@@ -16,6 +16,7 @@ import {
 } from './checkpoints'
 
 type CollaborationRunInput = Parameters<AgentRuntimeCoordinator['runCollaborationParticipant']>[0]
+const CHECKPOINT_INTEGRATION_TIMEOUT_MS = process.platform === 'win32' ? 15_000 : 10_000
 
 describe('CollaborationSupervisor', () => {
   let db: Database.Database
@@ -42,7 +43,12 @@ describe('CollaborationSupervisor', () => {
 
   afterEach(async () => {
     db.close()
-    await rm(root, { recursive: true, force: true })
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100
+    })
   })
 
   it('pauses and surfaces provider failures instead of leaving agents silently waiting', async () => {
@@ -587,90 +593,94 @@ describe('CollaborationSupervisor', () => {
     supervisor.shutdown()
   })
 
-  it('rewinds both participant projects before replacing a group message', async () => {
-    const detail = store.createGroup({
-      title: 'Webpage + Data',
-      participants: [
-        {
-          projectId: 'project-a',
-          providerTarget: { providerKind: 'litellm', model: 'local-loaded-model' }
-        },
-        {
-          projectId: 'project-b',
-          providerTarget: { providerKind: 'litellm', model: 'local-loaded-model' }
-        }
-      ]
-    })
-    const request = store.sendUserMessage({
-      groupId: detail.group.id,
-      text: 'Build the first version'
-    })
-    for (const [index, participant] of detail.participants.entries()) {
-      const path = join(participant.projectFolder, 'result.txt')
-      await writeFile(path, `before ${index}\n`, 'utf8')
-      const capture = await beginCheckpointCapture(
-        participant.projectFolder,
-        detail.group.id,
-        `run-${index}`
-      )
-      await writeFile(path, `after ${index}\n`, 'utf8')
-      const checkpoint = await createCheckpoint(
-        participant.projectFolder,
-        `Participant ${index}`,
-        capture
-      )
-      store.appendAgentSessionMessage({
-        sessionId: detail.agentSessions[index].id,
-        missionId: request.mission.id,
-        role: 'system',
-        kind: 'system',
-        presentation: 'history',
-        content: '',
-        metadata: {
-          checkpointHash: checkpoint!.hash,
-          coveredThroughEventSeq: request.event.seq,
-          agentRunId: `run-${index}`
-        }
+  it(
+    'rewinds both participant projects before replacing a group message',
+    async () => {
+      const detail = store.createGroup({
+        title: 'Webpage + Data',
+        participants: [
+          {
+            projectId: 'project-a',
+            providerTarget: { providerKind: 'litellm', model: 'local-loaded-model' }
+          },
+          {
+            projectId: 'project-b',
+            providerTarget: { providerKind: 'litellm', model: 'local-loaded-model' }
+          }
+        ]
       })
-    }
-    store.updateMission(request.mission.id, { status: 'completed' })
-    const runtime = {
-      runCollaborationParticipant: vi.fn(async (input: CollaborationRunInput) => {
-        await input.beforeModelStep?.([], new AbortController().signal, 0)
-        return {
-          runId: input.id,
-          phase: 'completed' as const,
-          content: 'Corrected work complete',
-          finalResponse: 'Corrected work complete',
-          thinking: '',
-          messages: [],
-          toolRounds: 0
-        }
-      }),
-      stop: vi.fn()
-    } as unknown as AgentRuntimeCoordinator
-    const supervisor = new CollaborationSupervisor(store, runtime, () => undefined)
-
-    const replacement = await supervisor.rewriteMessage(
-      {
+      const request = store.sendUserMessage({
         groupId: detail.group.id,
-        eventId: request.event.id,
-        text: 'Build the corrected version'
-      },
-      {} as WebContents
-    )
+        text: 'Build the first version'
+      })
+      for (const [index, participant] of detail.participants.entries()) {
+        const path = join(participant.projectFolder, 'result.txt')
+        await writeFile(path, `before ${index}\n`, 'utf8')
+        const capture = await beginCheckpointCapture(
+          participant.projectFolder,
+          detail.group.id,
+          `run-${index}`
+        )
+        await writeFile(path, `after ${index}\n`, 'utf8')
+        const checkpoint = await createCheckpoint(
+          participant.projectFolder,
+          `Participant ${index}`,
+          capture
+        )
+        store.appendAgentSessionMessage({
+          sessionId: detail.agentSessions[index].id,
+          missionId: request.mission.id,
+          role: 'system',
+          kind: 'system',
+          presentation: 'history',
+          content: '',
+          metadata: {
+            checkpointHash: checkpoint!.hash,
+            coveredThroughEventSeq: request.event.seq,
+            agentRunId: `run-${index}`
+          }
+        })
+      }
+      store.updateMission(request.mission.id, { status: 'completed' })
+      const runtime = {
+        runCollaborationParticipant: vi.fn(async (input: CollaborationRunInput) => {
+          await input.beforeModelStep?.([], new AbortController().signal, 0)
+          return {
+            runId: input.id,
+            phase: 'completed' as const,
+            content: 'Corrected work complete',
+            finalResponse: 'Corrected work complete',
+            thinking: '',
+            messages: [],
+            toolRounds: 0
+          }
+        }),
+        stop: vi.fn()
+      } as unknown as AgentRuntimeCoordinator
+      const supervisor = new CollaborationSupervisor(store, runtime, () => undefined)
 
-    expect(replacement.rewound).toHaveLength(2)
-    expect(replacement.event.seq).toBe(request.event.seq)
-    expect(replacement.event.payload.text).toBe('Build the corrected version')
-    expect(await readFile(join(root, 'webpage', 'result.txt'), 'utf8')).toBe('before 0\n')
-    expect(await readFile(join(root, 'data', 'result.txt'), 'utf8')).toBe('before 1\n')
-    await vi.waitFor(() => expect(runtime.runCollaborationParticipant).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() =>
-      expect(store.getMission(replacement.mission.id)?.status).toBe('completed')
-    )
-    supervisor.shutdown()
-  })
+      const replacement = await supervisor.rewriteMessage(
+        {
+          groupId: detail.group.id,
+          eventId: request.event.id,
+          text: 'Build the corrected version'
+        },
+        {} as WebContents
+      )
+
+      expect(replacement.rewound).toHaveLength(2)
+      expect(replacement.event.seq).toBe(request.event.seq)
+      expect(replacement.event.payload.text).toBe('Build the corrected version')
+      expect(await readFile(join(root, 'webpage', 'result.txt'), 'utf8')).toBe('before 0\n')
+      expect(await readFile(join(root, 'data', 'result.txt'), 'utf8')).toBe('before 1\n')
+      await vi.waitFor(() => expect(runtime.runCollaborationParticipant).toHaveBeenCalledTimes(2))
+      await vi.waitFor(() =>
+        expect(store.getMission(replacement.mission.id)?.status).toBe('completed')
+      )
+      supervisor.shutdown()
+    },
+    CHECKPOINT_INTEGRATION_TIMEOUT_MS
+  )
 
   it('captures and rewinds partial file changes from an active run before replaying', async () => {
     const detail = store.createGroup({
