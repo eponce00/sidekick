@@ -1,8 +1,6 @@
 import { BrowserWindow, clipboard, ipcMain, Notification } from 'electron'
 import { readFileSync } from 'fs'
 import icon from '../../../resources/icon.png?asset'
-import iconDark from '../../../resources/icon-dark.png?asset'
-import iconLight from '../../../resources/icon-light.png?asset'
 import {
   normalizeDesktopNotificationBody,
   type DesktopNotificationRequest
@@ -76,18 +74,9 @@ export function registerWindowHandlers(): void {
     return { ok: true }
   })
 
-  // Get icon as data URL for renderer (theme-aware)
-  ipcMain.handle('app:getIconPath', (_, theme?: 'dark' | 'light') => {
+  ipcMain.handle('app:getIconPath', () => {
     try {
-      let iconPath: string
-      if (theme === 'dark') {
-        iconPath = iconLight
-      } else if (theme === 'light') {
-        iconPath = iconDark
-      } else {
-        iconPath = icon
-      }
-      const iconBuffer = readFileSync(iconPath)
+      const iconBuffer = readFileSync(icon)
       const base64 = iconBuffer.toString('base64')
       return `data:image/png;base64,${base64}`
     } catch (error) {

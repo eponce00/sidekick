@@ -34,8 +34,8 @@ function createFixture(platform = 'all') {
     )
   }
   if (platform === 'all' || platform === 'macos') {
-    writeFileSync(join(directory, `SideKick-${VERSION}-arm64.dmg`), 'community-dmg')
-    writeFileSync(join(directory, `SideKick-${VERSION}-arm64.zip`), 'community-app-zip')
+    writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.dmg`), 'community-dmg')
+    writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.zip`), 'community-app-zip')
   }
 
   return directory
@@ -49,7 +49,7 @@ test('accepts the complete community artifact set and writes checksums', () => {
   const checksums = readFileSync(join(directory, 'SHA256SUMS.txt'), 'utf8')
   assert.equal(checksums.trim().split('\n').length, names.length)
   assert.match(checksums, new RegExp(`SideKick-${VERSION}-windows-x64-setup\\.exe`))
-  assert.match(checksums, new RegExp(`SideKick-${VERSION}-arm64\\.zip`))
+  assert.match(checksums, new RegExp(`SideKick-${VERSION}-macos-arm64\\.zip`))
 })
 
 test('accepts each platform artifact set before CI upload', () => {
@@ -69,7 +69,7 @@ test('ignores builder diagnostics, obsolete update metadata, and unpacked direct
   writeFileSync(join(directory, 'builder-debug.yml'), 'debug: true')
   writeFileSync(join(directory, 'builder-effective-config.yaml'), 'productName: SideKick')
   writeFileSync(join(directory, 'latest-mac.yml'), 'obsolete: true')
-  writeFileSync(join(directory, `SideKick-${VERSION}-arm64.zip.blockmap`), 'obsolete')
+  writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.zip.blockmap`), 'obsolete')
   mkdirSync(join(directory, 'mac-arm64'))
 
   assert.doesNotThrow(() =>
@@ -90,7 +90,7 @@ test('rejects builder diagnostics from the final public artifact set', () => {
 test('rejects obsolete update metadata from the final public artifact set', () => {
   const directory = createFixture()
   writeFileSync(join(directory, 'latest-mac.yml'), 'obsolete: true')
-  writeFileSync(join(directory, `SideKick-${VERSION}-arm64.zip.blockmap`), 'obsolete')
+  writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.zip.blockmap`), 'obsolete')
 
   assert.throws(
     () => validateReleaseArtifacts({ directory, platform: 'all', version: VERSION }),

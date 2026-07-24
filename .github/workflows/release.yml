@@ -141,8 +141,8 @@ jobs:
         with:
           name: SideKick-macOS-arm64
           path: |
-            dist/SideKick-*-arm64.dmg
-            dist/SideKick-*-arm64.zip
+            dist/SideKick-*-macos-arm64.dmg
+            dist/SideKick-*-macos-arm64.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -211,12 +211,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          version="$(node -p "require('./package.json').version")"
+          cat > release-notes.md <<EOF
+          Free SideKick community packages built from \`$GITHUB_REPOSITORY@$GITHUB_SHA\`.
+
+          ## Downloads
+
+          | Operating system | Architecture | Recommended package | Alternative |
+          | --- | --- | --- | --- |
+          | macOS | Apple Silicon (arm64) | \`SideKick-${version}-macos-arm64.dmg\` | \`SideKick-${version}-macos-arm64.zip\` |
+          | Windows | x64 | \`SideKick-${version}-windows-x64-setup.exe\` | — |
+
+          Linux is not included in this release because its installer and packaged runtime do not yet have a dedicated CI and smoke-test contract.
+
+          ## Trust
+
+          The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestation before installing.
+          EOF
           gh release create "$GITHUB_REF_NAME" release-artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --draft \
             --title "SideKick $GITHUB_REF_NAME" \
-            --notes "Free SideKick community packages built from $GITHUB_REPOSITORY@$GITHUB_SHA. The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Verify SHA256SUMS.txt and the GitHub artifact attestation before installing."
+            --notes-file release-notes.md
 
       - name: Verify the uploaded draft before publication
         shell: bash

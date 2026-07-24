@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Your AI sidekick for everyday computer tasks",
   "license": "GPL-3.0-or-later",
   "main": "./out/main/index.js",
@@ -49,7 +49,7 @@
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
     "benchmark:agent-evals": "node scripts/compare-agent-evals.cjs",
     "test:search-smoke": "node scripts/run-search-smoke.cjs",
-    "test:release": "node --test scripts/product-identity.test.cjs scripts/runtime-toolchain.test.cjs scripts/validate-packaged-app.test.cjs scripts/validate-release-artifacts.test.cjs",
+    "test:release": "node --test scripts/brand-assets.test.cjs scripts/product-identity.test.cjs scripts/runtime-toolchain.test.cjs scripts/validate-packaged-app.test.cjs scripts/validate-release-artifacts.test.cjs",
     "test:e2e": "npm run build && npm run test:e2e:runtime",
     "test:e2e:runtime": "node --test scripts/electron-e2e.test.cjs",
     "test:coverage": "node scripts/run-vitest.cjs --coverage --coverage.thresholds.statements=67 --coverage.thresholds.branches=53 --coverage.thresholds.functions=68 --coverage.thresholds.lines=70",

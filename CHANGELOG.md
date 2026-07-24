@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.4.1 — 2026-07-24
+
+- Replaced every inherited Electron application icon with the canonical SideKick robot artwork
+  across macOS, Windows, notifications, windows, the Dock, and repository branding.
+- Consolidated packaging on one vector icon master plus one runtime raster, and added regression
+  tests that reject the retired Electron assets and duplicate platform-specific icon files.
+- Made macOS release filenames explicitly platform-qualified and added a platform/architecture
+  download table to every generated GitHub Release.
+- Documented Linux as the next zero-cost desktop target while keeping it outside the release
+  contract until it has dedicated packaging, CI, smoke tests, and installation guidance.
+
 ## 0.4.0 — 2026-07-24
 
 SideKick 0.4.0 establishes the permanent free/open-source distribution model, updates the entire
