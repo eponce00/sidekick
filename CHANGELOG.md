@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.1 — 2026-07-24
+
+- Keep the Linux package filename aligned with the exact public `linux-x64` artifact contract.
+
 ## 0.5.0 — 2026-07-24
 
 - Keep generated artifacts visible as durable chat output instead of hiding them inside the

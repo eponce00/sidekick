@@ -13,6 +13,7 @@ test('uses one stable reverse-DNS production identity', () => {
   assert.equal(builder.appId, identity.appId)
   assert.equal(builder.productName, identity.productName)
   assert.equal(packageMetadata.desktopName, `${identity.appId}.desktop`)
+  assert.equal(builder.linux.artifactName, '${productName}-${version}-linux-x64.${ext}')
   assert.equal(builder.linux.executableName, identity.appId)
   assert.equal(builder.linux.desktop.entry.StartupWMClass, identity.appId)
   assert.equal(builder.linux.syncDesktopName, true)
