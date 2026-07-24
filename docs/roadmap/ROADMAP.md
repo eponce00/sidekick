@@ -1,6 +1,6 @@
 # Roadmap
 
-SideKick `0.4.1` is in active development. The current codebase includes the local-first desktop
+SideKick `0.4.2` is in active development. The current codebase includes the local-first desktop
 runtime, provider connections, agent tools, projects, permissions, plan mode, persistent goals,
 research, two-agent project collaboration, private workspace History, packaging, and a guarded
 public-release notification path. Release availability is tracked on the canonical

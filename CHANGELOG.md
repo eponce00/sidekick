@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.4.2 — 2026-07-24
+
+- Normalized text assets to LF across operating systems and made the vector-master hash insensitive
+  to checkout line endings while keeping every binary icon derivative byte-exact.
+- Promoted release-contract tests into ordinary macOS and Windows CI so a tag cannot be the first
+  place cross-platform release invariants run.
+
 ## 0.4.1 — 2026-07-24
 
 - Replaced every inherited Electron application icon with the canonical SideKick robot artwork
