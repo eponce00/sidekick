@@ -194,7 +194,7 @@
 
 .artifact-react-content {
   contain: layout style;
-  overflow: visible;
+  overflow: hidden;
   min-height: 0;
 }
 
@@ -214,6 +214,12 @@
   background: var(--panel-bg);
   border: none;
   display: block;
+}
+
+.artifact-preview-frame {
+  min-height: 160px;
+  max-height: min(560px, calc(100vh - 160px));
+  overflow: auto;
 }
 
 .artifact-svg-content {
@@ -346,7 +352,8 @@
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   line-height: 1.5;
-  overflow-x: auto;
+  max-height: min(560px, calc(100vh - 160px));
+  overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-secondary);

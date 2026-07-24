@@ -132,6 +132,13 @@ function isWorkSegmentGroup(group: GroupedSegment): boolean {
   return ['tool', 'summary', 'summarizing', 'decision', 'interaction'].includes(group.segment.type)
 }
 
+function isDurableOutputGroup(group: GroupedSegment): boolean {
+  return (
+    group.type === 'content' &&
+    (group.segment.type === 'artifact' || group.segment.type === 'verification')
+  )
+}
+
 function AgentWorkDisclosure({
   messageId,
   isLoading,
@@ -585,6 +592,14 @@ function MessageItemInner({
                 </div>
               ))
               if (lastWorkIndex < 0) return renderedGroups
+              const workGroupIndexes = new Set(
+                groupedSegments
+                  .map((group, groupIndex) => ({ group, groupIndex }))
+                  .filter(
+                    ({ group, groupIndex }) => groupIndex < workEnd && !isDurableOutputGroup(group)
+                  )
+                  .map(({ groupIndex }) => groupIndex)
+              )
               return (
                 <>
                   <AgentWorkDisclosure
@@ -594,9 +609,9 @@ function MessageItemInner({
                     startedAt={workStartedAt}
                     completedAt={workCompletedAt}
                   >
-                    {renderedGroups.slice(0, workEnd)}
+                    {renderedGroups.filter((_, groupIndex) => workGroupIndexes.has(groupIndex))}
                   </AgentWorkDisclosure>
-                  {renderedGroups.slice(workEnd)}
+                  {renderedGroups.filter((_, groupIndex) => !workGroupIndexes.has(groupIndex))}
                 </>
               )
             })()}

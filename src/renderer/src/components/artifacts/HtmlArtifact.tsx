@@ -2,6 +2,10 @@ import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { FileCode, Eye } from 'lucide-react'
 import { buildArtifactSrcDoc } from '../../utils/htmlArtifactDocument'
 import {
+  boundedArtifactFrameHeight,
+  DEFAULT_ARTIFACT_FRAME_HEIGHT
+} from '../../utils/artifactFrameSize'
+import {
   getArtifactTheme,
   getArtifactThemeCssVariables,
   observeArtifactTheme
@@ -16,7 +20,7 @@ interface HtmlArtifactProps {
 
 function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): React.JSX.Element {
   const [showCode, setShowCode] = useState(false)
-  const [iframeHeight, setIframeHeight] = useState(280)
+  const [iframeHeight, setIframeHeight] = useState(DEFAULT_ARTIFACT_FRAME_HEIGHT)
   const hasReportedRef = useRef(false)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const srcDoc = useMemo(() => buildArtifactSrcDoc(code, getArtifactTheme()), [code])
@@ -33,7 +37,7 @@ function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): Rea
 
       const data = event.data as { type?: string; height?: number; error?: string }
       if (data?.type === 'html-artifact-height' && typeof data.height === 'number') {
-        setIframeHeight(Math.max(120, Math.ceil(data.height) + 4))
+        setIframeHeight(boundedArtifactFrameHeight(data.height))
       } else if (data?.type === 'html-artifact-error' && !hasReportedRef.current) {
         hasReportedRef.current = true
         const message = data.error || 'Unknown HTML artifact error'
@@ -98,7 +102,7 @@ function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): Rea
         ) : (
           <iframe
             ref={iframeRef}
-            className="artifact-html-frame"
+            className="artifact-preview-frame artifact-html-frame"
             srcDoc={srcDoc}
             style={{ width: '100%', height: iframeHeight, border: 'none', display: 'block' }}
             sandbox="allow-scripts"
