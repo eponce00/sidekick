@@ -230,11 +230,11 @@ Per-instance API keys are encrypted by the main process before persistence. Rend
 
 SideKick's permanent zero-cost distribution policy rules out paid Apple Developer ID/notarization
 and paid Windows Authenticode certificates. Tagged GitHub releases therefore contain an ad-hoc
-signed macOS DMG/ZIP and an unsigned Windows NSIS installer. CI verifies those exact conditions,
-validates a closed artifact set, generates SHA-256 checksums, and publishes a GitHub/Sigstore
-provenance attestation. Releases are drafted, compared byte-for-size, and only then published
-without overwrite support. The publisher alone receives a short-lived repository-scoped token;
-build jobs remain read-only and receive no signing secrets.
+signed macOS DMG/ZIP, an unsigned Windows NSIS installer, and a Linux x64 AppImage. CI verifies
+those exact conditions, validates a closed artifact set, generates SHA-256 checksums, and publishes
+a GitHub/Sigstore provenance attestation. Releases are drafted, compared byte-for-size, and only
+then published without overwrite support. The publisher alone receives a short-lived,
+repository-scoped token; build jobs remain read-only and receive no signing secrets.
 
 The macOS `afterSign` hook applies an ad-hoc signature on public CI builds. Repeated local packages
 may instead use a laptop-local self-signed identity from a dedicated keychain so Chromium Safe
@@ -243,7 +243,9 @@ leaves the contributor's machine and is not a public trust claim. Both use the s
 library validation is disabled because Electron's separately signed nested frameworks cannot share
 a paid team identity with the zero-cost outer bundle. Windows Store MSIX is the planned primary
 Windows channel because Store registration and Store-managed signing/updates are currently free;
-the GitHub NSIS installer remains the no-account fallback.
+the GitHub NSIS installer remains the no-account fallback. Linux uses a static-runtime AppImage
+with one verified desktop, executable, icon, and `StartupWMClass` identity; it needs neither root
+installation nor a paid signing service.
 
 The main-process `AppUpdateService` is a release checker, not a binary updater. It requests only the
 canonical repository's public `releases/latest` API, accepts stable semantic-version tags and

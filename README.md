@@ -24,9 +24,10 @@
   <a href="https://github.com/eponce00/sidekick/actions/workflows/ci.yml">
     <img src="https://github.com/eponce00/sidekick/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" />
   </a>
-  <img src="https://img.shields.io/badge/source-v0.4.2-35d0ba" alt="Source version 0.4.2" />
+  <img src="https://img.shields.io/badge/source-v0.5.0-35d0ba" alt="Source version 0.5.0" />
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple" alt="macOS Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11" alt="Windows x64" />
+  <img src="https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=111827" alt="Linux x64" />
 </p>
 
 <p align="center">
@@ -160,12 +161,13 @@ and deletion behavior.
 
 ## Install
 
-The initial community distribution targets are deliberately narrow:
+The community distribution targets are deliberately narrow:
 
-| Platform             | Package                             | Trust and first launch                                                                                                |
-| -------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| macOS, Apple Silicon | DMG or ZIP from GitHub Releases     | Ad-hoc signed and not notarized. macOS requires explicit per-app approval through Privacy & Security on first launch. |
-| Windows, x64         | NSIS installer from GitHub Releases | Unsigned; Windows SmartScreen may warn. A free Microsoft Store MSIX is the preferred future Windows channel.          |
+| Platform             | Package                             | Trust and first launch                                                                                                                 |
+| -------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS, Apple Silicon | DMG or ZIP from GitHub Releases     | Ad-hoc signed and not notarized. macOS requires explicit per-app approval through Privacy & Security on first launch.                  |
+| Windows, x64         | NSIS installer from GitHub Releases | Unsigned; Windows SmartScreen may warn. A free Microsoft Store MSIX is the preferred future Windows channel.                           |
+| Linux, x64           | AppImage from GitHub Releases       | Self-contained and unsigned. Download it, make it executable with `chmod +x SideKick-*.AppImage`, then run it without root privileges. |
 
 Published versions are available from
 [GitHub Releases](https://github.com/eponce00/sidekick/releases). Each release includes exact
@@ -173,15 +175,15 @@ SHA-256 checksums and GitHub/Sigstore provenance. Installed builds check for a n
 and open its public release page when the user chooses **View release**. They never silently
 download or execute an unsigned replacement.
 
-Linux packages, Intel macOS builds, and portable Windows executables are not currently part of the
-community release contract. The [release guide](./docs/development/RELEASES.md) explains the
-permanent zero-cost policy, verification steps, and future Windows, Android, and iOS routes.
+Intel macOS builds and portable Windows executables are not currently part of the community release
+contract. The [release guide](./docs/development/RELEASES.md) explains the permanent zero-cost
+policy, verification steps, and future Windows, Android, and iOS routes.
 
 ## Run from source
 
-Requirements: [Node.js 24 LTS](https://nodejs.org/) and npm 11 on macOS or Windows. The exact
-runtime version is recorded in [`.node-version`](./.node-version), and installs fail closed on
-unsupported major versions.
+Requirements: [Node.js 24 LTS](https://nodejs.org/) and npm 11 on macOS, Windows, or Linux. The
+exact runtime version is recorded in [`.node-version`](./.node-version), and installs fail closed
+on unsupported major versions.
 
 ```bash
 git clone https://github.com/eponce00/sidekick.git
@@ -196,6 +198,7 @@ Package on the operating system you are targeting:
 ```bash
 npm run build:mac # macOS arm64 DMG + ZIP
 npm run build:win # Windows x64 NSIS installer
+npm run build:linux # Linux x64 AppImage
 ```
 
 Local packages are suitable for development and inspection. A tagged community release publishes
@@ -236,9 +239,9 @@ npm run check           # full local quality gate and production renderer build
 
 Every push and pull request runs the quality suite, launches the real app against a temporary
 profile, builds an unpacked application, smoke-tests the packaged app on macOS arm64 and Windows
-x64, and audits production dependencies for high-severity vulnerabilities. Live provider and
-search checks are separate opt-in tests so ordinary CI does not require credentials or external
-services.
+x64 and Linux x64, and audits production dependencies for high-severity vulnerabilities. Live
+provider and search checks are separate opt-in tests so ordinary CI does not require credentials
+or external services.
 
 ## Documentation
 

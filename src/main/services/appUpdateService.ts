@@ -102,7 +102,7 @@ async function fetchLatestGitHubRelease(): Promise<AppUpdateInfo | null> {
 
 export function updateDisabledReason(): AppUpdateDisabledReason | undefined {
   if (!app.isPackaged) return 'development'
-  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+  if (!['darwin', 'linux', 'win32'].includes(process.platform)) {
     return 'unsupported-platform'
   }
   return undefined

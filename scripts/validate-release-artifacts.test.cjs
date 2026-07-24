@@ -37,6 +37,9 @@ function createFixture(platform = 'all') {
     writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.dmg`), 'community-dmg')
     writeFileSync(join(directory, `SideKick-${VERSION}-macos-arm64.zip`), 'community-app-zip')
   }
+  if (platform === 'all' || platform === 'linux') {
+    writeFileSync(join(directory, `SideKick-${VERSION}-linux-x64.AppImage`), 'community-appimage')
+  }
 
   return directory
 }
@@ -50,17 +53,22 @@ test('accepts the complete community artifact set and writes checksums', () => {
   assert.equal(checksums.trim().split('\n').length, names.length)
   assert.match(checksums, new RegExp(`SideKick-${VERSION}-windows-x64-setup\\.exe`))
   assert.match(checksums, new RegExp(`SideKick-${VERSION}-macos-arm64\\.zip`))
+  assert.match(checksums, new RegExp(`SideKick-${VERSION}-linux-x64\\.AppImage`))
 })
 
 test('accepts each platform artifact set before CI upload', () => {
   const windows = createFixture('windows')
   const macos = createFixture('macos')
+  const linux = createFixture('linux')
 
   assert.doesNotThrow(() =>
     validateReleaseArtifacts({ directory: windows, platform: 'windows', version: VERSION })
   )
   assert.doesNotThrow(() =>
     validateReleaseArtifacts({ directory: macos, platform: 'macos', version: VERSION })
+  )
+  assert.doesNotThrow(() =>
+    validateReleaseArtifacts({ directory: linux, platform: 'linux', version: VERSION })
   )
 })
 

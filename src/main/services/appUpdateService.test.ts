@@ -69,6 +69,12 @@ describe('AppUpdateService', () => {
     const service = new AppUpdateService()
     expect(service.getState()).toMatchObject({ status: 'disabled', reason: 'development' })
   })
+
+  it('checks releases for packaged Linux builds', () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
+    const service = new AppUpdateService()
+    expect(service.getState()).toEqual({ currentVersion: '1.0.0', status: 'idle' })
+  })
 })
 
 describe('GitHub release validation', () => {

@@ -157,7 +157,7 @@ function App(): React.JSX.Element {
   const [isWindowMaximized, setIsWindowMaximized] = useState(false)
   const [isWindowFullScreen, setIsWindowFullScreen] = useState(false)
   useEffect(() => {
-    if (platform !== 'windows') return
+    if (platform === 'macos') return
     void window.api.window.isMaximized().then(setIsWindowMaximized)
     return window.api.window.onMaximizedChange(setIsWindowMaximized)
   }, [platform])

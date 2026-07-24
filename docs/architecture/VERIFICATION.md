@@ -70,5 +70,5 @@ run event. Direct chats, collaboration participants, and child agents all use th
 - Commands that finish in the background can only become evidence after their terminal result is
   explicitly observed; starting a process is not a passing check.
 - Workspace-wide external changes outside the run's changed paths are not attributed to that run.
-- Physical release testing should cover representative real servers on macOS and Windows because
-  each upstream server has its own startup and initialization quirks.
+- Physical release testing should cover representative real servers on macOS, Windows, and Linux
+  because each upstream server has its own startup and initialization quirks.

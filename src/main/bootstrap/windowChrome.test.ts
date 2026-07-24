@@ -12,7 +12,8 @@ describe('mainWindowChrome', () => {
     })
   })
 
-  it('preserves SideKick custom chrome on Windows', () => {
+  it('preserves SideKick custom chrome on Windows and Linux', () => {
     expect(mainWindowChrome('windows')).toEqual({ frame: false, fullscreenable: true })
+    expect(mainWindowChrome('linux')).toEqual({ frame: false, fullscreenable: true })
   })
 })

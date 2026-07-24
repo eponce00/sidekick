@@ -19,6 +19,7 @@ import type { AppCommand } from '../shared/appCommands'
 import { PRODUCT_IDENTITY } from '../shared/productIdentity'
 import { AppUpdateService } from './services/appUpdateService'
 import { isolatedE2EUserDataPath } from './bootstrap/applicationData'
+import { revealWindow } from './bootstrap/windowActivation'
 
 let appUpdateService: AppUpdateService | null = null
 let applicationShutdown: Promise<void> | null = null
@@ -88,7 +89,7 @@ async function bootstrapApplication(): Promise<void> {
   createMainWindow()
   const dispatchAppCommand = (command: AppCommand): void => {
     const target = BrowserWindow.getFocusedWindow() ?? appState.mainWindowRef
-    if (!target || target.isDestroyed()) {
+    if (!target || !revealWindow(target)) {
       const created = createMainWindow()
       created.webContents.once('did-finish-load', () => {
         setTimeout(() => {
@@ -97,9 +98,6 @@ async function bootstrapApplication(): Promise<void> {
       })
       return
     }
-    if (target.isMinimized()) target.restore()
-    target.show()
-    target.focus()
     target.webContents.send('app:command', command)
   }
   installApplicationMenu(process.platform, PRODUCT_IDENTITY.productName, {
@@ -112,7 +110,8 @@ async function bootstrapApplication(): Promise<void> {
   appUpdateService.start()
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+    const target = appState.mainWindowRef ?? BrowserWindow.getAllWindows()[0]
+    if (!revealWindow(target)) createMainWindow()
   })
 }
 

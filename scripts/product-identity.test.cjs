@@ -12,6 +12,11 @@ test('uses one stable reverse-DNS production identity', () => {
   assert.equal(identity.developmentAppId, `${identity.appId}.dev`)
   assert.equal(builder.appId, identity.appId)
   assert.equal(builder.productName, identity.productName)
+  assert.equal(packageMetadata.desktopName, `${identity.appId}.desktop`)
+  assert.equal(builder.linux.executableName, identity.appId)
+  assert.equal(builder.linux.desktop.entry.StartupWMClass, identity.appId)
+  assert.equal(builder.linux.syncDesktopName, true)
+  assert.equal(builder.toolsets.appimage, '1.0.3')
 })
 
 test('keeps project destinations bound to the public source repository', () => {

@@ -1,6 +1,6 @@
 # Roadmap
 
-SideKick `0.4.2` is in active development. The current codebase includes the local-first desktop
+SideKick `0.5.0` is in active development. The current codebase includes the local-first desktop
 runtime, provider connections, agent tools, projects, permissions, plan mode, persistent goals,
 research, two-agent project collaboration, private workspace History, packaging, and a guarded
 public-release notification path. Release availability is tracked on the canonical
@@ -11,14 +11,11 @@ guides, and completed items are recorded in the [changelog](../../CHANGELOG.md) 
 
 ## Release readiness
 
-- Run the community package matrix on clean physical macOS arm64 and Windows x64 machines,
-  including the honest first-launch warnings, permissions, persistence, release notification,
-  uninstall, and data retention.
+- Run the community package matrix on clean physical macOS arm64, Windows x64, and Linux x64
+  machines, including the honest first-launch warnings, permissions, persistence, release
+  notification, removal, and data retention.
 - Package the Windows app as MSIX and qualify the free Microsoft Store signing/update route after a
   maintainer completes Microsoft's free identity verification and reserves the product identity.
-- Add a Linux x64 AppImage job with packaged-runtime validation, a headless launch smoke, artifact
-  provenance, and clean Ubuntu installation/uninstallation qualification before including Linux in
-  the public release contract.
 - Publish the matching stable source tag only after `npm run check` and every release gate passes.
 
 The exact release contract is in [Releases](../development/RELEASES.md).

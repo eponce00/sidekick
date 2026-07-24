@@ -2,10 +2,18 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-07-24
+
 - Keep generated artifacts visible as durable chat output instead of hiding them inside the
   collapsed work disclosure.
 - Bound React and HTML artifact previews to a scrollable viewport and remove the iframe sizing
   feedback loop that could make a conversation grow indefinitely.
+- Add a Linux x64 AppImage with a static runtime, canonical desktop/icon identity, packaged-content
+  audit, extracted-image validation, real AppImage launch smoke, checksums, and provenance.
+- Run the real-Electron journey and unpacked package smoke on Linux CI alongside macOS and Windows,
+  and enable the stable GitHub release checker for packaged Linux builds.
+- Restore or recreate the main window when an already-running macOS app is activated after its last
+  window was closed.
 
 ## 0.4.2 — 2026-07-24
 

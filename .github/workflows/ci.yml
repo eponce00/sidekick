@@ -24,6 +24,9 @@ jobs:
           - name: macOS arm64
             os: macos-14
             smoke: macos
+          - name: Linux x64
+            os: ubuntu-22.04
+            smoke: linux
 
     steps:
       - uses: actions/checkout@v7
@@ -33,6 +36,14 @@ jobs:
           node-version-file: '.node-version'
           cache: npm
 
+      - name: Install Linux desktop test dependencies
+        if: matrix.smoke == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -41,13 +52,21 @@ jobs:
       - run: npm run test:coverage
       - run: npm run test:release
       - run: npm run build:unpack
-      - run: npm run test:e2e:runtime
+      - name: Run real-Electron journey
+        if: matrix.smoke != 'linux'
+        run: npm run test:e2e:runtime
+      - name: Run real-Electron journey on Linux
+        if: matrix.smoke == 'linux'
+        run: xvfb-run --auto-servernum npm run test:e2e:runtime
       - name: Audit Windows packaged content
         if: matrix.smoke == 'windows'
         run: npm run validate:package -- dist/win-unpacked/resources
       - name: Audit macOS packaged content
         if: matrix.smoke == 'macos'
         run: npm run validate:package -- dist/mac-arm64/SideKick.app/Contents/Resources
+      - name: Audit Linux packaged content
+        if: matrix.smoke == 'linux'
+        run: npm run validate:package -- dist/linux-unpacked/resources
       - name: Smoke-test Windows package
         if: matrix.smoke == 'windows'
         run: npm run smoke:packaged:windows
@@ -56,4 +75,7 @@ jobs:
         run: npm run smoke:packaged:macos
         env:
           SIDEKICK_ALLOW_UNSIGNED_SMOKE: ${{ github.event_name == 'pull_request' }}
+      - name: Smoke-test Linux package
+        if: matrix.smoke == 'linux'
+        run: xvfb-run --auto-servernum npm run smoke:packaged:linux
       - run: npm audit --omit=dev --audit-level=high
