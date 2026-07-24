@@ -24,7 +24,7 @@
   <a href="https://github.com/eponce00/sidekick/actions/workflows/ci.yml">
     <img src="https://github.com/eponce00/sidekick/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" />
   </a>
-  <img src="https://img.shields.io/badge/source-v0.4.1-35d0ba" alt="Source version 0.4.1" />
+  <img src="https://img.shields.io/badge/source-v0.4.2-35d0ba" alt="Source version 0.4.2" />
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple" alt="macOS Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11" alt="Windows x64" />
 </p>

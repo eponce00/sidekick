@@ -28,6 +28,19 @@ function sha256(contents) {
   return createHash('sha256').update(contents).digest('hex')
 }
 
+function canonicalAssetContents(relativePath, contents) {
+  return relativePath === 'build/icon.svg'
+    ? Buffer.from(contents.toString('utf8').replaceAll('\r\n', '\n'))
+    : contents
+}
+
+test('normalizes irrelevant vector line endings before hashing', () => {
+  assert.equal(
+    canonicalAssetContents('build/icon.svg', Buffer.from('<svg>\r\n</svg>\r\n')).toString(),
+    '<svg>\n</svg>\n'
+  )
+})
+
 test('uses deterministic platform derivatives of one SideKick vector master', () => {
   assert.equal(builder.mac.icon, 'build/icon.icns')
   assert.equal(builder.win.icon, 'build/icon.ico')
@@ -38,7 +51,8 @@ test('uses deterministic platform derivatives of one SideKick vector master', ()
   assert.equal(RETIRED_ELECTRON_ICON_HASHES.has(sha256(svg)), false)
 
   for (const [relativePath, expectedHash] of EXPECTED_BRAND_ASSET_HASHES) {
-    const contents = readFileSync(path.join(root, relativePath))
+    const rawContents = readFileSync(path.join(root, relativePath))
+    const contents = canonicalAssetContents(relativePath, rawContents)
     assert.equal(sha256(contents), expectedHash, `${relativePath} must match the vector master`)
     assert.equal(RETIRED_ELECTRON_ICON_HASHES.has(expectedHash), false)
   }
