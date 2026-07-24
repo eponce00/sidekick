@@ -27,7 +27,7 @@ module.exports = {
   asarUnpack: ['resources/**'],
   win: {
     executableName: identity.productName,
-    icon: 'resources/icon.ico',
+    icon: 'build/icon.ico',
     target: [
       {
         target: 'nsis',
@@ -42,7 +42,8 @@ module.exports = {
     createDesktopShortcut: 'always'
   },
   mac: {
-    artifactName: '${productName}-${version}-${arch}.${ext}',
+    artifactName: '${productName}-${version}-macos-${arch}.${ext}',
+    icon: 'build/icon.icns',
     hardenedRuntime: true,
     entitlements: 'build/entitlements.mac.plist',
     target: [

@@ -170,7 +170,7 @@ interface NotificationAPI {
 
 interface AppAPI {
   platform: import('../shared/platform').DesktopPlatform
-  getIconPath: (theme?: 'dark' | 'light') => Promise<string>
+  getIconPath: () => Promise<string>
   onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => () => void
 }
 

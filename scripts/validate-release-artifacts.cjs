@@ -30,7 +30,7 @@ function expectedArtifacts(version, platform) {
     expected.push(`SideKick-${version}-windows-x64-setup.exe`)
   }
   if (platform === 'all' || platform === 'macos') {
-    expected.push(`SideKick-${version}-arm64.dmg`, `SideKick-${version}-arm64.zip`)
+    expected.push(`SideKick-${version}-macos-arm64.dmg`, `SideKick-${version}-macos-arm64.zip`)
   }
 
   return expected.sort()

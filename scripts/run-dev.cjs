@@ -1,18 +1,16 @@
 const { execFileSync, spawn } = require('node:child_process')
-const {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} = require('node:fs')
+const { createHash } = require('node:crypto')
+const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 const identity = require('../src/shared/productIdentity.json')
 
 const APP_NAME = identity.productName
 const APP_ID = identity.developmentAppId
 const projectRoot = resolve(__dirname, '..')
+
+function sha256(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
 
 function setPlistValue(plistPath, key, type, value) {
   try {
@@ -22,13 +20,47 @@ function setPlistValue(plistPath, key, type, value) {
   }
 }
 
+function writeMacIcon(sourcePath, destinationPath, runtimeRoot) {
+  const iconsetPath = join(runtimeRoot, 'SideKick.iconset')
+  rmSync(iconsetPath, { recursive: true, force: true })
+  mkdirSync(iconsetPath)
+
+  for (const [points, scale] of [
+    [16, 1],
+    [16, 2],
+    [32, 1],
+    [32, 2],
+    [128, 1],
+    [128, 2],
+    [256, 1],
+    [256, 2],
+    [512, 1],
+    [512, 2]
+  ]) {
+    const pixels = points * scale
+    const suffix = scale === 2 ? '@2x' : ''
+    execFileSync('/usr/bin/sips', [
+      '-z',
+      String(pixels),
+      String(pixels),
+      sourcePath,
+      '--out',
+      join(iconsetPath, `icon_${points}x${points}${suffix}.png`)
+    ])
+  }
+
+  execFileSync('/usr/bin/iconutil', ['-c', 'icns', iconsetPath, '-o', destinationPath])
+  rmSync(iconsetPath, { recursive: true, force: true })
+}
+
 function prepareMacRuntime() {
   const electronVersion = require(join(projectRoot, 'node_modules/electron/package.json')).version
   const sourceApp = join(projectRoot, 'node_modules/electron/dist/Electron.app')
   const runtimeRoot = join(projectRoot, 'node_modules/.cache/sidekick-electron', electronVersion)
   const targetApp = join(runtimeRoot, 'Electron.app')
   const markerPath = join(runtimeRoot, '.sidekick-runtime')
-  const expectedMarker = `${APP_NAME}\n${APP_ID}\n${electronVersion}\n`
+  const iconPath = join(projectRoot, 'resources/icon.png')
+  const expectedMarker = `${APP_NAME}\n${APP_ID}\n${electronVersion}\n${sha256(iconPath)}\n`
 
   if (existsSync(markerPath) && readFileSync(markerPath, 'utf8') === expectedMarker) {
     return runtimeRoot
@@ -54,10 +86,7 @@ function prepareMacRuntime() {
   setPlistValue(plistPath, 'CFBundleDisplayName', 'string', APP_NAME)
   setPlistValue(plistPath, 'CFBundleIdentifier', 'string', APP_ID)
 
-  const iconPath = join(projectRoot, 'build/icon.icns')
-  if (existsSync(iconPath)) {
-    copyFileSync(iconPath, join(targetApp, 'Contents/Resources/electron.icns'))
-  }
+  writeMacIcon(iconPath, join(targetApp, 'Contents/Resources/electron.icns'), runtimeRoot)
 
   // Editing a bundle invalidates Electron's upstream signature. An ad-hoc development
   // signature gives macOS a coherent local app identity without requesting a certificate.

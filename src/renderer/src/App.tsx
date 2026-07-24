@@ -172,8 +172,7 @@ function App(): React.JSX.Element {
     max: 4096
   })
   const [conversationCost, setConversationCost] = useState<number>(0)
-  const [iconDarkPath, setIconDarkPath] = useState<string>('')
-  const [iconLightPath, setIconLightPath] = useState<string>('')
+  const [appIconPath, setAppIconPath] = useState<string>('')
   const [userLocation, setUserLocation] = useState<{
     city?: string
     country?: string
@@ -206,12 +205,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const loadData = async (): Promise<void> => {
       try {
-        const [iconDark, iconLight] = await Promise.all([
-          window.api.app.getIconPath('dark'),
-          window.api.app.getIconPath('light')
-        ])
-        setIconDarkPath(iconDark)
-        setIconLightPath(iconLight)
+        setAppIconPath(await window.api.app.getIconPath())
 
         const savedSettings = await window.api.settings.load()
         const savedModels = await window.api.pinnedModels.load()
@@ -959,13 +953,7 @@ function App(): React.JSX.Element {
     return (
       <div className="app-loading" data-theme={theme}>
         <div className="app-loading-content">
-          {(theme === 'dark' ? iconLightPath : iconDarkPath) && (
-            <img
-              src={theme === 'dark' ? iconLightPath : iconDarkPath}
-              alt=""
-              className="app-loading-icon"
-            />
-          )}
+          {appIconPath && <img src={appIconPath} alt="" className="app-loading-icon" />}
           <span className="app-loading-name">SideKick</span>
         </div>
       </div>
@@ -976,13 +964,7 @@ function App(): React.JSX.Element {
     <div className={`app platform-${platform}${isWindowFullScreen ? ' window-fullscreen' : ''}`}>
       <div className="title-bar">
         <div className="title-bar-left">
-          {(theme === 'dark' ? iconLightPath : iconDarkPath) && (
-            <img
-              src={theme === 'dark' ? iconLightPath : iconDarkPath}
-              alt="SideKick"
-              className="title-bar-icon"
-            />
-          )}
+          {appIconPath && <img src={appIconPath} alt="SideKick" className="title-bar-icon" />}
           {titleBarContext && (
             <>
               <span className="title-bar-divider">/</span>
