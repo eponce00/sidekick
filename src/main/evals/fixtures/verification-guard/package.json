@@ -1,0 +1,8 @@
+{
+  "name": "sidekick-verification-guard-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/verify.mjs"
+  }
+}

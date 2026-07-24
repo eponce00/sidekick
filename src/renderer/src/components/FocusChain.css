@@ -1,0 +1,281 @@
+/* ---- Focus Chain ---- */
+.focus-chain {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  animation: fcSlideDown 0.3s ease-out;
+}
+
+.activity-focus-chain-section .focus-chain {
+  margin: 0;
+}
+
+@keyframes fcSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.focus-chain-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--duration-fast);
+}
+
+.focus-chain-header:hover {
+  background-color: var(--surface-3);
+}
+
+.focus-chain-header-content {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.focus-chain-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.focus-chain-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1;
+  min-width: 0;
+}
+
+.focus-chain-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.focus-chain-label {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: var(--text-base);
+}
+
+.focus-chain-counter {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  background: var(--surface-3);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.focus-chain-current {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  overflow: hidden;
+}
+
+.current-indicator {
+  color: var(--accent);
+  font-size: 8px;
+  animation: fcPulse 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes fcPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.current-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.focus-chain-toggle {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ---- Progress Bar ---- */
+.focus-chain-progress-bar {
+  height: 3px;
+  background: var(--surface-3);
+  position: relative;
+  overflow: hidden;
+}
+
+.focus-chain-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease-out;
+  border-radius: 0 3px 3px 0;
+}
+
+/* ---- Content ---- */
+.focus-chain-content {
+  padding: var(--space-3) var(--space-4) var(--space-4) var(--space-4);
+  animation: fcExpandDown 0.2s ease-out;
+}
+
+@keyframes fcExpandDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+  }
+}
+
+.focus-chain-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ---- Items ---- */
+.focus-chain-item {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  transition: all var(--duration-fast);
+  background: var(--app-bg);
+}
+
+.focus-chain-item:hover {
+  background: var(--surface-3);
+  transform: translateX(2px);
+}
+
+.focus-chain-item.in-progress {
+  background: var(--surface-3);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.focus-chain-item.completed {
+  opacity: 0.6;
+}
+
+/* ---- Checkboxes ---- */
+.todo-status-indicator {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.todo-checkbox {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--surface-4);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--duration-fast);
+}
+
+.todo-checkbox.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.todo-checkbox.in-progress {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: var(--radius-full);
+  animation: fcSpin 0.8s linear infinite;
+}
+
+@keyframes fcSpin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- Content ---- */
+.todo-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.todo-title {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 400;
+  margin-bottom: 2px;
+}
+
+.focus-chain-item.completed .todo-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.todo-description {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  margin-top: var(--space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.focus-chain-item.completed .todo-description {
+  color: var(--text-muted);
+}
+
+/* ---- Light Theme ---- */
+body[data-theme="light"] .focus-chain-icon {
+  background: var(--accent);
+}
+
+body[data-theme="light"] .todo-checkbox.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+body[data-theme="light"] .todo-checkbox.in-progress {
+  border-color: var(--accent);
+}
+
+body[data-theme="light"] .spinner {
+  border-color: var(--accent);
+  border-top-color: transparent;
+}
+
+body[data-theme="light"] .current-indicator {
+  color: var(--accent);
+}
+
+body[data-theme="light"] .focus-chain-item.in-progress {
+  box-shadow: inset 3px 0 0 var(--accent);
+}

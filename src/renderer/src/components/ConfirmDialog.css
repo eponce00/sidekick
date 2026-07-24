@@ -1,0 +1,120 @@
+/* ---- Confirm Dialog ---- */
+.confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--modal-overlay);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: confirmFadeIn 0.15s ease-out;
+}
+
+.confirm-dialog {
+  background-color: var(--surface-1);
+  border-radius: var(--radius-lg);
+  width: 420px;
+  max-width: 90%;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35);
+  animation: confirmSlideUp 0.2s ease-out;
+}
+
+.confirm-header {
+  padding: var(--space-5) var(--space-6) var(--space-4);
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.confirm-body {
+  padding: var(--space-5) var(--space-6);
+}
+
+.confirm-message {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.confirm-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+}
+
+.confirm-btn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--duration-fast) ease;
+  border: none;
+}
+
+.confirm-btn-cancel {
+  background-color: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.confirm-btn-cancel:hover {
+  background-color: var(--surface-4);
+  color: var(--text-primary);
+}
+
+.confirm-btn-confirm {
+  color: #fff;
+}
+
+.confirm-btn-default {
+  background-color: var(--accent);
+}
+
+.confirm-btn-default:hover {
+  background-color: var(--accent-strong);
+}
+
+.confirm-btn-danger {
+  background-color: var(--color-error);
+}
+
+.confirm-btn-danger:hover {
+  background-color: #b44;
+}
+
+.confirm-btn-success {
+  background-color: var(--color-success);
+}
+
+.confirm-btn-success:hover {
+  background-color: #3a8;
+}
+
+.confirm-btn:active {
+  transform: scale(0.98);
+}
+
+@keyframes confirmFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes confirmSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

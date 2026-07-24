@@ -1,0 +1,260 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - name: Verify stable tag matches package version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            throw "Tagged releases require stable semver; received $version"
+          }
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Expected tag v$version, received $env:GITHUB_REF_NAME"
+          }
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+      - run: npm test
+      - run: npm run test:release
+      - name: Build unsigned Windows community artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:win
+      - run: npm run test:e2e:runtime
+      - run: npm run validate:package -- dist/win-unpacked/resources
+      - run: npm run smoke:packaged:windows
+      - name: Verify the community installer is intentionally unsigned
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-setup.exe')
+          if ($files.Count -ne 1) { throw 'Expected exactly one Windows NSIS installer.' }
+          $signature = Get-AuthenticodeSignature -FilePath $files[0].FullName
+          if ($signature.Status -ne 'NotSigned') {
+            throw "Expected an unsigned community installer, received: $($signature.Status)"
+          }
+          Write-Host "Verified that $($files[0].Name) is intentionally unsigned."
+      - name: Validate Windows community installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          npm run validate:release -- --version $version --platform windows dist
+
+      - name: Upload Windows community artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-Windows-x64
+          path: dist/SideKick-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    name: Build macOS arm64
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - name: Verify stable tag matches package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tagged releases require stable semver; received $version"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Expected tag v$version, received $GITHUB_REF_NAME"
+            exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+      - run: npm test
+      - run: npm run test:release
+      - name: Build ad-hoc signed macOS community artifacts
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:mac
+      - run: npm run test:e2e:runtime
+      - run: npm run validate:package -- dist/mac-arm64/SideKick.app/Contents/Resources
+      - run: npm run smoke:packaged:macos
+        env:
+          SIDEKICK_ALLOW_UNSIGNED_SMOKE: 'true'
+      - name: Verify the application uses only an ad-hoc signature
+        shell: bash
+        run: |
+          app_path='dist/mac-arm64/SideKick.app'
+          test -d "$app_path"
+          codesign --verify --deep --strict --verbose=2 "$app_path"
+          signature_details="$(codesign -dv --verbose=4 "$app_path" 2>&1)"
+          grep -q 'Signature=adhoc' <<<"$signature_details"
+          if grep -q '^Authority=' <<<"$signature_details"; then
+            echo "::error::Community builds must not depend on a paid Apple signing identity."
+            exit 1
+          fi
+      - name: Validate macOS community packages
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          npm run validate:release -- --version "$version" --platform macos dist
+
+      - name: Upload macOS community artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-macOS-arm64
+          path: |
+            dist/SideKick-*-arm64.dmg
+            dist/SideKick-*-arm64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish verified community release
+    if: github.ref_type == 'tag'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - name: Download validated platform artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: SideKick-*
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Validate the complete release and generate checksums
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          npm run validate:release -- --version "$version" --platform all --write-checksums release-artifacts
+
+      - name: Attest release provenance
+        uses: actions/attest@v4
+        with:
+          subject-checksums: release-artifacts/SHA256SUMS.txt
+
+      - name: Verify the public release destination and immutable source tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq '.visibility')"
+          if [[ "$visibility" != 'public' ]]; then
+            echo "::error::$GITHUB_REPOSITORY must be public for transparent community releases and attestations."
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "::error::Release $GITHUB_REF_NAME already exists; community releases are never overwritten."
+            exit 1
+          fi
+          tag_commit="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+          checkout_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$checkout_commit" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME resolves to $tag_commit, expected checked-out commit $checkout_commit."
+            exit 1
+          fi
+
+      - name: Create a draft release and upload the immutable asset set
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --draft \
+            --title "SideKick $GITHUB_REF_NAME" \
+            --notes "Free SideKick community packages built from $GITHUB_REPOSITORY@$GITHUB_SHA. The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Verify SHA256SUMS.txt and the GitHub artifact attestation before installing."
+
+      - name: Verify the uploaded draft before publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+          is_prerelease="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease')"
+          [[ "$is_draft" == 'true' ]]
+          [[ "$is_prerelease" == 'false' ]]
+
+          mapfile -t local_assets < <(find release-artifacts -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t remote_assets < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | sort)
+          if [[ "${local_assets[*]}" != "${remote_assets[*]}" ]]; then
+            echo "::error::Uploaded assets do not match the locally validated artifact set."
+            printf 'Local: %s\nRemote: %s\n' "${local_assets[*]}" "${remote_assets[*]}"
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r name size; do
+            if [[ -z "$name" || "$size" -le 0 ]]; then
+              echo "::error::Remote release contains an empty asset: $name"
+              exit 1
+            fi
+            local_size="$(stat -c '%s' "release-artifacts/$name")"
+            if [[ "$size" -ne "$local_size" ]]; then
+              echo "::error::Remote size for $name is $size; expected $local_size."
+              exit 1
+            fi
+          done < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | [.name, .size] | @tsv')
+
+      - name: Publish the verified community release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+          is_prerelease="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq '.isPrerelease')"
+          [[ "$is_draft" == 'false' ]]
+          [[ "$is_prerelease" == 'false' ]]

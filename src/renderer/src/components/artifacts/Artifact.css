@@ -1,0 +1,354 @@
+/* ---- Artifact Container ---- */
+.artifact-container {
+  margin: var(--space-3) 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background-color: var(--surface-2);
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* ---- Streaming/Loading State ---- */
+.artifact-streaming {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  animation: artifactPulse 2s ease-in-out infinite;
+}
+
+@keyframes artifactPulse {
+  0%,
+  100% {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px var(--accent-strong),
+      0 0 8px 2px rgba(226, 160, 82, 0.15);
+  }
+}
+
+.artifact-icon-spinning {
+  display: inline-block;
+  animation: artifactSpin 1s linear infinite;
+}
+
+@keyframes artifactSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.artifact-loading-content {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.artifact-loading-bar {
+  width: 100%;
+  height: 4px;
+  background-color: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.artifact-loading-progress {
+  width: 30%;
+  height: 100%;
+  background-color: var(--accent);
+  border-radius: 2px;
+  animation: artifactLoadingSlide 1.5s ease-in-out infinite;
+}
+
+@keyframes artifactLoadingSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(233%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+.artifact-loading-text {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ---- Artifact Header ---- */
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--surface-1);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+}
+
+.artifact-header-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.artifact-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.artifact-header-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
+  line-height: 1;
+}
+
+.artifact-header-button:hover {
+  background-color: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.artifact-icon {
+  font-size: var(--text-base);
+}
+
+.artifact-title {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.artifact-type-badge {
+  padding: 2px var(--space-2);
+  background-color: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.artifact-error-badge {
+  background-color: rgba(204, 85, 85, 0.8);
+}
+
+.artifact-toggle-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.artifact-toggle-code:hover {
+  background-color: var(--surface-3);
+  color: var(--text-primary);
+}
+
+/* ---- Artifact Content ---- */
+.artifact-content {
+  padding: var(--space-4);
+  background-color: var(--surface-1);
+  max-width: 100%;
+  overflow: visible;
+  position: relative;
+  box-sizing: border-box;
+}
+
+.artifact-content > * {
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.artifact-content canvas {
+  width: 100% !important;
+  height: auto !important;
+}
+
+.artifact-react-content {
+  contain: layout style;
+  overflow: visible;
+  min-height: 0;
+}
+
+.artifact-react-content > * {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.artifact-html-content {
+  contain: layout style;
+  overflow: hidden;
+}
+
+.artifact-html-frame {
+  width: 100%;
+  max-width: 100%;
+  background: var(--panel-bg);
+  border: none;
+  display: block;
+}
+
+.artifact-svg-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  contain: layout style;
+  overflow: hidden;
+}
+
+.artifact-svg-content svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---- Artifact Error ---- */
+.artifact-error {
+  padding: var(--space-3);
+  background-color: rgba(204, 85, 85, 0.1);
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  font-size: var(--text-sm);
+  margin: var(--space-3);
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.artifact-error p {
+  margin: var(--space-2) 0 0 0;
+  font-size: var(--text-xs);
+  opacity: 0.8;
+}
+
+.artifact-error-collapsed {
+  padding: var(--space-2) var(--space-3);
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background-color: rgba(204, 85, 85, 0.08);
+  font-size: var(--text-xs);
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.artifact-error-summary {
+  opacity: 0.9;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.artifact-broken {
+  opacity: 0.6;
+}
+
+.artifact-broken .artifact-header {
+  background-color: rgba(204, 85, 85, 0.1);
+}
+
+.artifact-error-actions {
+  display: flex;
+  justify-content: flex-start;
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+.artifact-error-button {
+  border: none;
+  background-color: rgba(204, 85, 85, 0.12);
+  color: var(--color-error);
+  font-size: var(--text-xs);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background-color var(--duration-fast) ease;
+}
+
+.artifact-error-button:hover {
+  background-color: rgba(204, 85, 85, 0.2);
+}
+
+.artifact-error strong {
+  font-weight: 600;
+}
+
+/* ---- Code Details ---- */
+.artifact-code-details {
+  margin: 0;
+}
+
+.artifact-code-details summary {
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  background-color: var(--surface-2);
+  user-select: none;
+}
+
+.artifact-code-details summary:hover {
+  background-color: var(--surface-3);
+  color: var(--text-secondary);
+}
+
+.artifact-code {
+  margin: 0;
+  padding: var(--space-3);
+  background-color: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  color: var(--text-secondary);
+  overflow-y: visible;
+  overflow-x: hidden;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.artifact-code-view {
+  margin: 0;
+  padding: var(--space-3);
+  background-color: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+}

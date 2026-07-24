@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            smoke: windows
+          - name: macOS arm64
+            os: macos-14
+            smoke: macos
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+      - run: npm run test:coverage
+      - run: npm run build:unpack
+      - run: npm run test:e2e:runtime
+      - name: Audit Windows packaged content
+        if: matrix.smoke == 'windows'
+        run: npm run validate:package -- dist/win-unpacked/resources
+      - name: Audit macOS packaged content
+        if: matrix.smoke == 'macos'
+        run: npm run validate:package -- dist/mac-arm64/SideKick.app/Contents/Resources
+      - name: Smoke-test Windows package
+        if: matrix.smoke == 'windows'
+        run: npm run smoke:packaged:windows
+      - name: Smoke-test macOS package
+        if: matrix.smoke == 'macos'
+        run: npm run smoke:packaged:macos
+        env:
+          SIDEKICK_ALLOW_UNSIGNED_SMOKE: ${{ github.event_name == 'pull_request' }}
+      - run: npm audit --omit=dev --audit-level=high

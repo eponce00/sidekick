@@ -1,0 +1,10 @@
+@import './base.css';
+
+/* Code blocks */
+code {
+  font-family: var(--font-mono, 'SF Mono', 'Consolas', monospace);
+  font-size: 0.9em;
+  padding: 2px 5px;
+  border-radius: var(--radius-sm, 6px);
+  background-color: var(--surface-2, #1e1e1e);
+}

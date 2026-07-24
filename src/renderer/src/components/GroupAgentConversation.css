@@ -1,0 +1,25 @@
+.group-agent-conversation-shell {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  height: 100%;
+  overflow: hidden;
+  background: var(--app-bg);
+}
+
+.group-agent-conversation-chat {
+  min-width: 0;
+}
+
+.group-agent-conversation-error {
+  width: min(100% - 36px, 880px);
+  margin: 0 auto 6px;
+  color: var(--color-error);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .group-agent-conversation-shell .activity-panel {
+    display: none;
+  }
+}

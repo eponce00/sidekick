@@ -1,0 +1,44 @@
+/* Provider icon wrapper */
+.provider-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  flex-shrink: 0;
+}
+
+.provider-icon svg {
+  display: block;
+}
+
+/* ── Ollama: slate-blue ── */
+.provider-icon--ollama,
+.provider-icon--ollama-cloud {
+  color: #9db2d9;
+}
+
+.provider-icon--ollama-cloud {
+  color: #82c8ed;
+}
+
+/* ── LM Studio: soft violet ── */
+.provider-icon--lmstudio {
+  color: #b39ddb;
+}
+
+.provider-icon--llamacpp {
+  color: #d4a373;
+}
+
+.provider-icon--openai-compatible {
+  color: #8fb8a8;
+}
+
+.provider-icon--litellm {
+  color: #8ea8ff;
+}
+
+/* ── OpenRouter: teal (echoes app accent) ── */
+.provider-icon--openrouter {
+  color: #5eead4;
+}

@@ -1,0 +1,133 @@
+name: Agent system evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      system_target:
+        description: Provider target for the shared system benchmark
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - litellm
+          - openrouter
+      system_model:
+        description: Optional model override for the selected provider
+        required: false
+        type: string
+      system_suite:
+        description: Scenario scope for the provider-neutral benchmark
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - quick
+          - verification
+      run_openrouter_matrix:
+        description: Check every development-only free OpenRouter model
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-system-eval
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    name: Evaluate agent harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SIDEKICK_LLM_EVAL_URL: ${{ secrets.SIDEKICK_LLM_EVAL_URL }}
+      SIDEKICK_LLM_EVAL_MODEL: local-loaded-model
+      SIDEKICK_LLM_EVAL_API_KEY: ${{ secrets.SIDEKICK_LLM_EVAL_API_KEY }}
+      SIDEKICK_OPENROUTER_EVAL_API_KEY: ${{ secrets.SIDEKICK_OPENROUTER_EVAL_API_KEY }}
+      SIDEKICK_AGENT_EVAL_TARGET: ${{ inputs.system_target }}
+      SIDEKICK_AGENT_EVAL_MODEL: ${{ inputs.system_model }}
+      SIDEKICK_AGENT_EVAL_REPORT: artifacts/agent-system-eval.json
+      SIDEKICK_OPENROUTER_EVAL_REPORT: artifacts/openrouter-model-matrix.json
+      SIDEKICK_AGENT_EVAL_SUITE: ${{ inputs.system_suite }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Require at least one development evaluation secret
+        shell: bash
+        run: |
+          if [ -z "$SIDEKICK_LLM_EVAL_API_KEY" ] && [ -z "$SIDEKICK_OPENROUTER_EVAL_API_KEY" ]; then
+            echo "::error::Configure SIDEKICK_LLM_EVAL_API_KEY or SIDEKICK_OPENROUTER_EVAL_API_KEY"
+            exit 1
+          fi
+
+      - name: Run authoritative system scenarios with provider fallback
+        run: npm run test:system-eval
+
+      - name: Check the free OpenRouter development model matrix
+        if: ${{ always() && inputs.run_openrouter_matrix }}
+        shell: bash
+        run: |
+          if [ -z "$SIDEKICK_OPENROUTER_EVAL_API_KEY" ]; then
+            echo "::notice::Skipping OpenRouter matrix because its development secret is unavailable"
+          else
+            npm run test:openrouter-eval
+          fi
+
+      - name: Add benchmark summary
+        if: always() && hashFiles('artifacts/agent-system-eval.json') != ''
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const report = JSON.parse(fs.readFileSync('artifacts/agent-system-eval.json', 'utf8'))
+          const categories = Object.entries(report.summary.byCategory || {})
+            .map(([name, value]) => `- ${name}: ${value.score}/100 (${value.passedCases}/${value.totalCases} passed)`)
+          const lines = [
+            '## Agent system evaluation',
+            '',
+            `- Provider: ${report.catalog.providerKind || 'unknown'}`,
+            `- Model: ${report.model}`,
+            `- Score: ${report.summary.score}/100`,
+            `- Points: ${report.summary.earnedPoints}/${report.summary.maxPoints}`,
+            `- Cases: ${report.summary.passedCases}/${report.summary.totalCases} passed`,
+            `- Median latency: ${report.summary.medianLatencyMs} ms`,
+            `- P95 latency: ${report.summary.p95LatencyMs} ms`,
+            `- Catalog context metadata: ${report.catalog.contextMetadataAvailable ? report.catalog.contextLength : 'not exposed'}`,
+            '',
+            '### Coverage by category',
+            '',
+            ...categories
+          ]
+          if (fs.existsSync('artifacts/openrouter-model-matrix.json')) {
+            const matrix = JSON.parse(fs.readFileSync('artifacts/openrouter-model-matrix.json', 'utf8'))
+            lines.push(
+              '',
+              '### OpenRouter development matrix',
+              '',
+              `- Models: ${matrix.summary.passedModels}/${matrix.summary.totalModels} passed`,
+              ...matrix.results.map(result => `- ${result.status === 'compatible' ? '✓' : result.status === 'unavailable' ? '○' : '✗'} ${result.model}: ${result.status} (${result.latencyMs} ms)`)
+            )
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`)
+          NODE
+
+      - name: Upload credential-free evaluation reports
+        if: always() && hashFiles('artifacts/*.json') != ''
+        uses: actions/upload-artifact@v6
+        with:
+          name: agent-system-eval-${{ github.run_number }}
+          path: artifacts/*.json
+          if-no-files-found: error
+          retention-days: 90

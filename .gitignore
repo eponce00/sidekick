@@ -1,0 +1,83 @@
+# Dependencies and generated output
+node_modules/
+dist/
+out/
+coverage/
+reference/
+/artifacts/
+/reports/
+/test-results/
+/playwright-report/
+/.nyc_output/
+
+# Local AI-agent instructions, memory, and session state
+.claude/
+.codex/
+.cursor/
+.gemini/
+.agents/
+.agent/
+.aider*
+.continue/
+.roo/
+.windsurf/
+/.memory/
+/memory/
+AGENTS.md
+AGENTS.local.md
+AGENTS.override.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+GEMINI.local.md
+MEMORY.md
+MEMORY.local.md
+!src/main/evals/fixtures/**/AGENTS.md
+
+# IDE and editor-local state
+.vscode/
+.idea/
+.fleet/
+.zed/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Local application data and diagnostics
+.DS_Store
+Thumbs.db
+Desktop.ini
+.eslintcache
+*.log*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.bak
+*.tmp
+dev-app-update.yml
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Local credentials and signing material
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+.env
+.env.*
+!.env.example
+!.env.agent-eval.example
+
+# Local Netlify folder
+.netlify

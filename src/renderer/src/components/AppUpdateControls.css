@@ -1,0 +1,132 @@
+.app-update-toast {
+  position: fixed;
+  z-index: 850;
+  right: 18px;
+  bottom: 18px;
+  width: min(420px, calc(100vw - 36px));
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-2) 94%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+}
+
+.app-update-toast-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.app-update-toast-copy svg {
+  flex: 0 0 auto;
+  color: var(--color-error);
+}
+
+.app-update-actions,
+.app-update-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-update-toast button,
+.app-update-settings button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--surface-3);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.app-update-toast button:hover,
+.app-update-settings button:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+  background: var(--surface-4);
+}
+
+.app-update-toast button.primary,
+.app-update-settings button.primary {
+  border-color: transparent;
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+.app-update-toast button.primary:hover,
+.app-update-settings button.primary:hover:not(:disabled) {
+  color: var(--on-accent);
+  background: var(--accent-strong);
+}
+
+.app-update-toast button:focus-visible,
+.app-update-settings button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.app-update-toast button:disabled,
+.app-update-settings button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.app-update-settings {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.app-update-settings > div:first-child {
+  min-width: 0;
+}
+
+.app-update-settings strong,
+.app-update-settings span {
+  display: block;
+}
+
+.app-update-settings strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.app-update-settings span {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+@media (max-width: 620px) {
+  .app-update-toast,
+  .app-update-settings {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-update-actions,
+  .app-update-settings-actions {
+    justify-content: flex-end;
+  }
+}

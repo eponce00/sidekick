@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/eponce00/sidekick/security/advisories/new
+    about: Report suspected vulnerabilities privately.
+  - name: Documentation
+    url: https://github.com/eponce00/sidekick/tree/main/docs
+    about: Check setup, user, architecture, testing, and release documentation.

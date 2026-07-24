@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-eval' blob: https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline'; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*"
+    />
+    <!-- Tailwind Play CDN: available via className in React artifacts, no import needed -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module" src="/src/sandbox-tailwind-config.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/sandbox-main.tsx"></script>
+  </body>
+</html>
