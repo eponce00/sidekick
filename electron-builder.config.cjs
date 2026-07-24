@@ -63,7 +63,7 @@ module.exports = {
     writeUpdateInfo: false
   },
   linux: {
-    artifactName: '${productName}-${version}-linux-${arch}.${ext}',
+    artifactName: '${productName}-${version}-linux-x64.${ext}',
     icon: 'build/icon.svg',
     category: 'Development',
     executableName: identity.appId,
