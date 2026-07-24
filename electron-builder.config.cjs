@@ -62,5 +62,31 @@ module.exports = {
   dmg: {
     writeUpdateInfo: false
   },
+  linux: {
+    artifactName: '${productName}-${version}-linux-${arch}.${ext}',
+    icon: 'build/icon.svg',
+    category: 'Development',
+    executableName: identity.appId,
+    syncDesktopName: true,
+    desktop: {
+      entry: {
+        Name: identity.productName,
+        Comment: 'Local-first desktop agent for your own model providers and projects',
+        Categories: 'Development;',
+        StartupWMClass: identity.appId,
+        Terminal: false,
+        Type: 'Application'
+      }
+    },
+    target: [
+      {
+        target: 'AppImage',
+        arch: ['x64']
+      }
+    ]
+  },
+  toolsets: {
+    appimage: '1.0.3'
+  },
   npmRebuild: false
 }

@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto')
 const { existsSync, readFileSync, readdirSync, statSync, writeFileSync } = require('node:fs')
 const { resolve } = require('node:path')
 
-const SUPPORTED_PLATFORMS = new Set(['all', 'macos', 'windows'])
+const SUPPORTED_PLATFORMS = new Set(['all', 'linux', 'macos', 'windows'])
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -31,6 +31,9 @@ function expectedArtifacts(version, platform) {
   }
   if (platform === 'all' || platform === 'macos') {
     expected.push(`SideKick-${version}-macos-arm64.dmg`, `SideKick-${version}-macos-arm64.zip`)
+  }
+  if (platform === 'all' || platform === 'linux') {
+    expected.push(`SideKick-${version}-linux-x64.AppImage`)
   }
 
   return expected.sort()
@@ -110,7 +113,7 @@ function parseArguments(argv) {
 
   assert(
     directory,
-    'Usage: validate-release-artifacts.cjs --version x.y.z [--platform all|macos|windows] [--write-checksums] <directory>'
+    'Usage: validate-release-artifacts.cjs --version x.y.z [--platform all|linux|macos|windows] [--write-checksums] <directory>'
   )
   assert(version, '--version is required')
   return { directory, platform, shouldWriteChecksums, version }

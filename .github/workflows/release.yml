@@ -146,10 +146,86 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  linux:
+    name: Build Linux x64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - name: Install Linux desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
+      - run: npm ci
+      - name: Verify stable tag matches package version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tagged releases require stable semver; received $version"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Expected tag v$version, received $GITHUB_REF_NAME"
+            exit 1
+          fi
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+      - run: npm test
+      - run: npm run test:release
+      - name: Build Linux AppImage
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run build:linux
+      - run: xvfb-run --auto-servernum npm run test:e2e:runtime
+      - run: npm run validate:package -- dist/linux-unpacked/resources
+      - name: Validate final Linux AppImage structure and identity
+        shell: bash
+        run: |
+          shopt -s nullglob
+          appimages=(dist/SideKick-*-linux-x64.AppImage)
+          if (( ${#appimages[@]} != 1 )); then
+            echo "::error::Expected exactly one Linux x64 AppImage."
+            exit 1
+          fi
+          npm run validate:linux-appimage -- "${appimages[0]}"
+      - name: Smoke-test the final Linux AppImage
+        shell: bash
+        run: |
+          shopt -s nullglob
+          appimages=(dist/SideKick-*-linux-x64.AppImage)
+          xvfb-run --auto-servernum npm run smoke:packaged:linux -- "${appimages[0]}"
+      - name: Validate Linux community package
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          npm run validate:release -- --version "$version" --platform linux dist
+
+      - name: Upload Linux community artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-Linux-x64
+          path: dist/SideKick-*-linux-x64.AppImage
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish verified community release
     if: github.ref_type == 'tag'
-    needs: [windows, macos]
+    needs: [windows, macos, linux]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -221,12 +297,11 @@ jobs:
           | --- | --- | --- | --- |
           | macOS | Apple Silicon (arm64) | \`SideKick-${version}-macos-arm64.dmg\` | \`SideKick-${version}-macos-arm64.zip\` |
           | Windows | x64 | \`SideKick-${version}-windows-x64-setup.exe\` | — |
-
-          Linux is not included in this release because its installer and packaged runtime do not yet have a dedicated CI and smoke-test contract.
+          | Linux | x64 | \`SideKick-${version}-linux-x64.AppImage\` | — |
 
           ## Trust
 
-          The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestation before installing.
+          The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Linux uses a self-contained AppImage and does not require a paid signing service. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestation before installing.
           EOF
           gh release create "$GITHUB_REF_NAME" release-artifacts/* \
             --repo "$GITHUB_REPOSITORY" \

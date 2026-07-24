@@ -105,7 +105,7 @@ export function createMainWindow(): BrowserWindow {
   })
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault())
 
-  if (platform === 'windows') {
+  if (platform !== 'macos') {
     const publishMaximizedState = (): void => {
       if (!mainWindow.isDestroyed()) {
         mainWindow.webContents.send('window:maximized-changed', mainWindow.isMaximized())
@@ -131,7 +131,7 @@ export function createMainWindow(): BrowserWindow {
     const bounds = mainWindow.getNormalBounds()
     appState.store?.set(WINDOW_STATE_KEY, {
       ...bounds,
-      maximized: platform === 'windows' && mainWindow.isMaximized()
+      maximized: platform !== 'macos' && mainWindow.isMaximized()
     })
   }
   const scheduleWindowStatePersistence = (): void => {
@@ -147,7 +147,7 @@ export function createMainWindow(): BrowserWindow {
   mainWindow.on('unmaximize', scheduleWindowStatePersistence)
 
   mainWindow.on('ready-to-show', () => {
-    if (platform === 'windows' && storedWindowState?.maximized) mainWindow.maximize()
+    if (platform !== 'macos' && storedWindowState?.maximized) mainWindow.maximize()
     mainWindow.show()
   })
   mainWindow.on('closed', () => {

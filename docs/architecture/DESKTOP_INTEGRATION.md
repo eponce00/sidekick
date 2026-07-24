@@ -1,8 +1,8 @@
 # Desktop integration contract
 
-SideKick targets macOS and Windows as first-class desktop platforms. Shared React components own
-product behavior, while Electron's trusted main process owns operating-system integration. Platform
-differences are explicit; the renderer does not infer them from user-agent strings.
+SideKick targets macOS, Windows, and Linux as first-class desktop platforms. Shared React components
+own product behavior, while Electron's trusted main process owns operating-system integration.
+Platform differences are explicit; the renderer does not infer them from user-agent strings.
 
 ## Text editing and contextual actions
 
@@ -18,6 +18,8 @@ select all. Links add Open in Browser and Copy Link; images add Copy Image and C
 - Windows uses Electron's Hunspell integration. SideKick selects up to four installed dictionaries
   from the user's preferred Windows languages instead of forcing US English. The OS locale remains
   the fallback when no preferred installed dictionary matches.
+- Linux also uses Electron's installed Hunspell dictionaries and preferred system languages. The
+  available languages depend on the distribution and desktop environment.
 
 References: [Electron spellchecker](https://www.electronjs.org/docs/latest/tutorial/spellchecker/),
 [Electron menu roles](https://www.electronjs.org/docs/latest/api/menu-item), and
@@ -25,23 +27,25 @@ References: [Electron spellchecker](https://www.electronjs.org/docs/latest/tutor
 
 ## Menus, shortcuts, and windows
 
-The native application menu is deliberately installed on both platforms so development never
+The native application menu is deliberately installed on all platforms so development never
 inherits Electron's generic menu.
 
-| Action       | macOS               | Windows  |
-| ------------ | ------------------- | -------- |
-| New chat     | `Command+N`         | `Ctrl+N` |
-| Open project | `Command+O`         | `Ctrl+O` |
-| Settings     | `Command+,`         | `Ctrl+,` |
-| Full screen  | `Control+Command+F` | `F11`    |
-| Close window | `Command+W`         | `Alt+F4` |
+| Action       | macOS               | Windows  | Linux    |
+| ------------ | ------------------- | -------- | -------- |
+| New chat     | `Command+N`         | `Ctrl+N` | `Ctrl+N` |
+| Open project | `Command+O`         | `Ctrl+O` | `Ctrl+O` |
+| Settings     | `Command+,`         | `Ctrl+,` | `Ctrl+,` |
+| Full screen  | `Control+Command+F` | `F11`    | `F11`    |
+| Close window | `Command+W`         | `Alt+F4` | `Alt+F4` |
 
 macOS uses native hidden-inset chrome, traffic lights, Spaces full screen, tiling, Dock identity,
 and standard close-versus-quit behavior. Windows keeps SideKick's caption buttons; maximize changes
 to a restore glyph when appropriate. Right-clicking the Windows title bar or pressing `Alt+Space`
 opens the conventional restore/minimize/maximize/close menu. Window size and position are persisted,
 clamped to a connected display's work area, and discarded if a saved window was stranded on a
-disconnected monitor.
+disconnected monitor. Linux uses the same compact custom caption controls, persists maximize state,
+and binds its reverse-DNS desktop filename, executable, icon, and `StartupWMClass` so GNOME, KDE,
+and compatible desktops associate the running window with the SideKick launcher.
 
 The custom Windows caption buttons do not participate in Windows 11's native Snap Layout hover
 surface. SideKick intentionally retains its current caption-button design.
@@ -56,9 +60,10 @@ second synthesized chime.
 
 macOS notification behavior depends on application identity and may be limited for an ad-hoc or
 self-signed community build. Windows notifications rely on the installed Start Menu shortcut and
-matching AppUserModelID. Development behavior is therefore not proof of packaged notification
-behavior; both community packages need physical smoke coverage, and macOS notification delivery
-must not be promised where the zero-cost identity cannot provide it.
+matching AppUserModelID. Linux delivery depends on the active desktop notification service and the
+AppImage's matching launcher identity. Development behavior is therefore not proof of packaged
+notification behavior; all community packages need physical smoke coverage, and macOS notification
+delivery must not be promised where the zero-cost identity cannot provide it.
 
 Reference: [Electron notifications](https://www.electronjs.org/docs/latest/tutorial/notifications).
 
@@ -82,3 +87,6 @@ restoration. Before release, physically verify:
 - Windows: caption buttons, maximize/restore glyph, title-bar right-click, `Alt+Space`, hidden menu
   via Alt, `Ctrl` shortcuts, English and Spanish suggestions, installed native notification,
   File Explorer reveal, Recycle Bin wording, multi-monitor restore.
+- Linux: AppImage executable permission and launch, caption buttons, maximize/restore glyph, hidden
+  menu via Alt, `Ctrl` shortcuts, available dictionaries, desktop notification and launcher icon,
+  file-manager reveal, Trash wording, X11 and Wayland desktop association, multi-monitor restore.

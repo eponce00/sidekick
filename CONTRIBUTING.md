@@ -14,8 +14,9 @@ local-first desktop application that can access user-selected files and services
 
 ## Development setup
 
-SideKick supports Node.js 24 LTS and npm 11 on macOS and Windows. Use the exact runtime recorded in
-[`.node-version`](.node-version); dependency installation rejects unsupported major versions.
+SideKick supports Node.js 24 LTS and npm 11 on macOS, Windows, and Linux. Use the exact runtime
+recorded in [`.node-version`](.node-version); dependency installation rejects unsupported major
+versions.
 
 ```bash
 git clone https://github.com/eponce00/sidekick.git
@@ -55,8 +56,8 @@ described in the [testing guide](docs/development/TESTING.md).
 ## Pull requests
 
 Open a focused pull request against `main`. Explain the user-visible result, important trust or data
-flow changes, and the validation performed. `main` requires both macOS arm64 and Windows x64 checks,
-resolved conversations, and a squash merge. Branches are removed automatically after merge.
+flow changes, and the validation performed. `main` requires macOS arm64, Windows x64, and Linux x64
+checks, resolved conversations, and a squash merge. Branches are removed automatically after merge.
 
 By contributing, you confirm that you have the right to submit the work and agree to license your
 contribution under [GPL-3.0-or-later](LICENSE), the same license as the project.

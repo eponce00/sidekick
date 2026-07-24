@@ -1,7 +1,8 @@
 {
   "name": "sidekick",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Your AI sidekick for everyday computer tasks",
+  "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
   "main": "./out/main/index.js",
   "author": "SideKick contributors",
@@ -49,7 +50,7 @@
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
     "benchmark:agent-evals": "node scripts/compare-agent-evals.cjs",
     "test:search-smoke": "node scripts/run-search-smoke.cjs",
-    "test:release": "node --test scripts/brand-assets.test.cjs scripts/product-identity.test.cjs scripts/runtime-toolchain.test.cjs scripts/validate-packaged-app.test.cjs scripts/validate-release-artifacts.test.cjs",
+    "test:release": "node --test scripts/brand-assets.test.cjs scripts/product-identity.test.cjs scripts/runtime-toolchain.test.cjs scripts/validate-linux-appimage.test.cjs scripts/validate-packaged-app.test.cjs scripts/validate-release-artifacts.test.cjs",
     "test:e2e": "npm run build && npm run test:e2e:runtime",
     "test:e2e:runtime": "node --test scripts/electron-e2e.test.cjs",
     "test:coverage": "node scripts/run-vitest.cjs --coverage --coverage.thresholds.statements=67 --coverage.thresholds.branches=53 --coverage.thresholds.functions=68 --coverage.thresholds.lines=70",
@@ -66,10 +67,13 @@
     "smoke:packaged": "npm run smoke:packaged:windows",
     "smoke:packaged:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-packaged.ps1",
     "smoke:packaged:macos": "node scripts/smoke-packaged-macos.cjs",
+    "smoke:packaged:linux": "node scripts/smoke-packaged-linux.cjs",
     "validate:release": "node scripts/validate-release-artifacts.cjs",
     "validate:package": "node scripts/validate-packaged-app.cjs",
+    "validate:linux-appimage": "node scripts/validate-linux-appimage.cjs",
     "build:win": "npm run build && electron-builder --config electron-builder.config.cjs --win --publish never",
-    "build:mac": "npm run build && electron-builder --config electron-builder.config.cjs --mac --publish never"
+    "build:mac": "npm run build && electron-builder --config electron-builder.config.cjs --mac --publish never",
+    "build:linux": "npm run build && electron-builder --config electron-builder.config.cjs --linux --x64 --publish never"
   },
   "dependencies": {
     "@babel/standalone": "^7.28.6",

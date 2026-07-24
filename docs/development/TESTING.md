@@ -2,8 +2,8 @@
 
 SideKick combines deterministic unit and integration tests with opt-in live provider evaluations.
 The core suites remain reproducible without network access, provider credentials, signing
-identities, or a graphical desktop. Supported macOS and Windows runners additionally execute an
-isolated real-Electron journey and a packaged launch smoke test.
+identities, or a graphical desktop. Supported macOS, Windows, and Linux runners additionally
+execute an isolated real-Electron journey and a packaged launch smoke test.
 
 ## Standard checks
 
@@ -103,10 +103,13 @@ npm run validate:package -- <unpacked-app-path>
 npm run smoke:packaged:macos -- <app-path>
 ```
 
-Windows uses `npm run smoke:packaged:windows`. The community release workflow additionally proves
-an exact artifact set and hashes, GitHub/Sigstore provenance, an ad-hoc-only macOS signature, an
-intentionally unsigned Windows installer, and application launch. See [Releases](RELEASES.md) for
-the exact artifact and physical-machine release contract.
+Windows uses `npm run smoke:packaged:windows`. Linux uses
+`xvfb-run --auto-servernum npm run smoke:packaged:linux` and validates the final AppImage with
+`npm run validate:linux-appimage -- <appimage-path>`. The community release workflow additionally
+proves an exact artifact set and hashes, GitHub/Sigstore provenance, an ad-hoc-only macOS signature,
+an intentionally unsigned Windows installer, the Linux desktop/icon identity, and application
+launch on all three operating systems. See [Releases](RELEASES.md) for the exact artifact and
+physical-machine release contract.
 
 ## Regression requirements
 

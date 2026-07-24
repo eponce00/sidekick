@@ -16,7 +16,7 @@ trusted installer.
 | --------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | macOS arm64     | Ad-hoc signed DMG and ZIP from GitHub Releases | Gatekeeper warns because Apple notarization requires the paid Apple Developer Program. The user must explicitly approve the app on first launch.                                                                              |
 | Windows x64     | Unsigned NSIS installer from GitHub Releases   | SmartScreen may warn. A Microsoft Store MSIX is the preferred future path because individual Store registration and Store signing are currently free.                                                                         |
-| Linux x64       | Future AppImage from GitHub Releases           | No paid signing program is required. Publication waits for a dedicated Linux build, packaged launch smoke, installer validation, and clean-machine qualification.                                                             |
+| Linux x64       | AppImage from GitHub Releases                  | No paid signing program or root installation is required. Users make the downloaded file executable and run it directly.                                                                                                      |
 | Android         | Future F-Droid build and/or project-signed APK | F-Droid is preferred. Direct installation can require an advanced sideload flow, and Android's developer-verification rules may add regional friction. SideKick will not pay for Play distribution or full paid verification. |
 | iPhone and iPad | Future installable web app (PWA)               | This is the only sustainable zero-cost public route. Native App Store and TestFlight distribution require the paid Apple Developer Program.                                                                                   |
 
@@ -59,8 +59,10 @@ shasum -a 256 -c SHA256SUMS.txt
 ```
 
 On Windows, use `certutil -hashfile <installer.exe> SHA256` and compare the result with
-`SHA256SUMS.txt`. The attestation proves which public workflow produced the bytes; it does not make
-an unsigned executable trusted by Apple Gatekeeper or Windows SmartScreen.
+`SHA256SUMS.txt`. On Linux, use `sha256sum -c SHA256SUMS.txt`, then make the AppImage executable
+with `chmod +x SideKick-<version>-linux-x64.AppImage`. The attestation proves which public workflow
+produced the bytes; it does not make an unsigned executable trusted by Apple Gatekeeper or Windows
+SmartScreen.
 
 ## Artifact contract
 
@@ -69,6 +71,7 @@ A valid community release contains exactly:
 ```text
 SideKick-<version>-macos-arm64.dmg
 SideKick-<version>-macos-arm64.zip
+SideKick-<version>-linux-x64.AppImage
 SideKick-<version>-windows-x64-setup.exe
 SHA256SUMS.txt
 ```
@@ -84,8 +87,14 @@ conversion download and cannot silently fall back to Electron artwork.
 
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
 from the public release, and the final merged-set validator rejects them because SideKick does not
-perform unattended binary updates. Portable Windows executables and Linux packages are also outside
-the current release contract.
+perform unattended binary updates. Portable Windows executables remain outside the current release
+contract.
+
+The Linux package uses the modern static AppImage runtime instead of the legacy FUSE2-dependent
+runtime. Its build sets one reverse-DNS executable, desktop filename, launcher icon, and
+`StartupWMClass`; CI extracts the final AppImage to verify those identities, confirms the Electron
+sandbox is not disabled by the launcher, audits its packaged resources, and launches the exact
+release file under a virtual display.
 
 Run the validator tests locally with:
 
@@ -96,24 +105,26 @@ npm run test:release
 Validate an already-built platform directory with:
 
 ```bash
-npm run validate:release -- --version 0.4.2 --platform macos dist
-npm run validate:release -- --version 0.4.2 --platform windows dist
+npm run validate:release -- --version 0.5.0 --platform macos dist
+npm run validate:release -- --version 0.5.0 --platform windows dist
+npm run validate:release -- --version 0.5.0 --platform linux dist
 ```
 
 ## What the tagged workflow proves
 
 A manual workflow run builds and tests packages without publishing them. A stable tag matching
-`package.json`, such as `v0.4.2`, runs the same gates and may publish.
+`package.json`, such as `v0.5.0`, runs the same gates and may publish.
 
-Both platform jobs run typechecks, lint, documentation validation, the test suites, release
+All three platform jobs run typechecks, lint, documentation validation, the test suites, release
 validator tests, a packaged build, an isolated real-Electron critical journey, a packaged-content
 audit, and a launch smoke test. Windows verifies that its NSIS installer is intentionally unsigned.
 macOS verifies strict bundle integrity, an ad-hoc signature, and the absence of an Apple certificate
-authority.
+authority. Linux extracts and validates its AppImage metadata and icon identity, then launches the
+final AppImage under Xvfb.
 
 The publisher then:
 
-1. downloads both validated platform artifact sets;
+1. downloads all three validated platform artifact sets;
 2. validates the merged exact set and generates `SHA256SUMS.txt`;
 3. creates a GitHub/Sigstore provenance attestation from those checksums;
 4. verifies that the repository is public, the release does not exist, and the tag identifies the
@@ -131,8 +142,8 @@ published version or source tag.
 1. Set the same stable version in `package.json` and `package-lock.json`.
 2. Run `npm run check`, `npm run test:release`, and `npm run test:e2e`.
 3. Merge the validated pull request into `main`.
-4. Create and push the matching annotated source tag, for example `v0.4.2`.
-5. Wait for both platform jobs and the publisher job.
+4. Create and push the matching annotated source tag, for example `v0.5.0`.
+5. Wait for all three platform jobs and the publisher job.
 6. Verify the release contains the exact artifact contract and a valid attestation.
 7. Install on clean physical machines and test the documented first-launch warning, app launch,
    permissions, data persistence, release notification, uninstall, and data retention.
