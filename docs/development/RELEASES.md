@@ -78,6 +78,10 @@ code-signing structure, but it has no Apple Developer ID and no notarization tic
 installer has no Authenticode signature. The workflow verifies both facts so an accidental local
 identity or an undocumented paid dependency cannot change the release contract.
 
+Application branding has one vector master at `build/icon.svg`. Its reviewed ICNS, ICO, and runtime
+PNG derivatives are checked in and hash-validated so clean release runners do not depend on an icon
+conversion download and cannot silently fall back to Electron artwork.
+
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
 from the public release, and the final merged-set validator rejects them because SideKick does not
 perform unattended binary updates. Portable Windows executables and Linux packages are also outside

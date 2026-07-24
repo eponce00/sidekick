@@ -6,8 +6,9 @@
 
 - Replaced every inherited Electron application icon with the canonical SideKick robot artwork
   across macOS, Windows, notifications, windows, the Dock, and repository branding.
-- Consolidated packaging on one vector icon master plus one runtime raster, and added regression
-  tests that reject the retired Electron assets and duplicate platform-specific icon files.
+- Consolidated branding on one vector icon master with deterministic checked-in ICNS, ICO, and
+  runtime PNG derivatives, avoiding release-time icon-tool downloads while tests reject retired
+  Electron artwork and asset drift.
 - Made macOS release filenames explicitly platform-qualified and added a platform/architecture
   download table to every generated GitHub Release.
 - Documented Linux as the next zero-cost desktop target while keeping it outside the release

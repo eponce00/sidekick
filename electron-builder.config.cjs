@@ -27,7 +27,7 @@ module.exports = {
   asarUnpack: ['resources/**'],
   win: {
     executableName: identity.productName,
-    icon: 'build/icon.svg',
+    icon: 'build/icon.ico',
     target: [
       {
         target: 'nsis',
@@ -43,7 +43,7 @@ module.exports = {
   },
   mac: {
     artifactName: '${productName}-${version}-macos-${arch}.${ext}',
-    icon: 'build/icon.svg',
+    icon: 'build/icon.icns',
     hardenedRuntime: true,
     entitlements: 'build/entitlements.mac.plist',
     target: [
