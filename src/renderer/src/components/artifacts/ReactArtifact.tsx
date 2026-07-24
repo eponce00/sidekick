@@ -8,6 +8,10 @@ import {
   Copy,
   Play
 } from 'lucide-react'
+import {
+  boundedArtifactFrameHeight,
+  DEFAULT_ARTIFACT_FRAME_HEIGHT
+} from '../../utils/artifactFrameSize'
 import { getArtifactTheme, observeArtifactTheme } from '../../utils/artifactTheme'
 
 // Resolve the sandbox page URL. In dev, Vite serves it at /sandbox.html.
@@ -31,7 +35,7 @@ function ReactArtifact({
 }: ReactArtifactProps): React.JSX.Element {
   const [showCode, setShowCode] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [iframeHeight, setIframeHeight] = useState(280)
+  const [iframeHeight, setIframeHeight] = useState(DEFAULT_ARTIFACT_FRAME_HEIGHT)
   const [isErrorExpanded, setIsErrorExpanded] = useState(false)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const hasReportedRef = useRef(false)
@@ -110,7 +114,7 @@ function ReactArtifact({
 
         case 'resize':
           if (typeof data.height === 'number' && data.height > 0) {
-            setIframeHeight(data.height + 4)
+            setIframeHeight(boundedArtifactFrameHeight(data.height))
           }
           break
       }
@@ -281,6 +285,7 @@ function ReactArtifact({
         ) : (
           <iframe
             ref={iframeRef}
+            className="artifact-preview-frame artifact-react-frame"
             src={SANDBOX_URL}
             style={{
               width: '100%',

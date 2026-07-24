@@ -318,6 +318,69 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.textContent).toContain('I will inspect it.')
   })
 
+  it('keeps a generated artifact outside the collapsed work disclosure', async () => {
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'artifact-output',
+            role: 'agent',
+            content: 'The dashboard is ready.',
+            timestamp: 1_000,
+            segments: [
+              {
+                type: 'tool',
+                tool: {
+                  id: 'weather-tool',
+                  title: 'Checking weather',
+                  command: 'web_search',
+                  status: 'success'
+                }
+              },
+              {
+                type: 'artifact',
+                artifact: {
+                  type: 'svg',
+                  title: 'Weather dashboard',
+                  code: '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>'
+                }
+              },
+              { type: 'text', content: 'The dashboard is ready.' }
+            ]
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const disclosure = container.querySelector('.agent-work-disclosure')
+    const artifact = container.querySelector('.artifact-segment')
+    expect(container.querySelector('.agent-work-toggle')?.getAttribute('aria-expanded')).toBe(
+      'false'
+    )
+    expect(artifact).not.toBeNull()
+    expect(disclosure?.contains(artifact)).toBe(false)
+    expect(container.textContent).toContain('Weather dashboard')
+    expect(container.textContent).toContain('The dashboard is ready.')
+    expect(container.textContent).not.toContain('Checking weather')
+  })
+
   it('updates the elapsed time while work is active', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(233_000)

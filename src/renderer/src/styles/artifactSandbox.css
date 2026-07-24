@@ -52,12 +52,16 @@ body {
     sans-serif;
 }
 
+html {
+  overflow-y: auto;
+}
+
 #root {
   width: 100%;
   max-width: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 12px;
+  padding: 0;
   overflow: visible;
 }
 

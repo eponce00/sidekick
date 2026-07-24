@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep generated artifacts visible as durable chat output instead of hiding them inside the
+  collapsed work disclosure.
+- Bound React and HTML artifact previews to a scrollable viewport and remove the iframe sizing
+  feedback loop that could make a conversation grow indefinitely.
+
 ## 0.4.2 — 2026-07-24
 
 - Normalized text assets to LF across operating systems and made the vector-master hash insensitive
