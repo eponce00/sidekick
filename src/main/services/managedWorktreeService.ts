@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
-import { basename, join, relative, resolve } from 'path'
+import { basename, isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
 import type Database from 'better-sqlite3'
 import type { Project } from '../../shared/projects'
@@ -120,13 +120,20 @@ export class ManagedWorktreeService {
 
     let repositoryRoot: string
     try {
-      repositoryRoot = resolve(await git(source.folder_path, ['rev-parse', '--show-toplevel']))
+      repositoryRoot = await fs.realpath(
+        resolve(await git(source.folder_path, ['rev-parse', '--show-toplevel']))
+      )
     } catch {
       throw new Error('An isolated fork requires a Git project')
     }
 
-    const sourceSubdirectory = relative(repositoryRoot, resolve(source.folder_path))
-    if (sourceSubdirectory.startsWith('..'))
+    const sourceFolder = await fs.realpath(resolve(source.folder_path))
+    const sourceSubdirectory = relative(repositoryRoot, sourceFolder)
+    if (
+      isAbsolute(sourceSubdirectory) ||
+      sourceSubdirectory === '..' ||
+      sourceSubdirectory.startsWith(`..${sep}`)
+    )
       throw new Error('Project folder is outside its Git root')
 
     const id = randomUUID()
