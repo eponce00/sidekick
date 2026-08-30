@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto'
 import { promises as fs, realpathSync } from 'fs'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -1110,7 +1110,9 @@ export class NativeBrowserSessionService {
       }
     }
     if (!allowed) throw new Error('Local browser files must remain inside an approved project root')
-    return url.href
+    // Load the canonical path so the synchronous navigation/request guards compare
+    // the same Windows path form even when TEMP uses an 8.3 alias (RUNNER~1).
+    return pathToFileURL(realPath).href
   }
 
   private async registerSurface(
