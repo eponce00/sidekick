@@ -58,6 +58,12 @@ jobs:
       - name: Run real-Electron journey on Linux
         if: matrix.smoke == 'linux'
         run: xvfb-run --auto-servernum npm run test:e2e:runtime
+      - name: Smoke-test native browser tools
+        if: matrix.smoke != 'linux'
+        run: npm run test:native-browser-smoke
+      - name: Smoke-test native browser tools on Linux
+        if: matrix.smoke == 'linux'
+        run: xvfb-run --auto-servernum npm run test:native-browser-smoke
       - name: Audit Windows packaged content
         if: matrix.smoke == 'windows'
         run: npm run validate:package -- dist/win-unpacked/resources

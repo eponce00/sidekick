@@ -41,7 +41,7 @@ check to be marked not applicable with an explanation.
 
 ## Enforcement boundary
 
-Planning is enforced by the main-process capability catalog even in Bypass mode. The planner can
+Planning is enforced by the main-process capability catalog even in Full access mode. The planner can
 use bounded workspace reads, semantic diagnostics, embedded web research, questions, skills,
 todos, waits, and retained-output reads. It cannot receive:
 

@@ -61,6 +61,7 @@ describe('Sidebar chat section', () => {
           onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
+          onToggleConversationPin={vi.fn()}
           onToggleProjectPin={vi.fn()}
           onRemoveProject={vi.fn()}
         />
@@ -118,6 +119,7 @@ describe('Sidebar chat section', () => {
           onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
+          onToggleConversationPin={vi.fn()}
           onToggleProjectPin={vi.fn()}
           onRemoveProject={vi.fn()}
         />
@@ -189,6 +191,7 @@ describe('Sidebar chat section', () => {
           onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
+          onToggleConversationPin={vi.fn()}
           onToggleProjectPin={vi.fn()}
           onRemoveProject={vi.fn()}
         />

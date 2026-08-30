@@ -1,4 +1,10 @@
-import type { AgentRunEvent, AgentRunPhase, ToolExecutionResult } from './agentRuntime'
+import type {
+  AgentRunEvent,
+  AgentRunPhase,
+  ToolExecutionResult,
+  ToolPresentationIntent
+} from './agentRuntime'
+import { formatCompactionContext } from './compactionPrompt'
 import type { WorkspaceVerificationSummary } from './verification'
 
 export interface ProjectedToolExecution {
@@ -11,8 +17,15 @@ export interface ProjectedToolExecution {
   status: 'pending' | 'running' | 'success' | 'error' | 'denied'
   accessLevel?: 'auto' | 'confirm'
   approvalStatus?: 'pending' | 'approved' | 'denied' | 'auto'
+  presentation?: ToolPresentationIntent
   output?: string
   error?: string
+  data?: unknown
+  outputReference?: import('./agentRuntime').ToolOutputReference
+  diagnostics?: import('./agentRuntime').ToolDiagnostic[]
+  changes?: import('./agentRuntime').ToolWorkspaceChange[]
+  startedAt?: number
+  completedAt?: number
 }
 
 export type ProjectedContentSegment =
@@ -48,6 +61,24 @@ export type ProjectedContentSegment =
         response?: Record<string, unknown>
       }
     }
+  | {
+      type: 'run_status'
+      status: {
+        kind: 'retrying'
+        reason: string
+        detail?: string
+        timestamp: number
+      }
+    }
+  | {
+      type: 'run_error'
+      runError: {
+        code?: string
+        message: string
+        retryable: boolean
+        recoveryAction?: string
+      }
+    }
   | { type: 'verification'; verification: WorkspaceVerificationSummary }
 
 export interface ProjectedAgentRunMessage {
@@ -57,8 +88,10 @@ export interface ProjectedAgentRunMessage {
   /** Latest provider context sample plus generation speed blended across this run. */
   tokenUsage: {
     promptTokens: number
+    cachedPromptTokens?: number
     completionTokens: number
     tokensPerSecond?: number
+    timeToFirstTokenMs?: number
     runStartedAt?: number
     runCompletedAt?: number
   }
@@ -77,14 +110,25 @@ function resultFrom(event: AgentRunEvent): ToolExecutionResult | undefined {
 const HIDDEN_CONTROL_TOOLS = new Set(['enter_plan_mode', 'present_plan', 'complete_plan'])
 
 export function projectAgentRunEvents(events: readonly AgentRunEvent[]): ProjectedAgentRunMessage {
+  // The durable run sequence is the chronology authority. Most callers already
+  // provide ordered pages, but projection is also used by live repair paths that
+  // can merge delayed IPC events. Never let arrival order move a marker or tool.
+  const orderedEvents = [...events].sort(
+    (left, right) =>
+      left.sequence - right.sequence ||
+      left.timestamp - right.timestamp ||
+      left.id.localeCompare(right.id)
+  )
   const tools = new Map<string, ProjectedToolExecution>()
   const artifacts = new Map<string, ProjectedContentSegment>()
   const decisions = new Map<string, Extract<ProjectedContentSegment, { type: 'decision' }>>()
   const interactions = new Map<string, Extract<ProjectedContentSegment, { type: 'interaction' }>>()
   let promptTokens = 0
+  let cachedPromptTokens: number | undefined
   let completionTokens = 0
   let measuredCompletionTokens = 0
   let measuredGenerationSeconds = 0
+  let timeToFirstTokenMs: number | undefined
   let phase: AgentRunPhase | null = null
   let committedContent = ''
   let committedThinking = ''
@@ -94,7 +138,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let runStartedAt: number | undefined
   let runCompletedAt: number | undefined
 
-  for (const event of events) {
+  for (const event of orderedEvents) {
     if (event.type === 'run.started') runStartedAt ??= event.timestamp
     if (event.type === 'run.phase' || event.type === 'run.completed') {
       if (typeof event.payload.phase === 'string') phase = event.payload.phase as AgentRunPhase
@@ -120,6 +164,15 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       // Prompt sizes from sequential tool-loop turns overlap almost entirely.
       // Only the latest sample represents the live context window.
       promptTokens = Number(event.payload.promptTokens || 0)
+      if (typeof event.payload.cachedPromptTokens === 'number') {
+        cachedPromptTokens = Math.max(0, event.payload.cachedPromptTokens)
+      }
+      if (
+        timeToFirstTokenMs === undefined &&
+        typeof event.payload.timeToFirstTokenMs === 'number'
+      ) {
+        timeToFirstTokenMs = Math.max(0, event.payload.timeToFirstTokenMs)
+      }
       completionTokens = turnCompletionTokens
       if (turnCompletionTokens > 0 && turnTokensPerSecond > 0) {
         measuredCompletionTokens += turnCompletionTokens
@@ -142,6 +195,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           command: String(event.payload.name || ''),
           name: String(event.payload.name || ''),
           input: event.payload.arguments as Record<string, unknown> | undefined,
+          presentation: event.payload.presentation as ToolPresentationIntent | undefined,
           status: 'pending',
           approvalStatus: 'auto'
         })
@@ -153,6 +207,17 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         tool.status = 'running'
         tool.title = String(event.payload.title || tool.title)
         tool.input = (event.payload.arguments as Record<string, unknown> | undefined) ?? tool.input
+        tool.presentation =
+          (event.payload.presentation as ToolPresentationIntent | undefined) ?? tool.presentation
+        tool.startedAt ??= event.timestamp
+      }
+    }
+    if (event.type === 'tool.output.delta') {
+      const tool = tools.get(toolCallId(event))
+      if (tool) {
+        const chunk = typeof event.payload.chunk === 'string' ? event.payload.chunk : ''
+        // Keep the live renderer bounded; complete output remains available by handle.
+        tool.output = `${tool.output || ''}${chunk}`.slice(-16_000)
       }
     }
     if (event.type === 'permission.requested') {
@@ -200,6 +265,14 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         tool.title = result.title || tool.title
         tool.output = result.modelContent
         tool.error = result.error?.message
+        tool.data = result.data
+        tool.outputReference = result.output
+        tool.diagnostics = result.diagnostics
+        tool.changes = result.changes
+        tool.startedAt = result.timing.startedAt
+        tool.completedAt = result.timing.completedAt
+        tool.presentation =
+          (event.payload.presentation as ToolPresentationIntent | undefined) ?? tool.presentation
         const data = result.data as Record<string, unknown> | undefined
         const artifact = data?.artifact as Record<string, unknown> | undefined
         if (
@@ -277,37 +350,112 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   const fullThinking = committedThinking + pendingThinking
   const segments: ProjectedContentSegment[] = []
   const emittedTools = new Set<string>()
-  for (const event of events) {
+  let streamedTurnContent = ''
+  let streamedTurnThinking = ''
+  let turnSegmentStart = 0
+  const pendingTurnTools: string[] = []
+  const appendTextualSegment = (type: 'text' | 'thinking', content: string): void => {
+    if (!content) return
+    const previous = segments.at(-1)
+    if (previous?.type === type) previous.content += content
+    else segments.push({ type, content })
+  }
+  const emitTool = (id: string): void => {
+    const tool = tools.get(id)
+    if (!tool || emittedTools.has(id)) return
+    emittedTools.add(id)
+    if (HIDDEN_CONTROL_TOOLS.has(tool.name)) return
+    segments.push({ type: 'tool', tool })
+    const artifact = artifacts.get(id)
+    if (artifact) segments.push(artifact)
+  }
+  for (const event of orderedEvents) {
+    if (event.type === 'assistant.delta') {
+      const thinking = typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
+      const content = typeof event.payload.content === 'string' ? event.payload.content : ''
+      streamedTurnThinking += thinking
+      streamedTurnContent += content
+      appendTextualSegment('thinking', thinking)
+      appendTextualSegment('text', content)
+    }
+    if (event.type === 'tool.pending') {
+      const id = toolCallId(event)
+      if (!pendingTurnTools.includes(id)) pendingTurnTools.push(id)
+    }
     if (event.type === 'assistant.completed') {
       if (event.payload.provisional === true) continue
       const thinking = typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
       const content = typeof event.payload.content === 'string' ? event.payload.content : ''
-      if (thinking) segments.push({ type: 'thinking', content: thinking })
-      if (content) segments.push({ type: 'text', content })
+      // Some providers only reveal final thinking at turn completion. Its semantic
+      // position is the start of that turn, before streamed answer text and tools.
+      if (thinking && !streamedTurnThinking) {
+        segments.splice(turnSegmentStart, 0, { type: 'thinking', content: thinking })
+      }
+      if (content && !streamedTurnContent) appendTextualSegment('text', content)
+      // A provider can begin streaming a tool call before its last prose token.
+      // Keep the entire assistant turn together, then show the tools it requested.
+      for (const id of pendingTurnTools) emitTool(id)
+      pendingTurnTools.length = 0
       const calls = Array.isArray(event.payload.toolCalls)
         ? (event.payload.toolCalls as Array<Record<string, unknown>>)
         : []
-      for (const call of calls) {
-        const id = String(call.id || '')
-        const tool = tools.get(id)
-        if (!tool || emittedTools.has(id)) continue
-        if (HIDDEN_CONTROL_TOOLS.has(tool.name)) {
-          emittedTools.add(id)
-          continue
-        }
-        segments.push({ type: 'tool', tool })
-        emittedTools.add(id)
-        const artifact = artifacts.get(id)
-        if (artifact) segments.push(artifact)
-      }
+      for (const call of calls) emitTool(String(call.id || ''))
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+      turnSegmentStart = segments.length
     }
     if (event.type === 'compaction.completed') {
+      // Compaction is a hard turn boundary. Flush calls announced before it even
+      // when a provider omitted assistant.completed, otherwise the final fallback
+      // emission would incorrectly place those historical tools after the marker.
+      for (const id of pendingTurnTools) emitTool(id)
+      pendingTurnTools.length = 0
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+      turnSegmentStart = segments.length
+      const summary = typeof event.payload.summary === 'string' ? event.payload.summary.trim() : ''
       segments.push({
         type: 'summary',
+        ...(summary ? { content: formatCompactionContext(summary) } : {}),
         summary: {
           originalTokens: Number(event.payload.originalTokens || 0),
           newTokens: Number(event.payload.summaryTokens || 0),
           messagesCompacted: Number(event.payload.messagesCompacted || 0)
+        }
+      })
+      turnSegmentStart = segments.length
+    }
+    if (event.type === 'run.retrying') {
+      const reason = String(event.payload.reason || 'provider_retry')
+      const detail =
+        typeof event.payload.error === 'string'
+          ? event.payload.error
+          : typeof event.payload.message === 'string'
+            ? event.payload.message
+            : undefined
+      segments.push({
+        type: 'run_status',
+        status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
+      })
+    }
+    if (event.type === 'run.completed' && event.payload.phase === 'failed') {
+      const rawError = event.payload.error
+      const error =
+        rawError && typeof rawError === 'object' ? (rawError as Record<string, unknown>) : null
+      segments.push({
+        type: 'run_error',
+        runError: {
+          ...(typeof error?.code === 'string' ? { code: error.code } : {}),
+          message:
+            typeof error?.message === 'string'
+              ? error.message
+              : typeof rawError === 'string'
+                ? rawError
+                : 'The agent run failed.',
+          retryable: error?.retryable !== false,
+          ...(typeof error?.recoveryAction === 'string'
+            ? { recoveryAction: error.recoveryAction }
+            : {})
         }
       })
     }
@@ -324,19 +472,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       if (interaction) segments.push(interaction)
     }
   }
-  for (const [id, tool] of tools) {
-    if (emittedTools.has(id)) continue
-    if (HIDDEN_CONTROL_TOOLS.has(tool.name)) continue
-    if (pendingThinking) segments.push({ type: 'thinking', content: pendingThinking })
-    if (pendingContent) segments.push({ type: 'text', content: pendingContent })
-    pendingThinking = ''
-    pendingContent = ''
-    segments.push({ type: 'tool', tool })
-    const artifact = artifacts.get(id)
-    if (artifact) segments.push(artifact)
-  }
-  if (pendingThinking) segments.push({ type: 'thinking', content: pendingThinking })
-  if (pendingContent) segments.push({ type: 'text', content: pendingContent })
+  for (const id of pendingTurnTools) emitTool(id)
+  for (const id of tools.keys()) emitTool(id)
   if (latestVerification && latestVerification.status !== 'not_applicable') {
     segments.push({ type: 'verification', verification: latestVerification })
   }
@@ -347,10 +484,12 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     segments,
     tokenUsage: {
       promptTokens,
+      ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
       completionTokens,
       ...(measuredGenerationSeconds > 0
         ? { tokensPerSecond: measuredCompletionTokens / measuredGenerationSeconds }
         : {}),
+      ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs }),
       ...(runStartedAt === undefined ? {} : { runStartedAt }),
       ...(runCompletedAt === undefined ? {} : { runCompletedAt })
     },

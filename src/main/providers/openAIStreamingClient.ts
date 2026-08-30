@@ -20,7 +20,11 @@ type Emit = (chunk: ProviderStreamChunk) => void
 interface OpenAIStreamEvent {
   id?: string
   error?: { message?: string; type?: string }
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number }
+  }
   timings?: { predicted_per_second?: number }
   choices?: Array<{
     finish_reason?: string
@@ -164,6 +168,7 @@ export async function streamOpenAICompatibleChat(
     const toolPreviewSignatures = new Map<number, string>()
     let buffer = ''
     let promptTokens = 0
+    let cachedPromptTokens: number | undefined
     let completionTokens = 0
     let predictedPerSecond: number | undefined
     let finishReason = 'stop'
@@ -187,6 +192,9 @@ export async function streamOpenAICompatibleChat(
         if (json.usage) {
           promptTokens = json.usage.prompt_tokens || promptTokens
           completionTokens = json.usage.completion_tokens || completionTokens
+          if (typeof json.usage.prompt_tokens_details?.cached_tokens === 'number') {
+            cachedPromptTokens = json.usage.prompt_tokens_details.cached_tokens
+          }
         }
         if (typeof json.timings?.predicted_per_second === 'number') {
           predictedPerSecond = json.timings.predicted_per_second
@@ -277,6 +285,7 @@ export async function streamOpenAICompatibleChat(
           done: true,
           done_reason: 'tool_calls',
           prompt_eval_count: promptTokens,
+          ...(cachedPromptTokens === undefined ? {} : { cached_prompt_tokens: cachedPromptTokens }),
           eval_count: completionTokens,
           ...(predictedPerSecond ? { predicted_per_second: predictedPerSecond } : {})
         })
@@ -312,6 +321,7 @@ export async function streamOpenAICompatibleChat(
           emit({ message: { tool_calls: fallback.data.message.tool_calls }, done: false })
         }
         promptTokens = fallback.data.promptTokens || promptTokens
+        cachedPromptTokens = fallback.data.cachedPromptTokens ?? cachedPromptTokens
         completionTokens = fallback.data.completionTokens || completionTokens
         finishReason = fallback.data.finishReason || finishReason
       }
@@ -337,6 +347,7 @@ export async function streamOpenAICompatibleChat(
       done: true,
       done_reason: finishReason,
       prompt_eval_count: promptTokens,
+      ...(cachedPromptTokens === undefined ? {} : { cached_prompt_tokens: cachedPromptTokens }),
       eval_count: completionTokens,
       ...(predictedPerSecond ? { predicted_per_second: predictedPerSecond } : {})
     })

@@ -6,21 +6,28 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 ## Core catalog
 
-| Capability      | Tools                                                                | Availability                                                             |
-| --------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Work tracking   | `manage_todo_list`                                                   | Conversation and Plan runs                                               |
-| Commands        | `execute_command`, `list_background_tasks`, `cancel_background_task` | Project-bound conversation, collaboration, and child-agent runs          |
-| Coordination    | `wait`                                                               | All agent profiles                                                       |
-| Delegation      | `spawn_subagent`                                                     | Project-bound conversation runs                                          |
-| Skills          | `use_skill`                                                          | Conversation runs, including read-only planning                          |
-| Human input     | `ask_user`                                                           | All interactive agent profiles                                           |
-| Retained output | `read_tool_output`                                                   | All agent profiles                                                       |
-| Web             | `web_search`, `web_image_search`, `web_fetch`                        | Conversation, collaboration, child-agent, and research runs when enabled |
+| Capability      | Tools                                                                                           | Availability                                                             |
+| --------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Work tracking   | `manage_todo_list`                                                                              | Conversation and Plan runs                                               |
+| Commands        | `execute_command`, `list_background_tasks`, `cancel_background_task`                            | Project-bound conversation, collaboration, and child-agent runs          |
+| Coordination    | `wait`                                                                                          | All agent profiles                                                       |
+| Delegation      | `spawn_subagent`                                                                                | Project-bound conversation runs                                          |
+| Skills          | `use_skill`                                                                                     | Conversation runs, including read-only planning                          |
+| Human input     | `ask_user`                                                                                      | All interactive agent profiles                                           |
+| Retained output | `read_tool_output`                                                                              | All agent profiles                                                       |
+| Web             | `web_search`, `web_image_search`, `web_fetch`                                                   | Conversation, collaboration, child-agent, and research runs when enabled |
+| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification | Project-bound runs when browser work is enabled                          |
 
-Project-bound runs can also receive `list_workspace_files`, `read_workspace_file`, and
-`search_workspace_files`. A configured model receives exactly one editing dialect—canonical
-`apply_patch`, exact edit/write tools, or the generic structured contract—but every dialect uses the
-same transactional workspace mutation service. `delete_file` uses that service as well.
+Project-bound runs can also receive the bounded `read` tool and canonical `apply_patch` editor.
+Files must be read in the same run before they are changed, and every edit uses the same
+transactional workspace mutation service.
+
+The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
+`browser_click`, `browser_type`, `browser_select`, `browser_scroll`, `browser_hover`,
+`browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
+inspection-only `browser_evaluate`, `browser_verify`, and `browser_close`. Browser pages run in an
+isolated Electron session, not in the app renderer, and screenshots can be supplied directly to a
+vision-capable model. See [Visual browser](BROWSER.md).
 
 The `code_intelligence` tool appears only when a matching language server is already installed on
 the machine or in the project. SideKick does not download language servers or toolchains.
@@ -39,7 +46,7 @@ the machine or in the project. SideKick does not download language servers or to
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
 mutations, MCP, artifacts, collaboration writes, and child agents remain unavailable even when the
-global policy is Bypass.
+global policy is Full access.
 
 ## Execution guarantees
 

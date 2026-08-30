@@ -35,7 +35,7 @@ describe('PromptComposer', () => {
     const prompt = new PromptComposer().compose({
       platform: 'macos',
       capabilities: capabilitiesFromTools(tools),
-      permissionMode: 'agent-decides',
+      permissionMode: 'sensitive-only',
       model,
       project: {
         workspaceRoot: '/workspace',
@@ -55,13 +55,15 @@ describe('PromptComposer', () => {
     expect(prompt.content).not.toContain('Web Artifacts Builder')
   })
 
-  it('defines replacement and deletion as distinct workspace operations', () => {
+  it('defines one transactional workspace mutation contract', () => {
     const tools = getToolDefinitions(true, '/workspace')
-    const write = tools.find((tool) => tool.function.name === 'write')
-    const remove = tools.find((tool) => tool.function.name === 'delete_file')
+    const patch = tools.find((tool) => tool.function.name === 'apply_patch')
 
-    expect(write?.function.description).toContain('intentionally replace an existing file')
-    expect(remove?.function.description).toContain('Never delete a file merely to work around')
+    expect(patch?.function.description).toContain('potentially multi-file patch')
+    expect(patch?.function.description).toContain('Delete File')
+    expect(tools.map(({ function: tool }) => tool.name)).not.toEqual(
+      expect.arrayContaining(['write', 'delete_file', 'edit'])
+    )
   })
 
   it('composes only enabled capabilities and uses the real host shell', () => {
@@ -71,7 +73,7 @@ describe('PromptComposer', () => {
     const prompt = new PromptComposer().compose({
       platform: 'macos',
       capabilities: capabilitiesFromTools(tools),
-      permissionMode: 'agent-decides',
+      permissionMode: 'sensitive-only',
       model,
       project: { workspaceRoot: null, instructions: '', instructionSources: [], memory: '' },
       currentDate: 'Saturday, July 18, 2026',
@@ -80,7 +82,7 @@ describe('PromptComposer', () => {
       skillAssetsPath: null
     })
 
-    expect(prompt.content).toContain('macOS; execute_command uses Bash')
+    expect(prompt.content).toContain('macOS; shell uses Bash')
     expect(prompt.content).toContain('up to 100 rounds')
     expect(prompt.content).not.toContain('PowerShell')
     expect(prompt.sectionIds).not.toContain('web')
@@ -112,7 +114,7 @@ describe('PromptComposer', () => {
     expect(prompt.projectInstructionsMessage).toContain('Run tests before shipping.')
     expect(prompt.content).toContain('<project_memory trust="untrusted-data">')
     expect(prompt.content).toContain('web pages, search snippets, MCP responses')
-    expect(prompt.content).toContain('Every sensitive operation requires user approval')
+    expect(prompt.content).toContain('asks before every host-classified sensitive operation')
     expect(prompt.content).toContain(
       'Never delete a file merely to recreate or rewrite the same path'
     )
@@ -122,7 +124,7 @@ describe('PromptComposer', () => {
     const prompt = new PromptComposer().compose({
       platform: 'macos',
       capabilities: capabilitiesFromTools(getToolDefinitions(true, null)),
-      permissionMode: 'agent-decides',
+      permissionMode: 'sensitive-only',
       model,
       project: {
         workspaceRoot: null,
@@ -167,7 +169,7 @@ describe('PromptComposer', () => {
             planStage
           })
         ),
-        permissionMode: 'bypass',
+        permissionMode: 'full-access',
         model,
         project: {
           workspaceRoot: '/workspace',
@@ -184,12 +186,43 @@ describe('PromptComposer', () => {
     const planning = compose('planning')
     expect(planning.content).toContain('runtime-enforced read-only planning phase')
     expect(planning.content).toContain('cannot modify it')
-    expect(planning.content).not.toContain('Use the provided exact edit tool')
+    expect(planning.content).not.toContain('Use apply_patch for additions')
 
     const executing = compose('executing')
     expect(executing.content).toContain('Approved plan execution')
     expect(executing.content).toContain('call complete_plan with evidence')
-    expect(executing.content).toContain('Use the provided exact edit tool')
+    expect(executing.content).toContain('Use apply_patch for additions')
+  })
+
+  it('teaches vision-capable runs the native observe-act-verify browser loop', () => {
+    const tools = getAgentToolDefinitions({
+      surface: 'conversation',
+      workspaceRoot: '/workspace',
+      browserEnabled: true
+    })
+    const prompt = new PromptComposer().compose({
+      platform: 'windows',
+      capabilities: capabilitiesFromTools(tools),
+      permissionMode: 'full-access',
+      model,
+      project: {
+        workspaceRoot: '/workspace',
+        instructions: '',
+        instructionSources: [],
+        memory: ''
+      },
+      currentDate: 'Sunday, August 30, 2026',
+      toolRoundLimit: 100,
+      activeSkillIds: [],
+      skillAssetsPath: null
+    })
+
+    expect(prompt.sectionIds).toContain('browser')
+    expect(prompt.content).toContain('isolated Chromium browser')
+    expect(prompt.content).toContain('Prefer semantic element refs')
+    expect(prompt.content).toContain('browser_verify')
+    expect(prompt.content).toContain('browser_resize')
+    expect(prompt.content).toContain('console errors')
   })
 
   it('infers common model families without coupling behavior to a provider', () => {

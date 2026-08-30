@@ -33,7 +33,7 @@ describe('agent permission audit projection', () => {
         title: 'Write report.md',
         requestedAccess: 'auto',
         effectiveAccess: 'auto',
-        mode: 'bypass',
+        mode: 'full-access',
         approved: true,
         arguments: { file_path: 'report.md' }
       }
@@ -44,7 +44,7 @@ describe('agent permission audit projection', () => {
         id: 'agent:permission-auto',
         operationKind: 'workspace',
         title: 'Write report.md',
-        mode: 'bypass',
+        mode: 'full-access',
         outcome: 'auto-approved'
       })
     ])
@@ -57,7 +57,7 @@ describe('agent permission audit projection', () => {
       kind: 'permission',
       request: {
         toolCallId: 'command-1',
-        name: 'execute_command',
+        name: 'shell',
         title: 'Install dependencies',
         requestedAccess: 'confirm',
         mode: 'always-ask',

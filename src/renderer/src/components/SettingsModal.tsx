@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Bell, Bot, Boxes, Palette, Server, Settings2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, Bell, Bot, Boxes, Palette, Search, Server, Settings2 } from 'lucide-react'
 import type { ProviderSettings } from '../types/app.types'
 import {
   DEFAULT_TOOL_CALL_LIMIT,
@@ -19,13 +19,14 @@ import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
 import { AppUpdateSettings } from './AppUpdateControls'
 import { useModalDialog } from '../hooks/useModalDialog'
+import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
 
 export type { AccentPalette } from '../constants/accentPalettes'
 export { applyAccentPalette } from '../constants/accentPalettes'
 export type { ProviderSettings } from '../types/app.types'
 
-export type SettingsSection = 'providers' | 'general' | 'agent' | 'appearance' | 'integrations'
+export type SettingsSection = SettingsSectionId
 
 interface SettingsModalProps {
   settings: ProviderSettings
@@ -34,18 +35,18 @@ interface SettingsModalProps {
   initialSection?: SettingsSection
 }
 
-const NAV_ITEMS: Array<{
-  id: SettingsSection
-  label: string
-  description: string
-  icon: typeof Server
-}> = [
-  { id: 'providers', label: 'Providers', description: 'Connections and models', icon: Server },
-  { id: 'general', label: 'General', description: 'Messages and notifications', icon: Settings2 },
-  { id: 'agent', label: 'Agent', description: 'Behavior and permissions', icon: Bot },
-  { id: 'appearance', label: 'Appearance', description: 'Theme and color', icon: Palette },
-  { id: 'integrations', label: 'Integrations', description: 'Search and MCP', icon: Boxes }
-]
+const SETTINGS_ICONS = {
+  server: Server,
+  settings: Settings2,
+  bot: Bot,
+  palette: Palette,
+  boxes: Boxes
+}
+
+const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
+  ...value,
+  icon: SETTINGS_ICONS[value.icon]
+}))
 
 function SettingCard({
   title,
@@ -107,6 +108,7 @@ function SettingsModal({
 }: SettingsModalProps): React.JSX.Element {
   const [settings, setSettings] = useState<ProviderSettings>(initialSettings)
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
+  const [navigationQuery, setNavigationQuery] = useState('')
   const [mcpValidationError, setMcpValidationError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -119,6 +121,22 @@ function SettingsModal({
   const planningModels = pinnedModelsFromProviderInstances(settings.providerInstances || []).filter(
     (model) => model.supportsTools !== false
   )
+  const visibleNavigationItems = useMemo(
+    () =>
+      NAV_ITEMS.filter((item) =>
+        `${item.label} ${item.description}`
+          .toLowerCase()
+          .includes(navigationQuery.trim().toLowerCase())
+      ),
+    [navigationQuery]
+  )
+
+  useEffect(() => {
+    if (!navigationQuery.trim() || !visibleNavigationItems.length) return
+    if (!visibleNavigationItems.some((item) => item.id === activeSection)) {
+      setActiveSection(visibleNavigationItems[0].id)
+    }
+  }, [activeSection, navigationQuery, visibleNavigationItems])
 
   const handleSave = async (): Promise<void> => {
     const mcpServers = settings.mcpServers ?? []
@@ -340,7 +358,7 @@ function SettingsModal({
             <label className="modern-field">
               <span>Tool approval mode</span>
               <select
-                value={settings.commandPermissionMode || 'agent-decides'}
+                value={settings.commandPermissionMode || 'full-access'}
                 onChange={(event) =>
                   setSettings({
                     ...settings,
@@ -349,10 +367,14 @@ function SettingsModal({
                   })
                 }
               >
-                <option value="always-ask">Ask before sensitive actions</option>
-                <option value="agent-decides">Agent decides</option>
-                <option value="bypass">Full bypass</option>
+                <option value="full-access">Full access (default)</option>
+                <option value="sensitive-only">Ask only for sensitive actions</option>
+                <option value="always-ask">Ask for every write or command</option>
               </select>
+              <small>
+                Full access runs tools without approval popups. Destructive actions still follow
+                SideKick&apos;s safety rules and the scope of your request.
+              </small>
             </label>
             <label className="modern-field">
               <span>
@@ -405,6 +427,35 @@ function SettingsModal({
               ))}
             </div>
           </SettingCard>
+          <SettingCard
+            title="Conversation text"
+            description="Adjust messages and the composer without changing the whole interface. Use Ctrl + or Ctrl − for window zoom."
+          >
+            <label className="modern-field">
+              <span>
+                Text size <em>{settings.contentFontSize ?? 14}px</em>
+              </span>
+              <input
+                type="range"
+                min={12}
+                max={17}
+                step={1}
+                value={settings.contentFontSize ?? 14}
+                onChange={(event) => {
+                  const contentFontSize = Number(event.target.value)
+                  setSettings({ ...settings, contentFontSize })
+                  document.documentElement.style.setProperty(
+                    '--content-text',
+                    `${contentFontSize}px`
+                  )
+                  document.documentElement.style.setProperty(
+                    '--content-text-secondary',
+                    `${Math.max(11, contentFontSize - (contentFontSize > 14 ? 2 : 1))}px`
+                  )
+                }}
+              />
+            </label>
+          </SettingCard>
         </div>
       )
     }
@@ -414,19 +465,8 @@ function SettingsModal({
         <div className="settings-page">
           <div className="settings-page-heading">
             <h2>Integrations</h2>
-            <p>
-              Sidekick works independently; connect external tool servers only when you want them.
-            </p>
+            <p>Connect and manage external MCP tool servers.</p>
           </div>
-          <SettingCard
-            title="Sidekick Search"
-            description="Built in and ready—no API key, container, search server, or setup required."
-          >
-            <div className="dependency-summary">
-              <span className="ok">Direct federated web and image search</span>
-              <span>Local ranking and caching</span>
-            </div>
-          </SettingCard>
           <SettingCard
             title="MCP servers"
             description="External MCP server commands run as local processes."
@@ -445,23 +485,34 @@ function SettingsModal({
   }
 
   return (
-    <div className="modal-overlay settings-overlay" onClick={onClose}>
+    <div className="modal-overlay settings-overlay">
       <div
         ref={dialogRef}
         className="settings-window"
-        onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
         tabIndex={-1}
       >
         <aside className="settings-sidebar">
-          <div className="settings-sidebar-heading">
-            <span className="settings-kicker">SideKick</span>
-            <h1 id="settings-modal-title">Settings</h1>
-          </div>
+          <button type="button" className="settings-back-button" onClick={onClose}>
+            <ArrowLeft size={16} aria-hidden="true" />
+            <span>Back to app</span>
+          </button>
+          <label className="settings-search">
+            <Search size={14} aria-hidden="true" />
+            <input
+              value={navigationQuery}
+              onChange={(event) => setNavigationQuery(event.target.value)}
+              placeholder="Search settings…"
+              aria-label="Find settings sections"
+            />
+          </label>
+          <h1 id="settings-modal-title" className="settings-navigation-title">
+            Settings
+          </h1>
           <nav>
-            {NAV_ITEMS.map((item) => {
+            {visibleNavigationItems.map((item) => {
               const Icon = item.icon
               return (
                 <button
@@ -473,13 +524,13 @@ function SettingsModal({
                   title={`${item.label} — ${item.description}`}
                 >
                   <Icon size={17} />
-                  <span>
-                    <strong>{item.label}</strong>
-                    <small>{item.description}</small>
-                  </span>
+                  <strong>{item.label}</strong>
                 </button>
               )
             })}
+            {!visibleNavigationItems.length && (
+              <div className="settings-search-empty">No matching section</div>
+            )}
           </nav>
           <div className="settings-sidebar-note">
             <Bell size={14} />
@@ -487,12 +538,6 @@ function SettingsModal({
           </div>
         </aside>
         <div className="settings-main">
-          <header className="settings-topbar">
-            <span>{NAV_ITEMS.find((item) => item.id === activeSection)?.label}</span>
-            <button type="button" onClick={onClose} aria-label="Close settings">
-              <X size={18} />
-            </button>
-          </header>
           <main
             className="settings-content"
             aria-label={`${NAV_ITEMS.find((item) => item.id === activeSection)?.label} settings`}

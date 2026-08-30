@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  editingDialectCandidatesForModel,
   editingDialectForModel,
+  verifiedEditingDialectFallbacks,
   workspaceMutationRequestFromTool,
   workspaceMutationResultForModel
 } from './workspaceMutations'
@@ -57,10 +59,36 @@ describe('model-aware editing dialects', () => {
     ).toBe('claude-edit')
   })
 
-  it('requires an explicit access decision for every mutation tool', () => {
-    expect(() =>
-      workspaceMutationRequestFromTool('write', { file_path: 'a.txt', content: 'a' })
-    ).toThrow('accessLevel')
+  it('orders inferred dialects and restricts fallbacks to verified alternatives', () => {
+    expect(editingDialectCandidatesForModel({ model: 'gpt-5.4' })[0]).toBe('apply-patch')
+    expect(
+      verifiedEditingDialectFallbacks(
+        {
+          model: 'model-a',
+          calibration: {
+            version: 2,
+            model: 'model-a',
+            selectedDialect: 'apply-patch',
+            verifiedDialects: ['apply-patch', 'structured-edit'],
+            results: [],
+            calibratedAt: 1,
+            source: 'active-probe'
+          }
+        },
+        'apply-patch'
+      )
+    ).toEqual(['structured-edit'])
+  })
+
+  it('does not let model arguments own the host access decision', () => {
+    expect(workspaceMutationRequestFromTool('write', { file_path: 'a.txt', content: 'a' })).toEqual(
+      {
+        kind: 'write',
+        filePath: 'a.txt',
+        content: 'a',
+        accessLevel: 'auto'
+      }
+    )
   })
 
   it('bounds verified mutation details returned to model context', () => {

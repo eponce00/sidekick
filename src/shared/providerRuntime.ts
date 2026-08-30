@@ -1,5 +1,6 @@
 import type { ProviderKind } from './providerRegistry'
 import type { ProviderInstance, ProviderInstanceHealth, ProviderInstanceModel } from './settings'
+import type { ToolResultMediaAttachment } from './agentRuntime'
 import type {
   EditingContractCalibration,
   EditingDialectCalibrationResult,
@@ -30,7 +31,10 @@ export type ProviderThinkingBlock =
 export interface ProviderChatMessage {
   role: string
   content: string | null
+  /** Legacy user-composer image data URLs. */
   images?: string[]
+  /** Typed tool/provider media, including durable file-backed artifacts. */
+  media?: ToolResultMediaAttachment[]
   tool_calls?: ProviderToolCall[]
   tool_call_id?: string
   thinking_blocks?: ProviderThinkingBlock[]
@@ -86,6 +90,8 @@ export interface ProviderStreamChunk {
   }
   done?: boolean
   prompt_eval_count?: number
+  /** Prompt tokens reused by an upstream provider or inference-engine prefix cache. */
+  cached_prompt_tokens?: number
   eval_count?: number
   eval_duration?: number
   predicted_per_second?: number
@@ -110,6 +116,7 @@ export interface ProviderCompletionData {
     tool_calls?: ProviderToolCall[] | null
   }
   promptTokens: number
+  cachedPromptTokens?: number
   completionTokens: number
   reasoningTokens: number
   finishReason: string

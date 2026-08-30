@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, type AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
-import { toolExecutionFailed } from '../../shared/agentRuntime'
+import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 import { projectAgentRunEvents } from '../../shared/agentEventProjection'
 import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
@@ -71,7 +71,7 @@ describe('AgentRunKernel', () => {
         purpose: 'conversation'
       },
       maxToolRounds: 1_000,
-      permissionMode: 'bypass',
+      permissionMode: 'full-access',
       toolRouter
     }
   }
@@ -211,6 +211,98 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it('carries typed tool media into the next model turn and durable result event', async () => {
+    const media = [
+      {
+        type: 'image' as const,
+        mimeType: 'image/png' as const,
+        name: 'viewport.png',
+        source: { type: 'file' as const, path: 'C:\\artifacts\\viewport.png' }
+      }
+    ]
+    const router = {
+      execute: vi.fn(async () =>
+        toolExecutionSucceeded({
+          title: 'Wait',
+          modelContent: 'Captured viewport.',
+          media
+        })
+      )
+    }
+    const continuation = sampledTurn({ content: 'I inspected the screenshot.' })
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'wait-with-image',
+            function: { name: 'wait', arguments: { seconds: 1, reason: 'capture' } }
+          }
+        ],
+        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+      }),
+      continuation
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start(input(router))
+    const toolMessage = result.messages.find(({ role }) => role === 'tool')
+    const completed = store.listEvents('run-1').find((event) => event.type === 'tool.completed')
+
+    expect(toolMessage).toMatchObject({
+      tool_call_id: 'wait-with-image',
+      content: 'Captured viewport.',
+      media
+    })
+    expect(completed?.payload).toMatchObject({ result: { media } })
+    expect(continuation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([expect.objectContaining({ role: 'tool', media })])
+      }),
+      expect.any(AbortSignal),
+      expect.any(Function)
+    )
+  })
+
+  it.each(['length', 'max_tokens', 'max-output-tokens'])(
+    'does not execute a tool batch when the provider stops for %s',
+    async (doneReason) => {
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 99 })) }
+      const sampler = sequence(
+        sampledTurn({
+          toolCalls: [
+            {
+              id: 'possibly-truncated',
+              function: { name: 'wait', arguments: { seconds: 99, reason: 'looks valid' } }
+            }
+          ],
+          usage: { promptTokens: 10, completionTokens: 1_024, doneReason }
+        }),
+        sampledTurn({ content: 'Retried safely without running the incomplete call.' })
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await kernel.start(input(router))
+      const events = store.listEvents('run-1')
+      const toolResult = result.messages.find(({ role }) => role === 'tool')
+
+      expect(result).toMatchObject({ phase: 'completed', toolRounds: 1 })
+      expect(router.execute).not.toHaveBeenCalled()
+      expect(toolResult?.content).toContain('output_truncated')
+      expect(toolResult?.content).toContain('Do not assume any call from this batch ran')
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'truncated_tool_batch',
+            doneReason,
+            toolCallCount: 1
+          })
+        })
+      )
+      expect(events.some(({ type }) => type === 'tool.running')).toBe(false)
+    }
+  )
+
   it('assigns unique durable identities when a provider repeats tool-call ids', async () => {
     const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
     const sampler = sequence(
@@ -242,6 +334,43 @@ describe('AgentRunKernel', () => {
     expect(router.execute).toHaveBeenCalledTimes(2)
     expect(new Set(toolMessageIds).size).toBe(2)
     expect(new Set(completedIds).size).toBe(2)
+  })
+
+  it('executes a contiguous batch of catalog-safe read tools concurrently', async () => {
+    const started: string[] = []
+    const releases: Array<() => void> = []
+    const router = {
+      execute: vi.fn(async (_name: string, args: Record<string, unknown>) => {
+        started.push(String(args.handle))
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { content: String(args.handle) }
+      })
+    }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          { id: 'read-1', function: { name: 'tool_output', arguments: { handle: 'first' } } },
+          { id: 'read-2', function: { name: 'tool_output', arguments: { handle: 'second' } } }
+        ],
+        usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'Both reads finished.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const running = kernel.start(input(router))
+    await vi.waitFor(() => expect(started).toEqual(['first', 'second']))
+    releases.splice(0).forEach((release) => release())
+    const result = await running
+
+    expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Both reads finished.' })
+    expect(router.execute).toHaveBeenCalledTimes(2)
+    expect(
+      store
+        .listEvents('run-1')
+        .filter(({ type }) => type === 'tool.completed')
+        .map(({ payload }) => payload.toolCallId)
+    ).toEqual(['read-1', 'read-2'])
   })
 
   it('requires a research profile to attempt source retrieval before completing', async () => {
@@ -339,7 +468,7 @@ describe('AgentRunKernel', () => {
             {
               id: `repeated-call-${callIndex}`,
               function: {
-                name: 'execute_command',
+                name: 'shell',
                 arguments: {
                   title: 'Check page',
                   command: 'curl http://localhost:3000',
@@ -388,7 +517,7 @@ describe('AgentRunKernel', () => {
             {
               id: `failing-${turnIndex}`,
               function: {
-                name: 'execute_command',
+                name: 'shell',
                 arguments: { title: 'Fail', command: 'false', accessLevel: 'auto' }
               }
             },
@@ -432,8 +561,7 @@ describe('AgentRunKernel', () => {
     catalog = {
       surface: 'conversation',
       workspaceRoot: '/project',
-      capabilities: ['workspace.write'],
-      editingTarget: { model: 'local-loaded-model', dialect: 'structured-edit' }
+      capabilities: ['workspace.write']
     }
     let callIndex = 0
     const malformedEdit: AgentKernelProviderSampler = async () => {
@@ -447,10 +575,7 @@ describe('AgentRunKernel', () => {
           toolCalls: [
             {
               id: `edit-${callIndex}`,
-              function: {
-                name: 'edit',
-                arguments: { file_path: 'src/app.ts', accessLevel: 'auto' }
-              }
+              function: { name: 'apply_patch', arguments: { accessLevel: 'auto' } }
             }
           ],
           usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
@@ -465,17 +590,14 @@ describe('AgentRunKernel', () => {
     expect(result.phase).toBe('failed')
     expect(result.error).toContain('5 identical failed calls')
     expect(router.execute).not.toHaveBeenCalled()
-    expect(result.messages.filter(({ role }) => role === 'tool')[0].content).toContain('old_string')
-    expect(result.messages.filter(({ role }) => role === 'tool')[0].content).toContain('new_string')
+    expect(result.messages.filter(({ role }) => role === 'tool')[0].content).toContain('patch')
   })
 
-  it('switches to a verified editing contract after repeated mutation schema failures', async () => {
-    let dialect: 'structured-edit' | 'apply-patch' = 'structured-edit'
+  it('keeps the canonical editing contract after legacy tool calls fail', async () => {
     catalog = {
       surface: 'conversation',
       workspaceRoot: '/project',
-      capabilities: ['workspace.write'],
-      editingTarget: { model: 'local-loaded-model', dialect }
+      capabilities: ['workspace.write']
     }
     const malformed = (id: string) =>
       sampledTurn({
@@ -519,50 +641,31 @@ describe('AgentRunKernel', () => {
       }
     }
     const router = { execute: vi.fn(async () => ({ ok: true, changed: true })) }
-    const recover = vi.fn(async () => {
-      dialect = 'apply-patch'
-      return {
-        switched: true as const,
-        from: 'structured-edit' as const,
-        to: 'apply-patch' as const
-      }
-    })
     const kernel = new AgentRunKernel(
       store,
       undefined,
       sequence(malformed('edit-1'), malformed('edit-2'), patched, sampledTurn({ content: 'Done' }))
     )
     const runInput = input(router)
-    runInput.catalog = () => ({
-      ...catalog,
-      editingTarget: { model: 'local-loaded-model', dialect }
-    })
-    runInput.editingRecovery = { currentDialect: () => dialect, recover }
+    runInput.catalog = () => ({ ...catalog })
 
     const result = await kernel.start(runInput)
 
     expect(result).toMatchObject({ phase: 'completed', content: 'Done' })
-    expect(recover).toHaveBeenCalledTimes(1)
     expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(store.listEvents('run-1')).toContainEqual(
-      expect.objectContaining({
-        type: 'run.retrying',
-        payload: expect.objectContaining({
-          reason: 'editing_contract_switched',
-          from: 'structured-edit',
-          to: 'apply-patch'
-        })
-      })
-    )
+    expect(
+      store
+        .listEvents('run-1')
+        .filter(({ type }) => type === 'run.retrying')
+        .map(({ payload }) => payload.reason)
+    ).not.toContain('editing_contract_switched')
   })
 
-  it('switches contracts after a model repeats the same ambiguous exact edit', async () => {
-    let dialect: 'structured-edit' | 'apply-patch' = 'structured-edit'
+  it('does not calibrate or revive removed exact-edit tools', async () => {
     catalog = {
       surface: 'conversation',
       workspaceRoot: '/project',
-      capabilities: ['workspace.write'],
-      editingTarget: { model: 'local-loaded-model', dialect }
+      capabilities: ['workspace.write']
     }
     const ambiguous = (id: string) =>
       sampledTurn({
@@ -628,14 +731,6 @@ describe('AgentRunKernel', () => {
           : { ok: true, changed: true }
       )
     }
-    const recover = vi.fn(async () => {
-      dialect = 'apply-patch'
-      return {
-        switched: true as const,
-        from: 'structured-edit' as const,
-        to: 'apply-patch' as const
-      }
-    })
     const kernel = new AgentRunKernel(
       store,
       undefined,
@@ -647,26 +742,18 @@ describe('AgentRunKernel', () => {
       )
     )
     const runInput = input(router)
-    runInput.catalog = () => ({
-      ...catalog,
-      editingTarget: { model: 'local-loaded-model', dialect }
-    })
-    runInput.editingRecovery = { currentDialect: () => dialect, recover }
+    runInput.catalog = () => ({ ...catalog })
 
     const result = await kernel.start(runInput)
 
     expect(result).toMatchObject({ phase: 'completed', content: 'Recovered safely.' })
-    expect(recover).toHaveBeenCalledTimes(1)
-    expect(router.execute).toHaveBeenCalledTimes(3)
-    expect(store.listEvents('run-1')).toContainEqual(
-      expect.objectContaining({
-        type: 'run.retrying',
-        payload: expect.objectContaining({
-          reason: 'editing_contract_calibration_started',
-          trigger: 'repeated_ambiguity'
-        })
-      })
-    )
+    expect(router.execute).toHaveBeenCalledTimes(1)
+    expect(
+      store
+        .listEvents('run-1')
+        .filter(({ type }) => type === 'run.retrying')
+        .map(({ payload }) => payload.reason)
+    ).not.toContain('editing_contract_calibration_started')
   })
 
   it('returns malformed provider JSON as a tool result and lets the model recover', async () => {
@@ -774,9 +861,7 @@ describe('AgentRunKernel', () => {
     const sampler: AgentKernelProviderSampler = vi.fn(async (request) => {
       const toolNames = (request.tools ?? []).map(({ function: tool }) => tool.name)
       expect(toolNames).toContain('present_plan')
-      expect(toolNames).not.toEqual(
-        expect.arrayContaining(['edit', 'write', 'apply_patch', 'execute_command'])
-      )
+      expect(toolNames).not.toEqual(expect.arrayContaining(['apply_patch', 'shell']))
       return {
         result: { ok: true },
         turn: {
@@ -919,7 +1004,7 @@ describe('AgentRunKernel', () => {
           (request.tools as Array<{ function: { name: string } }>).map(
             ({ function: tool }) => tool.name
           )
-        ).toEqual(expect.arrayContaining(['complete_plan', 'edit']))
+        ).toEqual(expect.arrayContaining(['complete_plan', 'apply_patch']))
         return sampledTurn({ content: 'Implemented and verified.' })(
           request,
           new AbortController().signal,
@@ -1053,8 +1138,11 @@ describe('AgentRunKernel', () => {
           {
             id: 'write-1',
             function: {
-              name: 'write',
-              arguments: { file_path: 'a.txt', content: 'hello', accessLevel: 'confirm' }
+              name: 'apply_patch',
+              arguments: {
+                patch: '*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch',
+                accessLevel: 'confirm'
+              }
             }
           }
         ]
@@ -1077,6 +1165,30 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
       expect.arrayContaining(['permission.requested', 'permission.resolved'])
     )
+  })
+
+  it('runs proven inspection commands without prompting in sensitive-only mode', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'read-1',
+            function: { name: 'shell', arguments: { command: 'Get-Content src/app.ts' } }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Inspected' })
+    )
+    const router = { execute: vi.fn(async () => ({ content: 'source' })) }
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+
+    expect((await new AgentRunKernel(store, undefined, sampler).start(runInput)).phase).toBe(
+      'completed'
+    )
+    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+    expect(router.execute).toHaveBeenCalledOnce()
   })
 
   it('forces one compaction and retries after a provider context overflow', async () => {
@@ -1175,6 +1287,7 @@ describe('AgentRunKernel', () => {
     expect(result).toMatchObject({ phase: 'failed', error: 'socket reset' })
     expect(events.map(({ type }) => type)).toEqual([
       'run.started',
+      'context.snapshot',
       'run.phase',
       'assistant.delta',
       'run.completed'

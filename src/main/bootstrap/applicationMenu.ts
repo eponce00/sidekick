@@ -34,6 +34,10 @@ export function applicationMenuTemplate(
     {
       label: 'View',
       submenu: [
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { role: 'resetZoom' },
+        { type: 'separator' },
         {
           role: 'togglefullscreen',
           accelerator: platform === 'darwin' ? 'Ctrl+Command+F' : 'F11'

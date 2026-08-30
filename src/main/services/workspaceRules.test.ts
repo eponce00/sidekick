@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join, parse } from 'path'
 import {
   beginWorkspaceInstructionScope,
   clearWorkspaceInstructionScope,
@@ -71,6 +71,32 @@ describe('loadWorkspaceRules', () => {
       result.content.indexOf('Desktop package rules')
     )
   })
+
+  it('rejects a working directory outside the project without walking forever', async () => {
+    const root = await createWorkspace()
+    const outside = dirname(root)
+
+    await expect(
+      loadWorkspaceRules(root, outside, { includeGlobal: false })
+    ).rejects.toThrow('Working directory must be inside the project folder')
+  })
+
+  it.runIf(process.platform === 'win32')(
+    'rejects cross-drive instruction targets without walking the other drive root forever',
+    async () => {
+      const root = await createWorkspace()
+      const rootDrive = parse(root).root.slice(0, 1).toUpperCase()
+      const otherDrive = rootDrive === 'C' ? 'D' : 'C'
+      const crossDriveTarget = `${otherDrive}:\\sidekick-outside\\file.ts`
+      const scopeId = `test:${root}`
+      await beginWorkspaceInstructionScope(scopeId, root)
+
+      await expect(
+        resolveWorkspaceInstructionsForPath(scopeId, root, crossDriveTarget, false, true)
+      ).rejects.toThrow('Instruction target must be inside the project folder')
+      clearWorkspaceInstructionScope(scopeId)
+    }
+  )
 
   it('loads one global instruction layer before project instructions', async () => {
     const root = await createWorkspace()

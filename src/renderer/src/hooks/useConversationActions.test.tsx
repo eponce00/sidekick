@@ -14,6 +14,8 @@ describe('useConversationActions', () => {
   let controller: ReturnType<typeof useConversationActions>
   const rerunStream = vi.fn(async () => undefined)
   const deleteMessagesAfter = vi.fn(async () => ({ success: true }))
+  const rewindToBeforeCheckpoint = vi.fn(async () => ({ ok: true, parentHash: null }))
+  const authorize = vi.fn(async () => ({ approved: true, token: 'undo-token' }))
 
   const researchRequest: Message = {
     id: 'user-1',
@@ -57,6 +59,10 @@ describe('useConversationActions', () => {
         conversations: {
           deleteMessagesAfter,
           updateMessage: vi.fn(async () => ({ success: true }))
+        },
+        permissions: { authorize },
+        workspace: {
+          rewindToBeforeCheckpoint
         }
       }
     })
@@ -74,5 +80,43 @@ describe('useConversationActions', () => {
       expect(rerunStream).toHaveBeenCalledWith([researchRequest], 'conversation-1', 'research')
     })
     expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 1)
+  })
+
+  it('undoes the changes owned by the response instead of restoring its after-state', async () => {
+    await act(async () => root.unmount())
+    function WorkspaceHarness(): null {
+      const [messages, setMessages] = useState<Message[]>([
+        researchRequest,
+        {
+          ...researchResponse,
+          checkpointHash: 'abcdef123456',
+          checkpointWorkspaceRoot: 'C:\\project'
+        }
+      ])
+      const value = useConversationActions({
+        messages,
+        setMessages,
+        conversationId: 'conversation-1',
+        selectedModel: 'model-1',
+        workspaceFolder: 'C:\\project',
+        rerunStream
+      })
+      useEffect(() => {
+        controller = value
+      }, [value])
+      return null
+    }
+    root = createRoot(container)
+    await act(async () => root.render(<WorkspaceHarness />))
+    act(() => controller.requestCheckpointRestore('abcdef123456'))
+    await act(async () => controller.confirmCheckpointRestore())
+
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'checkpoint', requestedAccess: 'auto' })
+    )
+    expect(rewindToBeforeCheckpoint).toHaveBeenCalledWith('C:\\project', 'abcdef123456', {
+      requestedAccess: 'auto',
+      authorizationToken: 'undo-token'
+    })
   })
 })

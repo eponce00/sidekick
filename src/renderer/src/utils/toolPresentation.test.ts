@@ -9,7 +9,7 @@ import {
 describe('tool presentation', () => {
   it('classifies built-in tools from stable names and legacy command strings', () => {
     expect(
-      getToolKind({ name: 'read_workspace_file', command: 'read_workspace_file', title: 'Read' })
+      getToolKind({ name: 'read', command: 'read', title: 'Read' })
     ).toBe('file-read')
     expect(getToolKind({ command: 'web_image_search("mountains")', title: 'Image search' })).toBe(
       'image-search'
@@ -63,10 +63,10 @@ describe('tool presentation', () => {
     ).toBe('Finding images for “Cuba population chart”')
     expect(
       getCompactToolTitle({
-        name: 'read_workspace_file',
-        command: 'read_workspace_file',
+        name: 'read',
+        command: 'read',
         title: 'Reading /Users/demo/project/src/components/ChatPanel.tsx',
-        input: { file_path: '/Users/demo/project/src/components/ChatPanel.tsx' },
+        input: { path: '/Users/demo/project/src/components/ChatPanel.tsx' },
         status: 'success'
       })
     ).toBe('Read …/components/ChatPanel.tsx')
@@ -95,7 +95,7 @@ describe('tool presentation', () => {
     ).toBe('Compact context')
     expect(
       getCompactToolTitle({
-        name: 'execute_command',
+        name: 'shell',
         command: 'npm run check',
         title: 'Executing command',
         status: 'running'

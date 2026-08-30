@@ -44,6 +44,10 @@ export interface WorkspaceSearchResult {
   truncated: boolean
 }
 
+export type WorkspacePathReadResult =
+  | ({ kind: 'file'; path: string } & WorkspaceReadResult)
+  | ({ kind: 'directory'; path: string } & WorkspaceListResult)
+
 export class WorkspaceSearchArgumentError extends Error {
   constructor(message: string) {
     super(message)
@@ -74,6 +78,48 @@ function assertTextSample(sample: Buffer, path: string): void {
 }
 
 export class WorkspaceReadService {
+  async readPath(
+    workspaceRoot: string,
+    path: string,
+    options: {
+      startLine?: number
+      endLine?: number
+      cursor?: number
+      maxEntries?: number
+      glob?: string
+      signal?: AbortSignal
+    } = {}
+  ): Promise<WorkspacePathReadResult> {
+    abortIfNeeded(options.signal)
+    const fullPath = await resolveSecureWorkspacePath(workspaceRoot, path)
+    const stat = await fs.stat(fullPath)
+    if (stat.isFile()) {
+      return {
+        kind: 'file',
+        path,
+        ...(await this.readFile(workspaceRoot, path, {
+          startLine: options.startLine,
+          endLine: options.endLine,
+          signal: options.signal
+        }))
+      }
+    }
+    if (stat.isDirectory()) {
+      return {
+        kind: 'directory',
+        path,
+        ...(await this.listFiles(workspaceRoot, {
+          subPath: path,
+          glob: options.glob,
+          cursor: options.cursor,
+          maxResults: options.maxEntries,
+          signal: options.signal
+        }))
+      }
+    }
+    throw new Error(`Path is neither a regular file nor a directory: ${path}`)
+  }
+
   async getFileVersion(workspaceRoot: string, filePath: string): Promise<string | null> {
     const fullPath = await resolveSecureWorkspacePath(workspaceRoot, filePath)
     try {

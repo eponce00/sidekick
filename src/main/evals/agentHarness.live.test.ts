@@ -398,7 +398,7 @@ liveDescribe('provider-neutral production agent harness', () => {
             ]
           })
           expect(result.phase, result.error).toBe('completed')
-          expect(result.toolNames).toContain('read_workspace_file')
+          expect(result.toolNames).toContain('read')
           expect(result.toolNames).toContain('edit')
           expect(await fs.readFile(join(workspaceRoot, 'src/status.ts'), 'utf8')).toBe(
             "export const status = 'after'\n"
@@ -599,7 +599,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               {
                 role: 'system',
                 content:
-                  'This is a deterministic SideKick completion-boundary evaluation. Read AGENTS.md and src/status.ts, then use a workspace mutation tool to change the status from before to after. On the first turn after the edit, do not run a command or code-intelligence query: reply with only CHANGE_APPLIED. If SideKick sends an app-authored verification guard, first call code_intelligence with operation diagnostics for src/status.ts, then run the suggested project check with execute_command. After both succeed, reply with only SIDEKICK_EVAL_VERIFICATION_OK.'
+                  'This is a deterministic SideKick completion-boundary evaluation. Read AGENTS.md and src/status.ts, then use apply_patch to change the status from before to after. On the first turn after the edit, do not run a shell command or code-intelligence query: reply with only CHANGE_APPLIED. If SideKick sends an app-authored verification guard, first call code_intelligence with operation diagnostics for src/status.ts, then run the suggested project check with shell. After both succeed, reply with only SIDEKICK_EVAL_VERIFICATION_OK.'
               },
               {
                 role: 'user',
@@ -614,9 +614,9 @@ liveDescribe('provider-neutral production agent harness', () => {
           expect(await fs.readFile(join(workspaceRoot, 'src/status.ts'), 'utf8')).toContain(
             "status = 'after'"
           )
-          expect(result.toolNames).toContain('read_workspace_file')
+          expect(result.toolNames).toContain('read')
           expect(result.toolNames).toContain('code_intelligence')
-          expect(result.toolNames).toContain('execute_command')
+          expect(result.toolNames).toContain('shell')
           assertMutationTools(result.toolNames)
 
           const guard = result.events.find(
@@ -626,7 +626,7 @@ liveDescribe('provider-neutral production agent harness', () => {
           )
           expect(guard, 'The kernel did not inject the verification continuation').toBeDefined()
           const commandStarted = result.events.find(
-            (event) => event.type === 'tool.running' && event.payload.name === 'execute_command'
+            (event) => event.type === 'tool.running' && event.payload.name === 'shell'
           )
           expect(commandStarted?.sequence).toBeGreaterThan(guard!.sequence)
           const verificationUpdates = result.events
@@ -727,7 +727,7 @@ liveDescribe('provider-neutral production agent harness', () => {
                 {
                   role: 'system',
                   content:
-                    'You are completing a deterministic evaluation in a small isolated project. Read AGENTS.md and all relevant source and test files before editing. Use SideKick workspace tools for files and execute_command for verification. Finish only after npm test passes.'
+                    'You are completing a deterministic evaluation in a small isolated project. Read AGENTS.md and all relevant source and test files before editing. Use read and apply_patch for files and shell for verification. Finish only after npm test passes.'
                 },
                 {
                   role: 'user',
@@ -744,7 +744,7 @@ liveDescribe('provider-neutral production agent harness', () => {
             expect(await fs.readFile(join(workspaceRoot, 'src/report.ts'), 'utf8')).toContain(
               'subtotal = 30'
             )
-            expect(result.toolNames).toContain('execute_command')
+            expect(result.toolNames).toContain('shell')
             assertMutationTools(result.toolNames)
             return result
           },
@@ -777,7 +777,7 @@ liveDescribe('provider-neutral production agent harness', () => {
             expect(await fs.readFile(join(workspaceRoot, 'AGENTS.md'), 'utf8')).toBe(
               instructionsBefore
             )
-            expect(result.toolNames).toContain('execute_command')
+            expect(result.toolNames).toContain('shell')
             assertMutationTools(result.toolNames)
             return result
           },
@@ -865,7 +865,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               afterToolExecution: async (name, args) => {
                 if (
                   !changedAfterRead &&
-                  name === 'read_workspace_file' &&
+                  name === 'read' &&
                   args.file_path === 'src/settings.ts'
                 ) {
                   changedAfterRead = true
@@ -902,7 +902,7 @@ liveDescribe('provider-neutral production agent harness', () => {
             expect(finalSettings).toContain("name: 'secondary',\n  mode: 'draft'")
             expect(finalSettings).toContain('externalVersion = 2')
             expect(
-              result.toolNames.filter((name) => name === 'read_workspace_file').length
+              result.toolNames.filter((name) => name === 'read').length
             ).toBeGreaterThanOrEqual(2)
             expect(
               result.toolNames.filter((name) => name === 'edit').length
@@ -972,11 +972,11 @@ liveDescribe('provider-neutral production agent harness', () => {
             )
             expect(result.toolNames).toEqual(
               expect.arrayContaining([
-                'read_workspace_file',
+                'read',
                 'present_plan',
                 'manage_todo_list',
                 'code_intelligence',
-                'execute_command',
+                'shell',
                 'complete_plan'
               ])
             )
@@ -1146,7 +1146,7 @@ Both agents: take ownership publicly before private work, never access the other
             expect(toolNames).toContain('collaboration_share_file')
             expect(toolNames).toContain('collaboration_import_artifact')
             expect(toolNames).toContain('collaboration_claim_complete')
-            expect(toolNames).toContain('execute_command')
+            expect(toolNames).toContain('shell')
             enrichMetric('group-artifact-collaboration', {
               details: {
                 participants: participantRuns.map((run) => run.status),
@@ -1233,7 +1233,7 @@ Both agents: treat this as a new mission continuing the durable private sessions
             expect(toolNames).toContain('collaboration_share_file')
             expect(toolNames).toContain('collaboration_import_artifact')
             expect(toolNames).toContain('collaboration_claim_complete')
-            expect(toolNames).toContain('execute_command')
+            expect(toolNames).toContain('shell')
             enrichMetric('group-follow-up-collaboration', {
               details: {
                 participants: participantRuns.map((run) => run.status),

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-08-30
+
+SideKick 0.6.0 is a broad agent-runtime and desktop-experience release focused on reliable long
+runs, visual UI work, and a calmer interface.
+
+- Rebuilt tool execution around a typed handler registry and canonical pipeline with safe parallel
+  reads, ordered mutations, retained output handles, bounded loop recovery, and no execution from
+  provider responses whose tool-call batch was truncated.
+- Added durable prompt admission and steering, reconnectable run snapshots, ordered live-event
+  merging, and history-positioned context-compaction records so text, thinking, and tools render in
+  the same order in which the model produced them.
+- Added a native isolated Chromium browser with accessible observation, screenshots, clicking,
+  typing, selection, scrolling, hover, tabs, responsive viewport control, console/network review,
+  verification, and a docked live Browser panel with a visible cursor.
+- Redesigned tool, approval, command, diff, file-change, thinking, and verification presentation.
+  Collapsed cards stay compact; expanded cards expose detail; approval cards settle immediately;
+  and additions/deletions use readable semantic color.
+- Added clipboard image paste, image lightboxes, file and folder context attachments, open-with
+  actions, clickable file references, and a compact composer menu organized by attachment, project
+  context, and agent behavior.
+- Added per-message conversation forking, managed worktree lifecycle, pinned projects and chats,
+  clearer recovery titles, automatic conversation titles, formatted token counts, and queued-message
+  send/steer behavior.
+- Replaced the settings dialog with a searchable full-window settings workspace, added reliable app
+  zoom controls, and made Full access the default permission mode while preserving audited safety
+  classification and stricter opt-in modes.
+- Removed the redundant trajectory/tasks navigation surface, simplified user-facing browser status,
+  and improved narrow viewport, image containment, scrolling, and responsive panel behavior.
+- Expanded deterministic coverage for the agent protocol, browser tools, permission classification,
+  event projection, streaming UI, attachments, worktrees, title generation, packaged runtime, and
+  release contracts.
+
 ## 0.5.1 — 2026-07-24
 
 - Keep the Linux package filename aligned with the exact public `linux-x64` artifact contract.

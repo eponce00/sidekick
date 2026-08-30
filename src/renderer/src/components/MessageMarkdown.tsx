@@ -1,7 +1,10 @@
 import {
+  memo,
+  isValidElement,
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
@@ -15,9 +18,12 @@ import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
 import { rehypeTwemoji } from 'rehype-twemoji'
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
+  FileCode2,
   ImageOff,
   MapPin,
   Maximize2,
@@ -25,6 +31,7 @@ import {
 } from 'lucide-react'
 import { parseMessageWithArtifacts } from '../utils/artifactParser'
 import { parseMapLink, type MapLinkLocation } from '../utils/mapLinks'
+import { splitMarkdownRenderBlocks } from '../utils/markdownStreaming'
 import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
 import './MessageMarkdown.css'
@@ -33,6 +40,7 @@ interface MarkdownNode {
   type?: string
   tagName?: string
   value?: string
+  url?: string
   properties?: Record<string, unknown>
   children?: MarkdownNode[]
 }
@@ -48,10 +56,102 @@ interface MessageMarkdownProps {
   content: string
   richMedia?: boolean
   isStreaming?: boolean
+  workspaceRoot?: string | null
   onArtifactResult?: (
     title: string,
     result: { success: boolean; error?: string; code?: string }
   ) => void
+}
+
+const FILE_REFERENCE_PATTERN =
+  /(?:[A-Za-z]:[\\/][^\s`"'<>]+|(?:\.{1,2}[\\/])?[A-Za-z0-9_.@+-]+(?:[\\/][A-Za-z0-9_.@+ -]+)+\.[A-Za-z0-9]{1,12}|\b[A-Za-z0-9_.@+-]+\.(?:[cm]?[jt]sx?|md|json|ya?ml|toml|css|scss|html|py|go|rs|java|kt|swift|cpp|hpp|cs|sh|ps1|sql))(?::\d+)?/g
+
+function fileReferencePath(value: string): string | null {
+  const trimmed = value.trim()
+  const match = trimmed.match(new RegExp(`^(?:${FILE_REFERENCE_PATTERN.source})$`))
+  return match ? trimmed.replace(/:(\d+)$/, '') : null
+}
+
+function remarkFileReferences(): (tree: MarkdownNode) => void {
+  return (tree) => {
+    const visit = (node: MarkdownNode): void => {
+      if (
+        !node.children ||
+        node.type === 'link' ||
+        node.type === 'code' ||
+        node.type === 'inlineCode'
+      )
+        return
+      const next: MarkdownNode[] = []
+      for (const child of node.children) {
+        if (child.type !== 'text' || !child.value) {
+          visit(child)
+          next.push(child)
+          continue
+        }
+        let cursor = 0
+        for (const match of child.value.matchAll(FILE_REFERENCE_PATTERN)) {
+          const index = match.index ?? 0
+          if (index > cursor) next.push({ type: 'text', value: child.value.slice(cursor, index) })
+          const label = match[0]
+          next.push({
+            type: 'link',
+            url: `#sidekick-file=${encodeURIComponent(label.replace(/:(\d+)$/, ''))}`,
+            children: [{ type: 'text', value: label }]
+          })
+          cursor = index + label.length
+        }
+        if (cursor < child.value.length)
+          next.push({ type: 'text', value: child.value.slice(cursor) })
+      }
+      node.children = next
+    }
+    visit(tree)
+  }
+}
+
+function nodeText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(nodeText).join('')
+  if (node && typeof node === 'object' && 'props' in node) {
+    return nodeText((node as { props?: { children?: ReactNode } }).props?.children)
+  }
+  return ''
+}
+
+function MarkdownCodeBlock({
+  children,
+  className
+}: {
+  children: ReactNode
+  className?: string
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const content = nodeText(children).replace(/\n$/, '')
+  const language = className?.match(/(?:^|\s)language-([\w+-]+)/)?.[1]
+  return (
+    <div className="markdown-code-block">
+      <div className="markdown-code-header">
+        <span className="markdown-code-language">{language || 'Code'}</span>
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard.writeText(content).then(() => {
+              setCopied(true)
+              window.setTimeout(() => setCopied(false), 1_200)
+            })
+          }}
+          aria-label={copied ? 'Code copied' : 'Copy code'}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre>
+        <code className={className}>{children}</code>
+      </pre>
+    </div>
+  )
 }
 
 interface ImageHints {
@@ -401,13 +501,111 @@ function MarkdownImage({
   )
 }
 
+function useWorkspaceFileOpen(
+  fileReference?: string | null,
+  workspaceRoot?: string | null
+): { error: string; open: () => Promise<void> } {
+  const [error, setError] = useState('')
+  const resetTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current)
+    },
+    []
+  )
+
+  const open = useCallback(async (): Promise<void> => {
+    if (!fileReference || !workspaceRoot) return
+    const result = await window.api.workspace.openFileReference(fileReference, workspaceRoot)
+    if (result.ok) {
+      setError('')
+      return
+    }
+    setError(result.error || 'File not found in this project')
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current)
+    resetTimer.current = window.setTimeout(() => setError(''), 3_000)
+  }, [fileReference, workspaceRoot])
+
+  return { error, open }
+}
+
+function InlineWorkspaceFile({
+  fileReference,
+  workspaceRoot,
+  children,
+  className,
+  ...props
+}: ComponentPropsWithoutRef<'code'> & {
+  fileReference: string
+  workspaceRoot: string
+}): React.JSX.Element {
+  const fileOpen = useWorkspaceFileOpen(fileReference, workspaceRoot)
+  return (
+    <code
+      {...props}
+      className={[className, 'markdown-inline-file', fileOpen.error ? 'is-open-error' : '']
+        .filter(Boolean)
+        .join(' ')}
+      role="link"
+      tabIndex={0}
+      title={fileOpen.error || `Open ${fileReference}`}
+      aria-label={fileOpen.error || `Open ${fileReference}`}
+      onClick={() => void fileOpen.open()}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        void window.api.workspace.showPathMenu(fileReference, workspaceRoot)
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          void fileOpen.open()
+        }
+      }}
+    >
+      {children}
+    </code>
+  )
+}
+
 function MarkdownLink({
   node: _node,
   href,
   children,
   className,
+  workspaceRoot,
   ...props
-}: ComponentPropsWithoutRef<'a'> & { node?: unknown }): React.JSX.Element {
+}: ComponentPropsWithoutRef<'a'> & {
+  node?: unknown
+  workspaceRoot?: string | null
+}): React.JSX.Element {
+  const localPath = href?.startsWith('#sidekick-file=')
+    ? decodeURIComponent(href.slice('#sidekick-file='.length))
+    : null
+  const fileOpen = useWorkspaceFileOpen(localPath, workspaceRoot)
+  if (localPath && workspaceRoot) {
+    return (
+      <a
+        {...props}
+        href={href}
+        className={[className, 'markdown-file-reference', fileOpen.error ? 'is-open-error' : '']
+          .filter(Boolean)
+          .join(' ')}
+        onClick={(event) => {
+          event.preventDefault()
+          void fileOpen.open()
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault()
+          void window.api.workspace.showPathMenu(localPath, workspaceRoot)
+        }}
+        title={fileOpen.error || `Open ${localPath}`}
+      >
+        <FileCode2 size={12} aria-hidden="true" />
+        <span>{children}</span>
+      </a>
+    )
+  }
   const mapLink = Boolean(href && parseMapLink(href, ''))
   const external = isExternalHref(href)
   return (
@@ -469,20 +667,26 @@ function withoutStreamingImages(content: string): string {
   return content.replace(/!\[[^\]]*\]\((?:https?:\/\/|data:image\/)[^)\n]+\)/giu, '')
 }
 
-export function MessageMarkdown({
+interface MarkdownFragmentProps extends MessageMarkdownProps {
+  allowRichMedia: boolean
+}
+
+const MarkdownFragment = memo(function MarkdownFragment({
   content,
-  richMedia = true,
-  isStreaming = false,
+  allowRichMedia,
+  workspaceRoot,
   onArtifactResult
-}: MessageMarkdownProps): React.JSX.Element {
+}: MarkdownFragmentProps): React.JSX.Element {
   const renderCode = ({
     node: _node,
     inline: _inline,
     children,
+    className,
     ...props
   }: ComponentPropsWithoutRef<'code'> & { node?: unknown; inline?: boolean }): ReactNode => {
+    const raw = nodeText(children)
     if (onArtifactResult) {
-      const parsedResult = parseMessageWithArtifacts(String(children))
+      const parsedResult = parseMessageWithArtifacts(raw)
       const artifactSegments = parsedResult.segments.filter(
         (segment) => segment.type === 'artifact' && segment.artifact
       )
@@ -496,21 +700,108 @@ export function MessageMarkdown({
         ))
       }
     }
-    return <code {...props}>{children}</code>
+    const block = Boolean(className?.includes('language-') || raw.includes('\n'))
+    if (block)
+      return (
+        <code {...props} className={className}>
+          {children}
+        </code>
+      )
+    const localPath = workspaceRoot && !block ? fileReferencePath(raw) : null
+    const localWorkspaceRoot = workspaceRoot || undefined
+    if (localPath && localWorkspaceRoot) {
+      return (
+        <InlineWorkspaceFile
+          {...props}
+          className={className}
+          fileReference={localPath}
+          workspaceRoot={localWorkspaceRoot}
+        >
+          {children}
+        </InlineWorkspaceFile>
+      )
+    }
+    return (
+      <code {...props} className={className}>
+        {children}
+      </code>
+    )
   }
 
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
+      remarkPlugins={[remarkGfm, remarkMath, remarkFileReferences]}
       rehypePlugins={[rehypeHighlight, rehypeKatex, rehypeTwemoji]}
       components={{
         code: renderCode,
+        pre: ({ children }) => {
+          const raw = nodeText(children).replace(/\n$/, '')
+          if (!raw) return <>{children}</>
+          const className = isValidElement<{ className?: string }>(children)
+            ? children.props.className
+            : undefined
+          return <MarkdownCodeBlock className={className}>{raw}</MarkdownCodeBlock>
+        },
         img: MarkdownImage,
-        a: MarkdownLink,
-        p: richMedia && !isStreaming ? RichMarkdownParagraph : PlainMarkdownParagraph
+        a: (props) => <MarkdownLink {...props} workspaceRoot={workspaceRoot} />,
+        p: allowRichMedia ? RichMarkdownParagraph : PlainMarkdownParagraph
       }}
     >
-      {isStreaming ? withoutStreamingImages(content) : content}
+      {content}
     </ReactMarkdown>
+  )
+})
+
+export function MessageMarkdown({
+  content,
+  richMedia = true,
+  isStreaming = false,
+  workspaceRoot,
+  onArtifactResult
+}: MessageMarkdownProps): React.JSX.Element {
+  const blocks = useMemo(
+    () => (isStreaming ? splitMarkdownRenderBlocks(withoutStreamingImages(content)) : []),
+    [content, isStreaming]
+  )
+  if (!isStreaming) {
+    return (
+      <MarkdownFragment
+        content={content}
+        richMedia={richMedia}
+        isStreaming={false}
+        allowRichMedia={richMedia}
+        workspaceRoot={workspaceRoot}
+        onArtifactResult={onArtifactResult}
+      />
+    )
+  }
+
+  const stableCount = Math.max(0, blocks.length - 2)
+  const stable = blocks.slice(0, stableCount)
+  const tail = blocks.slice(stableCount).join('')
+  return (
+    <>
+      {stable.map((block, index) => (
+        <MarkdownFragment
+          key={`${index}:${block.length}:${block.slice(0, 48)}`}
+          content={block}
+          richMedia={richMedia}
+          isStreaming
+          allowRichMedia={richMedia}
+          workspaceRoot={workspaceRoot}
+          onArtifactResult={onArtifactResult}
+        />
+      ))}
+      {tail && (
+        <MarkdownFragment
+          content={tail}
+          richMedia={richMedia}
+          isStreaming
+          allowRichMedia={false}
+          workspaceRoot={workspaceRoot}
+          onArtifactResult={onArtifactResult}
+        />
+      )}
+    </>
   )
 }

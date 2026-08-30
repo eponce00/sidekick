@@ -37,6 +37,7 @@ export interface PromptCapabilities {
   webSearch: boolean
   webFetch: boolean
   imageSearch: boolean
+  browser: boolean
   workspace: boolean
   mcp: boolean
 }

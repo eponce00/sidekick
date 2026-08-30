@@ -2,11 +2,21 @@ import { describe, expect, it } from 'vitest'
 import {
   calculateContextCapacity,
   calculateRequestBudget,
+  estimateConversationTokens,
   estimateTextTokens,
   resolveMaxOutputTokens
 } from './contextBudget'
 
 describe('calculateRequestBudget', () => {
+  it('bounds image token estimates without counting base64 as text', () => {
+    expect(
+      estimateConversationTokens([{ role: 'user', content: '', images: ['https://x.test/a.png'] }])
+    ).toBe(772)
+    expect(
+      estimateConversationTokens([{ role: 'user', content: '', images: ['x'.repeat(300_000)] }])
+    ).toBe(1_176)
+  })
+
   it('applies the compaction threshold after reserving the configured output budget', () => {
     const budget = calculateRequestBudget({
       messages: [],

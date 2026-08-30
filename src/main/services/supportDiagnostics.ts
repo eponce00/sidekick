@@ -1,5 +1,14 @@
 import type { SupportDiagnostics } from '../../shared/supportDiagnostics'
 import { SUPPORT_DIAGNOSTICS_SCHEMA_VERSION } from '../../shared/supportDiagnostics'
+import { normalizePermissionMode } from '../../shared/permissions'
+
+const KNOWN_PERMISSION_MODES = new Set([
+  'always-ask',
+  'sensitive-only',
+  'full-access',
+  'agent-decides',
+  'bypass'
+])
 
 const PROVIDER_TYPES = [
   'ollama',
@@ -10,8 +19,6 @@ const PROVIDER_TYPES = [
   'openai-compatible',
   'llamacpp'
 ] as const
-
-const PERMISSION_MODES = new Set(['always-ask', 'agent-decides', 'bypass'])
 
 interface SupportDiagnosticsInput {
   generatedAt: Date
@@ -77,9 +84,11 @@ export function createSupportDiagnostics(input: SupportDiagnosticsInput): Suppor
   const settings = record(input.settings) ?? {}
   const rawPermissionMode = settings.commandPermissionMode
   const permissionMode =
-    typeof rawPermissionMode === 'string' && PERMISSION_MODES.has(rawPermissionMode)
-      ? (rawPermissionMode as SupportDiagnostics['configuration']['permissionMode'])
-      : 'unknown'
+    rawPermissionMode === undefined
+      ? 'full-access'
+      : typeof rawPermissionMode === 'string' && KNOWN_PERMISSION_MODES.has(rawPermissionMode)
+        ? normalizePermissionMode(rawPermissionMode)
+        : 'unknown'
 
   return {
     schemaVersion: SUPPORT_DIAGNOSTICS_SCHEMA_VERSION,

@@ -87,6 +87,8 @@ export interface ProviderSettings {
   /** Pinned model id used for Plan mode. Empty means use the current chat model. */
   planningModelId?: string
   accentPalette?: string
+  /** Semantic conversation text size. Interface zoom remains an independent window control. */
+  contentFontSize?: number
   focusChainEnabled?: boolean
   focusChainReminderInterval?: number
   autoCompactEnabled?: boolean

@@ -3,7 +3,7 @@ import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/prov
 import type { ProviderInstance } from '../../shared/settings'
 import { streamOpenAICompatibleChat } from './openAIStreamingClient'
 import { completeAnthropicChat, streamAnthropicChat, toAnthropicMessages } from './anthropicClient'
-import { streamOllamaChat } from './ollamaClient'
+import { streamOllamaChat, toOllamaMessages } from './ollamaClient'
 import { toOpenAICompatibleMessages } from './providerRuntime'
 import { readIncompleteToolInputError } from '../../shared/toolCalls'
 
@@ -56,7 +56,7 @@ describe('provider streaming adapters', () => {
       'data: {"choices":[{"delta":{"content":"ink>Answer"}}]}\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","type":"function","function":{"name":"lookup","arguments":"{\\"query\\":"}}]}}]}\n',
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"cuba\\"}"}}]},"finish_reason":"tool_calls"}]}\n',
-      'data: {"choices":[],"usage":{"prompt_tokens":21,"completion_tokens":8}}\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":21,"completion_tokens":8,"prompt_tokens_details":{"cached_tokens":13}}}\n',
       'data: [DONE]\n'
     ])
     const fetchImpl = vi.fn(async () => response) as unknown as typeof fetch
@@ -85,6 +85,7 @@ describe('provider streaming adapters', () => {
       done: true,
       done_reason: 'tool_calls',
       prompt_eval_count: 21,
+      cached_prompt_tokens: 13,
       eval_count: 8
     })
   })
@@ -231,6 +232,52 @@ describe('provider streaming adapters', () => {
     expect(converted[2]).toMatchObject({ tool_call_id: 'call-1' })
   })
 
+  it('keeps OpenAI tool results contiguous before a linked multimodal observation', () => {
+    const converted = toOpenAICompatibleMessages([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'call-1', function: { name: 'observe', arguments: {} } },
+          { id: 'call-2', function: { name: 'read', arguments: {} } }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call-1',
+        content: 'Captured viewport.',
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            name: 'viewport.png',
+            source: { type: 'data_url', dataUrl: 'data:image/png;base64,AAAA' }
+          }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'call-2', content: 'read output' },
+      { role: 'assistant', content: 'continuing' }
+    ])
+
+    expect(converted.map(({ role }) => role)).toEqual([
+      'assistant',
+      'tool',
+      'tool',
+      'user',
+      'assistant'
+    ])
+    expect(converted[1]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call-1',
+      content: 'Captured viewport.'
+    })
+    expect(converted[3].content).toEqual([
+      { type: 'text', text: 'Visual output from tool call call-1:' },
+      { type: 'text', text: 'viewport.png' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } }
+    ])
+  })
+
   it('normalizes Anthropic thinking, text, partial tool JSON, and cumulative usage', async () => {
     const events = [
       {
@@ -337,7 +384,18 @@ describe('provider streaming adapters', () => {
         content: null,
         tool_calls: [{ id: 'tool-1', function: { name: 'lookup', arguments: { query: 'cuba' } } }]
       },
-      { role: 'tool', tool_call_id: 'tool-1', content: '{"value":1}' }
+      {
+        role: 'tool',
+        tool_call_id: 'tool-1',
+        content: '{"value":1}',
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            source: { type: 'data_url', dataUrl: 'data:image/png;base64,AAAA' }
+          }
+        ]
+      }
     ])
     expect(converted.system).toBe('System policy')
     expect(converted.messages[0].content).toContainEqual(expect.objectContaining({ type: 'image' }))
@@ -345,7 +403,11 @@ describe('provider streaming adapters', () => {
       expect.objectContaining({ type: 'tool_use', id: 'tool-1' })
     )
     expect(converted.messages[2].content).toEqual([
-      expect.objectContaining({ type: 'tool_result', tool_use_id: 'tool-1' })
+      expect.objectContaining({
+        type: 'tool_result',
+        tool_use_id: 'tool-1',
+        content: expect.arrayContaining([expect.objectContaining({ type: 'image' })])
+      })
     ])
   })
 
@@ -413,6 +475,37 @@ describe('provider streaming adapters', () => {
     expect(result).toEqual({ ok: true })
     expect(text(chunks, 'content')).toBe('hello')
     expect(chunks.at(-1)).toMatchObject({ done: true, prompt_eval_count: 2, eval_count: 1 })
+  })
+
+  it('strips data URL prefixes and links Ollama tool images after the tool batch', () => {
+    const converted = toOllamaMessages([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'observe-1', function: { name: 'observe', arguments: {} } }]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'observe-1',
+        content: 'Captured.',
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            source: { type: 'data_url', dataUrl: 'data:image/png;base64,AAAA' }
+          }
+        ]
+      },
+      { role: 'assistant', content: 'done' }
+    ])
+
+    expect(converted.map(({ role }) => role)).toEqual(['assistant', 'tool', 'user', 'assistant'])
+    expect(converted[1]).not.toHaveProperty('images')
+    expect(converted[2]).toMatchObject({
+      role: 'user',
+      content: 'Visual output from tool call observe-1',
+      images: ['AAAA']
+    })
   })
 
   it('surfaces Ollama errors delivered inside a successful NDJSON response', async () => {

@@ -13,13 +13,21 @@ import {
   type ToolRecoveryAction
 } from '../../shared/agentRuntime'
 import { readIncompleteToolInputError } from '../../shared/toolCalls'
-import { abortablePromise } from './abortablePromise'
+import {
+  ToolExecutionPipeline,
+  ToolRuntimeTimeoutError,
+  type ToolExecutionAfterHook,
+  type ToolExecutionAroundHook,
+  type ToolExecutionBeforeHook,
+  type ToolExecutionGuard
+} from './toolExecutionPipeline'
 
 export interface AgentToolExecutionContext {
   runId: string
   conversationId?: string
   workspaceRoot?: string
   signal: AbortSignal
+  onOutput?: (data: { chunk: string; stream: 'stdout' | 'stderr' }) => void
 }
 
 export interface ExecuteAgentToolInput {
@@ -436,6 +444,17 @@ function executionError(
   startedAt: number,
   signal: AbortSignal
 ): ToolExecutionResult {
+  if (error instanceof ToolRuntimeTimeoutError) {
+    return toolExecutionFailed({
+      title,
+      code: 'timeout',
+      message: error.message,
+      retryable: true,
+      recoveryAction: 'retry_later',
+      recovery: 'Reduce the operation scope or request a longer shell timeout when justified.',
+      startedAt
+    })
+  }
   if (error instanceof AgentToolExecutionError) {
     return toolExecutionFailed({
       title,
@@ -473,6 +492,56 @@ function executionError(
  * returns the canonical result envelope.
  */
 export class AgentToolRegistry {
+  private readonly pipeline = new ToolExecutionPipeline()
+  private readonly scheduler = new Map<
+    string,
+    { exclusive: Promise<void>; readers: Set<Promise<unknown>> }
+  >()
+
+  registerGuard(guard: ToolExecutionGuard): () => void {
+    return this.pipeline.registerGuard(guard)
+  }
+
+  registerBeforeExecute(hook: ToolExecutionBeforeHook): () => void {
+    return this.pipeline.registerBefore(hook)
+  }
+
+  registerAroundExecute(hook: ToolExecutionAroundHook): () => void {
+    return this.pipeline.registerAround(hook)
+  }
+
+  registerAfterExecute<T>(hook: ToolExecutionAfterHook<T>): () => void {
+    return this.pipeline.registerAfter(hook)
+  }
+
+  private schedule<T>(
+    runId: string,
+    concurrency: 'parallel' | 'exclusive',
+    body: () => Promise<T>
+  ): Promise<T> {
+    let state = this.scheduler.get(runId)
+    if (!state) {
+      state = { exclusive: Promise.resolve(), readers: new Set() }
+      this.scheduler.set(runId, state)
+    }
+    if (concurrency === 'parallel') {
+      const work = state.exclusive.then(body)
+      state.readers.add(work)
+      void work.then(
+        () => state!.readers.delete(work),
+        () => state!.readers.delete(work)
+      )
+      return work
+    }
+    const predecessors = Promise.allSettled([state.exclusive, ...state.readers])
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    state.exclusive = gate
+    return predecessors.then(body).finally(release)
+  }
+
   async execute(
     input: ExecuteAgentToolInput,
     executor: AgentToolExecutor
@@ -497,10 +566,23 @@ export class AgentToolRegistry {
       })
     }
     try {
-      const value = await abortablePromise(
-        executor(prepared.call.arguments, input.context),
-        input.context.signal,
-        'Tool execution was cancelled'
+      const entry = getAgentToolEntry(input.catalog, prepared.call.name)
+      const requestedShellTimeout =
+        prepared.call.name === 'shell' && prepared.call.arguments.background !== true
+          ? Math.max(1, Math.min(86_400, Number(prepared.call.arguments.timeout) || 30)) * 1_000 +
+            5_000
+          : undefined
+      const value = await this.schedule(
+        input.context.runId,
+        entry?.concurrency ?? 'exclusive',
+        () =>
+          this.pipeline.execute({
+            name: prepared.call.name,
+            arguments: prepared.call.arguments,
+            signal: input.context.signal,
+            timeoutMs: requestedShellTimeout ?? entry?.timeoutMs,
+            body: (signal) => executor(prepared.call.arguments, { ...input.context, signal })
+          })
       )
       return normalizeToolExecutionResult(input.title, value, startedAt, Date.now())
     } catch (error) {

@@ -234,10 +234,8 @@ function pathArgument(args: Record<string, unknown>, key: string): string {
 }
 
 function accessLevelArgument(args: Record<string, unknown>): RequestedAccess {
-  if (args.accessLevel !== 'auto' && args.accessLevel !== 'confirm') {
-    throw new Error('accessLevel must be auto or confirm')
-  }
-  return args.accessLevel
+  // Authorization is host-owned. This field remains only in the internal legacy envelope.
+  return args.accessLevel === 'confirm' ? 'confirm' : 'auto'
 }
 
 /** Convert the model-facing dialect into the single internal mutation protocol. */

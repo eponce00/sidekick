@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentRunChangedEvent,
+  PromptAdmissionItem,
+  ReplacePromptAdmissionsInput,
   StartConversationAgentRunInput
 } from '../../../shared/agentRunApi'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
@@ -35,6 +37,7 @@ describe('useConversationRun', () => {
   let controller: Controller
   let renderedMessages: Message[]
   let listener: ((change: AgentRunChangedEvent) => void) | null
+  let durableAdmissions: PromptAdmissionItem[]
 
   function Harness(): null {
     const [messages, setMessages] = useState<Message[]>([
@@ -63,6 +66,7 @@ describe('useConversationRun', () => {
     container = document.createElement('div')
     root = createRoot(container)
     listener = null
+    durableAdmissions = []
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
@@ -84,6 +88,55 @@ describe('useConversationRun', () => {
           latest: vi.fn(async () => ({ run: null, events: [], pendingInteractions: [] })),
           stop: vi.fn(async () => ({ stopped: true })),
           resolveInteraction: vi.fn(async () => ({ success: true })),
+          admissionsList: vi.fn(async (conversationId: string) => ({
+            pivot:
+              durableAdmissions.find(
+                (item) => item.conversationId === conversationId && item.behavior === 'pivot'
+              ) ?? null,
+            queued: durableAdmissions.filter(
+              (item) => item.conversationId === conversationId && item.behavior === 'queue'
+            )
+          })),
+          admissionsReplace: vi.fn(async (input: ReplacePromptAdmissionsInput) => {
+            const now = Date.now()
+            durableAdmissions = [
+              ...(input.pivot
+                ? [
+                    {
+                      ...input.pivot,
+                      conversationId: input.conversationId,
+                      behavior: 'pivot' as const,
+                      position: 0,
+                      createdAt: now,
+                      updatedAt: now
+                    }
+                  ]
+                : []),
+              ...input.queued.map((item, position) => ({
+                ...item,
+                conversationId: input.conversationId,
+                behavior: 'queue' as const,
+                position,
+                createdAt: now,
+                updatedAt: now
+              }))
+            ]
+            return {
+              pivot: durableAdmissions.find((item) => item.behavior === 'pivot') ?? null,
+              queued: durableAdmissions.filter((item) => item.behavior === 'queue')
+            }
+          }),
+          admissionsTakeNext: vi.fn(async (conversationId: string) => {
+            const candidates = durableAdmissions.filter(
+              (item) => item.conversationId === conversationId
+            )
+            const next =
+              candidates.find((item) => item.behavior === 'pivot') ??
+              candidates.find((item) => item.behavior === 'queue') ??
+              null
+            if (next) durableAdmissions = durableAdmissions.filter((item) => item.id !== next.id)
+            return next
+          }),
           onEvent: (callback: (change: AgentRunChangedEvent) => void) => {
             listener = callback
             return () => {
@@ -126,12 +179,61 @@ describe('useConversationRun', () => {
       listener?.({ event: runEvent(4, 'run.finalized', { persisted: true }) })
       await completion
     })
-    let pending: ReturnType<Controller['finishRun']> = null
-    act(() => {
-      pending = controller.finishRun()
+    let pending: Awaited<ReturnType<Controller['finishRun']>> = null
+    await act(async () => {
+      pending = await controller.finishRun()
     })
     expect(pending).toBeNull()
     expect(controller.isLoading).toBe(false)
+  })
+
+  it('preserves live events that arrive while the durable snapshot is loading', async () => {
+    const snapshotEvent = runEvent(1, 'assistant.delta', { content: 'Hello ' })
+    vi.mocked(window.api.agentRuns.events).mockImplementationOnce(async () => {
+      listener?.({
+        event: runEvent(2, 'assistant.completed', {
+          content: 'Hello from the live stream',
+          toolCalls: []
+        })
+      })
+      return {
+        run: {
+          id: 'run-1',
+          threadId: 'conversation-1',
+          surface: 'conversation',
+          executionMode: 'act',
+          phase: 'streaming',
+          provider: 'ollama',
+          model: 'test',
+          lastSequence: 1,
+          startedAt: 1,
+          updatedAt: 1
+        },
+        events: [snapshotEvent],
+        pendingInteractions: []
+      }
+    })
+    const input: StartConversationAgentRunInput = {
+      id: 'run-1',
+      conversationId: 'conversation-1',
+      assistantMessageId: 'assistant-1',
+      model
+    }
+    let completion!: Promise<void>
+
+    await act(async () => {
+      completion = controller.startRun(input)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(renderedMessages[0].content).toBe('Hello from the live stream')
+
+    await act(async () => {
+      listener?.({ event: runEvent(3, 'run.completed', { phase: 'completed' }) })
+      listener?.({ event: runEvent(4, 'run.finalized', { persisted: true }) })
+      await completion
+    })
   })
 
   it('retains queued messages until the finalized run is consumed', async () => {
@@ -142,11 +244,19 @@ describe('useConversationRun', () => {
       model
     }
     let completion!: Promise<void>
+    const images = [
+      {
+        id: 'image-1',
+        name: 'clipboard.png',
+        mimeType: 'image/png' as const,
+        dataUrl: 'data:image/png;base64,aGVsbG8='
+      }
+    ]
     await act(async () => {
       completion = controller.startRun(input)
       await Promise.resolve()
-      controller.submitDuringRun('first follow-up', 'research')
-      controller.submitDuringRun('second follow-up')
+      await controller.submitDuringRun('first follow-up', 'research', undefined, images)
+      await controller.submitDuringRun('second follow-up')
     })
     await act(async () => {
       listener?.({ event: runEvent(1, 'run.completed', { phase: 'completed' }) })
@@ -154,11 +264,16 @@ describe('useConversationRun', () => {
       await completion
     })
 
-    let pending: ReturnType<Controller['finishRun']> = null
-    act(() => {
-      pending = controller.finishRun()
+    let pending: Awaited<ReturnType<Controller['finishRun']>> = null
+    await act(async () => {
+      pending = await controller.finishRun()
     })
-    expect(pending).toEqual({ content: 'first follow-up', kind: 'queued', mode: 'research' })
+    expect(pending).toEqual({
+      content: 'first follow-up',
+      images,
+      kind: 'queued',
+      mode: 'research'
+    })
     expect(controller.queuedMessages.map(({ content }) => content)).toEqual(['second follow-up'])
   })
 
@@ -172,9 +287,9 @@ describe('useConversationRun', () => {
     await act(async () => {
       void controller.startRun(input)
       await Promise.resolve()
-      controller.submitDuringRun('first')
-      controller.submitDuringRun('second')
-      controller.submitDuringRun('third', 'plan')
+      await controller.submitDuringRun('first')
+      await controller.submitDuringRun('second')
+      await controller.submitDuringRun('third', 'plan')
     })
 
     const [first, second, third] = controller.queuedMessages
@@ -190,8 +305,7 @@ describe('useConversationRun', () => {
     ])
 
     await act(async () => {
-      expect(controller.steerQueuedMessage(second.id)).toBe(true)
-      await Promise.resolve()
+      expect(await controller.steerQueuedMessage(second.id)).toBe(true)
     })
 
     expect(controller.pivotMessage).toMatchObject({ id: second.id, content: 'second, revised' })

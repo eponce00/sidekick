@@ -84,4 +84,71 @@ describe('WorkspaceVerificationService', () => {
     expect(classifyVerificationCommand('node scripts/generate.mjs').mutatesWorkspace).toBe(true)
     expect(classifyVerificationCommand('sed -i.bak s/old/new/ app.ts').mutatesWorkspace).toBe(true)
   })
+
+  it('advances revisions only when a command actually changes workspace files', async () => {
+    await writeFile(join(root, 'app.ts'), 'before\n')
+    const readOnlySnapshot = service.captureCommandWorkspace(root, 'Invoke-WebRequest https://example.com')
+    service.recordCommand(
+      'run-observed',
+      root,
+      'Invoke-WebRequest https://example.com',
+      undefined,
+      { success: true, exitCode: 0, stdout: '200', stderr: '' },
+      Date.now(),
+      readOnlySnapshot
+    )
+    expect(service.currentRevision(root)).toBe(0)
+
+    const mutationSnapshot = service.captureCommandWorkspace(root, 'node scripts/generate.mjs')
+    await writeFile(join(root, 'app.ts'), 'after\n')
+    service.recordCommand(
+      'run-observed',
+      root,
+      'node scripts/generate.mjs',
+      undefined,
+      { success: true, exitCode: 0, stdout: '', stderr: '' },
+      Date.now(),
+      mutationSnapshot
+    )
+    expect(service.currentRevision(root)).toBe(1)
+    expect(service.changedPaths('run-observed', root, 0)).toEqual(['app.ts'])
+  })
+
+  it('labels shell launch failures separately and ignores CLIXML noise', () => {
+    service.recordChanges('run-errors', root, 'workspace_tool', [
+      { path: 'app.ts', kind: 'update' }
+    ])
+    service.recordCommand(
+      'run-errors',
+      root,
+      'npm run build',
+      undefined,
+      {
+        success: false,
+        exitCode: -1,
+        stdout: '',
+        stderr: '',
+        error: 'spawn powershell.exe ENOENT'
+      },
+      Date.now()
+    )
+    service.recordCommand(
+      'run-errors',
+      root,
+      'npm run build',
+      undefined,
+      {
+        success: false,
+        exitCode: 1,
+        stdout: 'npm error code ENOENT',
+        stderr: '#< CLIXML\r\n<Objs Version="1.1.0.1">'
+      },
+      Date.now()
+    )
+
+    expect(service.evidence('run-errors', root).map((item) => item.summary)).toEqual([
+      'Command could not start: spawn powershell.exe ENOENT.',
+      'Build failed: npm error code ENOENT.'
+    ])
+  })
 })

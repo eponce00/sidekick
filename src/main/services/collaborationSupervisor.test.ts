@@ -299,7 +299,7 @@ describe('CollaborationSupervisor', () => {
             timestamp: Date.now() + index,
             payload: {
               toolCallId: `tool-${index}`,
-              name: 'read_workspace_file',
+              name: 'read',
               result: toolExecutionSucceeded({ title: `Read ${index}`, data: { ok: true } })
             }
           })

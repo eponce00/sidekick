@@ -239,16 +239,16 @@ async function confirmSensitiveSettingsChange(
   next: SettingsRecord,
   sender: WebContents
 ): Promise<boolean> {
-  const enablingBypass =
-    normalizePermissionMode(previous.commandPermissionMode) !== 'bypass' &&
-    normalizePermissionMode(next.commandPermissionMode) === 'bypass'
+  const enablingFullAccess =
+    normalizePermissionMode(previous.commandPermissionMode) !== 'full-access' &&
+    normalizePermissionMode(next.commandPermissionMode) === 'full-access'
   const mcpChanged =
     JSON.stringify(previous.mcpServers ?? []) !== JSON.stringify(next.mcpServers ?? [])
-  if (!enablingBypass && !mcpChanged) return true
+  if (!enablingFullAccess && !mcpChanged) return true
 
   const reasons = [
-    enablingBypass
-      ? 'Bypass mode lets approved agent operations run without asking each time.'
+    enablingFullAccess
+      ? 'Full access lets in-scope agent operations run without approval prompts.'
       : null,
     mcpChanged
       ? `MCP connector configuration changed. Local connectors may launch processes; remote connectors communicate with the listed HTTPS endpoint.\n\n${mcpSummary(next.mcpServers)}`

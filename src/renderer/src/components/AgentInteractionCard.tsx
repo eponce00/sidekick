@@ -1,17 +1,22 @@
 import { useMemo, useState } from 'react'
-import { Check, ListChecks, ShieldAlert, X } from 'lucide-react'
+import { Check, ChevronLeft, ChevronRight, ListChecks, Loader2, ShieldAlert, X } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
 
 interface AgentInteractionCardProps {
   interaction: Interaction
-  onResolve: (id: string, response: Record<string, unknown>, cancelled?: boolean) => void
+  onResolve: (
+    id: string,
+    response: Record<string, unknown>,
+    cancelled?: boolean
+  ) => void | Promise<void>
 }
 
 interface QuestionOption {
   label: string
   description?: string
+  recommended?: boolean
 }
 
 interface Question {
@@ -19,7 +24,17 @@ interface Question {
   header?: string
   question: string
   options?: QuestionOption[]
+  multiSelect?: boolean
+  allowOther?: boolean
 }
+
+interface QuestionAnswer {
+  selected: string[]
+  custom: string
+  skipped: boolean
+}
+
+const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '', skipped: false }
 
 function questionsFrom(interaction: Interaction): Question[] {
   if (!Array.isArray(interaction.request.questions)) return []
@@ -38,43 +53,89 @@ export default function AgentInteractionCard({
   onResolve
 }: AgentInteractionCardProps): React.JSX.Element {
   const questions = useMemo(() => questionsFrom(interaction), [interaction])
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({})
+  const [questionIndex, setQuestionIndex] = useState(0)
+  const [showOther, setShowOther] = useState<Record<string, boolean>>({})
   const [planFeedback, setPlanFeedback] = useState('')
   const [showPlanFeedback, setShowPlanFeedback] = useState(false)
   const pending = interaction.status === 'pending'
+  const [permissionSubmission, setPermissionSubmission] = useState<{
+    interactionId: string
+    approved: boolean
+    settled: boolean
+  } | null>(null)
 
   if (interaction.kind === 'permission') {
     const title = String(interaction.request.title || 'Approve this action?')
     const detail = interaction.request.arguments
       ? JSON.stringify(interaction.request.arguments, null, 2).slice(0, 3_000)
       : ''
+    const localSubmission =
+      permissionSubmission?.interactionId === interaction.id ? permissionSubmission : null
+    const displayedDecision = pending
+      ? localSubmission?.approved
+      : interaction.response?.approved === true
+    const resolving = pending && Boolean(localSubmission && !localSubmission.settled)
+    const locallySettled = pending && localSubmission?.settled === true
+    const resolvePermission = async (approved: boolean): Promise<void> => {
+      if (localSubmission) return
+      setPermissionSubmission({ interactionId: interaction.id, approved, settled: false })
+      try {
+        // A denial is a resolved policy decision, not a cancelled interaction.
+        await onResolve(interaction.id, { approved })
+        // The durable event remains authoritative for replay, but a successful IPC response means
+        // the engine accepted the decision. Do not leave the card spinning while projection catches up.
+        setPermissionSubmission({ interactionId: interaction.id, approved, settled: true })
+      } catch {
+        setPermissionSubmission(null)
+      }
+    }
     return (
-      <div className={`agent-interaction agent-interaction-${interaction.status}`}>
+      <div
+        className={`agent-interaction agent-interaction-permission agent-interaction-${resolving ? 'resolving' : locallySettled ? 'resolved' : interaction.status}`}
+      >
         <div className="agent-interaction-heading">
           <ShieldAlert size={14} aria-hidden="true" />
           <span>{title}</span>
         </div>
-        {detail && <pre className="agent-interaction-detail">{detail}</pre>}
-        {pending ? (
+        {detail && pending && !resolving && (
+          <details className="agent-interaction-detail-disclosure">
+            <summary>Review action details</summary>
+            <pre className="agent-interaction-detail">{detail}</pre>
+          </details>
+        )}
+        {pending && !localSubmission ? (
           <div className="agent-interaction-actions">
             <button
               type="button"
               className="agent-interaction-primary"
-              onClick={() => onResolve(interaction.id, { approved: true })}
+              onClick={() => void resolvePermission(true)}
             >
               Approve
             </button>
             <button
               type="button"
-              onClick={() => onResolve(interaction.id, { approved: false }, true)}
+              onClick={() => void resolvePermission(false)}
             >
               Deny
             </button>
           </div>
         ) : (
           <div className="agent-interaction-status">
-            {interaction.response?.approved === true ? <Check size={12} /> : <X size={12} />}
-            {interaction.response?.approved === true ? 'Approved' : 'Denied'}
+            {resolving ? (
+              <Loader2 size={12} className="icon-spin" />
+            ) : displayedDecision ? (
+              <Check size={12} />
+            ) : (
+              <X size={12} />
+            )}
+            {resolving
+              ? displayedDecision
+                ? 'Approving…'
+                : 'Denying…'
+              : displayedDecision
+                ? 'Approved'
+                : 'Denied'}
           </div>
         )}
       </div>
@@ -229,54 +290,117 @@ export default function AgentInteractionCard({
     )
   }
 
-  const complete =
-    questions.length > 0 && questions.every((question) => answers[question.id]?.trim())
+  const currentQuestion = questions[Math.min(questionIndex, Math.max(questions.length - 1, 0))]
+  const currentAnswer = currentQuestion ? answers[currentQuestion.id] ?? EMPTY_ANSWER : EMPTY_ANSWER
+  const hasCurrentAnswer =
+    currentAnswer.skipped || currentAnswer.selected.length > 0 || Boolean(currentAnswer.custom.trim())
+  const atLastQuestion = questionIndex >= questions.length - 1
+  const setQuestionAnswer = (id: string, update: (current: QuestionAnswer) => QuestionAnswer): void => {
+    setAnswers((current) => ({ ...current, [id]: update(current[id] ?? EMPTY_ANSWER) }))
+  }
+  const responseAnswers = (): Record<string, unknown> =>
+    Object.fromEntries(
+      questions.flatMap((question) => {
+        const answer = answers[question.id] ?? EMPTY_ANSWER
+        if (answer.skipped) return []
+        const values = [...answer.selected, ...(answer.custom.trim() ? [answer.custom.trim()] : [])]
+        if (!values.length) return []
+        return [[question.id, question.multiSelect || values.length > 1 ? values : values[0]]]
+      })
+    )
   return (
-    <div className={`agent-interaction agent-interaction-${interaction.status}`}>
-      {questions.map((question) => (
-        <div className="agent-question" key={question.id}>
-          {question.header && <div className="agent-question-header">{question.header}</div>}
-          <div className="agent-question-copy">{question.question}</div>
-          {question.options?.length ? (
+    <div className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}>
+      {pending && questions.length > 1 && (
+        <div className="agent-question-progress">
+          <span>Question {questionIndex + 1} of {questions.length}</span>
+          <span>{questions.map((question, index) => (
+            <i key={question.id} className={index === questionIndex ? 'active' : (answers[question.id] ? 'answered' : '')} />
+          ))}</span>
+        </div>
+      )}
+      {pending && currentQuestion ? (
+        <div className="agent-question" key={currentQuestion.id}>
+          {currentQuestion.header && <div className="agent-question-header">{currentQuestion.header}</div>}
+          <div className="agent-question-copy">{currentQuestion.question}</div>
+          {currentQuestion.options?.length ? (
             <div className="agent-question-options">
-              {question.options.map((option) => (
+              {currentQuestion.options.map((option) => {
+                const selected = currentAnswer.selected.includes(option.label)
+                return (
                 <button
                   type="button"
                   key={option.label}
-                  className={answers[question.id] === option.label ? 'selected' : ''}
-                  disabled={!pending}
-                  onClick={() =>
-                    setAnswers((current) => ({ ...current, [question.id]: option.label }))
-                  }
+                  className={selected ? 'selected' : ''}
+                  aria-pressed={selected}
+                  onClick={() => setQuestionAnswer(currentQuestion.id, (answer) => ({
+                    ...answer,
+                    skipped: false,
+                    selected: currentQuestion.multiSelect
+                      ? (selected ? answer.selected.filter((value) => value !== option.label) : [...answer.selected, option.label])
+                      : [option.label]
+                  }))}
                 >
-                  <span>{option.label}</span>
+                  <span>{option.label}{option.recommended && <em>Recommended</em>}</span>
                   {option.description && <small>{option.description}</small>}
                 </button>
-              ))}
+                )
+              })}
+              {currentQuestion.allowOther !== false && (
+                showOther[currentQuestion.id] ? (
+                  <input
+                    value={currentAnswer.custom}
+                    autoFocus
+                    onChange={(event) => setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false, custom: event.target.value }))}
+                    placeholder="Type another answer"
+                  />
+                ) : (
+                  <button type="button" className="agent-question-other" onClick={() => setShowOther((current) => ({ ...current, [currentQuestion.id]: true }))}>
+                    <span>Something else…</span>
+                  </button>
+                )
+              )}
             </div>
           ) : (
             <input
-              value={answers[question.id] || ''}
-              disabled={!pending}
-              onChange={(event) =>
-                setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
-              }
+              value={currentAnswer.custom}
+              autoFocus
+              onChange={(event) => setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false, custom: event.target.value }))}
               placeholder="Type your answer"
             />
           )}
         </div>
-      ))}
+      ) : null}
       {pending ? (
-        <div className="agent-interaction-actions">
+        <div className="agent-interaction-actions agent-question-navigation">
+          {questionIndex > 0 && (
+            <button type="button" onClick={() => setQuestionIndex((current) => current - 1)}>
+              <ChevronLeft size={13} /> Back
+            </button>
+          )}
+          {currentQuestion && (
+            <button type="button" onClick={() => {
+              setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, selected: [], custom: '', skipped: true }))
+              if (!atLastQuestion) setQuestionIndex((current) => current + 1)
+              else {
+                const response = responseAnswers()
+                delete response[currentQuestion.id]
+                void onResolve(interaction.id, response)
+              }
+            }}>
+              Skip
+            </button>
+          )}
           <button
             type="button"
             className="agent-interaction-primary"
-            disabled={!complete}
-            onClick={() => onResolve(interaction.id, answers)}
+            disabled={!hasCurrentAnswer}
+            onClick={() => atLastQuestion
+              ? onResolve(interaction.id, responseAnswers())
+              : setQuestionIndex((current) => current + 1)}
           >
-            Send answer
+            {atLastQuestion ? 'Send answers' : <>Next <ChevronRight size={13} /></>}
           </button>
-          <button type="button" onClick={() => onResolve(interaction.id, {}, true)}>
+          <button type="button" className="agent-question-cancel" onClick={() => onResolve(interaction.id, {}, true)}>
             Cancel
           </button>
         </div>

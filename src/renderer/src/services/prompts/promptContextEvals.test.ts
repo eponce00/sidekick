@@ -11,13 +11,13 @@ import type { PermissionMode } from '../../../../shared/permissions'
 
 const platformExpectations: Array<[HostPlatform, string]> = [
   ['windows', 'PowerShell'],
-  ['macos', 'macOS; execute_command uses Bash'],
-  ['linux', 'Linux; execute_command uses Bash']
+  ['macos', 'macOS; shell uses Bash'],
+  ['linux', 'Linux; shell uses Bash']
 ]
 const permissionExpectations: Array<[PermissionMode, string]> = [
-  ['always-ask', 'Every sensitive operation requires user approval'],
-  ['agent-decides', 'safe, scoped, reversible work'],
-  ['bypass', 'Sensitive operations run without approval']
+  ['always-ask', 'asks before every host-classified sensitive operation'],
+  ['sensitive-only', 'Safe inspection, ordinary workspace edits'],
+  ['full-access', 'In-scope tools and commands run without approval prompts']
 ]
 
 function compose(platform: HostPlatform, permissionMode: PermissionMode): string {
@@ -47,7 +47,7 @@ function compose(platform: HostPlatform, permissionMode: PermissionMode): string
 
 describe('prompt/context eval matrix', () => {
   it.each(platformExpectations)('renders the %s host profile', (platform, expected) => {
-    const prompt = compose(platform, 'agent-decides')
+    const prompt = compose(platform, 'sensitive-only')
     expect(prompt).toContain(expected)
     if (platform !== 'windows') expect(prompt).toContain('POSIX-style paths')
   })
@@ -57,7 +57,7 @@ describe('prompt/context eval matrix', () => {
   })
 
   it('keeps hierarchy and injection boundaries explicit in every composed run', () => {
-    const prompt = compose('linux', 'agent-decides')
+    const prompt = compose('linux', 'sensitive-only')
     expect(prompt).toContain("system and permission policy; the user's current request")
     expect(prompt).toContain('<project_instructions trust="app-loaded-project-instructions">')
     expect(prompt).toContain('<project_memory trust="untrusted-data">')

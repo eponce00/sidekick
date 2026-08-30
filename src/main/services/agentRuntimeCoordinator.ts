@@ -6,29 +6,24 @@ import type {
   ResolveAgentInteractionInput,
   StartConversationAgentRunInput
 } from '../../shared/agentRunApi'
-import {
-  agentRunUsesPlan,
-  type AgentRunEvent,
-  type AgentRunSnapshot
-} from '../../shared/agentRuntime'
+import type { AgentRunEvent, AgentRunSnapshot } from '../../shared/agentRuntime'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
-import { editingCompatibilityService } from './editingCompatibilityService'
 import type { ProviderInstance } from '../../shared/settings'
-import { providerDefinition } from '../../shared/providerRegistry'
+import type { ProviderSettings } from '../../shared/settings'
+import { providerDefinition, type ProviderKind } from '../../shared/providerRegistry'
 import {
   capabilitiesFromTools,
   createPromptModelProfile,
   PromptComposer
 } from '../../shared/prompts'
-import { projectAgentRunEvents } from '../../shared/agentEventProjection'
 import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { loadStoredSettings } from '../ipc/settings'
-import { createCheckpoint, beginCheckpointCapture, discardCheckpointCapture } from './checkpoints'
+import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
@@ -37,6 +32,7 @@ import {
 } from './conversationRunPreparer'
 import { AgentRunKernel, type AgentKernelRunResult } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
+import { AgentMessageMaterializer } from './agentMessageMaterializer'
 import { AgentToolRuntime } from './agentToolRuntime'
 import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
@@ -46,8 +42,10 @@ import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
 import type { AgentCollaborationToolHandler } from './agentToolRuntime'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { ConversationGoalStore } from './conversationGoalStore'
+import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import type {
   ConversationGoal,
   CreateConversationGoalInput,
@@ -89,31 +87,49 @@ export class AgentRuntimeCoordinator {
   readonly store: AgentRunStore
   readonly kernel: AgentRunKernel
   readonly tools: AgentToolRuntime
+  readonly browser: NativeBrowserSessionService
   readonly goals: ConversationGoalStore
+  private readonly messages: AgentMessageMaterializer
   private readonly mcp = new McpClientManager()
   private readonly commands: CommandService
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()
   private readonly observers = new Map<string, Set<(event: AgentRunEvent) => void>>()
   private readonly publishExternal: (event: AgentRunEvent) => void
+  private readonly settings: () => ProviderSettings
+  private readonly skillAssetsPath: () => string
 
   constructor(
     private readonly db: Database.Database,
     userDataRoot: string,
     publish: (event: AgentRunEvent) => void,
-    publishGoal: (goal: ConversationGoal) => void = () => undefined
+    publishGoal: (goal: ConversationGoal) => void = () => undefined,
+    options: {
+      settings?: () => ProviderSettings
+      skillAssetsPath?: () => string
+    } = {}
   ) {
     this.publishExternal = publish
+    this.settings = options.settings ?? (() => loadStoredSettings() as unknown as ProviderSettings)
+    this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
+    this.messages = new AgentMessageMaterializer(db, this.store)
     this.goals = new ConversationGoalStore(db, publishGoal)
     this.outputs = new ToolOutputStore(join(userDataRoot, 'tool-outputs'))
     this.commands = new CommandService(db, join(userDataRoot, 'command-outputs'))
+    this.browser = new NativeBrowserSessionService({
+      artifactRoot: join(userDataRoot, 'browser-artifacts'),
+      maxTotalSessions: 6
+    })
     this.tools = new AgentToolRuntime(
       db,
       new WorkspaceReadService(),
       this.commands,
       this.outputs,
-      this.mcp
+      this.mcp,
+      undefined,
+      undefined,
+      this.browser
     )
     this.kernel = new AgentRunKernel(this.store, undefined, undefined, (event) =>
       this.publishEvent(event)
@@ -134,37 +150,16 @@ export class AgentRuntimeCoordinator {
       const events = this.store.listEvents(run.id, 0, 10_000)
       const started = events.find((event) => event.type === 'run.started')
       const outputMessageId = String(started?.payload.outputMessageId || '')
+      const latestUserMessage = this.db
+        .prepare(
+          `SELECT id, timestamp FROM messages
+           WHERE conversation_id = ? AND role = 'user' AND timestamp <= ?
+           ORDER BY timestamp DESC, rowid DESC LIMIT 1`
+        )
+        .get(run.threadId, run.startedAt) as { id: string; timestamp: number } | undefined
+      this.persistCompactionFromLedger(run.threadId, events, latestUserMessage)
       if ((run.surface === 'conversation' || run.surface === 'research') && outputMessageId) {
-        const projection = projectAgentRunEvents(events)
-        const content = projection.content.trim()
-          ? `${projection.content}\n\n_Run interrupted before completion._`
-          : 'Run interrupted before completion. You can retry the last message.'
-        this.db
-          .prepare(
-            `INSERT INTO messages
-             (id, conversation_id, role, content, thinking, segments, token_usage, run_mode, timestamp)
-             VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-               content = excluded.content,
-               thinking = excluded.thinking,
-               segments = excluded.segments,
-               token_usage = excluded.token_usage,
-               run_mode = excluded.run_mode`
-          )
-          .run(
-            outputMessageId,
-            run.threadId,
-            content,
-            projection.thinking || null,
-            projection.segments.length ? JSON.stringify(projection.segments) : null,
-            JSON.stringify(projection.tokenUsage),
-            run.surface === 'research'
-              ? 'research'
-              : agentRunUsesPlan(events)
-                ? 'plan'
-                : 'conversation',
-            Date.now()
-          )
+        this.messages.materialize(run.id)
       }
       this.store.appendEvent({
         id: `${run.id}:finalized`,
@@ -179,6 +174,33 @@ export class AgentRuntimeCoordinator {
     }
   }
 
+  private persistCompactionFromLedger(
+    conversationId: string,
+    events: readonly AgentRunEvent[],
+    anchor?: { id: string; timestamp: number }
+  ): boolean {
+    const payload = [...events]
+      .reverse()
+      .find(
+        (event) => event.type === 'compaction.completed' && event.payload.compacted === true
+      )?.payload
+    if (!payload || typeof payload.summary !== 'string' || !anchor) return false
+    new ConversationCompactionStore(this.db).save({
+      conversationId,
+      summary: payload.summary,
+      compactedThroughMessageId: anchor.id,
+      compactedThroughTimestamp: anchor.timestamp,
+      originalTokens: Number(payload.originalTokens || 0),
+      summaryTokens: Number(payload.summaryTokens || 0),
+      messagesCompacted: Number(payload.messagesCompacted || 0),
+      strategy: String(payload.strategy || 'deterministic') as 'model' | 'deterministic',
+      promptVersion: String(payload.promptVersion || 'legacy'),
+      provider: String(payload.provider || 'unknown') as ProviderKind,
+      model: String(payload.model || 'unknown')
+    })
+    return true
+  }
+
   private publishEvent(event: AgentRunEvent): void {
     this.publishExternal(event)
     for (const observer of this.observers.get(event.runId) ?? []) observer(event)
@@ -188,7 +210,7 @@ export class AgentRuntimeCoordinator {
     input: CollaborationKernelRunInput
   ): Promise<AgentKernelRunResult> {
     if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
-    const currentSettings = loadStoredSettings()
+    const currentSettings = this.settings()
     const configuredThreshold = Number(currentSettings.autoCompactThreshold)
     const configuredInstances = Array.isArray(currentSettings.providerInstances)
       ? (currentSettings.providerInstances as ProviderInstance[])
@@ -202,13 +224,6 @@ export class AgentRuntimeCoordinator {
       surface: 'collaboration',
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: true,
-      editingTarget: {
-        providerKind: target.providerKind,
-        model: target.model,
-        dialect: target.editingDialect,
-        upstreamModel: target.upstreamModel,
-        calibration: target.editingCalibration
-      },
       collaboration: input.collaboration,
       instructionScopeId: input.id,
       onWorkspaceWillMutate: input.onWorkspaceWillMutate
@@ -246,7 +261,7 @@ export class AgentRuntimeCoordinator {
       }).format(new Date()),
       toolRoundLimit: normalizeToolCallLimit(input.maxToolRounds ?? currentSettings.toolCallLimit),
       activeSkillIds: [],
-      skillAssetsPath: getBundledSkillAssetsPath()
+      skillAssetsPath: this.skillAssetsPath()
     })
     const messages: ProviderChatMessage[] = [
       {
@@ -283,21 +298,6 @@ export class AgentRuntimeCoordinator {
         permissionMode,
         toolRouter: session.router,
         verificationController: session.verificationController,
-        editingRecovery: {
-          currentDialect: session.editingDialect,
-          recover: async (signal) => {
-            const result = await editingCompatibilityService.recover(
-              target,
-              session.editingDialect(),
-              signal
-            )
-            if (result.switched && result.to) {
-              session.setEditingDialect(result.to)
-              if (result.calibration) target.editingCalibration = result.calibration
-            }
-            return result
-          }
-        },
         beforeModelStep: input.beforeModelStep,
         contextManager: new AgentContextManager({
           target: { ...target, contextLength },
@@ -341,10 +341,13 @@ export class AgentRuntimeCoordinator {
       })
       await capture.promise
     }
-    const prepared = await new ConversationRunPreparer(this.db, this.tools, this.goals).prepare(
-      input,
-      ensureCapture
-    )
+    const prepared = await new ConversationRunPreparer(
+      this.db,
+      this.tools,
+      this.goals,
+      this.settings,
+      this.skillAssetsPath
+    ).prepare(input, ensureCapture)
     workspaceRoot = prepared.workspaceRoot
     this.activeConversations.set(input.id, { input, prepared, capture })
     const run = this.kernel.start(prepared.kernelInput)
@@ -353,6 +356,36 @@ export class AgentRuntimeCoordinator {
       .then((result) => this.finalizeConversation(input.id, result))
       .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
     return this.store.get(input.id)!
+  }
+
+  private async finishCheckpointCapture(
+    active: ActiveConversationRun,
+    phase: AgentKernelRunResult['phase'] | 'interrupted'
+  ): Promise<string | null> {
+    if (!active.capture.promise || !active.prepared.workspaceRoot) return null
+    const captureId = await active.capture.promise
+    if (!captureId) return null
+
+    const requestLabel = checkpointLabel(active.prepared.latestUserMessage?.content || '')
+    const phaseLabel = phase === 'completed' ? requestLabel : `${requestLabel} (${phase})`
+    const checkpoint = await createCheckpoint(
+      active.prepared.workspaceRoot,
+      phaseLabel,
+      captureId
+    ).catch((error) => {
+      console.warn('[History] Could not finish run checkpoint:', error)
+      return null
+    })
+    if (!checkpoint) return null
+
+    const outcomeLabel = checkpointFallbackTitleFromPaths(checkpoint.changedPaths)
+    const storedLabel = phase === 'completed' ? outcomeLabel : `${outcomeLabel} (${phase})`
+    new CheckpointTitleStore(this.db).recordCreated(
+      active.prepared.workspaceRoot,
+      checkpoint.hash,
+      storedLabel
+    )
+    return checkpoint.hash
   }
 
   private async finalizeUnexpectedFailure(runId: string, error: unknown): Promise<void> {
@@ -364,9 +397,20 @@ export class AgentRuntimeCoordinator {
         this.goals.pause(goal.id, 'The goal run failed during finalization. Resume to retry.')
       }
     }
-    if (active?.capture.promise) {
-      const captureId = await active.capture.promise
-      if (captureId) discardCheckpointCapture(captureId)
+    const checkpointHash = active ? await this.finishCheckpointCapture(active, 'interrupted') : null
+    if (active && checkpointHash) {
+      this.db
+        .prepare(
+          `UPDATE messages
+           SET checkpoint_hash = ?, checkpoint_workspace_root = ?
+           WHERE id = ? AND conversation_id = ?`
+        )
+        .run(
+          checkpointHash,
+          active.prepared.workspaceRoot,
+          active.input.assistantMessageId,
+          active.input.conversationId
+        )
     }
     clearWorkspaceInstructionScope(runId)
     this.activeConversations.delete(runId)
@@ -376,6 +420,7 @@ export class AgentRuntimeCoordinator {
         runId,
         type: 'run.finalized',
         payload: {
+          checkpointHash,
           persisted: false,
           error: error instanceof Error ? error.message : String(error)
         }
@@ -388,69 +433,15 @@ export class AgentRuntimeCoordinator {
     const active = this.activeConversations.get(runId)
     if (!active) return
     try {
-      const events = this.store.listEvents(runId, 0, 10_000)
-      const projection = projectAgentRunEvents(events)
-      const segments = projection.segments
-      const usage = projection.tokenUsage
-      let checkpointHash: string | null = null
-      if (active.capture.promise && active.prepared.workspaceRoot) {
-        const captureId = await active.capture.promise
-        if (captureId) {
-          if (result.phase === 'completed') {
-            const label = checkpointLabel(active.prepared.latestUserMessage?.content || '')
-            const checkpoint = await createCheckpoint(
-              active.prepared.workspaceRoot,
-              label,
-              captureId
-            ).catch((error) => {
-              console.warn('[History] Could not create run checkpoint:', error)
-              return null
-            })
-            checkpointHash = checkpoint?.hash ?? null
-            if (checkpointHash) {
-              new CheckpointTitleStore(this.db).recordCreated(
-                active.prepared.workspaceRoot,
-                checkpointHash,
-                label
-              )
-            }
-          } else discardCheckpointCapture(captureId)
-        }
-      }
-      const content =
-        result.content ||
-        (result.phase === 'failed' ? `Error: ${result.error || 'Agent run failed'}` : '')
-      this.db
-        .prepare(
-          `INSERT INTO messages
-           (id, conversation_id, role, content, thinking, segments, token_usage,
-            checkpoint_hash, checkpoint_workspace_root, run_mode, timestamp)
-           VALUES (?, ?, 'agent', ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             content = excluded.content,
-             thinking = excluded.thinking,
-             segments = excluded.segments,
-             token_usage = excluded.token_usage,
-             checkpoint_hash = excluded.checkpoint_hash,
-             checkpoint_workspace_root = excluded.checkpoint_workspace_root,
-             run_mode = excluded.run_mode`
-        )
-        .run(
-          active.input.assistantMessageId,
-          active.input.conversationId,
-          content,
-          result.thinking || null,
-          segments.length ? JSON.stringify(segments) : null,
-          JSON.stringify(usage),
-          checkpointHash,
-          checkpointHash ? active.prepared.workspaceRoot : null,
-          active.input.mode === 'research'
-            ? 'research'
-            : agentRunUsesPlan(events)
-              ? 'plan'
-              : 'conversation',
-          Date.now()
-        )
+      const events = this.store.listAllEvents(runId)
+      const checkpointHash = await this.finishCheckpointCapture(active, result.phase)
+      this.messages.materialize(runId, {
+        checkpointHash,
+        checkpointWorkspaceRoot: active.prepared.workspaceRoot,
+        fallbackContent:
+          result.content ||
+          (result.phase === 'failed' ? `Error: ${result.error || 'Agent run failed'}` : '')
+      })
       this.db
         .prepare('UPDATE conversations SET active_skills = ?, updated_at = ? WHERE id = ?')
         .run(
@@ -458,8 +449,18 @@ export class AgentRuntimeCoordinator {
           Date.now(),
           active.input.conversationId
         )
+      const compactionPersisted = this.persistCompactionFromLedger(
+        active.input.conversationId,
+        events,
+        active.prepared.latestUserMessage
+          ? {
+              id: active.prepared.latestUserMessage.id,
+              timestamp: active.prepared.latestUserMessage.timestamp
+            }
+          : undefined
+      )
       const compaction = active.prepared.latestCompaction()
-      if (compaction && active.prepared.latestUserMessage) {
+      if (!compactionPersisted && compaction && active.prepared.latestUserMessage) {
         new ConversationCompactionStore(this.db).save({
           conversationId: active.input.conversationId,
           summary: compaction.summary,
@@ -521,22 +522,11 @@ export class AgentRuntimeCoordinator {
     const id = randomUUID()
     const parentInput = parent.prepared.kernelInput
     const target = parentInput.request.target
-    const parentEditingTarget =
-      parentInput.catalog instanceof Function
-        ? parentInput.catalog().editingTarget
-        : parentInput.catalog.editingTarget
     const session = await this.tools.createSession({
       runId: id,
       surface: 'subagent',
       workspaceRoot: parentContext.workspaceRoot,
       webSearchEnabled: true,
-      editingTarget: parentEditingTarget ?? {
-        providerKind: target.providerKind,
-        model: target.model,
-        dialect: target.editingDialect,
-        upstreamModel: target.upstreamModel,
-        calibration: target.editingCalibration
-      },
       instructionScopeId: id,
       onWorkspaceWillMutate: parent.prepared.onWorkspaceWillMutate
     })
@@ -564,20 +554,6 @@ export class AgentRuntimeCoordinator {
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
       verificationController: session.verificationController,
-      editingRecovery: parentContext.workspaceRoot
-        ? {
-            currentDialect: session.editingDialect,
-            recover: async (signal) => {
-              const result = await editingCompatibilityService.recover(
-                target,
-                session.editingDialect(),
-                signal
-              )
-              if (result.switched && result.to) session.setEditingDialect(result.to)
-              return result
-            }
-          }
-        : undefined,
       contextManager: new AgentContextManager({
         target,
         contextLength,
@@ -640,19 +616,36 @@ export class AgentRuntimeCoordinator {
   }
 
   events(runId: string, afterSequence = 0): AgentRunEventsResult {
+    const run = this.store.get(runId)
+    const events = this.store.listEvents(runId, afterSequence, 10_000)
+    const nextSequence = events.at(-1)?.sequence ?? afterSequence
     return {
-      run: this.store.get(runId),
-      events: this.store.listEvents(runId, afterSequence, 10_000),
-      pendingInteractions: this.store.listPendingInteractions(runId)
+      run,
+      events,
+      pendingInteractions: this.store.listPendingInteractions(runId),
+      journal: {
+        version: 1,
+        afterSequence,
+        nextSequence,
+        hasMore: Boolean(run && nextSequence < run.lastSequence)
+      }
     }
   }
 
   latest(threadId: string): AgentRunEventsResult {
     const run = this.store.latest(threadId)
+    const events = run ? this.store.listEvents(run.id, 0, 10_000) : []
+    const nextSequence = events.at(-1)?.sequence ?? 0
     return {
       run,
-      events: run ? this.store.listEvents(run.id, 0, 10_000) : [],
-      pendingInteractions: run ? this.store.listPendingInteractions(run.id) : []
+      events,
+      pendingInteractions: run ? this.store.listPendingInteractions(run.id) : [],
+      journal: {
+        version: 1,
+        afterSequence: 0,
+        nextSequence,
+        hasMore: Boolean(run && nextSequence < run.lastSequence)
+      }
     }
   }
 

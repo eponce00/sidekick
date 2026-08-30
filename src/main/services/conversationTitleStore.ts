@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import {
   CONVERSATION_TITLE_BACKFILL_RETRY_MS,
   CONVERSATION_TITLE_VERSION,
+  conversationTitleVersionForSource,
   type CompleteConversationTitleBackfillInput,
   type ConversationTitleBackfillCandidate,
   type ConversationTitleBackfillIdentity,
@@ -56,6 +57,7 @@ export class ConversationTitleStore {
          WHERE c.title_source IN (${ELIGIBLE_SOURCES})
            AND c.title_version < ?
            AND (
+             c.title_backfill_attempted_version < ? OR
              c.title_backfill_attempted_at IS NULL OR
              c.title_backfill_attempted_at <= ?
            )
@@ -73,6 +75,7 @@ export class ConversationTitleStore {
       )
       .all(
         CONVERSATION_TITLE_VERSION,
+        CONVERSATION_TITLE_VERSION,
         retryBefore,
         safeLimit
       ) as ConversationTitleBackfillCandidate[]
@@ -83,20 +86,25 @@ export class ConversationTitleStore {
     const result = this.db
       .prepare(
         `UPDATE conversations
-         SET title_backfill_attempted_at = ?, title_backfill_error = NULL
+         SET title_backfill_attempted_at = ?,
+             title_backfill_attempted_version = ?,
+             title_backfill_error = NULL
          WHERE id = ?
            AND title = ?
            AND title_source IN (${ELIGIBLE_SOURCES})
            AND title_version < ?
            AND (
+             title_backfill_attempted_version < ? OR
              title_backfill_attempted_at IS NULL OR
              title_backfill_attempted_at <= ?
            )`
       )
       .run(
         now,
+        CONVERSATION_TITLE_VERSION,
         input.id,
         input.expectedTitle,
+        CONVERSATION_TITLE_VERSION,
         CONVERSATION_TITLE_VERSION,
         now - CONVERSATION_TITLE_BACKFILL_RETRY_MS
       )
@@ -104,11 +112,12 @@ export class ConversationTitleStore {
   }
 
   complete(input: CompleteConversationTitleBackfillInput): boolean {
+    const source = input.source === 'fallback' ? 'fallback' : 'generated'
     const result = this.db
       .prepare(
         `UPDATE conversations
          SET title = ?,
-             title_source = 'generated',
+             title_source = ?,
              title_version = ?,
              title_backfill_error = NULL
          WHERE id = ?
@@ -118,7 +127,8 @@ export class ConversationTitleStore {
       )
       .run(
         input.title,
-        CONVERSATION_TITLE_VERSION,
+        source,
+        conversationTitleVersionForSource(source),
         input.id,
         input.expectedTitle,
         CONVERSATION_TITLE_VERSION

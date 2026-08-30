@@ -10,6 +10,7 @@ import ContextIndicator from './components/ContextIndicator'
 import GroupChatPanel from './components/GroupChatPanel'
 import GroupSetupDialog from './components/GroupSetupDialog'
 import { AppUpdateToast } from './components/AppUpdateControls'
+import { ForkConversationDialog } from './components/ForkConversationDialog'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
 import { normalizePermissionMode } from '../../shared/permissions'
@@ -58,7 +59,8 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   notificationSoundEnabled: false,
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
-  commandPermissionMode: 'agent-decides',
+  commandPermissionMode: 'full-access',
+  contentFontSize: 14,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -104,6 +106,7 @@ const previewGroupSessionId = getPreviewGroupSessionId()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
+    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -128,6 +131,12 @@ function App(): React.JSX.Element {
   const [projects, setProjects] = useState<Project[]>([])
   const [groups, setGroups] = useState<CollaborationGroup[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+  const [pendingFork, setPendingFork] = useState<{
+    conversationId: string
+    messageId?: string
+  } | null>(null)
+  const [forkBusy, setForkBusy] = useState(false)
+  const [forkError, setForkError] = useState<string | null>(null)
   const [currentGroupId, setCurrentGroupId] = useState<string | null>(previewGroupId)
   const [currentGroupSessionId, setCurrentGroupSessionId] = useState<string | null>(
     previewGroupSessionId
@@ -154,6 +163,20 @@ function App(): React.JSX.Element {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     return window.localStorage.getItem('sidebarCollapsed') === 'true'
   })
+  const [isCompactLayout, setIsCompactLayout] = useState(
+    () => window.matchMedia('(max-width: 760px)').matches
+  )
+  const [isCompactActivityOpen, setIsCompactActivityOpen] = useState(false)
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 760px)')
+    const update = (): void => setIsCompactLayout(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
+  const effectiveActivityPanelPinned = isCompactLayout
+    ? isCompactActivityOpen
+    : isActivityPanelPinned
+  const effectiveSidebarCollapsed = isSidebarCollapsed || (isCompactLayout && isCompactActivityOpen)
   const [isWindowMaximized, setIsWindowMaximized] = useState(false)
   const [isWindowFullScreen, setIsWindowFullScreen] = useState(false)
   useEffect(() => {
@@ -351,6 +374,15 @@ function App(): React.JSX.Element {
       applyAccentPalette(settings.accentPalette, theme)
     }
   }, [theme, settings.accentPalette])
+
+  useEffect(() => {
+    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14)))
+    document.documentElement.style.setProperty('--content-text', `${size}px`)
+    document.documentElement.style.setProperty(
+      '--content-text-secondary',
+      `${Math.max(11, size - (size > 14 ? 2 : 1))}px`
+    )
+  }, [settings.contentFontSize])
 
   useEffect(() => {
     window.localStorage.setItem('sidebarCollapsed', String(isSidebarCollapsed))
@@ -629,13 +661,47 @@ function App(): React.JSX.Element {
     )
   }
 
-  const handleForkConversation = async (id: string): Promise<void> => {
+  const handleConversationTitleApplied = (id: string, title: string): void => {
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === id
+          ? {
+              ...conversation,
+              title,
+              title_source: 'generated',
+              title_version: conversationTitleVersionForSource('generated')
+            }
+          : conversation
+      )
+    )
+  }
+
+  const handleForkConversation = (id: string, messageId?: string): void => {
     if (busyConversationIds.has(id)) return
-    const forked = await window.api.conversations.fork(id)
-    await activateProjectWorkspace(forked.project_id)
-    setConversations((prev) => [forked, ...prev])
-    setCurrentConversationId(forked.id)
-    void refreshProjects()
+    setForkError(null)
+    setPendingFork({ conversationId: id, messageId })
+  }
+
+  const executeForkConversation = async (workspaceMode: 'current' | 'worktree'): Promise<void> => {
+    if (!pendingFork || forkBusy || busyConversationIds.has(pendingFork.conversationId)) return
+    setForkBusy(true)
+    setForkError(null)
+    try {
+      const forked = await window.api.conversations.fork({
+        sourceId: pendingFork.conversationId,
+        messageId: pendingFork.messageId,
+        workspaceMode
+      })
+      await window.api.workspace.setPath(forked.home_workspace_root ?? null)
+      setProjects(await window.api.projects.list())
+      setConversations((prev) => [forked, ...prev])
+      setCurrentConversationId(forked.id)
+      setPendingFork(null)
+    } catch (error) {
+      setForkError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setForkBusy(false)
+    }
   }
 
   const handleConversationCreated = async (id: string, title: string): Promise<void> => {
@@ -645,6 +711,7 @@ function App(): React.JSX.Element {
       created_at: Date.now(),
       updated_at: Date.now(),
       project_id: null,
+      is_pinned: 0,
       title_source: 'fallback',
       title_version: conversationTitleVersionForSource('fallback'),
       sidebar_order: -1,
@@ -732,6 +799,11 @@ function App(): React.JSX.Element {
     await refreshProjects()
   }
 
+  const handleToggleConversationPin = async (id: string, pinned: boolean): Promise<void> => {
+    const result = await window.api.conversations.setPinned(id, pinned)
+    if (result.success) setConversations(await window.api.conversations.list())
+  }
+
   const handleRemoveProject = async (id: string): Promise<void> => {
     if (
       conversations.some(
@@ -801,15 +873,15 @@ function App(): React.JSX.Element {
     model: selectedPinnedModel,
     fastModelName: fastModelName !== currentModelName ? fastModelName : undefined,
     isAgentBusy: hasActiveConversationRuns,
-    onTitleApplied: (conversationId, title) => {
+    onTitleApplied: (conversationId, title, source = 'generated') => {
       setConversations((current) =>
         current.map((conversation) =>
           conversation.id === conversationId
             ? {
                 ...conversation,
                 title,
-                title_source: 'generated',
-                title_version: conversationTitleVersionForSource('generated')
+                title_source: source,
+                title_version: conversationTitleVersionForSource(source)
               }
             : conversation
         )
@@ -886,7 +958,11 @@ function App(): React.JSX.Element {
           projectName={panelProject?.name ?? null}
           onOpenProject={() => handleOpenProject(true)}
           onUpdateConversationTitle={handleUpdateConversationTitle}
+          onConversationTitleApplied={handleConversationTitleApplied}
           onConversationCreated={handleConversationCreated}
+          onForkConversation={(messageId) => {
+            if (panelConversationId) handleForkConversation(panelConversationId, messageId)
+          }}
           selectedModel={selectedModel}
           planningModelId={settings.planningModelId}
           onModelChange={handleModelChange}
@@ -908,7 +984,7 @@ function App(): React.JSX.Element {
           autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
           focusChainEnabled={settings.focusChainEnabled ?? true}
           toolCallLimit={settings.toolCallLimit ?? DEFAULT_TOOL_CALL_LIMIT}
-          commandPermissionMode={settings.commandPermissionMode ?? 'agent-decides'}
+          commandPermissionMode={settings.commandPermissionMode ?? 'full-access'}
           userLocation={userLocation}
           onResponseComplete={(message) =>
             handleConversationResponseComplete(panelConversationId, message)
@@ -961,7 +1037,9 @@ function App(): React.JSX.Element {
   }
 
   return (
-    <div className={`app platform-${platform}${isWindowFullScreen ? ' window-fullscreen' : ''}`}>
+    <div
+      className={`app platform-${platform}${isWindowFullScreen ? ' window-fullscreen' : ''}${isSettingsOpen ? ' settings-open' : ''}`}
+    >
       <div className="title-bar">
         <div className="title-bar-left">
           {appIconPath && <img src={appIconPath} alt="SideKick" className="title-bar-icon" />}
@@ -1054,7 +1132,7 @@ function App(): React.JSX.Element {
           currentConversationId={currentConversationId}
           currentGroupId={currentGroupId}
           currentGroupSessionId={currentGroupSessionId}
-          isCollapsed={isSidebarCollapsed}
+          isCollapsed={effectiveSidebarCollapsed}
           busyConversationIds={busyConversationIds}
           unreadConversationIds={unreadConversationIds}
           onSelectConversation={handleSelectConversation}
@@ -1062,7 +1140,14 @@ function App(): React.JSX.Element {
           onSelectGroupSession={(groupId, sessionId) =>
             void handleSelectGroupSession(groupId, sessionId)
           }
-          onToggleCollapsed={() => setIsSidebarCollapsed((prev) => !prev)}
+          onToggleCollapsed={() => {
+            if (isCompactLayout && effectiveSidebarCollapsed) {
+              setIsCompactActivityOpen(false)
+              setIsSidebarCollapsed(false)
+              return
+            }
+            setIsSidebarCollapsed((prev) => !prev)
+          }}
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
           onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
@@ -1075,6 +1160,7 @@ function App(): React.JSX.Element {
           onRenameGroupSession={(id, title) => void handleRenameGroupSession(id, title)}
           onMoveConversation={(input) => void handleMoveConversation(input)}
           onRenameProject={(id, name) => void handleRenameProject(id, name)}
+          onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
         />
@@ -1113,8 +1199,21 @@ function App(): React.JSX.Element {
         </div>
         {!currentGroupId && (
           <ActivityPanel
-            isPinned={isActivityPanelPinned}
-            onTogglePin={() => setIsActivityPanelPinned((prev) => !prev)}
+            isPinned={effectiveActivityPanelPinned}
+            conversationId={currentConversationId}
+            onTogglePin={() => {
+              if (isCompactLayout) {
+                setIsCompactActivityOpen((prev) => {
+                  const next = !prev
+                  if (next) setIsSidebarCollapsed(true)
+                  return next
+                })
+                return
+              }
+              setIsActivityPanelPinned((prev) => {
+                return !prev
+              })
+            }}
             focusChainTodos={
               currentConversationId
                 ? focusChainTodosByConversation[currentConversationId] || []
@@ -1144,6 +1243,23 @@ function App(): React.JSX.Element {
         selectedModelId={selectedModel}
         onCancel={() => setIsGroupSetupOpen(false)}
         onCreate={handleCreateGroup}
+      />
+
+      <ForkConversationDialog
+        isOpen={pendingFork !== null}
+        canUseWorktree={Boolean(
+          pendingFork &&
+          conversations.find((conversation) => conversation.id === pendingFork.conversationId)
+            ?.project_id
+        )}
+        busy={forkBusy}
+        error={forkError}
+        onChoose={(mode) => void executeForkConversation(mode)}
+        onCancel={() => {
+          if (forkBusy) return
+          setPendingFork(null)
+          setForkError(null)
+        }}
       />
 
       <AppUpdateToast />

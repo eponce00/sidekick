@@ -86,7 +86,7 @@ describe('projectGroupAgentConversation', () => {
         toolCalls: [
           {
             id: 'call',
-            function: { name: 'execute_command', arguments: { command: 'npm test' } }
+            function: { name: 'shell', arguments: { command: 'npm test' } }
           }
         ],
         toolCallId: null,
@@ -106,7 +106,7 @@ describe('projectGroupAgentConversation', () => {
         toolCalls: [],
         toolCallId: 'call',
         metadata: {
-          toolName: 'execute_command',
+          toolName: 'shell',
           title: 'Run tests',
           success: true,
           args: { command: 'npm test' }

@@ -1,0 +1,126 @@
+.fork-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--modal-overlay);
+}
+
+.fork-dialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+}
+
+.fork-dialog-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.fork-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+}
+
+.fork-dialog-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+}
+
+.fork-dialog-header p,
+.fork-dialog-note {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.fork-dialog-header > button {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.fork-dialog-header > button:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.fork-dialog-options {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.fork-dialog-options > button {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-3);
+  align-items: start;
+  padding: 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fork-dialog-options > button:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--surface-2));
+}
+
+.fork-dialog-options > button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.fork-dialog-options strong,
+.fork-dialog-options small {
+  display: block;
+}
+
+.fork-dialog-options strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.fork-dialog-options small {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.fork-dialog-note {
+  margin-top: var(--space-3);
+}
+
+.fork-dialog-error {
+  margin-top: var(--space-3);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  font-size: 12px;
+}

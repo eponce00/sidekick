@@ -33,7 +33,7 @@ class WorkspaceMutationPlanningError extends Error {
 }
 
 export interface WorkspaceMutationExecutionOptions {
-  /** Versions returned by read_workspace_file during this agent run. */
+  /** Versions returned by the canonical read tool during this agent run. */
   expectedVersions?: Readonly<Record<string, string>>
   /** Require a matching receipt before changing or deleting an existing file. */
   requireReadReceipt?: boolean

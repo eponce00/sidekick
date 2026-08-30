@@ -30,7 +30,7 @@ function access(value: unknown, fallback: RequestedAccess): RequestedAccess {
 
 function operationKind(name: string): PermissionOperationKind {
   if (name.startsWith('mcp__')) return 'mcp'
-  if (name === 'execute_command' || name === 'cancel_background_task') return 'command'
+  if (name === 'shell' || name === 'cancel_background_task') return 'command'
   if (name.startsWith('browser_')) return 'browser'
   if (name.includes('checkpoint')) return 'checkpoint'
   return 'workspace'

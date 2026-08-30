@@ -3,6 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { splitMarkdownRenderBlocks } from '../utils/markdownStreaming'
 import { MessageMarkdown } from './MessageMarkdown'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -173,5 +174,44 @@ describe('MessageMarkdown rich media', () => {
       )
     })
     expect(container.querySelector('code')?.textContent).toContain('const answer = 42')
+  })
+
+  it('keeps fenced code together while splitting stable streamed blocks', () => {
+    expect(
+      splitMarkdownRenderBlocks(
+        'First paragraph.\n\n```ts\nconst x = 1\n\nconst y = 2\n```\n\nTail'
+      )
+    ).toEqual(['First paragraph.\n\n', '```ts\nconst x = 1\n\nconst y = 2\n```\n\n', 'Tail'])
+  })
+
+  it('renders block code with a language label and copy control', async () => {
+    await act(async () => {
+      root.render(<MessageMarkdown content={'```typescript\nconst answer = 42\n```'} />)
+    })
+    expect(container.querySelector('.markdown-code-language')?.textContent).toBe('typescript')
+    expect(container.querySelector('[aria-label="Copy code"]')).not.toBeNull()
+  })
+
+  it('resolves clickable inline filenames through the workspace reference API', async () => {
+    const openFileReference = vi.fn(async () => ({
+      ok: true,
+      status: 'opened' as const,
+      path: 'C:\\project\\src\\main.js'
+    }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        ...window.api,
+        workspace: { ...window.api?.workspace, openFileReference }
+      }
+    })
+    await act(async () => {
+      root.render(<MessageMarkdown content="Open `main.js`." workspaceRoot={'C:\\project'} />)
+    })
+
+    await act(async () => {
+      ;(container.querySelector('.markdown-inline-file') as HTMLElement).click()
+    })
+    expect(openFileReference).toHaveBeenCalledWith('main.js', 'C:\\project')
   })
 })

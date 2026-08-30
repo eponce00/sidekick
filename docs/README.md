@@ -14,6 +14,7 @@ behavior, and the development guide when testing or publishing it.
 - [Research](user-guide/RESEARCH.md) — run evidence-backed web research through the normal agent runtime.
 - [Collaboration](user-guide/COLLABORATION.md) — coordinate two independent project agents in one group.
 - [Search](user-guide/SEARCH.md) — understand web search, image search, and page retrieval.
+- [Visual browser](user-guide/BROWSER.md) — inspect, interact with, and verify pages in the native browser.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 
 ## Architecture

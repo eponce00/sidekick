@@ -182,7 +182,7 @@ export class ToolOutputStore {
     const hint =
       `\n\n[Output truncated: ${bounded.originalBytes - bounded.returnedBytes} bytes omitted; ` +
       `approximately ${bounded.originalEstimatedTokens - bounded.returnedEstimatedTokens} tokens omitted. ` +
-      `Full output handle: ${handle}. Use read_tool_output with an offset and max_bytes.]`
+      `Full output handle: ${handle}. Use tool_output with an offset and max_bytes.]`
     return {
       content: bounded.content + hint,
       output: {

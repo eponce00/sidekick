@@ -5,13 +5,15 @@ import {
   describeProviderHealth,
   offlineProviderHealth,
   onlineProviderHealth,
-  providerHealthErrorMessage
+  providerHealthErrorMessage,
+  unknownProviderHealth
 } from './providerHealth'
 
 describe('provider health', () => {
   const now = 1_000_000
 
   it('treats a missing durable result as unknown', () => {
+    expect(unknownProviderHealth()).toEqual({ status: 'unknown' })
     expect(describeProviderHealth(undefined, now)).toMatchObject({
       state: 'unknown',
       label: 'Not checked'

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { CheckpointTitleStore } from './checkpointTitleStore'
+import { CHECKPOINT_TITLE_VERSION } from '../../shared/checkpointTitles'
 
 describe('CheckpointTitleStore', () => {
   let db: Database.Database
@@ -37,7 +38,7 @@ describe('CheckpointTitleStore', () => {
         hash,
         message: 'Refine landing page design',
         titleSource: 'generated',
-        titleVersion: 1
+        titleVersion: CHECKPOINT_TITLE_VERSION
       })
     ])
   })

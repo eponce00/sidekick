@@ -117,4 +117,24 @@ describe('useCheckpointTitleBackfill', () => {
     expect(onTitleApplied).toHaveBeenCalledWith(checkpoint.hash, 'Refine landing page styling')
     expect(window.api.workspace.renameCheckpoint).toBeUndefined()
   })
+
+  it('replaces a meta title from a weak model with a deterministic diff label', async () => {
+    getDiff.mockResolvedValue({
+      ok: true,
+      diff: 'diff --git a/cuba-population/index.html b/cuba-population/index.html'
+    })
+    titleMocks.generate.mockImplementation(async (config: TitleGenerationConfig, hash: string) => {
+      await config.onUpdateTitle(hash, 'The user wants me to create an imperative')
+      return 'The user wants me to create an imperative'
+    })
+
+    await act(async () => root.render(<Harness />))
+    await act(async () => vi.advanceTimersByTimeAsync(4_000))
+
+    expect(complete).toHaveBeenCalledOnce()
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Update Cuba population' })
+    )
+    expect(onTitleApplied).toHaveBeenCalledWith(checkpoint.hash, 'Update Cuba population')
+  })
 })

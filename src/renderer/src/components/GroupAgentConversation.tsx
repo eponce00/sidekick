@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Brain, FileText, FolderOpen, MessageCircle, Plus, Square } from 'lucide-react'
+import { FileText, FolderOpen, MessageCircle, Plus, Square, StickyNote } from 'lucide-react'
 import type {
   CollaborationAgentSession,
   CollaborationAgentSessionMessage,
@@ -484,12 +484,12 @@ export default function GroupAgentConversation({
                     }}
                   >
                     <span className="features-menu-item-icon">
-                      <Brain size={16} />
+                      <StickyNote size={16} />
                     </span>
                     <span className="features-menu-item-content">
-                      <span className="features-menu-item-label">Project memory</span>
+                      <span className="features-menu-item-label">Shared project notes</span>
                       <span className="features-menu-item-description">
-                        Edit durable agent notes
+                        Context included in every chat for this project
                       </span>
                     </span>
                   </button>
@@ -505,13 +505,13 @@ export default function GroupAgentConversation({
                       <FileText size={16} />
                     </span>
                     <span className="features-menu-item-content">
-                      <span className="features-menu-item-label">Project instructions</span>
+                      <span className="features-menu-item-label">Instruction files (AGENTS.md)</span>
                       <span className="features-menu-item-description">
                         {instructionStatus.error
                           ? 'Could not load safely'
                           : instructionStatus.sources.length
-                            ? `${instructionStatus.sources.length} source${instructionStatus.sources.length === 1 ? '' : 's'} loaded${instructionStatus.truncated ? ' · truncated' : ''}`
-                            : 'No instruction files found'}
+                            ? `${instructionStatus.sources.length} file${instructionStatus.sources.length === 1 ? '' : 's'} loaded automatically${instructionStatus.truncated ? ' · truncated' : ''}`
+                            : 'No AGENTS.md or SideKick rules loaded'}
                       </span>
                     </span>
                   </div>

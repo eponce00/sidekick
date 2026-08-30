@@ -115,7 +115,7 @@ test(
           `${connector} connector`
         )
       }
-      await page.getByRole('button', { name: 'Close settings' }).click()
+      await page.getByRole('button', { name: 'Back to app' }).click()
 
       await page.getByRole('textbox', { name: 'Search conversations' }).fill('New Conversation')
       await waitForVisible(

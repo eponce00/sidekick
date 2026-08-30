@@ -40,7 +40,8 @@ Goals are a control plane over the existing agent runtime, not another provider 
   is complete or execute the continuation loop.
 
 The goal plan reuses `manage_todo_list`: writes remain per-run for audit while the latest goal plan
-is also copied into durable goal state and displayed in the Tasks panel.
+is also copied into durable goal state. The compact goal row above the composer exposes its current
+status and progress without introducing a separate Tasks navigation surface.
 
 ## Continuation and steering
 

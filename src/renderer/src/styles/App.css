@@ -82,6 +82,8 @@
   --text-base: 14px;
   --text-lg: 16px;
   --text-xl: 18px;
+  --content-text: 14px;
+  --content-text-secondary: 13px;
   --leading: 1.5;
 
   /* — Motion — */
@@ -307,6 +309,25 @@ select {
   -webkit-app-region: no-drag;
 }
 
+.app.settings-open .title-bar {
+  position: relative;
+  z-index: 1001;
+  background: var(--app-bg);
+}
+
+.app.settings-open .title-bar-left,
+.app.settings-open .title-bar-actions {
+  visibility: hidden;
+}
+
+.app.settings-open .settings-overlay {
+  top: 42px;
+}
+
+.platform-macos.settings-open .settings-overlay {
+  top: 44px;
+}
+
 .window-control {
   display: flex;
   align-items: center;
@@ -383,6 +404,10 @@ select {
   flex: 1;
   display: flex;
   overflow: hidden;
+}
+
+.conversation-panel-stack {
+  position: relative;
 }
 
 .conversation-panel-slot[hidden] {

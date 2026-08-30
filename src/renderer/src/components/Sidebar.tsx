@@ -6,7 +6,7 @@ import {
   FolderInput,
   FolderOpen,
   FolderPlus,
-  GitFork,
+  GitBranch,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
@@ -51,6 +51,7 @@ interface SidebarProps {
   onRenameGroupSession: (id: string, title: string) => void
   onMoveConversation: (input: MoveConversationInput) => void
   onRenameProject: (id: string, name: string) => void
+  onToggleConversationPin: (id: string, pinned: boolean) => void
   onToggleProjectPin: (id: string, pinned: boolean) => void
   onRemoveProject: (id: string) => void
 }
@@ -81,6 +82,7 @@ function Sidebar({
   onRenameGroupSession,
   onMoveConversation,
   onRenameProject,
+  onToggleConversationPin,
   onToggleProjectPin,
   onRemoveProject
 }: SidebarProps): React.JSX.Element {
@@ -446,6 +448,17 @@ function Sidebar({
                   <button
                     type="button"
                     role="menuitem"
+                    onClick={() => {
+                      setOpenActionsMenu(null)
+                      onToggleConversationPin(conversation.id, !conversation.is_pinned)
+                    }}
+                  >
+                    {conversation.is_pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                    {conversation.is_pinned ? 'Unpin chat' : 'Pin chat'}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
                     disabled={isConversationBusy}
                     onClick={() => {
                       setOpenActionsMenu(null)
@@ -463,7 +476,7 @@ function Sidebar({
                       onForkConversation(conversation.id)
                     }}
                   >
-                    <GitFork size={13} strokeWidth={1.8} /> Fork chat
+                    <GitBranch size={13} strokeWidth={1.8} /> Fork chat
                   </button>
                 </div>
               )}

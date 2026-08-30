@@ -31,7 +31,7 @@ describe('ToolOutputStore', () => {
     const original = 'x'.repeat(8_000)
     const bounded = await store.apply(original, { maxBytes: 1_024, maxLines: 2_000 })
     expect(bounded.output.truncated).toBe(true)
-    expect(bounded.content).toContain('read_tool_output')
+    expect(bounded.content).toContain('tool_output')
 
     const handle = bounded.output.fullOutputHandle!
     const first = await store.read(handle, 0, 2_000)
@@ -64,6 +64,6 @@ describe('ToolOutputStore', () => {
     expect(bounded.output.originalEstimatedTokens).toBeGreaterThan(10_000)
     expect(bounded.output.returnedEstimatedTokens).toBeLessThanOrEqual(1_024)
     expect(bounded.content).toContain('tokens omitted')
-    expect(bounded.content).toContain('read_tool_output')
+    expect(bounded.content).toContain('tool_output')
   })
 })

@@ -4,7 +4,7 @@ import { mkdtemp, realpath, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import { CommandService } from './commandService'
+import { CommandService, projectRelativeCommandCwd, shellChildEnvironment } from './commandService'
 
 const cleanup: Array<() => Promise<void> | void> = []
 
@@ -40,6 +40,29 @@ async function setup(): Promise<{ root: string; service: CommandService; db: Dat
 }
 
 describe('CommandService', () => {
+  it('scrubs ambient credentials and injects managed workspace paths', () => {
+    const environment = shellChildEnvironment(
+      {
+        PATH: 'bin',
+        OPENAI_API_KEY: 'secret',
+        GITHUB_TOKEN: 'secret',
+        ORDINARY_SETTING: 'visible'
+      },
+      'C:\\workspace',
+      'C:\\scratch'
+    )
+
+    expect(environment).toMatchObject({
+      PATH: 'bin',
+      ORDINARY_SETTING: 'visible',
+      WORKSPACE_FOLDER: 'C:\\workspace',
+      SIDEKICK_WORKSPACE: 'C:\\workspace',
+      SIDEKICK_SCRATCH: 'C:\\scratch'
+    })
+    expect(environment).not.toHaveProperty('OPENAI_API_KEY')
+    expect(environment).not.toHaveProperty('GITHUB_TOKEN')
+  })
+
   it('executes foreground commands within the project', async () => {
     const { root, service } = await setup()
     const result = await service.execute({
@@ -48,6 +71,21 @@ describe('CommandService', () => {
       command: process.platform === 'win32' ? 'Write-Output $PWD.Path' : 'pwd',
       workspaceRoot: root
     })
+    expect('success' in result && result.success).toBe(true)
+    expect('stdout' in result && result.stdout.trim()).toBe(await realpath(root))
+  })
+
+  it('accepts an absolute cwd when it resolves inside the active project', async () => {
+    const { root, service } = await setup()
+    const result = await service.execute({
+      runId: 'run-absolute-cwd',
+      title: 'Print directory',
+      command: process.platform === 'win32' ? 'Write-Output $PWD.Path' : 'pwd',
+      workspaceRoot: root,
+      cwd: root
+    })
+
+    expect(projectRelativeCommandCwd(root, root)).toBe('')
     expect('success' in result && result.success).toBe(true)
     expect('stdout' in result && result.stdout.trim()).toBe(await realpath(root))
   })
@@ -83,6 +121,6 @@ describe('CommandService', () => {
         workspaceRoot: root,
         cwd: '..'
       })
-    ).rejects.toThrow(/outside/i)
+    ).rejects.toThrow(/outside|escapes/i)
   })
 })

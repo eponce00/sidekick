@@ -1,5 +1,6 @@
-import { ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
+import { join } from 'path'
 import { getDb } from './state'
 import { resolveKnownWorkspace } from './workspaceUtils'
 import { ConversationCompactionStore } from '../services/conversationCompactionStore'
@@ -14,6 +15,10 @@ import {
   type ConversationTitleUpdateOptions,
   type FailConversationTitleBackfillInput
 } from '../../shared/conversationTitles'
+import { validateMessageImages } from '../../shared/messageImages'
+import { validateMessageContextAttachments } from '../../shared/messageContextAttachments'
+import type { ForkConversationInput } from '../../shared/projects'
+import { ManagedWorktreeService } from '../services/managedWorktreeService'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -31,10 +36,11 @@ export function registerDatabaseHandlers(): void {
   const db = getDb()
   const compactions = new ConversationCompactionStore(db)
   const conversationTitles = new ConversationTitleStore(db)
+  const worktrees = new ManagedWorktreeService(db, join(app.getPath('userData'), 'worktrees'))
 
   ipcMain.handle('conversations:list', async () => {
     const stmt = db.prepare(
-      'SELECT * FROM conversations ORDER BY sidebar_order ASC, updated_at DESC'
+      'SELECT * FROM conversations ORDER BY is_pinned DESC, sidebar_order ASC, updated_at DESC'
     )
     return stmt.all()
   })
@@ -42,7 +48,9 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle('conversations:search', async (_, query: string) => {
     const normalized = query.trim()
     if (!normalized) {
-      return db.prepare('SELECT * FROM conversations ORDER BY updated_at DESC').all()
+      return db
+        .prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, updated_at DESC')
+        .all()
     }
     const pattern = `%${normalized.replace(/[\\%_]/g, '\\$&')}%`
     return db
@@ -51,7 +59,7 @@ export function registerDatabaseHandlers(): void {
          FROM conversations c
          LEFT JOIN messages m ON m.conversation_id = c.id
          WHERE c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\'
-         ORDER BY c.updated_at DESC
+         ORDER BY c.is_pinned DESC, c.updated_at DESC
          LIMIT 100`
       )
       .all(pattern, pattern)
@@ -101,6 +109,7 @@ export function registerDatabaseHandlers(): void {
         created_at: now,
         updated_at: now,
         project_id: normalizedProjectId,
+        is_pinned: 0,
         title_source: source,
         title_version: titleVersion,
         sidebar_order: placement.sidebar_order,
@@ -112,7 +121,16 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
-  ipcMain.handle('conversations:fork', async (_, sourceId: string, timestamp?: number) => {
+  ipcMain.handle('conversations:fork', async (_, input: ForkConversationInput) => {
+    if (
+      !input ||
+      typeof input.sourceId !== 'string' ||
+      !['current', 'worktree'].includes(input.workspaceMode) ||
+      (input.messageId !== undefined && typeof input.messageId !== 'string')
+    ) {
+      throw new Error('Invalid conversation fork request')
+    }
+    const sourceId = input.sourceId
     const source = db
       .prepare(
         `SELECT title, project_id, home_workspace_root, home_project_name
@@ -128,6 +146,26 @@ export function registerDatabaseHandlers(): void {
       | undefined
     if (!source) throw new Error('Conversation not found')
 
+    const boundary = input.messageId
+      ? (db
+          .prepare('SELECT id, timestamp FROM messages WHERE id = ? AND conversation_id = ?')
+          .get(input.messageId, sourceId) as { id: string; timestamp: number } | undefined)
+      : undefined
+    if (input.messageId && !boundary) throw new Error('Fork message not found in conversation')
+
+    let targetProjectId = source.project_id
+    let targetWorkspaceRoot = source.home_workspace_root
+    let targetProjectName = source.home_project_name
+    let createdWorktreeProjectId: string | null = null
+    if (input.workspaceMode === 'worktree') {
+      if (!source.project_id) throw new Error('An isolated fork requires a project')
+      const project = await worktrees.create(source.project_id, source.title)
+      createdWorktreeProjectId = project.id
+      targetProjectId = project.id
+      targetWorkspaceRoot = project.folder_path
+      targetProjectName = project.name
+    }
+
     const id = randomUUID()
     const now = Date.now()
     const title = `${source.title} (fork)`
@@ -136,75 +174,94 @@ export function registerDatabaseHandlers(): void {
         `SELECT COALESCE(MIN(sidebar_order), 0) - 1 AS sidebar_order
          FROM conversations WHERE project_id IS ?`
       )
-      .get(source.project_id) as { sidebar_order: number }
-    const rows = db
+      .get(targetProjectId) as { sidebar_order: number }
+    const allRows = db
       .prepare(
         `SELECT * FROM messages
-         WHERE conversation_id = ? AND (? IS NULL OR timestamp <= ?)
+         WHERE conversation_id = ?
          ORDER BY timestamp ASC`
       )
-      .all(sourceId, timestamp ?? null, timestamp ?? null) as Record<string, unknown>[]
+      .all(sourceId) as Record<string, unknown>[]
+    const boundaryIndex = boundary
+      ? allRows.findIndex((row) => String(row.id) === boundary.id)
+      : allRows.length - 1
+    const rows = boundary ? allRows.slice(0, boundaryIndex + 1) : allRows
 
-    db.transaction(() => {
-      db.prepare(
-        `INSERT INTO conversations
+    try {
+      db.transaction(() => {
+        db.prepare(
+          `INSERT INTO conversations
          (id, title, created_at, updated_at, project_id, title_source, title_version,
-          sidebar_order, project_context_version, home_workspace_root, home_project_name)
-         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?)`
-      ).run(
-        id,
-        title,
-        now,
-        now,
-        source.project_id,
-        conversationTitleVersionForSource('fork'),
-        placement.sidebar_order,
-        source.home_workspace_root,
-        source.home_project_name
-      )
-      const insert = db.prepare(
-        `INSERT INTO messages
-         (id, conversation_id, role, content, thinking, segments, token_usage,
-          checkpoint_hash, checkpoint_workspace_root, run_mode, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      const messageIdMap = new Map<string, string>()
-      for (const row of rows) {
-        const copiedMessageId = randomUUID()
-        messageIdMap.set(String(row.id), copiedMessageId)
-        insert.run(
-          copiedMessageId,
+          sidebar_order, project_context_version, home_workspace_root, home_project_name,
+          forked_from_conversation_id, forked_from_message_id)
+         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?)`
+        ).run(
           id,
-          row.role,
-          row.content,
-          row.thinking ?? null,
-          row.segments ?? null,
-          row.token_usage ?? null,
-          row.checkpoint_hash ?? null,
-          row.checkpoint_workspace_root ?? null,
-          row.run_mode === 'research'
-            ? 'research'
-            : row.run_mode === 'plan'
-              ? 'plan'
-              : 'conversation',
-          row.timestamp
+          title,
+          now,
+          now,
+          targetProjectId,
+          conversationTitleVersionForSource('fork'),
+          placement.sidebar_order,
+          targetWorkspaceRoot,
+          targetProjectName,
+          sourceId,
+          boundary?.id ?? null
         )
+        const insert = db.prepare(
+          `INSERT INTO messages
+         (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
+          checkpoint_hash, checkpoint_workspace_root, run_mode, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        const messageIdMap = new Map<string, string>()
+        for (const row of rows) {
+          const copiedMessageId = randomUUID()
+          messageIdMap.set(String(row.id), copiedMessageId)
+          insert.run(
+            copiedMessageId,
+            id,
+            row.role,
+            row.content,
+            row.thinking ?? null,
+            row.segments ?? null,
+            row.images ?? null,
+            row.attachments ?? null,
+            row.token_usage ?? null,
+            row.checkpoint_hash ?? null,
+            row.checkpoint_workspace_root ?? null,
+            row.run_mode === 'research'
+              ? 'research'
+              : row.run_mode === 'plan'
+                ? 'plan'
+                : 'conversation',
+            row.timestamp
+          )
+        }
+        compactions.copyLatestForFork(sourceId, id, messageIdMap, boundary?.timestamp)
+      })()
+    } catch (error) {
+      if (createdWorktreeProjectId) {
+        await worktrees.discardFreshProject(createdWorktreeProjectId)
       }
-      compactions.copyLatestForFork(sourceId, id, messageIdMap, timestamp)
-    })()
+      throw error
+    }
 
     return {
       id,
       title,
       created_at: now,
       updated_at: now,
-      project_id: source.project_id,
+      project_id: targetProjectId,
+      is_pinned: 0,
       title_source: 'fork',
       title_version: conversationTitleVersionForSource('fork'),
       sidebar_order: placement.sidebar_order,
       project_context_version: 0,
-      home_workspace_root: source.home_workspace_root,
-      home_project_name: source.home_project_name,
+      home_workspace_root: targetWorkspaceRoot,
+      home_project_name: targetProjectName,
+      forked_from_conversation_id: sourceId,
+      forked_from_message_id: boundary?.id ?? null,
       unread_completion_at: null
     }
   })
@@ -214,6 +271,16 @@ export function registerDatabaseHandlers(): void {
       .prepare('UPDATE conversations SET unread_completion_at = NULL WHERE id = ?')
       .run(id)
     return { success: result.changes === 1 }
+  })
+
+  ipcMain.handle('conversations:setPinned', async (_, id: string, pinned: boolean) => {
+    if (typeof id !== 'string' || !id || typeof pinned !== 'boolean') {
+      throw new Error('Invalid conversation pin request')
+    }
+    const result = db
+      .prepare('UPDATE conversations SET is_pinned = ? WHERE id = ?')
+      .run(pinned ? 1 : 0, id)
+    return { success: result.changes > 0 }
   })
 
   ipcMain.handle(
@@ -265,7 +332,8 @@ export function registerDatabaseHandlers(): void {
         !validBackfillIdentity(input) ||
         typeof input.title !== 'string' ||
         !input.title.trim() ||
-        input.title.length > 500
+        input.title.length > 500 ||
+        (input.source !== undefined && input.source !== 'generated' && input.source !== 'fallback')
       ) {
         throw new Error('Invalid completed title backfill')
       }
@@ -314,11 +382,21 @@ export function registerDatabaseHandlers(): void {
     const rows = stmt.all(conversationId) as Record<string, unknown>[]
     const runUsage = loadContextUsageByOutputMessage(db, conversationId)
     return rows.map((row) => {
-      const { token_usage, checkpoint_hash, checkpoint_workspace_root, run_mode, ...rest } =
-        row as Record<string, unknown>
+      const {
+        token_usage,
+        images,
+        attachments,
+        checkpoint_hash,
+        checkpoint_workspace_root,
+        run_mode,
+        run_id,
+        ...rest
+      } = row as Record<string, unknown>
       return {
         ...rest,
         segments: typeof row.segments === 'string' ? JSON.parse(row.segments) : undefined,
+        images: typeof images === 'string' ? JSON.parse(images) : undefined,
+        attachments: typeof attachments === 'string' ? JSON.parse(attachments) : undefined,
         tokenUsage: (() => {
           const persisted =
             typeof token_usage === 'string'
@@ -331,6 +409,7 @@ export function registerDatabaseHandlers(): void {
         checkpointHash: typeof checkpoint_hash === 'string' ? checkpoint_hash : undefined,
         checkpointWorkspaceRoot:
           typeof checkpoint_workspace_root === 'string' ? checkpoint_workspace_root : undefined,
+        runId: typeof run_id === 'string' ? run_id : undefined,
         runMode:
           run_mode === 'research' ? 'research' : run_mode === 'plan' ? 'plan' : 'conversation'
       }
@@ -383,11 +462,15 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle('conversations:saveMessage', async (_, message: Record<string, unknown>) => {
     const stmt = db.prepare(
       `INSERT INTO messages
-       (id, conversation_id, role, content, thinking, segments, token_usage,
+       (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
         checkpoint_hash, checkpoint_workspace_root, run_mode, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
+    const images = validateMessageImages(message.images)
+    const imagesJson = images.length ? JSON.stringify(images) : null
+    const attachments = validateMessageContextAttachments(message.attachments)
+    const attachmentsJson = attachments.length ? JSON.stringify(attachments) : null
     const tokenUsageJson = message.tokenUsage ? JSON.stringify(message.tokenUsage) : null
     stmt.run(
       message.id,
@@ -396,6 +479,8 @@ export function registerDatabaseHandlers(): void {
       message.content,
       message.thinking || null,
       segmentsJson,
+      imagesJson,
+      attachmentsJson,
       tokenUsageJson,
       message.checkpointHash || null,
       message.checkpointWorkspaceRoot || null,
@@ -419,16 +504,22 @@ export function registerDatabaseHandlers(): void {
       | undefined
     const stmt = db.prepare(
       `UPDATE messages
-       SET content = ?, thinking = ?, segments = ?, token_usage = ?, checkpoint_hash = ?,
+       SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?, checkpoint_hash = ?,
            checkpoint_workspace_root = ?, timestamp = ?
        WHERE id = ?`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
+    const images = validateMessageImages(message.images)
+    const imagesJson = images.length ? JSON.stringify(images) : null
+    const attachments = validateMessageContextAttachments(message.attachments)
+    const attachmentsJson = attachments.length ? JSON.stringify(attachments) : null
     const tokenUsageJson = message.tokenUsage ? JSON.stringify(message.tokenUsage) : null
     stmt.run(
       message.content,
       message.thinking || null,
       segmentsJson,
+      imagesJson,
+      attachmentsJson,
       tokenUsageJson,
       message.checkpointHash || null,
       message.checkpointWorkspaceRoot || null,

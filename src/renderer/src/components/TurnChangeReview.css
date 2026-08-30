@@ -1,0 +1,111 @@
+.turn-change-review {
+  margin: 12px 0 16px;
+  overflow: hidden;
+  border: 1px solid var(--surface-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-1) 90%, var(--surface-2));
+}
+
+.turn-change-review-header,
+.turn-change-file-row {
+  display: flex;
+  align-items: center;
+}
+
+.turn-change-review-header {
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.turn-change-review-header > span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.turn-change-review-stats,
+.turn-change-file-stats {
+  display: inline-flex;
+  gap: 7px;
+  font: 500 11px/1 var(--font-mono);
+}
+
+.turn-change-review-stats strong,
+.turn-change-file-stats strong {
+  color: var(--color-success);
+}
+.turn-change-review-stats em,
+.turn-change-file-stats em {
+  color: var(--color-error);
+  font-style: normal;
+}
+
+.turn-change-file + .turn-change-file {
+  border-top: 1px solid var(--surface-3);
+}
+.turn-change-file-row {
+  min-height: 36px;
+  padding: 0 8px 0 5px;
+  gap: 8px;
+}
+.turn-change-file-toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 8px 4px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.turn-change-file-toggle svg {
+  flex: none;
+  transition: transform 140ms ease;
+}
+.turn-change-file-toggle svg.expanded {
+  transform: rotate(90deg);
+}
+.turn-change-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 12px/1.3 var(--font-mono);
+}
+.turn-change-kind {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.turn-change-kind.is-create {
+  color: var(--color-success);
+}
+.turn-change-kind.is-delete {
+  color: var(--color-error);
+}
+.turn-change-open {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.turn-change-open:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+.turn-change-file > .rich-diff-block {
+  margin: 0;
+  border-width: 1px 0 0;
+  border-radius: 0;
+}

@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { ConversationTitleStore } from './conversationTitleStore'
+import { CONVERSATION_TITLE_VERSION } from '../../shared/conversationTitles'
 
 describe('ConversationTitleStore', () => {
   let db: Database.Database
@@ -36,8 +37,16 @@ describe('ConversationTitleStore', () => {
 
   it('returns only eligible rows with small conversation excerpts', () => {
     insertConversation('fallback', 'Question for fallback', 'fallback', 0, 300)
-    insertConversation('manual', 'My chosen title', 'user', 1, 400)
-    insertConversation('generated', 'Generated title', 'generated', 1, 500)
+    insertConversation('manual', 'My chosen title', 'user', CONVERSATION_TITLE_VERSION - 1, 400)
+    insertConversation('fork', 'Forked investigation', 'fork', CONVERSATION_TITLE_VERSION - 1, 450)
+    insertConversation(
+      'preserved',
+      'Legacy title retained by user',
+      'preserved',
+      CONVERSATION_TITLE_VERSION - 1,
+      475
+    )
+    insertConversation('generated', 'Generated title', 'generated', CONVERSATION_TITLE_VERSION, 500)
     db.prepare(
       `INSERT INTO messages (id, conversation_id, role, content, timestamp)
        VALUES ('fallback-agent', 'fallback', 'agent', 'A useful answer', 3)`
@@ -66,11 +75,44 @@ describe('ConversationTitleStore', () => {
   })
 
   it('can revisit SideKick-generated titles after a future prompt-version upgrade', () => {
-    insertConversation('generated-old', 'Older generated title', 'generated', 0)
+    insertConversation(
+      'generated-old',
+      'Older generated title',
+      'generated',
+      CONVERSATION_TITLE_VERSION - 1
+    )
 
     expect(store.listCandidates()).toEqual([
-      expect.objectContaining({ id: 'generated-old', titleSource: 'generated', titleVersion: 0 })
+      expect.objectContaining({
+        id: 'generated-old',
+        titleSource: 'generated',
+        titleVersion: CONVERSATION_TITLE_VERSION - 1
+      })
     ])
+  })
+
+  it('retries an old algorithm attempt immediately after a version upgrade', () => {
+    insertConversation(
+      'generated-old',
+      'The user wants me to create a 2-5',
+      'generated',
+      CONVERSATION_TITLE_VERSION - 1
+    )
+    db.prepare(
+      `UPDATE conversations
+       SET title_backfill_attempted_at = ?, title_backfill_attempted_version = ?
+       WHERE id = 'generated-old'`
+    ).run(now, CONVERSATION_TITLE_VERSION - 1)
+
+    expect(store.listCandidates()).toEqual([
+      expect.objectContaining({ id: 'generated-old', title: 'The user wants me to create a 2-5' })
+    ])
+    expect(
+      store.claim({
+        id: 'generated-old',
+        expectedTitle: 'The user wants me to create a 2-5'
+      })
+    ).toBe(true)
   })
 
   it('does not overwrite a title changed after the worker claimed it', () => {
@@ -79,9 +121,9 @@ describe('ConversationTitleStore', () => {
     expect(store.claim(identity)).toBe(true)
     db.prepare(
       `UPDATE conversations
-       SET title = 'Manual name', title_source = 'user', title_version = 1
+       SET title = 'Manual name', title_source = 'user', title_version = ?
        WHERE id = 'fallback'`
-    ).run()
+    ).run(CONVERSATION_TITLE_VERSION)
 
     expect(store.complete({ ...identity, title: 'Generated name' })).toBe(false)
     expect(
@@ -105,9 +147,45 @@ describe('ConversationTitleStore', () => {
     ).toEqual({
       title: 'Focused generated title',
       title_source: 'generated',
-      title_version: 1,
+      title_version: CONVERSATION_TITLE_VERSION,
       updated_at: 1234
     })
+  })
+
+  it('can atomically apply a deterministic fallback without suppressing future retries', () => {
+    insertConversation('bad-generated', 'The user wants me to create a 2-5', 'generated', 1, 1234)
+    const identity = {
+      id: 'bad-generated',
+      expectedTitle: 'The user wants me to create a 2-5'
+    }
+
+    expect(store.claim(identity)).toBe(true)
+    expect(
+      store.complete({
+        ...identity,
+        title: 'Find a good quality TTS engine',
+        source: 'fallback'
+      })
+    ).toBe(true)
+    expect(
+      db
+        .prepare(
+          `SELECT title, title_source, title_version, title_backfill_attempted_version
+           FROM conversations WHERE id = 'bad-generated'`
+        )
+        .get()
+    ).toEqual({
+      title: 'Find a good quality TTS engine',
+      title_source: 'fallback',
+      title_version: 0,
+      title_backfill_attempted_version: CONVERSATION_TITLE_VERSION
+    })
+    expect(store.listCandidates()).toHaveLength(0)
+
+    now += 6 * 60 * 60 * 1000 + 1
+    expect(store.listCandidates()).toEqual([
+      expect.objectContaining({ id: 'bad-generated', titleSource: 'fallback' })
+    ])
   })
 
   it('marks ambiguous legacy titles as preserved', () => {

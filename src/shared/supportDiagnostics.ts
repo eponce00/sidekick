@@ -25,7 +25,7 @@ export interface SupportDiagnostics {
     databaseOpen: boolean
   }
   configuration: {
-    permissionMode: 'always-ask' | 'agent-decides' | 'bypass' | 'unknown'
+    permissionMode: 'always-ask' | 'sensitive-only' | 'full-access' | 'unknown'
     providers: {
       total: number
       enabled: number

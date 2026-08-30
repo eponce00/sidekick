@@ -60,7 +60,7 @@ function executionFor(
     callId: call.id,
     title: result ? toolTitle(result) : name.replaceAll('_', ' '),
     name,
-    command: name === 'execute_command' && typeof input.command === 'string' ? input.command : name,
+    command: name === 'shell' && typeof input.command === 'string' ? input.command : name,
     input,
     status: result ? (success ? 'success' : 'error') : 'running',
     output: result && success ? result.content : undefined,
@@ -327,7 +327,7 @@ export function projectGroupAgentConversation(input: {
       return {
         id: result.toolCallId || result.id,
         type:
-          name === 'execute_command'
+          name === 'shell'
             ? 'command'
             : name.includes('workspace_file') || isWorkspaceMutationTool(name)
               ? 'file'
@@ -335,7 +335,7 @@ export function projectGroupAgentConversation(input: {
         status: success ? 'success' : 'error',
         title: toolTitle(result),
         command:
-          name === 'execute_command' && typeof args.command === 'string' ? args.command : undefined,
+          name === 'shell' && typeof args.command === 'string' ? args.command : undefined,
         output: success ? result.content : undefined,
         error: success ? undefined : result.content,
         startTime: result.createdAt,

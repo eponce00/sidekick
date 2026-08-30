@@ -49,6 +49,7 @@ export interface OpenAICompatibleChatResult {
     }> | null
   }
   promptTokens: number
+  cachedPromptTokens?: number
   completionTokens: number
   reasoningTokens: number
   finishReason: string
@@ -154,6 +155,7 @@ export async function completeOpenAICompatibleChat(
       usage?: {
         prompt_tokens?: number
         completion_tokens?: number
+        prompt_tokens_details?: { cached_tokens?: number }
         completion_tokens_details?: { reasoning_tokens?: number }
       }
     }
@@ -229,6 +231,9 @@ export async function completeOpenAICompatibleChat(
           tool_calls: toolCalls
         },
         promptTokens: data.usage?.prompt_tokens || 0,
+        ...(typeof data.usage?.prompt_tokens_details?.cached_tokens === 'number'
+          ? { cachedPromptTokens: data.usage.prompt_tokens_details.cached_tokens }
+          : {}),
         completionTokens: data.usage?.completion_tokens || 0,
         reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens || 0,
         finishReason: choice.finish_reason || 'stop'

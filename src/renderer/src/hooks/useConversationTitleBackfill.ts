@@ -1,7 +1,10 @@
 import { providerKindForTransport } from '../../../shared/providerRegistry'
 import type { PinnedModel } from '../types/models.types'
 import { FAST_MODEL_CONTEXT_LIMIT } from '../utils/chatHelpers'
-import { generateConversationTitle } from '../utils/chatPanelHelpers'
+import {
+  createFallbackConversationTitle,
+  generateConversationTitle
+} from '../utils/chatPanelHelpers'
 import { createConversationTitleMessages } from '../services/prompts'
 import { decideConversationTitleBackfill } from '../services/titles/conversationTitleBackfill'
 import { useIdleBackgroundJob, type IdleBackgroundJobResult } from './useIdleBackgroundJob'
@@ -11,7 +14,7 @@ interface ConversationTitleBackfillOptions {
   model?: PinnedModel
   fastModelName?: string
   isAgentBusy: boolean
-  onTitleApplied: (conversationId: string, title: string) => void
+  onTitleApplied: (conversationId: string, title: string, source?: 'generated' | 'fallback') => void
 }
 
 /** Improves app-owned conversation titles through the shared idle maintenance scheduler. */
@@ -74,10 +77,20 @@ export function useConversationTitleBackfill(options: ConversationTitleBackfillO
         )
 
         if (!generatedTitle && !applied) {
-          await window.api.conversations.failTitleBackfill({
+          const fallbackTitle = createFallbackConversationTitle(candidate.firstUserMessage)
+          const result = await window.api.conversations.completeTitleBackfill({
             ...identity,
-            error: 'Title provider did not return a usable title'
+            title: fallbackTitle,
+            source: 'fallback'
           })
+          if (result.applied) {
+            options.onTitleApplied(candidate.id, fallbackTitle, 'fallback')
+          } else {
+            await window.api.conversations.failTitleBackfill({
+              ...identity,
+              error: 'Title provider did not return a usable title'
+            })
+          }
         }
         return { didWork: true }
       }

@@ -1,4 +1,4 @@
-import type { KeyboardEvent, ReactNode, RefObject } from 'react'
+import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowUp } from 'lucide-react'
 import type { PromptRefinementConfig } from '../services/providers/promptRefinement'
@@ -21,6 +21,7 @@ interface ChatComposerProps {
   queueTray?: ReactNode
   popover?: ReactNode
   floatingAccessory?: ReactNode
+  attachmentTray?: ReactNode
   inputAriaControls?: string
   inputAriaExpanded?: boolean
   inputAriaActiveDescendant?: string
@@ -30,6 +31,7 @@ interface ChatComposerProps {
   promptRefinement?: PromptRefinementConfig
   onChange: (value: string) => void
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void
   onSend: () => void
 }
 
@@ -49,6 +51,7 @@ export function ChatComposer({
   queueTray,
   popover,
   floatingAccessory,
+  attachmentTray,
   inputAriaControls,
   inputAriaExpanded,
   inputAriaActiveDescendant,
@@ -58,6 +61,7 @@ export function ChatComposer({
   promptRefinement,
   onChange,
   onKeyDown,
+  onPaste,
   onSend
 }: ChatComposerProps): React.JSX.Element {
   const promptRefiner = usePromptRefinement({
@@ -80,12 +84,14 @@ export function ChatComposer({
         )}
         {popover && <div className="composer-popover">{popover}</div>}
         {contextBar && <div className="composer-context-bar">{contextBar}</div>}
+        {attachmentTray}
         <TextareaAutosize
           className="message-input"
           placeholder={placeholder}
           value={value}
           onChange={(event) => promptRefiner.handleChange(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={onPaste}
           minRows={minRows}
           maxRows={maxRows}
           disabled={disabled}

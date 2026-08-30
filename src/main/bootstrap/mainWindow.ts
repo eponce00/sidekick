@@ -12,6 +12,7 @@ import { mainWindowChrome } from './windowChrome'
 import { installWindowsTitleBarMenu } from './windowsTitleBarMenu'
 import { resolveSpellCheckerLanguages } from './spellCheckerLanguages'
 import { parseStoredWindowState, visibleWindowBounds } from './windowState'
+import { installWindowZoom } from './windowZoom'
 
 const WINDOW_STATE_KEY = 'desktopWindowStateV1'
 
@@ -92,6 +93,7 @@ export function createMainWindow(): BrowserWindow {
     await shell.openExternal(url)
   }
   installNativeTextContextMenu(mainWindow, { openLink: openExternalWithPermission })
+  installWindowZoom(mainWindow, appState.store ?? undefined)
   if (platform === 'windows') installWindowsTitleBarMenu(mainWindow)
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void openExternalWithPermission(url)

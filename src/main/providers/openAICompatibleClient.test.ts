@@ -54,6 +54,7 @@ describe('OpenAI-compatible client', () => {
             usage: {
               prompt_tokens: 4,
               completion_tokens: 5,
+              prompt_tokens_details: { cached_tokens: 3 },
               completion_tokens_details: { reasoning_tokens: 2 }
             }
           })
@@ -75,6 +76,7 @@ describe('OpenAI-compatible client', () => {
           tool_calls: [{ function: { name: 'read_file', arguments: '{"path":"a.txt"}' } }]
         },
         promptTokens: 4,
+        cachedPromptTokens: 3,
         completionTokens: 5,
         reasoningTokens: 2,
         finishReason: 'tool_calls'

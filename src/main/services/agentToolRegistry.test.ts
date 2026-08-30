@@ -27,22 +27,12 @@ describe('AgentToolRegistry', () => {
     expect(executor).not.toHaveBeenCalled()
   })
 
-  it('validates required and enum arguments before side effects', async () => {
+  it('validates required arguments before side effects', async () => {
     const executor = vi.fn()
-    const missing = await registry.execute(input('execute_command', {}), executor)
+    const missing = await registry.execute(input('shell', {}), executor)
     expect(missing.error?.code).toBe('invalid_arguments')
     expect(missing.error?.recoveryAction).toBe('correct_input')
-    expect(missing.error?.message).toContain('title, command, accessLevel')
-
-    const invalidEnum = await registry.execute(
-      input('execute_command', {
-        title: 'Inspect',
-        command: 'pwd',
-        accessLevel: 'sometimes'
-      }),
-      executor
-    )
-    expect(invalidEnum.error?.code).toBe('invalid_arguments')
+    expect(missing.error?.message).toContain('command')
     expect(executor).not.toHaveBeenCalled()
   })
 
@@ -66,7 +56,7 @@ describe('AgentToolRegistry', () => {
     expect(executor).not.toHaveBeenCalled()
   })
 
-  it('normalizes safe model-specific argument aliases before validation and execution', async () => {
+  it('rejects removed model-specific editing aliases', async () => {
     const executor = vi.fn(async () => ({ changed: true }))
     const result = await registry.execute(
       input(
@@ -81,24 +71,14 @@ describe('AgentToolRegistry', () => {
         new AbortController().signal,
         {
           surface: 'conversation' as const,
-          workspaceRoot: '/project',
-          editingTarget: { model: 'generic-model', dialect: 'structured-edit' }
+          workspaceRoot: '/project'
         }
       ),
       executor
     )
 
-    expect(result.status).toBe('success')
-    expect(executor).toHaveBeenCalledWith(
-      {
-        file_path: 'src/app.ts',
-        old_string: 'before',
-        new_string: 'after',
-        replace_all: false,
-        accessLevel: 'auto'
-      },
-      expect.any(Object)
-    )
+    expect(result).toMatchObject({ status: 'error', error: { code: 'unknown_tool' } })
+    expect(executor).not.toHaveBeenCalled()
   })
 
   it('normalizes successful values and typed permission denials', async () => {
@@ -137,11 +117,38 @@ describe('AgentToolRegistry', () => {
     )
     const executing = registry.execute(input('wait', { seconds: 1 }, controller.signal), executor)
 
+    await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce())
     controller.abort()
 
     await expect(
       Promise.race([executing, new Promise((resolve) => setTimeout(resolve, 100))])
     ).resolves.toMatchObject({ status: 'cancelled', error: { code: 'cancelled' } })
     releaseExecutor()
+  })
+
+  it('runs parallel reads together and waits before exclusive execution', async () => {
+    const localRegistry = new AgentToolRegistry()
+    const releases: Array<() => void> = []
+    const started: string[] = []
+    const read = (label: string) =>
+      localRegistry.execute(input('tool_output', { handle: label }), async () => {
+        started.push(label)
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { content: label }
+      })
+    const first = read('first')
+    const second = read('second')
+    await vi.waitFor(() => expect(started).toEqual(['first', 'second']))
+
+    const exclusive = localRegistry.execute(input('shell', { command: 'echo ok' }), async () => {
+      started.push('exclusive')
+      return { stdout: 'ok' }
+    })
+    await Promise.resolve()
+    expect(started).not.toContain('exclusive')
+
+    releases.splice(0).forEach((release) => release())
+    await Promise.all([first, second, exclusive])
+    expect(started.at(-1)).toBe('exclusive')
   })
 })

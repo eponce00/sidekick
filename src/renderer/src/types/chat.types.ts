@@ -1,6 +1,8 @@
 // Chat-related types for messages, content segments, and tool executions
 
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
+import type { MessageImageAttachment } from '../../../shared/messageImages'
+import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
 import type { WorkspaceVerificationSummary } from '../../../shared/verification'
 
 export interface ToolExecution {
@@ -15,8 +17,15 @@ export interface ToolExecution {
   status: 'pending' | 'running' | 'success' | 'error' | 'denied'
   accessLevel?: 'auto' | 'confirm'
   approvalStatus?: 'pending' | 'approved' | 'denied' | 'auto'
+  presentation?: import('../../../shared/agentRuntime').ToolPresentationIntent
   output?: string
   error?: string
+  data?: unknown
+  outputReference?: import('../../../shared/agentRuntime').ToolOutputReference
+  diagnostics?: import('../../../shared/agentRuntime').ToolDiagnostic[]
+  changes?: import('../../../shared/agentRuntime').ToolWorkspaceChange[]
+  startedAt?: number
+  completedAt?: number
   contextPercent?: number
   subAgentSteps?: import('./subagent.types').SubAgentStep[]
   /** True while the provider is still streaming the tool's input. */
@@ -43,6 +52,8 @@ export interface ContentSegment {
     | 'summarizing'
     | 'decision'
     | 'interaction'
+    | 'run_status'
+    | 'run_error'
     | 'verification'
     | 'file_result'
   content?: string
@@ -57,6 +68,7 @@ export interface ContentSegment {
     originalTokens: number
     newTokens: number
     messagesCompacted: number
+    /** The exact model-facing historical-context payload is stored in content. */
   }
   decision?: ToolLimitDecision
   interaction?: {
@@ -65,6 +77,18 @@ export interface ContentSegment {
     status: 'pending' | 'resolved' | 'cancelled'
     request: Record<string, unknown>
     response?: Record<string, unknown>
+  }
+  status?: {
+    kind: 'retrying'
+    reason: string
+    detail?: string
+    timestamp: number
+  }
+  runError?: {
+    code?: string
+    message: string
+    retryable: boolean
+    recoveryAction?: string
   }
   verification?: WorkspaceVerificationSummary
   fileResult?: {
@@ -77,9 +101,13 @@ export interface ContentSegment {
 
 export interface TokenUsage {
   promptTokens: number
+  /** Input tokens served from a provider or inference-engine prefix cache. */
+  cachedPromptTokens?: number
   completionTokens: number
   cost?: number // USD cost for this message (OpenRouter only)
   tokensPerSecond?: number // Generation speed (completion tokens / eval duration)
+  /** Provider dispatch to first reasoning, text, or tool delta. */
+  timeToFirstTokenMs?: number
   /** Durable wall-clock timing for the full agent run, including tools and research. */
   runStartedAt?: number
   runCompletedAt?: number
@@ -93,6 +121,8 @@ export interface MessageEditGeometry {
 
 export interface Message {
   id: string
+  /** Authoritative agent journal backing this assistant materialization. */
+  runId?: string
   role: 'user' | 'agent' | 'system'
   sourceRole?: 'system' | 'user' | 'assistant' | 'tool' // Provider role for synthetic loop context
   /** Identifies a public update from another project agent in a linked group chat. */
@@ -103,6 +133,8 @@ export interface Message {
   /** Compact app-authored status presentation; never used for prompt/control instructions. */
   noticeTone?: 'info' | 'success' | 'error'
   content: string
+  images?: MessageImageAttachment[]
+  attachments?: MessageContextAttachment[]
   thinking?: string
   segments?: ContentSegment[]
   timestamp: number
@@ -119,5 +151,5 @@ export interface Message {
 
 // Helper type for grouped segments (thinking + tools grouped together, text/artifacts separate)
 export type GroupedSegment =
-  | { type: 'actions'; toolSegments: ContentSegment[]; thinkingSegments: ContentSegment[] } // Group of thinking/tool segments
+  | { type: 'actions'; segments: ContentSegment[] } // Chronological thinking/tool segments
   | { type: 'content'; segment: ContentSegment } // Single text or artifact segment

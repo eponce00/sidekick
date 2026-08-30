@@ -30,7 +30,16 @@ import {
   resolveWorkspaceInstructionsForPath
 } from './workspaceRules'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
-import type { AgentRuntimeCoordinator } from './agentRuntimeCoordinator'
+import type {
+  CollaborationKernelRunInput
+} from './agentRuntimeCoordinator'
+import type { AgentKernelRunResult } from './agentRunKernel'
+
+export interface CollaborationAgentRuntime {
+  stop(runId: string): boolean
+  events(runId: string, afterSequence?: number): import('../../shared/agentRunApi').AgentRunEventsResult
+  runCollaborationParticipant(input: CollaborationKernelRunInput): Promise<AgentKernelRunResult>
+}
 import { CollaborationStore } from './collaborationStore'
 
 type Changed = (groupId: string, reason: 'event' | 'mission') => void
@@ -189,7 +198,7 @@ export class CollaborationSupervisor {
 
   constructor(
     private readonly store: CollaborationStore,
-    private readonly runtime: AgentRuntimeCoordinator,
+    private readonly runtime: CollaborationAgentRuntime,
     private readonly changed: Changed,
     private readonly options: CollaborationSupervisorOptions = {}
   ) {}

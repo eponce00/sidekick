@@ -1,9 +1,12 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import type {
   ResolveAgentInteractionInput,
+  ReplacePromptAdmissionsInput,
   StartConversationAgentRunInput
 } from '../../shared/agentRunApi'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
+import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
+import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
@@ -12,6 +15,7 @@ import {
 } from '../../shared/conversationGoals'
 
 let coordinator: AgentRuntimeCoordinator | null = null
+let engineClient: AgentEngineClient | null = null
 
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -35,6 +39,15 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
     )
   }
   return coordinator
+}
+
+function getAgentEngineClient(): AgentEngineClient {
+  if (!engineClient) {
+    engineClient = new AgentEngineClient(
+      new LocalAgentEngineTransport(getAgentRuntimeCoordinator())
+    )
+  }
+  return engineClient
 }
 
 function validId(value: unknown): value is string {
@@ -103,52 +116,114 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
   return input
 }
 
+function validateAdmissions(value: unknown): ReplacePromptAdmissionsInput {
+  const input = value as ReplacePromptAdmissionsInput
+  if (!input || !validId(input.conversationId) || !Array.isArray(input.queued)) {
+    throw new Error('Invalid prompt admissions')
+  }
+  const items = [...input.queued, ...(input.pivot ? [input.pivot] : [])]
+  if (
+    items.length > 100 ||
+    items.some(
+      (item) =>
+        !item ||
+        !validId(item.id) ||
+        typeof item.content !== 'string' ||
+        item.content.length > 1_000_000 ||
+        !['conversation', 'research', 'plan'].includes(item.mode) ||
+        (item.images !== undefined && !Array.isArray(item.images))
+    )
+  ) {
+    throw new Error('Invalid prompt admissions')
+  }
+  return input
+}
+
 export function registerAgentRunHandlers(): void {
-  const host = getAgentRuntimeCoordinator()
+  const engine = getAgentEngineClient()
+  const admissions = new PromptAdmissionStore(getDb())
   ipcMain.handle('agentRuns:startConversation', async (_event, raw: unknown) => ({
-    run: await host.startConversation(validateStart(raw))
+    run: await engine.request<import('../../shared/agentRuntime').AgentRunSnapshot>({
+      type: 'run.startConversation',
+      input: validateStart(raw)
+    })
   }))
-  ipcMain.handle('agentRuns:stop', (_event, runId: string) => ({
-    stopped: typeof runId === 'string' && host.stop(runId)
+  ipcMain.handle('agentRuns:stop', async (_event, runId: string) => ({
+    stopped:
+      typeof runId === 'string' &&
+      (await engine.request<boolean>({ type: 'run.stop', runId }))
   }))
   ipcMain.handle('agentRuns:events', (_event, runId: string, afterSequence?: number) =>
-    host.events(runId, afterSequence)
+    engine.request<import('../../shared/agentRunApi').AgentRunEventsResult>({
+      type: 'run.events',
+      runId,
+      afterSequence
+    })
   )
-  ipcMain.handle('agentRuns:latest', (_event, threadId: string) => host.latest(threadId))
-  ipcMain.handle('agentRuns:resolveInteraction', (_event, input: ResolveAgentInteractionInput) => {
+  ipcMain.handle('agentRuns:latest', (_event, threadId: string) =>
+    engine.request<import('../../shared/agentRunApi').AgentRunEventsResult>({
+      type: 'run.latest',
+      threadId
+    })
+  )
+  ipcMain.handle('agentRuns:resolveInteraction', async (_event, input: ResolveAgentInteractionInput) => {
     if (!input || typeof input.interactionId !== 'string' || !input.interactionId) {
       throw new Error('Invalid interaction response')
     }
-    host.resolveInteraction(input)
-    return { success: true }
+    return engine.request<{ success: true }>({ type: 'run.resolveInteraction', input })
+  })
+  ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
+    if (!validId(conversationId)) throw new Error('Invalid conversation')
+    return admissions.list(conversationId)
+  })
+  ipcMain.handle('agentRuns:admissionsReplace', (_event, input: ReplacePromptAdmissionsInput) => {
+    return admissions.replace(validateAdmissions(input))
+  })
+  ipcMain.handle('agentRuns:admissionsTakeNext', (_event, conversationId: string) => {
+    if (!validId(conversationId)) throw new Error('Invalid conversation')
+    return admissions.takeNext(conversationId)
   })
   ipcMain.handle('conversationGoals:current', (_event, conversationId: string) =>
-    validId(conversationId) ? host.currentGoal(conversationId) : null
+    validId(conversationId)
+      ? engine.request<import('../../shared/conversationGoals').ConversationGoal | null>({
+          type: 'goal.current',
+          conversationId
+        })
+      : null
   )
   ipcMain.handle('conversationGoals:create', (_event, input: unknown) =>
-    host.createGoal(validateGoalCreate(input))
+    engine.request<import('../../shared/conversationGoals').ConversationGoal>({
+      type: 'goal.create',
+      input: validateGoalCreate(input)
+    })
   )
   ipcMain.handle('conversationGoals:edit', (_event, input: unknown) =>
-    host.editGoal(validateGoalEdit(input))
+    engine.request<import('../../shared/conversationGoals').ConversationGoal>({
+      type: 'goal.edit',
+      input: validateGoalEdit(input)
+    })
   )
   ipcMain.handle('conversationGoals:pause', (_event, goalId: string) => {
     if (!validId(goalId)) throw new Error('Invalid goal')
-    return host.pauseGoal(goalId)
+    return engine.request({ type: 'goal.pause', goalId })
   })
   ipcMain.handle('conversationGoals:resume', (_event, goalId: string) => {
     if (!validId(goalId)) throw new Error('Invalid goal')
-    return host.resumeGoal(goalId)
+    return engine.request({ type: 'goal.resume', goalId })
   })
   ipcMain.handle('conversationGoals:clear', (_event, goalId: string) => {
     if (!validId(goalId)) throw new Error('Invalid goal')
-    return host.clearGoal(goalId)
+    return engine.request({ type: 'goal.clear', goalId })
   })
 }
 
 export async function shutdownAgentRuntime(): Promise<void> {
   const current = coordinator
+  const client = engineClient
   coordinator = null
-  await current?.close()
+  engineClient = null
+  if (client) await client.request({ type: 'engine.close' })
+  else await current?.close()
 }
 
 export function hasActiveAgentWork(): boolean {

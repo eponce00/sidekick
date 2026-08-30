@@ -2,11 +2,15 @@ import React from 'react'
 import {
   Brain,
   Check,
+  Command,
   FileText,
   FolderOpen,
   ListChecks,
   Loader2,
   Microscope,
+  ImagePlus,
+  Paperclip,
+  StickyNote,
   Plus,
   Square,
   Target,
@@ -23,9 +27,91 @@ import type { PromptRefinementHistorySelection } from '../utils/promptRefinement
 import { ConversationGoalBar } from './ConversationGoalBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
+import type { MessageImageAttachment } from '../../../shared/messageImages'
+import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
+import { clipboardImageFiles } from '../utils/messageImageAttachments'
+import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import './ChatInput.css'
+
+interface FeatureMenuActionProps {
+  label: string
+  description: string
+  icon: React.ReactNode
+  onClick: () => void
+  disabled?: boolean
+  unavailableReason?: string
+  selected?: boolean
+}
+
+function FeatureMenuAction({
+  label,
+  description,
+  icon,
+  onClick,
+  disabled = false,
+  unavailableReason,
+  selected = false
+}: FeatureMenuActionProps): React.JSX.Element {
+  const helpText = unavailableReason || description
+
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className="features-menu-item features-menu-action"
+      onClick={onClick}
+      disabled={disabled}
+      title={helpText}
+      aria-label={`${label}. ${helpText}`}
+    >
+      <span className="features-menu-item-icon" aria-hidden="true">
+        {icon}
+      </span>
+      <span className="features-menu-item-label">{label}</span>
+      {selected && (
+        <span className="features-menu-item-check" aria-label="Selected">
+          <Check size={15} />
+        </span>
+      )}
+    </button>
+  )
+}
+
+interface FeatureMenuStatusProps {
+  label: string
+  description: string
+  title: string
+  error?: boolean
+}
+
+function FeatureMenuStatus({
+  label,
+  description,
+  title,
+  error = false
+}: FeatureMenuStatusProps): React.JSX.Element {
+  return (
+    <div
+      className={`features-menu-status${error ? ' is-error' : ''}`}
+      role="status"
+      title={title}
+      aria-label={`${label}. ${description}`}
+    >
+      <span className="features-menu-item-icon" aria-hidden="true">
+        <FileText size={16} />
+      </span>
+      <span className="features-menu-item-label">{label}</span>
+    </div>
+  )
+}
 
 interface ChatInputProps {
   inputValue: string
+  attachedImages: MessageImageAttachment[]
+  attachedContext: MessageContextAttachment[]
+  attachmentError: string | null
+  visionAvailable: boolean
+  visionUnavailableReason?: string
   isLoading: boolean
   isStopping: boolean
   isCompacting: boolean
@@ -57,6 +143,10 @@ interface ChatInputProps {
   featuresMenuRef: React.RefObject<HTMLDivElement | null>
   modelMenuRef: React.RefObject<HTMLDivElement | null>
   onInputChange: (value: string) => void
+  onAddImageFiles: (files: File[]) => void
+  onAddContextAttachments: () => void
+  onRemoveImage: (id: string) => void
+  onRemoveContextAttachment: (id: string) => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
   onSendMessage: () => void
   onStopGeneration: () => void
@@ -76,6 +166,8 @@ interface ChatInputProps {
   workspaceFolder: string | null
   onOpenWorkspace: () => void
   onOpenWorkspaceMemory: () => void
+  workspaceMemoryAvailable: boolean
+  workspaceMemoryUnavailableReason?: string
   onUpdatePendingMessage: (id: string, content: string) => boolean
   onRemovePendingMessage: (id: string) => void
   onMoveQueuedMessage: (id: string, toIndex: number) => void
@@ -90,6 +182,11 @@ interface ChatInputProps {
 
 export function ChatInput({
   inputValue,
+  attachedImages,
+  attachedContext,
+  attachmentError,
+  visionAvailable,
+  visionUnavailableReason,
   isLoading,
   isStopping,
   isCompacting: _isCompacting,
@@ -121,6 +218,10 @@ export function ChatInput({
   featuresMenuRef,
   modelMenuRef,
   onInputChange,
+  onAddImageFiles,
+  onAddContextAttachments,
+  onRemoveImage,
+  onRemoveContextAttachment,
   onKeyDown,
   onSendMessage,
   onStopGeneration,
@@ -140,6 +241,8 @@ export function ChatInput({
   workspaceFolder,
   onOpenWorkspace,
   onOpenWorkspaceMemory,
+  workspaceMemoryAvailable,
+  workspaceMemoryUnavailableReason,
   onUpdatePendingMessage,
   onRemovePendingMessage,
   onMoveQueuedMessage,
@@ -151,6 +254,8 @@ export function ChatInput({
   showScrollToBottom = false,
   onScrollToBottom = () => undefined
 }: ChatInputProps) {
+  const imageInputRef = React.useRef<HTMLInputElement>(null)
+  const [commandIndex, setCommandIndex] = React.useState(0)
   const selectedPinnedModel = selectedModel
     ? pinnedModels.find((m) => m.id === selectedModel)
     : undefined
@@ -166,6 +271,156 @@ export function ChatInput({
             : researchPhase === 'awaiting_permission' || researchPhase === 'awaiting_user'
               ? 'Research needs your input'
               : 'Researching'
+  const commands = React.useMemo(
+    () => [
+      {
+        id: 'model',
+        label: 'Choose model',
+        hint: 'Switch or manage models',
+        keywords: 'model provider',
+        run: onToggleModelMenu
+      },
+      {
+        id: 'plan',
+        label: planSelected ? 'Turn off Plan mode' : 'Plan first',
+        hint: 'Plan before making changes',
+        keywords: 'plan mode',
+        disabled: !planAvailable,
+        run: onTogglePlan
+      },
+      {
+        id: 'research',
+        label: researchSelected ? 'Turn off Research' : 'Research report',
+        hint: 'Search and cross-check web sources',
+        keywords: 'research web sources',
+        disabled: !researchAvailable,
+        run: onToggleResearch
+      },
+      {
+        id: 'goal',
+        label: 'Ongoing goal',
+        hint: 'Keep working toward an objective across messages',
+        keywords: 'goal task objective',
+        disabled: !goalAvailable,
+        run: onOpenGoal
+      },
+      {
+        id: 'project',
+        label: workspaceFolder ? 'Change project folder' : 'Open project folder',
+        hint: 'Select the working directory',
+        keywords: 'workspace folder project',
+        run: onOpenWorkspace
+      },
+      ...(workspaceFolder
+        ? [
+            {
+              id: 'memory',
+              label: 'Shared project notes',
+              hint:
+                workspaceMemoryUnavailableReason ||
+                'Edit SideKick notes shared across this project',
+              keywords: 'workspace memory notes shared context',
+              disabled: !workspaceMemoryAvailable,
+              run: onOpenWorkspaceMemory
+            }
+          ]
+        : []),
+      ...(thinkingAvailable
+        ? [
+            {
+              id: 'thinking',
+              label: thinkingEnabled ? 'Turn off Thinking' : 'Turn on Thinking',
+              hint: 'Control model reasoning mode',
+              keywords: 'reasoning thinking',
+              run: onToggleThinking
+            }
+          ]
+        : [])
+    ],
+    [
+      goalAvailable,
+      onOpenGoal,
+      onOpenWorkspace,
+      onOpenWorkspaceMemory,
+      onToggleModelMenu,
+      onTogglePlan,
+      onToggleResearch,
+      onToggleThinking,
+      planAvailable,
+      planSelected,
+      researchAvailable,
+      researchSelected,
+      thinkingAvailable,
+      thinkingEnabled,
+      workspaceFolder,
+      workspaceMemoryAvailable,
+      workspaceMemoryUnavailableReason
+    ]
+  )
+  const commandMatch = /^\/([^\s]*)$/.exec(inputValue)
+  const commandQuery = commandMatch?.[1].toLowerCase() ?? ''
+  const visibleCommands = commandMatch
+    ? commands.filter((command) =>
+        `${command.id} ${command.label} ${command.keywords}`.toLowerCase().includes(commandQuery)
+      )
+    : []
+
+  React.useEffect(() => setCommandIndex(0), [commandQuery])
+
+  const runCommand = (index: number): void => {
+    const command = visibleCommands[index]
+    if (!command || command.disabled) return
+    onInputChange('')
+    command.run()
+  }
+
+  const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault()
+      onInputChange('/')
+      setCommandIndex(0)
+      return
+    }
+    if (commandMatch && visibleCommands.length) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setCommandIndex((current) => (current + 1) % visibleCommands.length)
+        return
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setCommandIndex(
+          (current) => (current - 1 + visibleCommands.length) % visibleCommands.length
+        )
+        return
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        runCommand(commandIndex)
+        return
+      }
+    }
+    if (commandMatch && event.key === 'Escape') {
+      event.preventDefault()
+      onInputChange('')
+      return
+    }
+    onKeyDown(event)
+  }
+  const runFeatureAction = (action: () => void): void => {
+    action()
+    onToggleFeaturesMenu()
+  }
+  const instructionStatusDescription = instructionError
+    ? 'Instruction files could not be loaded'
+    : instructionSources.length
+      ? `${instructionSources.length} instruction file${instructionSources.length === 1 ? '' : 's'} loaded automatically${instructionsTruncated ? ' · some content truncated' : ''}`
+      : 'No AGENTS.md or SideKick rule files loaded'
+  const instructionStatusTitle =
+    instructionError ||
+    (instructionSources.length
+      ? `Loaded automatically:\n${instructionSources.join('\n')}${instructionsTruncated ? '\nSome instruction content was truncated' : ''}`
+      : 'SideKick automatically loads AGENTS.md, SIDEKICK.md, and scoped project rule files when present.')
   return (
     <ChatComposer
       value={inputValue}
@@ -270,7 +525,7 @@ export function ChatInput({
               </button>
             )}
           </div>
-          ) : undefined
+        ) : undefined
       }
       queueTray={
         queuedMessages.length || pivotMessage ? (
@@ -298,12 +553,107 @@ export function ChatInput({
           : undefined
       }
       onChange={onInputChange}
-      onKeyDown={onKeyDown}
+      onKeyDown={handleComposerKeyDown}
+      onPaste={(event) => {
+        const files = clipboardImageFiles(event.clipboardData.items)
+        if (!files.length) return
+        event.preventDefault()
+        onAddImageFiles(files)
+      }}
       onSend={onSendMessage}
+      popover={
+        commandMatch ? (
+          <div className="composer-command-menu" id="composer-command-menu" role="listbox">
+            <div className="composer-command-header">
+              <Command size={12} aria-hidden="true" /> Commands
+              <span>↑↓ navigate · Enter select · Esc close</span>
+            </div>
+            {visibleCommands.map((command, index) => (
+              <button
+                type="button"
+                role="option"
+                id={`composer-command-${command.id}`}
+                aria-selected={index === commandIndex}
+                className={index === commandIndex ? 'active' : ''}
+                disabled={command.disabled}
+                key={command.id}
+                onMouseEnter={() => setCommandIndex(index)}
+                onClick={() => runCommand(index)}
+              >
+                <code>/{command.id}</code>
+                <span>
+                  <strong>{command.label}</strong>
+                  <small>{command.hint}</small>
+                </span>
+              </button>
+            ))}
+            {!visibleCommands.length && (
+              <div className="composer-command-empty">No matching commands</div>
+            )}
+          </div>
+        ) : undefined
+      }
+      inputAriaControls={commandMatch ? 'composer-command-menu' : undefined}
+      inputAriaExpanded={Boolean(commandMatch)}
+      inputAriaActiveDescendant={
+        commandMatch && visibleCommands[commandIndex]
+          ? `composer-command-${visibleCommands[commandIndex].id}`
+          : undefined
+      }
+      attachmentTray={
+        attachedImages.length || attachedContext.length || attachmentError ? (
+          <div className="composer-attachments" aria-label="Message attachments">
+            {attachedContext.map((attachment) => (
+              <div
+                className="composer-context-attachment"
+                key={attachment.id}
+                title={attachment.relativePath}
+              >
+                {attachment.kind === 'folder' ? (
+                  <FolderOpen size={15} aria-hidden="true" />
+                ) : (
+                  <FileText size={15} aria-hidden="true" />
+                )}
+                <span>{attachment.name}</span>
+                <button
+                  type="button"
+                  onClick={() => onRemoveContextAttachment(attachment.id)}
+                  title={`Remove ${attachment.name}`}
+                  aria-label={`Remove ${attachment.name}`}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            ))}
+            {attachedImages.map((image) => (
+              <div className="composer-attachment" key={image.id}>
+                <ImageAttachmentPreview image={image} className="composer-image-preview" />
+                <button
+                  type="button"
+                  className="composer-attachment-remove"
+                  onClick={() => onRemoveImage(image.id)}
+                  title={`Remove ${image.name}`}
+                  aria-label={`Remove ${image.name}`}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            {attachmentError && (
+              <span className="composer-attachment-error">{attachmentError}</span>
+            )}
+          </div>
+        ) : undefined
+      }
       floatingAccessory={
         <ScrollToBottomButton visible={showScrollToBottom} onClick={onScrollToBottom} />
       }
-      sendDisabled={!inputValue.trim() || Boolean(editingMessageId) || isStopping}
+      sendDisabled={
+        (!inputValue.trim() && !attachedImages.length && !attachedContext.length) ||
+        Boolean(commandMatch) ||
+        Boolean(editingMessageId) ||
+        isStopping
+      }
       sendButtonClassName={isStopping ? 'is-stopping' : ''}
       sendTitle={
         isLoading
@@ -316,111 +666,149 @@ export function ChatInput({
       }
       toolbarLeft={
         <>
-          <div className="features-menu-container" ref={featuresMenuRef}>
+          <div
+            className="features-menu-container composer-add-menu-container"
+            ref={featuresMenuRef}
+          >
+            <input
+              ref={imageInputRef}
+              className="composer-image-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              tabIndex={-1}
+              aria-hidden="true"
+              onChange={(event) => {
+                const files = Array.from(event.target.files || [])
+                event.target.value = ''
+                if (files.length) onAddImageFiles(files)
+              }}
+            />
             <button
+              type="button"
               className={`input-plus-button ${isFeaturesMenuOpen ? 'menu-open' : ''}`}
               onClick={onToggleFeaturesMenu}
-              title="Add context or change agent mode"
-              aria-label="Add context or change agent mode"
+              title="Add an attachment, project context, or agent behavior"
+              aria-label="Add an attachment, project context, or agent behavior"
+              aria-haspopup="menu"
+              aria-expanded={isFeaturesMenuOpen}
+              aria-controls={isFeaturesMenuOpen ? 'composer-features-menu' : undefined}
             >
               <Plus size={18} strokeWidth={1.8} />
             </button>
 
             {isFeaturesMenuOpen && (
-              <div className="features-menu">
-                <button
-                  className="features-menu-item"
-                  onClick={onOpenGoal}
-                  disabled={!goalAvailable}
-                  title={goalUnavailableReason}
-                >
-                  <span className="features-menu-item-icon">
-                    <Target size={16} />
-                  </span>
-                  <span className="features-menu-item-label">Persistent goal</span>
-                </button>
-                <button
-                  className="features-menu-item"
-                  onClick={onTogglePlan}
-                  disabled={!planAvailable}
-                  title={planUnavailableReason}
-                >
-                  <span className="features-menu-item-icon">
-                    <ListChecks size={16} />
-                  </span>
-                  <span className="features-menu-item-label">Plan first</span>
-                  {planSelected && (
-                    <span className="features-menu-item-check">
-                      <Check size={15} />
-                    </span>
-                  )}
-                </button>
-                <button
-                  className="features-menu-item"
-                  onClick={onToggleResearch}
-                  disabled={!researchAvailable}
-                  title={researchUnavailableReason}
-                >
-                  <span className="features-menu-item-icon">
-                    <Microscope size={16} />
-                  </span>
-                  <span className="features-menu-item-label">Research report</span>
-                  {researchSelected && (
-                    <span className="features-menu-item-check">
-                      <Check size={15} />
-                    </span>
-                  )}
-                </button>
-                <button className="features-menu-item" onClick={onOpenWorkspace}>
-                  <span className="features-menu-item-icon">
-                    <FolderOpen size={16} />
-                  </span>
-                  <span className="features-menu-item-label">
-                    {workspaceFolder ? 'Change project folder' : 'Open project folder'}
-                  </span>
-                  {workspaceFolder && (
-                    <span className="features-menu-item-check">
-                      <Check size={15} />
-                    </span>
-                  )}
-                </button>
-                {workspaceFolder && (
-                  <button className="features-menu-item" onClick={onOpenWorkspaceMemory}>
-                    <span className="features-menu-item-icon">
-                      <Brain size={16} />
-                    </span>
-                    <span className="features-menu-item-label">Project memory</span>
-                  </button>
-                )}
-                {workspaceFolder && (
-                  <div
-                    className={`features-menu-item features-menu-info ${instructionError ? 'is-error' : ''}`}
-                    title={
-                      instructionError ||
-                      (instructionSources.length
-                        ? `${instructionSources.join('\n')}${instructionsTruncated ? '\nSome instructions were truncated' : ''}`
-                        : 'No project instruction files found')
+              <div
+                className="features-menu features-menu-organized"
+                id="composer-features-menu"
+                role="menu"
+                aria-label="Add to message"
+              >
+                <section className="features-menu-section" role="group" aria-label="Add">
+                  <div className="features-menu-section-label">Add</div>
+                  <FeatureMenuAction
+                    label="Files and folders"
+                    description="Attach files or a folder from the current project"
+                    icon={<Paperclip size={16} />}
+                    onClick={() => runFeatureAction(onAddContextAttachments)}
+                    disabled={!workspaceFolder || Boolean(editingMessageId)}
+                    unavailableReason={
+                      editingMessageId
+                        ? 'Attachments cannot be changed while editing a message'
+                        : !workspaceFolder
+                          ? 'Open a project before attaching files or folders'
+                          : undefined
                     }
-                  >
-                    <span className="features-menu-item-icon">
-                      <FileText size={16} />
-                    </span>
-                    <span className="features-menu-item-label">Project instructions</span>
-                  </div>
-                )}
-                {thinkingAvailable && (
-                  <button className="features-menu-item" onClick={onToggleThinking}>
-                    <span className="features-menu-item-icon">
-                      <Brain size={16} />
-                    </span>
-                    <span className="features-menu-item-label">Thinking</span>
-                    {thinkingEnabled && (
-                      <span className="features-menu-item-check">
-                        <Check size={15} />
-                      </span>
-                    )}
-                  </button>
-                )}
+                  />
+                  <FeatureMenuAction
+                    label="Image from computer"
+                    description="Attach a PNG, JPEG, WebP, or GIF to this message"
+                    icon={<ImagePlus size={16} />}
+                    onClick={() =>
+                      runFeatureAction(() => {
+                        imageInputRef.current?.click()
+                      })
+                    }
+                    disabled={!visionAvailable || Boolean(editingMessageId)}
+                    unavailableReason={
+                      editingMessageId
+                        ? 'Images cannot be changed while editing a message'
+                        : visionUnavailableReason
+                    }
+                  />
+                </section>
+
+                <section
+                  className="features-menu-section"
+                  role="group"
+                  aria-label="Project context"
+                >
+                  <div className="features-menu-section-label">Project context</div>
+                  <FeatureMenuAction
+                    label={workspaceFolder ? 'Change project folder' : 'Open project folder'}
+                    description="Choose the files SideKick can read and change"
+                    icon={<FolderOpen size={16} />}
+                    onClick={() => runFeatureAction(onOpenWorkspace)}
+                    selected={Boolean(workspaceFolder)}
+                  />
+                  {workspaceFolder && (
+                    <FeatureMenuAction
+                      label="Shared project notes"
+                      description="Edit SideKick notes included in every chat for this folder"
+                      icon={<StickyNote size={16} />}
+                      onClick={() => runFeatureAction(onOpenWorkspaceMemory)}
+                      disabled={!workspaceMemoryAvailable}
+                      unavailableReason={workspaceMemoryUnavailableReason}
+                    />
+                  )}
+                  {workspaceFolder && (
+                    <FeatureMenuStatus
+                      label="Instruction files (AGENTS.md)"
+                      description={instructionStatusDescription}
+                      title={instructionStatusTitle}
+                      error={Boolean(instructionError)}
+                    />
+                  )}
+                </section>
+
+                <section className="features-menu-section" role="group" aria-label="Agent behavior">
+                  <div className="features-menu-section-label">Agent behavior</div>
+                  <FeatureMenuAction
+                    label="Ongoing goal"
+                    description="Keep SideKick working toward an objective across messages"
+                    icon={<Target size={16} />}
+                    onClick={() => runFeatureAction(onOpenGoal)}
+                    disabled={!goalAvailable}
+                    unavailableReason={goalUnavailableReason}
+                  />
+                  <FeatureMenuAction
+                    label="Plan first"
+                    description="Review a plan before SideKick changes project files"
+                    icon={<ListChecks size={16} />}
+                    onClick={() => runFeatureAction(onTogglePlan)}
+                    disabled={!planAvailable}
+                    unavailableReason={planUnavailableReason}
+                    selected={planSelected}
+                  />
+                  <FeatureMenuAction
+                    label="Research report"
+                    description="Search, cross-check, and cite web sources"
+                    icon={<Microscope size={16} />}
+                    onClick={() => runFeatureAction(onToggleResearch)}
+                    disabled={!researchAvailable}
+                    unavailableReason={researchUnavailableReason}
+                    selected={researchSelected}
+                  />
+                  {thinkingAvailable && (
+                    <FeatureMenuAction
+                      label="Model thinking"
+                      description="Let the selected model use its reasoning mode"
+                      icon={<Brain size={16} />}
+                      onClick={() => runFeatureAction(onToggleThinking)}
+                      selected={thinkingEnabled}
+                    />
+                  )}
+                </section>
               </div>
             )}
           </div>

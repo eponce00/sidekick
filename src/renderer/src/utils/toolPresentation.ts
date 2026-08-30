@@ -92,25 +92,41 @@ function websiteHost(tool: Pick<ToolExecution, 'command' | 'input' | 'title'>): 
 }
 
 export function getToolKind(tool: Pick<ToolExecution, 'name' | 'command' | 'title'>): ToolKind {
+  const intent = (tool as Pick<ToolExecution, 'presentation'>).presentation
+  if (intent) {
+    const mapped: Partial<Record<typeof intent.kind, ToolKind>> = {
+      generic: 'generic',
+      terminal: 'terminal',
+      read: 'file-read',
+      diff: 'file-edit',
+      search: tool.name === 'web_image_search' ? 'image-search' : 'search',
+      web: 'browser',
+      files: 'files',
+      artifact: 'artifact',
+      task: 'task',
+      subagent: 'subagent'
+    }
+    return mapped[intent.kind] ?? 'generic'
+  }
   const identifier = toolIdentifier(tool)
 
   if (/create_artifact|creating .*artifact/.test(identifier)) return 'artifact'
   if (/web_image_search|image search/.test(identifier)) return 'image-search'
   if (/web_search|searching:/.test(identifier)) return 'search'
   if (/web_fetch|fetching:|extracting .* from:/.test(identifier)) return 'browser'
-  if (/read_workspace_file|reading /.test(identifier)) return 'file-read'
+  if (/^read\b|reading /.test(identifier)) return 'file-read'
   if (/\bwrite\b|writing /.test(identifier)) return 'file-write'
   if (/apply_patch|search_replace|\bedit\b|editing /.test(identifier)) return 'file-edit'
   if (/delete_file|deleting /.test(identifier)) return 'file-delete'
-  if (/search_workspace_files|searching for /.test(identifier)) return 'file-search'
-  if (/list_workspace_files|listing workspace files/.test(identifier)) return 'files'
+  if (/searching for /.test(identifier)) return 'file-search'
+  if (/listing workspace files/.test(identifier)) return 'files'
   if (/spawn_subagent|sub-agent:/.test(identifier)) return 'subagent'
   if (/context_compaction|compacting context/.test(identifier)) return 'compaction'
   if (/use_skill|skill loaded/.test(identifier)) return 'skill'
   if (/todo|background_task/.test(identifier)) return 'task'
   if (tool.name === 'wait' || /^wait(?:ing|ed)?\b|\bsleep\b/.test(identifier)) return 'wait'
   if (/^mcp[:_\s-]|\bmcp[:_\s-]/.test(identifier)) return 'mcp'
-  if (tool.name === 'execute_command' || tool.command) return 'terminal'
+  if (tool.name === 'shell' || tool.command) return 'terminal'
 
   return 'generic'
 }
@@ -131,8 +147,9 @@ export function getToolStatusLabel(status: ToolExecution['status']): string {
 }
 
 export function getCompactToolTitle(
-  tool: Pick<ToolExecution, 'name' | 'command' | 'title' | 'input' | 'status'>
+  tool: Pick<ToolExecution, 'name' | 'command' | 'title' | 'input' | 'status' | 'presentation'>
 ): string {
+  if (tool.presentation?.title) return compactText(tool.presentation.title, 64)
   const kind = getToolKind(tool)
   const completed = tool.status === 'success'
   const running = tool.status === 'running'
@@ -161,7 +178,7 @@ export function getCompactToolTitle(
           ? 'Listing workspace files'
           : 'List files'
     case 'file-read':
-      return `${completed ? 'Read' : running ? 'Reading' : 'Read'} ${shortFilePath(workspaceValue(tool, 'file_path', /^reading\s+/i))}`
+      return `${completed ? 'Read' : running ? 'Reading' : 'Read'} ${shortFilePath(workspaceValue(tool, 'path', /^reading\s+/i))}`
     case 'file-write':
       return `${completed ? 'Wrote' : running ? 'Writing' : 'Write'} ${shortFilePath(workspaceValue(tool, 'file_path', /^writing\s+/i))}`
     case 'file-edit':

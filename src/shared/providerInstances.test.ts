@@ -5,7 +5,9 @@ import {
   pinnedModelsFromProviderInstances,
   providerInstanceForModel,
   refreshProviderTargetMetadata,
-  syncLegacyProviderSettings
+  syncLegacyProviderSettings,
+  transportForProviderInstance,
+  transportForProviderType
 } from './providerInstances'
 
 const legacySettings: ProviderSettings = {
@@ -17,6 +19,14 @@ const legacySettings: ProviderSettings = {
 }
 
 describe('provider instance migration', () => {
+  it('resolves transport from provider type and preset', () => {
+    expect(transportForProviderType('openrouter')).toBe('openrouter')
+    expect(transportForProviderType('openai-compatible')).toBe('lmstudio')
+    expect(transportForProviderInstance({ type: 'openai-compatible', preset: 'lmstudio' })).toBe(
+      'lmstudio'
+    )
+  })
+
   it('migrates only providers that were actually configured or used', () => {
     const instances = migrateLegacyProviderInstances(legacySettings, [
       { id: 'lmstudio:model-a', name: 'model-a', provider: 'lmstudio' }

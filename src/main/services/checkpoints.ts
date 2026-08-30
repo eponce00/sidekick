@@ -27,7 +27,7 @@ import type {
 const execFileAsync = promisify(execFile)
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 const HISTORY_VERSION = 2
-const CAPTURE_TTL_MS = 6 * 60 * 60 * 1000
+const CAPTURE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const MAX_FILES = 10_000
 const MAX_GIT_OUTPUT = 50 * 1024 * 1024
 const HISTORY_BRANCH = 'refs/heads/checkpoints'
@@ -62,6 +62,7 @@ export interface CreatedCheckpoint {
   hash: string
   changeCount: number
   captureVersion: number
+  changedPaths: string[]
 }
 
 interface CaptureSession {
@@ -71,6 +72,13 @@ interface CaptureSession {
   conversationId: string
   agentMessageId: string
   createdAt: number
+}
+
+export interface RecoveredCheckpointCapture {
+  conversationId: string
+  agentMessageId: string
+  workspaceRoot: string
+  checkpoint: CreatedCheckpoint
 }
 
 interface CommitMetadata {
@@ -349,10 +357,61 @@ async function writeWorkspaceTree(workspaceRoot: string): Promise<string> {
   return git(workspaceRoot, ['write-tree'])
 }
 
-function pruneCaptures(): void {
+function captureMetadataPath(captureId: string): string {
+  return join(configuredStorageRoot(), 'captures', `${captureId}.json`)
+}
+
+async function persistCapture(capture: CaptureSession): Promise<void> {
+  const directory = join(configuredStorageRoot(), 'captures')
+  await fs.mkdir(directory, { recursive: true })
+  const destination = captureMetadataPath(capture.id)
+  const temporary = `${destination}.${process.pid}.tmp`
+  await fs.writeFile(temporary, JSON.stringify(capture), { encoding: 'utf8', mode: 0o600 })
+  await fs.rename(temporary, destination)
+  await updateRef(capture.workspaceRoot, `refs/sidekick/captures/${capture.id}`, capture.baseTree)
+}
+
+async function loadPersistedCapture(captureId: string): Promise<CaptureSession | null> {
+  try {
+    const parsed = JSON.parse(
+      await fs.readFile(captureMetadataPath(captureId), 'utf8')
+    ) as Partial<CaptureSession>
+    if (
+      parsed.id !== captureId ||
+      typeof parsed.workspaceRoot !== 'string' ||
+      !/^[0-9a-f]{40,64}$/i.test(parsed.baseTree || '') ||
+      typeof parsed.conversationId !== 'string' ||
+      typeof parsed.agentMessageId !== 'string' ||
+      typeof parsed.createdAt !== 'number'
+    ) {
+      return null
+    }
+    return parsed as CaptureSession
+  } catch {
+    return null
+  }
+}
+
+async function removeCapture(capture: CaptureSession): Promise<void> {
+  captureSessions.delete(capture.id)
+  await fs.rm(captureMetadataPath(capture.id), { force: true })
+  await updateRef(capture.workspaceRoot, `refs/sidekick/captures/${capture.id}`, null)
+}
+
+async function pruneCaptures(): Promise<void> {
   const threshold = Date.now() - CAPTURE_TTL_MS
-  for (const [id, capture] of captureSessions) {
-    if (capture.createdAt < threshold) captureSessions.delete(id)
+  for (const capture of captureSessions.values()) {
+    if (capture.createdAt < threshold) await removeCapture(capture)
+  }
+  try {
+    const directory = join(configuredStorageRoot(), 'captures')
+    for (const entry of await fs.readdir(directory)) {
+      if (!entry.endsWith('.json')) continue
+      const capture = await loadPersistedCapture(entry.slice(0, -5))
+      if (capture && capture.createdAt < threshold) await removeCapture(capture)
+    }
+  } catch {
+    // No persisted captures yet.
   }
 }
 
@@ -361,7 +420,7 @@ export async function beginCheckpointCapture(
   conversationId: string,
   agentMessageId: string
 ): Promise<string> {
-  pruneCaptures()
+  await pruneCaptures()
   const root = resolve(workspaceRoot)
   const capture: CaptureSession = {
     id: randomUUID(),
@@ -372,11 +431,18 @@ export async function beginCheckpointCapture(
     createdAt: Date.now()
   }
   captureSessions.set(capture.id, capture)
+  try {
+    await persistCapture(capture)
+  } catch (error) {
+    captureSessions.delete(capture.id)
+    throw error
+  }
   return capture.id
 }
 
-export function discardCheckpointCapture(captureId: string): void {
-  captureSessions.delete(captureId)
+export async function discardCheckpointCapture(captureId: string): Promise<void> {
+  const capture = captureSessions.get(captureId) ?? (await loadPersistedCapture(captureId))
+  if (capture) await removeCapture(capture)
 }
 
 async function changedPaths(
@@ -421,20 +487,52 @@ export async function createCheckpoint(
   captureId?: string
 ): Promise<CreatedCheckpoint | null> {
   const root = resolve(workspaceRoot)
-  const capture = captureId ? captureSessions.get(captureId) : undefined
+  const capture = captureId
+    ? (captureSessions.get(captureId) ?? (await loadPersistedCapture(captureId)) ?? undefined)
+    : undefined
   if (captureId && (!capture || capture.workspaceRoot !== root)) {
     throw new Error('History capture expired or belongs to another workspace')
+  }
+
+  if (capture) {
+    try {
+      const existingHash = await git(root, [
+        'log',
+        HISTORY_BRANCH,
+        '-1',
+        '--format=%H',
+        '--fixed-strings',
+        '--grep',
+        `SideKick-Capture-Id: ${capture.id}`
+      ])
+      if (existingHash) {
+        const metadata = await commitMetadata(root, existingHash)
+        const files = await changedPaths(root, metadata.baseTree, existingHash)
+        await updateRef(root, APPLIED_REF, existingHash)
+        await removeCapture(capture)
+        return {
+          hash: existingHash,
+          changeCount: metadata.changeCount ?? files.length,
+          captureVersion: metadata.captureVersion,
+          changedPaths: files
+        }
+      }
+    } catch {
+      // The capture has not reached the active timeline yet.
+    }
   }
 
   const afterTree = await writeWorkspaceTree(root)
   const parent = (await ref(root, APPLIED_REF)) ?? (await ref(root, HISTORY_BRANCH))
   const baseTree = capture?.baseTree ?? parent ?? EMPTY_TREE
   const files = await changedPaths(root, baseTree, afterTree)
-  if (captureId) captureSessions.delete(captureId)
-  if (files.length === 0) return null
+  if (files.length === 0) {
+    if (capture) await removeCapture(capture)
+    return null
+  }
 
   const now = Math.floor(Date.now() / 1000)
-  const body = `${message.trim() || 'SideKick changes'}\n\nSideKick-History-Version: ${HISTORY_VERSION}\nSideKick-Base-Tree: ${baseTree}\nSideKick-Changed-Files: ${files.length}`
+  const body = `${message.trim() || 'SideKick changes'}\n\nSideKick-History-Version: ${HISTORY_VERSION}\nSideKick-Base-Tree: ${baseTree}\nSideKick-Changed-Files: ${files.length}${capture ? `\nSideKick-Capture-Id: ${capture.id}` : ''}`
   const env = {
     ...process.env,
     GIT_DIR: shadowDir(root),
@@ -451,9 +549,53 @@ export async function createCheckpoint(
     windowsHide: true
   })
   const hash = textOutput(stdout).trim()
+  // The baseline tree is named only in commit metadata, which Git does not treat as
+  // reachability. Keep an explicit ref so automatic object maintenance cannot make
+  // an otherwise valid Undo point unrestorable.
+  await updateRef(root, `refs/sidekick/bases/${hash}`, baseTree)
   await updateRef(root, HISTORY_BRANCH, hash)
   await updateRef(root, APPLIED_REF, hash)
-  return { hash, changeCount: files.length, captureVersion: HISTORY_VERSION }
+  if (capture) await removeCapture(capture)
+  return {
+    hash,
+    changeCount: files.length,
+    captureVersion: HISTORY_VERSION,
+    changedPaths: files
+  }
+}
+
+export async function recoverInterruptedCheckpointCaptures(): Promise<
+  RecoveredCheckpointCapture[]
+> {
+  const recovered: RecoveredCheckpointCapture[] = []
+  let entries: string[] = []
+  try {
+    entries = await fs.readdir(join(configuredStorageRoot(), 'captures'))
+  } catch {
+    return recovered
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith('.json')) continue
+    const capture = await loadPersistedCapture(entry.slice(0, -5))
+    if (!capture) continue
+    try {
+      const checkpoint = await createCheckpoint(
+        capture.workspaceRoot,
+        'Interrupted agent changes',
+        capture.id
+      )
+      if (checkpoint)
+        recovered.push({
+          conversationId: capture.conversationId,
+          agentMessageId: capture.agentMessageId,
+          workspaceRoot: capture.workspaceRoot,
+          checkpoint
+        })
+    } catch (error) {
+      console.warn('[History] Could not recover interrupted capture:', error)
+    }
+  }
+  return recovered
 }
 
 async function treeState(

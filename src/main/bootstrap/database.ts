@@ -1,13 +1,19 @@
 import Database from 'better-sqlite3'
+import { createHash } from 'crypto'
+import { existsSync } from 'fs'
 
 type ColumnRow = { name: string }
 
 const REQUIRED_COLUMNS = [
   { table: 'messages', column: 'segments', definition: 'TEXT' },
+  { table: 'messages', column: 'images', definition: 'TEXT' },
+  { table: 'messages', column: 'attachments', definition: 'TEXT' },
   { table: 'messages', column: 'token_usage', definition: 'TEXT' },
   { table: 'messages', column: 'checkpoint_hash', definition: 'TEXT' },
+  { table: 'messages', column: 'run_id', definition: 'TEXT' },
   { table: 'conversations', column: 'active_skills', definition: 'TEXT' },
   { table: 'conversations', column: 'project_id', definition: 'TEXT' },
+  { table: 'conversations', column: 'is_pinned', definition: 'INTEGER NOT NULL DEFAULT 0' },
   {
     table: 'conversations',
     column: 'title_source',
@@ -19,6 +25,11 @@ const REQUIRED_COLUMNS = [
     definition: 'INTEGER NOT NULL DEFAULT 0'
   },
   { table: 'conversations', column: 'title_backfill_attempted_at', definition: 'INTEGER' },
+  {
+    table: 'conversations',
+    column: 'title_backfill_attempted_version',
+    definition: 'INTEGER NOT NULL DEFAULT 0'
+  },
   { table: 'conversations', column: 'title_backfill_error', definition: 'TEXT' },
   { table: 'conversations', column: 'sidebar_order', definition: 'INTEGER NOT NULL DEFAULT 0' },
   {
@@ -29,6 +40,8 @@ const REQUIRED_COLUMNS = [
   { table: 'conversations', column: 'home_workspace_root', definition: 'TEXT' },
   { table: 'conversations', column: 'home_project_name', definition: 'TEXT' },
   { table: 'conversations', column: 'unread_completion_at', definition: 'INTEGER' },
+  { table: 'conversations', column: 'forked_from_conversation_id', definition: 'TEXT' },
+  { table: 'conversations', column: 'forked_from_message_id', definition: 'TEXT' },
   { table: 'collaboration_groups', column: 'unread_completion_at', definition: 'INTEGER' },
   {
     table: 'collaboration_agent_sessions',
@@ -94,6 +107,197 @@ function ensureRequiredColumns(db: Database.Database): void {
   }
 }
 
+interface SchemaMigration {
+  id: string
+  description: string
+  /** Immutable identifier for the exact operations in this migration. Never reuse after edits. */
+  contentId: string
+  apply: (db: Database.Database) => void
+}
+
+const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
+  {
+    id: '20260829_001_canonical_runtime',
+    description: 'reconcile legacy columns and retire transient conversation run state',
+    contentId: 'v1|required-columns|drop-conversation-runs|backfill-project-affinity',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec('DROP TABLE IF EXISTS conversation_runs')
+      db.exec(`
+        UPDATE conversations
+        SET home_workspace_root = (
+              SELECT folder_path FROM projects WHERE projects.id = conversations.project_id
+            ),
+            home_project_name = (
+              SELECT name FROM projects WHERE projects.id = conversations.project_id
+            )
+        WHERE project_id IS NOT NULL AND home_workspace_root IS NULL;
+      `)
+    }
+  },
+  {
+    id: '20260829_002_prompt_admission',
+    description: 'persist queued and pivot prompts with transactional admission',
+    contentId: 'v1|agent-prompt-admissions-table|order-and-pivot-indexes',
+    apply: (db) => {
+      db.exec(`
+        CREATE TABLE agent_prompt_admissions (
+          id TEXT PRIMARY KEY,
+          conversation_id TEXT NOT NULL,
+          content TEXT NOT NULL,
+          images_json TEXT,
+          attachments_json TEXT,
+          mode TEXT NOT NULL,
+          behavior TEXT NOT NULL CHECK (behavior IN ('pivot', 'queue')),
+          position INTEGER NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        );
+        CREATE INDEX idx_agent_prompt_admissions_order
+          ON agent_prompt_admissions(conversation_id, behavior, position, created_at);
+        CREATE UNIQUE INDEX idx_agent_prompt_admissions_pivot
+          ON agent_prompt_admissions(conversation_id)
+          WHERE behavior = 'pivot';
+      `)
+    }
+  },
+  {
+    id: '20260829_003_journal_materializations',
+    description: 'link assistant message materializations to their authoritative agent run journal',
+    contentId: 'v1|required-columns|unique-message-run-materialization-index',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_run_materialization
+          ON messages(run_id)
+          WHERE run_id IS NOT NULL;
+      `)
+    }
+  },
+  {
+    id: '20260830_001_managed_worktrees',
+    description: 'track conversation fork lineage and SideKick-managed Git worktrees',
+    contentId: 'v1|required-columns|managed-worktrees-table|age-index',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS managed_worktrees (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL UNIQUE,
+          source_project_id TEXT NOT NULL,
+          repository_root TEXT NOT NULL,
+          worktree_root TEXT NOT NULL UNIQUE,
+          branch TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_managed_worktrees_age
+          ON managed_worktrees(last_used_at ASC, created_at ASC);
+      `)
+    }
+  },
+  {
+    id: '20260830_002_conversation_pins',
+    description: 'persist pinned conversations and order them ahead of unpinned chats',
+    contentId: 'v1|required-columns|pinned-conversation-order-index',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_conversations_pinned_order
+          ON conversations(is_pinned DESC, project_id, sidebar_order, updated_at DESC);
+      `)
+    }
+  },
+  {
+    id: '20260830_003_title_backfill_attempt_versions',
+    description: 'retry title generation immediately when its algorithm version changes',
+    contentId: 'v1|required-title-backfill-attempt-version-column',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+    }
+  },
+  {
+    id: '20260830_004_message_context_attachments',
+    description: 'persist typed project file and folder references on messages and queued prompts',
+    contentId: 'v1|required-message-and-admission-attachment-columns',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      const admissionColumns = new Set(
+        (db.prepare('PRAGMA table_info(agent_prompt_admissions)').all() as ColumnRow[]).map(
+          ({ name }) => name
+        )
+      )
+      if (!admissionColumns.has('attachments_json')) {
+        db.exec('ALTER TABLE agent_prompt_admissions ADD COLUMN attachments_json TEXT')
+      }
+    }
+  }
+]
+
+function migrationChecksum(migration: SchemaMigration): string {
+  return createHash('sha256')
+    .update(`${migration.id}\n${migration.description}\n${migration.contentId}`)
+    .digest('hex')
+}
+
+function legacyMigrationChecksum(migration: SchemaMigration): string {
+  return createHash('sha256').update(`${migration.id}\n${migration.description}`).digest('hex')
+}
+
+function applyVersionedMigrations(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      checksum TEXT NOT NULL,
+      applied_at INTEGER NOT NULL
+    )
+  `)
+  const applied = new Map(
+    (
+      db.prepare('SELECT id, checksum FROM schema_migrations ORDER BY id').all() as Array<{
+        id: string
+        checksum: string
+      }>
+    ).map((migration) => [migration.id, migration.checksum])
+  )
+  const checksumUpgrades: Array<{ id: string; previous: string; checksum: string }> = []
+  for (const migration of SCHEMA_MIGRATIONS) {
+    const checksum = migrationChecksum(migration)
+    const prior = applied.get(migration.id)
+    if (prior && prior !== checksum && prior !== legacyMigrationChecksum(migration)) {
+      throw new Error(`Database migration checksum mismatch: ${migration.id}`)
+    }
+    if (prior && prior !== checksum) {
+      checksumUpgrades.push({ id: migration.id, previous: prior, checksum })
+    }
+  }
+  db.transaction(() => {
+    const update = db.prepare(
+      'UPDATE schema_migrations SET checksum = ? WHERE id = ? AND checksum = ?'
+    )
+    for (const migration of checksumUpgrades) {
+      const result = update.run(migration.checksum, migration.id, migration.previous)
+      if (result.changes !== 1) {
+        throw new Error(`Database migration checksum changed during upgrade: ${migration.id}`)
+      }
+    }
+  })()
+
+  for (const migration of SCHEMA_MIGRATIONS) {
+    if (applied.has(migration.id)) continue
+    const checksum = migrationChecksum(migration)
+    db.transaction(() => {
+      migration.apply(db)
+      db.prepare('INSERT INTO schema_migrations (id, checksum, applied_at) VALUES (?, ?, ?)').run(
+        migration.id,
+        checksum,
+        Date.now()
+      )
+    })()
+  }
+}
+
 export function applyDatabaseSchema(db: Database.Database): void {
   db.pragma('foreign_keys = ON')
   db.pragma('busy_timeout = 5000')
@@ -116,16 +320,31 @@ export function applyDatabaseSchema(db: Database.Database): void {
       updated_at INTEGER NOT NULL,
       active_skills TEXT,
       project_id TEXT,
+      is_pinned INTEGER NOT NULL DEFAULT 0,
       title_source TEXT NOT NULL DEFAULT 'legacy',
       title_version INTEGER NOT NULL DEFAULT 0,
       title_backfill_attempted_at INTEGER,
+      title_backfill_attempted_version INTEGER NOT NULL DEFAULT 0,
       title_backfill_error TEXT,
       sidebar_order INTEGER NOT NULL DEFAULT 0,
       project_context_version INTEGER NOT NULL DEFAULT 0,
       home_workspace_root TEXT,
       home_project_name TEXT,
       unread_completion_at INTEGER,
+      forked_from_conversation_id TEXT,
+      forked_from_message_id TEXT,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS managed_worktrees (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL UNIQUE,
+      source_project_id TEXT NOT NULL,
+      repository_root TEXT NOT NULL,
+      worktree_root TEXT NOT NULL UNIQUE,
+      branch TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -135,7 +354,10 @@ export function applyDatabaseSchema(db: Database.Database): void {
       content TEXT NOT NULL,
       thinking TEXT,
       segments TEXT,
+      images TEXT,
+      attachments TEXT,
       token_usage TEXT,
+      run_id TEXT,
       checkpoint_hash TEXT,
       checkpoint_workspace_root TEXT,
       run_mode TEXT NOT NULL DEFAULT 'conversation',
@@ -541,28 +763,11 @@ export function applyDatabaseSchema(db: Database.Database): void {
       ON collaboration_artifacts(group_id, created_at DESC);
   `)
 
-  // Pre-kernel run state was transient and cannot be resumed by the canonical event runtime.
-  db.exec('DROP TABLE IF EXISTS conversation_runs')
-
-  ensureRequiredColumns(db)
+  applyVersionedMigrations(db)
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_background_tasks_run
       ON background_tasks(run_id, started_at DESC);
-  `)
-
-  // Existing project chats predate permanent project affinity. Bind them to
-  // their current folder once so detaching cannot later be used to move them
-  // into an unrelated project.
-  db.exec(`
-    UPDATE conversations
-    SET home_workspace_root = (
-          SELECT folder_path FROM projects WHERE projects.id = conversations.project_id
-        ),
-        home_project_name = (
-          SELECT name FROM projects WHERE projects.id = conversations.project_id
-        )
-    WHERE project_id IS NOT NULL AND home_workspace_root IS NULL;
   `)
 
   db.exec(`
@@ -572,8 +777,19 @@ export function applyDatabaseSchema(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_conversation_title_backfill
       ON conversations(title_source, title_version, title_backfill_attempted_at);
 
+    CREATE INDEX IF NOT EXISTS idx_conversation_title_backfill_v2
+      ON conversations(
+        title_source,
+        title_version,
+        title_backfill_attempted_version,
+        title_backfill_attempted_at
+      );
+
     CREATE INDEX IF NOT EXISTS idx_conversation_sidebar_order
       ON conversations(project_id, sidebar_order, updated_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_conversations_pinned_order
+      ON conversations(is_pinned DESC, project_id, sidebar_order, updated_at DESC);
 
     CREATE INDEX IF NOT EXISTS idx_conversation_home_workspace
       ON conversations(home_workspace_root);
@@ -584,8 +800,19 @@ export function applyDatabaseSchema(db: Database.Database): void {
 }
 
 export function openApplicationDatabase(path: string): Database.Database {
+  const existed = path !== ':memory:' && existsSync(path)
   const db = new Database(path)
   try {
+    const hasMigrationLedger = Boolean(
+      db
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+        .get()
+    )
+    if (existed && !hasMigrationLedger) {
+      const backupPath = `${path}.pre-versioned-migrations-${Date.now()}.bak`
+      db.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`)
+      console.log(`[Database] Created pre-migration backup: ${backupPath}`)
+    }
     applyDatabaseSchema(db)
     return db
   } catch (error) {

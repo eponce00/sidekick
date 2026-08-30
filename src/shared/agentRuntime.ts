@@ -27,18 +27,60 @@ export const AGENT_CAPABILITIES = [
   'collaboration',
   'goal',
   'plan',
-  'tool.output'
+  'tool.output',
+  'browser'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
 
-export type AgentExecutionHost = 'main'
+export type AgentExecutionHost = 'main' | 'subprocess'
+
+export type AgentToolConcurrency = 'parallel' | 'exclusive'
+
+export const TOOL_PRESENTATION_KINDS = [
+  'generic',
+  'terminal',
+  'read',
+  'diff',
+  'search',
+  'web',
+  'files',
+  'artifact',
+  'task',
+  'subagent',
+  'browser'
+] as const
+
+export type ToolPresentationKind = (typeof TOOL_PRESENTATION_KINDS)[number]
+
+/** Renderer-neutral description recorded with a tool call and its result. */
+export interface ToolPresentationIntent {
+  kind: ToolPresentationKind
+  title: string
+  subject?: string
+  detail?: string
+}
+
+export interface AgentToolPresentationDefinition {
+  kind: ToolPresentationKind
+  call: (args: Readonly<Record<string, unknown>>) => ToolPresentationIntent
+  result?: (
+    args: Readonly<Record<string, unknown>>,
+    result: Readonly<ToolExecutionResult>
+  ) => ToolPresentationIntent
+}
 
 export interface AgentToolCatalogEntry {
   definition: AgentToolDefinition
   capability: AgentCapability
   risk: ToolRisk
   host: AgentExecutionHost
+  /** Host-owned deadline. This metadata is never sent to the model. */
+  timeoutMs?: number
+  /** Only explicitly safe read operations may overlap sibling calls. */
+  concurrency: AgentToolConcurrency
+  /** Owns human presentation so the renderer never has to infer semantics from command text. */
+  presentation: AgentToolPresentationDefinition
 }
 
 export interface AgentRunProfile {
@@ -132,6 +174,47 @@ export interface ToolExecutionTiming {
   completedAt: number
 }
 
+export const TOOL_RESULT_MEDIA_TYPES = ['image'] as const
+
+export type ToolResultMediaType = (typeof TOOL_RESULT_MEDIA_TYPES)[number]
+
+export const TOOL_RESULT_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif'
+] as const
+
+export type ToolResultImageMimeType = (typeof TOOL_RESULT_IMAGE_MIME_TYPES)[number]
+
+export const MAX_TOOL_RESULT_MEDIA = 4
+export const MAX_TOOL_RESULT_MEDIA_BYTES = 8 * 1024 * 1024
+export const MAX_TOOL_RESULT_MEDIA_DATA_URL_LENGTH =
+  Math.ceil((MAX_TOOL_RESULT_MEDIA_BYTES * 4) / 3) + 256
+
+export type ToolResultMediaSource =
+  | {
+      type: 'data_url'
+      dataUrl: string
+    }
+  | {
+      /** Absolute host path to a durable artifact resolved immediately before provider I/O. */
+      type: 'file'
+      path: string
+    }
+
+/**
+ * Typed non-text output from a first-party tool. Tool media is part of the durable
+ * result ledger; provider adapters materialize it into their native multimodal form.
+ */
+export interface ToolResultMediaAttachment {
+  type: 'image'
+  mimeType: ToolResultImageMimeType
+  source: ToolResultMediaSource
+  name?: string
+  description?: string
+}
+
 export interface ToolExecutionResult<TData = unknown> {
   status: Extract<ToolExecutionStatus, 'success' | 'error' | 'cancelled' | 'denied'>
   title: string
@@ -141,6 +224,7 @@ export interface ToolExecutionResult<TData = unknown> {
   output?: ToolOutputReference
   diagnostics?: ToolDiagnostic[]
   changes?: ToolWorkspaceChange[]
+  media?: ToolResultMediaAttachment[]
   timing: ToolExecutionTiming
 }
 
@@ -152,11 +236,14 @@ export interface AgentToolCall {
 
 export const AGENT_RUN_EVENT_TYPES = [
   'run.started',
+  'context.snapshot',
+  'context.changed',
   'run.phase',
   'assistant.delta',
   'assistant.completed',
   'tool.pending',
   'tool.running',
+  'tool.output.delta',
   'tool.completed',
   'permission.requested',
   'permission.resolved',
@@ -283,6 +370,71 @@ function failureFromUnknown(value: unknown): boolean {
   )
 }
 
+function dataUrlDecodedBytes(encoded: string): number {
+  const padding = encoded.endsWith('==') ? 2 : encoded.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((encoded.length * 3) / 4) - padding)
+}
+
+/** Validate and clone tool media before it enters the append-only run ledger. */
+export function normalizeToolResultMedia(
+  value: readonly ToolResultMediaAttachment[] | undefined
+): ToolResultMediaAttachment[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > MAX_TOOL_RESULT_MEDIA) {
+    throw new Error(`A tool result can contain up to ${MAX_TOOL_RESULT_MEDIA} media attachments`)
+  }
+  const supportedMimeTypes = new Set<string>(TOOL_RESULT_IMAGE_MIME_TYPES)
+  return value.map((candidate) => {
+    if (!candidate || candidate.type !== 'image') {
+      throw new Error('Unsupported tool result media attachment')
+    }
+    const mimeType = String(candidate.mimeType || '').toLowerCase()
+    if (!supportedMimeTypes.has(mimeType)) {
+      throw new Error(`Unsupported tool result image type: ${mimeType || 'unknown'}`)
+    }
+    const name = candidate.name?.trim()
+    const description = candidate.description?.trim()
+    if ((name?.length ?? 0) > 500 || (description?.length ?? 0) > 2_000) {
+      throw new Error('Tool result media metadata is too long')
+    }
+    let source: ToolResultMediaSource
+    if (candidate.source?.type === 'data_url') {
+      const dataUrl = candidate.source.dataUrl
+      const prefix = `data:${mimeType};base64,`
+      if (
+        typeof dataUrl !== 'string' ||
+        dataUrl.length > MAX_TOOL_RESULT_MEDIA_DATA_URL_LENGTH ||
+        !dataUrl.startsWith(prefix)
+      ) {
+        throw new Error('Invalid or oversized tool result image data URL')
+      }
+      const encoded = dataUrl.slice(prefix.length)
+      if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded) || encoded.length % 4 !== 0) {
+        throw new Error('Invalid tool result image base64 payload')
+      }
+      if (dataUrlDecodedBytes(encoded) > MAX_TOOL_RESULT_MEDIA_BYTES) {
+        throw new Error('Tool result image exceeds the byte limit')
+      }
+      source = { type: 'data_url', dataUrl }
+    } else if (candidate.source?.type === 'file') {
+      const path = candidate.source.path
+      if (typeof path !== 'string' || !path.trim() || path.length > 4_096 || path.includes('\0')) {
+        throw new Error('Invalid tool result media file reference')
+      }
+      source = { type: 'file', path }
+    } else {
+      throw new Error('Tool result media source is missing')
+    }
+    return {
+      type: 'image',
+      mimeType: mimeType as ToolResultImageMimeType,
+      source,
+      ...(name ? { name } : {}),
+      ...(description ? { description } : {})
+    }
+  })
+}
+
 function defaultRecoveryAction(
   code: ToolErrorCode,
   retryable: boolean | undefined
@@ -313,11 +465,13 @@ export function toolExecutionSucceeded<TData>(input: {
   output?: ToolOutputReference
   diagnostics?: ToolDiagnostic[]
   changes?: ToolWorkspaceChange[]
+  media?: readonly ToolResultMediaAttachment[]
   startedAt?: number
   completedAt?: number
 }): ToolExecutionResult<TData> {
   const startedAt = input.startedAt ?? Date.now()
   const completedAt = input.completedAt ?? Date.now()
+  const media = normalizeToolResultMedia(input.media)
   return {
     status: 'success',
     title: input.title,
@@ -326,6 +480,7 @@ export function toolExecutionSucceeded<TData>(input: {
     ...(input.output ? { output: input.output } : {}),
     ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),
     ...(input.changes ? { changes: input.changes } : {}),
+    ...(media?.length ? { media } : {}),
     timing: { startedAt, completedAt }
   }
 }
@@ -340,12 +495,14 @@ export function toolExecutionFailed(input: {
   data?: unknown
   modelContent?: string
   output?: ToolOutputReference
+  media?: readonly ToolResultMediaAttachment[]
   status?: 'error' | 'cancelled' | 'denied'
   startedAt?: number
   completedAt?: number
 }): ToolExecutionResult {
   const startedAt = input.startedAt ?? Date.now()
   const completedAt = input.completedAt ?? Date.now()
+  const media = normalizeToolResultMedia(input.media)
   const error: ToolExecutionError = {
     code: input.code,
     message: input.message,
@@ -371,6 +528,7 @@ export function toolExecutionFailed(input: {
     data,
     error,
     ...(input.output ? { output: input.output } : {}),
+    ...(media?.length ? { media } : {}),
     timing: { startedAt, completedAt }
   }
 }
@@ -381,7 +539,13 @@ export function normalizeToolExecutionResult(
   startedAt = Date.now(),
   completedAt = Date.now()
 ): ToolExecutionResult {
-  if (isToolExecutionResult(value)) return value
+  if (isToolExecutionResult(value)) {
+    const result = { ...value }
+    const media = normalizeToolResultMedia(value.media)
+    if (media?.length) result.media = media
+    else delete result.media
+    return result
+  }
   if (failureFromUnknown(value)) {
     const record = value as Record<string, unknown>
     const message =
