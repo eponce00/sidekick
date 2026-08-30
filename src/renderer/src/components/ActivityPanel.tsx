@@ -1,21 +1,28 @@
-import { useCallback, useState, useEffect, useRef } from 'react'
+import {
+  useCallback,
+  useState,
+  useEffect,
+  useRef,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import {
   AlertTriangle,
   ArrowUp,
   Loader2,
+  MoreHorizontal,
   ChevronRight,
   File,
   Folder,
   X,
-  ListTodo,
   History,
   FolderTree,
+  MonitorUp,
   PanelRight,
   RefreshCw,
   RotateCcw,
   Trash2
 } from 'lucide-react'
-import FocusChain from './FocusChain'
 import ConfirmDialog from './ConfirmDialog'
 import type { TodoItem } from '../../../shared/types'
 import type { PinnedModel } from '../types/models.types'
@@ -27,11 +34,29 @@ import {
 import { workspacePermissionOperation } from '../../../shared/permissions'
 import { authorizeCheckpointMutation } from '../utils/checkpointAuthorization'
 import { useCheckpointTitleBackfill } from '../hooks/useCheckpointTitleBackfill'
+import BrowserActivityPanel from './BrowserActivityPanel'
+import { EMPTY_BROWSER_ACTIVITY, type BrowserActivityState } from '../utils/browserActivity'
+import {
+  ACTIVITY_PANEL_DEFAULT_WIDTH,
+  ACTIVITY_PANEL_MIN_WIDTH,
+  ACTIVITY_PANEL_WIDE_WIDTH,
+  activityPanelMaximumWidth,
+  clampActivityPanelWidth,
+  storedActivityPanelWidth
+} from '../utils/activityPanelLayout'
 import './ActivityPanel.css'
+
+type ActivityTab = 'checkpoints' | 'files' | 'browser'
+
+function storedActivityTab(): ActivityTab {
+  const value = window.localStorage.getItem('activityPanelTab')
+  return value === 'checkpoints' || value === 'browser' ? value : 'files'
+}
 
 interface ActivityPanelProps {
   isPinned: boolean
   onTogglePin: () => void
+  conversationId?: string | null
   focusChainTodos: TodoItem[]
   workspaceFolder: string | null
   historyWorkspaceFolder?: string | null
@@ -50,7 +75,7 @@ interface ActivityPanelProps {
 function ActivityPanel({
   isPinned,
   onTogglePin,
-  focusChainTodos,
+  conversationId = null,
   workspaceFolder,
   historyWorkspaceFolder = workspaceFolder,
   historyReadOnly = false,
@@ -62,7 +87,15 @@ function ActivityPanel({
   isAgentBusy = false
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
-  const [activeTab, setActiveTab] = useState<'tasks' | 'checkpoints' | 'files'>('tasks')
+  const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
+  const [browserActivity, setBrowserActivity] =
+    useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
+  const autoOpenedBrowserRunRef = useRef<string | null>(null)
+  const [panelWidth, setPanelWidth] = useState(() =>
+    storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
+  )
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeStartRef = useRef({ x: 0, width: panelWidth })
   const [checkpoints, setCheckpoints] = useState<CheckpointHistoryItem[]>([])
   const [checkpointsLoading, setCheckpointsLoading] = useState(false)
   const [historyActionError, setHistoryActionError] = useState<{
@@ -79,6 +112,98 @@ function ActivityPanel({
   // Track the "HEAD" — the most-recently-restored hash (null = tip/latest)
   const [headHash, setHeadHash] = useState<string | null>(null)
   const headItemRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelTab', activeTab)
+  }, [activeTab])
+
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelWidth', String(panelWidth))
+  }, [panelWidth])
+
+  useEffect(() => {
+    const clampToViewport = (): void => {
+      setPanelWidth((current) => clampActivityPanelWidth(current, window.innerWidth))
+    }
+    window.addEventListener('resize', clampToViewport)
+    return () => window.removeEventListener('resize', clampToViewport)
+  }, [])
+
+  useEffect(() => {
+    if (!isResizing) return
+    const previousCursor = document.body.style.cursor
+    const previousSelection = document.body.style.userSelect
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    const move = (event: PointerEvent): void => {
+      const delta = resizeStartRef.current.x - event.clientX
+      setPanelWidth(
+        clampActivityPanelWidth(resizeStartRef.current.width + delta, window.innerWidth)
+      )
+    }
+    const stop = (): void => setIsResizing(false)
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', stop, { once: true })
+    window.addEventListener('pointercancel', stop, { once: true })
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousSelection
+    }
+  }, [isResizing])
+
+  const handleBrowserActivityChange = useCallback(
+    (state: BrowserActivityState): void => {
+      setBrowserActivity(state)
+      const latest = state.timeline[state.timeline.length - 1]
+      const isLive = latest?.status === 'running' || latest?.status === 'pending'
+      if (!state.runId || !isLive || autoOpenedBrowserRunRef.current === state.runId) return
+      autoOpenedBrowserRunRef.current = state.runId
+      setActiveTab('browser')
+      if (!isPinned) onTogglePin()
+    },
+    [isPinned, onTogglePin]
+  )
+
+  const beginResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!isPinned || event.button !== 0) return
+    resizeStartRef.current = { x: event.clientX, width: panelWidth }
+    setIsResizing(true)
+    event.preventDefault()
+  }
+
+  const resizeFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (!isPinned) return
+    const step = event.shiftKey ? 50 : 20
+    let next: number | undefined
+    if (event.key === 'ArrowLeft') next = panelWidth + step
+    else if (event.key === 'ArrowRight') next = panelWidth - step
+    else if (event.key === 'Home') next = ACTIVITY_PANEL_MIN_WIDTH
+    else if (event.key === 'End') next = activityPanelMaximumWidth(window.innerWidth)
+    if (next === undefined) return
+    event.preventDefault()
+    setPanelWidth(clampActivityPanelWidth(next, window.innerWidth))
+  }
+
+  const toggleWidePanel = (): void => {
+    const wide = clampActivityPanelWidth(ACTIVITY_PANEL_WIDE_WIDTH, window.innerWidth)
+    setPanelWidth((current) =>
+      current >= wide - 20
+        ? clampActivityPanelWidth(ACTIVITY_PANEL_DEFAULT_WIDTH, window.innerWidth)
+        : wide
+    )
+  }
+
+  const openCollapsedTab = (tab: ActivityTab): void => {
+    setActiveTab(tab)
+    onTogglePin()
+  }
+
+  const latestBrowserItem = browserActivity.timeline[browserActivity.timeline.length - 1]
+  const browserIsLive =
+    latestBrowserItem?.status === 'running' || latestBrowserItem?.status === 'pending'
 
   useCheckpointTitleBackfill({
     enabled: activeTab === 'checkpoints' && !checkpointsLoading && !historyReadOnly,
@@ -238,6 +363,14 @@ function ActivityPanel({
     }
   }
 
+  const showPathMenu = (filePath: string, isDirectory: boolean): void => {
+    if (!workspaceFolder) return
+    setFileActionError(null)
+    void window.api.workspace
+      .showPathMenu(filePath, workspaceFolder, isDirectory)
+      .catch((error) => setFileActionError(error instanceof Error ? error.message : String(error)))
+  }
+
   const executeAction = async (): Promise<void> => {
     if (!pendingAction || historyReadOnly || isAgentBusy) return
     const { hash, type } = pendingAction
@@ -308,7 +441,13 @@ function ActivityPanel({
       const isExpanded = expandedFolders.has(child)
       return (
         <div key={child}>
-          <div className="file-node-row">
+          <div
+            className="file-node-row"
+            onContextMenu={(event) => {
+              event.preventDefault()
+              showPathMenu(withoutTrailing, isDir)
+            }}
+          >
             <button
               className={`file-node${isDir ? ' file-node-dir' : ' file-node-file'}`}
               style={{ paddingLeft: `${depth * 14 + 10}px` }}
@@ -323,10 +462,10 @@ function ActivityPanel({
               }}
               onDoubleClick={() => {
                 if (!isDir && workspaceFolder) {
-                  window.api.workspace.openFile(`${workspaceFolder}/${child}`)
+                  void window.api.workspace.openFile(child, workspaceFolder)
                 }
               }}
-              title={child}
+              title={`${child} — right-click for file actions`}
             >
               <span className="file-node-chevron">
                 {isDir && (
@@ -340,6 +479,14 @@ function ActivityPanel({
                 {isDir ? <Folder size={13} /> : <File size={13} />}
               </span>
               <span className="file-node-name">{name}</span>
+            </button>
+            <button
+              className="file-node-action"
+              onClick={() => showPathMenu(withoutTrailing, isDir)}
+              title={`More actions for ${name}`}
+              aria-label={`More actions for ${child}`}
+            >
+              <MoreHorizontal size={13} />
             </button>
             {!isDir && (
               <button
@@ -367,31 +514,27 @@ function ActivityPanel({
   }
 
   return (
-    <aside className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}`}>
+    <aside
+      className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
+      style={isPinned ? { width: panelWidth, minWidth: panelWidth } : undefined}
+    >
+      {isPinned && (
+        <div
+          className="activity-panel-resize-handle"
+          role="separator"
+          aria-label="Resize workspace inspector"
+          aria-orientation="vertical"
+          aria-valuemin={ACTIVITY_PANEL_MIN_WIDTH}
+          aria-valuemax={activityPanelMaximumWidth(window.innerWidth)}
+          aria-valuenow={panelWidth}
+          tabIndex={0}
+          onPointerDown={beginResize}
+          onKeyDown={resizeFromKeyboard}
+          title="Drag to resize · Arrow keys adjust width"
+        />
+      )}
       <div className="activity-header">
         <div className="activity-tabs">
-          <button
-            className={`activity-tab-button ${activeTab === 'tasks' ? 'active' : ''}`}
-            onClick={() => setActiveTab('tasks')}
-            title="Tasks"
-          >
-            <ListTodo size={15} />
-            <span className="tab-label">Tasks</span>
-            {focusChainTodos.length > 0 && (
-              <span className="tab-badge">
-                {focusChainTodos.filter((t) => t.status === 'completed').length}/
-                {focusChainTodos.length}
-              </span>
-            )}
-          </button>
-          <button
-            className={`activity-tab-button ${activeTab === 'checkpoints' ? 'active' : ''}`}
-            onClick={() => setActiveTab('checkpoints')}
-            title="History"
-          >
-            <History size={15} />
-            <span className="tab-label">History</span>
-          </button>
           <button
             className={`activity-tab-button ${activeTab === 'files' ? 'active' : ''}`}
             onClick={() => setActiveTab('files')}
@@ -399,6 +542,29 @@ function ActivityPanel({
           >
             <FolderTree size={15} />
             <span className="tab-label">Files</span>
+          </button>
+          <button
+            className={`activity-tab-button ${activeTab === 'checkpoints' ? 'active' : ''}`}
+            onClick={() => setActiveTab('checkpoints')}
+            title="Advanced recovery"
+            aria-label="Open advanced recovery"
+          >
+            <History size={15} />
+            <span className="tab-label">Recovery</span>
+          </button>
+          <button
+            className={`activity-tab-button ${activeTab === 'browser' ? 'active' : ''}`}
+            onClick={() => setActiveTab('browser')}
+            title="Browser activity"
+            aria-label="Open browser activity"
+          >
+            <span className="activity-tab-icon-wrap">
+              <MonitorUp size={15} />
+              {browserIsLive && (
+                <span className="browser-live-dot" aria-label="Browser is active" />
+              )}
+            </span>
+            <span className="tab-label">Browser</span>
           </button>
         </div>
         <div className="activity-header-right">
@@ -414,21 +580,6 @@ function ActivityPanel({
 
       {isPinned ? (
         <div className="activity-content">
-          {activeTab === 'tasks' && (
-            <div className="tasks-list">
-              {focusChainTodos.length === 0 ? (
-                <div className="activity-empty">
-                  <p>No active tasks</p>
-                  <p className="hint">
-                    Task plans will appear here when working on complex requests
-                  </p>
-                </div>
-              ) : (
-                <FocusChain todos={focusChainTodos} />
-              )}
-            </div>
-          )}
-
           {activeTab === 'files' && (
             <div className="file-explorer-wrap">
               <div className="file-explorer-header">
@@ -660,42 +811,50 @@ function ActivityPanel({
               )}
             </div>
           )}
+          <div className="activity-browser-wrap" hidden={activeTab !== 'browser'}>
+            <BrowserActivityPanel
+              conversationId={conversationId}
+              onActivityChange={handleBrowserActivityChange}
+              isWide={panelWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
+              onToggleWidth={toggleWidePanel}
+            />
+          </div>
         </div>
       ) : (
         <div className="activity-collapsed-tabs">
           <button
             className="activity-tab-vertical"
-            onClick={() => {
-              setActiveTab('tasks')
-              onTogglePin()
-            }}
-            title="Open Tasks"
+            onClick={() => openCollapsedTab('files')}
+            title="Open Files"
+            aria-label="Open Files"
           >
-            <ListTodo size={17} />
-            {focusChainTodos.length > 0 && (
-              <span className="collapsed-tab-badge">{focusChainTodos.length}</span>
-            )}
+            <FolderTree size={17} />
           </button>
           <button
             className="activity-tab-vertical"
-            onClick={() => {
-              setActiveTab('checkpoints')
-              onTogglePin()
-            }}
-            title="Open History"
+            onClick={() => openCollapsedTab('checkpoints')}
+            title="Open Recovery"
+            aria-label="Open Recovery"
           >
             <History size={17} />
           </button>
           <button
             className="activity-tab-vertical"
-            onClick={() => {
-              setActiveTab('files')
-              onTogglePin()
-            }}
-            title="Open Files"
+            onClick={() => openCollapsedTab('browser')}
+            title="Open Browser activity"
+            aria-label="Open Browser activity"
           >
-            <FolderTree size={17} />
+            <MonitorUp size={17} />
+            {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
           </button>
+        </div>
+      )}
+      {!isPinned && (
+        <div hidden aria-hidden="true">
+          <BrowserActivityPanel
+            conversationId={conversationId}
+            onActivityChange={handleBrowserActivityChange}
+          />
         </div>
       )}
       <ConfirmDialog

@@ -1,5 +1,7 @@
 import {
+  checkpointFallbackTitleFromDiff,
   CHECKPOINT_TITLE_VERSION,
+  normalizeCheckpointTitle,
   type CheckpointHistoryItem
 } from '../../../shared/checkpointTitles'
 import { providerKindForTransport } from '../../../shared/providerRegistry'
@@ -73,13 +75,15 @@ export function useCheckpointTitleBackfill(options: CheckpointTitleBackfillOptio
             purpose: 'checkpoint-title',
             retries: 0,
             onUpdateTitle: async (_checkpointHash, title) => {
+              const usefulTitle = normalizeCheckpointTitle(title)
+              if (!usefulTitle) return
               const result = await window.api.workspace.completeCheckpointTitleBackfill({
                 ...identity,
-                title
+                title: usefulTitle
               })
               if (!result.applied) return
               applied = true
-              options.onTitleApplied(checkpoint.hash, title)
+              options.onTitleApplied(checkpoint.hash, usefulTitle)
             }
           },
           checkpoint.hash,
@@ -90,11 +94,21 @@ export function useCheckpointTitleBackfill(options: CheckpointTitleBackfillOptio
           )
         )
 
-        if (!generatedTitle && !applied) {
-          await window.api.workspace.failCheckpointTitleBackfill({
+        if (!applied) {
+          const fallbackTitle = checkpointFallbackTitleFromDiff(
+            diffResult.ok ? diffResult.diff : ''
+          )
+          const result = await window.api.workspace.completeCheckpointTitleBackfill({
             ...identity,
-            error: 'Checkpoint title provider did not return a usable title'
+            title: fallbackTitle
           })
+          if (result.applied) options.onTitleApplied(checkpoint.hash, fallbackTitle)
+          else if (!generatedTitle) {
+            await window.api.workspace.failCheckpointTitleBackfill({
+              ...identity,
+              error: 'Checkpoint title provider did not return a usable title'
+            })
+          }
         }
         return { didWork: true }
       }

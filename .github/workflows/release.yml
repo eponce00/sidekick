@@ -50,6 +50,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:win
       - run: npm run test:e2e:runtime
+      - run: npm run test:native-browser-smoke
       - run: npm run validate:package -- dist/win-unpacked/resources
       - run: npm run smoke:packaged:windows
       - name: Verify the community installer is intentionally unsigned
@@ -114,6 +115,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:mac
       - run: npm run test:e2e:runtime
+      - run: npm run test:native-browser-smoke
       - run: npm run validate:package -- dist/mac-arm64/SideKick.app/Contents/Resources
       - run: npm run smoke:packaged:macos
         env:
@@ -191,6 +193,7 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:linux
       - run: xvfb-run --auto-servernum npm run test:e2e:runtime
+      - run: xvfb-run --auto-servernum npm run test:native-browser-smoke
       - run: npm run validate:package -- dist/linux-unpacked/resources
       - name: Validate final Linux AppImage structure and identity
         shell: bash

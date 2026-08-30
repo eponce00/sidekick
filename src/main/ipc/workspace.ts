@@ -1,9 +1,20 @@
-import { BrowserWindow, ipcMain, dialog, shell, type OpenDialogOptions } from 'electron'
-import { isAbsolute, join, relative } from 'path'
+import {
+  BrowserWindow,
+  Menu,
+  clipboard,
+  ipcMain,
+  dialog,
+  shell,
+  type OpenDialogOptions
+} from 'electron'
+import { basename, isAbsolute, join, relative } from 'path'
 import { getStore } from './state'
 import { getStoredWorkspace, resolveKnownWorkspace, assertInsideWorkspace } from './workspaceUtils'
 import { appState } from './state'
 import { watch as fsWatch } from 'fs'
+import { promises as fs } from 'fs'
+import { spawn } from 'child_process'
+import { randomUUID } from 'crypto'
 import {
   beginWorkspaceInstructionScope,
   clearWorkspaceInstructionScope,
@@ -16,6 +27,8 @@ import type { WorkspaceMutationAuthorization } from '../../shared/types'
 import { permissionBroker } from '../services/permissionBroker'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
+import { discoverExternalOpeners } from '../services/externalOpeners'
+import type { MessageContextAttachment } from '../../shared/messageContextAttachments'
 
 const workspaceReads = new WorkspaceReadService()
 
@@ -66,6 +79,70 @@ export function registerWorkspaceHandlers(): void {
       return { canceled: true, path: null }
     }
     return { canceled: false, path: result.filePaths[0] }
+  })
+
+  ipcMain.handle('workspace:selectContextAttachments', async (event, passedRoot: string) => {
+    try {
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      const canonicalRoot = await fs.realpath(workspaceRoot)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const choiceOptions = {
+        type: 'question' as const,
+        title: 'Attach project context',
+        message: 'Choose files or one folder from this project',
+        detail: 'SideKick stores project-relative references and reads them only when relevant.',
+        buttons: ['Choose files', 'Choose folder', 'Cancel'],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true
+      }
+      const choice = win
+        ? await dialog.showMessageBox(win, choiceOptions)
+        : await dialog.showMessageBox(choiceOptions)
+      if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
+
+      const selectFolder = choice.response === 1
+      const openOptions: OpenDialogOptions = {
+        title: selectFolder ? 'Attach a project folder' : 'Attach project files',
+        defaultPath: workspaceRoot,
+        buttonLabel: 'Attach',
+        properties: selectFolder ? ['openDirectory'] : ['openFile', 'multiSelections']
+      }
+      const selection = win
+        ? await dialog.showOpenDialog(win, openOptions)
+        : await dialog.showOpenDialog(openOptions)
+      if (selection.canceled || !selection.filePaths.length) {
+        return { ok: true, canceled: true, attachments: [] }
+      }
+
+      const attachments: MessageContextAttachment[] = []
+      for (const selectedPath of selection.filePaths.slice(0, 12)) {
+        const canonicalPath = await fs.realpath(selectedPath)
+        const relativePath = relative(canonicalRoot, canonicalPath)
+        if (
+          !relativePath ||
+          relativePath === '..' ||
+          relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) ||
+          isAbsolute(relativePath)
+        ) {
+          throw new Error('Choose files or folders inside the current project')
+        }
+        const stat = await fs.stat(canonicalPath)
+        if (selectFolder ? !stat.isDirectory() : !stat.isFile()) {
+          throw new Error(selectFolder ? 'Choose a project folder' : 'Choose project files')
+        }
+        attachments.push({
+          id: randomUUID(),
+          kind: selectFolder ? ('folder' as const) : ('file' as const),
+          name: basename(canonicalPath),
+          relativePath: relativePath.replaceAll('\\', '/'),
+          ...(stat.isFile() ? { size: stat.size } : {})
+        })
+      }
+      return { ok: true, canceled: false, attachments }
+    } catch (error) {
+      return { ok: false, canceled: false, attachments: [], error: (error as Error).message }
+    }
   })
 
   // Workspace: persist folder path in electron-store
@@ -267,7 +344,171 @@ export function registerWorkspaceHandlers(): void {
     const error = await shell.openPath(await resolveShellTarget(filePath, passedRoot))
     if (error) throw new Error(error)
   })
+  ipcMain.handle(
+    'workspace:openFileReference',
+    async (event, fileReference: string, passedRoot?: string) => {
+      try {
+        const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
+        const directTarget = await resolveShellTarget(fileReference, passedRoot)
+        const directStat = await fs.stat(directTarget).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === 'ENOENT') return null
+          throw error
+        })
+        if (directStat?.isFile()) {
+          const error = await shell.openPath(directTarget)
+          return error
+            ? { ok: false, status: 'not_found' as const, error }
+            : { ok: true, status: 'opened' as const, path: directTarget }
+        }
+
+        if (isAbsolute(fileReference)) {
+          return {
+            ok: false,
+            status: 'not_found' as const,
+            error: 'File not found in this project'
+          }
+        }
+        const normalizedReference = fileReference.replace(/\\/g, '/').replace(/^\.\//, '')
+        const fileName = basename(normalizedReference)
+        const listed = await workspaceReads.listFiles(workspaceRoot, {
+          glob: `**/${fileName}`,
+          maxResults: 50
+        })
+        const comparable = (value: string): string =>
+          process.platform === 'win32' ? value.toLowerCase() : value
+        const wantedSuffix = comparable(normalizedReference)
+        const matches = listed.files
+          .filter((candidate) => {
+            const normalized = comparable(candidate.replace(/\\/g, '/'))
+            return normalized === wantedSuffix || normalized.endsWith(`/${wantedSuffix}`)
+          })
+          .slice(0, 20)
+
+        if (matches.length === 1) {
+          const target = await resolveSecureWorkspacePath(workspaceRoot, matches[0])
+          const error = await shell.openPath(target)
+          return error
+            ? { ok: false, status: 'not_found' as const, error }
+            : { ok: true, status: 'opened' as const, path: target }
+        }
+        if (matches.length > 1) {
+          const menu = Menu.buildFromTemplate(
+            matches.map((match) => ({
+              label: match,
+              click: () => {
+                void resolveSecureWorkspacePath(workspaceRoot, match)
+                  .then((target) => shell.openPath(target))
+                  .then((error) => {
+                    if (error) console.warn('[Workspace] Could not open file reference:', error)
+                  })
+              }
+            }))
+          )
+          const window = BrowserWindow.fromWebContents(event.sender)
+          menu.popup(window ? { window } : undefined)
+          return { ok: true, status: 'choose' as const, matches }
+        }
+        return { ok: false, status: 'not_found' as const, error: 'File not found in this project' }
+      } catch (error) {
+        return { ok: false, status: 'not_found' as const, error: (error as Error).message }
+      }
+    }
+  )
   ipcMain.handle('workspace:revealFile', async (_, filePath: string, passedRoot?: string) => {
     shell.showItemInFolder(await resolveShellTarget(filePath, passedRoot))
   })
+  ipcMain.handle(
+    'workspace:showPathMenu',
+    async (event, requestedPath: string, passedRoot?: string, isDirectory = false) => {
+      const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
+      const target = await resolveShellTarget(requestedPath, passedRoot)
+      const relativePath = relative(workspaceRoot, target).replace(/\\/g, '/')
+      const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
+      const openers = await discoverExternalOpeners()
+      const editors = openers.filter((opener) => opener.kind === 'editor')
+      const terminals = openers.filter((opener) => opener.kind === 'terminal')
+      const launch = (opener: (typeof openers)[number]): void => {
+        const child = spawn(opener.executable, opener.args(target, isDirectory), {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false
+        })
+        child.on('error', (error) =>
+          console.warn(`[Workspace] Could not open ${opener.label}:`, error)
+        )
+        child.unref()
+      }
+      const primaryEditor = editors[0]
+      const menu = Menu.buildFromTemplate([
+        ...(primaryEditor
+          ? [
+              {
+                label: `Open in ${primaryEditor.label}`,
+                icon: primaryEditor.icon,
+                click: () => launch(primaryEditor)
+              }
+            ]
+          : []),
+        {
+          label: 'Open with',
+          submenu: [
+            ...editors.map((opener) => ({
+              label: opener.label,
+              icon: opener.icon,
+              click: () => launch(opener)
+            })),
+            ...(editors.length ? [{ type: 'separator' as const }] : []),
+            {
+              label: 'Default app',
+              click: () => {
+                void shell.openPath(target).then((error) => {
+                  if (error) console.warn('[Workspace] Could not open path:', error)
+                })
+              }
+            },
+            ...(!isDirectory && process.platform === 'win32'
+              ? [
+                  {
+                    label: 'Choose another app…',
+                    click: () => {
+                      const chooser = spawn('rundll32.exe', ['shell32.dll,OpenAs_RunDLL', target], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: false
+                      })
+                      chooser.unref()
+                    }
+                  }
+                ]
+              : []),
+            {
+              label: revealLabel,
+              click: () => shell.showItemInFolder(target)
+            },
+            ...terminals.map((opener) => ({
+              label: opener.label,
+              icon: opener.icon,
+              click: () => launch(opener)
+            }))
+          ]
+        },
+        { type: 'separator' },
+        {
+          label: revealLabel,
+          click: () => shell.showItemInFolder(target)
+        },
+        { type: 'separator' },
+        {
+          label: 'Copy Full Path',
+          click: () => clipboard.writeText(target)
+        },
+        {
+          label: 'Copy Project-Relative Path',
+          click: () => clipboard.writeText(relativePath)
+        }
+      ])
+      const window = BrowserWindow.fromWebContents(event.sender)
+      menu.popup(window ? { window } : undefined)
+    }
+  )
 }

@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import { isAbsolute, join, resolve } from 'path'
+import { mkdirSync } from 'fs'
+import { isAbsolute, join, relative, resolve, sep } from 'path'
 import type { BackgroundTask, ShellCommandResult } from '../../shared/types'
-import { assertPathInside } from '../utils/paths'
+import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { CommandRunner } from './commandRunner'
 
 export interface CommandServiceRunInput {
@@ -24,6 +25,26 @@ export interface OwnedBackgroundTask extends BackgroundTask {
 
 const MAX_PERSISTED_OUTPUT = 32 * 1024
 
+const SENSITIVE_ENVIRONMENT_NAME =
+  /(?:^|_)(?:API_?KEY|AUTH|BEARER|COOKIE|CREDENTIAL|PASSWORD|PRIVATE_?KEY|SECRET|SESSION|TOKEN)(?:_|$)/i
+
+/** Build the child environment without ambient provider or application credentials. */
+export function shellChildEnvironment(
+  source: NodeJS.ProcessEnv,
+  workspaceRoot: string,
+  scratchDirectory: string
+): NodeJS.ProcessEnv {
+  const safe: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined || SENSITIVE_ENVIRONMENT_NAME.test(name)) continue
+    safe[name] = value
+  }
+  safe.WORKSPACE_FOLDER = workspaceRoot
+  safe.SIDEKICK_WORKSPACE = workspaceRoot
+  safe.SIDEKICK_SCRATCH = scratchDirectory
+  return safe
+}
+
 function compactResult(result: ShellCommandResult | undefined): ShellCommandResult | undefined {
   if (!result) return undefined
   return {
@@ -34,11 +55,19 @@ function compactResult(result: ShellCommandResult | undefined): ShellCommandResu
   }
 }
 
-function resolveWorkingDirectory(workspaceRoot: string, cwd?: string): string {
+/**
+ * Models occasionally echo the absolute project path shown in the system context back as cwd.
+ * Accept that harmless form while keeping the secure project-relative resolver as the authority.
+ */
+export function projectRelativeCommandCwd(workspaceRoot: string, cwd = ''): string {
+  if (!isAbsolute(cwd)) return cwd
   const root = resolve(workspaceRoot)
-  const workingDirectory = cwd ? (isAbsolute(cwd) ? resolve(cwd) : resolve(root, cwd)) : root
-  assertPathInside(root, workingDirectory)
-  return workingDirectory
+  const target = resolve(cwd)
+  const withinProject = relative(root, target)
+  if (withinProject === '..' || withinProject.startsWith(`..${sep}`) || isAbsolute(withinProject)) {
+    return cwd
+  }
+  return withinProject
 }
 
 export class CommandService {
@@ -55,6 +84,12 @@ export class CommandService {
 
   private outputPath(id: string): string {
     return join(this.outputRoot, `${id}.log`)
+  }
+
+  private shellEnvironment(runId: string, workspaceRoot: string): NodeJS.ProcessEnv {
+    const scratchDirectory = join(this.outputRoot, 'scratch', runId)
+    mkdirSync(scratchDirectory, { recursive: true })
+    return shellChildEnvironment(process.env, workspaceRoot, scratchDirectory)
   }
 
   private persist(task: OwnedBackgroundTask): void {
@@ -146,7 +181,10 @@ export class CommandService {
 
   async execute(input: CommandServiceRunInput): Promise<ShellCommandResult | OwnedBackgroundTask> {
     if (!input.command.trim()) throw new Error('Command is required')
-    const cwd = resolveWorkingDirectory(input.workspaceRoot, input.cwd)
+    const cwd = await resolveSecureWorkspacePath(
+      input.workspaceRoot,
+      projectRelativeCommandCwd(input.workspaceRoot, input.cwd)
+    )
     const id = randomUUID()
     if (input.background) return this.startBackground(id, cwd, input)
     const abort = (): void => {
@@ -160,7 +198,7 @@ export class CommandService {
         cwd,
         timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30)) * 1_000,
         outputPath: this.outputPath(id),
-        env: { ...process.env, WORKSPACE_FOLDER: cwd },
+        env: this.shellEnvironment(input.runId, input.workspaceRoot),
         onOutput: input.onOutput
       })
     } finally {
@@ -191,7 +229,7 @@ export class CommandService {
         cwd,
         timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 3_600)) * 1_000,
         outputPath: this.outputPath(id),
-        env: { ...process.env, WORKSPACE_FOLDER: cwd }
+        env: this.shellEnvironment(input.runId, input.workspaceRoot)
       })
       .then((result) => {
         task.result = result

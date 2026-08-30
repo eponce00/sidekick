@@ -1,29 +1,61 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, symlink, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join, relative } from 'path'
 import type { WorkspaceMutationAuthorization } from '../../shared/types'
 
 type RegisteredHandler = (...args: unknown[]) => unknown
 
-const { handlers, workspaceState, consume, trashItem } = vi.hoisted(() => ({
+const {
+  handlers,
+  workspaceState,
+  consume,
+  trashItem,
+  openPath,
+  showItemInFolder,
+  clipboardWriteText,
+  menuPopup,
+  menuTemplates,
+  showOpenDialog,
+  showMessageBox
+} = vi.hoisted(() => ({
   handlers: new Map<string, RegisteredHandler>(),
   workspaceState: { root: '' },
   consume: vi.fn(),
-  trashItem: vi.fn()
+  trashItem: vi.fn(),
+  openPath: vi.fn(),
+  showItemInFolder: vi.fn(),
+  clipboardWriteText: vi.fn(),
+  menuPopup: vi.fn(),
+  showOpenDialog: vi.fn(),
+  showMessageBox: vi.fn(),
+  menuTemplates: [] as Array<
+    Array<{
+      label?: string
+      click?: () => void
+      submenu?: Array<{ label?: string; click?: () => void }>
+    }>
+  >
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: vi.fn() },
-  dialog: { showOpenDialog: vi.fn() },
+  Menu: {
+    buildFromTemplate: vi.fn((template) => {
+      menuTemplates.push(template)
+      return { popup: menuPopup }
+    })
+  },
+  clipboard: { writeText: clipboardWriteText },
+  dialog: { showOpenDialog, showMessageBox },
   ipcMain: {
     handle: vi.fn((channel: string, handler: RegisteredHandler) => {
       handlers.set(channel, handler)
     })
   },
   shell: {
-    openPath: vi.fn(),
-    showItemInFolder: vi.fn(),
+    openPath,
+    showItemInFolder,
     trashItem
   }
 }))
@@ -54,6 +86,17 @@ vi.mock('../services/workspaceRules', () => ({
   clearWorkspaceInstructionScope: vi.fn()
 }))
 vi.mock('../services/permissionBroker', () => ({ permissionBroker: { consume } }))
+vi.mock('../services/externalOpeners', () => ({
+  discoverExternalOpeners: vi.fn().mockResolvedValue([
+    {
+      id: 'vscode',
+      label: 'VS Code',
+      kind: 'editor',
+      executable: 'Code.exe',
+      args: (target: string) => [target]
+    }
+  ])
+}))
 
 import { registerWorkspaceHandlers } from './workspace'
 
@@ -75,12 +118,38 @@ describe('workspace file IPC', () => {
     handlers.clear()
     consume.mockReset()
     trashItem.mockReset()
+    openPath.mockReset().mockResolvedValue('')
+    showItemInFolder.mockReset()
+    clipboardWriteText.mockReset()
+    menuPopup.mockReset()
+    showOpenDialog.mockReset()
+    showMessageBox.mockReset()
+    menuTemplates.length = 0
     workspaceState.root = await mkdtemp(join(tmpdir(), 'sidekick-workspace-'))
     registerWorkspaceHandlers()
   })
 
   afterEach(async () => {
     await rm(workspaceState.root, { recursive: true, force: true })
+  })
+
+  it('returns typed project-relative references from the attachment picker', async () => {
+    await mkdir(join(workspaceState.root, 'src'))
+    await writeFile(join(workspaceState.root, 'src', 'main.ts'), 'export {}', 'utf8')
+    showMessageBox.mockResolvedValue({ response: 0 })
+    showOpenDialog.mockResolvedValue({
+      canceled: false,
+      filePaths: [join(workspaceState.root, 'src', 'main.ts')]
+    })
+
+    const handler = handlers.get('workspace:selectContextAttachments') as RegisteredHandler
+    const result = (await handler({ sender: {} }, workspaceState.root)) as {
+      ok: boolean
+      attachments: Array<{ kind: string; relativePath: string }>
+    }
+
+    expect(result.ok).toBe(true)
+    expect(result.attachments).toMatchObject([{ kind: 'file', relativePath: 'src/main.ts' }])
   })
 
   it('moves a user-selected workspace file to the system trash', async () => {
@@ -133,5 +202,60 @@ describe('workspace file IPC', () => {
     } finally {
       await rm(outside, { recursive: true, force: true })
     }
+  })
+
+  it('shows secure native actions for a workspace file', async () => {
+    const handler = handlers.get('workspace:showPathMenu') as RegisteredHandler
+    await handler({ sender: {} }, 'notes/draft.md', workspaceState.root, false)
+
+    const template = menuTemplates[0]
+    expect(template.map((item) => item.label).filter(Boolean)).toEqual([
+      'Open in VS Code',
+      'Open with',
+      process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder',
+      'Copy Full Path',
+      'Copy Project-Relative Path'
+    ])
+    expect(
+      template
+        .find((item) => item.label === 'Open with')
+        ?.submenu?.map((item) => item.label)
+        .filter(Boolean)
+    ).toEqual([
+      'VS Code',
+      'Default app',
+      ...(process.platform === 'win32' ? ['Choose another app…'] : []),
+      process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
+    ])
+    template.find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
+    expect(clipboardWriteText).toHaveBeenCalledWith('notes/draft.md')
+    expect(menuPopup).toHaveBeenCalledOnce()
+  })
+
+  it('opens a unique nested file when a message only references its basename', async () => {
+    await mkdir(join(workspaceState.root, 'src', 'components'), { recursive: true })
+    const target = join(workspaceState.root, 'src', 'components', 'lightbox.js')
+    await writeFile(target, 'export {}', 'utf8')
+    const handler = handlers.get('workspace:openFileReference') as RegisteredHandler
+
+    const result = await handler({ sender: {} }, 'lightbox.js', workspaceState.root)
+
+    expect(result).toMatchObject({ ok: true, status: 'opened', path: target })
+    expect(openPath).toHaveBeenCalledWith(target)
+  })
+
+  it('shows a path chooser when a basename matches multiple workspace files', async () => {
+    await mkdir(join(workspaceState.root, 'app'), { recursive: true })
+    await mkdir(join(workspaceState.root, 'demo'), { recursive: true })
+    await writeFile(join(workspaceState.root, 'app', 'main.js'), 'app', 'utf8')
+    await writeFile(join(workspaceState.root, 'demo', 'main.js'), 'demo', 'utf8')
+    const handler = handlers.get('workspace:openFileReference') as RegisteredHandler
+
+    const result = await handler({ sender: {} }, 'main.js', workspaceState.root)
+
+    expect(result).toMatchObject({ ok: true, status: 'choose' })
+    expect(menuTemplates.at(-1)?.map((item) => item.label)).toEqual(['app/main.js', 'demo/main.js'])
+    expect(menuPopup).toHaveBeenCalledOnce()
+    expect(openPath).not.toHaveBeenCalled()
   })
 })

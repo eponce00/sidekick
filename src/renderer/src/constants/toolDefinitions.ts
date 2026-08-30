@@ -9,7 +9,6 @@ import {
   getAgentToolDefinitions,
   getSkillToolCatalogEntries
 } from '../../../shared/agentToolCatalog'
-import type { EditingModelTarget } from '../../../shared/workspaceMutations'
 
 export type ToolDefinitionItem = AgentToolDefinition
 export { WEB_ARTIFACTS_SKILL_ID, enableSkillToolDefinitions }
@@ -21,28 +20,24 @@ export function getSkillToolDefinitions(skillId: string): ToolDefinitionItem[] {
 export function getToolDefinitions(
   webSearchEnabled: boolean,
   workspaceRoot?: string | null,
-  activeSkillIds: readonly string[] = [],
-  editingTarget?: EditingModelTarget
+  activeSkillIds: readonly string[] = []
 ): ToolDefinitionItem[] {
   return getAgentToolDefinitions({
     surface: 'conversation',
     webSearchEnabled,
     workspaceRoot,
-    activeSkillIds,
-    editingTarget
+    activeSkillIds
   })
 }
 
 export function getSubAgentToolDefinitions(
   webSearchEnabled: boolean,
-  workspaceRoot?: string | null,
-  editingTarget?: EditingModelTarget
+  workspaceRoot?: string | null
 ): ToolDefinitionItem[] {
   return getAgentToolDefinitions({
     surface: 'subagent',
     webSearchEnabled,
-    workspaceRoot,
-    editingTarget
+    workspaceRoot
   })
 }
 

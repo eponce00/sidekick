@@ -1,4 +1,4 @@
-export type PermissionMode = 'always-ask' | 'agent-decides' | 'bypass'
+export type PermissionMode = 'full-access' | 'sensitive-only' | 'always-ask'
 export type RequestedAccess = 'auto' | 'confirm'
 export type PermissionOperationKind = 'command' | 'workspace' | 'mcp' | 'checkpoint' | 'browser'
 
@@ -95,12 +95,15 @@ export interface PermissionDecision {
 }
 
 export function normalizePermissionMode(value: unknown): PermissionMode {
-  if (value === 'always-ask' || value === 'bypass') return value
-  return 'agent-decides'
+  if (value === 'always-ask' || value === 'sensitive-only' || value === 'full-access') return value
+  // Migrate the two historical values without preserving them in the runtime contract.
+  if (value === 'agent-decides') return 'sensitive-only'
+  if (value === 'bypass') return 'full-access'
+  return 'full-access'
 }
 
 /**
- * Resolve the user's global approval mode against the access level requested by the agent.
+ * Resolve the user's global approval mode against the access level classified by the host.
  * This policy is authoritative for every sensitive operation.
  */
 export function resolvePermissionPolicy(
@@ -115,11 +118,11 @@ export function resolvePermissionPolicy(
     }
   }
 
-  if (mode === 'bypass') {
+  if (mode === 'full-access') {
     return {
       effectiveAccess: 'auto',
       source: mode,
-      reason: 'Bypass mode allows sensitive operations without approval.'
+      reason: 'Full access runs in-scope operations without approval prompts.'
     }
   }
 
@@ -128,8 +131,8 @@ export function resolvePermissionPolicy(
     source: mode,
     reason:
       requestedAccess === 'confirm'
-        ? 'The agent marked this operation as requiring approval.'
-        : 'The agent marked this operation as safe to run automatically.'
+        ? 'SideKick classified this operation as requiring approval.'
+        : 'SideKick classified this operation as safe to run automatically.'
   }
 }
 
@@ -149,10 +152,10 @@ export function browserPermissionOperation(
 export function getPermissionPrompt(mode: PermissionMode): string {
   switch (mode) {
     case 'always-ask':
-      return 'The app is in Always ask mode. Every sensitive operation requires user approval regardless of accessLevel.'
-    case 'bypass':
-      return 'The app is in Full bypass mode. Sensitive operations run without approval. Still choose accessLevel honestly so the audit log records your safety judgment.'
+      return 'The app is in Always ask mode. SideKick asks before every host-classified sensitive operation.'
+    case 'full-access':
+      return 'The app is in Full access mode. In-scope tools and commands run without approval prompts. Continue autonomously while respecting the user request and destructive-action safeguards.'
     default:
-      return 'The app is in Agent decides mode. Choose accessLevel="auto" only for safe, scoped, reversible work and accessLevel="confirm" for deletion, installation, system changes, credentials, external side effects, or other risky actions.'
+      return 'The app is in Sensitive actions mode. Safe inspection, ordinary workspace edits, and non-destructive validation run automatically; destructive operations and external side effects require approval.'
   }
 }

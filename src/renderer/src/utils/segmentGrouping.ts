@@ -2,6 +2,17 @@
 
 import type { ContentSegment, GroupedSegment } from '../types/chat.types'
 
+export type ChronologicalGroupBlock =
+  | {
+      type: 'work'
+      groups: Array<{ group: GroupedSegment; groupIndex: number }>
+    }
+  | {
+      type: 'content'
+      group: GroupedSegment
+      groupIndex: number
+    }
+
 /**
  * Groups consecutive thinking/tool segments together while keeping text/artifacts separate
  *
@@ -39,8 +50,7 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
       if (currentActionGroup.length > 0) {
         groups.push({
           type: 'actions',
-          toolSegments: currentActionGroup.filter((s) => s.type === 'tool'),
-          thinkingSegments: currentActionGroup.filter((s) => s.type === 'thinking')
+          segments: currentActionGroup
         })
         currentActionGroup = []
       }
@@ -54,14 +64,15 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
       segment.type === 'summarizing' ||
       segment.type === 'decision' ||
       segment.type === 'interaction' ||
+      segment.type === 'run_status' ||
+      segment.type === 'run_error' ||
       segment.type === 'verification'
     ) {
       // Summary, summarizing, and decision segments are standalone (like artifacts)
       if (currentActionGroup.length > 0) {
         groups.push({
           type: 'actions',
-          toolSegments: currentActionGroup.filter((s) => s.type === 'tool'),
-          thinkingSegments: currentActionGroup.filter((s) => s.type === 'thinking')
+          segments: currentActionGroup
         })
         currentActionGroup = []
       }
@@ -71,8 +82,7 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
       if (currentActionGroup.length > 0) {
         groups.push({
           type: 'actions',
-          toolSegments: currentActionGroup.filter((s) => s.type === 'tool'),
-          thinkingSegments: currentActionGroup.filter((s) => s.type === 'thinking')
+          segments: currentActionGroup
         })
         currentActionGroup = []
       }
@@ -84,10 +94,38 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
   if (currentActionGroup.length > 0) {
     groups.push({
       type: 'actions',
-      toolSegments: currentActionGroup.filter((s) => s.type === 'tool'),
-      thinkingSegments: currentActionGroup.filter((s) => s.type === 'thinking')
+      segments: currentActionGroup
     })
   }
 
   return groups
+}
+
+/**
+ * Collapses only consecutive work groups. Visible history markers and durable
+ * outputs remain at their original array positions and split the disclosure.
+ */
+export function chunkGroupsChronologically(
+  groups: readonly GroupedSegment[],
+  shouldCollapse: (group: GroupedSegment, groupIndex: number) => boolean
+): ChronologicalGroupBlock[] {
+  const blocks: ChronologicalGroupBlock[] = []
+  let pending: Array<{ group: GroupedSegment; groupIndex: number }> = []
+
+  const flush = (): void => {
+    if (!pending.length) return
+    blocks.push({ type: 'work', groups: pending })
+    pending = []
+  }
+
+  groups.forEach((group, groupIndex) => {
+    if (shouldCollapse(group, groupIndex)) {
+      pending.push({ group, groupIndex })
+      return
+    }
+    flush()
+    blocks.push({ type: 'content', group, groupIndex })
+  })
+  flush()
+  return blocks
 }

@@ -6,8 +6,6 @@ import type {
   ProviderContextResult,
   ProviderDiscoveryRequest,
   ProviderDiscoveryResult,
-  ProviderEditingCalibrationRequest,
-  ProviderEditingCalibrationResult,
   ProviderGenerationStatsResult,
   ProviderHealthChangedEvent,
   ProviderTarget
@@ -22,9 +20,6 @@ interface ProvidersAPI {
   complete: (request: ProviderChatRequest) => Promise<ProviderCompletionResult>
   discoverModels: (request: ProviderDiscoveryRequest) => Promise<ProviderDiscoveryResult>
   resolveContext: (target: ProviderTarget) => Promise<ProviderContextResult>
-  calibrateEditing: (
-    request: ProviderEditingCalibrationRequest
-  ) => Promise<ProviderEditingCalibrationResult>
   getGenerationStats: (
     target: ProviderTarget,
     generationId: string
@@ -61,14 +56,14 @@ interface ConversationsAPI {
     }
   >
   fork: (
-    id: string,
-    timestamp?: number
+    input: import('../shared/projects').ForkConversationInput
   ) => Promise<import('../shared/projects').ProjectConversation>
   update: (
     id: string,
     title: string,
     options?: import('../shared/conversationTitles').ConversationTitleUpdateOptions
   ) => Promise<{ success: boolean; updatedAt?: number }>
+  setPinned: (id: string, pinned: boolean) => Promise<{ success: boolean }>
   listTitleBackfillCandidates: (
     limit?: number
   ) => Promise<import('../shared/conversationTitles').ConversationTitleBackfillCandidate[]>
@@ -134,6 +129,15 @@ interface AgentRunsAPI {
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>
+  admissionsList: (
+    conversationId: string
+  ) => Promise<import('../shared/agentRunApi').PromptAdmissionsResult>
+  admissionsReplace: (
+    input: import('../shared/agentRunApi').ReplacePromptAdmissionsInput
+  ) => Promise<import('../shared/agentRunApi').PromptAdmissionsResult>
+  admissionsTakeNext: (
+    conversationId: string
+  ) => Promise<import('../shared/agentRunApi').PromptAdmissionItem | null>
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
   ) => () => void
@@ -180,6 +184,12 @@ interface ClipboardAPI {
 
 interface WorkspaceAPI {
   selectFolder: () => Promise<{ canceled: boolean; path: string | null }>
+  selectContextAttachments: (workspaceRoot: string) => Promise<{
+    ok: boolean
+    canceled: boolean
+    attachments: import('../shared/messageContextAttachments').MessageContextAttachment[]
+    error?: string
+  }>
   getPath: () => Promise<string | null>
   getRules: (
     workspaceRoot?: string,
@@ -300,7 +310,18 @@ interface WorkspaceAPI {
   ) => Promise<import('../shared/checkpointTitles').CheckpointTitleContext | null>
   openFolder: (folderPath: string, workspaceRoot?: string) => Promise<void>
   openFile: (filePath: string, workspaceRoot?: string) => Promise<void>
+  openFileReference: (
+    fileReference: string,
+    workspaceRoot?: string
+  ) => Promise<{
+    ok: boolean
+    status: 'opened' | 'choose' | 'not_found'
+    path?: string
+    matches?: string[]
+    error?: string
+  }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
+  showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
   onFilesChanged: (callback: () => void) => () => void
 }
 

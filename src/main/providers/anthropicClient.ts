@@ -67,11 +67,37 @@ function imageBlock(image: string): Record<string, unknown> {
   }
 }
 
+function messageImages(message: ProviderChatMessage): Array<{
+  dataUrl: string
+  name?: string
+  description?: string
+}> {
+  const images: Array<{ dataUrl: string; name?: string; description?: string }> = (
+    message.images || []
+  ).map((dataUrl) => ({ dataUrl }))
+  for (const attachment of message.media || []) {
+    if (attachment.source.type !== 'data_url') {
+      throw new Error('Provider media must be materialized before Anthropic serialization')
+    }
+    images.push({
+      dataUrl: attachment.source.dataUrl,
+      ...(attachment.name ? { name: attachment.name } : {}),
+      ...(attachment.description ? { description: attachment.description } : {})
+    })
+  }
+  return images
+}
+
 function messageContent(message: ProviderChatMessage): Array<Record<string, unknown>> {
   const blocks: Array<Record<string, unknown>> = []
   for (const thinking of message.thinking_blocks || []) blocks.push({ ...thinking })
   if (message.content) blocks.push({ type: 'text', text: message.content })
-  for (const image of message.images || []) blocks.push(imageBlock(image))
+  for (const image of messageImages(message)) {
+    if (image.description || image.name) {
+      blocks.push({ type: 'text', text: image.description || image.name || 'Tool image' })
+    }
+    blocks.push(imageBlock(image.dataUrl))
+  }
   for (const call of message.tool_calls || []) {
     let input = call.function.arguments || {}
     if (typeof input === 'string') {
@@ -107,13 +133,23 @@ export function toAnthropicMessages(messages: ProviderChatMessage[]): {
   for (const message of messages) {
     if (message.role === 'system') continue
     const role = message.role === 'assistant' ? 'assistant' : 'user'
+    const toolImages = message.role === 'tool' ? messageImages(message) : []
+    const toolContent: Array<Record<string, unknown>> = [
+      ...(message.content ? [{ type: 'text', text: message.content }] : []),
+      ...toolImages.flatMap((image) => [
+        ...(image.description || image.name
+          ? [{ type: 'text', text: image.description || image.name || 'Tool image' }]
+          : []),
+        imageBlock(image.dataUrl)
+      ])
+    ]
     const content =
       message.role === 'tool'
         ? [
             {
               type: 'tool_result',
               tool_use_id: message.tool_call_id || '',
-              content: message.content || ''
+              content: toolImages.length ? toolContent : message.content || ''
             }
           ]
         : messageContent(message)

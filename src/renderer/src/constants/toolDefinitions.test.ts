@@ -13,18 +13,16 @@ describe('tool definitions', () => {
     expect(delegated).toEqual(direct)
   })
 
-  it('routes direct-chat editing tools by the selected model without mixing dialects', () => {
-    const names = (model: string, providerKind: 'openrouter' | 'anthropic') =>
-      getToolDefinitions(false, '/workspace', [], { model, providerKind }).map(
-        ({ function: tool }) => tool.name
-      )
+  it('uses the same canonical workspace tools for every provider', () => {
+    const names = () =>
+      getToolDefinitions(false, '/workspace').map(({ function: tool }) => tool.name)
 
-    const openAi = names('openai/gpt-5.4-codex', 'openrouter')
+    const openAi = names()
     expect(openAi).toContain('apply_patch')
-    expect(openAi).not.toEqual(expect.arrayContaining(['Edit', 'Write', 'edit', 'write']))
+    expect(openAi).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
 
-    const claude = names('claude-sonnet-5', 'anthropic')
-    expect(claude).toEqual(expect.arrayContaining(['Edit', 'Write', 'delete_file']))
-    expect(claude).not.toContain('apply_patch')
+    const claude = names()
+    expect(claude).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
+    expect(claude).toEqual(openAi)
   })
 })

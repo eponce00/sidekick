@@ -3,7 +3,7 @@ import type { WebContents } from 'electron'
 import { commandPermissionOperation } from '../../shared/permissions'
 
 const mocks = vi.hoisted(() => ({
-  mode: 'agent-decides',
+  mode: 'full-access',
   audit: [] as unknown[],
   showMessageBox: vi.fn(async (_options: { detail?: string }) => ({ response: 1 }))
 }))
@@ -39,7 +39,7 @@ const operation = commandPermissionOperation({
 
 describe('PermissionBroker', () => {
   beforeEach(() => {
-    mocks.mode = 'agent-decides'
+    mocks.mode = 'full-access'
     mocks.audit = []
     mocks.showMessageBox.mockClear()
     mocks.showMessageBox.mockResolvedValue({ response: 1 })

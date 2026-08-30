@@ -166,6 +166,12 @@ Every normal conversation, research run, collaboration participant, and child ag
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
 - `AgentContextManager` performs budget-aware model compaction with a deterministic fallback and records the actual strategy and lineage.
 
+The kernel treats a provider output-limit finish reason as a failed tool batch: none of that turn's
+calls execute, even when an argument prefix happens to be valid JSON. Every call receives a
+model-visible `output_truncated` result so the model can retry with a smaller request. Within a
+non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
+mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
+
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
@@ -173,9 +179,59 @@ but no provider or tool execution. Research report is a run profile on the same 
 separate renderer agent. `useConversationMessages` and `useConversationActions` retain loading,
 edit/retry/rewind, cost, and checkpoint UI concerns.
 
+The renderer subscribes before reading a run snapshot, buffers events that arrive before attachment,
+and merges an in-flight durable snapshot into any newer live events by sequence. Sequence gaps use
+the paged journal endpoint for repair. A delayed snapshot therefore cannot erase a newer tool,
+thinking, completion, or finalization event and leave the interface waiting for another action.
+
 `src/shared/prompts` owns typed, capability-aware prompt and auxiliary trust boundaries for all surfaces. Skills live in `src/shared/skills`; the base prompt exposes discovery metadata and `use_skill` injects full trusted instructions on demand. Skills are declarative instructions, not packages to install. Optional bundled helper assets are resolved only inside the trusted runtime, and SideKick never runs a global Python/npm “skills setup.” Durable messages remain immutable; `conversation_compactions` stores anchored summaries while request preparation retains a recent verbatim tail. See [PROMPT_AND_CONTEXT.md](PROMPT_AND_CONTEXT.md).
 
 `services/providers/utilityCompletion.ts` is the narrow renderer-side non-streaming completion boundary for background UI utilities such as titles. Agent streaming never crosses that bridge; the kernel calls the trusted provider runtime directly.
+
+### Native visual browser
+
+Vision-capable conversation runs can use SideKick's first-party browser operator without installing a
+browser, extension, connector, or MCP server. `NativeBrowserSessionService` owns isolated Chromium
+surfaces backed by the Electron runtime already shipped in the desktop package. It uses Electron's
+internal CDP bridge for accessibility snapshots, semantic node references, full-page capture,
+network accounting, and coordinate fallback; no debugging port is exposed and no personal browser
+profile is attached. Local files are limited to explicitly granted project roots, plain HTTP is
+limited to loopback development servers, credential-bearing URLs and unsupported schemes fail
+closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
+subresources whose real path escapes that session's project grant. Conversation sessions persist
+across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used
+inactive session at the bounded global limit.
+
+The model-facing loop is semantic-first: `browser_observe` returns a fresh accessibility snapshot,
+screenshot, viewport, tab state, console delta, failed-request delta, screenshot hash, and visual
+change streak. Click, type, select, key, scroll, hover, navigation, tab, and wait actions use real
+browser input, settle the page, and return one post-action observation. `browser_evaluate` is a
+separate inspection-only primitive: common synthetic-input and DOM-mutation APIs are rejected, and
+the tool returns only a compact expression value rather than attaching a second, later screenshot
+or semantic tree. Element refs are tied to one observation epoch, so stale refs fail rather than
+acting on a different element. Repeated identical actions with no visual change are detected and
+stopped. `browser_verify` records an explicit criterion alongside a fresh visual observation; the
+model must inspect that evidence rather than infer success from a command or load event.
+`browser_resize` changes the owned viewport and Chromium device metrics so responsive desktop,
+tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
+multimodal result path to raster files inside the active project.
+
+Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
+typed file reference in the append-only run ledger; provider adapters materialize it only at the
+request boundary. OpenAI-compatible and Ollama requests preserve the required contiguous tool
+results before adding a linked multimodal observation, while Anthropic uses image blocks inside the
+native tool result. This avoids base64 in chat/event text and keeps screenshots available across
+continuation turns. The durable ledger retains every bounded screenshot, while inference requests
+carry only the two newest tool images so a long local-model browser loop cannot accumulate an
+unbounded visual prompt. Expired historical artifacts degrade to text instead of breaking a later
+follow-up. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
+renderer. The resizable workspace inspector docks Browser beside Files and Recovery. Its flexible
+preview stage consumes the available height while the page label, latest action, and verification
+state stay anchored at the bottom. Portrait and full-page captures scale inside that stage instead
+of expanding the inspector. Viewport screenshots overlay the last runtime-resolved interaction
+point with a high-contrast cursor and glow so the user can see where SideKick clicked, typed,
+hovered, or scrolled. The renderer never receives a raw `WebContents` handle or browser execution
+authority, and typed field values are redacted before tool arguments enter the durable event ledger.
 
 ### Persistent goals
 
@@ -261,6 +317,11 @@ execution.
 `agent_runs`, `agent_run_events`, `agent_pending_interactions`, and `agent_run_todos` are the only run
 state. Sequence-numbered events include deltas, completed assistant turns, tool lifecycle, usage,
 permissions, questions, compaction, retry, phase, terminal, and post-persistence finalization.
+
+Run request context is recorded at the start and at explicit runtime mode/model transitions. Tool
+results carry canonical status, structured recovery, bounded presentation metadata, timing, and
+optional retained-output handles; renderer cards are projections of that ledger rather than a
+second inferred execution state.
 
 On startup, nonterminal runs become `interrupted`; conversation/research partial output is projected into the linked assistant message, unfinished tools become visible interrupted failures, pending interactions are cancelled, and a recovered `run.finalized` event closes the ledger. A renderer reload reconstructs an active message from events without replaying a tool.
 

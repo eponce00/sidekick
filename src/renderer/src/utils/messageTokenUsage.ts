@@ -15,18 +15,24 @@ export function messageTokenUsageFromMetadata(
       : metadata
   const promptTokens = finiteNonNegative(nested.promptTokens)
   const completionTokens = finiteNonNegative(nested.completionTokens)
+  const cachedPromptTokens = finiteNonNegative(nested.cachedPromptTokens)
   const tokensPerSecond = finiteNonNegative(nested.tokensPerSecond)
+  const timeToFirstTokenMs = finiteNonNegative(nested.timeToFirstTokenMs)
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
-    tokensPerSecond === undefined
+    cachedPromptTokens === undefined &&
+    tokensPerSecond === undefined &&
+    timeToFirstTokenMs === undefined
   ) {
     return undefined
   }
   return {
     promptTokens: promptTokens ?? 0,
+    ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     completionTokens: completionTokens ?? 0,
-    ...(tokensPerSecond !== undefined && tokensPerSecond > 0 ? { tokensPerSecond } : {})
+    ...(tokensPerSecond !== undefined && tokensPerSecond > 0 ? { tokensPerSecond } : {}),
+    ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs })
   }
 }
 
@@ -46,10 +52,18 @@ export function mergeMessageTokenUsage(
   )
   return {
     promptTokens: left.promptTokens + right.promptTokens,
+    ...((left.cachedPromptTokens ?? 0) + (right.cachedPromptTokens ?? 0) > 0
+      ? { cachedPromptTokens: (left.cachedPromptTokens ?? 0) + (right.cachedPromptTokens ?? 0) }
+      : {}),
     completionTokens: left.completionTokens + right.completionTokens,
     ...((left.cost ?? 0) + (right.cost ?? 0) > 0
       ? { cost: (left.cost ?? 0) + (right.cost ?? 0) }
       : {}),
-    ...(measuredSeconds > 0 ? { tokensPerSecond: measuredTokens / measuredSeconds } : {})
+    ...(measuredSeconds > 0 ? { tokensPerSecond: measuredTokens / measuredSeconds } : {}),
+    ...(left.timeToFirstTokenMs !== undefined
+      ? { timeToFirstTokenMs: left.timeToFirstTokenMs }
+      : right.timeToFirstTokenMs !== undefined
+        ? { timeToFirstTokenMs: right.timeToFirstTokenMs }
+        : {})
   }
 }

@@ -133,7 +133,22 @@ export function QueuedMessageTray({
               title="Edit queued message"
             >
               {isPivot && <span className="queued-message-state">Steering</span>}
-              {message.content}
+              {message.content ||
+                (message.images?.length
+                  ? 'Image attachment'
+                  : message.attachments?.length
+                    ? 'Project attachment'
+                    : '')}
+              {Boolean(message.images?.length) && (
+                <span className="queued-message-image-count">
+                  {message.images!.length} image{message.images!.length === 1 ? '' : 's'}
+                </span>
+              )}
+              {Boolean(message.attachments?.length) && (
+                <span className="queued-message-image-count">
+                  {message.attachments!.length} file{message.attachments!.length === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
           )}
         </div>

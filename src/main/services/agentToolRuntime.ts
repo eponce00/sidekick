@@ -14,22 +14,17 @@ import {
   type ToolExecutionResult,
   type ToolWorkspaceChange
 } from '../../shared/agentRuntime'
-import { waitForAgentDelay } from '../../shared/agentWait'
-import { getSkillById } from '../../shared/skills'
 import type { McpServerConfig, McpToolInfo, TodoItem, ToolRisk } from '../../shared/types'
+import { getSkillById } from '../../shared/skills'
 import {
-  editingDialectForModel,
   isWorkspaceMutationTool,
+  WORKSPACE_MUTATION_TOOL_NAMES,
   workspaceMutationRequestFromTool,
   workspaceMutationResultForModel,
-  workspaceMutationTargetPaths,
-  type EditingDialect
+  workspaceMutationTargetPaths
 } from '../../shared/workspaceMutations'
-import { searchImages } from './sidekickSearch/imageSearch'
-import { readPage } from './sidekickSearch/pageReader'
-import { searchWeb } from './sidekickSearch/searchCoordinator'
 import { executeWorkspaceMutation } from './workspaceMutationService'
-import { WorkspaceReadService, WorkspaceSearchArgumentError } from './workspaceReadService'
+import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore, type ToolOutputPolicy } from './toolOutputStore'
@@ -38,7 +33,19 @@ import type { AgentToolExecutionContext } from './agentToolRegistry'
 import { resolveWorkspaceInstructionsForPath } from './workspaceRules'
 import type { CodeIntelligenceInput, VerificationTerminalDecision } from '../../shared/verification'
 import { LanguageIntelligenceService } from './languageIntelligence/languageIntelligenceService'
-import { WorkspaceVerificationService } from './workspaceVerificationService'
+import {
+  WorkspaceVerificationService,
+  type WorkspaceCommandSnapshot
+} from './workspaceVerificationService'
+import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import { registerCoreToolHandlers } from './agentCoreToolHandlers'
+import { registerWebToolHandlers } from './agentWebToolHandlers'
+import { registerConversationToolHandlers } from './agentConversationToolHandlers'
+import { registerSkillToolHandlers } from './agentSkillToolHandlers'
+import { registerMcpToolHandlers } from './agentMcpToolHandlers'
+import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
+import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 
 export interface AgentCollaborationToolHandler {
   execute(
@@ -75,7 +82,8 @@ export interface AgentToolRuntimeSessionInput {
   surface: AgentRunSurface
   workspaceRoot?: string
   webSearchEnabled: boolean
-  editingTarget: NonNullable<AgentToolCatalogOptions['editingTarget']>
+  /** Enable SideKick's built-in visual browser for this model/run. */
+  browserEnabled?: boolean
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
   mcpConfigs?: readonly McpServerConfig[]
@@ -90,8 +98,6 @@ export interface AgentToolRuntimeSession {
   catalog: () => AgentToolCatalogOptions
   router: AgentKernelToolRouter
   persistentSkillIds: () => string[]
-  editingDialect: () => EditingDialect
-  setEditingDialect: (dialect: EditingDialect) => void
   verificationController?: {
     afterTerminalTurn: () => Promise<VerificationTerminalDecision>
   }
@@ -134,7 +140,10 @@ function mcpDefinition(tool: McpToolInfo): AgentToolDefinition {
   }
 }
 
-function safeToolArguments(name: string, args: Record<string, unknown>): Record<string, unknown> {
+export function safeToolArguments(
+  name: string,
+  args: Record<string, unknown>
+): Record<string, unknown> {
   if (isWorkspaceMutationTool(name)) {
     return {
       file_path: args.file_path,
@@ -152,7 +161,7 @@ function safeToolArguments(name: string, args: Record<string, unknown>): Record<
       ...('content' in args ? { content_bytes: Buffer.byteLength(stringArg(args, 'content')) } : {})
     }
   }
-  if (name === 'execute_command') {
+  if (name === 'shell') {
     return {
       title: args.title,
       command: stringArg(args, 'command').slice(0, 2_000),
@@ -160,6 +169,14 @@ function safeToolArguments(name: string, args: Record<string, unknown>): Record<
       timeout: args.timeout,
       background: args.background,
       accessLevel: args.accessLevel
+    }
+  }
+  if (name === 'browser_type') {
+    const { value: _value, ...safe } = args
+    return {
+      ...safe,
+      value_redacted: true,
+      value_bytes: Buffer.byteLength(stringArg(args, 'value'))
     }
   }
   return Object.fromEntries(
@@ -226,8 +243,10 @@ export function collaborationCommandScopeError(
 export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
   private readonly recordedBackgroundVerification = new Set<string>()
+  private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
   private readonly verification: WorkspaceVerificationService
+  private readonly browser?: AgentBrowserSessionManager
 
   constructor(
     private readonly db: Database.Database,
@@ -236,10 +255,12 @@ export class AgentToolRuntime {
     private readonly outputs: ToolOutputStore,
     private readonly mcp: McpClientManager,
     languageIntelligence?: LanguageIntelligenceService,
-    verification?: WorkspaceVerificationService
+    verification?: WorkspaceVerificationService,
+    browser?: NativeBrowserSessionService
   ) {
     this.languageIntelligence = languageIntelligence ?? new LanguageIntelligenceService()
     this.verification = verification ?? new WorkspaceVerificationService(db)
+    this.browser = browser ? new AgentBrowserSessionManager(browser) : undefined
   }
 
   setChildLauncher(launcher: AgentChildRunLauncher): void {
@@ -250,7 +271,7 @@ export class AgentToolRuntime {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const readReceipts = new Map<string, string>()
     const mcpByFunction = new Map<string, McpToolInfo>()
-    let editingDialect = editingDialectForModel(input.editingTarget)
+    const enabledMcpByFunction = new Map<string, McpToolInfo>()
     const baselineRevision = this.verification.beginSession(input.workspaceRoot)
     const intelligenceStatus = input.workspaceRoot
       ? this.languageIntelligence.workspaceStatus(input.workspaceRoot)
@@ -269,16 +290,62 @@ export class AgentToolRuntime {
       const listed = await this.mcp.listTools()
       for (const tool of listed.tools) mcpByFunction.set(mcpFunctionName(tool), tool)
     }
+    const handlers = new AgentToolHandlerRegistry()
+    registerCoreToolHandlers(handlers, this.outputs)
+    registerWebToolHandlers(handlers, this.outputs)
+    registerVisionToolHandlers(handlers)
+    if (input.browserEnabled === true && this.browser) {
+      registerBrowserToolHandlers(handlers, this.browser, this.outputs)
+    }
+    registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
+    registerSkillToolHandlers(handlers, {
+      activeSkillIds,
+      readReceipts,
+      childLauncher: () => this.childLauncher
+    })
+    registerMcpToolHandlers(handlers, {
+      mcp: this.mcp,
+      available: mcpByFunction,
+      enabled: enabledMcpByFunction,
+      readReceipts
+    })
+    handlers.register(
+      [
+        'read',
+        'code_intelligence',
+        'shell',
+        'list_background_tasks',
+        'cancel_background_task',
+        ...WORKSPACE_MUTATION_TOOL_NAMES
+      ],
+      ({ name, arguments: args, context }) =>
+        this.execute(input, readReceipts, sessionState, name, args, context)
+    )
+    if (input.collaboration) {
+      handlers.register(
+        [
+          'collaboration_read',
+          'collaboration_send',
+          'collaboration_share_file',
+          'collaboration_list_artifacts',
+          'collaboration_import_artifact',
+          'collaboration_status',
+          'collaboration_claim_complete'
+        ],
+        ({ name, arguments: args, context }) =>
+          this.execute(input, readReceipts, sessionState, name, args, context)
+      )
+    }
     const catalog = (): AgentToolCatalogOptions => ({
       surface: input.surface,
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: input.webSearchEnabled,
-      editingTarget: { ...input.editingTarget, dialect: editingDialect },
+      browserEnabled: input.browserEnabled === true && Boolean(this.browser),
       activeSkillIds: [...activeSkillIds],
       capabilities: input.capabilities,
-      mcpTools: [...mcpByFunction.values()].map(mcpDefinition),
+      mcpTools: [...enabledMcpByFunction.values()].map(mcpDefinition),
       mcpToolRisks: Object.fromEntries(
-        [...mcpByFunction.entries()].map(([name, tool]) => [name, mcpToolRisk(tool)])
+        [...enabledMcpByFunction.entries()].map(([name, tool]) => [name, mcpToolRisk(tool)])
       ),
       goalEnabled: Boolean(input.goal),
       planStage: input.plan?.stage() ?? 'inactive',
@@ -289,27 +356,16 @@ export class AgentToolRuntime {
       catalog,
       persistentSkillIds: () =>
         [...activeSkillIds].filter((id) => getSkillById(id)?.activationScope === 'conversation'),
-      editingDialect: () => editingDialect,
-      setEditingDialect: (dialect) => {
-        editingDialect = dialect
-      },
       verificationController: this.verification.createTerminalController(
         input.runId,
         input.workspaceRoot,
         baselineRevision
       ),
       router: {
-        execute: (name, args, context) =>
-          this.execute(
-            input,
-            activeSkillIds,
-            readReceipts,
-            mcpByFunction,
-            sessionState,
-            name,
-            args,
-            context
-          ),
+        execute: (name, args, context) => {
+          const title = this.title(name, args)
+          return handlers.execute({ name, title, arguments: args, context })
+        },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments
       }
@@ -317,11 +373,8 @@ export class AgentToolRuntime {
   }
 
   private title(name: string, args: Record<string, unknown>): string {
-    if (name === 'execute_command') return stringArg(args, 'title', 'Run command')
-    if (name === 'read_workspace_file') return `Read ${stringArg(args, 'file_path')}`
-    if (name === 'list_workspace_files')
-      return `List ${stringArg(args, 'sub_path', 'project files')}`
-    if (name === 'search_workspace_files') return `Search ${stringArg(args, 'regex')}`
+    if (name === 'shell') return stringArg(args, 'title', 'Run command')
+    if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {
       return `${stringArg(args, 'operation', 'Inspect code').replaceAll('_', ' ')} ${stringArg(args, 'file_path')}`.trim()
     }
@@ -330,6 +383,32 @@ export class AgentToolRuntime {
     if (name === 'web_search') return `Search: ${stringArg(args, 'query')}`
     if (name === 'web_image_search') return `Image search: ${stringArg(args, 'query')}`
     if (name === 'web_fetch') return `Fetch: ${stringArg(args, 'url')}`
+    if (name === 'browser_open') return `Open ${stringArg(args, 'url', 'browser')}`
+    if (name === 'browser_observe') return 'Inspect browser'
+    if (name === 'browser_screenshot') return 'Capture browser screenshot'
+    if (name === 'browser_click')
+      return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
+    if (name === 'browser_type') return 'Type in browser'
+    if (name === 'browser_select') return 'Select browser option'
+    if (name === 'browser_press') return `Press ${stringArg(args, 'key', 'key')}`
+    if (name === 'browser_scroll') return 'Scroll browser'
+    if (name === 'browser_hover') return 'Hover browser element'
+    if (name === 'browser_wait') return 'Wait for browser'
+    if (name === 'browser_navigate') {
+      const action = stringArg(args, 'action', 'url')
+      return action === 'url'
+        ? `Navigate to ${stringArg(args, 'url', 'page')}`
+        : `${action[0]?.toUpperCase() || ''}${action.slice(1)} browser`
+    }
+    if (name === 'browser_resize') {
+      return `Resize browser to ${String(args.width || '?')} × ${String(args.height || '?')}`
+    }
+    if (name === 'browser_tabs') return `${stringArg(args, 'action', 'List')} browser tabs`
+    if (name === 'browser_console') return 'Read browser console'
+    if (name === 'browser_network') return 'Read browser network failures'
+    if (name === 'browser_evaluate') return 'Inspect page state'
+    if (name === 'browser_verify') return `Verify ${stringArg(args, 'criterion', 'UI visually')}`
+    if (name === 'browser_close') return 'Close browser'
     if (name === 'use_skill') return `Load ${stringArg(args, 'skill_id')} skill`
     if (name === 'update_goal') {
       return args.status === 'complete' ? 'Complete goal' : 'Report goal blocker'
@@ -394,118 +473,43 @@ export class AgentToolRuntime {
 
   private async execute(
     input: AgentToolRuntimeSessionInput,
-    activeSkillIds: Set<string>,
     readReceipts: Map<string, string>,
-    mcpByFunction: Map<string, McpToolInfo>,
     sessionState: AgentToolRuntimeSessionState,
     name: string,
     args: Record<string, unknown>,
     context: AgentToolExecutionContext
   ): Promise<ToolExecutionResult> {
     const title = this.title(name, args)
-    if (name === 'read_tool_output') {
-      const result = await this.outputs.read(
-        stringArg(args, 'handle'),
-        boundedNumber(args.offset, 0, 0, Number.MAX_SAFE_INTEGER),
-        boundedNumber(args.max_bytes, 50 * 1024, 1_024, 50 * 1024)
-      )
-      return this.success(title, result, result.content)
-    }
-    if (name === 'wait') {
-      const result = await waitForAgentDelay(args.seconds, { signal: context.signal })
-      return result.completed
-        ? this.success(title, result)
-        : toolExecutionFailed({
-            title,
-            code: 'cancelled',
-            message: 'Wait cancelled',
-            status: 'cancelled',
-            data: result
-          })
-    }
-    if (name === 'manage_todo_list') {
-      return this.manageTodos(context.runId, title, args, input.goal?.onTodosUpdated)
-    }
-    if (name === 'update_goal' && input.goal) {
-      return this.success(title, await input.goal.execute(args, context))
-    }
-    if (name === 'complete_plan' && input.plan) {
-      const result = input.plan.complete(args.completion)
-      return this.success(
-        title,
-        result,
-        result.accepted
-          ? JSON.stringify(result)
-          : `${JSON.stringify(result)}\nThe plan contract is not complete. Correct every listed issue before trying complete_plan again.`
-      )
-    }
-    if (name === 'list_workspace_files') {
-      const instructions = await this.scopedInstructions(
-        input,
-        stringArg(args, 'sub_path'),
-        true,
-        false
-      )
-      const result = await this.workspaceReads.listFiles(this.requireWorkspace(input), {
-        subPath: stringArg(args, 'sub_path') || undefined,
+    if (name === 'read') {
+      const path = stringArg(args, 'path', '.')
+      const result = await this.workspaceReads.readPath(this.requireWorkspace(input), path, {
+        startLine: args.start_line as number | undefined,
+        endLine: args.end_line as number | undefined,
+        cursor: args.cursor as number | undefined,
+        maxEntries: args.max_entries as number | undefined,
         glob: stringArg(args, 'glob') || undefined,
         signal: context.signal
       })
-      return this.success(title, result, instructions.content + result.files.join('\n'))
-    }
-    if (name === 'read_workspace_file') {
       const instructions = await this.scopedInstructions(
         input,
-        stringArg(args, 'file_path'),
-        false,
+        path,
+        result.kind === 'directory',
         false
       )
-      const result = await this.workspaceReads.readFile(
-        this.requireWorkspace(input),
-        stringArg(args, 'file_path'),
-        {
-          startLine: args.start_line as number | undefined,
-          endLine: args.end_line as number | undefined,
-          signal: context.signal
-        }
-      )
-      readReceipts.set(stringArg(args, 'file_path').replaceAll('\\', '/'), result.version)
-      if (input.workspaceRoot) {
-        this.languageIntelligence.observeFile(input.workspaceRoot, stringArg(args, 'file_path'))
+      if (result.kind === 'directory') {
+        const metadata = `[Directory: ${path} | next_cursor ${result.nextCursor ?? 'none'}]\n`
+        return this.success(
+          title,
+          result,
+          instructions.content + metadata + result.files.join('\n')
+        )
       }
+      readReceipts.set(path.replaceAll('\\', '/'), result.version)
+      if (input.workspaceRoot) this.languageIntelligence.observeFile(input.workspaceRoot, path)
       const metadata =
-        `[File: ${stringArg(args, 'file_path')} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
+        `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
         ` | version ${result.version}${result.nextLine ? ` | next_line ${result.nextLine}` : ''}]\n`
       return this.success(title, result, instructions.content + metadata + result.content)
-    }
-    if (name === 'search_workspace_files') {
-      const instructions = await this.scopedInstructions(
-        input,
-        stringArg(args, 'path'),
-        true,
-        false
-      )
-      try {
-        const result = await this.workspaceReads.searchFiles(this.requireWorkspace(input), {
-          regex: stringArg(args, 'regex'),
-          path: stringArg(args, 'path') || undefined,
-          filePattern: stringArg(args, 'file_pattern') || undefined,
-          contextLines: args.context_lines as number | undefined,
-          signal: context.signal
-        })
-        return this.success(title, result, instructions.content + result.output)
-      } catch (error) {
-        if (!(error instanceof WorkspaceSearchArgumentError)) throw error
-        return toolExecutionFailed({
-          title,
-          code: 'invalid_arguments',
-          message: error.message,
-          retryable: true,
-          recoveryAction: 'correct_input',
-          recovery:
-            'Use a valid JavaScript regular expression and a project-relative file or directory path.'
-        })
-      }
     }
     if (name === 'code_intelligence') {
       const operation = stringArg(args, 'operation') as CodeIntelligenceInput['operation']
@@ -655,7 +659,7 @@ export class AgentToolRuntime {
         diagnostics
       })
     }
-    if (name === 'execute_command') {
+    if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
       const scopeError =
@@ -678,7 +682,11 @@ export class AgentToolRuntime {
             'New directory-scoped project instructions apply. Review them, then retry the command.'
         )
       }
-      readReceipts.clear()
+      // A shell command may mutate files, but receipts are content-versioned and the mutation
+      // service compares them with the current file immediately before applying a patch. Keep
+      // still-valid receipts; an actually changed file is rejected as stale without forcing
+      // redundant reads after every diagnostic command.
+      const verificationSnapshot = this.verification.captureCommandWorkspace(workspaceRoot, command)
       await input.onWorkspaceWillMutate?.()
       const commandStartedAt = Date.now()
       const result = await this.commands.execute({
@@ -689,7 +697,8 @@ export class AgentToolRuntime {
         cwd: stringArg(args, 'cwd') || undefined,
         timeoutSecs: boundedNumber(args.timeout, args.background === true ? 3_600 : 30, 1, 86_400),
         background: args.background === true,
-        signal: context.signal
+        signal: context.signal,
+        onOutput: ({ chunk, stream }) => context.onOutput?.({ chunk, stream })
       })
       const publicResult = { ...result, outputPath: undefined }
       const content =
@@ -710,8 +719,11 @@ export class AgentToolRuntime {
           command,
           stringArg(args, 'cwd') || undefined,
           result,
-          commandStartedAt
+          commandStartedAt,
+          verificationSnapshot
         )
+      } else if (verificationSnapshot) {
+        this.backgroundVerificationSnapshots.set(result.id, verificationSnapshot)
       }
       if ('stdout' in result && !result.success) {
         const bounded = await this.outputs.apply(content, { preview: 'head-tail' })
@@ -749,9 +761,11 @@ export class AgentToolRuntime {
             task.command,
             task.cwd,
             task.result,
-            task.startedAt
+            task.startedAt,
+            this.backgroundVerificationSnapshots.get(task.id)
           )
           this.recordedBackgroundVerification.add(task.id)
+          this.backgroundVerificationSnapshots.delete(task.id)
         }
       }
       return this.success(title, { tasks })
@@ -766,80 +780,6 @@ export class AgentToolRuntime {
             message: 'Background task was not found in this run'
           })
     }
-    if (name === 'web_search') {
-      const result = await searchWeb(stringArg(args, 'query'), boundedNumber(args.limit, 8, 1, 20))
-      return this.success(title, result)
-    }
-    if (name === 'web_image_search') {
-      const results = await searchImages(stringArg(args, 'query'), 8, {
-        includeImageData: args.include_image_data === true,
-        maxImagesWithData: 3
-      })
-      return this.success(title, { results })
-    }
-    if (name === 'web_fetch') {
-      const page = await readPage(stringArg(args, 'url'))
-      return this.success(title, page, JSON.stringify(page), { policy: { preview: 'head-tail' } })
-    }
-    if (name === 'use_skill') {
-      const skill = getSkillById(stringArg(args, 'skill_id'))
-      if (!skill || skill.invocation === 'manual') {
-        return toolExecutionFailed({
-          title,
-          code: 'not_found',
-          message: `Skill is not available: ${stringArg(args, 'skill_id')}`
-        })
-      }
-      activeSkillIds.add(skill.id)
-      const content =
-        `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
-        `${skill.systemPromptInjection}\n</skill_instructions>`
-      return this.success(title, { id: skill.id, name: skill.name }, content)
-    }
-    if (name === 'create_artifact') {
-      if (!activeSkillIds.has('web-artifacts')) {
-        return toolExecutionFailed({
-          title,
-          code: 'permission_denied',
-          message: 'Load the web-artifacts skill before creating an inline artifact'
-        })
-      }
-      return this.success(title, {
-        artifact: {
-          type: args.type,
-          title: args.title,
-          code: args.code
-        }
-      })
-    }
-    if (name === 'spawn_subagent') {
-      if (!this.childLauncher) {
-        return toolExecutionFailed({
-          title,
-          code: 'unsupported',
-          message: 'Child-agent execution is not configured'
-        })
-      }
-      readReceipts.clear()
-      return this.success(
-        title,
-        await this.childLauncher.launch(
-          stringArg(args, 'task'),
-          stringArg(args, 'context') || undefined,
-          context
-        )
-      )
-    }
-    const mcpTool = mcpByFunction.get(name)
-    if (mcpTool) {
-      readReceipts.clear()
-      return this.success(
-        title,
-        await this.mcp.callTool(mcpTool.serverId, mcpTool.name, args, {
-          signal: context.signal
-        })
-      )
-    }
     if (name.startsWith('collaboration_') && input.collaboration) {
       if (name === 'collaboration_import_artifact') readReceipts.clear()
       return this.success(title, await input.collaboration.execute(name, args, context))
@@ -851,42 +791,11 @@ export class AgentToolRuntime {
     })
   }
 
-  private async manageTodos(
-    runId: string,
-    title: string,
-    args: Record<string, unknown>,
-    onUpdated?: (todos: TodoItem[]) => void
-  ): Promise<ToolExecutionResult> {
-    if (args.operation === 'write') {
-      const todos = Array.isArray(args.todoList) ? (args.todoList as TodoItem[]) : []
-      if (todos.filter((todo) => todo.status === 'in-progress').length > 1) {
-        return toolExecutionFailed({
-          title,
-          code: 'invalid_arguments',
-          message: 'At most one todo item may be in progress',
-          retryable: true
-        })
-      }
-      this.db
-        .prepare(
-          `INSERT INTO agent_run_todos (run_id, todo_json, updated_at) VALUES (?, ?, ?)
-           ON CONFLICT(run_id) DO UPDATE SET todo_json = excluded.todo_json, updated_at = excluded.updated_at`
-        )
-        .run(runId, JSON.stringify(todos), Date.now())
-      onUpdated?.(todos)
-    }
-    const row = this.db
-      .prepare('SELECT todo_json FROM agent_run_todos WHERE run_id = ?')
-      .get(runId) as { todo_json: string } | undefined
-    const todos = row ? (JSON.parse(row.todo_json) as TodoItem[]) : []
-    return this.success(title, { todoList: todos })
-  }
-
   cancelRun(runId: string): void {
     this.commands.cancelRun(runId)
   }
 
   async close(): Promise<void> {
-    await this.languageIntelligence.close()
+    await Promise.all([this.languageIntelligence.close(), this.browser?.dispose()])
   }
 }

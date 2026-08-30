@@ -52,9 +52,14 @@ describe('applicationMenuTemplate', () => {
         expect.objectContaining({ role: 'quit' })
       ])
     )
-    expect(submenu(template.find(({ label }) => label === 'View'))).toEqual([
-      expect.objectContaining({ role: 'togglefullscreen', accelerator: 'F11' })
-    ])
+    expect(submenu(template.find(({ label }) => label === 'View'))).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'zoomIn' }),
+        expect.objectContaining({ role: 'zoomOut' }),
+        expect.objectContaining({ role: 'resetZoom' }),
+        expect.objectContaining({ role: 'togglefullscreen', accelerator: 'F11' })
+      ])
+    )
     expect(submenu(template.find(({ label }) => label === 'Help'))).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: 'Check for Updates…' })])
     )

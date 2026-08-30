@@ -105,15 +105,15 @@ npm run test:release
 Validate an already-built platform directory with:
 
 ```bash
-npm run validate:release -- --version 0.5.1 --platform macos dist
-npm run validate:release -- --version 0.5.1 --platform windows dist
-npm run validate:release -- --version 0.5.1 --platform linux dist
+npm run validate:release -- --version 0.6.0 --platform macos dist
+npm run validate:release -- --version 0.6.0 --platform windows dist
+npm run validate:release -- --version 0.6.0 --platform linux dist
 ```
 
 ## What the tagged workflow proves
 
 A manual workflow run builds and tests packages without publishing them. A stable tag matching
-`package.json`, such as `v0.5.1`, runs the same gates and may publish.
+`package.json`, such as `v0.6.0`, runs the same gates and may publish.
 
 All three platform jobs run typechecks, lint, documentation validation, the test suites, release
 validator tests, a packaged build, an isolated real-Electron critical journey, a packaged-content
@@ -142,7 +142,7 @@ published version or source tag.
 1. Set the same stable version in `package.json` and `package-lock.json`.
 2. Run `npm run check`, `npm run test:release`, and `npm run test:e2e`.
 3. Merge the validated pull request into `main`.
-4. Create and push the matching annotated source tag, for example `v0.5.1`.
+4. Create and push the matching annotated source tag, for example `v0.6.0`.
 5. Wait for all three platform jobs and the publisher job.
 6. Verify the release contains the exact artifact contract and a valid attestation.
 7. Install on clean physical machines and test the documented first-launch warning, app launch,

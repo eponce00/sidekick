@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'crypto'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs'
 import { relative, resolve } from 'path'
 import type { ToolDiagnostic, ToolWorkspaceChange } from '../../shared/agentRuntime'
 import type { ShellCommandResult } from '../../shared/types'
@@ -39,6 +39,26 @@ export interface VerificationCommandClassification {
   scope: VerificationScope
   mutatesWorkspace: boolean
 }
+
+export interface WorkspaceCommandSnapshot {
+  entries: Map<string, string>
+  complete: boolean
+}
+
+const SNAPSHOT_IGNORED_DIRECTORIES = new Set([
+  '.git',
+  '.hg',
+  '.svn',
+  'node_modules',
+  '.pnpm-store',
+  '.yarn',
+  '.cache',
+  '.next',
+  '.nuxt',
+  '.vite',
+  'coverage'
+])
+const MAX_SNAPSHOT_FILES = 25_000
 
 const READ_ONLY_COMMANDS = [
   /^\s*(?:pwd|ls|dir|find|fd|rg|grep|cat|head|tail|sed\s+-n|wc|stat|file|which|where|type)\b/i,
@@ -122,8 +142,73 @@ function commandSummary(kind: VerificationKind, result: ShellCommandResult): str
       /\b(\d+)\s+(?:tests?\s+)?passed\b/i.exec(output)?.[1]
     return `${label} passed${count ? ` (${count} passed)` : ''}.`
   }
-  const detail = (result.stderr || result.stdout || result.error || '').trim().split('\n')[0]
+  const launchError = result.error?.trim()
+  if (launchError && /\b(?:spawn|ENOENT|EACCES|EPERM)\b/i.test(launchError)) {
+    return `Command could not start: ${launchError.slice(0, 240)}.`
+  }
+  const detail = `${result.stderr}\n${result.stdout}\n${result.error || ''}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(
+      (line) =>
+        line &&
+        line !== '#< CLIXML' &&
+        !line.startsWith('<Objs ') &&
+        !/^={3,}/.test(line)
+    )
   return `${label} failed${detail ? `: ${detail.slice(0, 240)}` : ` with exit code ${result.exitCode}`}.`
+}
+
+function snapshotWorkspace(workspaceRoot: string): WorkspaceCommandSnapshot {
+  const root = resolve(workspaceRoot)
+  const entries = new Map<string, string>()
+  let complete = true
+  const visit = (directory: string): void => {
+    if (!complete) return
+    let children
+    try {
+      children = readdirSync(directory, { withFileTypes: true })
+    } catch {
+      complete = false
+      return
+    }
+    for (const child of children) {
+      if (entries.size >= MAX_SNAPSHOT_FILES) {
+        complete = false
+        return
+      }
+      if (child.isDirectory() && SNAPSHOT_IGNORED_DIRECTORIES.has(child.name)) continue
+      const absolute = resolve(directory, child.name)
+      const path = relative(root, absolute).replaceAll('\\', '/')
+      try {
+        const stat = child.isSymbolicLink() ? lstatSync(absolute) : statSync(absolute)
+        if (child.isDirectory()) visit(absolute)
+        else entries.set(path, `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}:${stat.mode}`)
+      } catch {
+        complete = false
+      }
+    }
+  }
+  visit(root)
+  return { entries, complete }
+}
+
+function workspaceChanges(
+  before: WorkspaceCommandSnapshot,
+  after: WorkspaceCommandSnapshot
+): ToolWorkspaceChange[] {
+  const paths = new Set([...before.entries.keys(), ...after.entries.keys()])
+  const changes: ToolWorkspaceChange[] = []
+  for (const path of paths) {
+    const previous = before.entries.get(path)
+    const current = after.entries.get(path)
+    if (previous === current) continue
+    changes.push({
+      path,
+      kind: previous === undefined ? 'create' : current === undefined ? 'delete' : 'update'
+    })
+  }
+  return changes.sort((left, right) => left.path.localeCompare(right.path))
 }
 
 function packageManager(root: string): 'pnpm' | 'yarn' | 'bun' | 'npm' {
@@ -166,6 +251,15 @@ export class WorkspaceVerificationService {
 
   beginSession(workspaceRoot?: string): number {
     return workspaceRoot ? this.currentRevision(workspaceRoot) : 0
+  }
+
+  captureCommandWorkspace(
+    workspaceRoot: string,
+    command: string
+  ): WorkspaceCommandSnapshot | undefined {
+    return classifyVerificationCommand(command).mutatesWorkspace
+      ? snapshotWorkspace(workspaceRoot)
+      : undefined
   }
 
   recordChanges(
@@ -211,14 +305,16 @@ export class WorkspaceVerificationService {
     command: string,
     cwd: string | undefined,
     result: ShellCommandResult,
-    startedAt: number
+    startedAt: number,
+    before?: WorkspaceCommandSnapshot
   ): VerificationEvidence | null {
     const classification = classifyVerificationCommand(command)
     const root = resolve(workspaceRoot)
-    // A failed or cancelled compound command may have mutated files before its final process
-    // failed. Advance conservatively whenever the command contract was mutating.
     if (classification.mutatesWorkspace) {
-      this.recordChanges(runId, root, 'command', [{ path: '*', kind: 'update' }])
+      const changes = before
+        ? workspaceChanges(before, snapshotWorkspace(root))
+        : [{ path: '*', kind: 'update' as const }]
+      if (changes.length) this.recordChanges(runId, root, 'command', changes)
     }
     if (!classification.kind) return null
     const changedPaths = this.changedPaths(runId, root, 0)

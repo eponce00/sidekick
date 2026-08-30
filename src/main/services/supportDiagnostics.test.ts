@@ -34,7 +34,7 @@ describe('support diagnostics', () => {
       protectedCredentialStorageAvailable: true,
       databaseOpen: true,
       settings: {
-        commandPermissionMode: 'agent-decides',
+        commandPermissionMode: 'sensitive-only',
         manualLocation: privateValues[9],
         selectedModel: privateValues[4],
         openRouterApiKey: privateValues[1],
@@ -74,7 +74,7 @@ describe('support diagnostics', () => {
     })
 
     expect(diagnostics.configuration).toEqual({
-      permissionMode: 'agent-decides',
+      permissionMode: 'sensitive-only',
       providers: {
         total: 3,
         enabled: 2,

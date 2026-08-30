@@ -116,4 +116,23 @@ describe('useConversationTitleBackfill', () => {
     })
     expect(onTitleApplied).toHaveBeenCalledWith('old-chat', 'Atomic SQLite Backfill')
   })
+
+  it('applies a useful deterministic fallback when the title model output is unusable', async () => {
+    titleMocks.generate.mockResolvedValueOnce(null)
+    await act(async () => root.render(<Harness busy={false} />))
+    await act(async () => vi.advanceTimersByTimeAsync(12_000))
+
+    expect(completeTitleBackfill).toHaveBeenCalledWith({
+      id: 'old-chat',
+      expectedTitle: 'Explain SQLite atomic updates',
+      title: 'Explain SQLite atomic updates for background jobs',
+      source: 'fallback'
+    })
+    expect(onTitleApplied).toHaveBeenCalledWith(
+      'old-chat',
+      'Explain SQLite atomic updates for background jobs',
+      'fallback'
+    )
+    expect(failTitleBackfill).not.toHaveBeenCalled()
+  })
 })

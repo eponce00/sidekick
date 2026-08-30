@@ -10,7 +10,7 @@ describe('canonical agent tool catalog', () => {
     const collaboration = names({ surface: 'collaboration', webSearchEnabled: true })
 
     for (const name of [
-      'execute_command',
+      'shell',
       'list_background_tasks',
       'cancel_background_task',
       'wait',
@@ -31,22 +31,19 @@ describe('canonical agent tool catalog', () => {
     )
   })
 
-  it('selects exactly one model-specific editing dialect', () => {
+  it('ignores provider editing dialect metadata and exposes one contract', () => {
     const openAi = names({
       surface: 'conversation',
-      workspaceRoot: '/workspace',
-      editingTarget: { model: 'openai/gpt-5.4-codex', providerKind: 'openrouter' }
+      workspaceRoot: '/workspace'
     })
     expect(openAi).toContain('apply_patch')
-    expect(openAi).not.toEqual(expect.arrayContaining(['Edit', 'Write', 'edit', 'write']))
+    expect(openAi).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
 
     const claude = names({
       surface: 'collaboration',
-      workspaceRoot: '/workspace',
-      editingTarget: { model: 'claude-sonnet-5', providerKind: 'anthropic' }
+      workspaceRoot: '/workspace'
     })
-    expect(claude).toEqual(expect.arrayContaining(['Edit', 'Write', 'delete_file']))
-    expect(claude).not.toContain('apply_patch')
+    expect(claude).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
   })
 
   it('uses capabilities as the only tool availability filter', () => {
@@ -58,11 +55,13 @@ describe('canonical agent tool catalog', () => {
     expect(catalog.map(({ definition }) => definition.function.name)).toEqual([
       'wait',
       'ask_user',
-      'list_workspace_files',
-      'read_workspace_file',
-      'search_workspace_files'
+      'read'
     ])
-    expect(catalog.every(({ host }) => host === 'main')).toBe(true)
+    expect(catalog.find(({ definition }) => definition.function.name === 'read')).toMatchObject({
+      host: 'main',
+      concurrency: 'parallel',
+      timeoutMs: 30_000
+    })
   })
 
   it('exposes skill-owned tools only after activation', () => {
@@ -70,6 +69,53 @@ describe('canonical agent tool catalog', () => {
     expect(names({ surface: 'conversation', activeSkillIds: ['web-artifacts'] })).toContain(
       'create_artifact'
     )
+  })
+
+  it('exposes the complete first-party visual browser only for compatible runs', () => {
+    expect(names({ surface: 'conversation', browserEnabled: false })).not.toContain('browser_open')
+    const browser = names({
+      surface: 'conversation',
+      workspaceRoot: '/workspace',
+      browserEnabled: true
+    })
+    expect(browser).toEqual(
+      expect.arrayContaining([
+        'view_image',
+        'browser_open',
+        'browser_observe',
+        'browser_screenshot',
+        'browser_click',
+        'browser_type',
+        'browser_select',
+        'browser_press',
+        'browser_scroll',
+        'browser_hover',
+        'browser_wait',
+        'browser_navigate',
+        'browser_resize',
+        'browser_tabs',
+        'browser_console',
+        'browser_network',
+        'browser_evaluate',
+        'browser_verify',
+        'browser_close'
+      ])
+    )
+    const observation = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_observe')
+    expect(observation).toMatchObject({
+      capability: 'browser',
+      risk: 'read',
+      presentation: { kind: 'browser' }
+    })
+    const evaluation = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_evaluate')
+    expect(evaluation?.definition.function.description).toContain('read-only')
+    expect(evaluation?.definition.function.description).toContain('dedicated browser action tools')
   })
 
   it('exposes goal completion control only inside a durable goal run', () => {
@@ -99,22 +145,13 @@ describe('canonical agent tool catalog', () => {
         }
       ]
     })
-    expect(planning).toEqual(
-      expect.arrayContaining([
-        'present_plan',
-        'read_workspace_file',
-        'search_workspace_files',
-        'code_intelligence'
-      ])
-    )
+    expect(planning).toEqual(expect.arrayContaining(['present_plan', 'read', 'code_intelligence']))
     expect(planning).not.toEqual(
       expect.arrayContaining([
         'enter_plan_mode',
         'complete_plan',
-        'edit',
-        'write',
         'apply_patch',
-        'execute_command',
+        'shell',
         'mcp_write',
         'create_artifact',
         'spawn_subagent'
@@ -133,7 +170,7 @@ describe('canonical agent tool catalog', () => {
       workspaceRoot: '/workspace',
       planStage: 'executing'
     })
-    expect(executing).toEqual(expect.arrayContaining(['complete_plan', 'edit']))
+    expect(executing).toEqual(expect.arrayContaining(['complete_plan', 'apply_patch']))
     expect(executing).not.toEqual(expect.arrayContaining(['enter_plan_mode', 'present_plan']))
   })
 

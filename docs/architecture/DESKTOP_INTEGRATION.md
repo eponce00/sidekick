@@ -69,6 +69,10 @@ Reference: [Electron notifications](https://www.electronjs.org/docs/latest/tutor
 
 ## Dialog and accessibility behavior
 
+Settings is a full-window application workspace rather than a modal. It keeps the platform caption
+controls available, provides a searchable section rail, and returns to the exact prior app view
+through **Back to app**. Save and Cancel remain anchored while the selected section scrolls.
+
 Primary modal surfaces expose dialog semantics, contain Tab focus, close with Escape, and restore
 focus to the invoking control. Destructive confirmation dialogs initially focus Cancel. Focus rings
 remain keyboard-visible, and global reduced-motion media queries collapse nonessential animation.

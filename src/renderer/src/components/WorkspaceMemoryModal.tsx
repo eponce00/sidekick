@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { X } from 'lucide-react'
+import { useId, useState } from 'react'
+import { Info, NotebookPen, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { useModalDialog } from '../hooks/useModalDialog'
 import './WorkspaceMemoryModal.css'
 
@@ -21,7 +22,7 @@ export function WorkspaceMemoryModal({
   if (!isOpen) return null
   return (
     <WorkspaceMemoryForm
-      key={initialContent}
+      key={`${workspaceFolder}\u0000${initialContent}`}
       workspaceFolder={workspaceFolder}
       initialContent={initialContent}
       onClose={onClose}
@@ -39,69 +40,123 @@ function WorkspaceMemoryForm({
   const [content, setContent] = useState(initialContent)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dialogRef = useModalDialog<HTMLDivElement>(true, onClose)
+  const closeWhenIdle = (): void => {
+    if (!saving) onClose()
+  }
+  const dialogRef = useModalDialog<HTMLDivElement>(true, closeWhenIdle)
+  const titleId = useId()
+  const descriptionId = useId()
+  const fieldId = useId()
+  const projectName = workspaceFolder.split(/[\\/]/).filter(Boolean).at(-1) || 'this project'
+  const hasChanges = content.trim() !== initialContent.trim()
 
   const handleSave = async (): Promise<void> => {
+    if (saving || !hasChanges) return
     setSaving(true)
     setError(null)
-    const result = await window.api.memory.save(workspaceFolder, content)
-    setSaving(false)
-    if (!result.ok) {
-      setError(result.error ?? 'Could not save project memory')
-      return
+    try {
+      const result = await window.api.memory.save(workspaceFolder, content)
+      if (!result.ok) {
+        setError(result.error ?? 'Could not save project notes')
+        return
+      }
+      onSaved(result.content)
+      onClose()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not save project notes')
+    } finally {
+      setSaving(false)
     }
-    onSaved(result.content)
-    onClose()
   }
 
-  return (
-    <div className="modal-overlay" onClick={onClose}>
+  const dialog = (
+    <div
+      className="workspace-memory-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) closeWhenIdle()
+      }}
+    >
       <div
         ref={dialogRef}
-        className="modal-content workspace-memory-modal"
+        className="workspace-memory-dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="workspace-memory-title"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
         tabIndex={-1}
-        onClick={(event) => event.stopPropagation()}
       >
-        <div className="modal-header">
-          <div>
-            <h2 id="workspace-memory-title">Project Memory</h2>
-            <p>Durable notes shared by every conversation in this project folder.</p>
+        <div className="workspace-memory-header">
+          <span className="workspace-memory-heading-icon" aria-hidden="true">
+            <NotebookPen size={18} />
+          </span>
+          <div className="workspace-memory-heading-copy">
+            <h2 id={titleId}>Project notes</h2>
+            <p id={descriptionId}>
+              Background context shared with every SideKick chat in <strong>{projectName}</strong>.
+            </p>
           </div>
           <button
             type="button"
-            className="modal-close"
+            className="workspace-memory-close"
             onClick={onClose}
-            title="Close"
-            aria-label="Close project memory"
+            disabled={saving}
+            title="Close project notes"
+            aria-label="Close project notes"
           >
             <X size={17} />
           </button>
         </div>
-        <div className="modal-body">
+
+        <div className="workspace-memory-body">
+          <div className="workspace-memory-explainer">
+            <Info size={15} aria-hidden="true" />
+            <p>
+              Use this for stable facts, decisions, and preferences. These notes are context—not
+              rules. Put agent workflow rules in <code>AGENTS.md</code> instead.
+            </p>
+          </div>
+          <label htmlFor={fieldId}>Notes shared with the model</label>
           <textarea
+            id={fieldId}
             value={content}
             onChange={(event) => setContent(event.target.value)}
             maxLength={64_000}
-            placeholder="Project decisions, user preferences, recurring workflows, important constraints…"
+            placeholder="Stable project facts, decisions, user preferences, naming conventions…"
             autoFocus
           />
           <div className="workspace-memory-meta">
             <span>{content.length.toLocaleString()} / 64,000 characters</span>
-            {error && <span className="workspace-memory-error">{error}</span>}
+            {error && (
+              <span className="workspace-memory-error" role="alert">
+                {error}
+              </span>
+            )}
           </div>
         </div>
-        <div className="modal-footer">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={saving}>
+
+        <div className="workspace-memory-footer">
+          <span>Stored locally for this project</span>
+          <button
+            type="button"
+            className="workspace-memory-button secondary"
+            onClick={onClose}
+            disabled={saving}
+          >
             Cancel
           </button>
-          <button type="button" className="btn-primary" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save Memory'}
+          <button
+            type="button"
+            className="workspace-memory-button primary"
+            onClick={() => void handleSave()}
+            disabled={saving || !hasChanges}
+          >
+            {saving ? 'Saving…' : 'Save notes'}
           </button>
         </div>
       </div>
     </div>
   )
+
+  return typeof document === 'undefined' ? dialog : createPortal(dialog, document.body)
 }

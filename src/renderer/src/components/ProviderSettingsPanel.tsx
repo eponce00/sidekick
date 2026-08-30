@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import {
   Check,
   ChevronRight,
-  FlaskConical,
   Info,
   Plus,
   RefreshCw,
@@ -17,8 +16,6 @@ import type {
   ProviderInstanceModel,
   ProviderModelMetadataOverrides
 } from '../../../shared/settings'
-import type { ProviderEditingCalibrationResult } from '../../../shared/providerRuntime'
-import { editingDialectForModel, validEditingCalibration } from '../../../shared/workspaceMutations'
 import {
   describeProviderHealth,
   offlineProviderHealth,
@@ -71,9 +68,6 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
   const [manualModel, setManualModel] = useState('')
   const [modelFilter, setModelFilter] = useState('')
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
-  const [calibratingModelId, setCalibratingModelId] = useState<string | null>(null)
-  const [calibrationResult, setCalibrationResult] =
-    useState<ProviderEditingCalibrationResult | null>(null)
   const selected = instances.find((instance) => instance.id === selectedId) ?? instances[0]
   const editingModel = selected?.models.find((model) => model.id === editingModelId)
   const editingModelDisplay = editingModel ? getModelDisplayInfo(editingModel) : undefined
@@ -195,29 +189,6 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
     if (model.metadataSource === 'provider') return 'Server metadata'
     if (model.metadataSource === 'inferred') return 'Inferred metadata'
     return 'Metadata unknown'
-  }
-
-  const calibrateEditing = async (): Promise<void> => {
-    if (!selected || !editingModel || calibratingModelId) return
-    setCalibratingModelId(editingModel.id)
-    setCalibrationResult(null)
-    try {
-      const result = await window.api.providers.calibrateEditing({
-        providerInstanceId: selected.id,
-        model: editingModel.id
-      })
-      setCalibrationResult(result)
-      if (result.ok && result.calibration) {
-        updateModel(editingModel.id, { editingCalibration: result.calibration })
-      }
-    } catch (error) {
-      setCalibrationResult({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      })
-    } finally {
-      setCalibratingModelId(null)
-    }
   }
 
   return (
@@ -517,7 +488,6 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                                   type="button"
                                   onClick={() => {
                                     setEditingModelId(model.id)
-                                    setCalibrationResult(null)
                                   }}
                                   aria-label={`Edit metadata for ${display.label}`}
                                   title="Model metadata"
@@ -680,106 +650,6 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                     }}
                   />
                 </label>
-              </div>
-            </section>
-
-            <section className="provider-model-dialog-section">
-              <div>
-                <h4>File editing</h4>
-                <p>
-                  SideKick exposes exactly one editing contract. Auto uses the real model name when
-                  the provider makes it available.
-                </p>
-              </div>
-              <div className="provider-model-metadata-grid">
-                <label>
-                  <span>Editing contract</span>
-                  <select
-                    value={editingModel.editingDialect || 'auto'}
-                    onChange={(event) =>
-                      updateModel(editingModel.id, {
-                        editingDialect: event.target
-                          .value as ProviderInstanceModel['editingDialect']
-                      })
-                    }
-                  >
-                    <option value="auto">Auto-detect</option>
-                    <option value="apply-patch">Codex apply patch</option>
-                    <option value="claude-edit">Claude edit and write</option>
-                    <option value="search-replace">Search and replace</option>
-                    <option value="structured-edit">Structured edit and write</option>
-                  </select>
-                </label>
-                <div className="provider-editing-calibration">
-                  {(() => {
-                    const calibration = validEditingCalibration({
-                      providerKind: providerDefinitionForInstance(selected).kind,
-                      model: editingModel.id,
-                      dialect: editingModel.editingDialect,
-                      upstreamModel: editingModel.upstreamModel,
-                      calibration: editingModel.editingCalibration
-                    })
-                    const effective = editingDialectForModel({
-                      providerKind: providerDefinitionForInstance(selected).kind,
-                      model: editingModel.id,
-                      dialect: editingModel.editingDialect,
-                      upstreamModel: editingModel.upstreamModel,
-                      calibration: editingModel.editingCalibration
-                    })
-                    return (
-                      <>
-                        <div className="provider-editing-calibration-summary">
-                          <span>
-                            Effective: <strong>{effective}</strong>
-                          </span>
-                          {calibration && (
-                            <small>
-                              Verified {calibration.verifiedDialects.length} contract
-                              {calibration.verifiedDialects.length === 1 ? '' : 's'} ·{' '}
-                              {new Date(calibration.calibratedAt).toLocaleDateString()}
-                            </small>
-                          )}
-                          {!calibration && editingModel.upstreamModel && (
-                            <small title={editingModel.upstreamModel}>
-                              Gateway model: {editingModel.upstreamModel}
-                            </small>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="settings-secondary-action provider-calibrate-action"
-                          onClick={() => void calibrateEditing()}
-                          disabled={calibratingModelId !== null}
-                        >
-                          <FlaskConical
-                            size={14}
-                            className={calibratingModelId === editingModel.id ? 'icon-spin' : ''}
-                          />
-                          {calibratingModelId === editingModel.id
-                            ? 'Testing contracts…'
-                            : calibration
-                              ? 'Recalibrate'
-                              : 'Calibrate automatically'}
-                        </button>
-                        <p>
-                          Runs long-context localized-edit, multi-match replacement, and
-                          complete-write probes using the configured model, then saves the contracts
-                          that work.
-                        </p>
-                        {calibrationResult && (
-                          <div
-                            className={`provider-calibration-result ${calibrationResult.ok ? 'success' : 'error'}`}
-                            role="status"
-                          >
-                            {calibrationResult.ok
-                              ? `Selected ${calibrationResult.calibration?.selectedDialect}. Verified: ${calibrationResult.calibration?.verifiedDialects.join(', ')}.`
-                              : calibrationResult.error || 'Editing calibration failed.'}
-                          </div>
-                        )}
-                      </>
-                    )
-                  })()}
-                </div>
               </div>
             </section>
 

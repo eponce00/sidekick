@@ -17,14 +17,20 @@ function candidate(
 }
 
 describe('decideConversationTitleBackfill', () => {
-  it('regenerates titles explicitly owned by SideKick title paths', () => {
+  it('regenerates placeholders, fallbacks, and malformed generated titles', () => {
     expect(decideConversationTitleBackfill(candidate('New Conversation', 'placeholder'))).toBe(
       'generate'
     )
     expect(decideConversationTitleBackfill(candidate('Anything', 'fallback'))).toBe('generate')
-    expect(decideConversationTitleBackfill(candidate('Older generated title', 'generated'))).toBe(
-      'generate'
-    )
+    expect(
+      decideConversationTitleBackfill(candidate('The user wants me to create a 2-5', 'generated'))
+    ).toBe('generate')
+  })
+
+  it('preserves useful generated titles across title algorithm upgrades', () => {
+    expect(
+      decideConversationTitleBackfill(candidate('Replace image and add lightbox', 'generated'))
+    ).toBe('preserve')
   })
 
   it('regenerates legacy titles that exactly match the deterministic fallback', () => {

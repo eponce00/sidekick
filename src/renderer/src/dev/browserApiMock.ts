@@ -13,7 +13,7 @@ const previewSettings = {
   lmStudioEndpoint: 'http://localhost:1234',
   llamaCppEndpoint: 'http://localhost:8080',
   selectedModel: 'ollama:qwen3:8b',
-  commandPermissionMode: 'agent-decides' as const,
+  commandPermissionMode: 'full-access' as const,
   notificationsEnabled: true,
   notificationSoundEnabled: false,
   focusChainEnabled: true,
@@ -44,7 +44,7 @@ const previewPermissionAudit = [
     title: 'Edit renderer settings layout and responsive styles',
     requestedAccess: 'auto' as const,
     effectiveAccess: 'auto' as const,
-    mode: 'agent-decides' as const,
+    mode: 'sensitive-only' as const,
     fingerprint: 'a16e436d5507c0209be6',
     outcome: 'auto-approved' as const,
     reason: 'The requested edit stays inside the active project workspace.'
@@ -229,7 +229,7 @@ const previewAgentSessionMessages: Record<string, CollaborationAgentSessionMessa
       toolCalls: [],
       toolCallId: 'preview-read-projects',
       metadata: {
-        toolName: 'read_workspace_file',
+        toolName: 'read',
         title: 'Read src/routes/projects.ts',
         success: true
       },
@@ -386,7 +386,7 @@ const previewGroupDetail: CollaborationGroupDetail = {
       actorParticipantId: 'preview-participant-2',
       kind: 'tool_call',
       payload: {
-        toolName: 'read_workspace_file',
+        toolName: 'read',
         toolCallId: 'preview-read-projects',
         title: 'src/routes/projects.ts'
       },
@@ -402,7 +402,7 @@ const previewGroupDetail: CollaborationGroupDetail = {
       actorParticipantId: 'preview-participant-2',
       kind: 'tool_result',
       payload: {
-        toolName: 'read_workspace_file',
+        toolName: 'read',
         toolCallId: 'preview-read-projects',
         success: true,
         result: 'Read src/routes/projects.ts'
@@ -450,11 +450,17 @@ const previewMessages = [
   },
   {
     id: 'preview-message-2',
+    runId: 'preview-run-1',
     conversation_id: 'preview-1',
     role: 'agent',
     content:
       'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy.',
     segments: [
+      {
+        type: 'thinking' as const,
+        content:
+          'I should inspect the current information hierarchy before changing visual density.'
+      },
       {
         type: 'tool' as const,
         tool: {
@@ -464,8 +470,21 @@ const previewMessages = [
           command: 'web_search("población Cuba 2024 2025 2026 and recent official statistics")',
           status: 'success' as const,
           accessLevel: 'auto' as const,
-          approvalStatus: 'auto' as const
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'search' as const,
+            title: 'Search population sources',
+            subject: 'población Cuba 2024 2025 2026',
+            detail: '8 sources matched'
+          },
+          output:
+            '1. Cuba Population (2026) — World Population Review\n2. Population and Demography — ONEI\n3. World Population Prospects — United Nations'
         }
+      },
+      {
+        type: 'thinking' as const,
+        content:
+          'The sources disagree slightly, so I will inspect the source page and preserve that distinction in the answer.'
       },
       {
         type: 'tool' as const,
@@ -477,19 +496,69 @@ const previewMessages = [
           hint: 'Cuba population figures for each year from 2016 to 2026 and an explanation of differences between sources',
           status: 'success' as const,
           accessLevel: 'auto' as const,
-          approvalStatus: 'auto' as const
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'web' as const,
+            title: 'Fetch population source',
+            subject: 'worldpopulationreview.com/countries/cuba',
+            detail: 'Cuba population figures and source methodology'
+          },
+          output:
+            'Retrieved the population table, source notes, and methodology section successfully.'
         }
       },
       {
         type: 'tool' as const,
         tool: {
           id: 'preview-tool-command',
-          name: 'execute_command',
+          name: 'shell',
           title: 'Checking the renderer',
           command: 'npm run typecheck:web',
-          status: 'running' as const,
+          status: 'success' as const,
           accessLevel: 'auto' as const,
-          approvalStatus: 'auto' as const
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'terminal' as const,
+            title: 'Check the renderer',
+            subject: 'npm run typecheck:web',
+            detail: 'Completed in 4.2s'
+          },
+          output:
+            '> sidekick@0.6.0 typecheck:web\n> tsc --noEmit -p tsconfig.web.json --composite false\n\nType check passed.',
+          startedAt: Date.now() - 130_000,
+          completedAt: Date.now() - 126_000
+        }
+      },
+      {
+        type: 'thinking' as const,
+        content:
+          'The data path is sound. I can now simplify the work disclosure and make file changes explicit.'
+      },
+      {
+        type: 'tool' as const,
+        tool: {
+          id: 'preview-tool-diff',
+          name: 'apply_patch',
+          title: 'Update conversation hierarchy',
+          command: 'apply_patch',
+          status: 'success' as const,
+          accessLevel: 'auto' as const,
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'diff' as const,
+            title: 'Update conversation hierarchy',
+            subject: 'src/renderer/src/components/ChatPanel.tsx',
+            detail: '1 file changed'
+          },
+          data: {
+            diff: 'diff --git a/src/renderer/src/components/ChatPanel.tsx b/src/renderer/src/components/ChatPanel.tsx\n--- a/src/renderer/src/components/ChatPanel.tsx\n+++ b/src/renderer/src/components/ChatPanel.tsx\n@@ -704,6 +704,10 @@\n return (\n   <div className="chat-panel">\n+    <ConversationViewTabs\n+      value={conversationView}\n+      onChange={setConversationView}\n+    />\n     <div className="messages-container">'
+          },
+          changes: [
+            {
+              path: 'src/renderer/src/components/ChatPanel.tsx',
+              kind: 'update' as const
+            }
+          ]
         }
       },
       {
@@ -498,7 +567,13 @@ const previewMessages = [
           'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy.'
       }
     ],
-    tokenUsage: { promptTokens: 286, completionTokens: 86, tokensPerSecond: 32.4 },
+    tokenUsage: {
+      promptTokens: 286,
+      completionTokens: 86,
+      tokensPerSecond: 32.4,
+      runStartedAt: Date.now() - 180_000,
+      runCompletedAt: Date.now() - 120_000
+    },
     timestamp: Date.now() - 120_000
   }
 ]
@@ -515,10 +590,6 @@ export function installBrowserApiMock(): void {
         contextLength: 32_768,
         reliable: false,
         source: 'fallback'
-      }),
-      calibrateEditing: async () => ({
-        ok: false,
-        error: 'Editing calibration is unavailable in browser preview.'
       }),
       getGenerationStats: async () => ({ ok: false, error: 'UI preview' }),
       onHealthChanged: () => () => undefined
@@ -549,6 +620,7 @@ export function installBrowserApiMock(): void {
           created_at: Date.now(),
           updated_at: Date.now(),
           project_id: projectId ?? null,
+          is_pinned: 0,
           title_source: titleSource,
           title_version: 0,
           sidebar_order: -1,
@@ -565,12 +637,20 @@ export function installBrowserApiMock(): void {
         created_at: Date.now(),
         updated_at: Date.now(),
         project_id: null,
+        is_pinned: 0,
         sidebar_order: -1,
         project_context_version: 0,
         home_workspace_root: null,
         home_project_name: null
       }),
       update: async () => ({ success: true }),
+      setPinned: async (id, pinned) => {
+        const conversation = [...previewCreatedConversations, ...previewConversations].find(
+          (candidate) => candidate.id === id
+        )
+        if (conversation) conversation.is_pinned = pinned ? 1 : 0
+        return { success: Boolean(conversation) }
+      },
       listTitleBackfillCandidates: async () => [],
       claimTitleBackfill: async () => ({ claimed: false }),
       completeTitleBackfill: async () => ({ applied: false }),
@@ -676,9 +756,100 @@ export function installBrowserApiMock(): void {
         }
       }),
       stop: async () => ({ stopped: true }),
-      events: async () => ({ run: null, events: [], pendingInteractions: [] }),
+      events: async (runId, afterSequence = 0) => {
+        if (runId !== 'preview-run-1') {
+          return { run: null, events: [], pendingInteractions: [] }
+        }
+        const now = Date.now() - 120_000
+        const events = [
+          {
+            id: 'preview-event-1',
+            runId,
+            sequence: 1,
+            type: 'run.started' as const,
+            timestamp: now - 7_000,
+            payload: { executionMode: 'act' }
+          },
+          {
+            id: 'preview-event-2',
+            runId,
+            sequence: 2,
+            type: 'assistant.delta' as const,
+            timestamp: now - 6_500,
+            payload: { thinking: 'First I will inspect the current information hierarchy.' }
+          },
+          {
+            id: 'preview-event-3',
+            runId,
+            sequence: 3,
+            type: 'assistant.completed' as const,
+            timestamp: now - 6_000,
+            payload: { thinking: 'First I will inspect the current information hierarchy.' }
+          },
+          {
+            id: 'preview-event-4',
+            runId,
+            sequence: 4,
+            type: 'tool.pending' as const,
+            timestamp: now - 5_500,
+            payload: { toolCallId: 'preview-tool-search', name: 'web_search', arguments: {} }
+          },
+          {
+            id: 'preview-event-5',
+            runId,
+            sequence: 5,
+            type: 'tool.running' as const,
+            timestamp: now - 5_000,
+            payload: { toolCallId: 'preview-tool-search', title: 'Search population sources' }
+          },
+          {
+            id: 'preview-event-6',
+            runId,
+            sequence: 6,
+            type: 'tool.completed' as const,
+            timestamp: now - 4_000,
+            payload: {
+              toolCallId: 'preview-tool-search',
+              result: {
+                callId: 'preview-tool-search',
+                name: 'web_search',
+                title: 'Search population sources',
+                status: 'success' as const,
+                modelContent: 'Found representative sources.',
+                timing: { startedAt: now - 5_000, completedAt: now - 4_000 }
+              }
+            }
+          },
+          {
+            id: 'preview-event-7',
+            runId,
+            sequence: 7,
+            type: 'run.completed' as const,
+            timestamp: now,
+            payload: { phase: 'completed' }
+          }
+        ]
+        const page = events.filter((event) => event.sequence > afterSequence)
+        return {
+          run: null,
+          events: page,
+          pendingInteractions: [],
+          journal: {
+            version: 1 as const,
+            afterSequence,
+            firstSequence: page[0]?.sequence ?? null,
+            lastSequence: page.at(-1)?.sequence ?? null,
+            nextSequence: page.at(-1)?.sequence ?? afterSequence,
+            hasMore: false,
+            gapDetected: false
+          }
+        }
+      },
       latest: async () => ({ run: null, events: [], pendingInteractions: [] }),
       resolveInteraction: async () => ({ success: true }),
+      admissionsList: async () => ({ queued: [], pivot: null }),
+      admissionsReplace: async () => ({ queued: [], pivot: null }),
+      admissionsTakeNext: async () => null,
       onEvent: () => () => undefined
     },
     conversationGoals: {
@@ -828,12 +999,12 @@ export function installBrowserApiMock(): void {
     appUpdates: {
       getState: async () => ({
         status: 'disabled' as const,
-        currentVersion: '0.3.0',
+        currentVersion: '0.6.0',
         reason: 'development' as const
       }),
       check: async () => ({
         status: 'disabled' as const,
-        currentVersion: '0.3.0',
+        currentVersion: '0.6.0',
         reason: 'development' as const
       }),
       openRelease: async () => ({ opened: false }),
@@ -843,6 +1014,7 @@ export function installBrowserApiMock(): void {
     clipboard: { writeText: async () => ({ success: true }) },
     workspace: {
       selectFolder: async () => ({ canceled: false, path: 'C:\\Projects\\sidekick-demo' }),
+      selectContextAttachments: async () => ({ ok: true, canceled: true, attachments: [] }),
       getPath: async () => 'C:\\Projects\\sidekick-demo',
       getRules: async () => ({
         ok: true,
@@ -889,7 +1061,13 @@ export function installBrowserApiMock(): void {
       getCheckpointTitleContext: async () => null,
       openFolder: async () => {},
       openFile: async () => {},
+      openFileReference: async (fileReference) => ({
+        ok: true,
+        status: 'opened' as const,
+        path: fileReference
+      }),
       revealFile: async () => {},
+      showPathMenu: async () => {},
       onFilesChanged: () => () => {}
     }
   }

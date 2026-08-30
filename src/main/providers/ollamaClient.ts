@@ -1,4 +1,5 @@
 import type {
+  ProviderChatMessage,
   ProviderChatRequest,
   ProviderCompletionResult,
   ProviderStreamChunk,
@@ -20,10 +21,75 @@ function thinkValue(model: string, enabled: boolean): boolean | 'low' | 'medium'
   return model.toLowerCase().includes('gpt-oss') ? (enabled ? 'medium' : 'low') : enabled
 }
 
+function ollamaImagePayload(dataUrl: string): string {
+  const match = dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s)
+  return match?.[1] || dataUrl
+}
+
+function messageImages(message: ProviderChatMessage): Array<{
+  data: string
+  label?: string
+}> {
+  const images = (message.images || []).map((dataUrl) => ({ data: ollamaImagePayload(dataUrl) }))
+  for (const attachment of message.media || []) {
+    if (attachment.source.type !== 'data_url') {
+      throw new Error('Provider media must be materialized before Ollama serialization')
+    }
+    images.push({
+      data: ollamaImagePayload(attachment.source.dataUrl),
+      ...((attachment.description || attachment.name) && {
+        label: attachment.description || attachment.name
+      })
+    })
+  }
+  return images
+}
+
+/** Ollama expects raw base64 image payloads, not data URLs. */
+export function toOllamaMessages(messages: ProviderChatMessage[]): Array<Record<string, unknown>> {
+  const converted: Array<Record<string, unknown>> = []
+  let pendingToolImages: Array<{ data: string; label?: string; toolCallId: string }> = []
+  const flushToolImages = (): void => {
+    if (!pendingToolImages.length) return
+    converted.push({
+      role: 'user',
+      content: pendingToolImages
+        .map(
+          (image) =>
+            `Visual output from tool call ${image.toolCallId}${image.label ? `: ${image.label}` : ''}`
+        )
+        .join('\n'),
+      images: pendingToolImages.map(({ data }) => data)
+    })
+    pendingToolImages = []
+  }
+  for (const message of messages) {
+    if (message.role !== 'tool') flushToolImages()
+    const images = messageImages(message)
+    const { images: _legacyImages, media: _media, ...base } = message
+    if (message.role === 'tool') {
+      converted.push(base)
+      pendingToolImages.push(
+        ...images.map((image) => ({
+          ...image,
+          toolCallId: message.tool_call_id || 'unknown'
+        }))
+      )
+      continue
+    }
+    converted.push({
+      ...base,
+      ...(images.length ? { images: images.map(({ data }) => data) } : {})
+    })
+  }
+  flushToolImages()
+  return converted
+}
+
 function body(request: ProviderChatRequest, stream: boolean): Record<string, unknown> {
   return {
     model: request.target.model,
-    messages: request.messages,
+    messages: toOllamaMessages(request.messages),
     tools: request.tools?.length ? request.tools : undefined,
     stream,
     keep_alive: '30m',

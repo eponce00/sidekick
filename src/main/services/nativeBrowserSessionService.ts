@@ -1,0 +1,3010 @@
+import { createHash, randomUUID } from 'crypto'
+import { promises as fs, realpathSync } from 'fs'
+import { fileURLToPath } from 'url'
+import { basename, isAbsolute, join, relative, resolve } from 'path'
+import type {
+  BrowserWindow as ElectronBrowserWindow,
+  KeyboardInputEvent,
+  MouseInputEvent,
+  MouseWheelInputEvent,
+  WebContents
+} from 'electron'
+
+export interface BrowserViewport {
+  width: number
+  height: number
+  deviceScaleFactor?: number
+}
+
+export interface BrowserOperationOptions {
+  signal?: AbortSignal
+  /** Absolute Unix time in milliseconds. */
+  deadlineAt?: number
+  /** Relative timeout. The earliest of timeoutMs and deadlineAt wins. */
+  timeoutMs?: number
+}
+
+export interface BrowserTarget {
+  /** A current ref returned in BrowserObservation.semanticSnapshot. */
+  ref?: string
+  /** Accessible role/name lookup. Ambiguous lookups fail unless nth is supplied. */
+  role?: string
+  name?: string
+  /** CSS fallback after ref/role-name lookup and before coordinates. Must resolve uniquely unless nth is set. */
+  selector?: string
+  exact?: boolean
+  nth?: number
+  /** CSS-pixel fallback used only when no semantic target resolves. */
+  coordinates?: { x: number; y: number }
+}
+
+export interface BrowserOpenInput {
+  runId: string
+  url?: string
+  viewport?: BrowserViewport
+  /** Host-approved roots for this session's file:// inspection. */
+  allowedFileRoots?: string[]
+  /** Only IDs approved through allowedAttachWebContentsIds/canAttachWebContents may attach. */
+  attachWebContentsId?: number
+}
+
+export interface BrowserObservationOptions {
+  tabId?: string
+  screenshot?: BrowserScreenshotKind | 'none'
+  includeSemanticSnapshot?: boolean
+  semanticDepth?: number
+}
+
+export type BrowserScreenshotKind = 'viewport' | 'fullPage' | 'element'
+
+export interface BrowserScreenshotArtifact {
+  id: string
+  sessionId: string
+  tabId: string
+  path: string
+  /** Renderer-safe URL served by SideKick's locked-down browser-artifact protocol. */
+  url: string
+  mimeType: 'image/png'
+  kind: BrowserScreenshotKind
+  sourceUrl: string
+  width: number
+  height: number
+  bytes: number
+  sha256: string
+  createdAt: number
+  changed: boolean | null
+  unchangedStreak: number
+}
+
+export interface BrowserConsoleEntry {
+  sequence: number
+  tabId: string
+  timestamp: number
+  level: 'debug' | 'info' | 'warning' | 'error'
+  message: string
+  lineNumber?: number
+  sourceId?: string
+}
+
+export interface BrowserPointer {
+  x: number
+  y: number
+  action: 'click' | 'type' | 'select' | 'press' | 'scroll' | 'hover'
+  targetMode: BrowserActionResult['targetMode']
+  updatedAt: number
+}
+
+export interface BrowserNetworkFailure {
+  sequence: number
+  tabId: string
+  timestamp: number
+  url: string
+  method?: string
+  resourceType?: string
+  errorText: string
+  canceled: boolean
+}
+
+export interface BrowserTabSummary {
+  id: string
+  webContentsId: number
+  title: string
+  url: string
+  active: boolean
+  loading: boolean
+  attached: boolean
+}
+
+export interface BrowserObservation {
+  sessionId: string
+  runId: string
+  observedAt: number
+  tab: BrowserTabSummary
+  tabs: BrowserTabSummary[]
+  viewport: BrowserViewport
+  /** Last resolved interaction point in viewport CSS pixels, for the visible activity inspector. */
+  pointer?: BrowserPointer | null
+  semanticSnapshot?: string
+  semanticNodeCount?: number
+  screenshot?: BrowserScreenshotArtifact
+  screenshotChanged: boolean | null
+  unchangedScreenshotStreak: number
+  console: BrowserConsoleEntry[]
+  failedRequests: BrowserNetworkFailure[]
+  cursors: { console: number; network: number }
+}
+
+export interface BrowserQuiescenceResult {
+  idle: boolean
+  waitedMs: number
+  pendingRequests: number
+  mutationRevision: number
+  timedOut: boolean
+}
+
+export interface BrowserActionResult {
+  sessionId: string
+  tabId: string
+  action: string
+  targetMode: 'ref' | 'semantic' | 'selector' | 'coordinates' | 'page'
+  coordinateFallbackUsed: boolean
+  durationMs: number
+  quiescence: BrowserQuiescenceResult
+  loopProtection: {
+    unchangedRepeatCount: number
+    blockedOnNextIdenticalAction: boolean
+  }
+  observation: BrowserObservation
+}
+
+export interface BrowserScreenshotInput {
+  sessionId: string
+  tabId?: string
+  kind?: BrowserScreenshotKind
+  target?: BrowserTarget
+}
+
+export interface BrowserNavigateInput {
+  sessionId: string
+  tabId?: string
+  /** Defaults to url when url is supplied. */
+  action?: 'url' | 'back' | 'forward' | 'reload'
+  url?: string
+}
+
+export interface BrowserClickInput {
+  sessionId: string
+  tabId?: string
+  target: BrowserTarget
+  button?: 'left' | 'middle' | 'right'
+  clickCount?: 1 | 2 | 3
+}
+
+export interface BrowserTypeInput {
+  sessionId: string
+  tabId?: string
+  target: BrowserTarget
+  text: string
+  clear?: boolean
+  submit?: boolean
+}
+
+export interface BrowserSelectInput {
+  sessionId: string
+  tabId?: string
+  target: BrowserTarget
+  values: string[]
+}
+
+export interface BrowserPressInput {
+  sessionId: string
+  tabId?: string
+  target?: BrowserTarget
+  key: string
+}
+
+export interface BrowserScrollInput {
+  sessionId: string
+  tabId?: string
+  target?: BrowserTarget
+  deltaX?: number
+  deltaY: number
+}
+
+export interface BrowserResizeInput {
+  sessionId: string
+  tabId?: string
+  viewport: BrowserViewport
+}
+
+export interface BrowserHoverInput {
+  sessionId: string
+  tabId?: string
+  target: BrowserTarget
+}
+
+export type BrowserWaitCondition =
+  | { type: 'quiescence'; idleMs?: number; maxWaitMs?: number }
+  | { type: 'time'; ms: number }
+  | { type: 'text'; text: string; state?: 'present' | 'absent' }
+  | { type: 'url'; value: string; match?: 'equals' | 'contains' | 'regex' }
+  | { type: 'semantic'; target: BrowserTarget; state?: 'present' | 'absent' }
+
+export interface BrowserWaitInput {
+  sessionId: string
+  tabId?: string
+  condition?: BrowserWaitCondition
+}
+
+export interface BrowserTabsInput {
+  sessionId: string
+  action?: 'list' | 'new' | 'select' | 'close'
+  tabId?: string
+  url?: string
+}
+
+export interface BrowserTabsResult {
+  sessionId: string
+  activeTabId: string
+  tabs: BrowserTabSummary[]
+  observation?: BrowserObservation
+}
+
+export interface BrowserTelemetryInput {
+  sessionId: string
+  tabId?: string
+  afterSequence?: number
+}
+
+export interface BrowserEvaluateInput {
+  sessionId: string
+  tabId?: string
+  expression: string
+}
+
+export interface BrowserEvaluateResult {
+  sessionId: string
+  tabId: string
+  value: unknown
+  serializedBytes: number
+  truncated: boolean
+}
+
+export type BrowserVerificationAssertion =
+  | { type: 'url'; value: string; match?: 'equals' | 'contains' | 'regex' }
+  | { type: 'title'; value: string; match?: 'equals' | 'contains' | 'regex' }
+  | { type: 'text'; text: string; state?: 'present' | 'absent' }
+  | { type: 'semantic'; target: BrowserTarget; state?: 'present' | 'absent' }
+  | { type: 'screenshotChanged'; baselineSha256: string; changed?: boolean }
+
+export interface BrowserVerifyInput {
+  sessionId: string
+  tabId?: string
+  assertions: BrowserVerificationAssertion[]
+}
+
+export interface BrowserVerificationResult {
+  passed: boolean
+  assertions: Array<BrowserVerificationAssertion & { passed: boolean; actual?: string }>
+  observation: BrowserObservation
+}
+
+export interface BrowserCloseInput {
+  sessionId?: string
+  runId?: string
+  tabId?: string
+  deleteArtifacts?: boolean
+}
+
+export interface NativeBrowserSessionServiceOptions {
+  artifactRoot: string
+  allowedFileRoots?: string[]
+  allowedAttachWebContentsIds?: ReadonlySet<number>
+  canAttachWebContents?: (webContentsId: number, currentUrl: string) => boolean
+  maxSessionsPerRun?: number
+  maxTotalSessions?: number
+  maxTabsPerSession?: number
+  maxArtifacts?: number
+  maxArtifactBytes?: number
+  artifactRetentionMs?: number
+  maxTelemetryEntries?: number
+  maxRepeatedNoChangeActions?: number
+  defaultViewport?: BrowserViewport
+  now?: () => number
+  runtime?: NativeBrowserRuntime
+}
+
+export interface NativeBrowserSurfaceConsoleMessage {
+  level: BrowserConsoleEntry['level']
+  message: string
+  lineNumber?: number
+  sourceId?: string
+}
+
+export interface NativeBrowserSurfaceLoadFailure {
+  url: string
+  errorText: string
+  canceled?: boolean
+}
+
+export interface NativeBrowserSurfaceCapture {
+  png: Buffer
+  width: number
+  height: number
+}
+
+export interface NativeBrowserSurface {
+  readonly webContentsId: number
+  readonly attached: boolean
+  getURL(): string
+  getTitle(): string
+  isDestroyed(): boolean
+  isLoading(): boolean
+  loadURL(url: string): Promise<void>
+  stop(): void
+  close(): Promise<void>
+  focus(): void
+  insertText(text: string): Promise<void>
+  sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
+  resizeViewport(viewport: BrowserViewport): void
+  executeJavaScript<T>(source: string): Promise<T>
+  captureViewport(): Promise<NativeBrowserSurfaceCapture>
+  attachDebugger(): Promise<void>
+  detachDebugger(): void
+  sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T>
+  setNavigationGuard(guard: (url: string) => boolean): void
+  /** Guards file:// document and subresource requests in the isolated partition. */
+  setRequestGuard(guard: (url: string) => boolean): void
+  onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void
+  onLoadFailure(listener: (failure: NativeBrowserSurfaceLoadFailure) => void): () => void
+  onDebuggerMessage(listener: (method: string, params: Record<string, unknown>) => void): () => void
+  onDestroyed(listener: () => void): () => void
+  onOpenUrl(listener: (url: string) => void): () => void
+}
+
+export interface NativeBrowserRuntime {
+  createSurface(options: {
+    partition: string
+    viewport: BrowserViewport
+  }): Promise<NativeBrowserSurface>
+  attachSurface(webContentsId: number): Promise<NativeBrowserSurface>
+}
+
+interface CDPAXValue {
+  value?: unknown
+}
+
+interface CDPAXProperty {
+  name: string
+  value?: CDPAXValue
+}
+
+interface CDPAXNode {
+  nodeId: string
+  ignored?: boolean
+  role?: CDPAXValue
+  name?: CDPAXValue
+  description?: CDPAXValue
+  value?: CDPAXValue
+  properties?: CDPAXProperty[]
+  childIds?: string[]
+  parentId?: string
+  backendDOMNodeId?: number
+}
+
+interface SemanticRef {
+  ref: string
+  backendNodeId: number
+  role: string
+  name: string
+  epoch: number
+}
+
+interface ActionRecord {
+  fingerprint: string
+  changed: boolean
+}
+
+interface RequestMetadata {
+  url: string
+  method?: string
+  resourceType?: string
+  ignoredForIdle: boolean
+  startedAt: number
+}
+
+interface TabState {
+  id: string
+  surface: NativeBrowserSurface
+  refEpoch: number
+  refs: Map<string, SemanticRef>
+  semanticNodes: SemanticRef[]
+  consoleCursor: number
+  networkCursor: number
+  lastPointer?: BrowserPointer
+  lastScreenshotHashes: Partial<Record<BrowserScreenshotKind, string>>
+  unchangedScreenshotStreaks: Partial<Record<BrowserScreenshotKind, number>>
+  inFlight: Map<string, RequestMetadata>
+  actionHistory: ActionRecord[]
+  disposers: Array<() => void>
+}
+
+interface SessionState {
+  id: string
+  runId: string
+  partition: string
+  allowedFileRoots: string[]
+  tabs: Map<string, TabState>
+  activeTabId: string
+  console: BrowserConsoleEntry[]
+  failures: BrowserNetworkFailure[]
+  consoleSequence: number
+  networkSequence: number
+  tail: Promise<void>
+  createdAt: number
+}
+
+interface ElementPoint {
+  x: number
+  y: number
+  backendNodeId?: number
+  mode: BrowserActionResult['targetMode']
+  fallbackUsed: boolean
+}
+
+const DEFAULT_VIEWPORT: BrowserViewport = { width: 1280, height: 800, deviceScaleFactor: 1 }
+const DEFAULT_MAX_SESSIONS_PER_RUN = 2
+const DEFAULT_MAX_TOTAL_SESSIONS = 6
+const DEFAULT_MAX_TABS = 8
+const DEFAULT_MAX_ARTIFACTS = 200
+const DEFAULT_MAX_ARTIFACT_BYTES = 250 * 1024 * 1024
+const DEFAULT_MAX_ARTIFACTS_PER_SESSION = 50
+const DEFAULT_MAX_ARTIFACT_BYTES_PER_SESSION = 64 * 1024 * 1024
+const DEFAULT_ARTIFACT_RETENTION_MS = 24 * 60 * 60 * 1_000
+const DEFAULT_MAX_TELEMETRY = 2_000
+const DEFAULT_MAX_REPEATED_NO_CHANGE = 3
+const MAX_SEMANTIC_NODES = 800
+const MAX_SEMANTIC_CHARS = 96 * 1024
+const MAX_EVALUATION_BYTES = 64 * 1024
+const MAX_MODEL_SCREENSHOT_BYTES = 8 * 1024 * 1024
+const MAX_SCREENSHOT_DIMENSION = 16_384
+const MAX_SCREENSHOT_PIXELS = 40_000_000
+
+function abortError(message: string): Error {
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}
+
+function timeoutError(message: string): Error {
+  const error = new Error(message)
+  error.name = 'TimeoutError'
+  return error
+}
+
+function currentSignal(
+  options: BrowserOperationOptions,
+  now: () => number
+): AbortSignal | undefined {
+  const signals: AbortSignal[] = []
+  if (options.signal) signals.push(options.signal)
+  const relativeDeadline = options.timeoutMs === undefined ? Infinity : now() + options.timeoutMs
+  const absoluteDeadline = options.deadlineAt ?? Infinity
+  const deadline = Math.min(relativeDeadline, absoluteDeadline)
+  if (Number.isFinite(deadline)) {
+    const remaining = Math.max(0, deadline - now())
+    if (remaining === 0) {
+      const controller = new AbortController()
+      controller.abort(timeoutError('Browser operation timed out'))
+      signals.push(controller.signal)
+    } else {
+      signals.push(AbortSignal.timeout(Math.min(2_147_483_647, Math.ceil(remaining))))
+    }
+  }
+  if (!signals.length) return undefined
+  return signals.length === 1 ? signals[0] : AbortSignal.any(signals)
+}
+
+async function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) {
+    if (signal.reason?.name === 'TimeoutError') throw timeoutError('Browser operation timed out')
+    throw abortError('Browser operation cancelled')
+  }
+  return new Promise<T>((resolvePromise, reject) => {
+    const onAbort = (): void => {
+      if (signal.reason?.name === 'TimeoutError')
+        reject(timeoutError('Browser operation timed out'))
+      else reject(abortError('Browser operation cancelled'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolvePromise(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
+async function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  await abortable(
+    new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.max(0, ms))),
+    signal
+  )
+}
+
+function boundedInteger(value: number, minimum: number, maximum: number, label: string): number {
+  if (!Number.isFinite(value)) throw new Error(`${label} must be a finite number`)
+  return Math.max(minimum, Math.min(maximum, Math.trunc(value)))
+}
+
+function safeSegment(value: string): string {
+  const normalized = value.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80)
+  return normalized || 'unknown'
+}
+
+function isPathWithin(root: string, candidate: string): boolean {
+  const path = relative(root, candidate)
+  return path === '' || (!path.startsWith('..') && !isAbsolute(path))
+}
+
+function loopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  return (
+    host === 'localhost' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host === '127.0.0.1' ||
+    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
+  )
+}
+
+function valueOf(value: CDPAXValue | undefined): string {
+  if (value?.value === undefined || value.value === null) return ''
+  return String(value.value).replace(/\s+/g, ' ').trim()
+}
+
+function quoteSnapshot(value: string): string {
+  return JSON.stringify(value.length > 300 ? `${value.slice(0, 297)}...` : value)
+}
+
+function matchesText(actual: string, expected: string, mode = 'equals'): boolean {
+  if (mode === 'contains') return actual.includes(expected)
+  if (mode === 'regex') {
+    try {
+      return new RegExp(expected).test(actual)
+    } catch {
+      throw new Error('Invalid verification regular expression')
+    }
+  }
+  return actual === expected
+}
+
+function canonicalFingerprint(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function finiteCoordinate(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0)
+    throw new Error(`${label} must be a non-negative number`)
+  return value
+}
+
+class ElectronNativeBrowserSurface implements NativeBrowserSurface {
+  readonly webContentsId: number
+  private readonly consoleListeners = new Set<
+    (message: NativeBrowserSurfaceConsoleMessage) => void
+  >()
+  private readonly failureListeners = new Set<(failure: NativeBrowserSurfaceLoadFailure) => void>()
+  private readonly debuggerListeners = new Set<
+    (method: string, params: Record<string, unknown>) => void
+  >()
+  private readonly destroyedListeners = new Set<() => void>()
+  private readonly openUrlListeners = new Set<(url: string) => void>()
+  private navigationGuard: (url: string) => boolean = (url) => url === 'about:blank'
+  private debuggerOwned = false
+
+  constructor(
+    private readonly contents: WebContents,
+    private readonly ownerWindow: ElectronBrowserWindow | null,
+    readonly attached: boolean
+  ) {
+    this.webContentsId = contents.id
+    contents.setWindowOpenHandler(({ url }) => {
+      if (this.navigationGuard(url)) {
+        for (const listener of this.openUrlListeners) listener(url)
+      }
+      return { action: 'deny' }
+    })
+    contents.on('will-navigate', (details, deprecatedUrl) => {
+      const url = (details as unknown as { url?: string }).url ?? deprecatedUrl
+      if (!this.navigationGuard(url)) details.preventDefault()
+    })
+    contents.on('will-redirect', (details, deprecatedUrl) => {
+      const url = (details as unknown as { url?: string }).url ?? deprecatedUrl
+      if (!this.navigationGuard(url)) details.preventDefault()
+    })
+    contents.on('console-message', (details) => {
+      const modern = details as unknown as {
+        level: NativeBrowserSurfaceConsoleMessage['level']
+        message: string
+        lineNumber: number
+        sourceId: string
+      }
+      const normalized: NativeBrowserSurfaceConsoleMessage = {
+        level: modern.level,
+        message: modern.message,
+        lineNumber: modern.lineNumber,
+        sourceId: modern.sourceId
+      }
+      for (const listener of this.consoleListeners) listener(normalized)
+    })
+    contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+      if (!isMainFrame && code === -3) return
+      const failure = { url, errorText: description, canceled: code === -3 }
+      for (const listener of this.failureListeners) listener(failure)
+    })
+    contents.debugger.on('message', (_event, method, params) => {
+      for (const listener of this.debuggerListeners) {
+        listener(method, (params ?? {}) as Record<string, unknown>)
+      }
+    })
+    contents.once('destroyed', () => {
+      for (const listener of this.destroyedListeners) listener()
+      this.clearListeners()
+    })
+  }
+
+  getURL(): string {
+    return this.contents.isDestroyed() ? '' : this.contents.getURL()
+  }
+
+  getTitle(): string {
+    return this.contents.isDestroyed() ? '' : this.contents.getTitle()
+  }
+
+  isDestroyed(): boolean {
+    return this.contents.isDestroyed()
+  }
+
+  isLoading(): boolean {
+    return !this.contents.isDestroyed() && this.contents.isLoading()
+  }
+
+  async loadURL(url: string): Promise<void> {
+    await this.contents.loadURL(url)
+  }
+
+  stop(): void {
+    if (!this.contents.isDestroyed()) this.contents.stop()
+  }
+
+  async close(): Promise<void> {
+    if (this.contents.isDestroyed()) return
+    this.detachDebugger()
+    this.clearListeners()
+    if (!this.attached) {
+      if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
+      else this.contents.close({ waitForBeforeUnload: false })
+    }
+  }
+
+  focus(): void {
+    if (!this.contents.isDestroyed()) this.contents.focus()
+  }
+
+  async insertText(text: string): Promise<void> {
+    await this.contents.insertText(text)
+  }
+
+  sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
+    this.contents.sendInputEvent(event)
+  }
+
+  resizeViewport(viewport: BrowserViewport): void {
+    if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
+      this.ownerWindow.setContentSize(viewport.width, viewport.height, false)
+    }
+  }
+
+  async executeJavaScript<T>(source: string): Promise<T> {
+    return (await this.contents.executeJavaScript(source, true)) as T
+  }
+
+  async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
+    this.contents.invalidate()
+    let image = await this.contents.capturePage()
+    let png = image.toPNG()
+    let size = image.getSize()
+    for (let attempt = 0; png.byteLength > MAX_MODEL_SCREENSHOT_BYTES && attempt < 4; attempt++) {
+      const ratio = Math.min(0.85, Math.sqrt(MAX_MODEL_SCREENSHOT_BYTES / png.byteLength) * 0.9)
+      const width = Math.max(320, Math.floor(size.width * ratio))
+      if (width >= size.width) break
+      image = image.resize({ width, quality: 'good' })
+      png = image.toPNG()
+      size = image.getSize()
+    }
+    if (png.byteLength > MAX_MODEL_SCREENSHOT_BYTES) {
+      throw new Error('Browser viewport screenshot exceeds the 8 MiB vision input limit')
+    }
+    return { png, width: size.width, height: size.height }
+  }
+
+  async attachDebugger(): Promise<void> {
+    if (!this.contents.debugger.isAttached()) {
+      this.contents.debugger.attach('1.3')
+      this.debuggerOwned = true
+    }
+    await Promise.all([
+      this.contents.debugger.sendCommand('Page.enable'),
+      this.contents.debugger.sendCommand('DOM.enable'),
+      this.contents.debugger.sendCommand('Runtime.enable'),
+      this.contents.debugger.sendCommand('Network.enable'),
+      this.contents.debugger.sendCommand('Accessibility.enable')
+    ])
+  }
+
+  detachDebugger(): void {
+    if (!this.contents.isDestroyed() && this.debuggerOwned && this.contents.debugger.isAttached()) {
+      this.contents.debugger.detach()
+    }
+    this.debuggerOwned = false
+  }
+
+  async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+    return (await this.contents.debugger.sendCommand(method, params)) as T
+  }
+
+  setNavigationGuard(guard: (url: string) => boolean): void {
+    this.navigationGuard = guard
+  }
+
+  setRequestGuard(guard: (url: string) => boolean): void {
+    if (this.attached) return
+    this.contents.session.webRequest.onBeforeRequest(
+      { urls: ['file://*/*'] },
+      (details, callback) => callback({ cancel: !guard(details.url) })
+    )
+  }
+
+  onConsole(listener: (message: NativeBrowserSurfaceConsoleMessage) => void): () => void {
+    this.consoleListeners.add(listener)
+    return () => this.consoleListeners.delete(listener)
+  }
+
+  onLoadFailure(listener: (failure: NativeBrowserSurfaceLoadFailure) => void): () => void {
+    this.failureListeners.add(listener)
+    return () => this.failureListeners.delete(listener)
+  }
+
+  onDebuggerMessage(
+    listener: (method: string, params: Record<string, unknown>) => void
+  ): () => void {
+    this.debuggerListeners.add(listener)
+    return () => this.debuggerListeners.delete(listener)
+  }
+
+  onDestroyed(listener: () => void): () => void {
+    this.destroyedListeners.add(listener)
+    return () => this.destroyedListeners.delete(listener)
+  }
+
+  onOpenUrl(listener: (url: string) => void): () => void {
+    this.openUrlListeners.add(listener)
+    return () => this.openUrlListeners.delete(listener)
+  }
+
+  private clearListeners(): void {
+    this.consoleListeners.clear()
+    this.failureListeners.clear()
+    this.debuggerListeners.clear()
+    this.destroyedListeners.clear()
+    this.openUrlListeners.clear()
+  }
+}
+
+class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
+  private readonly securedSessions = new WeakSet<object>()
+
+  async createSurface(options: {
+    partition: string
+    viewport: BrowserViewport
+  }): Promise<NativeBrowserSurface> {
+    const electron = await import('electron')
+    await electron.app.whenReady()
+    const window = new electron.BrowserWindow({
+      show: false,
+      width: options.viewport.width,
+      height: options.viewport.height,
+      useContentSize: true,
+      webPreferences: {
+        partition: options.partition,
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        backgroundThrottling: false,
+        offscreen: true,
+        devTools: false
+      }
+    })
+    window.webContents.setBackgroundThrottling(false)
+    const browserSession = window.webContents.session
+    if (!this.securedSessions.has(browserSession)) {
+      this.securedSessions.add(browserSession)
+      browserSession.setPermissionRequestHandler((_contents, _permission, callback) => {
+        callback(false)
+      })
+      browserSession.setPermissionCheckHandler(() => false)
+      browserSession.on('will-download', (event) => event.preventDefault())
+    }
+    return new ElectronNativeBrowserSurface(window.webContents, window, false)
+  }
+
+  async attachSurface(webContentsId: number): Promise<NativeBrowserSurface> {
+    const electron = await import('electron')
+    await electron.app.whenReady()
+    const contents = electron.webContents.fromId(webContentsId)
+    if (!contents || contents.isDestroyed()) throw new Error('Browser WebContents is unavailable')
+    return new ElectronNativeBrowserSurface(contents, null, true)
+  }
+}
+
+export class NativeBrowserSessionService {
+  private readonly sessions = new Map<string, SessionState>()
+  private readonly runtime: NativeBrowserRuntime
+  private readonly artifactRoot: string
+  private readonly defaultAllowedFileRoots: string[]
+  private readonly maxSessionsPerRun: number
+  private readonly maxTotalSessions: number
+  private readonly maxTabsPerSession: number
+  private readonly maxArtifacts: number
+  private readonly maxArtifactBytes: number
+  private readonly artifactRetentionMs: number
+  private readonly maxTelemetryEntries: number
+  private readonly maxRepeatedNoChangeActions: number
+  private readonly defaultViewport: BrowserViewport
+  private readonly now: () => number
+  private artifactTail: Promise<void> = Promise.resolve()
+
+  constructor(private readonly options: NativeBrowserSessionServiceOptions) {
+    if (!options.artifactRoot) throw new Error('A browser artifact root is required')
+    this.artifactRoot = resolve(options.artifactRoot)
+    this.defaultAllowedFileRoots = (options.allowedFileRoots ?? []).map((root) => resolve(root))
+    this.runtime = options.runtime ?? new ElectronNativeBrowserRuntime()
+    this.maxSessionsPerRun = boundedInteger(
+      options.maxSessionsPerRun ?? DEFAULT_MAX_SESSIONS_PER_RUN,
+      1,
+      16,
+      'maxSessionsPerRun'
+    )
+    this.maxTotalSessions = boundedInteger(
+      options.maxTotalSessions ?? DEFAULT_MAX_TOTAL_SESSIONS,
+      1,
+      32,
+      'maxTotalSessions'
+    )
+    this.maxTabsPerSession = boundedInteger(
+      options.maxTabsPerSession ?? DEFAULT_MAX_TABS,
+      1,
+      32,
+      'maxTabsPerSession'
+    )
+    this.maxArtifacts = boundedInteger(
+      options.maxArtifacts ?? DEFAULT_MAX_ARTIFACTS,
+      1,
+      10_000,
+      'maxArtifacts'
+    )
+    this.maxArtifactBytes = boundedInteger(
+      options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES,
+      1024 * 1024,
+      2_000_000_000,
+      'maxArtifactBytes'
+    )
+    this.artifactRetentionMs = boundedInteger(
+      options.artifactRetentionMs ?? DEFAULT_ARTIFACT_RETENTION_MS,
+      60_000,
+      30 * 24 * 60 * 60 * 1_000,
+      'artifactRetentionMs'
+    )
+    this.maxTelemetryEntries = boundedInteger(
+      options.maxTelemetryEntries ?? DEFAULT_MAX_TELEMETRY,
+      50,
+      20_000,
+      'maxTelemetryEntries'
+    )
+    this.maxRepeatedNoChangeActions = boundedInteger(
+      options.maxRepeatedNoChangeActions ?? DEFAULT_MAX_REPEATED_NO_CHANGE,
+      1,
+      20,
+      'maxRepeatedNoChangeActions'
+    )
+    this.defaultViewport = this.normalizeViewport(options.defaultViewport ?? DEFAULT_VIEWPORT)
+    this.now = options.now ?? Date.now
+  }
+
+  async open(
+    input: BrowserOpenInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserObservation> {
+    const signal = currentSignal(operation, this.now)
+    if (!input.runId.trim()) throw new Error('A browser runId is required')
+    if (this.sessions.size >= this.maxTotalSessions) {
+      throw new Error(`The browser session limit (${this.maxTotalSessions}) is reached`)
+    }
+    const runCount = [...this.sessions.values()].filter(
+      (session) => session.runId === input.runId
+    ).length
+    if (runCount >= this.maxSessionsPerRun) {
+      throw new Error(
+        `Run ${input.runId} already has the maximum ${this.maxSessionsPerRun} browser sessions`
+      )
+    }
+
+    const viewport = this.normalizeViewport(input.viewport ?? this.defaultViewport)
+    const allowedFileRoots = await this.resolveFileRoots(input.allowedFileRoots ?? [])
+    const initialUrl = input.url
+      ? await this.normalizeNavigationUrl(input.url, allowedFileRoots)
+      : undefined
+    const id = randomUUID()
+    const partition = `sidekick-browser-${safeSegment(input.runId)}-${id}`
+    let surface: NativeBrowserSurface | undefined
+    try {
+      if (input.attachWebContentsId !== undefined) {
+        const allowlisted = this.options.allowedAttachWebContentsIds?.has(input.attachWebContentsId)
+        if (!allowlisted && !this.options.canAttachWebContents) {
+          throw new Error('Attaching arbitrary WebContents is disabled')
+        }
+        surface = await abortable(this.runtime.attachSurface(input.attachWebContentsId), signal)
+        if (
+          !allowlisted &&
+          !this.options.canAttachWebContents?.(input.attachWebContentsId, surface.getURL())
+        ) {
+          await surface.close()
+          throw new Error('This WebContents is not approved for browser attachment')
+        }
+        const attachedUrl = surface.getURL() || 'about:blank'
+        if (new URL(attachedUrl).protocol === 'file:') {
+          throw new Error('Attaching an existing file:// WebContents is not supported')
+        }
+        await this.normalizeNavigationUrl(attachedUrl, allowedFileRoots)
+      } else {
+        surface = await abortable(this.runtime.createSurface({ partition, viewport }), signal)
+        // A committed document is required before Accessibility/DOM domains are enabled.
+        await this.commitBlankDocument(surface, signal)
+      }
+
+      const session: SessionState = {
+        id,
+        runId: input.runId,
+        partition,
+        allowedFileRoots,
+        tabs: new Map(),
+        activeTabId: '',
+        console: [],
+        failures: [],
+        consoleSequence: 0,
+        networkSequence: 0,
+        tail: Promise.resolve(),
+        createdAt: this.now()
+      }
+      this.sessions.set(id, session)
+      const tab = await this.registerSurface(session, surface, signal)
+      session.activeTabId = tab.id
+      if (initialUrl) {
+        await this.navigateUnlocked(session, tab, initialUrl, signal)
+      }
+      return await this.observeUnlocked(
+        session,
+        {
+          tabId: tab.id,
+          screenshot: 'viewport',
+          includeSemanticSnapshot: true
+        },
+        signal
+      )
+    } catch (error) {
+      this.sessions.delete(id)
+      if (surface) {
+        await abortable(surface.close(), AbortSignal.timeout(2_000)).catch(() => undefined)
+      }
+      throw error
+    }
+  }
+
+  async attach(
+    input: BrowserOpenInput & { attachWebContentsId: number },
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserObservation> {
+    return this.open(input, operation)
+  }
+
+  private normalizeViewport(viewport: BrowserViewport): BrowserViewport {
+    return {
+      width: boundedInteger(viewport.width, 320, 3840, 'viewport width'),
+      height: boundedInteger(viewport.height, 240, 2160, 'viewport height'),
+      deviceScaleFactor: Math.max(0.5, Math.min(4, viewport.deviceScaleFactor ?? 1))
+    }
+  }
+
+  private async resolveFileRoots(sessionRoots: string[]): Promise<string[]> {
+    const roots = [...this.defaultAllowedFileRoots, ...sessionRoots]
+    const result: string[] = []
+    for (const root of roots) {
+      if (!isAbsolute(root)) throw new Error('Browser file roots must be absolute')
+      const normalized = resolve(root)
+      if (!basename(normalized)) throw new Error('A filesystem root cannot be a browser file root')
+      let realRoot: string
+      try {
+        const stat = await fs.stat(normalized)
+        if (!stat.isDirectory()) throw new Error('Browser file roots must be directories')
+        realRoot = await fs.realpath(normalized)
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Browser file roots must be directories') {
+          throw error
+        }
+        throw new Error(`Browser file root does not exist: ${normalized}`)
+      }
+      if (!result.includes(realRoot)) result.push(realRoot)
+    }
+    return result
+  }
+
+  private navigationUrlAllowedSync(input: string, allowedFileRoots: string[]): boolean {
+    try {
+      const url = new URL(input)
+      if (url.username || url.password) return false
+      if (url.protocol === 'about:') return url.href === 'about:blank'
+      if (url.protocol === 'https:') return true
+      if (url.protocol === 'http:') return loopbackHost(url.hostname)
+      if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) return false
+      const candidate = realpathSync(resolve(fileURLToPath(url)))
+      return allowedFileRoots.some((root) => isPathWithin(root, candidate))
+    } catch {
+      return false
+    }
+  }
+
+  private async normalizeNavigationUrl(input: string, allowedFileRoots: string[]): Promise<string> {
+    let url: URL
+    try {
+      url = new URL(input)
+    } catch {
+      throw new Error('Browser URLs must be absolute')
+    }
+    if (url.username || url.password) throw new Error('Browser URLs cannot contain credentials')
+    if (url.protocol === 'about:' && url.href === 'about:blank') return url.href
+    if (url.protocol === 'https:') return url.href
+    if (url.protocol === 'http:') {
+      if (!loopbackHost(url.hostname)) {
+        throw new Error('Plain HTTP is allowed only for loopback development servers')
+      }
+      return url.href
+    }
+    if (url.protocol !== 'file:') {
+      throw new Error('Only HTTPS, loopback HTTP, and approved local file URLs are supported')
+    }
+    if (url.hostname && url.hostname !== 'localhost') {
+      throw new Error('Remote file URLs are not supported')
+    }
+    if (!allowedFileRoots.length) throw new Error('Local file browsing is not enabled')
+    const requestedPath = resolve(fileURLToPath(url))
+    let realPath: string
+    try {
+      realPath = await fs.realpath(requestedPath)
+    } catch {
+      throw new Error('The local browser file does not exist')
+    }
+    let allowed = false
+    for (const root of allowedFileRoots) {
+      if (isPathWithin(root, realPath)) {
+        allowed = true
+        break
+      }
+    }
+    if (!allowed) throw new Error('Local browser files must remain inside an approved project root')
+    return url.href
+  }
+
+  private async registerSurface(
+    session: SessionState,
+    surface: NativeBrowserSurface,
+    signal?: AbortSignal
+  ): Promise<TabState> {
+    if (session.tabs.size >= this.maxTabsPerSession) {
+      await surface.close()
+      throw new Error(`The browser tab limit (${this.maxTabsPerSession}) is reached`)
+    }
+    surface.setNavigationGuard((url) =>
+      this.navigationUrlAllowedSync(url, session.allowedFileRoots)
+    )
+    surface.setRequestGuard((url) => this.navigationUrlAllowedSync(url, session.allowedFileRoots))
+    await abortable(surface.attachDebugger(), signal)
+    const tab: TabState = {
+      id: randomUUID(),
+      surface,
+      refEpoch: 1,
+      refs: new Map(),
+      semanticNodes: [],
+      consoleCursor: session.consoleSequence,
+      networkCursor: session.networkSequence,
+      lastScreenshotHashes: {},
+      unchangedScreenshotStreaks: {},
+      inFlight: new Map(),
+      actionHistory: [],
+      disposers: []
+    }
+    session.tabs.set(tab.id, tab)
+    tab.disposers.push(
+      surface.onConsole((message) => this.recordConsole(session, tab, message)),
+      surface.onLoadFailure((failure) => this.recordLoadFailure(session, tab, failure)),
+      surface.onDebuggerMessage((method, params) =>
+        this.handleDebuggerMessage(session, tab, method, params)
+      ),
+      surface.onDestroyed(() => this.handleSurfaceDestroyed(session, tab)),
+      surface.onOpenUrl((url) => {
+        void this.openPopup(session, url).catch((error) => {
+          this.recordConsole(session, tab, {
+            level: 'error',
+            message: `Blocked popup: ${error instanceof Error ? error.message : String(error)}`
+          })
+        })
+      })
+    )
+    return tab
+  }
+
+  private recordConsole(
+    session: SessionState,
+    tab: TabState,
+    message: NativeBrowserSurfaceConsoleMessage
+  ): void {
+    session.console.push({
+      sequence: ++session.consoleSequence,
+      tabId: tab.id,
+      timestamp: this.now(),
+      ...message
+    })
+    if (session.console.length > this.maxTelemetryEntries) {
+      session.console.splice(0, session.console.length - this.maxTelemetryEntries)
+    }
+  }
+
+  private recordLoadFailure(
+    session: SessionState,
+    tab: TabState,
+    failure: NativeBrowserSurfaceLoadFailure
+  ): void {
+    session.failures.push({
+      sequence: ++session.networkSequence,
+      tabId: tab.id,
+      timestamp: this.now(),
+      url: failure.url,
+      errorText: failure.errorText,
+      canceled: failure.canceled ?? false
+    })
+    this.trimNetworkTelemetry(session)
+  }
+
+  private trimNetworkTelemetry(session: SessionState): void {
+    if (session.failures.length > this.maxTelemetryEntries) {
+      session.failures.splice(0, session.failures.length - this.maxTelemetryEntries)
+    }
+  }
+
+  private handleDebuggerMessage(
+    session: SessionState,
+    tab: TabState,
+    method: string,
+    params: Record<string, unknown>
+  ): void {
+    if (method === 'Network.requestWillBeSent') {
+      const requestId = String(params.requestId ?? '')
+      const request = (params.request ?? {}) as Record<string, unknown>
+      const resourceType = String(params.type ?? '')
+      if (requestId) {
+        tab.inFlight.set(requestId, {
+          url: String(request.url ?? ''),
+          method: request.method ? String(request.method) : undefined,
+          resourceType: resourceType || undefined,
+          ignoredForIdle: resourceType === 'WebSocket' || resourceType === 'EventSource',
+          startedAt: this.now()
+        })
+      }
+      return
+    }
+    if (method === 'Network.loadingFinished') {
+      tab.inFlight.delete(String(params.requestId ?? ''))
+      return
+    }
+    if (method === 'Network.loadingFailed') {
+      const requestId = String(params.requestId ?? '')
+      const request = tab.inFlight.get(requestId)
+      tab.inFlight.delete(requestId)
+      session.failures.push({
+        sequence: ++session.networkSequence,
+        tabId: tab.id,
+        timestamp: this.now(),
+        url: request?.url ?? tab.surface.getURL(),
+        method: request?.method,
+        resourceType: request?.resourceType,
+        errorText: String(params.errorText ?? 'Network request failed'),
+        canceled: Boolean(params.canceled)
+      })
+      this.trimNetworkTelemetry(session)
+      return
+    }
+    if (method === 'Page.frameNavigated') {
+      const frame = (params.frame ?? {}) as Record<string, unknown>
+      if (!frame.parentId) this.invalidateSemanticRefs(tab)
+      return
+    }
+    if (method === 'Page.navigatedWithinDocument') this.invalidateSemanticRefs(tab)
+  }
+
+  private invalidateSemanticRefs(tab: TabState): void {
+    tab.refEpoch++
+    tab.refs.clear()
+    tab.semanticNodes = []
+  }
+
+  private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
+    for (const dispose of tab.disposers.splice(0)) dispose()
+    session.tabs.delete(tab.id)
+    if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
+    if (!session.tabs.size) this.sessions.delete(session.id)
+  }
+
+  private async createOwnedTab(
+    session: SessionState,
+    viewport: BrowserViewport,
+    signal?: AbortSignal
+  ): Promise<TabState> {
+    let surface: NativeBrowserSurface | undefined
+    try {
+      surface = await abortable(
+        this.runtime.createSurface({ partition: session.partition, viewport }),
+        signal
+      )
+      // CDP Accessibility/DOM domains can stall until Chromium commits its first document.
+      await this.commitBlankDocument(surface, signal)
+      return await this.registerSurface(session, surface, signal)
+    } catch (error) {
+      if (surface) {
+        await abortable(surface.close(), AbortSignal.timeout(2_000)).catch(() => undefined)
+      }
+      throw error
+    }
+  }
+
+  private async commitBlankDocument(
+    surface: NativeBrowserSurface,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const blankIsReady = async (): Promise<boolean> => {
+      if (surface.getURL() !== 'about:blank') return false
+      try {
+        const readyState = await abortable(
+          surface.executeJavaScript<string>('document.readyState'),
+          signal
+        )
+        return readyState === 'interactive' || readyState === 'complete'
+      } catch (error) {
+        if (signal?.aborted) throw error
+        return false
+      }
+    }
+
+    // BrowserWindow starts its own about:blank navigation. Loading the same URL before
+    // it commits can supersede that navigation and produce ERR_FAILED on Electron 43.
+    for (let poll = 0; poll < 10; poll++) {
+      if (await blankIsReady()) return
+      await delay(25, signal)
+    }
+
+    let lastError: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await abortable(surface.loadURL('about:blank'), signal)
+        if (await blankIsReady()) return
+        lastError = new Error('Chromium did not commit the browser bootstrap document')
+      } catch (error) {
+        if (signal?.aborted) throw error
+        lastError = error
+      }
+
+      // Electron 43 on Windows may reject a superseded about:blank load before
+      // getURL catches up. Give the committed navigation a short, bounded window.
+      for (let poll = 0; poll < 4; poll++) {
+        if (await blankIsReady()) return
+        await delay(25, signal)
+      }
+      if (attempt === 0) surface.stop()
+    }
+    if (await blankIsReady()) return
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('Chromium failed to commit the browser bootstrap document')
+  }
+
+  private async openPopup(session: SessionState, inputUrl: string): Promise<void> {
+    const url = await this.normalizeNavigationUrl(inputUrl, session.allowedFileRoots)
+    await this.withSessionLock(session, {}, async (signal) => {
+      const viewport = await this.currentViewport(this.getTab(session))
+      const tab = await this.createOwnedTab(session, viewport, signal)
+      session.activeTabId = tab.id
+      try {
+        await this.navigateUnlocked(session, tab, url, signal)
+      } catch (error) {
+        await this.closeTab(session, tab)
+        throw error
+      }
+    })
+  }
+
+  private getSession(sessionId: string): SessionState {
+    const session = this.sessions.get(sessionId)
+    if (!session) throw new Error('Browser session not found or already closed')
+    return session
+  }
+
+  private getTab(session: SessionState, tabId?: string): TabState {
+    const id = tabId ?? session.activeTabId
+    const tab = session.tabs.get(id)
+    if (!tab || tab.surface.isDestroyed())
+      throw new Error('Browser tab not found or already closed')
+    return tab
+  }
+
+  private async withSessionLock<T>(
+    session: SessionState,
+    operation: BrowserOperationOptions,
+    body: (signal: AbortSignal | undefined) => Promise<T>
+  ): Promise<T> {
+    const signal = currentSignal(operation, this.now)
+    let release!: () => void
+    const turn = new Promise<void>((resolvePromise) => {
+      release = resolvePromise
+    })
+    const previous = session.tail.catch(() => undefined)
+    session.tail = previous.then(() => turn)
+    try {
+      await abortable(previous, signal)
+      return await body(signal)
+    } finally {
+      release()
+    }
+  }
+
+  private tabSummary(session: SessionState, tab: TabState): BrowserTabSummary {
+    return {
+      id: tab.id,
+      webContentsId: tab.surface.webContentsId,
+      title: tab.surface.getTitle(),
+      url: tab.surface.getURL(),
+      active: tab.id === session.activeTabId,
+      loading: tab.surface.isLoading(),
+      attached: tab.surface.attached
+    }
+  }
+
+  private tabSummaries(session: SessionState): BrowserTabSummary[] {
+    return [...session.tabs.values()].map((tab) => this.tabSummary(session, tab))
+  }
+
+  async navigate(
+    input: BrowserNavigateInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const navigationAction = input.action ?? (input.url ? 'url' : undefined)
+      if (!navigationAction) throw new Error('Browser navigation requires a url or history action')
+      let url: string | undefined
+      if (navigationAction === 'url') {
+        if (!input.url) throw new Error('URL navigation requires a url')
+        url = await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+      } else if (input.url) {
+        throw new Error(`${navigationAction} navigation does not accept a url`)
+      }
+      const startedAt = this.now()
+      const fingerprint = canonicalFingerprint({
+        action: 'navigate',
+        navigationAction,
+        tabId: tab.id,
+        url
+      })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      tab.lastPointer = undefined
+      let navigationQuiescence: BrowserQuiescenceResult
+      if (navigationAction === 'url') {
+        navigationQuiescence = await this.navigateUnlocked(session, tab, url!, signal)
+      } else if (navigationAction === 'reload') {
+        await this.normalizeNavigationUrl(tab.surface.getURL(), session.allowedFileRoots)
+        this.invalidateSemanticRefs(tab)
+        await abortable(tab.surface.sendDebuggerCommand('Page.reload'), signal)
+        navigationQuiescence = await this.waitForQuiescence(
+          tab,
+          this.navigationQuiescence(tab.surface.getURL()),
+          signal
+        )
+      } else {
+        const history = await abortable(
+          tab.surface.sendDebuggerCommand<{
+            currentIndex: number
+            entries: Array<{ id: number; url: string; title?: string }>
+          }>('Page.getNavigationHistory'),
+          signal
+        )
+        const index = history.currentIndex + (navigationAction === 'back' ? -1 : 1)
+        const entry = history.entries[index]
+        if (!entry)
+          throw new Error(`Browser cannot navigate ${navigationAction}; no history entry exists`)
+        await this.normalizeNavigationUrl(entry.url, session.allowedFileRoots)
+        this.invalidateSemanticRefs(tab)
+        await abortable(
+          tab.surface.sendDebuggerCommand('Page.navigateToHistoryEntry', { entryId: entry.id }),
+          signal
+        )
+        navigationQuiescence = await this.waitForQuiescence(
+          tab,
+          this.navigationQuiescence(entry.url),
+          signal
+        )
+      }
+      return this.finishAction(
+        session,
+        tab,
+        `navigate:${navigationAction}`,
+        'page',
+        false,
+        fingerprint,
+        startedAt,
+        signal,
+        navigationQuiescence
+      )
+    })
+  }
+
+  private async navigateUnlocked(
+    _session: SessionState,
+    tab: TabState,
+    url: string,
+    signal?: AbortSignal
+  ): Promise<BrowserQuiescenceResult> {
+    tab.lastPointer = undefined
+    this.invalidateSemanticRefs(tab)
+    try {
+      await abortable(tab.surface.loadURL(url), signal)
+    } catch (error) {
+      if (signal?.aborted) tab.surface.stop()
+      throw error
+    }
+    return this.waitForQuiescence(tab, this.navigationQuiescence(url), signal)
+  }
+
+  private navigationQuiescence(url: string): { idleMs?: number; maxWaitMs?: number } {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'file:' || parsed.protocol === 'about:') {
+      // loadURL has already reached the document load event. Local previews have
+      // no meaningful network-idle phase, so do not leave the first frame hidden
+      // behind the general remote-page settling budget.
+      return { idleMs: 100, maxWaitMs: 750 }
+    }
+    if (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname)
+    ) {
+      return { idleMs: 200, maxWaitMs: 2_000 }
+    }
+    return {}
+  }
+
+  async observe(
+    sessionId: string,
+    options: BrowserObservationOptions = {},
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserObservation> {
+    const session = this.getSession(sessionId)
+    return this.withSessionLock(session, operation, (signal) =>
+      this.observeUnlocked(session, options, signal)
+    )
+  }
+
+  private async observeUnlocked(
+    session: SessionState,
+    options: BrowserObservationOptions,
+    signal?: AbortSignal
+  ): Promise<BrowserObservation> {
+    const tab = this.getTab(session, options.tabId)
+    const viewport = await abortable(this.currentViewport(tab), signal)
+    let semanticSnapshot: string | undefined
+    let semanticNodeCount: number | undefined
+    if (options.includeSemanticSnapshot !== false) {
+      const semantic = await this.captureSemanticSnapshot(tab, options.semanticDepth, signal)
+      semanticSnapshot = semantic.snapshot
+      semanticNodeCount = semantic.count
+    }
+    const screenshotKind = options.screenshot ?? 'viewport'
+    const screenshot =
+      screenshotKind === 'none'
+        ? undefined
+        : await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
+    const consoleEntries = session.console.filter(
+      (entry) => entry.tabId === tab.id && entry.sequence > tab.consoleCursor
+    )
+    const failures = session.failures.filter(
+      (entry) => entry.tabId === tab.id && entry.sequence > tab.networkCursor
+    )
+    tab.consoleCursor = session.consoleSequence
+    tab.networkCursor = session.networkSequence
+    return {
+      sessionId: session.id,
+      runId: session.runId,
+      observedAt: this.now(),
+      tab: this.tabSummary(session, tab),
+      tabs: this.tabSummaries(session),
+      viewport,
+      pointer: tab.lastPointer ?? null,
+      semanticSnapshot,
+      semanticNodeCount,
+      screenshot,
+      screenshotChanged: screenshot?.changed ?? null,
+      unchangedScreenshotStreak:
+        screenshot?.unchangedStreak ?? tab.unchangedScreenshotStreaks.viewport ?? 0,
+      console: consoleEntries,
+      failedRequests: failures,
+      cursors: { console: session.consoleSequence, network: session.networkSequence }
+    }
+  }
+
+  private async currentViewport(tab: TabState): Promise<BrowserViewport> {
+    try {
+      const value = await tab.surface.executeJavaScript<{
+        width: number
+        height: number
+        deviceScaleFactor: number
+      }>(
+        `(() => ({ width: window.innerWidth, height: window.innerHeight, deviceScaleFactor: window.devicePixelRatio || 1 }))()`
+      )
+      return this.normalizeViewport(value)
+    } catch {
+      return this.defaultViewport
+    }
+  }
+
+  private async captureSemanticSnapshot(
+    tab: TabState,
+    requestedDepth?: number,
+    signal?: AbortSignal
+  ): Promise<{ snapshot: string; count: number }> {
+    const depth =
+      requestedDepth === undefined ? undefined : boundedInteger(requestedDepth, 1, 30, 'depth')
+    const response = await abortable(
+      tab.surface.sendDebuggerCommand<{ nodes: CDPAXNode[] }>(
+        'Accessibility.getFullAXTree',
+        depth ? { depth } : undefined
+      ),
+      signal
+    )
+    const allNodes = response.nodes ?? []
+    const nodes = new Map(allNodes.map((node) => [node.nodeId, node]))
+    tab.refs.clear()
+    tab.semanticNodes = []
+    let emitted = 0
+    let output = ''
+    const roots = allNodes.filter((node) => !node.parentId || !nodes.has(node.parentId))
+
+    const visit = (node: CDPAXNode, level: number): void => {
+      if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) return
+      const role = valueOf(node.role) || 'generic'
+      const name = valueOf(node.name)
+      const ignored = node.ignored === true
+      let ref = ''
+      if (!ignored && node.backendDOMNodeId && role !== 'StaticText' && role !== 'InlineTextBox') {
+        ref = `ax-${tab.refEpoch}-${node.backendDOMNodeId}`
+        const semanticRef: SemanticRef = {
+          ref,
+          backendNodeId: node.backendDOMNodeId,
+          role: role.toLowerCase(),
+          name,
+          epoch: tab.refEpoch
+        }
+        tab.refs.set(ref, semanticRef)
+        tab.semanticNodes.push(semanticRef)
+      }
+      if (!ignored && (role !== 'generic' || name || ref)) {
+        const attributes: string[] = []
+        if (ref) attributes.push(`ref=${ref}`)
+        for (const property of node.properties ?? []) {
+          if (
+            [
+              'disabled',
+              'checked',
+              'selected',
+              'expanded',
+              'pressed',
+              'required',
+              'readonly'
+            ].includes(property.name) &&
+            property.value?.value !== undefined
+          ) {
+            attributes.push(`${property.name}=${String(property.value.value)}`)
+          }
+        }
+        const value = valueOf(node.value)
+        if (value && value !== name) attributes.push(`value=${quoteSnapshot(value)}`)
+        const description = valueOf(node.description)
+        if (description) attributes.push(`description=${quoteSnapshot(description)}`)
+        const line = `${'  '.repeat(Math.min(level, 20))}- ${role}${name ? ` ${quoteSnapshot(name)}` : ''}${attributes.length ? ` [${attributes.join(' ')}]` : ''}\n`
+        if (output.length + line.length <= MAX_SEMANTIC_CHARS) {
+          output += line
+          emitted++
+        }
+      }
+      for (const childId of node.childIds ?? []) {
+        const child = nodes.get(childId)
+        if (child) visit(child, level + (ignored ? 0 : 1))
+      }
+    }
+    for (const root of roots) visit(root, 0)
+    if (emitted >= MAX_SEMANTIC_NODES || output.length >= MAX_SEMANTIC_CHARS) {
+      output += '... semantic snapshot truncated ...\n'
+    }
+    return { snapshot: output.trimEnd(), count: emitted }
+  }
+
+  async screenshot(
+    input: BrowserScreenshotInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserScreenshotArtifact> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      return this.captureAndStore(
+        session,
+        tab,
+        input.kind ?? (input.target ? 'element' : 'viewport'),
+        input.target,
+        signal
+      )
+    })
+  }
+
+  private async captureAndStore(
+    session: SessionState,
+    tab: TabState,
+    kind: BrowserScreenshotKind,
+    target: BrowserTarget | undefined,
+    signal?: AbortSignal
+  ): Promise<BrowserScreenshotArtifact> {
+    const capture = await this.captureRaw(tab, kind, target, signal)
+    const sha256 = createHash('sha256').update(capture.png).digest('hex')
+    const previousHash = tab.lastScreenshotHashes[kind]
+    const changed = previousHash === undefined ? null : previousHash !== sha256
+    const unchangedStreak = changed === false ? (tab.unchangedScreenshotStreaks[kind] ?? 0) + 1 : 0
+    tab.unchangedScreenshotStreaks[kind] = unchangedStreak
+    tab.lastScreenshotHashes[kind] = sha256
+    const createdAt = this.now()
+    const id = randomUUID()
+    const directory = join(
+      this.artifactRoot,
+      safeSegment(session.runId),
+      safeSegment(session.id),
+      safeSegment(tab.id)
+    )
+    const path = join(directory, `${createdAt}-${id}.png`)
+    const temporaryPath = `${path}.partial`
+    try {
+      await fs.mkdir(directory, { recursive: true })
+      const [realRoot, realDirectory] = await Promise.all([
+        fs.realpath(this.artifactRoot),
+        fs.realpath(directory)
+      ])
+      if (!isPathWithin(realRoot, realDirectory) || realDirectory === realRoot) {
+        throw new Error('Browser screenshot directory escaped the artifact root')
+      }
+      await abortable(Promise.resolve(), signal)
+      await fs.writeFile(temporaryPath, capture.png, { mode: 0o600, signal })
+      await abortable(Promise.resolve(), signal)
+      await fs.rename(temporaryPath, path)
+      await abortable(Promise.resolve(), signal)
+    } catch (error) {
+      await Promise.all([
+        fs.unlink(temporaryPath).catch(() => undefined),
+        fs.unlink(path).catch(() => undefined)
+      ])
+      if (signal?.aborted) {
+        if (signal.reason?.name === 'TimeoutError') {
+          throw timeoutError('Browser operation timed out')
+        }
+        throw abortError('Browser operation cancelled')
+      }
+      throw error
+    }
+    const sessionArtifactRoot = join(
+      this.artifactRoot,
+      safeSegment(session.runId),
+      safeSegment(session.id)
+    )
+    await this.enforceArtifactBounds(path, sessionArtifactRoot)
+    const relativePath = relative(this.artifactRoot, path)
+    if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      await fs.unlink(path).catch(() => undefined)
+      throw new Error('Browser screenshot escaped the artifact root')
+    }
+    const rendererUrl = `sidekick-browser://artifact/${relativePath
+      .split(/[\\/]+/)
+      .map(encodeURIComponent)
+      .join('/')}`
+    return {
+      id,
+      sessionId: session.id,
+      tabId: tab.id,
+      path,
+      url: rendererUrl,
+      mimeType: 'image/png',
+      kind,
+      sourceUrl: tab.surface.getURL(),
+      width: capture.width,
+      height: capture.height,
+      bytes: capture.png.byteLength,
+      sha256,
+      createdAt,
+      changed,
+      unchangedStreak
+    }
+  }
+
+  private async captureRaw(
+    tab: TabState,
+    kind: BrowserScreenshotKind,
+    target: BrowserTarget | undefined,
+    signal?: AbortSignal
+  ): Promise<NativeBrowserSurfaceCapture> {
+    if (kind === 'viewport') return abortable(tab.surface.captureViewport(), signal)
+
+    let clip: { x: number; y: number; width: number; height: number; scale: number }
+    if (kind === 'element') {
+      if (!target) throw new Error('An element screenshot requires a semantic target')
+      const resolved = await this.resolveTarget(tab, target, false, signal)
+      if (!resolved.backendNodeId) {
+        throw new Error('Element screenshots require a semantic ref or role/name target')
+      }
+      const box = await this.elementBox(tab, resolved.backendNodeId, signal)
+      clip = { ...box, scale: this.screenshotScale(box.width, box.height) }
+    } else {
+      const metrics = await abortable(
+        tab.surface.sendDebuggerCommand<{
+          contentSize?: { x?: number; y?: number; width: number; height: number }
+          cssContentSize?: { x?: number; y?: number; width: number; height: number }
+        }>('Page.getLayoutMetrics'),
+        signal
+      )
+      const size = metrics.cssContentSize ?? metrics.contentSize
+      if (!size) throw new Error('Unable to determine full-page screenshot dimensions')
+      const width = Math.max(1, Math.min(MAX_SCREENSHOT_DIMENSION, Math.ceil(size.width)))
+      const height = Math.max(1, Math.min(MAX_SCREENSHOT_DIMENSION, Math.ceil(size.height)))
+      clip = {
+        x: size.x ?? 0,
+        y: size.y ?? 0,
+        width,
+        height,
+        scale: this.screenshotScale(width, height)
+      }
+    }
+    let png = Buffer.alloc(0)
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const response = await abortable(
+        tab.surface.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
+          format: 'png',
+          fromSurface: true,
+          captureBeyondViewport: true,
+          clip
+        }),
+        signal
+      )
+      png = Buffer.from(response.data, 'base64')
+      if (png.byteLength <= MAX_MODEL_SCREENSHOT_BYTES) break
+      clip.scale = Math.max(
+        0.1,
+        clip.scale * Math.min(0.8, Math.sqrt(MAX_MODEL_SCREENSHOT_BYTES / png.byteLength) * 0.9)
+      )
+    }
+    if (!png.length) throw new Error('Chromium returned an empty screenshot')
+    if (png.byteLength > MAX_MODEL_SCREENSHOT_BYTES) {
+      throw new Error('Browser screenshot exceeds the 8 MiB vision input limit after downscaling')
+    }
+    return {
+      png,
+      width: Math.max(1, Math.round(clip.width * clip.scale)),
+      height: Math.max(1, Math.round(clip.height * clip.scale))
+    }
+  }
+
+  private screenshotScale(width: number, height: number): number {
+    if (width * height <= MAX_SCREENSHOT_PIXELS) return 1
+    return Math.max(0.1, Math.sqrt(MAX_SCREENSHOT_PIXELS / (width * height)))
+  }
+
+  private async enforceArtifactBounds(protectedPath: string, sessionRoot: string): Promise<void> {
+    let release!: () => void
+    const turn = new Promise<void>((resolvePromise) => {
+      release = resolvePromise
+    })
+    const previous = this.artifactTail.catch(() => undefined)
+    this.artifactTail = previous.then(() => turn)
+    await previous
+    try {
+      await this.pruneArtifactRoot(
+        sessionRoot,
+        protectedPath,
+        Math.min(this.maxArtifacts, DEFAULT_MAX_ARTIFACTS_PER_SESSION),
+        Math.min(this.maxArtifactBytes, DEFAULT_MAX_ARTIFACT_BYTES_PER_SESSION)
+      )
+      await this.pruneArtifactRoot(
+        this.artifactRoot,
+        protectedPath,
+        this.maxArtifacts,
+        this.maxArtifactBytes
+      )
+    } finally {
+      release()
+    }
+  }
+
+  private async pruneArtifactRoot(
+    root: string,
+    protectedPath: string,
+    maxArtifacts: number,
+    maxArtifactBytes: number
+  ): Promise<void> {
+    const entries = await this.collectArtifacts(root)
+    const now = this.now()
+    for (const entry of entries) {
+      if (entry.path === protectedPath) continue
+      if (now - entry.mtimeMs > this.artifactRetentionMs) {
+        await fs.unlink(entry.path).catch(() => undefined)
+        entry.removed = true
+      }
+    }
+    const retained = entries.filter((entry) => !entry.removed).sort((a, b) => a.mtimeMs - b.mtimeMs)
+    let bytes = retained.reduce((sum, entry) => sum + entry.size, 0)
+    let count = retained.length
+    for (const entry of retained) {
+      if (count <= maxArtifacts && bytes <= maxArtifactBytes) break
+      if (entry.path === protectedPath) continue
+      await fs.unlink(entry.path).catch(() => undefined)
+      bytes -= entry.size
+      count--
+    }
+    const protectedEntry = retained.find((entry) => entry.path === protectedPath)
+    if (
+      protectedEntry &&
+      (protectedEntry.size > maxArtifactBytes || count > maxArtifacts || bytes > maxArtifactBytes)
+    ) {
+      await fs.unlink(protectedPath).catch(() => undefined)
+      throw new Error('Browser screenshot exceeds the configured artifact storage bound')
+    }
+  }
+
+  private async collectArtifacts(
+    root: string
+  ): Promise<Array<{ path: string; size: number; mtimeMs: number; removed?: boolean }>> {
+    const collected: Array<{ path: string; size: number; mtimeMs: number; removed?: boolean }> = []
+    const visit = async (directory: string): Promise<void> => {
+      let entries: import('fs').Dirent[]
+      try {
+        entries = await fs.readdir(directory, { withFileTypes: true })
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw error
+      }
+      for (const entry of entries) {
+        const path = join(directory, entry.name)
+        if (entry.isSymbolicLink()) continue
+        if (entry.isDirectory()) await visit(path)
+        else if (entry.isFile() && entry.name.endsWith('.png')) {
+          const stat = await fs.stat(path)
+          collected.push({ path, size: stat.size, mtimeMs: stat.mtimeMs })
+        }
+      }
+    }
+    await visit(root)
+    return collected
+  }
+
+  private async ensureSemanticRefs(tab: TabState, signal?: AbortSignal): Promise<void> {
+    if (!tab.refs.size) await this.captureSemanticSnapshot(tab, undefined, signal)
+  }
+
+  private async semanticRefForTarget(
+    tab: TabState,
+    target: BrowserTarget,
+    signal?: AbortSignal
+  ): Promise<SemanticRef> {
+    await this.ensureSemanticRefs(tab, signal)
+    if (target.ref) {
+      const semanticRef = tab.refs.get(target.ref)
+      if (!semanticRef || semanticRef.epoch !== tab.refEpoch) {
+        throw new Error('Browser element ref is stale; observe the page again')
+      }
+      return semanticRef
+    }
+    if (!target.role && !target.name) {
+      throw new Error('A semantic browser target needs a ref or accessible role/name')
+    }
+    const role = target.role?.toLowerCase()
+    const exact = target.exact !== false
+    const matches = tab.semanticNodes.filter((node) => {
+      if (role && node.role !== role) return false
+      if (target.name === undefined) return true
+      return exact
+        ? node.name === target.name
+        : node.name.toLowerCase().includes(target.name.toLowerCase())
+    })
+    const nth = target.nth
+    if (nth !== undefined) {
+      const index = boundedInteger(nth, 0, Math.max(0, matches.length - 1), 'target nth')
+      if (!matches[index]) throw new Error('Semantic browser target was not found')
+      return matches[index]
+    }
+    if (!matches.length) throw new Error('Semantic browser target was not found')
+    if (matches.length > 1) {
+      throw new Error(
+        `Semantic browser target is ambiguous (${matches.length} matches); use a ref or nth`
+      )
+    }
+    return matches[0]
+  }
+
+  private async selectorBackendNode(
+    tab: TabState,
+    target: BrowserTarget,
+    signal?: AbortSignal
+  ): Promise<number> {
+    const selector = target.selector?.trim()
+    if (!selector) throw new Error('A non-empty CSS selector is required')
+    if (selector.length > 2_000) throw new Error('CSS selector is too long')
+    const document = await abortable(
+      tab.surface.sendDebuggerCommand<{ root?: { nodeId?: number } }>('DOM.getDocument', {
+        depth: 0,
+        pierce: true
+      }),
+      signal
+    )
+    const nodeId = document.root?.nodeId
+    if (!nodeId) throw new Error('Browser document is unavailable')
+    const response = await abortable(
+      tab.surface.sendDebuggerCommand<{ nodeIds?: number[] }>('DOM.querySelectorAll', {
+        nodeId,
+        selector
+      }),
+      signal
+    )
+    const nodeIds = response.nodeIds ?? []
+    if (!nodeIds.length) throw new Error('CSS browser target was not found')
+    let selectedNodeId: number
+    if (target.nth !== undefined) {
+      const index = boundedInteger(target.nth, 0, Math.max(0, nodeIds.length - 1), 'target nth')
+      selectedNodeId = nodeIds[index]
+    } else {
+      if (nodeIds.length > 1) {
+        throw new Error(`CSS browser target is ambiguous (${nodeIds.length} matches); use nth`)
+      }
+      selectedNodeId = nodeIds[0]
+    }
+    const described = await abortable(
+      tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+        nodeId: selectedNodeId,
+        depth: 0
+      }),
+      signal
+    )
+    if (!described.node?.backendNodeId) throw new Error('CSS browser target is no longer available')
+    return described.node.backendNodeId
+  }
+
+  private async resolvedNodeObject(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<string> {
+    const response = await abortable(
+      tab.surface.sendDebuggerCommand<{ object?: { objectId?: string } }>('DOM.resolveNode', {
+        backendNodeId
+      }),
+      signal
+    )
+    const objectId = response.object?.objectId
+    if (!objectId) throw new Error('Browser element is no longer available; observe again')
+    return objectId
+  }
+
+  private async callOnNode<T>(
+    tab: TabState,
+    backendNodeId: number,
+    functionDeclaration: string,
+    args: unknown[] = [],
+    signal?: AbortSignal
+  ): Promise<T> {
+    const objectId = await this.resolvedNodeObject(tab, backendNodeId, signal)
+    try {
+      const response = await abortable(
+        tab.surface.sendDebuggerCommand<{
+          result?: { value?: T; description?: string }
+          exceptionDetails?: { text?: string; exception?: { description?: string } }
+        }>('Runtime.callFunctionOn', {
+          objectId,
+          functionDeclaration,
+          arguments: args.map((value) => ({ value })),
+          returnByValue: true,
+          awaitPromise: true,
+          userGesture: true
+        }),
+        signal
+      )
+      if (response.exceptionDetails) {
+        throw new Error(
+          response.exceptionDetails.exception?.description ??
+            response.exceptionDetails.text ??
+            'Browser page evaluation failed'
+        )
+      }
+      return response.result?.value as T
+    } finally {
+      await tab.surface
+        .sendDebuggerCommand('Runtime.releaseObject', { objectId })
+        .catch(() => undefined)
+    }
+  }
+
+  private async elementRect(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<{
+    x: number
+    y: number
+    pageX: number
+    pageY: number
+    width: number
+    height: number
+  }> {
+    await abortable(
+      tab.surface.sendDebuggerCommand('DOM.scrollIntoViewIfNeeded', { backendNodeId }),
+      signal
+    ).catch(() => undefined)
+    const rect = await this.callOnNode<{
+      x: number
+      y: number
+      pageX: number
+      pageY: number
+      width: number
+      height: number
+    }>(
+      tab,
+      backendNodeId,
+      `function() {
+        const rect = this.getBoundingClientRect();
+        return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
+          width: rect.width, height: rect.height };
+      }`,
+      [],
+      signal
+    )
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+      throw new Error('Browser element is not visible')
+    }
+    return rect
+  }
+
+  private async elementBox(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<{ x: number; y: number; width: number; height: number }> {
+    const rect = await this.elementRect(tab, backendNodeId, signal)
+    return { x: rect.pageX, y: rect.pageY, width: rect.width, height: rect.height }
+  }
+
+  private async resolveTarget(
+    tab: TabState,
+    target: BrowserTarget,
+    allowCoordinates: boolean,
+    signal?: AbortSignal
+  ): Promise<ElementPoint> {
+    const hasSemantic = Boolean(target.ref || target.role || target.name)
+    const hasSelector = Boolean(target.selector)
+    let primaryError: unknown
+    if (hasSemantic) {
+      try {
+        const semanticRef = await this.semanticRefForTarget(tab, target, signal)
+        const rect = await this.elementRect(tab, semanticRef.backendNodeId, signal)
+        return {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+          backendNodeId: semanticRef.backendNodeId,
+          mode: target.ref ? 'ref' : 'semantic',
+          fallbackUsed: false
+        }
+      } catch (error) {
+        primaryError = error
+      }
+    }
+    if (hasSelector) {
+      try {
+        const backendNodeId = await this.selectorBackendNode(tab, target, signal)
+        const rect = await this.elementRect(tab, backendNodeId, signal)
+        return {
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+          backendNodeId,
+          mode: 'selector',
+          fallbackUsed: false
+        }
+      } catch (error) {
+        primaryError = error
+      }
+    }
+    if (!allowCoordinates || !target.coordinates) {
+      if (primaryError) throw primaryError
+      throw new Error('Browser action requires a ref, semantic target, or CSS selector')
+    }
+    const viewport = await this.currentViewport(tab)
+    const x = finiteCoordinate(target.coordinates.x, 'target x')
+    const y = finiteCoordinate(target.coordinates.y, 'target y')
+    if (x >= viewport.width || y >= viewport.height) {
+      throw new Error('Browser coordinates are outside the current viewport')
+    }
+    return { x, y, mode: 'coordinates', fallbackUsed: hasSemantic || hasSelector }
+  }
+
+  async click(
+    input: BrowserClickInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'click', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = await this.resolveTarget(tab, input.target, true, signal)
+      const startedAt = this.now()
+      this.setPointer(tab, target, 'click', startedAt)
+      tab.surface.focus()
+      const button = input.button ?? 'left'
+      const clickCount = input.clickCount ?? 1
+      tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+      tab.surface.sendInputEvent({
+        type: 'mouseDown',
+        x: target.x,
+        y: target.y,
+        button,
+        clickCount
+      })
+      tab.surface.sendInputEvent({ type: 'mouseUp', x: target.x, y: target.y, button, clickCount })
+      return this.finishAction(
+        session,
+        tab,
+        'click',
+        target.mode,
+        target.fallbackUsed,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async type(
+    input: BrowserTypeInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'type', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = await this.resolveTarget(tab, input.target, true, signal)
+      const startedAt = this.now()
+      this.setPointer(tab, target, 'type', startedAt)
+      tab.surface.focus()
+      if (target.backendNodeId) {
+        await this.callOnNode(
+          tab,
+          target.backendNodeId,
+          `function() { this.focus(); return true; }`,
+          [],
+          signal
+        )
+      } else {
+        tab.surface.sendInputEvent({
+          type: 'mouseDown',
+          x: target.x,
+          y: target.y,
+          button: 'left',
+          clickCount: 1
+        })
+        tab.surface.sendInputEvent({
+          type: 'mouseUp',
+          x: target.x,
+          y: target.y,
+          button: 'left',
+          clickCount: 1
+        })
+      }
+      if (input.clear !== false) {
+        const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
+        tab.surface.sendInputEvent({
+          type: 'keyDown',
+          keyCode: 'A',
+          modifiers: [selectAllModifier]
+        })
+        tab.surface.sendInputEvent({
+          type: 'keyUp',
+          keyCode: 'A',
+          modifiers: [selectAllModifier]
+        })
+        tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
+        tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+      }
+      await abortable(tab.surface.insertText(input.text), signal)
+      if (input.submit) this.sendKey(tab, 'Enter')
+      return this.finishAction(
+        session,
+        tab,
+        'type',
+        target.mode,
+        target.fallbackUsed,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async select(
+    input: BrowserSelectInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    if (!input.values.length) throw new Error('Select requires at least one value or label')
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'select', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = await this.resolveTarget(tab, input.target, false, signal)
+      const startedAt = this.now()
+      this.setPointer(tab, target, 'select', startedAt)
+      await this.callOnNode<string[]>(
+        tab,
+        target.backendNodeId!,
+        `function(values) {
+          if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element');
+          const requested = new Set(values);
+          let matched = 0;
+          for (const option of this.options) {
+            const selected = requested.has(option.value) || requested.has(option.label) || requested.has(option.text);
+            option.selected = selected;
+            if (selected) matched++;
+          }
+          if (!matched) throw new Error('No select options matched the requested values or labels');
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+          return Array.from(this.selectedOptions).map(option => option.value);
+        }`,
+        [input.values],
+        signal
+      )
+      return this.finishAction(
+        session,
+        tab,
+        'select',
+        target.mode,
+        false,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async press(
+    input: BrowserPressInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'press', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = input.target
+        ? await this.resolveTarget(tab, input.target, true, signal)
+        : undefined
+      const startedAt = this.now()
+      if (target) this.setPointer(tab, target, 'press', startedAt)
+      tab.surface.focus()
+      if (target?.backendNodeId) {
+        await this.callOnNode(tab, target.backendNodeId, `function() { this.focus(); }`, [], signal)
+      } else if (target) {
+        tab.surface.sendInputEvent({
+          type: 'mouseDown',
+          x: target.x,
+          y: target.y,
+          button: 'left',
+          clickCount: 1
+        })
+        tab.surface.sendInputEvent({
+          type: 'mouseUp',
+          x: target.x,
+          y: target.y,
+          button: 'left',
+          clickCount: 1
+        })
+      }
+      this.sendKey(tab, input.key)
+      return this.finishAction(
+        session,
+        tab,
+        'press',
+        target?.mode ?? 'page',
+        target?.fallbackUsed ?? false,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  private sendKey(tab: TabState, key: string): void {
+    const parts = key
+      .split('+')
+      .map((part) => part.trim())
+      .filter(Boolean)
+    const keyCode = parts.pop()
+    if (!keyCode) throw new Error('A keyboard key is required')
+    const modifiers: Array<'shift' | 'control' | 'alt' | 'meta'> = []
+    for (const modifier of parts) {
+      const normalized = modifier.toLowerCase()
+      if (normalized === 'ctrl' || normalized === 'control') modifiers.push('control')
+      else if (normalized === 'cmd' || normalized === 'command' || normalized === 'meta')
+        modifiers.push('meta')
+      else if (normalized === 'shift') modifiers.push('shift')
+      else if (normalized === 'alt' || normalized === 'option') modifiers.push('alt')
+      else throw new Error(`Unsupported keyboard modifier: ${modifier}`)
+    }
+    tab.surface.sendInputEvent({ type: 'keyDown', keyCode, modifiers })
+    tab.surface.sendInputEvent({ type: 'keyUp', keyCode, modifiers })
+  }
+
+  async scroll(
+    input: BrowserScrollInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'scroll', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = input.target
+        ? await this.resolveTarget(tab, input.target, true, signal)
+        : undefined
+      const startedAt = this.now()
+      const deltaX = Number.isFinite(input.deltaX) ? input.deltaX! : 0
+      if (!Number.isFinite(input.deltaY)) throw new Error('scroll deltaY must be finite')
+      if (target?.backendNodeId) {
+        this.setPointer(tab, target, 'scroll', startedAt)
+        await this.callOnNode(
+          tab,
+          target.backendNodeId,
+          `function(dx, dy) { this.scrollBy({ left: dx, top: dy, behavior: 'instant' }); }`,
+          [deltaX, input.deltaY],
+          signal
+        )
+      } else {
+        const viewport = await this.currentViewport(tab)
+        const point = target ?? {
+          x: viewport.width / 2,
+          y: viewport.height / 2,
+          mode: 'page' as const,
+          fallbackUsed: false
+        }
+        this.setPointer(tab, point, 'scroll', startedAt)
+        tab.surface.sendInputEvent({
+          type: 'mouseWheel',
+          x: point.x,
+          y: point.y,
+          deltaX,
+          deltaY: input.deltaY,
+          canScroll: true
+        })
+      }
+      return this.finishAction(
+        session,
+        tab,
+        'scroll',
+        target?.mode ?? 'page',
+        target?.fallbackUsed ?? false,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async resize(
+    input: BrowserResizeInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const viewport = this.normalizeViewport(input.viewport)
+      const fingerprint = canonicalFingerprint({ action: 'resize', tabId: tab.id, viewport })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const startedAt = this.now()
+      tab.lastPointer = undefined
+      tab.surface.resizeViewport(viewport)
+      await abortable(
+        tab.surface.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
+          width: viewport.width,
+          height: viewport.height,
+          deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
+          mobile: false,
+          screenWidth: viewport.width,
+          screenHeight: viewport.height,
+          scale: 1
+        }),
+        signal
+      )
+      this.invalidateSemanticRefs(tab)
+      return this.finishAction(
+        session,
+        tab,
+        'resize',
+        'page',
+        false,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async hover(
+    input: BrowserHoverInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'hover', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      const target = await this.resolveTarget(tab, input.target, true, signal)
+      const startedAt = this.now()
+      this.setPointer(tab, target, 'hover', startedAt)
+      tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+      return this.finishAction(
+        session,
+        tab,
+        'hover',
+        target.mode,
+        target.fallbackUsed,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  private async mutationRevision(tab: TabState, signal?: AbortSignal): Promise<number> {
+    return abortable(
+      tab.surface.executeJavaScript<number>(`(() => {
+        const key = Symbol.for('io.sidekick.browser.mutation-state');
+        let state = window[key];
+        if (!state) {
+          state = { revision: 0 };
+          const observer = new MutationObserver(() => state.revision++);
+          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+          state.observer = observer;
+          window[key] = state;
+        }
+        return state.revision;
+      })()`),
+      signal
+    )
+  }
+
+  private pendingRequests(tab: TabState): number {
+    let pending = 0
+    for (const request of tab.inFlight.values()) {
+      if (!request.ignoredForIdle && this.now() - request.startedAt < 2_000) pending++
+    }
+    return pending
+  }
+
+  private setPointer(
+    tab: TabState,
+    target: Pick<ElementPoint, 'x' | 'y' | 'mode'>,
+    action: BrowserPointer['action'],
+    updatedAt = this.now()
+  ): void {
+    tab.lastPointer = {
+      x: target.x,
+      y: target.y,
+      action,
+      targetMode: target.mode,
+      updatedAt
+    }
+  }
+
+  private async waitForQuiescence(
+    tab: TabState,
+    input: { idleMs?: number; maxWaitMs?: number },
+    signal?: AbortSignal
+  ): Promise<BrowserQuiescenceResult> {
+    const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
+    const maxWaitMs = boundedInteger(input.maxWaitMs ?? 5_000, idleMs, 30_000, 'maxWaitMs')
+    const startedAt = this.now()
+    let stableSince = startedAt
+    let revision = await this.mutationRevision(tab, signal).catch(() => 0)
+    while (this.now() - startedAt < maxWaitMs) {
+      const nextRevision = await this.mutationRevision(tab, signal).catch(() => revision)
+      const pending = this.pendingRequests(tab)
+      if (nextRevision !== revision || pending > 0 || tab.surface.isLoading()) {
+        revision = nextRevision
+        stableSince = this.now()
+      } else if (this.now() - stableSince >= idleMs) {
+        return {
+          idle: true,
+          waitedMs: this.now() - startedAt,
+          pendingRequests: pending,
+          mutationRevision: revision,
+          timedOut: false
+        }
+      }
+      await delay(50, signal)
+    }
+    return {
+      idle: false,
+      waitedMs: this.now() - startedAt,
+      pendingRequests: this.pendingRequests(tab),
+      mutationRevision: revision,
+      timedOut: true
+    }
+  }
+
+  private async ensureBaselineHash(
+    _session: SessionState,
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (tab.lastScreenshotHashes.viewport) return
+    const capture = await this.captureRaw(tab, 'viewport', undefined, signal)
+    tab.lastScreenshotHashes.viewport = createHash('sha256').update(capture.png).digest('hex')
+  }
+
+  private guardRepeatedAction(tab: TabState, fingerprint: string): void {
+    let repeats = 0
+    for (let index = tab.actionHistory.length - 1; index >= 0; index--) {
+      const record = tab.actionHistory[index]
+      if (record.fingerprint !== fingerprint || record.changed) break
+      repeats++
+    }
+    if (repeats >= this.maxRepeatedNoChangeActions) {
+      const error = new Error(
+        `Browser loop protection blocked an identical action after ${repeats} unchanged attempts`
+      ) as Error & { code?: string }
+      error.name = 'BrowserLoopError'
+      error.code = 'BROWSER_REPEATED_NO_CHANGE'
+      throw error
+    }
+  }
+
+  private async finishAction(
+    session: SessionState,
+    tab: TabState,
+    action: string,
+    targetMode: BrowserActionResult['targetMode'],
+    fallbackUsed: boolean,
+    fingerprint: string,
+    startedAt: number,
+    signal?: AbortSignal,
+    settledQuiescence?: BrowserQuiescenceResult
+  ): Promise<BrowserActionResult> {
+    const quiescence = settledQuiescence ?? (await this.waitForQuiescence(tab, {}, signal))
+    const observation = await this.observeUnlocked(
+      session,
+      { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+      signal
+    )
+    const changed = observation.screenshotChanged !== false
+    tab.actionHistory.push({ fingerprint, changed })
+    if (tab.actionHistory.length > 30) tab.actionHistory.splice(0, tab.actionHistory.length - 30)
+    let unchangedRepeatCount = 0
+    for (let index = tab.actionHistory.length - 1; index >= 0; index--) {
+      const record = tab.actionHistory[index]
+      if (record.fingerprint !== fingerprint || record.changed) break
+      unchangedRepeatCount++
+    }
+    return {
+      sessionId: session.id,
+      tabId: tab.id,
+      action,
+      targetMode,
+      coordinateFallbackUsed: fallbackUsed,
+      durationMs: this.now() - startedAt,
+      quiescence,
+      loopProtection: {
+        unchangedRepeatCount,
+        blockedOnNextIdenticalAction: unchangedRepeatCount >= this.maxRepeatedNoChangeActions
+      },
+      observation
+    }
+  }
+
+  async wait(
+    input: BrowserWaitInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserObservation> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const condition = input.condition ?? { type: 'quiescence' as const }
+      if (condition.type === 'quiescence') {
+        await this.waitForQuiescence(tab, condition, signal)
+      } else if (condition.type === 'time') {
+        await delay(boundedInteger(condition.ms, 0, 60_000, 'wait duration'), signal)
+      } else {
+        await this.waitForCondition(tab, condition, signal)
+      }
+      return this.observeUnlocked(
+        session,
+        { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+        signal
+      )
+    })
+  }
+
+  private async waitForCondition(
+    tab: TabState,
+    condition: Exclude<BrowserWaitCondition, { type: 'quiescence' } | { type: 'time' }>,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const startedAt = this.now()
+    while (this.now() - startedAt < 10_000) {
+      let satisfied = false
+      if (condition.type === 'text') {
+        const present = await abortable(
+          tab.surface.executeJavaScript<boolean>(
+            `document.body ? document.body.innerText.includes(${JSON.stringify(condition.text)}) : false`
+          ),
+          signal
+        )
+        satisfied = (condition.state ?? 'present') === 'present' ? present : !present
+      } else if (condition.type === 'url') {
+        satisfied = matchesText(tab.surface.getURL(), condition.value, condition.match)
+      } else {
+        try {
+          await this.captureSemanticSnapshot(tab, undefined, signal)
+          await this.resolveTarget(tab, condition.target, false, signal)
+          satisfied = (condition.state ?? 'present') === 'present'
+        } catch {
+          satisfied = (condition.state ?? 'present') === 'absent'
+        }
+      }
+      if (satisfied) return
+      await delay(100, signal)
+    }
+    throw timeoutError(`Browser wait condition was not met: ${condition.type}`)
+  }
+
+  async tabs(
+    input: BrowserTabsInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserTabsResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const action = input.action ?? 'list'
+      if (action === 'list') {
+        return {
+          sessionId: session.id,
+          activeTabId: session.activeTabId,
+          tabs: this.tabSummaries(session)
+        }
+      }
+      if (action === 'new') {
+        const url = input.url
+          ? await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+          : undefined
+        const viewport = await this.currentViewport(this.getTab(session))
+        const tab = await this.createOwnedTab(session, viewport, signal)
+        session.activeTabId = tab.id
+        try {
+          if (url) await this.navigateUnlocked(session, tab, url, signal)
+          const observation = await this.observeUnlocked(
+            session,
+            { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+            signal
+          )
+          return {
+            sessionId: session.id,
+            activeTabId: tab.id,
+            tabs: this.tabSummaries(session),
+            observation
+          }
+        } catch (error) {
+          await this.closeTab(session, tab)
+          throw error
+        }
+      }
+      const tab = this.getTab(session, input.tabId)
+      if (action === 'select') {
+        session.activeTabId = tab.id
+        const observation = await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+          signal
+        )
+        return {
+          sessionId: session.id,
+          activeTabId: tab.id,
+          tabs: this.tabSummaries(session),
+          observation
+        }
+      }
+      await this.closeTab(session, tab)
+      const active = session.activeTabId ? this.getTab(session) : undefined
+      const observation = active
+        ? await this.observeUnlocked(
+            session,
+            { tabId: active.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+            signal
+          )
+        : undefined
+      return {
+        sessionId: session.id,
+        activeTabId: session.activeTabId,
+        tabs: this.tabSummaries(session),
+        observation
+      }
+    })
+  }
+
+  private async closeTab(session: SessionState, tab: TabState): Promise<void> {
+    for (const dispose of tab.disposers.splice(0)) dispose()
+    session.tabs.delete(tab.id)
+    if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
+    await tab.surface.close()
+    if (!session.tabs.size) this.sessions.delete(session.id)
+  }
+
+  async console(
+    input: BrowserTelemetryInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<{ entries: BrowserConsoleEntry[]; cursor: number }> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async () => {
+      const tab = input.tabId ? this.getTab(session, input.tabId) : undefined
+      const after = Math.max(0, Math.trunc(input.afterSequence ?? 0))
+      return {
+        entries: session.console.filter(
+          (entry) => entry.sequence > after && (!tab || entry.tabId === tab.id)
+        ),
+        cursor: session.consoleSequence
+      }
+    })
+  }
+
+  async network(
+    input: BrowserTelemetryInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<{ failures: BrowserNetworkFailure[]; cursor: number }> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async () => {
+      const tab = input.tabId ? this.getTab(session, input.tabId) : undefined
+      const after = Math.max(0, Math.trunc(input.afterSequence ?? 0))
+      return {
+        failures: session.failures.filter(
+          (entry) => entry.sequence > after && (!tab || entry.tabId === tab.id)
+        ),
+        cursor: session.networkSequence
+      }
+    })
+  }
+
+  async evaluate(
+    input: BrowserEvaluateInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserEvaluateResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const envelope = await abortable(
+        tab.surface.executeJavaScript<{ json: string; truncated: boolean }>(`(async () => {
+          let value = await (0, eval)(${JSON.stringify(input.expression)});
+          if (value === undefined) value = null;
+          const seen = new WeakSet();
+          let json = JSON.stringify(value, (_key, item) => {
+            if (typeof item === 'bigint') return item.toString();
+            if (typeof item === 'object' && item !== null) {
+              if (seen.has(item)) return '[Circular]';
+              seen.add(item);
+            }
+            return item;
+          });
+          if (json === undefined) json = 'null';
+          const limit = ${MAX_EVALUATION_BYTES};
+          const truncated = json.length > limit;
+          return { json: truncated ? json.slice(0, limit) : json, truncated };
+        })()`),
+        signal
+      )
+      let value: unknown = envelope.json
+      if (!envelope.truncated) {
+        try {
+          value = JSON.parse(envelope.json)
+        } catch {
+          value = envelope.json
+        }
+      }
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        value,
+        serializedBytes: Buffer.byteLength(envelope.json, 'utf8'),
+        truncated: envelope.truncated
+      }
+    })
+  }
+
+  async verify(
+    input: BrowserVerifyInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserVerificationResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const observation = await this.observeUnlocked(
+        session,
+        { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+        signal
+      )
+      const results: BrowserVerificationResult['assertions'] = []
+      for (const assertion of input.assertions) {
+        let passed = false
+        let actual: string | undefined
+        if (assertion.type === 'url') {
+          actual = tab.surface.getURL()
+          passed = matchesText(actual, assertion.value, assertion.match)
+        } else if (assertion.type === 'title') {
+          actual = tab.surface.getTitle()
+          passed = matchesText(actual, assertion.value, assertion.match)
+        } else if (assertion.type === 'text') {
+          const present = await abortable(
+            tab.surface.executeJavaScript<boolean>(
+              `document.body ? document.body.innerText.includes(${JSON.stringify(assertion.text)}) : false`
+            ),
+            signal
+          )
+          actual = present ? 'present' : 'absent'
+          passed = (assertion.state ?? 'present') === actual
+        } else if (assertion.type === 'semantic') {
+          let present = false
+          try {
+            await this.resolveTarget(tab, assertion.target, false, signal)
+            present = true
+          } catch {
+            present = false
+          }
+          actual = present ? 'present' : 'absent'
+          passed = (assertion.state ?? 'present') === actual
+        } else {
+          actual = observation.screenshot?.sha256
+          const changed = actual !== assertion.baselineSha256
+          passed = changed === (assertion.changed ?? true)
+        }
+        results.push({ ...assertion, passed, actual })
+      }
+      return {
+        passed: results.every((assertion) => assertion.passed),
+        assertions: results,
+        observation
+      }
+    })
+  }
+
+  async close(
+    input: BrowserCloseInput
+  ): Promise<{ closedSessions: string[]; closedTabs: string[] }> {
+    if (!input.sessionId && !input.runId) {
+      throw new Error('browser close requires a sessionId or runId')
+    }
+    const sessions = input.sessionId
+      ? [this.getSession(input.sessionId)]
+      : [...this.sessions.values()].filter((session) => session.runId === input.runId)
+    const closedSessions: string[] = []
+    const closedTabs: string[] = []
+    for (const session of sessions) {
+      if (input.tabId) {
+        const tab = this.getTab(session, input.tabId)
+        closedTabs.push(tab.id)
+        await this.closeTab(session, tab)
+        if (input.deleteArtifacts) await this.deleteTabArtifacts(session, tab.id)
+      } else {
+        for (const tab of [...session.tabs.values()]) {
+          closedTabs.push(tab.id)
+          await this.closeTab(session, tab)
+        }
+        this.sessions.delete(session.id)
+        closedSessions.push(session.id)
+        if (input.deleteArtifacts) await this.deleteSessionArtifacts(session)
+      }
+    }
+    return { closedSessions, closedTabs }
+  }
+
+  private async deleteSessionArtifacts(session: SessionState): Promise<void> {
+    const directory = join(this.artifactRoot, safeSegment(session.runId), safeSegment(session.id))
+    await this.deleteArtifactDirectory(directory)
+  }
+
+  private async deleteTabArtifacts(session: SessionState, tabId: string): Promise<void> {
+    const directory = join(
+      this.artifactRoot,
+      safeSegment(session.runId),
+      safeSegment(session.id),
+      safeSegment(tabId)
+    )
+    await this.deleteArtifactDirectory(directory)
+  }
+
+  private async deleteArtifactDirectory(directory: string): Promise<void> {
+    if (!isPathWithin(this.artifactRoot, directory) || directory === this.artifactRoot) {
+      throw new Error('Refusing to remove an unsafe browser artifact path')
+    }
+    let stat: import('fs').Stats
+    try {
+      stat = await fs.lstat(directory)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    if (stat.isSymbolicLink()) {
+      await fs.unlink(directory)
+      return
+    }
+    const [realRoot, realDirectory] = await Promise.all([
+      fs.realpath(this.artifactRoot),
+      fs.realpath(directory)
+    ])
+    if (!isPathWithin(realRoot, realDirectory) || realDirectory === realRoot) {
+      throw new Error('Refusing to remove an artifact directory outside the canonical root')
+    }
+    await fs.rm(directory, { recursive: true, force: true })
+  }
+
+  async dispose(): Promise<void> {
+    for (const session of [...this.sessions.values()]) {
+      for (const tab of [...session.tabs.values()]) await this.closeTab(session, tab)
+      this.sessions.delete(session.id)
+    }
+  }
+}

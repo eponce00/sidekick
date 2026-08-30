@@ -1,4 +1,5 @@
 import type { ConversationTitleBackfillCandidate } from '../../../../shared/conversationTitles'
+import { isUsableGeneratedConversationTitle } from '../../../../shared/conversationTitles'
 import {
   createFallbackConversationTitle,
   isPlaceholderConversationTitle
@@ -9,12 +10,12 @@ export type ConversationTitleBackfillDecision = 'generate' | 'preserve'
 export function decideConversationTitleBackfill(
   candidate: ConversationTitleBackfillCandidate
 ): ConversationTitleBackfillDecision {
-  if (
-    candidate.titleSource === 'placeholder' ||
-    candidate.titleSource === 'fallback' ||
-    candidate.titleSource === 'generated'
-  ) {
+  if (candidate.titleSource === 'placeholder' || candidate.titleSource === 'fallback') {
     return 'generate'
+  }
+
+  if (candidate.titleSource === 'generated') {
+    return isUsableGeneratedConversationTitle(candidate.title) ? 'preserve' : 'generate'
   }
 
   if (candidate.titleSource === 'legacy') {

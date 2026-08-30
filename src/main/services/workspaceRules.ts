@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import { homedir } from 'os'
-import { dirname, join, relative, resolve, sep } from 'path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import type {
   WorkspaceInstructionResolution,
   WorkspaceInstructionSource,
@@ -49,7 +49,11 @@ function instructionDirectories(projectRoot: string, workingDirectory: string): 
   const normalizedRoot = resolve(projectRoot)
   const normalizedWorkingDirectory = resolve(workingDirectory)
   const pathFromRoot = relative(normalizedRoot, normalizedWorkingDirectory)
-  if (pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) {
+  if (
+    pathFromRoot === '..' ||
+    pathFromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(pathFromRoot)
+  ) {
     throw new Error('Working directory must be inside the project folder')
   }
 
@@ -252,7 +256,11 @@ export async function beginWorkspaceInstructionScope(
 function targetDirectory(projectRoot: string, targetPath: string, isDirectory: boolean): string {
   const absolute = resolve(projectRoot, targetPath || '.')
   const pathFromRoot = relative(projectRoot, absolute)
-  if (pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) {
+  if (
+    pathFromRoot === '..' ||
+    pathFromRoot.startsWith(`..${sep}`) ||
+    isAbsolute(pathFromRoot)
+  ) {
     throw new Error('Instruction target must be inside the project folder')
   }
   return isDirectory ? absolute : dirname(absolute)

@@ -16,17 +16,189 @@ import {
   Info,
   CircleAlert,
   ListChecks,
-  Microscope
+  Microscope,
+  GitBranch,
+  FileText,
+  FolderOpen
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
-import { groupSegments } from '../utils/segmentGrouping'
+import { chunkGroupsChronologically, groupSegments } from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
 import ToolCallRow from './ToolCallRow'
+import { ToolExecutionCard } from './ToolExecutionCard'
+import { TurnChangeReview } from './TurnChangeReview'
 import AgentInteractionCard from './AgentInteractionCard'
+import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
+import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import type { SubAgentStep } from '../types/subagent.types'
+import type { WorkspaceVerificationSummary } from '../../../shared/verification'
+import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
+
+const RETRY_LABELS: Record<string, string> = {
+  provider_transcript_repaired: 'Repaired the provider transcript and retried',
+  context_window_exceeded: 'Context limit reached; compacting and retrying',
+  truncated_tool_batch: 'Tool call stream was incomplete; retrying',
+  research_source_required: 'Source verification required; continuing research',
+  workspace_verification_required: 'Workspace changed; running a fresh verification',
+  goal_continuation: 'Continuing the active goal',
+  provider_retry: 'Provider request failed; retrying'
+}
+
+function retryLabel(reason: string): string {
+  if (reason.startsWith('tool_guard_')) return 'Tool loop detected; adjusting the next attempt'
+  return RETRY_LABELS[reason] ?? reason.replaceAll('_', ' ')
+}
+
+function RunStatusSegment({
+  status
+}: {
+  status: NonNullable<import('../types/chat.types').ContentSegment['status']>
+}): React.JSX.Element {
+  return (
+    <div className="run-status-segment" role="status" title={status.detail}>
+      <RotateCcw size={11} aria-hidden="true" />
+      <span>{retryLabel(status.reason)}</span>
+    </div>
+  )
+}
+
+function RunErrorSegment({
+  error,
+  onRetry
+}: {
+  error: NonNullable<import('../types/chat.types').ContentSegment['runError']>
+  onRetry: () => void
+}): React.JSX.Element {
+  return (
+    <div className="run-error-segment" role="alert">
+      <CircleAlert size={15} aria-hidden="true" />
+      <div>
+        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
+        <span>{error.message}</span>
+      </div>
+      {error.retryable && (
+        <button type="button" onClick={onRetry}>
+          <RotateCcw size={11} /> Retry
+        </button>
+      )}
+    </div>
+  )
+}
+
+function CompactionSummarySegment({
+  summary,
+  modelContext
+}: {
+  summary: NonNullable<import('../types/chat.types').ContentSegment['summary']>
+  modelContext?: string
+}): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const savedPercent = Math.round(
+    Math.max(0, Math.min(1, 1 - summary.newTokens / Math.max(summary.originalTokens, 1))) * 100
+  )
+
+  const copyContext = async (): Promise<void> => {
+    if (!modelContext) return
+    const result = await window.api.clipboard.writeText(modelContext)
+    if (!result?.success) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1_500)
+  }
+
+  return (
+    <details className="summary-segment-compact">
+      <summary>
+        <AlignLeft className="summary-icon" size={12} aria-hidden="true" />
+        <span className="summary-text">
+          Context compacted · {summary.messagesCompacted.toLocaleString()} messages · {savedPercent}
+          % saved
+        </span>
+        <ChevronDown className="summary-arrow" size={12} aria-hidden="true" />
+      </summary>
+      <div className="summary-inspector">
+        {modelContext ? (
+          <>
+            <div className="summary-inspector-header">
+              <div>
+                <strong>Context sent to the model</strong>
+                <span>Inserted as a user message on the next request</span>
+              </div>
+              <button
+                type="button"
+                className="summary-copy-button"
+                onClick={() => void copyContext()}
+                aria-label={copied ? 'Copied compacted context' : 'Copy compacted context'}
+              >
+                {copied ? <Check size={12} /> : <Copy size={12} />}
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <pre className="summary-content">{modelContext}</pre>
+            <div className="summary-token-counts">
+              {summary.originalTokens.toLocaleString()} → {summary.newTokens.toLocaleString()}{' '}
+              estimated tokens
+            </div>
+          </>
+        ) : (
+          <p className="summary-unavailable">
+            The compacted payload was not recorded for this older event.
+          </p>
+        )}
+      </div>
+    </details>
+  )
+}
+
+function VerificationSegment({
+  verification
+}: {
+  verification: WorkspaceVerificationSummary
+}): React.JSX.Element {
+  const currentEvidence = verification.evidence.filter(
+    (evidence) => evidence.revision === verification.currentRevision
+  )
+  const authoritative = currentEvidence.at(-1) ?? verification.evidence.at(-1)
+  const history = verification.evidence.filter((evidence) => evidence.id !== authoritative?.id)
+
+  return (
+    <details className={`verification-segment verification-${verification.status}`}>
+      <summary>
+        {verification.status === 'passed' ? <Check size={12} /> : <CircleAlert size={12} />}
+        <span>{verification.headline}</span>
+        <ChevronDown size={10} className="verification-arrow" />
+      </summary>
+      <div className="verification-detail">
+        {verification.detail && <p>{verification.detail}</p>}
+        {authoritative && (
+          <ul className="verification-current-evidence">
+            <li>
+              <span className={`verification-dot ${authoritative.status}`} />
+              <span>{authoritative.summary}</span>
+              {authoritative.command && <code>{authoritative.command}</code>}
+            </li>
+          </ul>
+        )}
+        {history.length > 0 && (
+          <details className="verification-history">
+            <summary>Earlier attempts ({history.length})</summary>
+            <ul>
+              {history.slice(-4).map((evidence) => (
+                <li key={evidence.id}>
+                  <span className={`verification-dot ${evidence.status}`} />
+                  <span>{evidence.summary}</span>
+                  {evidence.command && <code>{evidence.command}</code>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    </details>
+  )
+}
 
 /** Renders the sub-agent mini-chat showing step-by-step execution */
 function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Element {
@@ -49,7 +221,7 @@ function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Eleme
                 <Search size={11} />
               ) : step.name === 'web_fetch' ? (
                 <Globe size={11} />
-              ) : step.name === 'execute_command' ? (
+              ) : step.name === 'shell' ? (
                 <Terminal size={11} />
               ) : (
                 <Loader2 size={11} />
@@ -72,11 +244,51 @@ function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Eleme
 }
 
 /** Renders sub-agent progress as a compact tool row with optional inline detail. */
+function subAgentStepsFromProjection(
+  projection: ReturnType<typeof projectAgentRunEvents>
+): SubAgentStep[] {
+  return projection.segments.flatMap((segment): SubAgentStep[] => {
+    if (segment.type === 'thinking') return [{ type: 'thinking', content: segment.content }]
+    if (segment.type === 'text') return [{ type: 'response', content: segment.content }]
+    if (segment.type === 'tool') {
+      return [
+        {
+          type:
+            segment.tool.status === 'running' || segment.tool.status === 'pending'
+              ? 'tool_call'
+              : 'tool_result',
+          name: segment.tool.name,
+          content: segment.tool.output || segment.tool.error || segment.tool.title,
+          status:
+            segment.tool.status === 'error' || segment.tool.status === 'denied'
+              ? 'error'
+              : segment.tool.status === 'success'
+                ? 'success'
+                : 'running'
+        }
+      ]
+    }
+    return []
+  })
+}
+
 function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
   const [expanded, setExpanded] = useState(tool.status === 'running')
-  const hasSteps = tool.subAgentSteps && tool.subAgentSteps.length > 0
+  const data =
+    tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
+  const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
+  const [childSteps, setChildSteps] = useState<SubAgentStep[] | null>(null)
+  const [childError, setChildError] = useState('')
+  const requestedChildRuns = useRef(new Set<string>())
+  const embeddedSteps =
+    tool.subAgentSteps && tool.subAgentSteps.length > 0 ? tool.subAgentSteps : null
+  const displayedSteps = embeddedSteps ?? childSteps
+  const hasSteps = Boolean(displayedSteps?.length)
   const isRunning = tool.status === 'running'
-  const canExpand = hasSteps || isRunning
+  const childLoading = Boolean(
+    expanded && childRunId && !embeddedSteps && !childSteps && !childError
+  )
+  const canExpand = hasSteps || isRunning || Boolean(childRunId)
 
   // Auto-expand while running, auto-collapse when done (if user hasn't manually toggled)
   const wasRunning = useRef(false)
@@ -88,6 +300,27 @@ function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
     }
     return undefined
   }, [isRunning])
+
+  useEffect(() => {
+    if (
+      !expanded ||
+      !childRunId ||
+      embeddedSteps ||
+      childSteps ||
+      requestedChildRuns.current.has(childRunId)
+    )
+      return
+    requestedChildRuns.current.add(childRunId)
+    void window.api.agentRuns
+      .events(childRunId, 0)
+      .then((result) => {
+        setChildSteps(subAgentStepsFromProjection(projectAgentRunEvents(result.events)))
+        setChildError('')
+      })
+      .catch((error: unknown) => {
+        setChildError(error instanceof Error ? error.message : 'Could not load child run')
+      })
+  }, [childRunId, childSteps, embeddedSteps, expanded])
 
   return (
     <div className={`sa-inline sa-inline-${tool.status}`}>
@@ -103,13 +336,19 @@ function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
       {expanded && (
         <div className="sa-inline__body">
           {hasSteps ? (
-            <SubAgentMiniChat steps={tool.subAgentSteps!} />
-          ) : isRunning ? (
+            <SubAgentMiniChat steps={displayedSteps!} />
+          ) : isRunning || childLoading ? (
             <div className="sa-inline__waiting">
               <Loader2 size={12} className="icon-spin" />
-              <span>Working...</span>
+              <span>{childLoading ? 'Loading child run…' : 'Working…'}</span>
             </div>
           ) : null}
+          {childRunId && (
+            <div className="sa-inline__lineage">
+              <GitBranch size={11} /> Child run <code>{childRunId.slice(0, 8)}</code>
+            </div>
+          )}
+          {childError && <div className="sa-inline__error">{childError}</div>}
           {tool.error && <div className="sa-inline__error">{tool.error}</div>}
         </div>
       )}
@@ -127,15 +366,32 @@ function formatWorkDuration(durationMs: number): string {
   return `${seconds}s`
 }
 
+function thinkingPreview(content: string): string {
+  const normalized = content.replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'Thinking'
+  const preview = normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
+  return `Think · ${preview}`
+}
+
 function isWorkSegmentGroup(group: GroupedSegment): boolean {
   if (group.type === 'actions') return true
-  return ['tool', 'summary', 'summarizing', 'decision', 'interaction'].includes(group.segment.type)
+  return [
+    'tool',
+    'summary',
+    'summarizing',
+    'decision',
+    'interaction',
+    'run_status',
+    'run_error'
+  ].includes(group.segment.type)
 }
 
 function isDurableOutputGroup(group: GroupedSegment): boolean {
   return (
     group.type === 'content' &&
-    (group.segment.type === 'artifact' || group.segment.type === 'verification')
+    (group.segment.type === 'artifact' ||
+      group.segment.type === 'verification' ||
+      group.segment.type === 'summary')
   )
 }
 
@@ -144,13 +400,19 @@ function AgentWorkDisclosure({
   isLoading,
   startedAt,
   completedAt,
-  children
+  children,
+  segments,
+  awaitingFirstOutput = false,
+  runId: _runId
 }: {
   messageId: string
   isLoading: boolean
   startedAt?: number
   completedAt?: number
   children?: React.ReactNode
+  segments?: readonly import('../types/chat.types').ContentSegment[]
+  awaitingFirstOutput?: boolean
+  runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(isLoading)
   const [now, setNow] = useState(Date.now)
@@ -162,9 +424,18 @@ function AgentWorkDisclosure({
   }, [isLoading])
 
   const endAt = isLoading ? now : (completedAt ?? startedAt ?? now)
-  const label = startedAt
-    ? `${isLoading ? 'Working' : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
+  const toolCount = segments?.filter((segment) => segment.type === 'tool').length ?? 0
+  const reasoningCount = segments?.filter((segment) => segment.type === 'thinking').length ?? 0
+  const activityLabel = [
+    toolCount ? `${toolCount} tool${toolCount === 1 ? '' : 's'}` : '',
+    reasoningCount ? `${reasoningCount} thought${reasoningCount === 1 ? '' : 's'}` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const durationLabel = startedAt
+    ? `${isLoading ? (awaitingFirstOutput ? 'Waiting for model' : 'Working') : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
     : 'Worked'
+  const label = activityLabel ? `${durationLabel} · ${activityLabel}` : durationLabel
   const contentId = `${messageId}-agent-work`
 
   return (
@@ -207,6 +478,7 @@ interface MessageItemProps {
   onConfirmEditMessage: (msg: Message) => void
   onCopyMessage: (msg: Message) => void
   onRetryMessage: (msg: Message) => void
+  onForkMessage?: () => void
   onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
@@ -214,7 +486,7 @@ interface MessageItemProps {
     interactionId: string,
     response: Record<string, unknown>,
     cancelled?: boolean
-  ) => void
+  ) => void | Promise<void>
   workspaceFolder?: string | null
   onUndoCheckpoint?: (hash: string) => void
   editActionTitle?: string
@@ -239,15 +511,16 @@ function MessageItemInner({
   onConfirmEditMessage,
   onCopyMessage,
   onRetryMessage,
+  onForkMessage,
   onSetEditingContent,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
-  workspaceFolder: _workspaceFolder,
-  onUndoCheckpoint: _onUndoCheckpoint,
+  workspaceFolder,
+  onUndoCheckpoint,
   editActionTitle = 'Edit message',
   confirmEditActionTitle = 'Save and resend',
-  retryActionTitle = 'Retry message',
+  retryActionTitle = 'Rewind and retry from here',
   readOnly = false
 }: MessageItemProps) {
   const messageRef = useRef<HTMLDivElement>(null)
@@ -317,6 +590,43 @@ function MessageItemInner({
             <span>Plan → Act</span>
           </div>
         )}
+        {Boolean(msg.attachments?.length) && (
+          <div className="message-context-attachments" aria-label="Attached files and folders">
+            {msg.attachments!.map((attachment) => (
+              <button
+                type="button"
+                key={attachment.id}
+                title={`Open ${attachment.relativePath}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  const open =
+                    attachment.kind === 'folder'
+                      ? window.api.workspace.openFolder
+                      : window.api.workspace.openFile
+                  void open(attachment.relativePath, workspaceFolder || undefined)
+                }}
+              >
+                {attachment.kind === 'folder' ? (
+                  <FolderOpen size={14} aria-hidden="true" />
+                ) : (
+                  <FileText size={14} aria-hidden="true" />
+                )}
+                <span>{attachment.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {Boolean(msg.images?.length) && (
+          <div className="message-image-attachments" aria-label="Attached images">
+            {msg.images!.map((image) => (
+              <ImageAttachmentPreview
+                key={image.id}
+                image={image}
+                className="message-image-preview"
+              />
+            ))}
+          </div>
+        )}
         {/* Show loading animation only when: no content, no thinking, no segments, and still loading */}
         {msg.role === 'agent' &&
           !msg.content &&
@@ -328,6 +638,7 @@ function MessageItemInner({
               messageId={msg.id}
               isLoading
               startedAt={workStartedAt}
+              awaitingFirstOutput
             />
           )}
 
@@ -359,18 +670,20 @@ function MessageItemInner({
               const renderedGroups = groupedSegments.map((group, groupIdx) => (
                 <div key={groupIdx} className="segment-group">
                   {group.type === 'actions' ? (
-                    // Tool calls always visible; thinking collapsible
+                    // Preserve the provider's real thinking/tool chronology.
                     <div className="actions-group">
-                      {/* Always-visible tool call rows */}
-                      {group.toolSegments.length > 0 && (
-                        <div className="actions-tools">
-                          {group.toolSegments.map((segment, segIdx) => (
-                            <div key={segIdx} className="action-item">
+                      {group.segments.map((segment, segIdx) => {
+                        if (segment.type === 'tool') {
+                          return (
+                            <div key={`tool-${segIdx}`} className="action-item">
                               {segment.tool &&
-                                (segment.tool.command === 'spawn_subagent' ? (
+                                (resolveToolView(segment.tool) === 'subagent' ? (
                                   <SubAgentCard tool={segment.tool} />
                                 ) : (
-                                  <ToolCallRow tool={segment.tool} />
+                                  <ToolExecutionCard
+                                    tool={segment.tool}
+                                    workspaceRoot={workspaceFolder}
+                                  />
                                 ))}
                               {!segment.tool && segment.content && (
                                 <ToolCallRow
@@ -383,49 +696,44 @@ function MessageItemInner({
                                 />
                               )}
                             </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Collapsible thinking section */}
-                      {group.thinkingSegments.length > 0 && (
-                        <>
-                          <button
-                            className="actions-toggle"
-                            onClick={() => onToggleThinking(`${msg.id}-group-${groupIdx}`)}
-                            aria-expanded={expandedThinking.has(`${msg.id}-group-${groupIdx}`)}
-                            title="Show or hide thinking"
-                          >
-                            <ChevronRight
-                              size={11}
-                              className={`toggle-icon ${expandedThinking.has(`${msg.id}-group-${groupIdx}`) ? 'expanded' : ''}`}
-                            />
-                            <span className="actions-summary">
-                              {group.thinkingSegments.length} thinking
-                            </span>
-                          </button>
-
-                          {expandedThinking.has(`${msg.id}-group-${groupIdx}`) && (
-                            <div className="actions-content">
-                              {group.thinkingSegments.map((segment, segIdx) => (
-                                <div key={segIdx} className="action-item">
-                                  {segment.content && (
-                                    <div className="action-thinking">
-                                      <span className="action-label">Thinking</span>
-                                      <div className="action-text">
-                                        <MessageMarkdown
-                                          content={segment.content}
-                                          richMedia={false}
-                                        />
-                                      </div>
+                          )
+                        }
+                        if (segment.type !== 'thinking' || !segment.content) return null
+                        const thinkingId = `${msg.id}-group-${groupIdx}-thinking-${segIdx}`
+                        return (
+                          <div key={`thinking-${segIdx}`} className="action-thinking-step">
+                            <button
+                              className="actions-toggle"
+                              onClick={() => onToggleThinking(thinkingId)}
+                              aria-expanded={expandedThinking.has(thinkingId)}
+                              title="Show or hide thinking"
+                            >
+                              <ChevronRight
+                                size={11}
+                                className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
+                              />
+                              <span className="actions-summary">
+                                {thinkingPreview(segment.content)}
+                              </span>
+                            </button>
+                            {expandedThinking.has(thinkingId) && (
+                              <div className="actions-content">
+                                <div className="action-item">
+                                  <div className="action-thinking">
+                                    <div className="action-text">
+                                      <MessageMarkdown
+                                        content={segment.content}
+                                        richMedia={false}
+                                        workspaceRoot={workspaceFolder}
+                                      />
                                     </div>
-                                  )}
+                                  </div>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   ) : group.type === 'content' &&
                     group.segment.type === 'decision' &&
@@ -487,6 +795,17 @@ function MessageItemInner({
                       onResolve={onResolveAgentInteraction}
                     />
                   ) : group.type === 'content' &&
+                    group.segment.type === 'run_status' &&
+                    group.segment.status ? (
+                    <RunStatusSegment status={group.segment.status} />
+                  ) : group.type === 'content' &&
+                    group.segment.type === 'run_error' &&
+                    group.segment.runError ? (
+                    <RunErrorSegment
+                      error={group.segment.runError}
+                      onRetry={() => onRetryMessage(msg)}
+                    />
+                  ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
                     // Standalone artifact (not grouped with thinking)
@@ -502,7 +821,7 @@ function MessageItemInner({
                     group.segment.type === 'tool' &&
                     group.segment.tool ? (
                     // Standalone tool (pending approval or sub-agent card)
-                    group.segment.tool.command === 'spawn_subagent' ? (
+                    resolveToolView(group.segment.tool) === 'subagent' ? (
                       <SubAgentCard tool={group.segment.tool} />
                     ) : (
                       <ToolCallRow tool={group.segment.tool} />
@@ -515,6 +834,7 @@ function MessageItemInner({
                       <MessageMarkdown
                         content={group.segment.content}
                         isStreaming={isLoading}
+                        workspaceRoot={workspaceFolder}
                         onArtifactResult={onHandleArtifactResult}
                       />
                     </div>
@@ -527,67 +847,14 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'verification' &&
                     group.segment.verification ? (
-                    <details
-                      className={`verification-segment verification-${group.segment.verification.status}`}
-                    >
-                      <summary>
-                        {group.segment.verification.status === 'passed' ? (
-                          <Check size={12} />
-                        ) : (
-                          <CircleAlert size={12} />
-                        )}
-                        <span>{group.segment.verification.headline}</span>
-                        <ChevronDown size={10} className="verification-arrow" />
-                      </summary>
-                      <div className="verification-detail">
-                        {group.segment.verification.detail && (
-                          <p>{group.segment.verification.detail}</p>
-                        )}
-                        {group.segment.verification.evidence.length > 0 && (
-                          <ul>
-                            {group.segment.verification.evidence.slice(-4).map((evidence) => (
-                              <li key={evidence.id}>
-                                <span className={`verification-dot ${evidence.status}`} />
-                                <span>{evidence.summary}</span>
-                                {evidence.command && <code>{evidence.command}</code>}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    </details>
+                    <VerificationSegment verification={group.segment.verification} />
                   ) : group.type === 'content' &&
                     group.segment.type === 'summary' &&
                     group.segment.summary ? (
-                    // Context summarization indicator - compact inline version
-                    <div className="summary-segment-compact">
-                      <AlignLeft className="summary-icon" size={12} />
-                      <span className="summary-text">
-                        Context compacted: {group.segment.summary.messagesCompacted} msgs,{' '}
-                        {Math.round(
-                          Math.max(
-                            0,
-                            Math.min(
-                              1,
-                              1 -
-                                group.segment.summary.newTokens /
-                                  Math.max(group.segment.summary.originalTokens, 1)
-                            )
-                          ) * 100
-                        )}
-                        % saved
-                      </span>
-                      {group.segment.content && (
-                        <details className="summary-details">
-                          <summary>
-                            <ChevronDown className="summary-arrow" size={10} />
-                          </summary>
-                          <div className="summary-content">
-                            <MessageMarkdown content={group.segment.content} richMedia={false} />
-                          </div>
-                        </details>
-                      )}
-                    </div>
+                    <CompactionSummarySegment
+                      summary={group.segment.summary}
+                      modelContext={group.segment.content}
+                    />
                   ) : null}
                 </div>
               ))
@@ -600,20 +867,52 @@ function MessageItemInner({
                   )
                   .map(({ groupIndex }) => groupIndex)
               )
-              return (
-                <>
+              const blocks = chunkGroupsChronologically(groupedSegments, (_group, groupIndex) =>
+                workGroupIndexes.has(groupIndex)
+              )
+              const output: React.ReactNode[] = []
+              let changeReviewRendered = false
+              const appendChangeReview = (): void => {
+                if (changeReviewRendered) return
+                output.push(
+                  <TurnChangeReview
+                    key={`${msg.id}:change-review`}
+                    segments={msg.segments || []}
+                    workspaceRoot={workspaceFolder}
+                  />
+                )
+                changeReviewRendered = true
+              }
+
+              blocks.forEach((block) => {
+                const firstGroupIndex =
+                  block.type === 'work' ? block.groups[0]!.groupIndex : block.groupIndex
+                if (firstGroupIndex >= workEnd) appendChangeReview()
+
+                if (block.type === 'content') {
+                  output.push(renderedGroups[block.groupIndex])
+                  return
+                }
+
+                const blockSegments = block.groups.flatMap(({ group }) =>
+                  group.type === 'actions' ? group.segments : [group.segment]
+                )
+                output.push(
                   <AgentWorkDisclosure
-                    key={`${msg.id}:${isLoading ? 'working' : 'worked'}`}
-                    messageId={msg.id}
+                    key={`${msg.id}:work:${firstGroupIndex}`}
+                    messageId={`${msg.id}-work-${firstGroupIndex}`}
                     isLoading={isLoading}
                     startedAt={workStartedAt}
                     completedAt={workCompletedAt}
+                    segments={blockSegments}
+                    runId={msg.runId}
                   >
-                    {renderedGroups.filter((_, groupIndex) => workGroupIndexes.has(groupIndex))}
+                    {block.groups.map(({ groupIndex }) => renderedGroups[groupIndex])}
                   </AgentWorkDisclosure>
-                  {renderedGroups.filter((_, groupIndex) => !workGroupIndexes.has(groupIndex))}
-                </>
-              )
+                )
+              })
+              appendChangeReview()
+              return output
             })()}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
@@ -627,13 +926,18 @@ function MessageItemInner({
               completedAt={workCompletedAt}
             >
               <div className="thinking-content">
-                <MessageMarkdown content={msg.thinking} richMedia={false} />
+                <MessageMarkdown
+                  content={msg.thinking}
+                  richMedia={false}
+                  workspaceRoot={workspaceFolder}
+                />
               </div>
             </AgentWorkDisclosure>
             <div className="message-content">
               <MessageMarkdown
                 content={msg.content}
                 isStreaming={isLoading}
+                workspaceRoot={workspaceFolder}
                 onArtifactResult={onHandleArtifactResult}
               />
             </div>
@@ -667,6 +971,7 @@ function MessageItemInner({
             <MessageMarkdown
               content={msg.content}
               isStreaming={isLoading && msg.role === 'agent'}
+              workspaceRoot={workspaceFolder}
               onArtifactResult={onHandleArtifactResult}
             />
           </div>
@@ -674,6 +979,72 @@ function MessageItemInner({
       </div>
       {msg.role !== 'system' && (
         <div className="message-meta">
+          <div className="message-info">
+            {msg.role === 'agent' && msg.tokenUsage && (
+              <details className="message-run-stats">
+                <summary title="Show response metrics">
+                  {(msg.tokenUsage.promptTokens + msg.tokenUsage.completionTokens).toLocaleString()}{' '}
+                  tokens
+                  {workStartedAt && workCompletedAt
+                    ? ` · ${formatWorkDuration(workCompletedAt - workStartedAt)}`
+                    : ''}
+                  <ChevronDown size={10} aria-hidden="true" />
+                </summary>
+                <div className="message-run-stats-popover">
+                  <span>
+                    Input <strong>{msg.tokenUsage.promptTokens.toLocaleString()}</strong>
+                  </span>
+                  <span>
+                    Output <strong>{msg.tokenUsage.completionTokens.toLocaleString()}</strong>
+                  </span>
+                  {msg.tokenUsage.cachedPromptTokens !== undefined && (
+                    <span>
+                      Cached{' '}
+                      <strong>
+                        {msg.tokenUsage.cachedPromptTokens.toLocaleString()}
+                        {msg.tokenUsage.promptTokens > 0
+                          ? ` (${Math.round(
+                              (msg.tokenUsage.cachedPromptTokens / msg.tokenUsage.promptTokens) *
+                                100
+                            )}%)`
+                          : ''}
+                      </strong>
+                    </span>
+                  )}
+                  {msg.tokenUsage.timeToFirstTokenMs !== undefined && (
+                    <span>
+                      First output{' '}
+                      <strong>
+                        {msg.tokenUsage.timeToFirstTokenMs < 1_000
+                          ? `${Math.round(msg.tokenUsage.timeToFirstTokenMs)} ms`
+                          : `${(msg.tokenUsage.timeToFirstTokenMs / 1_000).toFixed(1)} s`}
+                      </strong>
+                    </span>
+                  )}
+                  {msg.tokenUsage.tokensPerSecond !== undefined && (
+                    <span>
+                      Speed <strong>{msg.tokenUsage.tokensPerSecond.toFixed(1)} t/s</strong>
+                    </span>
+                  )}
+                  {msg.tokenUsage.cost !== undefined && (
+                    <span>
+                      Cost <strong>${msg.tokenUsage.cost.toFixed(4)}</strong>
+                    </span>
+                  )}
+                </div>
+              </details>
+            )}
+            <div className="message-timestamp">
+              {formatTimestamp(msg.timestamp)}
+              {msg.role === 'agent' &&
+                msg.tokenUsage?.tokensPerSecond !== undefined &&
+                msg.tokenUsage.tokensPerSecond > 0 && (
+                  <span className="message-token-info" title="Generation speed">
+                    {msg.tokenUsage.tokensPerSecond.toFixed(1)} t/s
+                  </span>
+                )}
+            </div>
+          </div>
           {msg.role === 'user' && (
             <div className="message-actions">
               {editingMessageId === msg.id ? (
@@ -732,6 +1103,18 @@ function MessageItemInner({
                       >
                         <RotateCcw size={13} />
                       </button>
+                      {onForkMessage && (
+                        <button
+                          type="button"
+                          className="message-action icon"
+                          onClick={onForkMessage}
+                          title="Fork from this message"
+                          aria-label="Fork from this message"
+                          disabled={isLoading}
+                        >
+                          <GitBranch size={13} />
+                        </button>
+                      )}
                     </>
                   )}
                 </>
@@ -749,19 +1132,43 @@ function MessageItemInner({
               >
                 {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
               </button>
+              {!readOnly && onForkMessage && (
+                <button
+                  type="button"
+                  className="message-action icon"
+                  onClick={onForkMessage}
+                  title="Fork from this message"
+                  aria-label="Fork from this message"
+                  disabled={isLoading}
+                >
+                  <GitBranch size={13} />
+                </button>
+              )}
+              {!readOnly &&
+                msg.checkpointHash &&
+                msg.checkpointWorkspaceRoot === workspaceFolder &&
+                onUndoCheckpoint && (
+                  <button
+                    type="button"
+                    className="message-action icon"
+                    onClick={() => onUndoCheckpoint(msg.checkpointHash!)}
+                    title={
+                      msg.restoredFrom === msg.checkpointHash
+                        ? 'Changes already undone'
+                        : 'Undo file changes from this response'
+                    }
+                    aria-label={
+                      msg.restoredFrom === msg.checkpointHash
+                        ? 'Changes already undone'
+                        : 'Undo file changes'
+                    }
+                    disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                )}
             </div>
           )}
-
-          <div className="message-timestamp">
-            {formatTimestamp(msg.timestamp)}
-            {msg.role === 'agent' &&
-              msg.tokenUsage?.tokensPerSecond !== undefined &&
-              msg.tokenUsage.tokensPerSecond > 0 && (
-                <span className="message-token-info" title="Generation speed">
-                  {msg.tokenUsage.tokensPerSecond.toFixed(1)} t/s
-                </span>
-              )}
-          </div>
         </div>
       )}
     </div>
@@ -777,6 +1184,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   // Re-render if loading state changed (affects the typing indicator on the last message)
   if (prev.isLoading !== next.isLoading) return false
   if (prev.readOnly !== next.readOnly) return false
+  if (prev.onForkMessage !== next.onForkMessage) return false
   // Re-render if this message is being edited or stopped being edited
   if (
     prev.editingMessageId !== next.editingMessageId &&
@@ -794,10 +1202,15 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
     return false
   // Re-render if thinking expansion changed for this message
   if (prev.expandedThinking !== next.expandedThinking) {
-    const msgId = prev.message.id
-    const wasExpanded = [...prev.expandedThinking].some((k) => k.startsWith(msgId))
-    const isExpanded = [...next.expandedThinking].some((k) => k.startsWith(msgId))
-    if (wasExpanded !== isExpanded) return false
+    const prefix = `${prev.message.id}-`
+    const previousKeys = [...prev.expandedThinking].filter((key) => key.startsWith(prefix))
+    const nextKeys = [...next.expandedThinking].filter((key) => key.startsWith(prefix))
+    if (
+      previousKeys.length !== nextKeys.length ||
+      previousKeys.some((key) => !next.expandedThinking.has(key)) ||
+      nextKeys.some((key) => !prev.expandedThinking.has(key))
+    )
+      return false
   }
   // All relevant props are equal — skip re-render
   return true

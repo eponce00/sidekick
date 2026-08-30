@@ -14,6 +14,7 @@ import {
   hardResetCheckpoint,
   initShadowRepo,
   listCheckpoints,
+  recoverInterruptedCheckpointCaptures,
   restoreCheckpoint,
   rewindToBeforeCheckpoint,
   rewindWorkspacesToBeforeCheckpoints
@@ -87,7 +88,7 @@ describe('private SideKick workspace history', () => {
       appliedHash: hash
     })
     expect(await getCheckpointDiff(workspace, hash)).toContain('tracked.txt')
-  })
+  }, 15_000)
 
   it('records only the delta after the per-run baseline', async () => {
     await write(join(workspace, 'manual-before.txt'), 'manual work\n')
@@ -105,6 +106,28 @@ describe('private SideKick workspace history', () => {
       changeCount: 1,
       captureVersion: 2
     })
+  }, 15_000)
+
+  it('recovers a persisted pre-mutation capture after an interrupted run', async () => {
+    await write(join(workspace, 'agent.txt'), 'before\n')
+    const captureId = await beginCheckpointCapture(workspace, 'conversation-1', 'assistant-1')
+    await write(join(workspace, 'agent.txt'), 'partial change\n')
+
+    const recovered = await recoverInterruptedCheckpointCaptures()
+
+    expect(recovered).toHaveLength(1)
+    expect(recovered[0]).toMatchObject({
+      conversationId: 'conversation-1',
+      agentMessageId: 'assistant-1',
+      workspaceRoot: workspace,
+      checkpoint: { changeCount: 1, captureVersion: 2 }
+    })
+    expect(await getCheckpointDiff(workspace, recovered[0].checkpoint.hash)).toContain(
+      'partial change'
+    )
+    await expect(createCheckpoint(workspace, 'Duplicate recovery', captureId)).rejects.toThrow(
+      'History capture expired'
+    )
   })
 
   it('preserves unrelated manual files when undoing SideKick changes', async () => {

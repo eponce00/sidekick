@@ -4,6 +4,28 @@ import { dirname } from 'path'
 import type { ShellCommandResult } from '../../shared/types'
 
 const DEFAULT_CAPTURE_BYTES = 256 * 1024
+const WINDOWS_EXIT_MARKER = '__SIDEKICK_EXIT_CODE__='
+
+function decodeCliXmlText(value: string): string {
+  return value
+    .replace(/_x000D__x000A_/gi, '\n')
+    .replace(/_x000D_/gi, '\r')
+    .replace(/_x000A_/gi, '\n')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+}
+
+/** Reduce PowerShell's serialized error stream to the human-readable error records. */
+export function normalizePowerShellStderr(value: string): string {
+  if (!value.includes('#< CLIXML') && !value.includes('<Objs Version=')) return value
+  const errors = [...value.matchAll(/<S\s+S="Error">([\s\S]*?)<\/S>/gi)]
+    .map((match) => decodeCliXmlText(match[1]).trim())
+    .filter(Boolean)
+  return errors.length ? [...new Set(errors)].join('\n') : ''
+}
 
 export interface CommandRunOptions {
   id: string
@@ -66,17 +88,31 @@ export class CommandRunner {
     const log = createWriteStream(options.outputPath, { flags: 'w' })
     const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash'
     const windowsCommand = `& {
-      $global:LASTEXITCODE = 0
+      $global:LASTEXITCODE = $null
       ${options.command}
       $sidekickSucceeded = $?
       $sidekickExitCode = $global:LASTEXITCODE
-      if ($sidekickSucceeded) { exit 0 }
-      if ($sidekickExitCode -ne 0) { exit $sidekickExitCode }
-      exit 1
+      $sidekickFinalExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCode -ne 0) {
+        [int]$sidekickExitCode
+      } elseif (-not $sidekickSucceeded) {
+        1
+      } else {
+        0
+      }
+      [Console]::Error.WriteLine('${WINDOWS_EXIT_MARKER}' + $sidekickFinalExitCode)
+      exit $sidekickFinalExitCode
     }`
     const args =
       process.platform === 'win32'
-        ? ['-NoProfile', '-NonInteractive', '-Command', windowsCommand]
+        ? [
+            '-NoProfile',
+            '-NonInteractive',
+            // EncodedCommand avoids Windows argv quoting corrupting commands that themselves
+            // contain quotes (for example `node -e "..."`). Corruption could start an
+            // interactive child, report exit 0, and leave the workspace directory locked.
+            '-EncodedCommand',
+            Buffer.from(windowsCommand, 'utf16le').toString('base64')
+          ]
         : ['-c', options.command]
     const child = spawn(shell, args, {
       cwd: options.cwd,
@@ -93,6 +129,7 @@ export class CommandRunner {
       let truncated = false
       let timedOut = false
       let settled = false
+      let reportedWindowsExitCode: number | undefined
       let forceKillTimer: NodeJS.Timeout | undefined
       let settleTimer: NodeJS.Timeout | undefined
 
@@ -148,7 +185,12 @@ export class CommandRunner {
       })
       child.stderr.on('data', (data: Buffer) => {
         if (settled) return
-        const chunk = data.toString()
+        const rawChunk = data.toString()
+        const marker = new RegExp(`${WINDOWS_EXIT_MARKER}(-?\\d+)\\r?\\n?`, 'g')
+        const matches = [...rawChunk.matchAll(marker)]
+        if (matches.length) reportedWindowsExitCode = Number(matches.at(-1)?.[1])
+        const chunk = rawChunk.replace(marker, '')
+        if (!chunk) return
         log.write(`[stderr]\n${chunk}`)
         stderr += capture(chunk)
         options.onOutput?.({ commandId: options.id, chunk, stream: 'stderr' })
@@ -157,12 +199,15 @@ export class CommandRunner {
         finish({ success: false, exitCode: -1, stdout, stderr, error: error.message })
       )
       child.on('close', (code, signal) => {
+        const effectiveCode = reportedWindowsExitCode ?? code ?? -1
         const cancelled = !timedOut && (this.cancelled.delete(options.id) || signal === 'SIGTERM')
+        const finalStderr =
+          process.platform === 'win32' ? normalizePowerShellStderr(stderr) : stderr
         finish({
-          success: code === 0 && !timedOut,
-          exitCode: code ?? -1,
+          success: effectiveCode === 0 && !timedOut,
+          exitCode: effectiveCode,
           stdout,
-          stderr,
+          stderr: finalStderr,
           cancelled,
           error: timedOut
             ? `Command timed out after ${options.timeoutMs / 1000} seconds`

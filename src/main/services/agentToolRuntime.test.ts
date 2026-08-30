@@ -5,13 +5,36 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import type { ToolExecutionResult } from '../../shared/agentRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import { AgentToolRuntime, collaborationCommandScopeError } from './agentToolRuntime'
+import {
+  AgentToolRuntime,
+  collaborationCommandScopeError,
+  safeToolArguments
+} from './agentToolRuntime'
 import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 
 const roots: string[] = []
+
+describe('safe tool arguments', () => {
+  it('never persists text typed into a browser field', () => {
+    expect(
+      safeToolArguments('browser_type', {
+        ref: 'ax-2-9',
+        value: 'correct horse battery staple',
+        clear: true,
+        submit: false
+      })
+    ).toEqual({
+      ref: 'ax-2-9',
+      clear: true,
+      submit: false,
+      value_redacted: true,
+      value_bytes: 28
+    })
+  })
+})
 
 async function temporaryRoot(prefix: string): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), prefix))
@@ -42,8 +65,7 @@ describe('AgentToolRuntime file receipts', () => {
       surface: 'conversation',
       workspaceRoot: workspace,
       webSearchEnabled: false,
-      editingTarget: { model: 'generic-model' },
-      capabilities: ['workspace.read', 'workspace.write']
+      capabilities: ['workspace.read', 'workspace.write', 'command.execute']
     })
     const context = {
       runId: 'run-1',
@@ -52,11 +74,9 @@ describe('AgentToolRuntime file receipts', () => {
     }
     const edit = (oldString: string, newString: string) =>
       session.router.execute(
-        'edit',
+        'apply_patch',
         {
-          file_path: 'status.txt',
-          old_string: oldString,
-          new_string: newString,
+          patch: `*** Begin Patch\n*** Update File: status.txt\n@@\n-${oldString}\n+${newString}\n*** End Patch`,
           accessLevel: 'auto'
         },
         context
@@ -67,67 +87,56 @@ describe('AgentToolRuntime file receipts', () => {
       error: { code: 'stale_read', message: expect.stringContaining('Read receipt required') }
     })
 
-    await session.router.execute('read_workspace_file', { file_path: 'status.txt' }, context)
+    await session.router.execute('read', { path: 'status.txt' }, context)
     await writeFile(join(workspace, 'status.txt'), 'external\n', 'utf8')
     expect(await edit('external', 'after')).toMatchObject({
       status: 'error',
       error: { code: 'stale_read', message: expect.stringContaining('Stale read receipt') }
     })
 
-    await session.router.execute('read_workspace_file', { file_path: 'status.txt' }, context)
-    expect(await edit('external', 'after')).toMatchObject({ status: 'success' })
-    await expect(session.verificationController?.afterTerminalTurn()).resolves.toMatchObject({
-      continue: true,
-      summary: {
-        status: 'unverified',
-        currentRevision: 1,
-        changedPaths: ['status.txt']
-      }
-    })
-
-    await writeFile(join(workspace, 'duplicates.txt'), 'same\nsame\n', 'utf8')
-    await session.router.execute('read_workspace_file', { file_path: 'duplicates.txt' }, context)
+    await session.router.execute('read', { path: 'status.txt' }, context)
     await expect(
       session.router.execute(
-        'edit',
+        'shell',
         {
-          file_path: 'duplicates.txt',
-          old_string: 'same',
-          new_string: 'different',
-          replace_all: false,
+          title: 'Inspect without changing files',
+          command: process.platform === 'win32' ? 'Write-Output inspected' : 'printf inspected',
           accessLevel: 'auto'
         },
         context
       )
-    ).resolves.toMatchObject({
-      status: 'error',
-      error: {
-        code: 'conflict',
-        recoveryAction: 'correct_input',
-        recovery: expect.stringContaining('replace_all=true')
+    ).resolves.toMatchObject({ status: 'success' })
+    expect(await edit('external', 'after')).toMatchObject({ status: 'success' })
+    await session.router.execute(
+      'shell',
+      {
+        title: 'Mutate the inspected file',
+        command:
+          process.platform === 'win32'
+            ? "[IO.File]::WriteAllText((Join-Path $PWD 'status.txt'), 'changed by shell')"
+            : "printf 'changed by shell' > status.txt",
+        accessLevel: 'auto'
       },
-      data: {
-        failure: {
-          code: 'multiple_matches',
-          matchCount: 2,
-          matchStartLines: [1, 2]
-        }
+      context
+    )
+    expect(await edit('changed by shell', 'final')).toMatchObject({
+      status: 'error',
+      error: { code: 'stale_read' }
+    })
+    await expect(session.verificationController?.afterTerminalTurn()).resolves.toMatchObject({
+      continue: true,
+      summary: {
+        status: 'unverified',
+        currentRevision: 2,
+        changedPaths: ['status.txt']
       }
     })
 
     await expect(
-      session.router.execute(
-        'search_workspace_files',
-        { regex: '[invalid', path: 'status.txt' },
-        context
-      )
+      session.router.execute('read_workspace_file', { file_path: 'status.txt' }, context)
     ).resolves.toMatchObject({
       status: 'error',
-      error: {
-        code: 'invalid_arguments',
-        recoveryAction: 'correct_input',
-        message: expect.stringContaining('Invalid search regular expression')
-      }
+      error: { code: 'unknown_tool' }
     })
   })
 
@@ -147,8 +156,7 @@ describe('AgentToolRuntime file receipts', () => {
       runId: 'collaboration-run',
       surface: 'collaboration',
       workspaceRoot: workspace,
-      webSearchEnabled: false,
-      editingTarget: { model: 'generic-model' }
+      webSearchEnabled: false
     })
     const context = {
       runId: 'collaboration-run',
@@ -158,7 +166,7 @@ describe('AgentToolRuntime file receipts', () => {
 
     await expect(
       session.router.execute(
-        'execute_command',
+        'shell',
         {
           title: 'Read peer data directly',
           command: 'cat /Users/example/peer-project/private.csv',
@@ -170,7 +178,7 @@ describe('AgentToolRuntime file receipts', () => {
 
     await expect(
       session.router.execute(
-        'execute_command',
+        'shell',
         {
           title: 'Leave project root',
           command: 'cd .. && mv project renamed-project',
@@ -197,23 +205,29 @@ describe('AgentToolRuntime file receipts', () => {
       runId: 'failed-command-run',
       surface: 'conversation',
       workspaceRoot: workspace,
-      webSearchEnabled: false,
-      editingTarget: { model: 'generic-model' }
+      webSearchEnabled: false
     })
     const denseError = JSON.stringify({
       coordinates: Array.from({ length: 5_000 }, (_, index) => [index / 100, -index / 100])
     })
-    await writeFile(
-      join(workspace, 'fail.cjs'),
-      `process.stderr.write(${JSON.stringify(denseError)}); process.exit(7)`,
-      'utf8'
-    )
-
+    if (process.platform === 'win32') {
+      await writeFile(
+        join(workspace, 'fail.ps1'),
+        `$dense = @'\n${denseError}\n'@\n[Console]::Error.Write($dense)\ncmd.exe /d /c exit 7\n`,
+        'utf8'
+      )
+    } else {
+      await writeFile(
+        join(workspace, 'fail.cjs'),
+        `process.stderr.write(${JSON.stringify(denseError)}); process.exit(7)`,
+        'utf8'
+      )
+    }
     const result = (await session.router.execute(
-      'execute_command',
+      'shell',
       {
         title: 'Expected failure',
-        command: 'node fail.cjs',
+        command: process.platform === 'win32' ? '& .\\fail.ps1' : 'node fail.cjs',
         accessLevel: 'auto'
       },
       {

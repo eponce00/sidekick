@@ -11,7 +11,6 @@ import {
   resolveProviderContext,
   setProviderHealthPublisher
 } from '../providers/providerRuntime'
-import { editingCompatibilityService } from '../services/editingCompatibilityService'
 
 export function registerProviderRuntimeHandlers(): void {
   setProviderHealthPublisher((change) => {
@@ -27,9 +26,6 @@ export function registerProviderRuntimeHandlers(): void {
   )
   ipcMain.handle('providers:resolveContext', (_event, target: ProviderTarget) =>
     resolveProviderContext(target)
-  )
-  ipcMain.handle('providers:calibrateEditing', (_event, request) =>
-    editingCompatibilityService.calibrate(request)
   )
   ipcMain.handle(
     'providers:getGenerationStats',

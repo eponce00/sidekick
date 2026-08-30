@@ -11,36 +11,36 @@
 }
 
 .settings-overlay {
-  background: rgb(10 31 54 / 46%);
-  backdrop-filter: blur(7px) saturate(118%);
-  -webkit-backdrop-filter: blur(7px) saturate(118%);
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 0;
+  background: var(--app-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 body[data-theme='light'] .settings-overlay {
-  background: rgb(36 91 137 / 20%);
+  background: var(--app-bg);
 }
 
 .settings-window {
-  width: min(1120px, calc(100vw - 48px));
-  height: min(780px, calc(100dvh - 48px));
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 238px minmax(0, 1fr);
+  grid-template-columns: clamp(236px, 19vw, 292px) minmax(0, 1fr);
   overflow: hidden;
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  background: var(--surface-1);
-  box-shadow:
-    0 28px 80px rgb(0 9 22 / 38%),
-    0 0 0 1px rgb(96 178 226 / 5%);
-  animation: settings-in 180ms ease-out;
+  border: 0;
+  border-radius: 0;
+  background: var(--app-bg);
+  box-shadow: none;
+  animation: settings-in 140ms ease-out;
 }
 
 @keyframes settings-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.99);
   }
 }
 
@@ -49,20 +49,81 @@ body[data-theme='light'] .settings-overlay {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 26px 14px 16px;
+  padding: 20px 12px 16px;
   border-right: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface-2) 70%, var(--app-bg));
+  background: color-mix(in srgb, var(--surface-1) 44%, var(--app-bg));
 }
 
-.settings-sidebar-heading {
-  padding: 0 12px 22px;
+.settings-back-button {
+  width: max-content;
+  max-width: 100%;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 2px 14px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
-.settings-sidebar-heading h1 {
-  margin: 3px 0 0;
+.settings-back-button:hover {
   color: var(--text-primary);
-  font-size: 22px;
-  letter-spacing: -0.03em;
+  background: var(--surface-3);
+}
+
+.settings-back-button:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  margin: 0 3px 22px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--surface-1);
+  color: var(--text-muted);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.settings-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.settings-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-search-empty {
+  padding: 14px 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.settings-navigation-title {
+  margin: 0 11px 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .settings-kicker {
@@ -87,7 +148,8 @@ body[data-theme='light'] .settings-overlay {
   grid-template-columns: 20px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 10px 11px;
+  min-height: 38px;
+  padding: 8px 11px;
   border: 0;
   border-radius: 10px;
   color: var(--text-muted);
@@ -103,8 +165,8 @@ body[data-theme='light'] .settings-overlay {
 
 .settings-sidebar nav button.active {
   color: var(--text-primary);
-  background: var(--accent-subtle);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+  background: var(--surface-3);
+  box-shadow: none;
 }
 
 .settings-sidebar nav button.active > svg {
@@ -115,8 +177,7 @@ body[data-theme='light'] .settings-overlay {
   flex: 0 0 auto;
 }
 
-.settings-sidebar nav strong,
-.settings-sidebar nav small {
+.settings-sidebar nav strong {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -124,15 +185,8 @@ body[data-theme='light'] .settings-overlay {
 }
 
 .settings-sidebar nav strong {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.settings-sidebar nav small {
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 450;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .settings-sidebar-note {
@@ -154,44 +208,8 @@ body[data-theme='light'] .settings-overlay {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-rows: 50px minmax(0, 1fr) 64px;
+  grid-template-rows: minmax(0, 1fr) 64px;
   overflow: hidden;
-}
-
-.settings-topbar {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 18px 0 24px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-muted);
-  font-size: 12px;
-}
-
-.settings-topbar > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-topbar button {
-  width: 32px;
-  height: 32px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 9px;
-  color: var(--text-muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.settings-topbar button:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
 }
 
 .settings-content {
@@ -202,8 +220,8 @@ body[data-theme='light'] .settings-overlay {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 30px 34px 42px;
-  background: color-mix(in srgb, var(--app-bg) 68%, var(--surface-1));
+  padding: clamp(52px, 8dvh, 86px) clamp(34px, 6vw, 92px) 56px;
+  background: var(--app-bg);
 }
 
 .settings-content::-webkit-scrollbar,
@@ -251,7 +269,7 @@ body[data-theme='light'] .settings-overlay {
 .settings-page,
 .provider-manager {
   width: 100%;
-  max-width: 810px;
+  max-width: 980px;
   min-width: 0;
   margin: 0 auto;
 }
@@ -1501,41 +1519,17 @@ body[data-theme='light'] .settings-overlay {
 
 @media (max-width: 900px) {
   .settings-window {
-    width: calc(100vw - 24px);
-    height: calc(100dvh - 24px);
-    grid-template-columns: 76px minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    grid-template-columns: 210px minmax(0, 1fr);
   }
 
   .settings-sidebar {
     padding: 18px 10px 12px;
   }
 
-  .settings-sidebar-heading {
-    min-height: 40px;
-    padding: 0;
-  }
-
-  .settings-sidebar-heading .settings-kicker,
-  .settings-sidebar-heading h1,
-  .settings-sidebar nav span,
-  .settings-sidebar-note span {
-    display: none;
-  }
-
-  .settings-sidebar nav button {
-    min-height: 44px;
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 10px;
-  }
-
-  .settings-sidebar-note {
-    justify-content: center;
-    padding: 10px;
-  }
-
   .settings-content {
-    padding: 26px 24px 38px;
+    padding: 48px 28px 42px;
   }
 
   .provider-manager-grid {
@@ -1552,11 +1546,7 @@ body[data-theme='light'] .settings-overlay {
 
 @media (max-height: 620px) and (min-width: 641px) {
   .settings-sidebar {
-    padding-top: 14px;
-  }
-
-  .settings-sidebar-heading {
-    padding-bottom: 10px;
+    padding-top: 10px;
   }
 
   .settings-sidebar-note {
@@ -1569,7 +1559,7 @@ body[data-theme='light'] .settings-overlay {
   }
 
   .settings-main {
-    grid-template-rows: 44px minmax(0, 1fr) 56px;
+    grid-template-rows: minmax(0, 1fr) 56px;
   }
 
   .settings-content {
@@ -1585,8 +1575,8 @@ body[data-theme='light'] .settings-overlay {
   }
 
   .settings-window {
-    width: 100vw;
-    height: 100dvh;
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     border: 0;
@@ -1596,15 +1586,26 @@ body[data-theme='light'] .settings-overlay {
   .settings-sidebar {
     flex: 0 0 auto;
     display: block;
-    padding: 7px 8px 8px;
+    padding: 8px;
     overflow: hidden;
     border-right: 0;
     border-bottom: 1px solid var(--border-subtle);
   }
 
-  .settings-sidebar-heading,
+  .settings-navigation-title,
   .settings-sidebar-note {
     display: none;
+  }
+
+  .settings-back-button {
+    min-height: 30px;
+    margin: 0 0 5px;
+    padding: 0 7px;
+  }
+
+  .settings-search {
+    min-height: 34px;
+    margin: 0 0 8px;
   }
 
   .settings-sidebar nav {
@@ -1633,13 +1634,8 @@ body[data-theme='light'] .settings-overlay {
     height: 16px;
   }
 
-  .settings-sidebar nav span,
   .settings-sidebar nav strong {
     display: block;
-  }
-
-  .settings-sidebar nav small {
-    display: none;
   }
 
   .settings-sidebar nav strong {
@@ -1649,11 +1645,7 @@ body[data-theme='light'] .settings-overlay {
   .settings-main {
     flex: 1 1 auto;
     height: auto;
-    grid-template-rows: 44px minmax(0, 1fr) auto;
-  }
-
-  .settings-topbar {
-    padding: 0 10px 0 16px;
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .settings-content {
@@ -1816,12 +1808,8 @@ body[data-theme='light'] .settings-overlay {
     grid-template-columns: 1fr;
   }
 
-  .settings-sidebar nav button span {
+  .settings-sidebar nav button strong {
     display: none;
-  }
-
-  .settings-topbar {
-    padding-left: 12px;
   }
 
   .settings-card-heading,

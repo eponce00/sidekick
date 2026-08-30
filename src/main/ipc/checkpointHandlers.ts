@@ -57,7 +57,7 @@ export function registerCheckpointHandlers(): void {
     if (!/^[0-9a-f]{7,64}$/i.test(hash)) throw new Error('Invalid checkpoint hash')
     permissionBroker.consume(
       authorization?.authorizationToken,
-      checkpointPermissionOperation(action, hash, 'confirm')
+      checkpointPermissionOperation(action, hash, authorization?.requestedAccess ?? 'confirm')
     )
   }
 
@@ -105,9 +105,9 @@ export function registerCheckpointHandlers(): void {
     }
   )
 
-  ipcMain.handle('workspace:discardHistoryCapture', (_, captureId: string) => {
+  ipcMain.handle('workspace:discardHistoryCapture', async (_, captureId: string) => {
     if (typeof captureId === 'string' && captureId.length <= 500) {
-      discardCheckpointCapture(captureId)
+      await discardCheckpointCapture(captureId)
     }
     return { ok: true }
   })

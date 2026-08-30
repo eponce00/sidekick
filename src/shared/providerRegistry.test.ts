@@ -3,11 +3,17 @@ import {
   PROVIDER_REGISTRY,
   providerDefinition,
   providerDefinitionForInstance,
+  providerDefinitionForTransport,
   providerKindForInstance,
   providerUsesOpenAIProtocol
 } from './providerRegistry'
 
 describe('provider registry', () => {
+  it('resolves definitions from runtime transports', () => {
+    expect(providerDefinitionForTransport('lmstudio').kind).toBe('lmstudio')
+    expect(providerDefinitionForTransport('anthropic').protocol).toBe('anthropic')
+  })
+
   it('defines every provider kind once', () => {
     const kinds = PROVIDER_REGISTRY.map((definition) => definition.kind)
     expect(new Set(kinds).size).toBe(kinds.length)

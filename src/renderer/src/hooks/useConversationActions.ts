@@ -123,6 +123,8 @@ export function useConversationActions(options: ConversationActionsOptions): {
           id: message.id,
           conversation_id: options.conversationId,
           content: updatedMessage.content,
+          images: message.images,
+          attachments: message.attachments,
           thinking: message.thinking,
           segments: message.segments,
           timestamp: message.timestamp
@@ -186,22 +188,23 @@ export function useConversationActions(options: ConversationActionsOptions): {
     const hash = pendingCheckpointRestore
     setPendingCheckpointRestore(null)
     try {
-      const authorization = await authorizeCheckpointMutation('restore', hash)
+      const authorization = await authorizeCheckpointMutation('rewind', hash)
       if (!authorization) return
-      const result = await window.api.workspace.restoreCheckpoint(
+      const result = await window.api.workspace.rewindToBeforeCheckpoint(
         options.workspaceFolder,
         hash,
         authorization
       )
       if (result.ok) {
+        options.onCheckpointCreated?.(result.parentHash ?? undefined)
         options.setMessages((previous) =>
           previous.map((message) =>
             message.checkpointHash === hash ? { ...message, restoredFrom: hash } : message
           )
         )
-      } else console.error('[Checkpoint] Restore failed:', result.error)
+      } else console.error('[Checkpoint] Undo failed:', result.error)
     } catch (error) {
-      console.error('[Checkpoint] Restore error:', error)
+      console.error('[Checkpoint] Undo error:', error)
     }
   }
 

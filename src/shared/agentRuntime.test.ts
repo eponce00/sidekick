@@ -3,6 +3,7 @@ import {
   agentRunUsesPlan,
   hasAgentCapability,
   isToolExecutionResult,
+  normalizeToolResultMedia,
   normalizeToolExecutionResult,
   toolExecutionFailed,
   toolExecutionSucceeded,
@@ -27,6 +28,56 @@ describe('agent runtime contracts', () => {
       timing: { startedAt: 10, completedAt: 20 }
     })
     expect(isToolExecutionResult(result)).toBe(true)
+  })
+
+  it('records bounded typed image output without folding it into model text', () => {
+    const media = normalizeToolResultMedia([
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        name: ' viewport.png ',
+        description: ' Current page ',
+        source: { type: 'data_url', dataUrl: 'data:image/png;base64,AAAA' }
+      }
+    ])
+    const result = toolExecutionSucceeded({
+      title: 'Observe browser',
+      modelContent: 'Captured the current viewport.',
+      media
+    })
+
+    expect(result.media).toEqual([
+      {
+        type: 'image',
+        mimeType: 'image/png',
+        name: 'viewport.png',
+        description: 'Current page',
+        source: { type: 'data_url', dataUrl: 'data:image/png;base64,AAAA' }
+      }
+    ])
+    expect(result.modelContent).not.toContain('base64')
+    expect(isToolExecutionResult(result)).toBe(true)
+  })
+
+  it('rejects malformed or unsupported tool media before persistence', () => {
+    expect(() =>
+      normalizeToolResultMedia([
+        {
+          type: 'image',
+          mimeType: 'image/png',
+          source: { type: 'data_url', dataUrl: 'data:image/png;base64,not-base64' }
+        }
+      ])
+    ).toThrow('base64')
+    expect(() =>
+      normalizeToolResultMedia([
+        {
+          type: 'image',
+          mimeType: 'image/svg+xml' as 'image/png',
+          source: { type: 'file', path: 'C:\\screens\\page.svg' }
+        }
+      ])
+    ).toThrow('Unsupported tool result image type')
   })
 
   it('normalizes legacy-shaped failures into stable machine errors', () => {

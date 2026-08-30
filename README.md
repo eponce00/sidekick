@@ -24,14 +24,14 @@
   <a href="https://github.com/eponce00/sidekick/actions/workflows/ci.yml">
     <img src="https://github.com/eponce00/sidekick/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" />
   </a>
-  <img src="https://img.shields.io/badge/source-v0.5.1-35d0ba" alt="Source version 0.5.1" />
+  <img src="https://img.shields.io/badge/source-v0.6.0-35d0ba" alt="Source version 0.6.0" />
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple" alt="macOS Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11" alt="Windows x64" />
   <img src="https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=111827" alt="Linux x64" />
 </p>
 
 <p align="center">
-  <img src="./docs/assets/screenshots/conversation.jpg" width="1200" alt="SideKick conversation with project navigation, visible agent work, and task panel" />
+  <img src="./docs/assets/screenshots/conversation.png" width="1200" alt="SideKick conversation with interleaved agent work, file changes, and project files" />
 </p>
 
 > [!IMPORTANT]
@@ -92,6 +92,14 @@ receives each request, which tools are available, and how much autonomy the agen
   </tr>
 </table>
 
+## A browser the agent can actually use
+
+SideKick includes an isolated Chromium workspace for visual feedback. Vision-capable agents can
+open local or remote pages, inspect accessible structure, click, type, scroll, resize the viewport,
+capture screenshots, and verify the result. The docked Browser panel shows the live page, a visible
+cursor, and concise activity while the ordinary conversation keeps text, thinking, and tools in
+their real execution order.
+
 ## One workspace, multiple agents
 
 Group chats are built for work that crosses project boundaries without collapsing those boundaries.
@@ -100,7 +108,7 @@ conversation, and SideKick History. The shared channel stays readable while the 
 show what each participant is doing.
 
 <p align="center">
-  <img src="./docs/assets/screenshots/group-agents.jpg" width="1200" alt="SideKick group chat coordinating two project-bound agents" />
+  <img src="./docs/assets/screenshots/group-agents.png" width="1200" alt="SideKick group chat coordinating two project-bound agents" />
 </p>
 
 ## Local models and cloud models, together
@@ -110,7 +118,7 @@ connections of the same kind, discover their model inventories, choose which mod
 and optionally select a separate utility model for lightweight background work.
 
 <p align="center">
-  <img src="./docs/assets/screenshots/providers.jpg" width="1200" alt="SideKick provider settings with Ollama and OpenRouter connections" />
+  <img src="./docs/assets/screenshots/providers.png" width="1200" alt="SideKick full-window provider settings with Ollama and OpenRouter connections" />
 </p>
 
 | Provider      | Transport                 | Credentials | Models                            |
@@ -147,11 +155,11 @@ Commands and other privileged actions run with the logged-in user's operating-sy
 SideKick is not an OS sandbox. Choose the autonomy level that matches the workspace and model you
 trust:
 
-| Mode                 | Behavior                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------- |
-| **Always ask**       | Every command, mutation, and MCP operation requires approval.                                         |
-| **Agent decides**    | Routine project-local work can proceed; risky operations pause for approval. This is the default.     |
-| **Bypass approvals** | Operations run without prompts while retaining their original safety classification in the audit log. |
+| Mode                            | Behavior                                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Full access**                 | In-scope work runs without approval prompts. This is the default. Safety classifications remain audited. |
+| **Ask for sensitive actions**   | Safe inspection and ordinary project work run automatically; destructive or external actions ask first.  |
+| **Ask for every write/command** | Every host-classified sensitive operation requires approval.                                             |
 
 Read the full [permission policy](./docs/user-guide/PERMISSIONS.md),
 [prompt and context boundary](./docs/architecture/PROMPT_AND_CONTEXT.md), and
@@ -217,7 +225,7 @@ flowchart LR
   Main --> Runtime["Canonical agent runtime"]
   Runtime --> Providers["Local and hosted model providers"]
   Runtime --> Workspace["Workspace tools, commands, and verification"]
-  Runtime --> Web["Search, page retrieval, and artifacts"]
+  Runtime --> Web["Search, native browser, and artifacts"]
   Runtime --> MCP["User-configured MCP servers"]
   Main --> Data["Local SQLite, settings, and private History"]
 ```

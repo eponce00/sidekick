@@ -11,19 +11,15 @@ export function capabilitiesFromTools(tools: readonly AgentToolDefinition[]): Pr
     availableToolNames,
     artifacts: names.has('create_artifact'),
     todoList: names.has('manage_todo_list'),
-    commands: names.has('execute_command'),
+    commands: names.has('shell'),
     backgroundCommands: hasAny('list_background_tasks', 'cancel_background_task'),
     subagents: names.has('spawn_subagent'),
     skills: names.has('use_skill'),
     webSearch: names.has('web_search'),
     webFetch: names.has('web_fetch'),
     imageSearch: names.has('web_image_search'),
-    workspace: hasAny(
-      'list_workspace_files',
-      'read_workspace_file',
-      'search_workspace_files',
-      ...WORKSPACE_MUTATION_TOOL_NAMES
-    ),
+    browser: availableToolNames.some((name) => name.startsWith('browser_')),
+    workspace: hasAny('read', ...WORKSPACE_MUTATION_TOOL_NAMES),
     mcp: availableToolNames.some((name) => name.startsWith('mcp__'))
   }
 }

@@ -2,46 +2,23 @@ import { describe, expect, it } from 'vitest'
 import { normalizeAgentToolParameters, workspaceToolDefinitions } from './agentToolDefinitions'
 
 describe('workspace tool definitions', () => {
-  it.each([
-    [
-      'apply-patch',
-      ['list_workspace_files', 'read_workspace_file', 'search_workspace_files', 'apply_patch']
-    ],
-    [
-      'claude-edit',
-      [
-        'list_workspace_files',
-        'read_workspace_file',
-        'search_workspace_files',
-        'Edit',
-        'Write',
-        'delete_file'
-      ]
-    ],
-    [
-      'search-replace',
-      [
-        'list_workspace_files',
-        'read_workspace_file',
-        'search_workspace_files',
-        'search_replace',
-        'write',
-        'delete_file'
-      ]
-    ],
-    [
-      'structured-edit',
-      [
-        'list_workspace_files',
-        'read_workspace_file',
-        'search_workspace_files',
-        'edit',
-        'write',
-        'delete_file'
-      ]
-    ]
-  ] as const)('exposes only the %s editing dialect', (dialect, names) => {
-    expect(workspaceToolDefinitions(dialect).map(({ function: tool }) => tool.name)).toEqual(names)
+  it.each(['apply-patch', 'claude-edit', 'search-replace', 'structured-edit'] as const)(
+    'exposes one canonical contract regardless of legacy %s metadata',
+    (dialect) => {
+      expect(workspaceToolDefinitions(dialect).map(({ function: tool }) => tool.name)).toEqual([
+        'read',
+        'apply_patch'
+      ])
+    }
+  )
+
+  it('requires project-relative paths for the canonical read contract', () => {
+    const read = workspaceToolDefinitions('apply-patch').find(
+      ({ function: tool }) => tool.name === 'read'
+    )
+    expect(read?.function.parameters.required).toEqual(['path'])
+    expect(read?.function.parameters.properties).toHaveProperty('start_line')
+    expect(read?.function.parameters.properties).toHaveProperty('cursor')
   })
 
   it('normalizes MCP references into a portable recursive schema', () => {

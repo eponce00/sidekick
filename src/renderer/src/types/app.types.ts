@@ -16,6 +16,7 @@ export interface Conversation {
   created_at: number
   updated_at: number
   project_id: string | null
+  is_pinned?: number
   title_source?: import('../../../shared/conversationTitles').ConversationTitleSource
   title_version?: number
   sidebar_order: number
@@ -23,4 +24,6 @@ export interface Conversation {
   home_workspace_root: string | null
   home_project_name: string | null
   unread_completion_at?: number | null
+  forked_from_conversation_id?: string | null
+  forked_from_message_id?: string | null
 }

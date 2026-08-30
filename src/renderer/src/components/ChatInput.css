@@ -1,0 +1,137 @@
+.composer-add-menu-container {
+  /* Let the sheet anchor to the full composer instead of the small + button. */
+  position: static;
+}
+
+.composer-context-attachment {
+  min-width: 0;
+  max-width: 240px;
+  height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 6px 0 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  background: var(--surface-3);
+}
+
+.composer-context-attachment > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.composer-context-attachment > span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 560;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-context-attachment > button {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer-context-attachment > button:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.features-menu.features-menu-organized {
+  right: -1px;
+  bottom: calc(100% + 10px);
+  left: -1px;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  max-height: min(440px, calc(100vh - 104px));
+  box-sizing: border-box;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 6px;
+  transform-origin: bottom center;
+}
+
+.features-menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.features-menu-section + .features-menu-section {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.features-menu-section-label {
+  padding: 3px 7px 4px;
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.features-menu-organized .features-menu-item,
+.features-menu-organized .features-menu-status {
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+}
+
+.features-menu-organized .features-menu-item-icon {
+  width: 20px;
+  height: 20px;
+  flex-basis: 20px;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.features-menu-organized .features-menu-item-label {
+  line-height: 1.2;
+}
+
+.features-menu-organized .features-menu-item-check {
+  flex: 0 0 auto;
+}
+
+.features-menu-status {
+  width: 100%;
+  display: flex;
+  box-sizing: border-box;
+  color: var(--text-secondary);
+  border-radius: 7px;
+  background: transparent;
+  cursor: help;
+}
+
+.features-menu-status.is-error {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
+}
+
+.features-menu-status.is-error .features-menu-item-icon {
+  color: var(--color-error);
+}
+
+@media (max-height: 700px) {
+  .features-menu.features-menu-organized {
+    max-height: calc(100vh - 88px);
+  }
+}

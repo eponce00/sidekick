@@ -117,85 +117,9 @@ export function normalizeAgentToolParameters(
   } as AgentToolDefinition['function']['parameters']
 }
 
-const accessLevel: AgentToolParameterProperty = {
-  type: 'string',
-  enum: ['auto', 'confirm'],
-  description:
-    'Use auto for routine, reversible project edits. Use confirm for sensitive, surprising, destructive, or broad changes.'
-}
-
 const filePath: AgentToolParameterProperty = {
   type: 'string',
   description: 'Path relative to the project root.'
-}
-
-function exactEditDefinition(name: 'Edit' | 'search_replace' | 'edit'): AgentToolDefinition {
-  return {
-    type: 'function',
-    function: {
-      name,
-      description:
-        'Replace exact text in a project file. Read the relevant file first. You must explicitly set replace_all: false for one unique match or replace_all: true only when every match should change. If a false edit reports multiple matches, retry once with more surrounding context or set replace_all to true. To create or intentionally replace a complete file, use the write tool.',
-      parameters: {
-        type: 'object',
-        required: ['file_path', 'old_string', 'new_string', 'replace_all', 'accessLevel'],
-        properties: {
-          file_path: filePath,
-          old_string: {
-            type: 'string',
-            description:
-              'Exact current file text to replace. An empty string is allowed only when creating a missing or empty file.'
-          },
-          new_string: {
-            type: 'string',
-            description: 'Replacement text; must differ from old_string.'
-          },
-          replace_all: {
-            type: 'boolean',
-            description:
-              'Required replacement intent. Set false when old_string identifies one unique location. Set true only when every exact occurrence should be replaced.'
-          },
-          accessLevel
-        }
-      }
-    }
-  }
-}
-
-function writeDefinition(name: 'Write' | 'write'): AgentToolDefinition {
-  return {
-    type: 'function',
-    function: {
-      name,
-      description:
-        'Create a new project file or intentionally replace an existing file with complete content. Read an existing file first; SideKick binds the write to that run-scoped read receipt and rejects stale or missing receipts. Identical content is rejected as a no-op. Use the edit tool for localized changes.',
-      parameters: {
-        type: 'object',
-        required: ['file_path', 'content', 'accessLevel'],
-        properties: {
-          file_path: filePath,
-          content: { type: 'string', description: 'Complete desired file content.' },
-          accessLevel
-        }
-      }
-    }
-  }
-}
-
-function deleteDefinition(): AgentToolDefinition {
-  return {
-    type: 'function',
-    function: {
-      name: 'delete_file',
-      description:
-        'Delete a project file only when its intended final state is absent. Read it first; SideKick rejects stale or missing run-scoped read receipts. Never delete a file merely to work around a failed edit or before recreating the same path.',
-      parameters: {
-        type: 'object',
-        required: ['file_path', 'accessLevel'],
-        properties: { file_path: filePath, accessLevel }
-      }
-    }
-  }
 }
 
 function applyPatchDefinition(): AgentToolDefinition {
@@ -221,10 +145,9 @@ Format:
 Update hunks are context-based, not line-number based. Read every existing target first; SideKick rejects stale or missing run-scoped read receipts. Every hunk line must begin with a space, +, or -. Add-file content lines must begin with +. Paths must be project-relative. Use *** Move to: new/path immediately after an Update File header to rename while editing.`,
       parameters: {
         type: 'object',
-        required: ['patch', 'accessLevel'],
+        required: ['patch'],
         properties: {
-          patch: { type: 'string', description: 'Complete canonical patch text.' },
-          accessLevel
+          patch: { type: 'string', description: 'Complete canonical patch text.' }
         }
       }
     }
@@ -232,86 +155,48 @@ Update hunks are context-based, not line-number based. Read every existing targe
 }
 
 export function editingToolDefinitions(dialect: EditingDialect): AgentToolDefinition[] {
-  if (dialect === 'apply-patch') return [applyPatchDefinition()]
-  if (dialect === 'claude-edit')
-    return [exactEditDefinition('Edit'), writeDefinition('Write'), deleteDefinition()]
-  if (dialect === 'search-replace') {
-    return [exactEditDefinition('search_replace'), writeDefinition('write'), deleteDefinition()]
-  }
-  return [exactEditDefinition('edit'), writeDefinition('write'), deleteDefinition()]
+  // ToolRuntimeV2 intentionally exposes one editing contract to every provider.
+  // Keep the argument while callers migrate away from provider-specific dialect selection.
+  void dialect
+  return [applyPatchDefinition()]
 }
 
-/** File browsing definitions shared by normal chats and collaborative project agents. */
+/** Canonical bounded project reader used by every provider and run surface. */
 export function workspaceReadToolDefinitions(): AgentToolDefinition[] {
   return [
     {
       type: 'function',
       function: {
-        name: 'list_workspace_files',
+        name: 'read',
         description:
-          'List project files and directories using project-relative paths. Directories end with /. Use glob and sub_path to narrow large trees.',
+          'Read a project-relative UTF-8 file or list a directory. File output is line-numbered and bounded; continue with start_line. Directory output is bounded; continue with cursor. Absolute paths and paths outside the project are rejected.',
         parameters: {
           type: 'object',
+          required: ['path'],
           properties: {
-            sub_path: { type: 'string', description: 'Optional project-relative directory.' },
-            glob: { type: 'string', description: 'Optional glob such as **/*.tsx.' }
-          }
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'read_workspace_file',
-        description:
-          'Read a UTF-8 project file. Lines are numbered for reference; the number prefix is not part of the file. Use start_line and end_line for focused reads.',
-        parameters: {
-          type: 'object',
-          required: ['file_path'],
-          properties: {
-            file_path: filePath,
+            path: filePath,
             start_line: {
               type: 'number',
               minimum: 1,
-              description: 'Optional 1-based inclusive start line.'
+              description: 'For files, optional 1-based inclusive start line.'
             },
             end_line: {
               type: 'number',
               minimum: 1,
-              description: 'Optional 1-based inclusive end line.'
-            }
-          }
-        }
-      }
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'search_workspace_files',
-        description:
-          'Search project files with a regular expression and return matching lines with bounded context.',
-        parameters: {
-          type: 'object',
-          required: ['regex'],
-          properties: {
-            regex: {
-              type: 'string',
-              minLength: 1,
-              maxLength: 10_000,
-              description: 'JavaScript-compatible regular expression.'
+              description: 'For files, optional 1-based inclusive end line.'
             },
-            path: {
-              type: 'string',
-              description:
-                'Optional project-relative file or directory. A file path searches only that file.'
-            },
-            file_pattern: { type: 'string', description: 'Optional glob filter.' },
-            context_lines: {
+            cursor: {
               type: 'number',
               minimum: 0,
-              maximum: 5,
-              description: 'Context lines around each match, maximum 5.'
-            }
+              description: 'For directories, zero-based continuation cursor.'
+            },
+            max_entries: {
+              type: 'number',
+              minimum: 1,
+              maximum: 1000,
+              description: 'For directories, maximum returned entries.'
+            },
+            glob: { type: 'string', description: 'Optional directory glob such as **/*.tsx.' }
           }
         }
       }

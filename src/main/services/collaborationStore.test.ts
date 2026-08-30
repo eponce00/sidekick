@@ -185,8 +185,8 @@ describe('CollaborationStore', () => {
     })
     const titled = store.listGroups()[0].agentSessions
     expect(titled.map(({ title }) => title)).toEqual([
-      'Build a polished Cuba population dashboard with',
-      'Build a polished Cuba population dashboard with'
+      'Build a polished Cuba population dashboard',
+      'Build a polished Cuba population dashboard'
     ])
 
     store.updateAgentSession(titled[0].id, 'Population dashboard frontend')

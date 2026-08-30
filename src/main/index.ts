@@ -1,7 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
-import { registerArtifactScheme, installArtifactProtocol } from './bootstrap/artifactProtocol'
+import {
+  configureBrowserArtifactRoot,
+  registerArtifactScheme,
+  installArtifactProtocol
+} from './bootstrap/artifactProtocol'
 import { openApplicationDatabase } from './bootstrap/database'
 import { createMainWindow } from './bootstrap/mainWindow'
 import { initializeWorkspaceState } from './bootstrap/workspace'
@@ -12,7 +16,11 @@ import { shutdownCollaboration } from './ipc/collaboration'
 import { shutdownAgentRuntime } from './ipc/agentRuns'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import { startWorkspaceWatcher } from './ipc/workspace'
-import { configureCheckpointStorageRoot } from './services/checkpoints'
+import {
+  configureCheckpointStorageRoot,
+  recoverInterruptedCheckpointCaptures
+} from './services/checkpoints'
+import { CheckpointTitleStore } from './services/checkpointTitleStore'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
 import type { AppCommand } from '../shared/appCommands'
@@ -63,6 +71,7 @@ if (is.dev || e2eUserDataPath) {
 registerArtifactScheme()
 
 async function bootstrapApplication(): Promise<void> {
+  configureBrowserArtifactRoot(join(app.getPath('userData'), 'browser-artifacts'))
   await installArtifactProtocol()
 
   // Development runs use Electron.app, whose bundle icon is Electron's atom. Override the Dock
@@ -73,6 +82,28 @@ async function bootstrapApplication(): Promise<void> {
   appState.store = new Store()
   appState.db = openApplicationDatabase(join(app.getPath('userData'), 'conversations.db'))
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
+  const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
+  if (recoveredCaptures.length) {
+    const titles = new CheckpointTitleStore(appState.db)
+    const linkMessage = appState.db.prepare(
+      `UPDATE messages SET checkpoint_hash = ?, checkpoint_workspace_root = ?
+       WHERE id = ? AND conversation_id = ?`
+    )
+    for (const recovered of recoveredCaptures) {
+      titles.recordCreated(
+        recovered.workspaceRoot,
+        recovered.checkpoint.hash,
+        'Interrupted agent changes'
+      )
+      linkMessage.run(
+        recovered.checkpoint.hash,
+        recovered.workspaceRoot,
+        recovered.agentMessageId,
+        recovered.conversationId
+      )
+    }
+    console.log(`[History] Recovered ${recoveredCaptures.length} interrupted file change set(s)`)
+  }
   const workspacePath = await initializeWorkspaceState()
 
   electronApp.setAppUserModelId(PRODUCT_IDENTITY.appId)

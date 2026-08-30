@@ -2,7 +2,11 @@ import type { ProviderKind } from '../../../shared/providerRegistry'
 import type { ModelProvider } from '../../../shared/models'
 import type { LLMToolCall } from '../types/llm.types'
 import { completeUtilityText, createUtilityModelConfig } from '../services/providers'
-import { createFallbackConversationTitle } from '../../../shared/conversationTitles'
+import {
+  createFallbackConversationTitle,
+  isUsableGeneratedConversationTitle,
+  stripConversationTitleMetaPreamble
+} from '../../../shared/conversationTitles'
 export { createFallbackConversationTitle } from '../../../shared/conversationTitles'
 export {
   estimateConversationTokens,
@@ -28,25 +32,42 @@ export function isPlaceholderConversationTitle(title: string | null | undefined)
   return !title?.trim() || /^new conversation$/i.test(title.trim())
 }
 
+export function getQueuedMessageIdForEmptySubmit(
+  isLoading: boolean,
+  hasComposerContent: boolean,
+  queuedMessages: readonly { id: string }[]
+): string | null {
+  if (!isLoading || hasComposerContent) return null
+  return queuedMessages[0]?.id ?? null
+}
+
 export function normalizeGeneratedConversationTitle(value: unknown): string | null {
   if (typeof value !== 'string') return null
-  const withoutThinking = value.replace(/<think>[\s\S]*?<\/think>/gi, ' ').trim()
-  const firstMeaningfulLine = withoutThinking
+  const withoutThinking = value
+    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/<think>[\s\S]*$/gi, ' ')
+    .replace(/<\/?think>/gi, ' ')
+    .trim()
+  const meaningfulLines = withoutThinking
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find(Boolean)
-  if (!firstMeaningfulLine) return null
+    .filter(Boolean)
 
-  const normalized = firstMeaningfulLine
-    .replace(/^#{1,6}\s*/, '')
-    .replace(/^(?:title|t[ií]tulo)\s*:\s*/i, '')
-    .replace(/[.!?;:]+$/g, '')
-    .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (!normalized) return null
+  for (const line of meaningfulLines) {
+    const normalized = stripConversationTitleMetaPreamble(
+      line
+        .replace(/^#{1,6}\s*/, '')
+        .replace(/^(?:title|t[ií]tulo)\s*:\s*/i, '')
+        .replace(/[.!?;:]+$/g, '')
+        .replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+    const concise = normalized.split(' ').slice(0, 6).join(' ').slice(0, 72).trim()
+    if (isUsableGeneratedConversationTitle(concise)) return concise
+  }
 
-  return normalized.split(' ').slice(0, 8).join(' ').slice(0, 72).trim() || null
+  return null
 }
 
 /**
@@ -75,7 +96,8 @@ export async function generateConversationTitle(
     if (!titleResult.ok) {
       throw new Error(titleResult.error?.message || 'Title request failed')
     }
-    rawTitle = titleResult.text || titleResult.message?.thinking
+    // Reasoning often narrates "the user wants me to..." and is never a title.
+    rawTitle = titleResult.text
   } catch (error) {
     console.warn('[Title] Failed to auto-generate title:', error)
   }

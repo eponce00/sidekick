@@ -6,14 +6,15 @@ interaction. User-initiated destructive UI actions use an exact main-process bro
 
 ## Modes
 
-| Mode          | Requested `auto`                  | Requested `confirm`               |
-| ------------- | --------------------------------- | --------------------------------- |
-| Always ask    | Durable user approval interaction | Durable user approval interaction |
-| Agent decides | Automatic                         | Durable user approval interaction |
-| Bypass        | Automatic                         | Automatic                         |
+| Mode                           | Requested `auto`                  | Requested `confirm`               |
+| ------------------------------ | --------------------------------- | --------------------------------- |
+| Full access                    | Automatic                         | Automatic                         |
+| Ask only for sensitive actions | Automatic                         | Durable user approval interaction |
+| Ask for every write or command | Durable user approval interaction | Durable user approval interaction |
 
-Agent decides is the default. Bypass removes prompts but does not erase the agent's
-original safety classification: audit records retain both requested and effective access.
+Full access is the default. It removes approval prompts for in-scope work but does not erase the
+host's original safety classification: audit records retain both requested and effective access.
+The stricter modes are available per conversation from the composer and in Settings.
 
 ## Operation matrix
 

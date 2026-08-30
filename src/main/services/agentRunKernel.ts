@@ -2,6 +2,8 @@ import { randomUUID } from 'crypto'
 import {
   getAgentToolDefinitions,
   getAgentToolEntry,
+  presentAgentToolCall,
+  presentAgentToolResult,
   type AgentToolCatalogOptions
 } from '../../shared/agentToolCatalog'
 import {
@@ -30,6 +32,7 @@ import {
   type PermissionMode,
   type RequestedAccess
 } from '../../shared/permissions'
+import { commandCanRunWithoutApproval } from './commandPermissionClassifier'
 import { streamProviderChat } from '../providers/providerRuntime'
 import { previewToolCallArguments } from '../providers/toolCallPreview'
 import { AgentRunStore } from './agentRunStore'
@@ -41,7 +44,6 @@ import {
   type AgentToolExecutor
 } from './agentToolRegistry'
 import { AgentToolRecoveryController } from './agentToolRecoveryController'
-import { isWorkspaceMutationTool, type EditingDialect } from '../../shared/workspaceMutations'
 import type { VerificationTerminalDecision } from '../../shared/verification'
 import type { AgentPlanReview, AgentPlanStage } from '../../shared/agentPlans'
 import type { AgentPlanTerminalDecision } from './agentPlanService'
@@ -54,9 +56,11 @@ export interface AgentKernelModelTurn {
   toolCalls: ProviderToolCall[]
   usage: {
     promptTokens: number
+    cachedPromptTokens?: number
     completionTokens: number
     doneReason: string
     tokensPerSecond?: number
+    timeToFirstTokenMs?: number
   }
   generationId?: string
 }
@@ -124,12 +128,6 @@ export interface StartAgentKernelRunInput extends StartAgentRunInput {
   permissionMode: PermissionMode
   toolRouter: AgentKernelToolRouter
   contextManager?: AgentKernelContextManager
-  editingRecovery?: {
-    currentDialect: () => EditingDialect
-    recover: (
-      signal: AbortSignal
-    ) => Promise<{ switched: boolean; from: EditingDialect; to?: EditingDialect; reason?: string }>
-  }
   /** Injects newly arrived external events at safe provider boundaries. */
   beforeModelStep?: (
     messages: ProviderChatMessage[],
@@ -206,14 +204,6 @@ const TOOL_PREVIEW_FIELDS = new Set([
   'background'
 ])
 
-function workspaceMutationFailureCode(result: ToolExecutionResult): string | undefined {
-  if (!result.data || typeof result.data !== 'object') return undefined
-  const failure = (result.data as Record<string, unknown>).failure
-  if (!failure || typeof failure !== 'object') return undefined
-  const code = (failure as Record<string, unknown>).code
-  return typeof code === 'string' ? code : undefined
-}
-
 function parsedToolArguments(call: ProviderToolCall): {
   arguments: Record<string, unknown>
 } {
@@ -266,6 +256,22 @@ function safePreview(call: ProviderToolCall): Record<string, unknown> {
   return preview
 }
 
+/**
+ * Providers use several spellings for an output-token stop. Tool arguments from
+ * such a turn are unsafe even when their JSON happens to parse: the model may
+ * have stopped at a syntactically valid but semantically incomplete boundary.
+ */
+function toolBatchMayBeTruncated(doneReason: string): boolean {
+  const normalized = doneReason.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
+  return (
+    normalized === 'length' ||
+    normalized === 'max_tokens' ||
+    normalized === 'max_output_tokens' ||
+    normalized === 'token_limit' ||
+    normalized === 'model_length'
+  )
+}
+
 function uniqueToolCallIds(calls: readonly ProviderToolCall[]): ProviderToolCall[] {
   const seen = new Set<string>()
   return calls.map((call, index) => {
@@ -291,7 +297,7 @@ function mergeToolCalls(existing: ProviderToolCall[], incoming: ProviderToolCall
 }
 
 function defaultToolTitle(name: string, args: Record<string, unknown>): string {
-  if (name === 'execute_command') return String(args.title || 'Run command')
+  if (name === 'shell') return String(args.title || 'Run command')
   if (name === 'wait') return `Wait ${String(args.seconds || '')}s`
   if (name === 'web_search') return `Search: ${String(args.query || '')}`
   if (name === 'web_image_search') return `Image search: ${String(args.query || '')}`
@@ -320,22 +326,17 @@ function toolRequestedAccess(
   name: string,
   args: Record<string, unknown>
 ): RequestedAccess {
-  if (args.accessLevel === 'confirm') return 'confirm'
-  if (name.startsWith('mcp__')) {
-    return getAgentToolEntry(catalog, name)?.risk === 'read' ? 'auto' : 'confirm'
-  }
-  return 'auto'
+  const entry = getAgentToolEntry(catalog, name)
+  if (!entry || entry.risk === 'read') return 'auto'
+  if (name === 'apply_patch') return 'auto'
+  if (name === 'shell' && commandCanRunWithoutApproval(String(args.command || ''))) return 'auto'
+  return 'confirm'
 }
 
-function toolNeedsPolicyDecision(
-  catalog: AgentToolCatalogOptions,
-  name: string,
-  args: Record<string, unknown>
-): boolean {
+function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string): boolean {
   const entry = getAgentToolEntry(catalog, name)
   if (!entry) return false
   if (name.startsWith('mcp__')) return entry.risk !== 'read'
-  if (args.accessLevel === 'confirm') return true
   if (entry.risk !== 'write' && entry.risk !== 'execute') return false
   return ![
     'manage_todo_list',
@@ -357,12 +358,14 @@ export async function sampleProviderTurn(
   const thinkingBlocks: ProviderThinkingBlock[] = []
   const toolCalls: ProviderToolCall[] = []
   let promptTokens = 0
+  let cachedPromptTokens: number | undefined
   let completionTokens = 0
   let doneReason = 'stop'
   let firstGeneratedAt: number | undefined
   let streamEndedAt: number | undefined
   let evalDurationNs: number | undefined
   let reportedTokensPerSecond: number | undefined
+  const requestStartedAt = Date.now()
   const result = await streamProviderChat(
     request,
     (chunk) => {
@@ -379,6 +382,9 @@ export async function sampleProviderTurn(
       if (chunk.message?.thinking_blocks) thinkingBlocks.push(...chunk.message.thinking_blocks)
       if (chunk.message?.tool_calls) mergeToolCalls(toolCalls, chunk.message.tool_calls)
       if (chunk.prompt_eval_count !== undefined) promptTokens = chunk.prompt_eval_count
+      if (chunk.cached_prompt_tokens !== undefined) {
+        cachedPromptTokens = chunk.cached_prompt_tokens
+      }
       if (chunk.eval_count !== undefined) completionTokens = chunk.eval_count
       if (chunk.eval_duration !== undefined) evalDurationNs = chunk.eval_duration
       if (chunk.predicted_per_second !== undefined) {
@@ -407,7 +413,16 @@ export async function sampleProviderTurn(
       thinking,
       thinkingBlocks,
       toolCalls: toolCalls.map((call) => ({ ...call, id: call.id || randomUUID() })),
-      usage: { promptTokens, completionTokens, doneReason, tokensPerSecond },
+      usage: {
+        promptTokens,
+        ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
+        completionTokens,
+        doneReason,
+        tokensPerSecond,
+        ...(firstGeneratedAt === undefined
+          ? {}
+          : { timeToFirstTokenMs: firstGeneratedAt - requestStartedAt })
+      },
       ...(result.generationId ? { generationId: result.generationId } : {})
     }
   }
@@ -738,6 +753,16 @@ The user approved this exact plan revision. Act capabilities are now available a
     })
     const event = this.store.listEvents(input.id, before, 1)[0]
     if (event) this.publish(event)
+    this.append(input.id, 'context.changed', {
+      version: 1,
+      from,
+      to: transition.profile.executionMode,
+      provider: transition.provider,
+      model: transition.model,
+      revision: transition.revision ?? null,
+      systemPrompt: transition.systemPrompt ?? null,
+      tools: getAgentToolDefinitions(currentCatalog(input))
+    })
   }
 
   private async authorizeTool(
@@ -747,7 +772,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     signal: AbortSignal
   ): Promise<boolean> {
     const catalog = currentCatalog(input)
-    if (!toolNeedsPolicyDecision(catalog, call.name, call.arguments)) return true
+    if (!toolNeedsPolicyDecision(catalog, call.name)) return true
     const requestedAccess = toolRequestedAccess(catalog, call.name, call.arguments)
     const decision = resolvePermissionPolicy(input.permissionMode, requestedAccess)
     if (decision.effectiveAccess === 'auto') {
@@ -815,6 +840,14 @@ The user approved this exact plan revision. Act capabilities are now available a
     const startedEvent = this.store.listEvents(input.id, 0, 1)[0]
     if (startedEvent) this.publish(startedEvent)
     let messages = validateProviderTranscript(input.messages).messages
+    this.append(input.id, 'context.snapshot', {
+      version: 1,
+      messages,
+      tools: getAgentToolDefinitions(currentCatalog(input)),
+      promptContext: input.promptContext ?? {},
+      provider: input.provider,
+      model: input.model
+    })
     let finalContent = ''
     let finalThinking = ''
     let toolRounds = 0
@@ -825,9 +858,6 @@ The user approved this exact plan revision. Act capabilities are now available a
     let contextOverflowRetryAttempted = false
     let activeRequest = input.request
     let activeContextManager = input.contextManager
-    let consecutiveMutationSchemaFailures = 0
-    let pendingEditingRecoveryReason: 'invalid_arguments' | 'repeated_ambiguity' | undefined
-    const attemptedEditingRecoveries = new Set<EditingDialect>()
 
     try {
       this.transition(started.id, 'streaming')
@@ -905,7 +935,12 @@ The user approved this exact plan revision. Act capabilities are now available a
                   this.append(input.id, 'tool.pending', {
                     toolCallId: id,
                     name: call.function.name,
-                    arguments: preview
+                    arguments: preview,
+                    presentation: presentAgentToolCall(
+                      currentCatalog(input),
+                      call.function.name,
+                      preview
+                    )
                   })
                 }
               }
@@ -946,6 +981,8 @@ The user approved this exact plan revision. Act capabilities are now available a
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
         }
+        const truncatedToolBatch =
+          turn.toolCalls.length > 0 && toolBatchMayBeTruncated(turn.usage.doneReason)
         activeContextManager?.observeUsage?.(
           requestMessages,
           toolDefinitions,
@@ -999,7 +1036,9 @@ The user approved this exact plan revision. Act capabilities are now available a
             index: call.index,
             name: call.function.name,
             arguments:
-              input.toolRouter.safeArguments?.(call.function.name, objectArguments(call)) ??
+              (truncatedToolBatch
+                ? undefined
+                : input.toolRouter.safeArguments?.(call.function.name, objectArguments(call))) ??
               safePreview(call)
           })),
           usage: turn.usage,
@@ -1135,31 +1174,128 @@ The user approved this exact plan revision. Act capabilities are now available a
         let lastToolMessage: ProviderChatMessage | undefined
         let callStopReason: string | undefined
         let planKeepRequested = false
-        for (const providerCall of turn.toolCalls) {
-          if (signal.aborted) break
-          const parsed = parsedToolArguments(providerCall)
+        const preparedBatch = turn.toolCalls.map((providerCall) => {
+          const parsed = truncatedToolBatch
+            ? { arguments: safePreview(providerCall) }
+            : parsedToolArguments(providerCall)
           const prepared = prepareAgentToolCall(currentCatalog(input), {
             id: providerCall.id || randomUUID(),
             name: providerCall.function.name,
             arguments: parsed.arguments
           })
           const call = prepared.call
-          if (RESEARCH_SOURCE_TOOLS.has(call.name)) researchSourceAttempted = true
           const title =
             input.toolRouter.title?.(call.name, call.arguments) ??
             defaultToolTitle(call.name, call.arguments)
-          if (!previewSignatures.has(call.id)) {
+          const safeArguments =
+            input.toolRouter.safeArguments?.(call.name, call.arguments) ?? safePreview(providerCall)
+          const presentation = presentAgentToolCall(currentCatalog(input), call.name, safeArguments)
+          return { providerCall, prepared, call, title, safeArguments, presentation }
+        })
+        for (const item of preparedBatch) {
+          if (RESEARCH_SOURCE_TOOLS.has(item.call.name)) researchSourceAttempted = true
+          if (!previewSignatures.has(item.call.id)) {
             this.append(input.id, 'tool.pending', {
-              toolCallId: call.id,
-              name: call.name,
-              arguments:
-                input.toolRouter.safeArguments?.(call.name, call.arguments) ??
-                safePreview(providerCall)
+              toolCallId: item.call.id,
+              name: item.call.name,
+              arguments: item.safeArguments,
+              presentation: item.presentation
             })
+          }
+        }
+        if (truncatedToolBatch) {
+          this.append(input.id, 'run.retrying', {
+            reason: 'truncated_tool_batch',
+            doneReason: turn.usage.doneReason,
+            toolCallCount: turn.toolCalls.length
+          })
+        }
+        const preExecuted = new Map<string, ToolExecutionResult>()
+        for (let callIndex = 0; callIndex < preparedBatch.length; callIndex++) {
+          if (signal.aborted) break
+          const item = preparedBatch[callIndex]
+          const { prepared, call, title, safeArguments, presentation: callPresentation } = item
+          const entry = getAgentToolEntry(currentCatalog(input), call.name)
+          if (
+            !truncatedToolBatch &&
+            entry?.concurrency === 'parallel' &&
+            !preExecuted.has(call.id)
+          ) {
+            const group = [item]
+            while (callIndex + group.length < preparedBatch.length) {
+              const sibling = preparedBatch[callIndex + group.length]
+              const siblingEntry = getAgentToolEntry(currentCatalog(input), sibling.call.name)
+              if (siblingEntry?.concurrency !== 'parallel') break
+              group.push(sibling)
+            }
+            await Promise.all(
+              group.map(async (parallelItem) => {
+                const parallelStartedAt = Date.now()
+                const invalid = validatePreparedAgentToolCall(
+                  currentCatalog(input),
+                  parallelItem.call,
+                  parallelItem.title,
+                  parallelStartedAt,
+                  parallelItem.prepared.repairs
+                )
+                if (invalid) {
+                  preExecuted.set(parallelItem.call.id, invalid)
+                  return
+                }
+                this.transition(input.id, 'executing_tool')
+                this.append(input.id, 'tool.running', {
+                  toolCallId: parallelItem.call.id,
+                  name: parallelItem.call.name,
+                  title: parallelItem.presentation.title || parallelItem.title,
+                  arguments: parallelItem.safeArguments,
+                  presentation: parallelItem.presentation
+                })
+                const result = await this.tools.execute(
+                  {
+                    catalog: currentCatalog(input),
+                    call: parallelItem.call,
+                    title: parallelItem.title,
+                    context: {
+                      runId: input.id,
+                      conversationId: input.threadId,
+                      workspaceRoot: input.workspaceRoot,
+                      signal,
+                      onOutput: ({ chunk, stream }) =>
+                        this.append(input.id, 'tool.output.delta', {
+                          toolCallId: parallelItem.call.id,
+                          stream,
+                          chunk
+                        })
+                    }
+                  },
+                  ((args, context) =>
+                    input.toolRouter.execute(
+                      parallelItem.call.name,
+                      args,
+                      context
+                    )) as AgentToolExecutor
+                )
+                preExecuted.set(parallelItem.call.id, result)
+              })
+            )
           }
           const startedAt = Date.now()
           let result: ToolExecutionResult
-          if (callStopReason) {
+          const parallelResult = preExecuted.get(call.id)
+          if (parallelResult) {
+            result = parallelResult
+          } else if (truncatedToolBatch) {
+            result = toolExecutionFailed({
+              title,
+              code: 'output_truncated',
+              message: `Tool was not executed because the provider stopped this response with ${turn.usage.doneReason} while emitting tool calls. Its arguments may be incomplete.`,
+              retryable: true,
+              recoveryAction: 'change_strategy',
+              recovery:
+                'Re-issue a smaller, focused tool call in a new response. Do not assume any call from this batch ran.',
+              startedAt
+            })
+          } else if (callStopReason) {
             result = toolExecutionFailed({
               title,
               code: 'loop_detected',
@@ -1226,10 +1362,9 @@ The user approved this exact plan revision. Act capabilities are now available a
               this.append(input.id, 'tool.running', {
                 toolCallId: call.id,
                 name: call.name,
-                title,
-                arguments:
-                  input.toolRouter.safeArguments?.(call.name, call.arguments) ??
-                  safePreview(providerCall)
+                title: callPresentation.title || title,
+                arguments: safeArguments,
+                presentation: callPresentation
               })
               result = await this.tools.execute(
                 {
@@ -1240,7 +1375,13 @@ The user approved this exact plan revision. Act capabilities are now available a
                     runId: input.id,
                     conversationId: input.threadId,
                     workspaceRoot: input.workspaceRoot,
-                    signal
+                    signal,
+                    onOutput: ({ chunk, stream }) =>
+                      this.append(input.id, 'tool.output.delta', {
+                        toolCallId: call.id,
+                        stream,
+                        chunk
+                      })
                   }
                 },
                 ((args, context) =>
@@ -1248,7 +1389,6 @@ The user approved this exact plan revision. Act capabilities are now available a
               )
             }
           }
-          const entry = getAgentToolEntry(currentCatalog(input), call.name)
           const guard = callStopReason
             ? {}
             : toolRecovery.observeCall({
@@ -1276,6 +1416,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               recovery:
                 'Stop this repeated approach. Start a materially different task or provide new information before trying again.',
               modelContent: `${result.modelContent}\n<sidekick_tool_guard trust="app-policy" reason="${guard.reason}" count="${guard.count}">\n${guard.stopReason}\n</sidekick_tool_guard>`,
+              media: result.media,
               startedAt
             })
           }
@@ -1289,32 +1430,23 @@ The user approved this exact plan revision. Act capabilities are now available a
           ) {
             planKeepRequested = true
           }
-          if (isWorkspaceMutationTool(call.name)) {
-            if (result.status === 'success') {
-              consecutiveMutationSchemaFailures = 0
-              pendingEditingRecoveryReason = undefined
-            } else if (result.error?.code === 'invalid_arguments') {
-              consecutiveMutationSchemaFailures++
-              if (consecutiveMutationSchemaFailures >= 2) {
-                pendingEditingRecoveryReason = 'invalid_arguments'
-              }
-            } else {
-              consecutiveMutationSchemaFailures = 0
-              if (
-                workspaceMutationFailureCode(result) === 'multiple_matches' &&
-                guard.reason === 'exact_failure' &&
-                (guard.count ?? 0) >= 2
-              ) {
-                pendingEditingRecoveryReason = 'repeated_ambiguity'
-              }
-            }
-          }
           this.append(input.id, 'tool.completed', {
             toolCallId: call.id,
             name: call.name,
-            result
+            result,
+            presentation: presentAgentToolResult(
+              currentCatalog(input),
+              call.name,
+              safeArguments,
+              result
+            )
           })
-          lastToolMessage = { role: 'tool', tool_call_id: call.id, content: result.modelContent }
+          lastToolMessage = {
+            role: 'tool',
+            tool_call_id: call.id,
+            content: result.modelContent,
+            ...(result.media?.length ? { media: result.media } : {})
+          }
           messages.push(lastToolMessage)
         }
         if (callStopReason) throw new AgentToolLoopError(callStopReason)
@@ -1339,45 +1471,6 @@ The user approved this exact plan revision. Act capabilities are now available a
             messages,
             toolRounds
           }
-        }
-        const activeDialect = input.editingRecovery?.currentDialect()
-        if (
-          input.editingRecovery &&
-          activeDialect &&
-          pendingEditingRecoveryReason &&
-          !attemptedEditingRecoveries.has(activeDialect)
-        ) {
-          attemptedEditingRecoveries.add(activeDialect)
-          this.append(input.id, 'run.retrying', {
-            reason: 'editing_contract_calibration_started',
-            dialect: activeDialect,
-            failures: consecutiveMutationSchemaFailures,
-            trigger: pendingEditingRecoveryReason
-          })
-          const recovered = await input.editingRecovery.recover(signal)
-          if (recovered.switched && recovered.to) {
-            consecutiveMutationSchemaFailures = 0
-            const recoveryTrigger = pendingEditingRecoveryReason
-            pendingEditingRecoveryReason = undefined
-            this.append(input.id, 'run.retrying', {
-              reason: 'editing_contract_switched',
-              from: recovered.from,
-              to: recovered.to
-            })
-            messages.push({
-              role: 'user',
-              content: `<sidekick_editing_contract_recovery trust="app-policy" from="${recovered.from}" to="${recovered.to}">
-SideKick verified that the prior file-editing contract could not recover from ${recoveryTrigger === 'repeated_ambiguity' ? 'an ambiguous exact-text replacement' : 'repeated invalid structured arguments'} and switched to the tested ${recovered.to} contract. Use only the currently available workspace mutation tool schema. Re-read the relevant file if needed, then retry the intended edit once with every required argument. Do not repeat the old tool call.
-</sidekick_editing_contract_recovery>`
-            })
-            if (!signal.aborted) this.transition(input.id, 'streaming')
-            continue
-          }
-          this.append(input.id, 'run.retrying', {
-            reason: 'editing_contract_calibration_failed',
-            dialect: activeDialect,
-            detail: recovered.reason || 'No verified fallback was available'
-          })
         }
         const turnGuard = toolRecovery.observeTurn(turnSuccessCount, turnFailureCount)
         if (turnGuard.warning && lastToolMessage) {

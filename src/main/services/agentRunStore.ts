@@ -325,6 +325,19 @@ export class AgentRunStore {
     return rows.map(mapEvent)
   }
 
+  listAllEvents(runId: string): AgentRunEvent[] {
+    const events: AgentRunEvent[] = []
+    let cursor = 0
+    while (true) {
+      const page = this.listEvents(runId, cursor, 10_000)
+      events.push(...page)
+      if (page.length < 10_000) return events
+      const next = page.at(-1)?.sequence ?? cursor
+      if (next <= cursor) return events
+      cursor = next
+    }
+  }
+
   createInteraction(input: CreateAgentInteractionInput): PendingAgentInteraction {
     const now = Date.now()
     this.db.transaction(() => {

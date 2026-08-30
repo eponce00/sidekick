@@ -201,7 +201,6 @@ export class AgentScenarioHarness {
       surface,
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: false,
-      editingTarget: target,
       collaboration: input.collaboration,
       plan: planService
         ? {
@@ -258,7 +257,7 @@ export class AgentScenarioHarness {
           purpose: 'conversation'
         },
         maxToolRounds: input.maxToolRounds ?? 60,
-        permissionMode: 'bypass',
+        permissionMode: 'full-access',
         toolRouter,
         verificationController: session.verificationController,
         planController: planService

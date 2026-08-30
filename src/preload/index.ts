@@ -12,9 +12,6 @@ const api = {
       ipcRenderer.invoke('providers:discoverModels', request),
     resolveContext: (target: import('../shared/providerRuntime').ProviderTarget) =>
       ipcRenderer.invoke('providers:resolveContext', target),
-    calibrateEditing: (
-      request: import('../shared/providerRuntime').ProviderEditingCalibrationRequest
-    ) => ipcRenderer.invoke('providers:calibrateEditing', request),
     getGenerationStats: (
       target: import('../shared/providerRuntime').ProviderTarget,
       generationId: string
@@ -51,13 +48,15 @@ const api = {
       projectId?: string | null,
       titleSource?: import('../shared/conversationTitles').ConversationTitleSource
     ) => ipcRenderer.invoke('conversations:create', title, projectId, titleSource),
-    fork: (id: string, timestamp?: number) =>
-      ipcRenderer.invoke('conversations:fork', id, timestamp),
+    fork: (input: import('../shared/projects').ForkConversationInput) =>
+      ipcRenderer.invoke('conversations:fork', input),
     update: (
       id: string,
       title: string,
       options?: import('../shared/conversationTitles').ConversationTitleUpdateOptions
     ) => ipcRenderer.invoke('conversations:update', id, title, options),
+    setPinned: (id: string, pinned: boolean) =>
+      ipcRenderer.invoke('conversations:setPinned', id, pinned),
     listTitleBackfillCandidates: (limit?: number) =>
       ipcRenderer.invoke('conversations:listTitleBackfillCandidates', limit),
     claimTitleBackfill: (
@@ -114,6 +113,12 @@ const api = {
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
+    admissionsList: (conversationId: string) =>
+      ipcRenderer.invoke('agentRuns:admissionsList', conversationId),
+    admissionsReplace: (input: import('../shared/agentRunApi').ReplacePromptAdmissionsInput) =>
+      ipcRenderer.invoke('agentRuns:admissionsReplace', input),
+    admissionsTakeNext: (conversationId: string) =>
+      ipcRenderer.invoke('agentRuns:admissionsTakeNext', conversationId),
     onEvent: (callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -266,6 +271,8 @@ const api = {
   },
   workspace: {
     selectFolder: () => ipcRenderer.invoke('workspace:selectFolder'),
+    selectContextAttachments: (workspaceRoot: string) =>
+      ipcRenderer.invoke('workspace:selectContextAttachments', workspaceRoot),
     getPath: () => ipcRenderer.invoke('workspace:getPath'),
     getRules: (workspaceRoot?: string, scopeId?: string) =>
       ipcRenderer.invoke('workspace:getRules', workspaceRoot, scopeId),
@@ -364,8 +371,12 @@ const api = {
       ipcRenderer.invoke('workspace:openFolder', folderPath, workspaceRoot),
     openFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:openFile', filePath, workspaceRoot),
+    openFileReference: (fileReference: string, workspaceRoot?: string) =>
+      ipcRenderer.invoke('workspace:openFileReference', fileReference, workspaceRoot),
     revealFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
+    showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
+      ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
     onFilesChanged: (callback: () => void) => {
       const listener = () => callback()
       ipcRenderer.on('workspace:filesChanged', listener)

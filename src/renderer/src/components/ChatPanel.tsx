@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { useAutoFocus } from '../hooks/useAutoFocus'
@@ -26,11 +27,18 @@ import {
 import {
   createFallbackConversationTitle,
   generateConversationTitle,
+  getQueuedMessageIdForEmptySubmit,
   isPlaceholderConversationTitle
 } from '../utils/chatPanelHelpers'
 import type { WelcomeSuggestion } from '../utils/welcomeSuggestions'
 import { selectPromptRefinementHistory } from '../utils/promptRefinementHistory'
 import { createConversationTitleMessages } from '../services/prompts'
+import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
+import {
+  MAX_MESSAGE_CONTEXT_ATTACHMENTS,
+  type MessageContextAttachment
+} from '../../../shared/messageContextAttachments'
+import { fileToMessageImage } from '../utils/messageImageAttachments'
 import 'highlight.js/styles/github-dark.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -51,7 +59,9 @@ interface ChatPanelProps {
     title: string,
     source?: ConversationTitleSource
   ) => Promise<void> | void
+  onConversationTitleApplied: (id: string, title: string) => void
   onConversationCreated: (id: string, title: string) => void
+  onForkConversation: (messageId: string) => void
   selectedModel: string
   planningModelId?: string
   onModelChange: (modelId: string) => void
@@ -87,7 +97,9 @@ function ChatPanel({
   projectName,
   onOpenProject,
   onUpdateConversationTitle,
+  onConversationTitleApplied,
   onConversationCreated,
+  onForkConversation,
   selectedModel,
   planningModelId,
   onModelChange,
@@ -133,6 +145,9 @@ function ChatPanel({
     )
   }, [messages, selectedContextLength])
   const [inputValue, setInputValue] = useState('')
+  const [attachedImages, setAttachedImages] = useState<MessageImageAttachment[]>([])
+  const [attachedContext, setAttachedContext] = useState<MessageContextAttachment[]>([])
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
   const [planModelOverrideId, setPlanModelOverrideId] = useState<string | null>(null)
@@ -146,6 +161,8 @@ function ChatPanel({
     error?: string
   }>({ content: '', sources: [], truncated: false })
   const [workspaceMemory, setWorkspaceMemory] = useState('')
+  const [workspaceMemoryLoadedFor, setWorkspaceMemoryLoadedFor] = useState<string | null>(null)
+  const [workspaceMemoryError, setWorkspaceMemoryError] = useState<string | null>(null)
   const [isWorkspaceMemoryOpen, setIsWorkspaceMemoryOpen] = useState(false)
   const [goalDialogMode, setGoalDialogMode] = useState<'create' | 'edit' | null>(null)
   const [gitAvailableForWorkspace, setGitAvailableForWorkspace] = useState<boolean>(true) // git check result
@@ -161,6 +178,8 @@ function ChatPanel({
   >(new Map())
   const pendingGoalStartRef = useRef<string | null>(null)
   const pendingGoalSteerRef = useRef(false)
+  const workspaceFolderRef = useRef(workspaceFolder)
+  workspaceFolderRef.current = workspaceFolder
   const {
     phase,
     activeMode,
@@ -177,7 +196,6 @@ function ChatPanel({
     removePendingMessage,
     moveQueuedMessage,
     steerQueuedMessage,
-    resetPendingMessages,
     resolveInteraction,
     sendMessage: sendConversationMessage
   } = useConversationRun({
@@ -282,8 +300,11 @@ function ChatPanel({
   }, [conversationId, workspaceFolder])
 
   useEffect(() => {
+    setWorkspaceMemory('')
+    setWorkspaceMemoryLoadedFor(null)
+    setWorkspaceMemoryError(null)
+    setIsWorkspaceMemoryOpen(false)
     if (!workspaceFolder) {
-      setWorkspaceMemory('')
       return
     }
 
@@ -291,9 +312,19 @@ function ChatPanel({
     window.api.memory
       .get(workspaceFolder)
       .then((result) => {
-        if (!cancelled && result.ok) setWorkspaceMemory(result.content)
+        if (cancelled) return
+        if (result.ok) {
+          setWorkspaceMemory(result.content)
+          setWorkspaceMemoryLoadedFor(workspaceFolder)
+          return
+        }
+        setWorkspaceMemoryError(result.error || 'Could not load shared project notes')
       })
-      .catch((error) => console.warn('[WorkspaceMemory] Failed to load:', error))
+      .catch((error) => {
+        if (cancelled) return
+        console.warn('[WorkspaceMemory] Failed to load:', error)
+        setWorkspaceMemoryError(error instanceof Error ? error.message : String(error))
+      })
 
     return () => {
       cancelled = true
@@ -313,11 +344,13 @@ function ChatPanel({
   }, [])
 
   useEffect(() => {
-    // Clear artifact results and message queue when switching conversations
+    // Clear conversation-local presentation state. Prompt admissions reload from durable storage.
     artifactResultsRef.current.clear()
-    resetPendingMessages()
+    setAttachedImages([])
+    setAttachedContext([])
+    setAttachmentError(null)
     setNextRunMode('conversation')
-  }, [conversationId, resetPendingMessages])
+  }, [conversationId])
 
   // Simple handler to track artifact render results (called by Artifact components)
   const handleArtifactResult = (
@@ -487,9 +520,11 @@ function ChatPanel({
       titleBaseMessage && (isNewConversation || isPlaceholderConversationTitle(conversationTitle))
     )
     if (shouldGenerateTitle && titleBaseMessage) {
+      const titlePrompt =
+        titleBaseMessage.content || titleBaseMessage.images?.[0]?.name || 'Image conversation'
       await onUpdateConversationTitle(
         activeConversationId,
-        createFallbackConversationTitle(titleBaseMessage.content),
+        createFallbackConversationTitle(titlePrompt),
         'fallback'
       )
     }
@@ -523,27 +558,50 @@ function ChatPanel({
         const persisted = await window.api.conversations.getMessages(activeConversationId)
         const assistant = persisted.find((message) => message.id === assistantMessageId)
         if (assistant?.content?.trim()) {
-          const provider = getProviderFromModel(selectedModel)
+          const titlePrompt =
+            titleBaseMessage.content || titleBaseMessage.images?.[0]?.name || 'Image conversation'
           const modelName = model.providerModelId || stripModelPrefix(model.name)
           const titleModel = fastModelName || modelName
-          void generateConversationTitle(
-            {
-              provider,
-              providerKind: model.providerKind,
-              providerInstanceId: model.providerInstanceId,
-              model: titleModel,
-              contextLength: fastModelName
-                ? Math.min(model.contextLength || 32_768, FAST_MODEL_CONTEXT_LIMIT)
-                : model.contextLength || 32_768,
-              fallbackTitle: titleBaseMessage.content,
-              onUpdateTitle: (id, title) => onUpdateConversationTitle(id, title, 'generated')
-            },
-            activeConversationId,
-            createConversationTitleMessages(
-              titleBaseMessage.content,
-              assistant.content.slice(0, 500)
+          const identity = {
+            id: activeConversationId,
+            expectedTitle: createFallbackConversationTitle(titlePrompt)
+          }
+          void (async () => {
+            const claim = await window.api.conversations.claimTitleBackfill(identity)
+            if (!claim.claimed) return
+
+            let applied = false
+            const generatedTitle = await generateConversationTitle(
+              {
+                provider: model.provider,
+                providerKind: model.providerKind,
+                providerInstanceId: model.providerInstanceId,
+                model: titleModel,
+                contextLength: fastModelName
+                  ? Math.min(model.contextLength || 32_768, FAST_MODEL_CONTEXT_LIMIT)
+                  : model.contextLength || 32_768,
+                onUpdateTitle: async (id, title) => {
+                  const result = await window.api.conversations.completeTitleBackfill({
+                    ...identity,
+                    title
+                  })
+                  if (!result.applied) return
+                  applied = true
+                  onConversationTitleApplied(id, title)
+                }
+              },
+              activeConversationId,
+              createConversationTitleMessages(titlePrompt, assistant.content.slice(0, 500))
             )
-          )
+            if (!generatedTitle && !applied) {
+              await window.api.conversations.failTitleBackfill({
+                ...identity,
+                error: 'Title provider did not return a usable title'
+              })
+            }
+          })().catch((error) => {
+            console.warn('[Title] Failed to run guarded title generation:', error)
+          })
         }
       }
     } catch (error) {
@@ -554,13 +612,15 @@ function ChatPanel({
         )
       )
     } finally {
-      const pendingMessage = finishRun()
+      const pendingMessage = await finishRun()
       if (pendingMessage) {
         window.setTimeout(() => {
           void sendMessage(pendingMessage.content, {
             clearInput: false,
             conversationId: activeConversationId,
-            mode: pendingMessage.mode
+            mode: pendingMessage.mode,
+            images: pendingMessage.images,
+            attachments: pendingMessage.attachments
           })
         }, 50)
       } else if (completed) {
@@ -577,6 +637,8 @@ function ChatPanel({
       skipSave?: boolean
       conversationId?: string
       mode?: ConversationRunMode
+      images?: MessageImageAttachment[]
+      attachments?: MessageContextAttachment[]
     }
   ): Promise<void> => {
     await sendConversationMessage(content, streamAgentResponse, options)
@@ -606,10 +668,24 @@ function ChatPanel({
   }
 
   // Handle sending a message while the LLM is already responding
-  const handleSendDuringLoading = async (content: string): Promise<void> => {
+  const handleSendDuringLoading = async (
+    content: string,
+    images: MessageImageAttachment[],
+    attachments: MessageContextAttachment[]
+  ): Promise<void> => {
     if (goal?.status === 'active') pendingGoalSteerRef.current = true
-    if (submitDuringRun(content, nextRunMode, goal?.status === 'active' ? 'pivot' : undefined)) {
+    if (
+      await submitDuringRun(
+        content,
+        nextRunMode,
+        goal?.status === 'active' ? 'pivot' : undefined,
+        images,
+        attachments
+      )
+    ) {
       setInputValue('')
+      setAttachedImages([])
+      setAttachedContext([])
       setNextRunMode('conversation')
     } else {
       pendingGoalSteerRef.current = false
@@ -617,23 +693,93 @@ function ChatPanel({
   }
 
   const handleSubmit = (): void => {
-    if (!inputValue.trim()) return
+    if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (attachedImages.length && !visionAvailable) {
+      setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
+      return
+    }
+    const images = attachedImages
+    const attachments = attachedContext
     if (isLoading) {
-      void handleSendDuringLoading(inputValue)
+      void handleSendDuringLoading(inputValue, images, attachments)
       return
     }
     const mode = nextRunMode
     setNextRunMode('conversation')
     setPlanModelOverrideId(null)
-    void sendMessage(inputValue, { clearInput: true, mode })
+    setAttachedImages([])
+    setAttachedContext([])
+    void sendMessage(inputValue, { clearInput: true, mode, images, attachments })
+  }
+
+  const visionAvailable = selectedPinnedModel?.supportsVision !== false
+  const visionUnavailableReason = selectedPinnedModel
+    ? selectedPinnedModel.supportsVision === false
+      ? 'The selected model does not support image input'
+      : undefined
+    : 'Select a model before attaching images'
+
+  const addImageFiles = async (files: File[]): Promise<void> => {
+    if (!visionAvailable || !selectedPinnedModel) {
+      setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
+      return
+    }
+    const available = Math.max(0, MAX_MESSAGE_IMAGES - attachedImages.length)
+    if (!available) {
+      setAttachmentError(`A message can contain up to ${MAX_MESSAGE_IMAGES} images`)
+      return
+    }
+    try {
+      const additions = await Promise.all(files.slice(0, available).map(fileToMessageImage))
+      setAttachedImages((previous) => [...previous, ...additions].slice(0, MAX_MESSAGE_IMAGES))
+      setAttachmentError(
+        files.length > available ? `Only ${MAX_MESSAGE_IMAGES} images can be attached` : null
+      )
+    } catch (error) {
+      setAttachmentError(error instanceof Error ? error.message : 'Could not attach image')
+    }
+  }
+
+  const addContextAttachments = async (): Promise<void> => {
+    if (!workspaceFolder) {
+      setAttachmentError('Open a project before attaching files or folders')
+      return
+    }
+    const result = await window.api.workspace.selectContextAttachments(workspaceFolder)
+    if (!result.ok) {
+      setAttachmentError(result.error || 'Could not attach project context')
+      return
+    }
+    if (result.canceled) return
+    setAttachedContext((previous) => {
+      const byPath = new Map(previous.map((attachment) => [attachment.relativePath, attachment]))
+      for (const attachment of result.attachments) byPath.set(attachment.relativePath, attachment)
+      return [...byPath.values()].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
+    })
+    setAttachmentError(
+      attachedContext.length + result.attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
+        ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} file or folder references`
+        : null
+    )
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (!editingMessageId) {
-        handleSubmit()
+      if (editingMessageId) return
+
+      const queuedMessageId = getQueuedMessageIdForEmptySubmit(
+        isLoading,
+        Boolean(inputValue.trim() || attachedImages.length || attachedContext.length),
+        messageQueue
+      )
+      if (queuedMessageId) {
+        if (goal?.status === 'active') pendingGoalSteerRef.current = true
+        void steerQueuedMessage(queuedMessageId)
+        return
       }
+
+      handleSubmit()
     }
   }
 
@@ -654,6 +800,45 @@ function ChatPanel({
 
   const visibleMessages = messages.filter((msg) => !msg.hidden)
   const promptRefinementHistory = useMemo(() => selectPromptRefinementHistory(messages), [messages])
+  const virtualizeMessages = visibleMessages.length >= 40
+  const messageVirtualizer = useVirtualizer({
+    count: visibleMessages.length,
+    getScrollElement: () => messagesContainerRef.current,
+    estimateSize: () => 220,
+    getItemKey: (index) => visibleMessages[index]?.id ?? index,
+    overscan: 8,
+    enabled: virtualizeMessages
+  })
+
+  const renderMessage = (msg: Message, index: number): React.JSX.Element => (
+    <MessageItem
+      key={msg.id}
+      message={msg}
+      index={index}
+      isLoading={isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'}
+      expandedThinking={expandedThinking}
+      editingMessageId={editingMessageId}
+      editingGeometry={editingGeometry}
+      editingContent={editingDraft}
+      onToggleThinking={toggleThinking}
+      onHandleArtifactResult={handleArtifactResult}
+      onEditMessage={handleStartEditMessage}
+      onCancelEditMessage={handleCancelEditMessage}
+      onConfirmEditMessage={handleConfirmEditMessage}
+      onCopyMessage={handleCopyMessage}
+      onRetryMessage={handleRetryMessage}
+      onForkMessage={() => onForkConversation(msg.id)}
+      copiedMessageId={copiedMessageId}
+      onSetEditingContent={setEditingDraft}
+      onApproveToolLimitDecision={handleApproveToolLimitDecision}
+      onDenyToolLimitDecision={handleDenyToolLimitDecision}
+      onResolveAgentInteraction={(id, response, cancelled) =>
+        resolveInteraction(id, response, cancelled)
+      }
+      workspaceFolder={workspaceFolder}
+      onUndoCheckpoint={handleUndoCheckpoint}
+    />
+  )
 
   return (
     <div className="chat-panel">
@@ -684,38 +869,29 @@ function ChatPanel({
           </div>
         ) : (
           <>
-            {visibleMessages.map((msg, index) => {
-              return (
-                <MessageItem
-                  key={msg.id}
-                  message={msg}
-                  index={index}
-                  isLoading={
-                    isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'
-                  }
-                  expandedThinking={expandedThinking}
-                  editingMessageId={editingMessageId}
-                  editingGeometry={editingGeometry}
-                  editingContent={editingDraft}
-                  onToggleThinking={toggleThinking}
-                  onHandleArtifactResult={handleArtifactResult}
-                  onEditMessage={handleStartEditMessage}
-                  onCancelEditMessage={handleCancelEditMessage}
-                  onConfirmEditMessage={handleConfirmEditMessage}
-                  onCopyMessage={handleCopyMessage}
-                  onRetryMessage={handleRetryMessage}
-                  copiedMessageId={copiedMessageId}
-                  onSetEditingContent={setEditingDraft}
-                  onApproveToolLimitDecision={handleApproveToolLimitDecision}
-                  onDenyToolLimitDecision={handleDenyToolLimitDecision}
-                  onResolveAgentInteraction={(id, response, cancelled) =>
-                    void resolveInteraction(id, response, cancelled)
-                  }
-                  workspaceFolder={workspaceFolder}
-                  onUndoCheckpoint={handleUndoCheckpoint}
-                />
-              )
-            })}
+            {virtualizeMessages ? (
+              <div
+                className="virtual-message-timeline"
+                style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+              >
+                {messageVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const msg = visibleMessages[virtualRow.index]
+                  return (
+                    <div
+                      key={msg.id}
+                      ref={messageVirtualizer.measureElement}
+                      data-index={virtualRow.index}
+                      className="virtual-message-row"
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      {renderMessage(msg, virtualRow.index)}
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              visibleMessages.map(renderMessage)
+            )}
             <div ref={messagesEndRef} />
           </>
         )}
@@ -724,6 +900,11 @@ function ChatPanel({
       {/* Input Area */}
       <ChatInput
         inputValue={inputValue}
+        attachedImages={attachedImages}
+        attachedContext={attachedContext}
+        attachmentError={attachmentError}
+        visionAvailable={visionAvailable}
+        visionUnavailableReason={visionUnavailableReason}
         isLoading={isLoading}
         isStopping={isStopping}
         isCompacting={isCompacting}
@@ -755,6 +936,16 @@ function ChatPanel({
         featuresMenuRef={featuresMenuRef}
         modelMenuRef={modelMenuRef}
         onInputChange={setInputValue}
+        onAddImageFiles={(files) => void addImageFiles(files)}
+        onAddContextAttachments={() => void addContextAttachments()}
+        onRemoveImage={(id) => {
+          setAttachedImages((previous) => previous.filter((image) => image.id !== id))
+          setAttachmentError(null)
+        }}
+        onRemoveContextAttachment={(id) => {
+          setAttachedContext((previous) => previous.filter((attachment) => attachment.id !== id))
+          setAttachmentError(null)
+        }}
         onKeyDown={handleKeyDown}
         onSendMessage={handleSubmit}
         onStopGeneration={() => {
@@ -791,17 +982,27 @@ function ChatPanel({
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
         workspaceFolder={workspaceFolder}
+        workspaceMemoryAvailable={workspaceMemoryLoadedFor === workspaceFolder}
+        workspaceMemoryUnavailableReason={
+          workspaceMemoryLoadedFor === workspaceFolder
+            ? undefined
+            : workspaceMemoryError || 'Loading shared project notes…'
+        }
         onOpenWorkspace={async () => {
           await onOpenProject()
           setIsFeaturesMenuOpen(false)
         }}
-        onOpenWorkspaceMemory={() => setIsWorkspaceMemoryOpen(true)}
+        onOpenWorkspaceMemory={() => {
+          if (workspaceFolder && workspaceMemoryLoadedFor === workspaceFolder) {
+            setIsWorkspaceMemoryOpen(true)
+          }
+        }}
         onUpdatePendingMessage={updatePendingMessage}
         onRemovePendingMessage={removePendingMessage}
         onMoveQueuedMessage={moveQueuedMessage}
         onSteerQueuedMessage={(id) => {
           if (goal?.status === 'active') pendingGoalSteerRef.current = true
-          steerQueuedMessage(id)
+          void steerQueuedMessage(id)
         }}
         instructionSources={workspaceRules.sources}
         instructionsTruncated={workspaceRules.truncated}
@@ -826,11 +1027,24 @@ function ChatPanel({
       )}
 
       <WorkspaceMemoryModal
-        isOpen={isWorkspaceMemoryOpen}
+        isOpen={
+          isWorkspaceMemoryOpen &&
+          Boolean(workspaceFolder) &&
+          workspaceMemoryLoadedFor === workspaceFolder
+        }
         workspaceFolder={workspaceFolder ?? ''}
         initialContent={workspaceMemory}
-        onClose={() => setIsWorkspaceMemoryOpen(false)}
-        onSaved={setWorkspaceMemory}
+        onClose={() => {
+          const modalFolder = workspaceFolder
+          if (workspaceFolderRef.current === modalFolder) setIsWorkspaceMemoryOpen(false)
+        }}
+        onSaved={(content) => {
+          const modalFolder = workspaceFolder
+          if (modalFolder && workspaceFolderRef.current === modalFolder) {
+            setWorkspaceMemory(content)
+            setWorkspaceMemoryLoadedFor(modalFolder)
+          }
+        }}
       />
 
       {/* D13: Git not available warning banner */}
@@ -849,11 +1063,11 @@ function ChatPanel({
       {/* D11: Checkpoint restore confirmation dialog */}
       <ConfirmDialog
         isOpen={pendingCheckpointRestore !== null}
-        title="Restore workspace?"
-        message="This will overwrite current workspace files with the state from before this message. Any unsaved changes will be lost."
-        confirmText="Restore"
+        title="Undo these file changes?"
+        message="SideKick will restore the files changed by this response to their earlier state. Unrelated edits stay untouched, and the undo stops if an affected file changed afterward."
+        confirmText="Undo changes"
         cancelText="Cancel"
-        variant="danger"
+        variant="default"
         onConfirm={() => void handleConfirmCheckpointRestore()}
         onCancel={cancelCheckpointRestore}
       />

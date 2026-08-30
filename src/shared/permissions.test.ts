@@ -9,9 +9,11 @@ import {
 } from './permissions'
 
 describe('command permission policy', () => {
-  it('keeps agent-decides as the compatibility default', () => {
-    expect(normalizePermissionMode(undefined)).toBe('agent-decides')
-    expect(normalizePermissionMode('unexpected')).toBe('agent-decides')
+  it('uses full access as the default and migrates historical values', () => {
+    expect(normalizePermissionMode(undefined)).toBe('full-access')
+    expect(normalizePermissionMode('unexpected')).toBe('full-access')
+    expect(normalizePermissionMode('bypass')).toBe('full-access')
+    expect(normalizePermissionMode('agent-decides')).toBe('sensitive-only')
   })
 
   it('always asks in strict mode', () => {
@@ -19,19 +21,19 @@ describe('command permission policy', () => {
     expect(resolvePermissionPolicy('always-ask', 'confirm').effectiveAccess).toBe('confirm')
   })
 
-  it('preserves the agent requested access in agent-decides mode', () => {
-    expect(resolvePermissionPolicy('agent-decides', 'auto').effectiveAccess).toBe('auto')
-    expect(resolvePermissionPolicy('agent-decides', 'confirm').effectiveAccess).toBe('confirm')
+  it('preserves host-classified access in sensitive-only mode', () => {
+    expect(resolvePermissionPolicy('sensitive-only', 'auto').effectiveAccess).toBe('auto')
+    expect(resolvePermissionPolicy('sensitive-only', 'confirm').effectiveAccess).toBe('confirm')
   })
 
-  it('never asks in bypass mode', () => {
-    expect(resolvePermissionPolicy('bypass', 'auto').effectiveAccess).toBe('auto')
-    expect(resolvePermissionPolicy('bypass', 'confirm').effectiveAccess).toBe('auto')
+  it('never asks in full access mode', () => {
+    expect(resolvePermissionPolicy('full-access', 'auto').effectiveAccess).toBe('auto')
+    expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
   })
 
   it('applies the same policy to every operation kind', () => {
     expect(resolvePermissionPolicy('always-ask', 'auto').effectiveAccess).toBe('confirm')
-    expect(resolvePermissionPolicy('bypass', 'confirm').effectiveAccess).toBe('auto')
+    expect(resolvePermissionPolicy('full-access', 'confirm').effectiveAccess).toBe('auto')
   })
 
   it('binds authorization requests to exact operation details', () => {

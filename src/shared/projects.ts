@@ -15,13 +15,22 @@ export interface ProjectConversation {
   created_at: number
   updated_at: number
   project_id: string | null
+  is_pinned?: number
   sidebar_order: number
   project_context_version: number
   home_workspace_root: string | null
   home_project_name: string | null
   unread_completion_at?: number | null
+  forked_from_conversation_id?: string | null
+  forked_from_message_id?: string | null
   title_source?: import('./conversationTitles').ConversationTitleSource
   title_version?: number
+}
+
+export interface ForkConversationInput {
+  sourceId: string
+  messageId?: string
+  workspaceMode: 'current' | 'worktree'
 }
 
 export type ConversationPlacement = 'before' | 'after' | 'start' | 'end'
