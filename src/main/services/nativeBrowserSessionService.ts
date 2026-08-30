@@ -1065,7 +1065,9 @@ export class NativeBrowserSessionService {
       if (url.protocol === 'https:') return true
       if (url.protocol === 'http:') return loopbackHost(url.hostname)
       if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) return false
-      const candidate = realpathSync(resolve(fileURLToPath(url)))
+      // The native implementation expands Windows 8.3 aliases (for example
+      // RUNNER~1), keeping request checks aligned with async fs.realpath roots.
+      const candidate = realpathSync.native(resolve(fileURLToPath(url)))
       return allowedFileRoots.some((root) => isPathWithin(root, candidate))
     } catch {
       return false
