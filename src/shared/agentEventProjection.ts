@@ -14,7 +14,7 @@ export interface ProjectedToolExecution {
   command: string
   name: string
   input?: Record<string, unknown>
-  status: 'pending' | 'running' | 'success' | 'error' | 'denied'
+  status: 'pending' | 'running' | 'success' | 'partial' | 'error' | 'denied'
   accessLevel?: 'auto' | 'confirm'
   approvalStatus?: 'pending' | 'approved' | 'denied' | 'auto'
   presentation?: ToolPresentationIntent
@@ -260,8 +260,15 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       const tool = tools.get(id)
       const result = resultFrom(event)
       if (tool && result) {
+        const data = result.data as Record<string, unknown> | undefined
         tool.status =
-          result.status === 'success' ? 'success' : result.status === 'denied' ? 'denied' : 'error'
+          result.status === 'success'
+            ? 'success'
+            : result.status === 'denied'
+              ? 'denied'
+              : data?.outcome === 'partial'
+                ? 'partial'
+                : 'error'
         tool.title = result.title || tool.title
         tool.output = result.modelContent
         tool.error = result.error?.message
@@ -273,7 +280,6 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         tool.completedAt = result.timing.completedAt
         tool.presentation =
           (event.payload.presentation as ToolPresentationIntent | undefined) ?? tool.presentation
-        const data = result.data as Record<string, unknown> | undefined
         const artifact = data?.artifact as Record<string, unknown> | undefined
         if (
           artifact &&
@@ -433,10 +439,15 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           : typeof event.payload.message === 'string'
             ? event.payload.message
             : undefined
-      segments.push({
-        type: 'run_status',
-        status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
-      })
+      // Tool-guard hints are model-facing recovery policy, not useful user-facing
+      // timeline events. Keep durable events for diagnosis while avoiding noisy
+      // banners in both live and historical message projections.
+      if (!reason.startsWith('tool_guard_')) {
+        segments.push({
+          type: 'run_status',
+          status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
+        })
+      }
     }
     if (event.type === 'run.completed' && event.payload.phase === 'failed') {
       const rawError = event.payload.error

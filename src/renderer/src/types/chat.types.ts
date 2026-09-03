@@ -14,7 +14,7 @@ export interface ToolExecution {
   hint?: string // Optional context shown as subtitle (e.g. "Looking for: population data")
   name?: string
   input?: Record<string, unknown>
-  status: 'pending' | 'running' | 'success' | 'error' | 'denied'
+  status: 'pending' | 'running' | 'success' | 'partial' | 'error' | 'denied'
   accessLevel?: 'auto' | 'confirm'
   approvalStatus?: 'pending' | 'approved' | 'denied' | 'auto'
   presentation?: import('../../../shared/agentRuntime').ToolPresentationIntent

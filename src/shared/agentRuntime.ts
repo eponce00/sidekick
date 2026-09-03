@@ -540,7 +540,10 @@ export function normalizeToolExecutionResult(
   completedAt = Date.now()
 ): ToolExecutionResult {
   if (isToolExecutionResult(value)) {
-    const result = { ...value }
+    // Tool handlers often construct their typed result only after the work has
+    // completed, so its default timing can be effectively zero. The registry
+    // owns the actual execution envelope and must be the canonical clock.
+    const result = { ...value, timing: { startedAt, completedAt } }
     const media = normalizeToolResultMedia(value.media)
     if (media?.length) result.media = media
     else delete result.media

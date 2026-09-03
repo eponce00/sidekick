@@ -34,7 +34,11 @@ export interface BrowserTarget {
   selector?: string
   exact?: boolean
   nth?: number
-  /** CSS-pixel fallback used only when no semantic target resolves. */
+  /** Internal action-specific ranking when a visible name matches multiple AX roles. */
+  preferredRoles?: string[]
+  /** Viewport screenshot that the coordinate fallback was read from. */
+  screenshotId?: string
+  /** Screenshot-pixel fallback used only when no semantic target resolves. */
   coordinates?: { x: number; y: number }
 }
 
@@ -154,6 +158,13 @@ export interface BrowserActionResult {
     unchangedRepeatCount: number
     blockedOnNextIdenticalAction: boolean
   }
+  effect?: {
+    changed: boolean
+    kind: 'scroll'
+    before: { x: number; y: number }
+    after: { x: number; y: number }
+    message?: string
+  }
   observation: BrowserObservation
 }
 
@@ -194,6 +205,51 @@ export interface BrowserSelectInput {
   tabId?: string
   target: BrowserTarget
   values: string[]
+}
+
+export type BrowserFormFieldInput =
+  | { kind: 'textbox'; target: BrowserTarget; value: string }
+  | { kind: 'select'; target: BrowserTarget; values: string[] }
+  | { kind: 'checkbox'; target: BrowserTarget; checked: boolean }
+  | { kind: 'radio'; target: BrowserTarget; checked: true }
+
+export interface BrowserFillFormInput {
+  sessionId: string
+  tabId?: string
+  /** Ordered fields. Execution stops at the first failed or page-changing field. */
+  fields: BrowserFormFieldInput[]
+}
+
+export interface BrowserFormFieldResult {
+  index: number
+  kind: BrowserFormFieldInput['kind']
+  status: 'filled' | 'unchanged' | 'failed' | 'skipped'
+  targetMode?: Exclude<BrowserActionResult['targetMode'], 'coordinates' | 'page'>
+  verification?: {
+    passed: boolean
+    valueLength?: number
+    selectedCount?: number
+  }
+  error?: {
+    code: 'target_not_found' | 'unsupported_control' | 'verification_failed' | 'page_changed'
+    message: string
+  }
+}
+
+export interface BrowserFillFormResult {
+  sessionId: string
+  tabId: string
+  action: 'fill_form'
+  completed: boolean
+  stopReason: 'completed' | 'field_failed' | 'page_changed'
+  attemptedFields: number
+  filledFields: number
+  durationMs: number
+  quiescence: BrowserQuiescenceResult
+  loopProtection: BrowserActionResult['loopProtection']
+  /** Contains verification metadata only; requested and actual values are never returned. */
+  fields: BrowserFormFieldResult[]
+  observation: BrowserObservation
 }
 
 export interface BrowserPressInput {
@@ -413,6 +469,16 @@ interface RequestMetadata {
   startedAt: number
 }
 
+interface CoordinateCaptureState {
+  sourceUrl: string
+  refEpoch: number
+  viewportWidth: number
+  viewportHeight: number
+  scrollX: number
+  scrollY: number
+  mutationRevision: number
+}
+
 interface TabState {
   id: string
   surface: NativeBrowserSurface
@@ -422,6 +488,11 @@ interface TabState {
   consoleCursor: number
   networkCursor: number
   lastPointer?: BrowserPointer
+  lastViewportScreenshot?: {
+    id: string
+    imageWidth: number
+    imageHeight: number
+  } & CoordinateCaptureState
   lastScreenshotHashes: Partial<Record<BrowserScreenshotKind, string>>
   unchangedScreenshotStreaks: Partial<Record<BrowserScreenshotKind, number>>
   inFlight: Map<string, RequestMetadata>
@@ -450,6 +521,20 @@ interface ElementPoint {
   backendNodeId?: number
   mode: BrowserActionResult['targetMode']
   fallbackUsed: boolean
+}
+
+interface BrowserFormControlState {
+  kind: 'textbox' | 'select' | 'checkbox' | 'radio' | 'unsupported'
+  disabled: boolean
+  readOnly: boolean
+  value?: string
+  selectedValues?: string[]
+  checked?: boolean
+}
+
+interface BrowserSelectMutationResult {
+  changed: boolean
+  expectedValues: string[]
 }
 
 const DEFAULT_VIEWPORT: BrowserViewport = { width: 1280, height: 800, deviceScaleFactor: 1 }
@@ -589,10 +674,65 @@ function canonicalFingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
 
+function redactFormObservation(
+  observation: BrowserObservation,
+  sensitiveStrings: ReadonlySet<string>
+): BrowserObservation {
+  const variants = [...sensitiveStrings]
+    .filter(Boolean)
+    .flatMap((value) => [value, encodeURIComponent(value)])
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((a, b) => b.length - a.length)
+  const redact = (text: string): string => {
+    let result = text
+    for (const value of variants) result = result.split(value).join('[redacted]')
+    return result
+  }
+  let semanticSnapshot = observation.semanticSnapshot
+  if (semanticSnapshot) {
+    semanticSnapshot = semanticSnapshot.replace(
+      /\s(value|checked|selected)=("(?:\\.|[^"])*"|[^\s\]]+)/g,
+      ' $1=[redacted]'
+    )
+    semanticSnapshot = redact(semanticSnapshot)
+  }
+  return {
+    ...observation,
+    tab: {
+      ...observation.tab,
+      title: redact(observation.tab.title),
+      url: redact(observation.tab.url)
+    },
+    tabs: observation.tabs.map((tab) => ({
+      ...tab,
+      title: redact(tab.title),
+      url: redact(tab.url)
+    })),
+    ...(semanticSnapshot === undefined ? {} : { semanticSnapshot }),
+    screenshot: undefined,
+    screenshotChanged: null,
+    console: observation.console.map((entry) => ({
+      ...entry,
+      message: redact(entry.message),
+      ...(entry.sourceId ? { sourceId: redact(entry.sourceId) } : {})
+    })),
+    failedRequests: observation.failedRequests.map((failure) => ({
+      ...failure,
+      url: redact(failure.url),
+      errorText: redact(failure.errorText)
+    }))
+  }
+}
+
 function finiteCoordinate(value: number, label: string): number {
   if (!Number.isFinite(value) || value < 0)
     throw new Error(`${label} must be a non-negative number`)
   return value
+}
+
+function isTransientViewportCaptureError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.trim() === 'UnknownVizError'
 }
 
 class ElectronNativeBrowserSurface implements NativeBrowserSurface {
@@ -719,8 +859,32 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
     let image = await this.contents.capturePage()
-    let png = image.toPNG()
     let size = image.getSize()
+    // Electron's capturePage() returns native device pixels on high-DPI displays,
+    // while Chromium mouse coordinates and our BrowserTarget contract use CSS
+    // viewport pixels. Normalize the image to window.innerWidth/innerHeight so a
+    // point selected from the screenshot maps 1:1 back to sendInputEvent(). This
+    // also avoids sending a 3x-larger image to vision models on 300% Windows DPI.
+    const cssViewport = await this.executeJavaScript<{ width: number; height: number }>(
+      `(() => ({ width: window.innerWidth, height: window.innerHeight }))()`
+    ).catch(() => undefined)
+    if (
+      cssViewport &&
+      Number.isFinite(cssViewport.width) &&
+      Number.isFinite(cssViewport.height) &&
+      cssViewport.width >= 1 &&
+      cssViewport.height >= 1 &&
+      (size.width !== Math.round(cssViewport.width) ||
+        size.height !== Math.round(cssViewport.height))
+    ) {
+      image = image.resize({
+        width: Math.round(cssViewport.width),
+        height: Math.round(cssViewport.height),
+        quality: 'good'
+      })
+      size = image.getSize()
+    }
+    let png = image.toPNG()
     for (let attempt = 0; png.byteLength > MAX_MODEL_SCREENSHOT_BYTES && attempt < 4; attempt++) {
       const ratio = Math.min(0.85, Math.sqrt(MAX_MODEL_SCREENSHOT_BYTES / png.byteLength) * 0.9)
       const width = Math.max(320, Math.floor(size.width * ratio))
@@ -1257,6 +1421,7 @@ export class NativeBrowserSessionService {
     tab.refEpoch++
     tab.refs.clear()
     tab.semanticNodes = []
+    tab.lastViewportScreenshot = undefined
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
@@ -1691,15 +1856,36 @@ export class NativeBrowserSessionService {
     target: BrowserTarget | undefined,
     signal?: AbortSignal
   ): Promise<BrowserScreenshotArtifact> {
+    const createdAt = this.now()
+    const id = randomUUID()
+    const captureStateBefore =
+      kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
     const capture = await this.captureRaw(tab, kind, target, signal)
+    const captureStateAfter =
+      kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
+    const stableCaptureState =
+      captureStateBefore &&
+      captureStateAfter &&
+      this.sameCoordinateCaptureState(captureStateBefore, captureStateAfter)
+        ? captureStateAfter
+        : undefined
+    if (kind === 'viewport') {
+      tab.lastViewportScreenshot = stableCaptureState
+        ? {
+            id,
+            imageWidth: capture.width,
+            imageHeight: capture.height,
+            ...stableCaptureState
+          }
+        : undefined
+    }
+    const sourceUrlAtCapture = stableCaptureState?.sourceUrl ?? tab.surface.getURL()
     const sha256 = createHash('sha256').update(capture.png).digest('hex')
     const previousHash = tab.lastScreenshotHashes[kind]
     const changed = previousHash === undefined ? null : previousHash !== sha256
     const unchangedStreak = changed === false ? (tab.unchangedScreenshotStreaks[kind] ?? 0) + 1 : 0
     tab.unchangedScreenshotStreaks[kind] = unchangedStreak
     tab.lastScreenshotHashes[kind] = sha256
-    const createdAt = this.now()
-    const id = randomUUID()
     const directory = join(
       this.artifactRoot,
       safeSegment(session.runId),
@@ -1723,6 +1909,7 @@ export class NativeBrowserSessionService {
       await fs.rename(temporaryPath, path)
       await abortable(Promise.resolve(), signal)
     } catch (error) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
       await Promise.all([
         fs.unlink(temporaryPath).catch(() => undefined),
         fs.unlink(path).catch(() => undefined)
@@ -1740,9 +1927,15 @@ export class NativeBrowserSessionService {
       safeSegment(session.runId),
       safeSegment(session.id)
     )
-    await this.enforceArtifactBounds(path, sessionArtifactRoot)
+    try {
+      await this.enforceArtifactBounds(path, sessionArtifactRoot)
+    } catch (error) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
+      throw error
+    }
     const relativePath = relative(this.artifactRoot, path)
     if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
       await fs.unlink(path).catch(() => undefined)
       throw new Error('Browser screenshot escaped the artifact root')
     }
@@ -1750,7 +1943,7 @@ export class NativeBrowserSessionService {
       .split(/[\\/]+/)
       .map(encodeURIComponent)
       .join('/')}`
-    return {
+    const artifact: BrowserScreenshotArtifact = {
       id,
       sessionId: session.id,
       tabId: tab.id,
@@ -1758,7 +1951,7 @@ export class NativeBrowserSessionService {
       url: rendererUrl,
       mimeType: 'image/png',
       kind,
-      sourceUrl: tab.surface.getURL(),
+      sourceUrl: sourceUrlAtCapture,
       width: capture.width,
       height: capture.height,
       bytes: capture.png.byteLength,
@@ -1767,6 +1960,7 @@ export class NativeBrowserSessionService {
       changed,
       unchangedStreak
     }
+    return artifact
   }
 
   private async captureRaw(
@@ -1775,7 +1969,22 @@ export class NativeBrowserSessionService {
     target: BrowserTarget | undefined,
     signal?: AbortSignal
   ): Promise<NativeBrowserSurfaceCapture> {
-    if (kind === 'viewport') return abortable(tab.surface.captureViewport(), signal)
+    if (kind === 'viewport') {
+      let lastError: unknown
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await abortable(tab.surface.captureViewport(), signal)
+        } catch (error) {
+          lastError = error
+          if (!isTransientViewportCaptureError(error) || attempt === 2) throw error
+          // captureViewport invalidates the offscreen surface first. Electron
+          // documents that this schedules a fresh paint; give Chromium's Viz
+          // compositor a bounded chance to publish that frame before retrying.
+          await delay(50 * (attempt + 1), signal)
+        }
+      }
+      throw lastError
+    }
 
     let clip: { x: number; y: number; width: number; height: number; scale: number }
     if (kind === 'element') {
@@ -1949,13 +2158,30 @@ export class NativeBrowserSessionService {
     }
     const role = target.role?.toLowerCase()
     const exact = target.exact !== false
-    const matches = tab.semanticNodes.filter((node) => {
+    let matches = tab.semanticNodes.filter((node) => {
       if (role && node.role !== role) return false
       if (target.name === undefined) return true
       return exact
         ? node.name === target.name
         : node.name.toLowerCase().includes(target.name.toLowerCase())
     })
+    // A label such as "State" can appear on a heading, generic wrapper, and
+    // combobox. Prefer a case-insensitive exact accessible-name match before a
+    // broad substring match, then prefer roles appropriate to the requested
+    // action. Refs remain the deterministic escape hatch.
+    if (!exact && target.name !== undefined) {
+      const normalizedName = target.name.toLowerCase()
+      const exactNameMatches = matches.filter((node) => node.name.toLowerCase() === normalizedName)
+      if (exactNameMatches.length) matches = exactNameMatches
+    }
+    if (!role && target.preferredRoles?.length && matches.length > 1) {
+      const preferredRoles = new Set(target.preferredRoles.map((value) => value.toLowerCase()))
+      const actionableMatches = matches.filter((node) => preferredRoles.has(node.role))
+      // Action-specific roles remove headings and wrappers, but two genuinely
+      // actionable controls with the same name must remain ambiguous. Silently
+      // ranking one role above another can click a button instead of a checkbox.
+      if (actionableMatches.length) matches = actionableMatches
+    }
     const nth = target.nth
     if (nth !== undefined) {
       const index = boundedInteger(nth, 0, Math.max(0, matches.length - 1), 'target nth')
@@ -1964,8 +2190,12 @@ export class NativeBrowserSessionService {
     }
     if (!matches.length) throw new Error('Semantic browser target was not found')
     if (matches.length > 1) {
+      const candidates = matches
+        .slice(0, 8)
+        .map((node) => `${node.role} ${quoteSnapshot(node.name)} [ref=${node.ref}]`)
+        .join('; ')
       throw new Error(
-        `Semantic browser target is ambiguous (${matches.length} matches); use a ref or nth`
+        `Semantic browser target is ambiguous (${matches.length} matches); use a ref or nth. Candidates: ${candidates}`
       )
     }
     return matches[0]
@@ -2164,12 +2394,30 @@ export class NativeBrowserSessionService {
       if (primaryError) throw primaryError
       throw new Error('Browser action requires a ref, semantic target, or CSS selector')
     }
-    const viewport = await this.currentViewport(tab)
-    const x = finiteCoordinate(target.coordinates.x, 'target x')
-    const y = finiteCoordinate(target.coordinates.y, 'target y')
-    if (x >= viewport.width || y >= viewport.height) {
-      throw new Error('Browser coordinates are outside the current viewport')
+    if (!target.screenshotId) {
+      throw new Error(
+        'Browser coordinate actions require the screenshot_id from a current viewport observation'
+      )
     }
+    const screenshot = tab.lastViewportScreenshot
+    if (!screenshot || screenshot.id !== target.screenshotId) {
+      throw new Error(
+        'Browser screenshot is stale; observe the viewport again before using coordinates'
+      )
+    }
+    const currentCaptureState = await this.coordinateCaptureState(tab, signal)
+    if (!this.sameCoordinateCaptureState(screenshot, currentCaptureState)) {
+      throw new Error(
+        'Browser screenshot is stale; observe the viewport again before using coordinates'
+      )
+    }
+    const imageX = finiteCoordinate(target.coordinates.x, 'target x')
+    const imageY = finiteCoordinate(target.coordinates.y, 'target y')
+    if (imageX >= screenshot.imageWidth || imageY >= screenshot.imageHeight) {
+      throw new Error('Browser coordinates are outside the referenced screenshot')
+    }
+    const x = (imageX * screenshot.viewportWidth) / screenshot.imageWidth
+    const y = (imageY * screenshot.viewportHeight) / screenshot.imageHeight
     return { x, y, mode: 'coordinates', fallbackUsed: hasSemantic || hasSelector }
   }
 
@@ -2222,33 +2470,15 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
-      const startedAt = this.now()
-      this.setPointer(tab, target, 'type', startedAt)
-      tab.surface.focus()
-      if (target.backendNodeId) {
-        await this.callOnNode(
-          tab,
-          target.backendNodeId,
-          `function() { this.focus(); return true; }`,
-          [],
-          signal
-        )
-      } else {
-        tab.surface.sendInputEvent({
-          type: 'mouseDown',
-          x: target.x,
-          y: target.y,
-          button: 'left',
-          clickCount: 1
-        })
-        tab.surface.sendInputEvent({
-          type: 'mouseUp',
-          x: target.x,
-          y: target.y,
-          button: 'left',
-          clickCount: 1
-        })
+      if (!target.backendNodeId) {
+        throw new Error('Browser text entry requires a semantic or selector-backed field target')
       }
+      const sourceUrl = tab.surface.getURL()
+      const sourceRefEpoch = tab.refEpoch
+      const startedAt = this.now()
+      await this.clickFormControl(tab, target, signal)
+      await this.assertTextEntryTarget(tab, target.backendNodeId, sourceUrl, sourceRefEpoch, signal)
+      this.setPointer(tab, target, 'type', startedAt)
       if (input.clear !== false) {
         const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
         tab.surface.sendInputEvent({
@@ -2261,11 +2491,36 @@ export class NativeBrowserSessionService {
           keyCode: 'A',
           modifiers: [selectAllModifier]
         })
+        // Page key handlers can navigate or move focus. Cross a renderer
+        // boundary and revalidate before the destructive clear key.
+        await abortable(tab.surface.executeJavaScript('0'), signal)
+        await this.assertTextEntryTarget(
+          tab,
+          target.backendNodeId,
+          sourceUrl,
+          sourceRefEpoch,
+          signal
+        )
         tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
         tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+        // sendInputEvent is fire-and-forget. Flush the clear keystrokes before
+        // insertText, then prove the original field still owns focus so a page
+        // handler cannot redirect sensitive text into another page or control.
+        await abortable(tab.surface.executeJavaScript('0'), signal)
+        await this.assertTextEntryTarget(
+          tab,
+          target.backendNodeId,
+          sourceUrl,
+          sourceRefEpoch,
+          signal
+        )
       }
       await abortable(tab.surface.insertText(input.text), signal)
       if (input.submit) this.sendKey(tab, 'Enter')
+      // Electron input dispatch is asynchronous relative to later CDP capture.
+      // A renderer round trip prevents the final character/key event from being
+      // overtaken by post-action observation on busy offscreen renderers.
+      await abortable(tab.surface.executeJavaScript('0'), signal)
       return this.finishAction(
         session,
         tab,
@@ -2276,6 +2531,381 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+    })
+  }
+
+  private async inspectFormControl(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<BrowserFormControlState> {
+    return this.callOnNode<BrowserFormControlState>(
+      tab,
+      backendNodeId,
+      `function() {
+        if (!this.isConnected) throw new Error('Target form control is no longer connected');
+        const tag = String(this.tagName || '').toLowerCase();
+        const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
+        const disabled = this.disabled === true || this.getAttribute?.('aria-disabled') === 'true';
+        const readOnly = this.readOnly === true || this.getAttribute?.('aria-readonly') === 'true';
+        if (tag === 'select') {
+          return {
+            kind: 'select', disabled, readOnly: false,
+            selectedValues: Array.from(this.selectedOptions || []).map(option => String(option.value))
+          };
+        }
+        if (tag === 'input' && inputType === 'checkbox') {
+          return { kind: 'checkbox', disabled, readOnly: false, checked: this.checked === true };
+        }
+        if (tag === 'input' && inputType === 'radio') {
+          return { kind: 'radio', disabled, readOnly: false, checked: this.checked === true };
+        }
+        const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color']);
+        if ((tag === 'input' && !unsupportedInputs.has(inputType)) || tag === 'textarea') {
+          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? '') };
+        }
+        if (this.isContentEditable === true) {
+          return { kind: 'textbox', disabled, readOnly, value: String(this.textContent ?? '') };
+        }
+        return { kind: 'unsupported', disabled, readOnly };
+      }`,
+      [],
+      signal
+    )
+  }
+
+  private async replaceFormText(
+    tab: TabState,
+    target: ElementPoint,
+    value: string,
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.clickFormControl(tab, target, signal)
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
+    this.setPointer(tab, target, 'type')
+    const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
+    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectAllModifier] })
+    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectAllModifier] })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
+    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
+    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
+    if (value) await abortable(tab.surface.insertText(value), signal)
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+  }
+
+  private async assertTextEntryTarget(
+    tab: TabState,
+    backendNodeId: number,
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const assertDocumentUnchanged = (): void => {
+      if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+        throw new Error('Browser page changed before text entry; no text was inserted')
+      }
+    }
+    assertDocumentUnchanged()
+    await this.callOnNode<boolean>(
+      tab,
+      backendNodeId,
+      `function() {
+        if (!this.isConnected) throw new Error('Target text field is no longer connected');
+        const tag = String(this.tagName || '').toLowerCase();
+        const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
+        const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color', 'checkbox', 'radio']);
+        const isTextbox = tag === 'textarea' || (tag === 'input' && !unsupportedInputs.has(inputType)) || this.isContentEditable === true;
+        const active = document.activeElement;
+        const ownsFocus = active === this || (this.isContentEditable === true && active && this.contains(active));
+        if (!isTextbox || !ownsFocus) throw new Error('Target text field did not retain focus');
+        return true;
+      }`,
+      [],
+      signal
+    )
+    assertDocumentUnchanged()
+  }
+
+  private async updateFormSelect(
+    tab: TabState,
+    backendNodeId: number,
+    values: string[],
+    signal?: AbortSignal
+  ): Promise<BrowserSelectMutationResult> {
+    return this.callOnNode<BrowserSelectMutationResult>(
+      tab,
+      backendNodeId,
+      `function(values) {
+        if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element');
+        if (!this.multiple && values.length !== 1) {
+          throw new Error('A single-select field requires exactly one requested option');
+        }
+        const matched = values.map(requested => Array.from(this.options).filter(option =>
+          option.value === requested || option.label === requested || option.text === requested
+        ));
+        if (matched.some(options => options.length !== 1)) {
+          throw new Error('A requested select option was missing or ambiguous');
+        }
+        const selected = matched.map(options => options[0]);
+        if (selected.some(option => option.disabled || (option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled))) {
+          throw new Error('A requested select option is disabled');
+        }
+        const expectedValues = Array.from(new Set(selected.map(option => String(option.value))));
+        const before = Array.from(this.selectedOptions).map(option => String(option.value));
+        for (const option of this.options) option.selected = expectedValues.includes(String(option.value));
+        const after = Array.from(this.selectedOptions).map(option => String(option.value));
+        const changed = before.length !== after.length || before.some((value, index) => value !== after[index]);
+        if (changed) {
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return { changed, expectedValues };
+      }`,
+      [values],
+      signal
+    )
+  }
+
+  private async clickFormControl(
+    tab: TabState,
+    target: ElementPoint,
+    signal?: AbortSignal
+  ): Promise<void> {
+    this.setPointer(tab, target, 'click')
+    tab.surface.focus()
+    tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+    tab.surface.sendInputEvent({
+      type: 'mouseDown',
+      x: target.x,
+      y: target.y,
+      button: 'left',
+      clickCount: 1
+    })
+    tab.surface.sendInputEvent({
+      type: 'mouseUp',
+      x: target.x,
+      y: target.y,
+      button: 'left',
+      clickCount: 1
+    })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+  }
+
+  private formFieldFailure(error: unknown): BrowserFormFieldResult['error'] {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/stale|not found|no longer available|ambiguous|not visible|requires a ref/i.test(message)) {
+      return {
+        code: 'target_not_found',
+        message: 'The form field target could not be resolved from the current page state.'
+      }
+    }
+    if (
+      /not a select|requires exactly one|requested select options|unsupported|disabled|read-only/i.test(
+        message
+      )
+    ) {
+      return {
+        code: 'unsupported_control',
+        message: 'The target control does not support the requested form operation.'
+      }
+    }
+    return {
+      code: 'verification_failed',
+      message: 'The requested form state could not be verified after the browser action.'
+    }
+  }
+
+  async fillForm(
+    input: BrowserFillFormInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserFillFormResult> {
+    if (!Array.isArray(input.fields) || input.fields.length < 1) {
+      throw new Error('Form fill requires at least one field')
+    }
+    if (input.fields.length > 25) throw new Error('Form fill supports at most 25 fields')
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'fill_form', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      const startedAt = this.now()
+      const initialUrl = tab.surface.getURL()
+      const initialRefEpoch = tab.refEpoch
+      const fields: BrowserFormFieldResult[] = []
+      const sensitiveStrings = new Set<string>()
+      let stopReason: BrowserFillFormResult['stopReason'] = 'completed'
+      const pageChanged = (): boolean =>
+        tab.surface.isDestroyed() ||
+        session.activeTabId !== tab.id ||
+        tab.surface.getURL() !== initialUrl ||
+        tab.refEpoch !== initialRefEpoch
+
+      for (let index = 0; index < input.fields.length; index++) {
+        const field = input.fields[index]
+        if (pageChanged()) {
+          stopReason = 'page_changed'
+          break
+        }
+        let target: ElementPoint | undefined
+        try {
+          target = await this.resolveTarget(tab, field.target, false, signal)
+          const backendNodeId = target.backendNodeId!
+          const before = await this.inspectFormControl(tab, backendNodeId, signal)
+          if (before.kind !== field.kind) {
+            throw new Error('Target is an unsupported form control for the requested field kind')
+          }
+          if (before.disabled) throw new Error('Target form control is disabled')
+
+          let status: BrowserFormFieldResult['status'] = 'unchanged'
+          let verification: BrowserFormFieldResult['verification']
+          if (field.kind === 'textbox') {
+            sensitiveStrings.add(field.value)
+            if (before.readOnly) throw new Error('Target form control is read-only')
+            if (before.value !== field.value) {
+              await this.replaceFormText(
+                tab,
+                target,
+                field.value,
+                initialUrl,
+                initialRefEpoch,
+                signal
+              )
+              status = 'filled'
+            }
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const passed = after.kind === 'textbox' && after.value === field.value
+            verification = { passed, valueLength: after.value?.length }
+          } else if (field.kind === 'select') {
+            for (const value of field.values) sensitiveStrings.add(value)
+            if (!field.values.length || field.values.length > 20) {
+              throw new Error('Select requires between one and 20 requested options')
+            }
+            const mutation = await this.updateFormSelect(tab, backendNodeId, field.values, signal)
+            for (const value of mutation.expectedValues) sensitiveStrings.add(value)
+            status = mutation.changed ? 'filled' : 'unchanged'
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const actual = [...(after.selectedValues ?? [])].sort()
+            const expected = [...mutation.expectedValues].sort()
+            const passed =
+              after.kind === 'select' &&
+              actual.length === expected.length &&
+              actual.every((value, valueIndex) => value === expected[valueIndex])
+            verification = { passed, selectedCount: actual.length }
+            this.setPointer(tab, target, 'select')
+          } else {
+            if (field.kind === 'radio' && field.checked !== true) {
+              throw new Error('A radio field can only be checked through real user input')
+            }
+            if (before.checked !== field.checked) {
+              await this.clickFormControl(tab, target, signal)
+              status = 'filled'
+            }
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const passed = after.kind === field.kind && after.checked === field.checked
+            verification = { passed }
+          }
+
+          if (!verification.passed) {
+            fields.push({
+              index,
+              kind: field.kind,
+              status: 'failed',
+              targetMode: target.mode as BrowserFormFieldResult['targetMode'],
+              verification,
+              error: {
+                code: 'verification_failed',
+                message: 'The requested form state did not match the actual control state.'
+              }
+            })
+            stopReason = 'field_failed'
+            continue
+          }
+          fields.push({
+            index,
+            kind: field.kind,
+            status,
+            targetMode: target.mode as BrowserFormFieldResult['targetMode'],
+            verification
+          })
+        } catch (error) {
+          const changed = pageChanged()
+          fields.push({
+            index,
+            kind: field.kind,
+            status: 'failed',
+            ...(target ? { targetMode: target.mode as BrowserFormFieldResult['targetMode'] } : {}),
+            error: changed
+              ? {
+                  code: 'page_changed',
+                  message: 'The page changed before this form field could be verified.'
+                }
+              : this.formFieldFailure(error)
+          })
+          stopReason = changed ? 'page_changed' : 'field_failed'
+          if (changed) break
+        }
+      }
+
+      for (let index = fields.length; index < input.fields.length; index++) {
+        fields.push({ index, kind: input.fields[index].kind, status: 'skipped' })
+      }
+
+      const quiescence = await this.waitForQuiescence(tab, {}, signal)
+      if (stopReason === 'completed' && pageChanged()) {
+        stopReason = 'page_changed'
+        const last = [...fields].reverse().find((field) => field.status !== 'skipped')
+        if (last) {
+          last.status = 'failed'
+          last.error = {
+            code: 'page_changed',
+            message: 'The page changed before the completed form batch could be confirmed.'
+          }
+        }
+      }
+      const observation = redactFormObservation(
+        await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
+          signal
+        ),
+        sensitiveStrings
+      )
+      const changed = fields.some((field) => field.status === 'filled')
+      tab.actionHistory.push({ fingerprint, changed })
+      if (tab.actionHistory.length > 30) tab.actionHistory.splice(0, tab.actionHistory.length - 30)
+      let unchangedRepeatCount = 0
+      for (let index = tab.actionHistory.length - 1; index >= 0; index--) {
+        const record = tab.actionHistory[index]
+        if (record.fingerprint !== fingerprint || record.changed) break
+        unchangedRepeatCount++
+      }
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        action: 'fill_form',
+        completed: stopReason === 'completed',
+        stopReason,
+        attemptedFields: fields.filter((field) => field.status !== 'skipped').length,
+        filledFields: fields.filter(
+          (field) => field.status === 'filled' || field.status === 'unchanged'
+        ).length,
+        durationMs: this.now() - startedAt,
+        quiescence,
+        loopProtection: {
+          unchangedRepeatCount,
+          blockedOnNextIdenticalAction: unchangedRepeatCount >= this.maxRepeatedNoChangeActions
+        },
+        fields,
+        observation
+      }
     })
   }
 
@@ -2291,21 +2921,75 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       const target = await this.resolveTarget(tab, input.target, false, signal)
+      const sourceUrl = tab.surface.getURL()
+      const sourceRefEpoch = tab.refEpoch
+      const semanticIdentity = target.backendNodeId
+        ? tab.semanticNodes.find((node) => node.backendNodeId === target.backendNodeId)
+        : undefined
+      let verificationTarget: BrowserTarget
+      if (target.mode === 'selector') {
+        if (!input.target.selector) throw new Error('Resolved select selector is unavailable')
+        verificationTarget = {
+          selector: input.target.selector,
+          ...(input.target.nth === undefined ? {} : { nth: input.target.nth })
+        }
+      } else {
+        if (!semanticIdentity) throw new Error('Resolved select semantic identity is unavailable')
+        verificationTarget = {
+          role: semanticIdentity.role,
+          name: semanticIdentity.name,
+          exact: true
+        }
+      }
       const startedAt = this.now()
       this.setPointer(tab, target, 'select', startedAt)
-      await this.callOnNode<string[]>(
+      const expectedSelected = await this.callOnNode<string[]>(
         tab,
         target.backendNodeId!,
         `function(values) {
           if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element');
-          const requested = new Set(values);
-          let matched = 0;
-          for (const option of this.options) {
-            const selected = requested.has(option.value) || requested.has(option.label) || requested.has(option.text);
-            option.selected = selected;
-            if (selected) matched++;
+          if (!this.multiple && values.length > 1) {
+            throw new Error('A single-select field accepts only one requested value');
           }
-          if (!matched) throw new Error('No select options matched the requested values or labels');
+          const normalize = value => String(value).trim().replace(/\\s+/g, ' ').toLowerCase();
+          const options = Array.from(this.options);
+          const chosen = new Set();
+          for (const requested of values) {
+            const raw = String(requested);
+            const normalized = normalize(raw);
+            // Deterministic precedence matters when one option's value happens
+            // to equal another option's label.
+            let matches = options.filter(option => option.value === raw);
+            if (!matches.length) {
+              matches = options.filter(option => option.label === raw || option.text === raw);
+            }
+            if (!matches.length) {
+              matches = options.filter(option =>
+                [option.value, option.label, option.text].some(candidate => normalize(candidate) === normalized)
+              );
+            }
+            if (!matches.length && normalized) {
+              const partial = options.filter(option =>
+                [option.value, option.label, option.text].some(candidate => {
+                  const value = normalize(candidate);
+                  return Boolean(value) && (value.startsWith(normalized) || normalized.startsWith(value));
+                })
+              );
+              if (partial.length === 1) matches = partial;
+            }
+            if (matches.length !== 1) {
+              const safe = value => String(value).trim().replace(/\\s+/g, ' ').slice(0, 80);
+              const available = options.slice(0, 20).map(option => safe(option.label || option.text || option.value));
+              const suffix = options.length > available.length ? ', ...' : '';
+              throw new Error(matches.length
+                ? 'A requested select value is ambiguous; use its exact option value. Candidates: ' + matches.slice(0, 8).map(option => safe(option.label || option.text || option.value)).join(', ')
+                : 'No select option matched one requested value. Available options: ' + available.join(', ') + suffix);
+            }
+            chosen.add(matches[0]);
+          }
+          for (const option of options) {
+            option.selected = chosen.has(option);
+          }
           this.dispatchEvent(new Event('input', { bubbles: true }));
           this.dispatchEvent(new Event('change', { bubbles: true }));
           return Array.from(this.selectedOptions).map(option => option.value);
@@ -2313,7 +2997,7 @@ export class NativeBrowserSessionService {
         [input.values],
         signal
       )
-      return this.finishAction(
+      const result = await this.finishAction(
         session,
         tab,
         'select',
@@ -2323,6 +3007,35 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+      if (result.observation.tab.url !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+        throw new Error(
+          'Browser select changed the page before its final selection could be verified'
+        )
+      }
+      const verificationNode = await this.resolveTarget(tab, verificationTarget, false, signal)
+      const selectedAfterSettle = await this.callOnNode<string[]>(
+        tab,
+        verificationNode.backendNodeId!,
+        `function() {
+          if (!(this instanceof HTMLSelectElement) || !this.isConnected) {
+            throw new Error('Target is no longer a connected select element');
+          }
+          return Array.from(this.selectedOptions).map(option => String(option.value));
+        }`,
+        [],
+        signal
+      )
+      const expected = [...expectedSelected].sort()
+      const actual = [...selectedAfterSettle].sort()
+      if (
+        expected.length !== actual.length ||
+        expected.some((value, index) => value !== actual[index])
+      ) {
+        throw new Error(
+          'Browser select did not retain the requested selection after page handlers ran'
+        )
+      }
+      return result
     })
   }
 
@@ -2411,12 +3124,20 @@ export class NativeBrowserSessionService {
       const startedAt = this.now()
       const deltaX = Number.isFinite(input.deltaX) ? input.deltaX! : 0
       if (!Number.isFinite(input.deltaY)) throw new Error('scroll deltaY must be finite')
+      let scrollEffect: {
+        before: { x: number; y: number }
+        after: { x: number; y: number }
+      }
       if (target?.backendNodeId) {
         this.setPointer(tab, target, 'scroll', startedAt)
-        await this.callOnNode(
+        scrollEffect = await this.callOnNode(
           tab,
           target.backendNodeId,
-          `function(dx, dy) { this.scrollBy({ left: dx, top: dy, behavior: 'instant' }); }`,
+          `function(dx, dy) {
+            const before = { x: this.scrollLeft, y: this.scrollTop };
+            this.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+            return { before, after: { x: this.scrollLeft, y: this.scrollTop } };
+          }`,
           [deltaX, input.deltaY],
           signal
         )
@@ -2429,16 +3150,19 @@ export class NativeBrowserSessionService {
           fallbackUsed: false
         }
         this.setPointer(tab, point, 'scroll', startedAt)
-        tab.surface.sendInputEvent({
-          type: 'mouseWheel',
-          x: point.x,
-          y: point.y,
-          deltaX,
-          deltaY: input.deltaY,
-          canScroll: true
-        })
+        scrollEffect = await abortable(
+          tab.surface.executeJavaScript<{
+            before: { x: number; y: number }
+            after: { x: number; y: number }
+          }>(`(() => {
+            const before = { x: window.scrollX, y: window.scrollY };
+            window.scrollBy({ left: ${JSON.stringify(deltaX)}, top: ${JSON.stringify(input.deltaY)}, behavior: 'instant' });
+            return { before, after: { x: window.scrollX, y: window.scrollY } };
+          })()`),
+          signal
+        )
       }
-      return this.finishAction(
+      const result = await this.finishAction(
         session,
         tab,
         'scroll',
@@ -2448,6 +3172,22 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+      const changed =
+        scrollEffect.before.x !== scrollEffect.after.x ||
+        scrollEffect.before.y !== scrollEffect.after.y
+      result.effect = {
+        changed,
+        kind: 'scroll',
+        before: scrollEffect.before,
+        after: scrollEffect.after,
+        ...(!changed
+          ? {
+              message:
+                'Scroll had no effect at the current boundary. Target a scrollable element, reverse direction, or use a current semantic ref instead of repeating it.'
+            }
+          : {})
+      }
+      return result
     })
   }
 
@@ -2533,6 +3273,71 @@ export class NativeBrowserSessionService {
         return state.revision;
       })()`),
       signal
+    )
+  }
+
+  private async coordinateCaptureState(
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<CoordinateCaptureState> {
+    const state = await abortable(
+      tab.surface.executeJavaScript<{
+        sourceUrl: string
+        viewportWidth: number
+        viewportHeight: number
+        scrollX: number
+        scrollY: number
+        mutationRevision: number
+      }>(`(() => {
+        // io.sidekick.browser.coordinate-capture-state
+        const key = Symbol.for('io.sidekick.browser.mutation-state');
+        let mutationState = window[key];
+        if (!mutationState) {
+          mutationState = { revision: 0 };
+          const observer = new MutationObserver(() => mutationState.revision++);
+          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+          mutationState.observer = observer;
+          window[key] = mutationState;
+        }
+        return {
+          sourceUrl: location.href,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+          mutationRevision: mutationState.revision
+        };
+      })()`),
+      signal
+    )
+    if (
+      !state ||
+      typeof state.sourceUrl !== 'string' ||
+      !Number.isFinite(state.viewportWidth) ||
+      !Number.isFinite(state.viewportHeight) ||
+      state.viewportWidth < 1 ||
+      state.viewportHeight < 1 ||
+      !Number.isFinite(state.scrollX) ||
+      !Number.isFinite(state.scrollY) ||
+      !Number.isFinite(state.mutationRevision)
+    ) {
+      throw new Error('Unable to bind browser coordinates to the current viewport state')
+    }
+    return { ...state, refEpoch: tab.refEpoch }
+  }
+
+  private sameCoordinateCaptureState(
+    left: CoordinateCaptureState,
+    right: CoordinateCaptureState
+  ): boolean {
+    return (
+      left.sourceUrl === right.sourceUrl &&
+      left.refEpoch === right.refEpoch &&
+      left.viewportWidth === right.viewportWidth &&
+      left.viewportHeight === right.viewportHeight &&
+      left.scrollX === right.scrollX &&
+      left.scrollY === right.scrollY &&
+      left.mutationRevision === right.mutationRevision
     )
   }
 

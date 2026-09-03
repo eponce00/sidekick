@@ -262,7 +262,7 @@ function subAgentStepsFromProjection(
           status:
             segment.tool.status === 'error' || segment.tool.status === 'denied'
               ? 'error'
-              : segment.tool.status === 'success'
+              : segment.tool.status === 'success' || segment.tool.status === 'partial'
                 ? 'success'
                 : 'running'
         }

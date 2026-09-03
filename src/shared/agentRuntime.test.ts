@@ -97,6 +97,18 @@ describe('agent runtime contracts', () => {
     expect(result.timing).toEqual({ startedAt: 10, completedAt: 20 })
   })
 
+  it('uses the registry execution envelope for already-typed tool results', () => {
+    const inner = toolExecutionSucceeded({
+      title: 'Browser action',
+      data: { ok: true },
+      startedAt: 19,
+      completedAt: 19
+    })
+    const result = normalizeToolExecutionResult('Browser action', inner, 10, 20)
+
+    expect(result.timing).toEqual({ startedAt: 10, completedAt: 20 })
+  })
+
   it('represents denial distinctly from execution errors', () => {
     const result = toolExecutionFailed({
       title: 'Run command',

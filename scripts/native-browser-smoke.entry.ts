@@ -18,6 +18,8 @@ interface SmokeResult {
   sessionId: string
   semanticNodeCount: number
   screenshotBytes: number
+  viewportPixelsMatch: boolean
+  formFieldsVerified: number
   fullPageBytes: number
   elementBytes: number
   screenshotChanged: boolean
@@ -47,7 +49,9 @@ function pageHtml(): string {
       main { box-sizing: border-box; min-height: 100vh; padding: 48px; }
       #scene { width: 560px; min-height: 240px; padding: 32px; border-radius: 24px; background: #273a63; }
       body.changed #scene { background: #7a3150; transform: translateX(48px); }
-      button, input { display: block; box-sizing: border-box; margin-top: 16px; padding: 12px 16px; font: inherit; }
+      button, input, select { display: block; box-sizing: border-box; margin-top: 16px; padding: 12px 16px; font: inherit; }
+      input[type="checkbox"], input[type="radio"] { display: inline-block; margin-right: 8px; }
+      fieldset { margin-top: 16px; }
       #typed { min-height: 28px; margin-top: 16px; }
     </style>
   </head>
@@ -59,6 +63,21 @@ function pageHtml(): string {
         <label for="name">Name</label>
         <input id="name" name="name" autocomplete="off">
         <p id="typed" aria-live="polite">Nothing typed</p>
+        <form id="profile-form">
+          <label for="account-token">Account token</label>
+          <input id="account-token" name="account-token" type="password" autocomplete="off">
+          <label for="preferred-language">Preferred language</label>
+          <select id="preferred-language" name="preferred-language">
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+          </select>
+          <label><input id="product-updates" type="checkbox">Receive product updates</label>
+          <fieldset>
+            <legend>Plan</legend>
+            <label><input id="plan-basic" type="radio" name="plan" value="basic" checked>Basic</label>
+            <label><input id="plan-pro" type="radio" name="plan" value="pro">Professional</label>
+          </fieldset>
+        </form>
         <button id="popup" type="button">Open popup</button>
         <button id="blocked" type="button">Open blocked popup</button>
       </section>
@@ -122,6 +141,13 @@ async function waitFor<T>(
 function assertPathWithin(root: string, candidate: string): void {
   const rel = relative(resolve(root), resolve(candidate))
   assert.ok(rel && !rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel))
+}
+
+function readPngDimensions(path: string): { width: number; height: number } {
+  const bytes = readFileSync(path)
+  assert.deepEqual(bytes.subarray(0, 8), PNG_SIGNATURE)
+  assert.equal(bytes.subarray(12, 16).toString('ascii'), 'IHDR')
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
 }
 
 async function runSmoke(): Promise<SmokeResult> {
@@ -217,8 +243,14 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(opened.screenshot.url.startsWith('sidekick-browser://artifact/'), true)
     assert.equal(existsSync(opened.screenshot.path), true)
     assertPathWithin(artifactRoot, opened.screenshot.path)
-    assert.deepEqual(readFileSync(opened.screenshot.path).subarray(0, 8), PNG_SIGNATURE)
-    progress('Open, semantic observation, and screenshot passed')
+    const viewportPixels = readPngDimensions(opened.screenshot.path)
+    assert.deepEqual(viewportPixels, {
+      width: opened.viewport.width,
+      height: opened.viewport.height
+    })
+    assert.equal(opened.screenshot.width, opened.viewport.width)
+    assert.equal(opened.screenshot.height, opened.viewport.height)
+    progress('Open, semantic observation, and viewport-sized screenshot passed')
 
     const initialHash = opened.screenshot.sha256
     const clicked = await service.click({
@@ -261,6 +293,73 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(typedValue.value, 'Ada Lovelace')
     assert.match(typed.observation.semanticSnapshot ?? '', /Typed: Ada Lovelace/)
     progress('Semantic type passed')
+
+    const sensitiveFormValue = 'native-browser-smoke-sensitive-9472'
+    const filledForm = await service.fillForm({
+      sessionId: opened.sessionId,
+      fields: [
+        {
+          kind: 'textbox',
+          target: { role: 'textbox', name: 'Account token', exact: true },
+          value: sensitiveFormValue
+        },
+        {
+          kind: 'select',
+          target: { role: 'combobox', name: 'Preferred language', exact: true },
+          values: ['es']
+        },
+        {
+          kind: 'checkbox',
+          target: { role: 'checkbox', name: 'Receive product updates', exact: true },
+          checked: true
+        },
+        {
+          kind: 'radio',
+          target: { role: 'radio', name: 'Professional', exact: true },
+          checked: true
+        }
+      ]
+    })
+    const safeFormDiagnostics = JSON.stringify({
+      stopReason: filledForm.stopReason,
+      fields: filledForm.fields.map((field) => ({
+        index: field.index,
+        kind: field.kind,
+        status: field.status,
+        error: field.error,
+        verification: field.verification
+      }))
+    })
+    assert.equal(filledForm.completed, true, safeFormDiagnostics)
+    assert.equal(filledForm.stopReason, 'completed')
+    assert.equal(filledForm.attemptedFields, 4)
+    assert.equal(filledForm.filledFields, 4)
+    assert.equal(
+      filledForm.fields.every(
+        (field) => field.status === 'filled' && field.verification?.passed === true
+      ),
+      true
+    )
+    assert.equal(filledForm.observation.screenshot, undefined)
+    assert.equal(JSON.stringify(filledForm).includes(sensitiveFormValue), false)
+    const verifiedFormState = await service.evaluate({
+      sessionId: opened.sessionId,
+      expression: `(() => ({
+        textboxMatches: document.querySelector('#account-token').value === ${JSON.stringify(sensitiveFormValue)},
+        selectMatches: document.querySelector('#preferred-language').value === 'es',
+        checkboxMatches: document.querySelector('#product-updates').checked === true,
+        radioMatches: document.querySelector('#plan-pro').checked === true,
+        otherRadioCleared: document.querySelector('#plan-basic').checked === false
+      }))()`
+    })
+    assert.deepEqual(verifiedFormState.value, {
+      textboxMatches: true,
+      selectMatches: true,
+      checkboxMatches: true,
+      radioMatches: true,
+      otherRadioCleared: true
+    })
+    progress('Verified batched native form fill without exposing the sensitive value')
 
     await service.evaluate({
       sessionId: opened.sessionId,
@@ -379,6 +478,8 @@ async function runSmoke(): Promise<SmokeResult> {
       sessionId: opened.sessionId,
       semanticNodeCount: opened.semanticNodeCount ?? 0,
       screenshotBytes: opened.screenshot.bytes,
+      viewportPixelsMatch: true,
+      formFieldsVerified: filledForm.fields.filter((field) => field.verification?.passed).length,
       fullPageBytes: fullPage.bytes,
       elementBytes: element.bytes,
       screenshotChanged: clicked.observation.screenshotChanged === true,

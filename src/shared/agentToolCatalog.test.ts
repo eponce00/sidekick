@@ -87,6 +87,7 @@ describe('canonical agent tool catalog', () => {
         'browser_click',
         'browser_type',
         'browser_select',
+        'browser_fill_form',
         'browser_press',
         'browser_scroll',
         'browser_hover',
@@ -116,6 +117,31 @@ describe('canonical agent tool catalog', () => {
     }).find(({ definition }) => definition.function.name === 'browser_evaluate')
     expect(evaluation?.definition.function.description).toContain('read-only')
     expect(evaluation?.definition.function.description).toContain('dedicated browser action tools')
+    const formFill = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_fill_form')
+    expect(formFill).toMatchObject({
+      capability: 'browser',
+      risk: 'execute',
+      presentation: { kind: 'browser' },
+      definition: {
+        function: {
+          parameters: {
+            required: ['fields'],
+            properties: { fields: { minItems: 1, maxItems: 25 } }
+          }
+        }
+      }
+    })
+    const click = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_click')
+    expect(click?.definition.function.parameters).toMatchObject({
+      anyOf: expect.arrayContaining([{ required: ['x', 'y', 'screenshot_id'] }]),
+      properties: { screenshot_id: { type: 'string' } }
+    })
   })
 
   it('exposes goal completion control only inside a durable goal run', () => {

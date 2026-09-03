@@ -179,6 +179,40 @@ export function safeToolArguments(
       value_bytes: Buffer.byteLength(stringArg(args, 'value'))
     }
   }
+  if (name === 'browser_fill_form') {
+    const fields = Array.isArray(args.fields) ? args.fields : []
+    return {
+      fields: fields.map((raw) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { invalid: true }
+        const field = raw as Record<string, unknown>
+        const safe = {
+          kind: field.kind,
+          ref: field.ref,
+          selector: field.selector,
+          text: field.text
+        }
+        if ('value' in field) {
+          return {
+            ...safe,
+            value_redacted: true,
+            value_bytes: Buffer.byteLength(typeof field.value === 'string' ? field.value : '')
+          }
+        }
+        if ('values' in field) {
+          const values = Array.isArray(field.values)
+            ? field.values.filter((value): value is string => typeof value === 'string')
+            : []
+          return {
+            ...safe,
+            values_redacted: true,
+            value_count: values.length,
+            values_bytes: values.reduce((sum, value) => sum + Buffer.byteLength(value), 0)
+          }
+        }
+        return { ...safe, checked_redacted: 'checked' in field }
+      })
+    }
+  }
   return Object.fromEntries(
     Object.entries(args).map(([key, value]) => [
       key,
@@ -390,6 +424,7 @@ export class AgentToolRuntime {
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
     if (name === 'browser_type') return 'Type in browser'
     if (name === 'browser_select') return 'Select browser option'
+    if (name === 'browser_fill_form') return 'Fill browser form'
     if (name === 'browser_press') return `Press ${stringArg(args, 'key', 'key')}`
     if (name === 'browser_scroll') return 'Scroll browser'
     if (name === 'browser_hover') return 'Hover browser element'

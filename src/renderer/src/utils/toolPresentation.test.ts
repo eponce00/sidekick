@@ -8,9 +8,7 @@ import {
 
 describe('tool presentation', () => {
   it('classifies built-in tools from stable names and legacy command strings', () => {
-    expect(
-      getToolKind({ name: 'read', command: 'read', title: 'Read' })
-    ).toBe('file-read')
+    expect(getToolKind({ name: 'read', command: 'read', title: 'Read' })).toBe('file-read')
     expect(getToolKind({ command: 'web_image_search("mountains")', title: 'Image search' })).toBe(
       'image-search'
     )
@@ -24,6 +22,7 @@ describe('tool presentation', () => {
 
   it('provides concise state and approval copy', () => {
     expect(getToolStatusLabel('success')).toBe('Completed')
+    expect(getToolStatusLabel('partial')).toBe('Partially completed')
     expect(getToolStatusLabel('error')).toBe('Failed')
     expect(getToolApprovalLabel({ accessLevel: 'confirm', approvalStatus: 'pending' })).toBe(
       'Approval needed'

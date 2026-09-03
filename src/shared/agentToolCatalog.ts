@@ -106,6 +106,14 @@ function presentationTitle(
     }
   if (name === 'browser_observe') return { kind, title: 'Inspect browser' }
   if (name === 'browser_screenshot') return { kind, title: 'Capture browser screenshot' }
+  if (name === 'browser_fill_form') {
+    const count = Array.isArray(args.fields) ? args.fields.length : 0
+    return {
+      kind,
+      title: 'Fill browser form',
+      detail: count ? `${count} field${count === 1 ? '' : 's'}` : undefined
+    }
+  }
   if (name === 'browser_verify')
     return { kind, title: 'Verify UI visually', detail: stringArgument(args, 'criterion') }
   if (name.startsWith('browser_'))
@@ -607,34 +615,54 @@ const browserScreenshot = definition(
 
 const browserClick = definition(
   'browser_click',
-  'Perform a real user click and wait for the page to settle before returning the changed observation. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and are interpreted in current viewport CSS pixels.',
+  'Perform a real user click and wait for the page to settle before returning compact semantic state. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and must include the screenshot_id of the viewport image they came from; SideKick rejects stale images and maps resized image pixels safely. Routine screenshots are omitted unless requested, coordinates were used, or the action had no visual effect.',
   {
     type: 'object',
     anyOf: [
       { required: ['ref'] },
       { required: ['selector'] },
       { required: ['text'] },
-      { required: ['x', 'y'] }
+      { required: ['name'] },
+      { required: ['role'] },
+      { required: ['x', 'y', 'screenshot_id'] }
     ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
+      name: { type: 'string', description: 'Accessible name or label.' },
+      role: { type: 'string', description: 'Accessible role such as button or link.' },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
       x: { type: 'number', minimum: 0 },
       y: { type: 'number', minimum: 0 },
+      screenshot_id: {
+        type: 'string',
+        description: 'ID of the current viewport screenshot used to choose x and y.'
+      },
       button: { type: 'string', enum: ['left', 'middle', 'right'] },
-      click_count: { type: 'number', minimum: 1, maximum: 3 }
+      click_count: { type: 'number', minimum: 1, maximum: 3 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
     }
   }
 )
 
 const browserType = definition(
   'browser_type',
-  'Enter text into a browser field selected by semantic ref, CSS selector, or label/placeholder text, then return the changed observation.',
+  'Enter text into one browser field, then return compact verified page state. Prefer browser_fill_form when two or more fields can be completed together.',
   {
     type: 'object',
     required: ['value'],
-    anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }],
+    anyOf: [
+      { required: ['ref'] },
+      { required: ['selector'] },
+      { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] }
+    ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
@@ -642,9 +670,21 @@ const browserType = definition(
         type: 'string',
         description: 'Visible label or placeholder used to locate the field.'
       },
+      name: { type: 'string', description: 'Accessible field name or label.' },
+      role: {
+        type: 'string',
+        enum: ['textbox', 'searchbox', 'combobox', 'spinbutton'],
+        description: 'Accessible field role.'
+      },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
       value: { type: 'string' },
       clear: { type: 'boolean', description: 'Replace existing content. Defaults to true.' },
-      submit: { type: 'boolean', description: 'Press Enter after typing.' }
+      submit: { type: 'boolean', description: 'Press Enter after typing.' },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
     }
   }
 )
@@ -655,12 +695,91 @@ const browserSelect = definition(
   {
     type: 'object',
     required: ['values'],
-    anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }],
+    anyOf: [
+      { required: ['ref'] },
+      { required: ['selector'] },
+      { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] }
+    ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
-      values: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string' } }
+      name: { type: 'string', description: 'Accessible select name or label.' },
+      role: {
+        type: 'string',
+        enum: ['combobox', 'listbox'],
+        description: 'Accessible select role.'
+      },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
+      values: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string' } },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
+    }
+  }
+)
+
+const browserFillForm = definition(
+  'browser_fill_form',
+  'Fill up to 25 independent standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Every safe field is attempted even when another field fails; the batch stops early only if the page changes. Each actual post-fill state is verified, partial completion is reported explicitly, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Retry only failed fields. Use individual browser tools for custom widgets or autocomplete controls.',
+  {
+    type: 'object',
+    required: ['fields'],
+    properties: {
+      fields: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 25,
+        items: {
+          type: 'object',
+          required: ['kind'],
+          allOf: [
+            {
+              anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }]
+            },
+            {
+              anyOf: [
+                { properties: { kind: { enum: ['textbox'] } }, required: ['value'] },
+                { properties: { kind: { enum: ['select'] } }, required: ['values'] },
+                { properties: { kind: { enum: ['checkbox'] } }, required: ['checked'] },
+                { properties: { kind: { enum: ['radio'] } }, required: ['checked'] }
+              ]
+            }
+          ],
+          properties: {
+            kind: { type: 'string', enum: ['textbox', 'select', 'checkbox', 'radio'] },
+            ref: {
+              type: 'string',
+              description: 'Preferred current element ref from browser_observe.'
+            },
+            selector: { type: 'string', description: 'Unique CSS selector fallback.' },
+            text: {
+              type: 'string',
+              description: 'Accessible label or placeholder fallback; must resolve unambiguously.'
+            },
+            value: {
+              type: 'string',
+              description: 'Replacement text for a textbox. It is redacted from all tool records.'
+            },
+            values: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 20,
+              items: { type: 'string' },
+              description: 'Option values or visible labels for a native select.'
+            },
+            checked: {
+              type: 'boolean',
+              description:
+                'Desired checkbox state. Radio fields require true because a real user cannot directly uncheck one radio.'
+            }
+          }
+        }
+      }
     }
   }
 )
@@ -675,6 +794,10 @@ const browserPress = definition(
       key: {
         type: 'string',
         description: 'Key such as Enter, Tab, Escape, Control+A, Meta+L, or ArrowDown.'
+      },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
       }
     }
   }
@@ -689,28 +812,40 @@ const browserScroll = definition(
       ref: { type: 'string' },
       selector: { type: 'string' },
       delta_x: { type: 'number', minimum: -10000, maximum: 10000 },
-      delta_y: { type: 'number', minimum: -10000, maximum: 10000 }
+      delta_y: { type: 'number', minimum: -10000, maximum: 10000 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when visual layout must be inspected. Defaults to auto.'
+      }
     }
   }
 )
 
 const browserHover = definition(
   'browser_hover',
-  'Hover a semantic element, selector, visible text, or viewport coordinate and return the changed observation.',
+  'Hover a semantic element, selector, visible text, or viewport coordinate and return the changed observation. Coordinate targets require the screenshot_id of the current viewport image.',
   {
     type: 'object',
     anyOf: [
       { required: ['ref'] },
       { required: ['selector'] },
       { required: ['text'] },
-      { required: ['x', 'y'] }
+      { required: ['x', 'y', 'screenshot_id'] }
     ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
       x: { type: 'number', minimum: 0 },
-      y: { type: 'number', minimum: 0 }
+      y: { type: 'number', minimum: 0 },
+      screenshot_id: {
+        type: 'string',
+        description: 'ID of the current viewport screenshot used to choose x and y.'
+      },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when visual layout must be inspected. Defaults to auto.'
+      }
     }
   }
 )
@@ -724,7 +859,11 @@ const browserWait = definition(
       text: { type: 'string' },
       selector: { type: 'string' },
       url_contains: { type: 'string' },
-      milliseconds: { type: 'number', minimum: 50, maximum: 30000 }
+      milliseconds: { type: 'number', minimum: 50, maximum: 30000 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image after the wait. Defaults to false.'
+      }
     }
   }
 )
@@ -832,6 +971,7 @@ const browserTools = [
   browserClick,
   browserType,
   browserSelect,
+  browserFillForm,
   browserPress,
   browserScroll,
   browserHover,

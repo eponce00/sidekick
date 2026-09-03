@@ -61,6 +61,56 @@ describe('AgentToolRecoveryController', () => {
     expect(failure(4)).toEqual({})
   })
 
+  it('resets failure streaks after a successful alternative action makes progress', () => {
+    const controller = new AgentToolRecoveryController()
+    const fail = () =>
+      controller.observeCall({
+        name: 'browser_fill_form',
+        arguments: { fields: [{ kind: 'textbox' }] },
+        result: toolExecutionFailed({
+          title: 'Fill browser form',
+          code: 'conflict',
+          message: 'One field could not be verified',
+          retryable: true
+        }),
+        readOnly: false
+      })
+
+    expect(fail()).toEqual({})
+    controller.observeCall({
+      name: 'browser_type',
+      arguments: { ref: 'field-1' },
+      result: toolExecutionSucceeded({ title: 'Type in browser', data: { changed: true } }),
+      readOnly: false
+    })
+    expect(fail()).toEqual({})
+  })
+
+  it('treats verified field mutations in a partial form result as progress', () => {
+    const controller = new AgentToolRecoveryController()
+    const result = toolExecutionFailed({
+      title: 'Fill browser form',
+      code: 'conflict',
+      message: 'One field could not be verified',
+      retryable: true,
+      data: {
+        outcome: 'partial',
+        fields: [{ status: 'filled' }, { status: 'failed' }]
+      }
+    })
+
+    for (let index = 0; index < 4; index++) {
+      expect(
+        controller.observeCall({
+          name: 'browser_fill_form',
+          arguments: { fields: [{ kind: 'textbox', index }] },
+          result,
+          readOnly: false
+        })
+      ).toEqual({})
+    }
+  })
+
   it('stops alternating malformed calls that evade an exact-call counter', () => {
     const controller = new AgentToolRecoveryController()
     const observations = Array.from({ length: 8 }, (_, index) =>

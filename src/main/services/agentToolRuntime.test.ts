@@ -34,6 +34,55 @@ describe('safe tool arguments', () => {
       value_bytes: 28
     })
   })
+
+  it('redacts every value kind in a batched browser form', () => {
+    const safe = safeToolArguments('browser_fill_form', {
+      fields: [
+        { kind: 'textbox', ref: 'ax-2-9', value: 'private text' },
+        { kind: 'select', selector: '#country', values: ['Private option'] },
+        { kind: 'checkbox', text: 'Sensitive preference', checked: true },
+        { kind: 'radio', ref: 'ax-2-12', checked: true }
+      ]
+    })
+
+    expect(safe).toEqual({
+      fields: [
+        {
+          kind: 'textbox',
+          ref: 'ax-2-9',
+          selector: undefined,
+          text: undefined,
+          value_redacted: true,
+          value_bytes: 12
+        },
+        {
+          kind: 'select',
+          ref: undefined,
+          selector: '#country',
+          text: undefined,
+          values_redacted: true,
+          value_count: 1,
+          values_bytes: 14
+        },
+        {
+          kind: 'checkbox',
+          ref: undefined,
+          selector: undefined,
+          text: 'Sensitive preference',
+          checked_redacted: true
+        },
+        {
+          kind: 'radio',
+          ref: 'ax-2-12',
+          selector: undefined,
+          text: undefined,
+          checked_redacted: true
+        }
+      ]
+    })
+    expect(JSON.stringify(safe)).not.toContain('private text')
+    expect(JSON.stringify(safe)).not.toContain('Private option')
+  })
 })
 
 async function temporaryRoot(prefix: string): Promise<string> {

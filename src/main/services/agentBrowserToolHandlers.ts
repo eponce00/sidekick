@@ -12,6 +12,8 @@ import type { ToolOutputStore } from './toolOutputStore'
 import {
   NativeBrowserSessionService,
   type BrowserActionResult,
+  type BrowserFillFormResult,
+  type BrowserFormFieldInput,
   type BrowserNavigateInput,
   type BrowserObservation,
   type BrowserScreenshotArtifact,
@@ -26,6 +28,7 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_click',
   'browser_type',
   'browser_select',
+  'browser_fill_form',
   'browser_press',
   'browser_scroll',
   'browser_hover',
@@ -42,7 +45,40 @@ export const AGENT_BROWSER_TOOL_NAMES = [
 
 const DEFAULT_MAX_CONVERSATION_SESSIONS = 6
 const MAX_PERSISTED_SEMANTIC_LINES = 300
+const MAX_ACTION_SEMANTIC_LINES = 60
+const MAX_ACTION_SEMANTIC_LINE_CHARS = 480
 const MAX_PERSISTED_TELEMETRY = 100
+
+const PRIMARY_SEMANTIC_ROLES = new Set([
+  'alert',
+  'button',
+  'checkbox',
+  'combobox',
+  'dialog',
+  'link',
+  'listbox',
+  'menuitem',
+  'radio',
+  'searchbox',
+  'slider',
+  'spinbutton',
+  'status',
+  'switch',
+  'tab',
+  'textbox',
+  'treeitem'
+])
+const CONTEXT_SEMANTIC_ROLES = new Set([
+  'form',
+  'group',
+  'heading',
+  'main',
+  'navigation',
+  'region',
+  'row',
+  'rowheader',
+  'table'
+])
 
 interface BrowserScopeEntry {
   sessionId: string
@@ -153,6 +189,71 @@ function withoutArtifactPath(
   return publicArtifact
 }
 
+function semanticRole(line: string): string {
+  return /^\s*-\s+([^\s]+)/.exec(line)?.[1]?.toLowerCase() ?? ''
+}
+
+/**
+ * Keep actionable nodes from the entire accessibility tree instead of blindly
+ * taking its head. Long selects can otherwise spend the whole model budget on
+ * options near the top of a form and hide later fields and submit buttons.
+ */
+function prioritizedSemanticSnapshot(snapshot: string, lineLimit: number): string {
+  const lines = snapshot.split('\n')
+  if (lines.length <= lineLimit) return snapshot
+  const ranked = lines.map((line, index) => {
+    const role = semanticRole(line)
+    let priority = 5
+    if (PRIMARY_SEMANTIC_ROLES.has(role)) priority = 0
+    else if (CONTEXT_SEMANTIC_ROLES.has(role)) priority = 1
+    else if (/\b(?:checked|selected|required|expanded|pressed|disabled)=/i.test(line)) priority = 2
+    else if (role === 'option') priority = 3
+    else if (role === 'statictext' || role === 'inlinetextbox') priority = 4
+    return { line, index, priority }
+  })
+  const selected = ranked
+    .sort((left, right) => left.priority - right.priority || left.index - right.index)
+    .slice(0, Math.max(1, lineLimit - 1))
+    .sort((left, right) => left.index - right.index)
+  return `${selected.map(({ line }) => line).join('\n')}\n... semantic snapshot prioritized and limited by SideKick ...`
+}
+
+function boundedSemanticLine(line: string): string {
+  if (line.length <= MAX_ACTION_SEMANTIC_LINE_CHARS) return line
+  const tailChars = 140
+  const headChars = MAX_ACTION_SEMANTIC_LINE_CHARS - tailChars - 5
+  return `${line.slice(0, headChars)} ... ${line.slice(-tailChars)}`
+}
+
+/**
+ * Closed native selects can expose hundreds of option nodes even though
+ * browser_select accepts the intended visible label directly. Repeating those
+ * nodes after every action bloats the next model prefill and can hide the
+ * controls that actually matter. Keep the controls, omit option inventories,
+ * and bound pathological accessible names while preserving ref-bearing tails.
+ */
+function compactSemanticSnapshot(snapshot: string, lineLimit: number): string {
+  const lines = snapshot.split('\n')
+  const optionCount = lines.reduce(
+    (count, line) => count + (semanticRole(line) === 'option' ? 1 : 0),
+    0
+  )
+  const nonOptionLines = optionCount
+    ? lines.filter((line) => semanticRole(line) !== 'option')
+    : lines
+  const availableLines = Math.max(1, lineLimit - (optionCount ? 1 : 0))
+  const prioritized = nonOptionLines.length
+    ? prioritizedSemanticSnapshot(nonOptionLines.join('\n'), availableLines)
+    : ''
+  const bounded = prioritized.split('\n').filter(Boolean).map(boundedSemanticLine)
+  if (optionCount) {
+    bounded.push(
+      `... ${optionCount} option nodes omitted; browser_select accepts an exact visible option label without expanding the list ...`
+    )
+  }
+  return bounded.join('\n')
+}
+
 function publicObservation(observation: BrowserObservation, semanticLineLimit?: number): unknown {
   const lineLimit = Math.max(
     1,
@@ -161,7 +262,7 @@ function publicObservation(observation: BrowserObservation, semanticLineLimit?: 
   const lines = observation.semanticSnapshot?.split('\n')
   const semanticSnapshot = lines
     ? lines.length > lineLimit
-      ? `${lines.slice(0, lineLimit).join('\n')}\n... semantic snapshot limited by SideKick ...`
+      ? prioritizedSemanticSnapshot(observation.semanticSnapshot!, lineLimit)
       : observation.semanticSnapshot
     : undefined
   return {
@@ -171,6 +272,82 @@ function publicObservation(observation: BrowserObservation, semanticLineLimit?: 
     console: observation.console.slice(-MAX_PERSISTED_TELEMETRY),
     failedRequests: observation.failedRequests.slice(-MAX_PERSISTED_TELEMETRY)
   }
+}
+
+function compactObservation(
+  observation: BrowserObservation,
+  screenshotAttached: boolean,
+  semanticLineLimit = MAX_ACTION_SEMANTIC_LINES
+): unknown {
+  const semanticSnapshot = observation.semanticSnapshot
+    ? compactSemanticSnapshot(observation.semanticSnapshot, semanticLineLimit)
+    : undefined
+  return {
+    observedAt: observation.observedAt,
+    tab: {
+      id: observation.tab.id,
+      title: observation.tab.title,
+      url: observation.tab.url,
+      loading: observation.tab.loading
+    },
+    viewport: observation.viewport,
+    pointer: observation.pointer ?? null,
+    ...(semanticSnapshot ? { semanticSnapshot } : {}),
+    semanticNodeCount: observation.semanticNodeCount,
+    visual: observation.screenshot
+      ? {
+          screenshotId: observation.screenshot.id,
+          width: observation.screenshot.width,
+          height: observation.screenshot.height,
+          sha256: observation.screenshot.sha256,
+          changed: observation.screenshot.changed,
+          unchangedStreak: observation.screenshot.unchangedStreak,
+          attached: screenshotAttached
+        }
+      : { attached: false },
+    console: observation.console.slice(-10),
+    failedRequests: observation.failedRequests.slice(-10),
+    instruction: screenshotAttached
+      ? 'Use the attached image only if semantic state is insufficient.'
+      : 'No image was attached to this routine result. Call browser_observe with include_screenshot=true only when visual evidence is needed.'
+  }
+}
+
+function compactAction(result: BrowserActionResult, screenshotAttached: boolean): unknown {
+  return {
+    sessionId: result.sessionId,
+    tabId: result.tabId,
+    action: result.action,
+    targetMode: result.targetMode,
+    coordinateFallbackUsed: result.coordinateFallbackUsed,
+    durationMs: result.durationMs,
+    quiescence: result.quiescence,
+    loopProtection: result.loopProtection,
+    ...(result.effect ? { effect: result.effect } : {}),
+    observation: compactObservation(result.observation, screenshotAttached)
+  }
+}
+
+function shouldAttachRoutineScreenshot(
+  name: string,
+  args: Record<string, unknown>,
+  observation: BrowserObservation | undefined
+): boolean {
+  if (args.include_screenshot === true) return true
+  if (args.include_screenshot === false) return false
+  if (name === 'browser_observe') return true
+  if (name === 'browser_navigate' || name === 'browser_resize') return true
+  if (finiteNumber(args, 'x') !== undefined && finiteNumber(args, 'y') !== undefined) return true
+  return (
+    [
+      'browser_click',
+      'browser_type',
+      'browser_select',
+      'browser_press',
+      'browser_scroll',
+      'browser_hover'
+    ].includes(name) && observation?.screenshotChanged === false
+  )
 }
 
 function publicAction(result: BrowserActionResult): unknown {
@@ -260,31 +437,95 @@ function observationFromResult(value: unknown): BrowserObservation | undefined {
 
 function targetFromArguments(
   args: Record<string, unknown>,
-  options: { required: boolean; coordinates?: boolean } = { required: true, coordinates: true }
+  options: { required: boolean; coordinates?: boolean; preferredRoles?: string[] } = {
+    required: true,
+    coordinates: true
+  }
 ): BrowserTarget | undefined {
   const ref = stringArgument(args, 'ref')
   const selector = stringArgument(args, 'selector')
   const text = stringArgument(args, 'text')
+  const name = stringArgument(args, 'name') ?? text
+  const role = stringArgument(args, 'role')
+  const nth = finiteNumber(args, 'nth')
   const x = finiteNumber(args, 'x')
   const y = finiteNumber(args, 'y')
+  const screenshotId = stringArgument(args, 'screenshot_id')
   if ((x === undefined) !== (y === undefined)) {
     throw new Error('Browser coordinates require both x and y')
   }
   if (x !== undefined && !options.coordinates) {
     throw new Error('This browser action does not accept coordinate targets')
   }
+  if (x !== undefined && !screenshotId) {
+    throw new Error('Browser coordinates require screenshot_id from the current viewport image')
+  }
   const target = {
     ...(ref ? { ref } : {}),
     ...(selector ? { selector } : {}),
-    ...(!ref && !selector && text ? { name: text, exact: false } : {}),
+    ...(!ref && !selector && role ? { role } : {}),
+    ...(!ref && !selector && name
+      ? { name, exact: typeof args.exact === 'boolean' ? args.exact : false }
+      : {}),
+    ...(nth !== undefined ? { nth } : {}),
+    ...(options.preferredRoles?.length ? { preferredRoles: options.preferredRoles } : {}),
+    ...(screenshotId ? { screenshotId } : {}),
     ...(x !== undefined && y !== undefined ? { coordinates: { x, y } } : {})
   } as BrowserTarget
-  if (!ref && !selector && !text && x === undefined) {
+  if (!ref && !selector && !name && !role && x === undefined) {
     if (options.required)
       throw new Error('A browser element ref, selector, text, or coordinates is required')
     return undefined
   }
   return target
+}
+
+function formFieldsFromArguments(args: Record<string, unknown>): BrowserFormFieldInput[] {
+  if (!Array.isArray(args.fields) || args.fields.length < 1) {
+    throw new Error('browser_fill_form requires at least one field')
+  }
+  if (args.fields.length > 25) throw new Error('browser_fill_form supports at most 25 fields')
+  return args.fields.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`browser_fill_form field ${index} must be an object`)
+    }
+    const field = raw as Record<string, unknown>
+    const kind = stringArgument(field, 'kind')
+    const target = targetFromArguments(field, { required: true, coordinates: false })!
+    if (kind === 'textbox') {
+      if (typeof field.value !== 'string') {
+        throw new Error(`browser_fill_form textbox field ${index} requires a string value`)
+      }
+      return { kind, target, value: field.value }
+    }
+    if (kind === 'select') {
+      const rawValues = Array.isArray(field.values) ? field.values : []
+      const values = rawValues.filter((value): value is string => typeof value === 'string')
+      if (!values.length || values.length !== rawValues.length || values.length > 20) {
+        throw new Error(
+          `browser_fill_form select field ${index} requires between one and 20 string values`
+        )
+      }
+      return { kind, target, values }
+    }
+    if (kind === 'checkbox') {
+      if (typeof field.checked !== 'boolean') {
+        throw new Error(`browser_fill_form checkbox field ${index} requires checked`)
+      }
+      return { kind, target, checked: field.checked }
+    }
+    if (kind === 'radio') {
+      if (field.checked !== true) {
+        throw new Error(`browser_fill_form radio field ${index} requires checked=true`)
+      }
+      return { kind, target, checked: true }
+    }
+    throw new Error(`browser_fill_form field ${index} has an unsupported kind`)
+  })
+}
+
+function publicFillForm(result: BrowserFillFormResult): unknown {
+  return { ...result, observation: publicObservation(result.observation) }
 }
 
 function errorResult(
@@ -639,6 +880,61 @@ async function boundedVisualSuccess(
   )
 }
 
+async function boundedVisualFormFailure(
+  outputs: ToolOutputStore,
+  manager: AgentBrowserSessionManager,
+  title: string,
+  result: BrowserFillFormResult,
+  signal: AbortSignal
+): Promise<ToolExecutionResult> {
+  const firstFailure = result.fields.find((field) => field.status === 'failed')
+  const unsupported = firstFailure?.error?.code === 'unsupported_control'
+  const recovery = unsupported
+    ? 'Use a dedicated browser action for this custom control, then resume the remaining fields.'
+    : 'Use the returned final observation to retarget only the failed fields. Do not repeat fields that were already verified.'
+  const verifiedFields = result.fields.filter(
+    (field) => field.status === 'filled' || field.status === 'unchanged'
+  ).length
+  const data = {
+    ...(publicFillForm(result) as Record<string, unknown>),
+    outcome: verifiedFields > 0 ? 'partial' : 'failed',
+    recovery: {
+      action: unsupported ? 'change_strategy' : 'refresh_state',
+      instruction: recovery,
+      verifiedFields,
+      failedFields: result.fields.filter((field) => field.status === 'failed').length,
+      skippedFields: result.fields.filter((field) => field.status === 'skipped').length
+    }
+  }
+  const visual = await prepareVisualAttachment(
+    manager.service,
+    result.observation.screenshot,
+    signal,
+    'Browser form state after the batch stopped'
+  )
+  const modelData = addVisualMetadata(data, visual.metadata)
+  const bounded = await outputs.apply(JSON.stringify(modelData), {
+    maxBytes: 40 * 1024,
+    maxLines: 600,
+    maxTokens: 6_000,
+    preview: 'head-tail'
+  })
+  return toolExecutionFailed({
+    title,
+    code: unsupported ? 'unsupported' : 'conflict',
+    message:
+      firstFailure?.error?.message ??
+      'The form batch stopped because the page changed before completion.',
+    retryable: !unsupported,
+    recoveryAction: unsupported ? 'change_strategy' : 'refresh_state',
+    recovery,
+    data: addVisualMetadata(data, visual.metadata),
+    modelContent: bounded.content,
+    output: bounded.output,
+    media: visual.media
+  })
+}
+
 export function registerBrowserToolHandlers(
   registry: AgentToolHandlerRegistry,
   manager: AgentBrowserSessionManager,
@@ -657,6 +953,24 @@ export function registerBrowserToolHandlers(
 
     let lease: BrowserSessionLease | undefined
     try {
+      const requestedNavigateAction =
+        name === 'browser_navigate' ? stringArgument(args, 'action') : undefined
+      const requestedNavigateUrl =
+        name === 'browser_navigate' ? stringArgument(args, 'url') : undefined
+      if (name === 'browser_navigate') {
+        if (!requestedNavigateAction) throw new Error('browser_navigate requires an action')
+        if (!['url', 'back', 'forward', 'reload'].includes(requestedNavigateAction)) {
+          throw new Error('browser_navigate action must be url, back, forward, or reload')
+        }
+        if (requestedNavigateAction === 'url' && !requestedNavigateUrl) {
+          throw new Error('browser_navigate action url requires a URL')
+        }
+        if (requestedNavigateAction !== 'url' && requestedNavigateUrl) {
+          throw new Error(
+            `browser_navigate action ${requestedNavigateAction} does not accept a URL`
+          )
+        }
+      }
       lease = await manager.lease(scope, context.workspaceRoot)
       if (name === 'browser_open') {
         const url = stringArgument(args, 'url')
@@ -716,6 +1030,32 @@ export function registerBrowserToolHandlers(
       }
 
       if (!lease) {
+        if (
+          name === 'browser_navigate' &&
+          requestedNavigateAction === 'url' &&
+          requestedNavigateUrl
+        ) {
+          const opened = await manager.open(
+            scope,
+            context.runId,
+            requestedNavigateUrl,
+            undefined,
+            context.workspaceRoot ? [context.workspaceRoot] : [],
+            context.signal
+          )
+          lease = opened.lease
+          const data = publicObservation(opened.observation)
+          return boundedVisualSuccess(
+            outputs,
+            manager,
+            title,
+            data,
+            data,
+            opened.observation.screenshot,
+            context.signal,
+            'Browser page opened for visual inspection'
+          )
+        }
         return toolExecutionFailed({
           title,
           code: 'not_found',
@@ -766,7 +1106,11 @@ export function registerBrowserToolHandlers(
         raw = await manager.service.click(
           {
             sessionId: lease.sessionId,
-            target: targetFromArguments(args)!,
+            target: targetFromArguments(args, {
+              required: true,
+              coordinates: true,
+              preferredRoles: ['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'switch']
+            })!,
             button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
             clickCount: (finiteNumber(args, 'click_count') as 1 | 2 | 3 | undefined) ?? 1
           },
@@ -776,7 +1120,11 @@ export function registerBrowserToolHandlers(
         raw = await manager.service.type(
           {
             sessionId: lease.sessionId,
-            target: targetFromArguments(args, { required: true, coordinates: false })!,
+            target: targetFromArguments(args, {
+              required: true,
+              coordinates: false,
+              preferredRoles: ['textbox', 'searchbox', 'combobox', 'spinbutton']
+            })!,
             text: typeof args.value === 'string' ? args.value : '',
             clear: args.clear !== false,
             submit: args.submit === true
@@ -791,11 +1139,24 @@ export function registerBrowserToolHandlers(
         raw = await manager.service.select(
           {
             sessionId: lease.sessionId,
-            target: targetFromArguments(args, { required: true, coordinates: false })!,
+            target: targetFromArguments(args, {
+              required: true,
+              coordinates: false,
+              preferredRoles: ['combobox', 'listbox']
+            })!,
             values
           },
           { signal: context.signal }
         )
+      } else if (name === 'browser_fill_form') {
+        const result = await manager.service.fillForm(
+          { sessionId: lease.sessionId, fields: formFieldsFromArguments(args) },
+          { signal: context.signal }
+        )
+        if (!result.completed) {
+          return boundedVisualFormFailure(outputs, manager, title, result, context.signal)
+        }
+        raw = result
       } else if (name === 'browser_press') {
         raw = await manager.service.press(
           { sessionId: lease.sessionId, key: stringArgument(args, 'key') || '' },
@@ -831,14 +1192,12 @@ export function registerBrowserToolHandlers(
           { signal: context.signal }
         )
       } else if (name === 'browser_navigate') {
-        const action = stringArgument(args, 'action')
-        const url = stringArgument(args, 'url')
-        if (!action) throw new Error('browser_navigate requires an action')
-        if (action === 'url' && !url) throw new Error('browser_navigate action url requires a URL')
         raw = await manager.service.navigate(
           {
             sessionId: lease.sessionId,
-            ...(action === 'url' ? { url: url! } : { action })
+            ...(requestedNavigateAction === 'url'
+              ? { url: requestedNavigateUrl! }
+              : { action: requestedNavigateAction! })
           } as BrowserNavigateInput,
           { signal: context.signal }
         )
@@ -982,13 +1341,19 @@ export function registerBrowserToolHandlers(
           ? { ...(raw as object), observation: publicObservation(observation, semanticLimit) }
           : publicObservation(observation, semanticLimit)
         : raw
+      const attachScreenshot = shouldAttachRoutineScreenshot(name, args, observation)
+      const modelData = observation
+        ? raw && typeof raw === 'object' && 'observation' in raw
+          ? compactAction(raw as BrowserActionResult, attachScreenshot)
+          : compactObservation(observation, attachScreenshot, semanticLimit)
+        : raw
       return boundedVisualSuccess(
         outputs,
         manager,
         title,
         data,
-        data,
-        observation?.screenshot,
+        modelData,
+        attachScreenshot ? observation?.screenshot : undefined,
         context.signal,
         mediaDescription
       )

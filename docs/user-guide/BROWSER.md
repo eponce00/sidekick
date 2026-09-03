@@ -12,6 +12,16 @@ viewport, move between tabs, wait for page state, inspect console and failed net
 verify an expected result. Screenshots are delivered as actual image input when the selected model
 supports vision.
 
+`browser_fill_form` batches up to 25 native textboxes, selects, checkboxes, and radio buttons in
+one model turn. It uses current semantic references or unambiguous selectors/accessible names,
+never coordinates. Fields are filled in order and their actual browser state is checked after each
+action. The batch stops before later fields when a field fails or the page changes, then returns one
+fresh semantic observation with per-field filled, unchanged, failed, or skipped status. Entered
+text, selected option values, and checked choices are redacted from durable tool records and
+results. The batch intentionally omits a result screenshot because text fields could expose those
+values visually; the live Browser panel still shows the current page. Custom widgets and
+autocomplete controls remain explicit single-action work.
+
 The Browser tab in the right workspace panel shows the live page, a highlighted cursor, and a
 short user-facing activity history. The page scales to the available panel without allowing a
 narrow or mobile viewport to stretch an image beyond the layout. Browser details remain available

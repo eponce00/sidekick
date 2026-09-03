@@ -139,6 +139,8 @@ export function getToolStatusLabel(status: ToolExecution['status']): string {
       return 'Running'
     case 'success':
       return 'Completed'
+    case 'partial':
+      return 'Partially completed'
     case 'error':
       return 'Failed'
     case 'denied':

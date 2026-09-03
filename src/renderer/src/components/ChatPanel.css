@@ -1272,6 +1272,10 @@ body[data-theme='light'] .message-user .message-action:hover {
   animation: tool-call-success-confirm 1.7s ease-out 0.65s forwards;
 }
 
+.tool-call-row-partial .tool-call-state {
+  color: var(--color-warning);
+}
+
 @keyframes tool-call-success-confirm {
   0%,
   55% {
