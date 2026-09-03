@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",

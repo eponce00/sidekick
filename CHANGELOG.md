@@ -2,8 +2,21 @@
 
 ## Unreleased
 
-- Added a native batched form-fill browser action with semantic targeting, per-field state
-  verification, redacted values, fail-fast page-change handling, and one final observation.
+## 0.6.1 — 2026-09-03
+
+SideKick 0.6.1 hardens and accelerates the native browser workflow introduced in 0.6.0.
+
+- Added verified batched form filling for standard controls with redacted values, safe continuation
+  across independent field failures, explicit partial-completion recovery, and page-change stops.
+- Reduced repeated model input with compact routine browser observations, prioritized actionable
+  controls, collapsed select-option inventories, bounded accessibility lines, and compact legacy
+  browser history reconstruction.
+- Strengthened semantic target uniqueness, role-aware targeting, select retention checks, text-focus
+  ownership, screenshot-coordinate scaling, and stale-image rejection.
+- Made recovery accounting progress-aware, kept internal tool-guard hints out of the chat timeline,
+  reduced repetitive browser narration, and recorded canonical tool execution timing.
+- Refreshed vulnerable transitive dependencies and restored a zero-finding production dependency
+  audit.
 
 ## 0.6.0 — 2026-08-30
 
