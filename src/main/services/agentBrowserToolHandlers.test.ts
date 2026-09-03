@@ -357,8 +357,10 @@ describe('native browser agent tool handlers', () => {
     expect(result.media).toBeUndefined()
     expect(result.modelContent).toContain('combobox \\"State\\"')
     expect(result.modelContent).toContain('button \\"Submit search\\"')
-    expect(result.modelContent).toContain('semantic snapshot prioritized')
+    expect(result.modelContent).toContain('400 option nodes omitted')
+    expect(result.modelContent).not.toContain('Country 0')
     expect(result.modelContent).not.toContain('Country 399')
+    expect(result.modelContent.length).toBeLessThan(8_000)
   })
 
   it('attaches vision for coordinate actions and exposes action-specific semantic roles', async () => {

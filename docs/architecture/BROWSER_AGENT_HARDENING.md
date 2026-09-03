@@ -36,6 +36,17 @@ These figures describe the single incident used for diagnosis, not a general ben
 | Example viewport image / CSS viewport | 3840×2016 / 1280×672 at device-pixel ratio 3 |
 | Cached-input accounting | unavailable; this must not be interpreted as a zero-token cache hit |
 
+### 2026-09-03 live follow-up
+
+A second real form run exposed the remaining latency split before the tighter
+semantic compaction in this change. After 14 model/tool rounds it had accumulated
+695.8 seconds of wall time: 666.1 seconds (95.7%) waiting for model first tokens,
+16.4 seconds (2.4%) executing tools, and 13.4 seconds (1.9%) in decode and other
+work. Prompt input grew from 9,979 to 55,563 tokens. Browser model receipts
+averaged 12,689 characters because a closed country select contributed hundreds
+of option nodes to every otherwise-compact semantic observation. The complete
+durable result was larger, but only `modelContent` was sent to the provider.
+
 ## Adopted design principles
 
 - **Make state transitions explicit and batch safe operations.** OpenAI's [Computer use loop](https://developers.openai.com/api/docs/guides/tools-computer-use#option-1-run-the-built-in-computer-use-loop) executes the returned action array in order and captures updated state after the batch. SideKick should likewise avoid a model round trip for every independent form field.
@@ -49,7 +60,7 @@ These figures describe the single incident used for diagnosis, not a general ben
 
 The branch currently implements the following:
 
-1. **Smaller model-facing state.** Routine actions now return a compact observation with actionable semantic lines prioritized across the captured tree, bounded diagnostics, and screenshot identity/hash metadata. Images are attached automatically for navigation, resize, coordinate actions, and no-effect recovery, or explicitly on request—not for every ordinary field action. Old verbose browser receipts larger than the legacy threshold are compacted when provider history is reconstructed, without rewriting the durable ledger. See the [browser handlers](../../src/main/services/agentBrowserToolHandlers.ts) and [history reconstruction](../../src/main/services/conversationRunPreparer.ts).
+1. **Smaller model-facing state.** Routine actions now return a compact observation with actionable semantic lines prioritized across the captured tree, bounded diagnostics, and screenshot identity/hash metadata. The routine semantic budget is 60 lines; closed-select option inventories are summarized rather than repeated, and pathological accessible-name lines are bounded while preserving their ref-bearing tails. Images are attached automatically for navigation, resize, coordinate actions, and no-effect recovery, or explicitly on request—not for every ordinary field action. Old verbose browser receipts larger than the legacy threshold are compacted when provider history is reconstructed, without rewriting the durable ledger. See the [browser handlers](../../src/main/services/agentBrowserToolHandlers.ts) and [history reconstruction](../../src/main/services/conversationRunPreparer.ts).
 2. **A complete target contract.** Click, type, and select expose accessible `role`, `name`, `exact`, and zero-based `nth`. Action-specific role filtering removes headings and wrappers but preserves ambiguity between multiple genuinely actionable controls. First-use URL navigation now opens the conversation browser automatically. See the [tool catalog](../../src/shared/agentToolCatalog.ts), [handler mapping](../../src/main/services/agentBrowserToolHandlers.ts), and [native target resolution](../../src/main/services/nativeBrowserSessionService.ts).
 3. **Bound, scaled visual fallback.** Viewport captures are normalized toward CSS dimensions. Coordinate click and hover require the `screenshot_id` of the image used to select the point, reject stale screenshots, validate against that image, and scale to the live viewport. A screenshot token is bound only when URL, document epoch, viewport, scroll offset, and DOM-mutation revision remain stable across capture. Electron's exact transient `UnknownVizError` capture failure receives two short, cancellation-aware retries; other surface errors fail immediately. See the [native screenshot and coordinate implementation](../../src/main/services/nativeBrowserSessionService.ts).
 4. **Stronger native select behavior.** Option matching now uses deterministic exact precedence followed by normalized case/whitespace matching and a unique partial fallback. Errors return bounded candidate text, and the selected values are read again after page handlers and quiescence. See the [native select implementation](../../src/main/services/nativeBrowserSessionService.ts).
@@ -69,6 +80,7 @@ Current checks on 2026-09-02:
 - `npm run lint`, `npm run typecheck`, `npm run docs:check`, and `git diff --check` passed.
 - `npm run build:win` produced the NSIS installer; packaged-runtime and Windows release-artifact validation passed, followed by a launched packaged-app smoke test with the expected four Electron processes.
 - A non-breaking transitive dependency refresh reduced `npm audit` from four findings to **0 vulnerabilities**. The full 767-test suite, lint, typechecking, and a real-Electron native-browser smoke were repeated successfully afterward.
+- After the 2026-09-03 option-tree and 60-line routine-observation change, the full **767-test** suite, lint, typechecking, diff hygiene, and another real-Electron native-browser smoke passed. A synthetic 400-option regression retained the lower State and Submit controls while omitting every option line from model content and remaining below the 8,000-character test ceiling.
 
 These checks validate implementation contracts, not model-level performance. Release qualification should additionally:
 

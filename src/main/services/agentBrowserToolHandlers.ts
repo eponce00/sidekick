@@ -45,7 +45,8 @@ export const AGENT_BROWSER_TOOL_NAMES = [
 
 const DEFAULT_MAX_CONVERSATION_SESSIONS = 6
 const MAX_PERSISTED_SEMANTIC_LINES = 300
-const MAX_ACTION_SEMANTIC_LINES = 120
+const MAX_ACTION_SEMANTIC_LINES = 60
+const MAX_ACTION_SEMANTIC_LINE_CHARS = 480
 const MAX_PERSISTED_TELEMETRY = 100
 
 const PRIMARY_SEMANTIC_ROLES = new Set([
@@ -217,6 +218,45 @@ function prioritizedSemanticSnapshot(snapshot: string, lineLimit: number): strin
   return `${selected.map(({ line }) => line).join('\n')}\n... semantic snapshot prioritized and limited by SideKick ...`
 }
 
+function boundedSemanticLine(line: string): string {
+  if (line.length <= MAX_ACTION_SEMANTIC_LINE_CHARS) return line
+  const tailChars = 140
+  const headChars = MAX_ACTION_SEMANTIC_LINE_CHARS - tailChars - 5
+  return `${line.slice(0, headChars)} ... ${line.slice(-tailChars)}`
+}
+
+/**
+ * Closed native selects can expose hundreds of option nodes even though
+ * browser_select accepts the intended visible label directly. Repeating those
+ * nodes after every action bloats the next model prefill and can hide the
+ * controls that actually matter. Keep the controls, omit option inventories,
+ * and bound pathological accessible names while preserving ref-bearing tails.
+ */
+function compactSemanticSnapshot(snapshot: string, lineLimit: number): string {
+  const lines = snapshot.split('\n')
+  const optionCount = lines.reduce(
+    (count, line) => count + (semanticRole(line) === 'option' ? 1 : 0),
+    0
+  )
+  const nonOptionLines = optionCount
+    ? lines.filter((line) => semanticRole(line) !== 'option')
+    : lines
+  const availableLines = Math.max(1, lineLimit - (optionCount ? 1 : 0))
+  const prioritized = nonOptionLines.length
+    ? prioritizedSemanticSnapshot(nonOptionLines.join('\n'), availableLines)
+    : ''
+  const bounded = prioritized
+    .split('\n')
+    .filter(Boolean)
+    .map(boundedSemanticLine)
+  if (optionCount) {
+    bounded.push(
+      `... ${optionCount} option nodes omitted; browser_select accepts an exact visible option label without expanding the list ...`
+    )
+  }
+  return bounded.join('\n')
+}
+
 function publicObservation(observation: BrowserObservation, semanticLineLimit?: number): unknown {
   const lineLimit = Math.max(
     1,
@@ -243,7 +283,7 @@ function compactObservation(
   semanticLineLimit = MAX_ACTION_SEMANTIC_LINES
 ): unknown {
   const semanticSnapshot = observation.semanticSnapshot
-    ? prioritizedSemanticSnapshot(observation.semanticSnapshot, semanticLineLimit)
+    ? compactSemanticSnapshot(observation.semanticSnapshot, semanticLineLimit)
     : undefined
   return {
     observedAt: observation.observedAt,
