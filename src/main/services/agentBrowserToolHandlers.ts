@@ -295,6 +295,7 @@ function shouldAttachRoutineScreenshot(
 ): boolean {
   if (args.include_screenshot === true) return true
   if (args.include_screenshot === false) return false
+  if (name === 'browser_observe') return true
   if (name === 'browser_navigate' || name === 'browser_resize') return true
   if (finiteNumber(args, 'x') !== undefined && finiteNumber(args, 'y') !== undefined) return true
   return (

@@ -2375,7 +2375,7 @@ export class NativeBrowserSessionService {
               const partial = options.filter(option =>
                 [option.value, option.label, option.text].some(candidate => {
                   const value = normalize(candidate);
-                  return value.startsWith(normalized) || normalized.startsWith(value);
+                  return Boolean(value) && (value.startsWith(normalized) || normalized.startsWith(value));
                 })
               );
               if (partial.length === 1) matches = partial;

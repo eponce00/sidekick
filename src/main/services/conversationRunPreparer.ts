@@ -106,6 +106,74 @@ function durableToolMedia(value: unknown): ToolResultMediaAttachment[] {
   }
 }
 
+const LEGACY_VERBOSE_BROWSER_ACTIONS = new Set([
+  'browser_click',
+  'browser_fill_form',
+  'browser_hover',
+  'browser_navigate',
+  'browser_press',
+  'browser_resize',
+  'browser_scroll',
+  'browser_select',
+  'browser_tabs',
+  'browser_type',
+  'browser_wait'
+])
+const LEGACY_BROWSER_RECEIPT_THRESHOLD = 4_000
+
+function compactLegacyBrowserReceipt(
+  name: string,
+  content: string
+): { content: string; compacted: boolean } {
+  if (!LEGACY_VERBOSE_BROWSER_ACTIONS.has(name) || content.length <= LEGACY_BROWSER_RECEIPT_THRESHOLD) {
+    return { content, compacted: false }
+  }
+  try {
+    const value = JSON.parse(content) as Record<string, unknown>
+    const observation =
+      value.observation && typeof value.observation === 'object'
+        ? (value.observation as Record<string, unknown>)
+        : undefined
+    const tab =
+      observation?.tab && typeof observation.tab === 'object'
+        ? (observation.tab as Record<string, unknown>)
+        : undefined
+    const screenshot =
+      observation?.screenshot && typeof observation.screenshot === 'object'
+        ? (observation.screenshot as Record<string, unknown>)
+        : undefined
+    return {
+      compacted: true,
+      content: JSON.stringify({
+        historicalBrowserReceipt: true,
+        action: typeof value.action === 'string' ? value.action : name,
+        ...(typeof value.targetMode === 'string' ? { targetMode: value.targetMode } : {}),
+        ...(typeof value.durationMs === 'number' ? { durationMs: value.durationMs } : {}),
+        page: {
+          ...(typeof tab?.title === 'string' ? { title: tab.title } : {}),
+          ...(typeof tab?.url === 'string' ? { url: tab.url } : {}),
+          ...(observation?.viewport && typeof observation.viewport === 'object'
+            ? { viewport: observation.viewport }
+            : {})
+        },
+        visual: {
+          ...(typeof observation?.screenshotChanged === 'boolean'
+            ? { changed: observation.screenshotChanged }
+            : {}),
+          ...(typeof screenshot?.sha256 === 'string' ? { sha256: screenshot.sha256 } : {})
+        },
+        ...(value.quiescence && typeof value.quiescence === 'object'
+          ? { quiescence: value.quiescence }
+          : {}),
+        note:
+          'SideKick compacted this legacy full-page action receipt. Inspect the current page only if it is still relevant.'
+      })
+    }
+  } catch {
+    return { content, compacted: false }
+  }
+}
+
 /**
  * Rebuild provider history from the append-only run ledger. UI segments are intentionally
  * excluded: they are a human projection and are neither protocol messages nor model input.
@@ -175,11 +243,14 @@ export function durableProviderHistory(
         payload.result && typeof payload.result === 'object'
           ? (payload.result as Record<string, unknown>)
           : {}
-      const media = durableToolMedia(result.media)
+      const name = String(payload.name || '')
+      const rawContent = typeof result.modelContent === 'string' ? result.modelContent : ''
+      const receipt = compactLegacyBrowserReceipt(name, rawContent)
+      const media = receipt.compacted ? [] : durableToolMedia(result.media)
       history.push({
         role: 'tool',
         tool_call_id: String(payload.toolCallId || ''),
-        content: typeof result.modelContent === 'string' ? result.modelContent : '',
+        content: receipt.content,
         ...(media.length ? { media } : {})
       })
     }
