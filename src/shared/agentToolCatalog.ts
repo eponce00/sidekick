@@ -607,34 +607,50 @@ const browserScreenshot = definition(
 
 const browserClick = definition(
   'browser_click',
-  'Perform a real user click and wait for the page to settle before returning the changed observation. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and are interpreted in current viewport CSS pixels.',
+  'Perform a real user click and wait for the page to settle before returning compact semantic state. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and are interpreted 1:1 in the attached viewport image. Routine screenshots are omitted unless requested, coordinates were used, or the action had no visual effect.',
   {
     type: 'object',
     anyOf: [
       { required: ['ref'] },
       { required: ['selector'] },
       { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] },
       { required: ['x', 'y'] }
     ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
+      name: { type: 'string', description: 'Accessible name or label.' },
+      role: { type: 'string', description: 'Accessible role such as button or link.' },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
       x: { type: 'number', minimum: 0 },
       y: { type: 'number', minimum: 0 },
       button: { type: 'string', enum: ['left', 'middle', 'right'] },
-      click_count: { type: 'number', minimum: 1, maximum: 3 }
+      click_count: { type: 'number', minimum: 1, maximum: 3 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
     }
   }
 )
 
 const browserType = definition(
   'browser_type',
-  'Enter text into a browser field selected by semantic ref, CSS selector, or label/placeholder text, then return the changed observation.',
+  'Enter text into one browser field, then return compact verified page state. Prefer browser_fill_form when two or more fields can be completed together.',
   {
     type: 'object',
     required: ['value'],
-    anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }],
+    anyOf: [
+      { required: ['ref'] },
+      { required: ['selector'] },
+      { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] }
+    ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
@@ -642,9 +658,21 @@ const browserType = definition(
         type: 'string',
         description: 'Visible label or placeholder used to locate the field.'
       },
+      name: { type: 'string', description: 'Accessible field name or label.' },
+      role: {
+        type: 'string',
+        enum: ['textbox', 'searchbox', 'combobox', 'spinbutton'],
+        description: 'Accessible field role.'
+      },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
       value: { type: 'string' },
       clear: { type: 'boolean', description: 'Replace existing content. Defaults to true.' },
-      submit: { type: 'boolean', description: 'Press Enter after typing.' }
+      submit: { type: 'boolean', description: 'Press Enter after typing.' },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
     }
   }
 )
@@ -655,12 +683,30 @@ const browserSelect = definition(
   {
     type: 'object',
     required: ['values'],
-    anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }],
+    anyOf: [
+      { required: ['ref'] },
+      { required: ['selector'] },
+      { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] }
+    ],
     properties: {
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
-      values: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string' } }
+      name: { type: 'string', description: 'Accessible select name or label.' },
+      role: {
+        type: 'string',
+        enum: ['combobox', 'listbox'],
+        description: 'Accessible select role.'
+      },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
+      values: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string' } },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
+      }
     }
   }
 )
@@ -675,6 +721,10 @@ const browserPress = definition(
       key: {
         type: 'string',
         description: 'Key such as Enter, Tab, Escape, Control+A, Meta+L, or ArrowDown.'
+      },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when semantic state is insufficient. Defaults to auto.'
       }
     }
   }
@@ -689,7 +739,11 @@ const browserScroll = definition(
       ref: { type: 'string' },
       selector: { type: 'string' },
       delta_x: { type: 'number', minimum: -10000, maximum: 10000 },
-      delta_y: { type: 'number', minimum: -10000, maximum: 10000 }
+      delta_y: { type: 'number', minimum: -10000, maximum: 10000 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when visual layout must be inspected. Defaults to auto.'
+      }
     }
   }
 )
@@ -710,7 +764,11 @@ const browserHover = definition(
       selector: { type: 'string' },
       text: { type: 'string' },
       x: { type: 'number', minimum: 0 },
-      y: { type: 'number', minimum: 0 }
+      y: { type: 'number', minimum: 0 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when visual layout must be inspected. Defaults to auto.'
+      }
     }
   }
 )
@@ -724,7 +782,11 @@ const browserWait = definition(
       text: { type: 'string' },
       selector: { type: 'string' },
       url_contains: { type: 'string' },
-      milliseconds: { type: 'number', minimum: 50, maximum: 30000 }
+      milliseconds: { type: 'number', minimum: 50, maximum: 30000 },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image after the wait. Defaults to false.'
+      }
     }
   }
 )

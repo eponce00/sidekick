@@ -291,6 +291,62 @@ describe('native browser agent tool handlers', () => {
     )
   })
 
+  it('auto-opens a conversation browser for first-use URL navigation', async () => {
+    const { registry, service } = setup()
+    const result = await execute(registry, 'browser_navigate', {
+      action: 'url',
+      url: 'https://example.com/first'
+    })
+
+    expect(result).toMatchObject({ status: 'success', media: [{ mimeType: 'image/png' }] })
+    expect(service.open).toHaveBeenCalledTimes(1)
+    expect(service.navigate).not.toHaveBeenCalled()
+  })
+
+  it('keeps lower actionable controls in compact routine results without repeating images', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const value = observation('session-1')
+    value.semanticNodeCount = 405
+    value.semanticSnapshot = [
+      '- document "Long form"',
+      ...Array.from({ length: 400 }, (_, index) =>
+        `  - option "Country ${index}" [ref=ax-1-${index + 10}]`
+      ),
+      '  - combobox "State" [ref=ax-1-900]',
+      '  - button "Submit search" [ref=ax-1-901]'
+    ].join('\n')
+    vi.mocked(service.click).mockResolvedValueOnce(actionResult(value, 'click'))
+
+    const result = await execute(registry, 'browser_click', { ref: 'ax-1-1' })
+
+    expect(result.status).toBe('success')
+    expect(result.media).toBeUndefined()
+    expect(result.modelContent).toContain('combobox \\"State\\"')
+    expect(result.modelContent).toContain('button \\"Submit search\\"')
+    expect(result.modelContent).toContain('semantic snapshot prioritized')
+    expect(result.modelContent).not.toContain('Country 399')
+  })
+
+  it('attaches vision for coordinate actions and exposes action-specific semantic roles', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+
+    const coordinate = await execute(registry, 'browser_click', { x: 100, y: 200 })
+    expect(coordinate).toMatchObject({ status: 'success', media: [{ mimeType: 'image/png' }] })
+
+    await execute(registry, 'browser_type', { text: 'State', value: 'Nevada' })
+    expect(service.type).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({
+          name: 'State',
+          preferredRoles: ['textbox', 'searchbox', 'combobox', 'spinbutton']
+        })
+      }),
+      expect.any(Object)
+    )
+  })
+
   it('replaces a persistent session when the conversation moves to another project', async () => {
     const { registry, service } = setup()
     await execute(

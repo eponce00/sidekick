@@ -34,6 +34,8 @@ export interface BrowserTarget {
   selector?: string
   exact?: boolean
   nth?: number
+  /** Internal action-specific ranking when a visible name matches multiple AX roles. */
+  preferredRoles?: string[]
   /** CSS-pixel fallback used only when no semantic target resolves. */
   coordinates?: { x: number; y: number }
 }
@@ -153,6 +155,13 @@ export interface BrowserActionResult {
   loopProtection: {
     unchangedRepeatCount: number
     blockedOnNextIdenticalAction: boolean
+  }
+  effect?: {
+    changed: boolean
+    kind: 'scroll'
+    before: { x: number; y: number }
+    after: { x: number; y: number }
+    message?: string
   }
   observation: BrowserObservation
 }
@@ -719,8 +728,31 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
     let image = await this.contents.capturePage()
-    let png = image.toPNG()
     let size = image.getSize()
+    // Electron's capturePage() returns native device pixels on high-DPI displays,
+    // while Chromium mouse coordinates and our BrowserTarget contract use CSS
+    // viewport pixels. Normalize the image to window.innerWidth/innerHeight so a
+    // point selected from the screenshot maps 1:1 back to sendInputEvent(). This
+    // also avoids sending a 3x-larger image to vision models on 300% Windows DPI.
+    const cssViewport = await this.executeJavaScript<{ width: number; height: number }>(
+      `(() => ({ width: window.innerWidth, height: window.innerHeight }))()`
+    ).catch(() => undefined)
+    if (
+      cssViewport &&
+      Number.isFinite(cssViewport.width) &&
+      Number.isFinite(cssViewport.height) &&
+      cssViewport.width >= 1 &&
+      cssViewport.height >= 1 &&
+      (size.width !== Math.round(cssViewport.width) || size.height !== Math.round(cssViewport.height))
+    ) {
+      image = image.resize({
+        width: Math.round(cssViewport.width),
+        height: Math.round(cssViewport.height),
+        quality: 'good'
+      })
+      size = image.getSize()
+    }
+    let png = image.toPNG()
     for (let attempt = 0; png.byteLength > MAX_MODEL_SCREENSHOT_BYTES && attempt < 4; attempt++) {
       const ratio = Math.min(0.85, Math.sqrt(MAX_MODEL_SCREENSHOT_BYTES / png.byteLength) * 0.9)
       const width = Math.max(320, Math.floor(size.width * ratio))
@@ -1949,13 +1981,33 @@ export class NativeBrowserSessionService {
     }
     const role = target.role?.toLowerCase()
     const exact = target.exact !== false
-    const matches = tab.semanticNodes.filter((node) => {
+    let matches = tab.semanticNodes.filter((node) => {
       if (role && node.role !== role) return false
       if (target.name === undefined) return true
       return exact
         ? node.name === target.name
         : node.name.toLowerCase().includes(target.name.toLowerCase())
     })
+    // A label such as "State" can appear on a heading, generic wrapper, and
+    // combobox. Prefer a case-insensitive exact accessible-name match before a
+    // broad substring match, then prefer roles appropriate to the requested
+    // action. Refs remain the deterministic escape hatch.
+    if (!exact && target.name !== undefined) {
+      const normalizedName = target.name.toLowerCase()
+      const exactNameMatches = matches.filter((node) => node.name.toLowerCase() === normalizedName)
+      if (exactNameMatches.length) matches = exactNameMatches
+    }
+    if (!role && target.preferredRoles?.length && matches.length > 1) {
+      const preferredRanks = new Map(
+        target.preferredRoles.map((preferredRole, index) => [preferredRole.toLowerCase(), index])
+      )
+      const bestRank = Math.min(
+        ...matches.map((node) => preferredRanks.get(node.role) ?? Number.MAX_SAFE_INTEGER)
+      )
+      if (bestRank !== Number.MAX_SAFE_INTEGER) {
+        matches = matches.filter((node) => preferredRanks.get(node.role) === bestRank)
+      }
+    }
     const nth = target.nth
     if (nth !== undefined) {
       const index = boundedInteger(nth, 0, Math.max(0, matches.length - 1), 'target nth')
@@ -1964,8 +2016,12 @@ export class NativeBrowserSessionService {
     }
     if (!matches.length) throw new Error('Semantic browser target was not found')
     if (matches.length > 1) {
+      const candidates = matches
+        .slice(0, 8)
+        .map((node) => `${node.role} ${quoteSnapshot(node.name)} [ref=${node.ref}]`)
+        .join('; ')
       throw new Error(
-        `Semantic browser target is ambiguous (${matches.length} matches); use a ref or nth`
+        `Semantic browser target is ambiguous (${matches.length} matches); use a ref or nth. Candidates: ${candidates}`
       )
     }
     return matches[0]
@@ -2298,14 +2354,44 @@ export class NativeBrowserSessionService {
         target.backendNodeId!,
         `function(values) {
           if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element');
-          const requested = new Set(values);
-          let matched = 0;
-          for (const option of this.options) {
-            const selected = requested.has(option.value) || requested.has(option.label) || requested.has(option.text);
-            option.selected = selected;
-            if (selected) matched++;
+          if (!this.multiple && values.length > 1) {
+            throw new Error('A single-select field accepts only one requested value');
           }
-          if (!matched) throw new Error('No select options matched the requested values or labels');
+          const normalize = value => String(value).trim().replace(/\\s+/g, ' ').toLowerCase();
+          const options = Array.from(this.options);
+          const chosen = new Set();
+          for (const requested of values) {
+            const raw = String(requested);
+            const normalized = normalize(raw);
+            let matches = options.filter(option =>
+              option.value === raw || option.label === raw || option.text === raw
+            );
+            if (!matches.length) {
+              matches = options.filter(option =>
+                [option.value, option.label, option.text].some(candidate => normalize(candidate) === normalized)
+              );
+            }
+            if (!matches.length && normalized) {
+              const partial = options.filter(option =>
+                [option.value, option.label, option.text].some(candidate => {
+                  const value = normalize(candidate);
+                  return value.startsWith(normalized) || normalized.startsWith(value);
+                })
+              );
+              if (partial.length === 1) matches = partial;
+            }
+            if (matches.length !== 1) {
+              const available = options.slice(0, 30).map(option => option.label || option.text || option.value);
+              const suffix = options.length > available.length ? ', ...' : '';
+              throw new Error(matches.length
+                ? 'A requested select value is ambiguous; use its exact option value. Candidates: ' + matches.slice(0, 10).map(option => option.label || option.text || option.value).join(', ')
+                : 'No select option matched one requested value. Available options: ' + available.join(', ') + suffix);
+            }
+            chosen.add(matches[0]);
+          }
+          for (const option of options) {
+            option.selected = chosen.has(option);
+          }
           this.dispatchEvent(new Event('input', { bubbles: true }));
           this.dispatchEvent(new Event('change', { bubbles: true }));
           return Array.from(this.selectedOptions).map(option => option.value);
@@ -2411,12 +2497,20 @@ export class NativeBrowserSessionService {
       const startedAt = this.now()
       const deltaX = Number.isFinite(input.deltaX) ? input.deltaX! : 0
       if (!Number.isFinite(input.deltaY)) throw new Error('scroll deltaY must be finite')
+      let scrollEffect: {
+        before: { x: number; y: number }
+        after: { x: number; y: number }
+      }
       if (target?.backendNodeId) {
         this.setPointer(tab, target, 'scroll', startedAt)
-        await this.callOnNode(
+        scrollEffect = await this.callOnNode(
           tab,
           target.backendNodeId,
-          `function(dx, dy) { this.scrollBy({ left: dx, top: dy, behavior: 'instant' }); }`,
+          `function(dx, dy) {
+            const before = { x: this.scrollLeft, y: this.scrollTop };
+            this.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+            return { before, after: { x: this.scrollLeft, y: this.scrollTop } };
+          }`,
           [deltaX, input.deltaY],
           signal
         )
@@ -2429,16 +2523,19 @@ export class NativeBrowserSessionService {
           fallbackUsed: false
         }
         this.setPointer(tab, point, 'scroll', startedAt)
-        tab.surface.sendInputEvent({
-          type: 'mouseWheel',
-          x: point.x,
-          y: point.y,
-          deltaX,
-          deltaY: input.deltaY,
-          canScroll: true
-        })
+        scrollEffect = await abortable(
+          tab.surface.executeJavaScript<{
+            before: { x: number; y: number }
+            after: { x: number; y: number }
+          }>(`(() => {
+            const before = { x: window.scrollX, y: window.scrollY };
+            window.scrollBy({ left: ${JSON.stringify(deltaX)}, top: ${JSON.stringify(input.deltaY)}, behavior: 'instant' });
+            return { before, after: { x: window.scrollX, y: window.scrollY } };
+          })()`),
+          signal
+        )
       }
-      return this.finishAction(
+      const result = await this.finishAction(
         session,
         tab,
         'scroll',
@@ -2448,6 +2545,21 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+      const changed =
+        scrollEffect.before.x !== scrollEffect.after.x || scrollEffect.before.y !== scrollEffect.after.y
+      result.effect = {
+        changed,
+        kind: 'scroll',
+        before: scrollEffect.before,
+        after: scrollEffect.after,
+        ...(!changed
+          ? {
+              message:
+                'Scroll had no effect at the current boundary. Target a scrollable element, reverse direction, or use a current semantic ref instead of repeating it.'
+            }
+          : {})
+      }
+      return result
     })
   }
 
