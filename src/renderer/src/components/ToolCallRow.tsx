@@ -2,6 +2,7 @@ import {
   Ban,
   Bot,
   Check,
+  CircleAlert,
   ChevronRight,
   Clock3,
   Code2,
@@ -81,6 +82,8 @@ function ToolStatusIcon({ status }: { status: ToolExecution['status'] }): React.
       return <Loader2 size={ICON_SIZE} className="icon-spin" />
     case 'success':
       return <Check size={ICON_SIZE} />
+    case 'partial':
+      return <CircleAlert size={ICON_SIZE} />
     case 'error':
       return <X size={ICON_SIZE} />
     case 'denied':

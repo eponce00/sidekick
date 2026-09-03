@@ -78,6 +78,21 @@ function warning(reason: string, count: number, instruction: string): string {
   return `<sidekick_tool_guard trust="app-policy" reason="${reason}" count="${count}">\n${instruction}\n</sidekick_tool_guard>`
 }
 
+function madeMaterialProgress(result: ToolExecutionResult): boolean {
+  if (!result.data || typeof result.data !== 'object' || Array.isArray(result.data)) return false
+  const fields = (result.data as Record<string, unknown>).fields
+  return (
+    Array.isArray(fields) &&
+    fields.some(
+      (field) =>
+        Boolean(field) &&
+        typeof field === 'object' &&
+        !Array.isArray(field) &&
+        (field as Record<string, unknown>).status === 'filled'
+    )
+  )
+}
+
 /**
  * Run-scoped, tool-agnostic guardrails. Recoverability describes how a model may
  * correct an error; this controller independently decides when repetition is no
@@ -104,7 +119,8 @@ export class AgentToolRecoveryController {
   }): ToolRecoveryObservation {
     const toolName = input.name.toLowerCase()
     if (input.result.status === 'success') {
-      this.clearToolFailures(toolName)
+      if (input.readOnly) this.clearToolFailures(toolName)
+      else this.clearFailures()
       if (!input.readOnly) return {}
       const callFingerprint = canonicalToolFingerprint(toolName, input.arguments)
       const outputFingerprint = canonicalToolFingerprint('result', input.result.modelContent)
@@ -133,6 +149,10 @@ export class AgentToolRecoveryController {
     }
 
     if (input.result.status !== 'error') return {}
+    if (madeMaterialProgress(input.result)) {
+      this.clearFailures()
+      return {}
+    }
     const errorCode = input.result.error?.code ?? 'internal'
     const exact = canonicalToolFingerprint(toolName, {
       arguments: input.arguments,
@@ -229,6 +249,13 @@ export class AgentToolRecoveryController {
     for (const [key, detail] of this.failureDetails) {
       if (detail.toolName.toLowerCase() === toolName) this.failureDetails.delete(key)
     }
+  }
+
+  private clearFailures(): void {
+    this.exactFailures.clear()
+    this.exactFailuresByTool.clear()
+    this.failuresByTool.clear()
+    this.failureDetails.clear()
   }
 
   private failureSummary(toolName?: string): string {

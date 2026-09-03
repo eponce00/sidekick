@@ -245,10 +245,7 @@ function compactSemanticSnapshot(snapshot: string, lineLimit: number): string {
   const prioritized = nonOptionLines.length
     ? prioritizedSemanticSnapshot(nonOptionLines.join('\n'), availableLines)
     : ''
-  const bounded = prioritized
-    .split('\n')
-    .filter(Boolean)
-    .map(boundedSemanticLine)
+  const bounded = prioritized.split('\n').filter(Boolean).map(boundedSemanticLine)
   if (optionCount) {
     bounded.push(
       `... ${optionCount} option nodes omitted; browser_select accepts an exact visible option label without expanding the list ...`
@@ -342,9 +339,14 @@ function shouldAttachRoutineScreenshot(
   if (name === 'browser_navigate' || name === 'browser_resize') return true
   if (finiteNumber(args, 'x') !== undefined && finiteNumber(args, 'y') !== undefined) return true
   return (
-    ['browser_click', 'browser_type', 'browser_select', 'browser_press', 'browser_scroll', 'browser_hover'].includes(
-      name
-    ) && observation?.screenshotChanged === false
+    [
+      'browser_click',
+      'browser_type',
+      'browser_select',
+      'browser_press',
+      'browser_scroll',
+      'browser_hover'
+    ].includes(name) && observation?.screenshotChanged === false
   )
 }
 
@@ -889,12 +891,19 @@ async function boundedVisualFormFailure(
   const unsupported = firstFailure?.error?.code === 'unsupported_control'
   const recovery = unsupported
     ? 'Use a dedicated browser action for this custom control, then resume the remaining fields.'
-    : 'Use the returned final observation to retarget only the failed and skipped fields.'
+    : 'Use the returned final observation to retarget only the failed fields. Do not repeat fields that were already verified.'
+  const verifiedFields = result.fields.filter(
+    (field) => field.status === 'filled' || field.status === 'unchanged'
+  ).length
   const data = {
     ...(publicFillForm(result) as Record<string, unknown>),
+    outcome: verifiedFields > 0 ? 'partial' : 'failed',
     recovery: {
       action: unsupported ? 'change_strategy' : 'refresh_state',
-      instruction: recovery
+      instruction: recovery,
+      verifiedFields,
+      failedFields: result.fields.filter((field) => field.status === 'failed').length,
+      skippedFields: result.fields.filter((field) => field.status === 'skipped').length
     }
   }
   const visual = await prepareVisualAttachment(
@@ -957,7 +966,9 @@ export function registerBrowserToolHandlers(
           throw new Error('browser_navigate action url requires a URL')
         }
         if (requestedNavigateAction !== 'url' && requestedNavigateUrl) {
-          throw new Error(`browser_navigate action ${requestedNavigateAction} does not accept a URL`)
+          throw new Error(
+            `browser_navigate action ${requestedNavigateAction} does not accept a URL`
+          )
         }
       }
       lease = await manager.lease(scope, context.workspaceRoot)
@@ -1098,15 +1109,7 @@ export function registerBrowserToolHandlers(
             target: targetFromArguments(args, {
               required: true,
               coordinates: true,
-              preferredRoles: [
-                'button',
-                'link',
-                'checkbox',
-                'radio',
-                'menuitem',
-                'tab',
-                'switch'
-              ]
+              preferredRoles: ['button', 'link', 'checkbox', 'radio', 'menuitem', 'tab', 'switch']
             })!,
             button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
             clickCount: (finiteNumber(args, 'click_count') as 1 | 2 | 3 | undefined) ?? 1

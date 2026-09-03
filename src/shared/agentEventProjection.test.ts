@@ -193,6 +193,42 @@ describe('projectAgentRunEvents', () => {
     ])
   })
 
+  it('keeps tool-guard recovery hints out of the user-facing timeline', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'assistant.completed', { content: 'Before.', toolCalls: [] }),
+      event(2, 'run.retrying', { reason: 'tool_guard_same_tool_failure', count: 3 }),
+      event(3, 'assistant.completed', { content: 'After.', toolCalls: [] })
+    ])
+
+    expect(projection.segments).toEqual([{ type: 'text', content: 'Before.After.' }])
+  })
+
+  it('projects explicit partial tool completion without a failure icon', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'tool.pending', { toolCallId: 'form-1', name: 'browser_fill_form' }),
+      event(2, 'tool.completed', {
+        toolCallId: 'form-1',
+        result: {
+          status: 'error',
+          title: 'Fill browser form',
+          modelContent: '{"outcome":"partial"}',
+          data: { outcome: 'partial', filledFields: 2, attemptedFields: 3 },
+          error: {
+            code: 'conflict',
+            message: 'One field could not be verified',
+            retryable: true,
+            recoveryAction: 'refresh_state'
+          },
+          timing: { startedAt: 1, completedAt: 2 }
+        }
+      })
+    ])
+
+    expect(projection.segments.find(({ type }) => type === 'tool')).toMatchObject({
+      tool: { status: 'partial' }
+    })
+  })
+
   it('projects the exact model-facing context for completed compactions', () => {
     const projection = projectAgentRunEvents([
       event(1, 'compaction.completed', {

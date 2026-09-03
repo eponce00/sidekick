@@ -28,7 +28,8 @@ export interface BrowserActivityPanelProps {
 function activityStatus(state: BrowserActivityState): 'live' | 'error' | 'verified' | 'idle' {
   const latest = state.timeline[state.timeline.length - 1]
   if (latest?.status === 'running' || latest?.status === 'pending') return 'live'
-  if (latest?.status === 'error' || latest?.status === 'denied') return 'error'
+  if (latest?.status === 'partial' || latest?.status === 'error' || latest?.status === 'denied')
+    return 'error'
   if (state.verification?.status === 'passed') return 'verified'
   return 'idle'
 }

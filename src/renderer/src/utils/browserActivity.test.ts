@@ -181,6 +181,26 @@ describe('browser activity projection', () => {
     expect(unsafePath.screenshot).toBeUndefined()
   })
 
+  it('preserves explicit partial form completion in browser activity', () => {
+    const state = applyBrowserActivityEvent(
+      EMPTY_BROWSER_ACTIVITY,
+      event(1, 'tool.completed', {
+        name: 'browser_fill_form',
+        toolCallId: 'form-partial',
+        result: {
+          status: 'error',
+          title: 'Fill browser form',
+          data: { outcome: 'partial', attemptedFields: 3, filledFields: 2 }
+        }
+      })
+    )
+
+    expect(state.timeline[0]).toMatchObject({
+      callId: 'form-partial',
+      status: 'partial'
+    })
+  })
+
   it('projects visual verification progress and failure without retaining screenshots per step', () => {
     const running = applyBrowserActivityEvent(
       EMPTY_BROWSER_ACTIVITY,

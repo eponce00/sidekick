@@ -343,8 +343,9 @@ describe('native browser agent tool handlers', () => {
     value.semanticNodeCount = 405
     value.semanticSnapshot = [
       '- document "Long form"',
-      ...Array.from({ length: 400 }, (_, index) =>
-        `  - option "Country ${index}" [ref=ax-1-${index + 10}]`
+      ...Array.from(
+        { length: 400 },
+        (_, index) => `  - option "Country ${index}" [ref=ax-1-${index + 10}]`
       ),
       '  - combobox "State" [ref=ax-1-900]',
       '  - button "Submit search" [ref=ax-1-901]'
@@ -380,7 +381,9 @@ describe('native browser agent tool handlers', () => {
     })
     expect(coordinate).toMatchObject({ status: 'success', media: [{ mimeType: 'image/png' }] })
     expect(service.click).toHaveBeenLastCalledWith(
-      expect.objectContaining({ target: expect.objectContaining({ screenshotId: 'shot-session-1' }) }),
+      expect.objectContaining({
+        target: expect.objectContaining({ screenshotId: 'shot-session-1' })
+      }),
       expect.any(Object)
     )
 
@@ -608,13 +611,71 @@ describe('native browser agent tool handlers', () => {
       error: { code: 'conflict', retryable: true, recoveryAction: 'refresh_state' },
       data: {
         completed: false,
+        outcome: 'failed',
         fields: [{ status: 'failed' }, { status: 'skipped' }]
       }
     })
     expect((result.data as BrowserFillFormResult).observation.screenshot).toBeUndefined()
     expect(result.media).toBeUndefined()
-    expect(result.modelContent).toContain('retarget only the failed and skipped fields')
+    expect(result.modelContent).toContain('retarget only the failed fields')
     expect(JSON.stringify(result)).not.toContain('private failure value')
+  })
+
+  it('marks a partially completed form batch explicitly without echoing values', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const finalObservation = observation('session-1')
+    finalObservation.screenshot = undefined
+    service.fillForm.mockResolvedValueOnce({
+      sessionId: 'session-1',
+      tabId: finalObservation.tab.id,
+      action: 'fill_form',
+      completed: false,
+      stopReason: 'field_failed',
+      attemptedFields: 2,
+      filledFields: 1,
+      durationMs: 10,
+      quiescence: {
+        idle: true,
+        waitedMs: 1,
+        pendingRequests: 0,
+        mutationRevision: 0,
+        timedOut: false
+      },
+      loopProtection: { unchangedRepeatCount: 0, blockedOnNextIdenticalAction: false },
+      fields: [
+        { index: 0, kind: 'textbox', status: 'filled', verification: { passed: true } },
+        {
+          index: 1,
+          kind: 'textbox',
+          status: 'failed',
+          verification: { passed: false },
+          error: {
+            code: 'verification_failed',
+            message: 'The requested form state did not match the actual control state.'
+          }
+        }
+      ],
+      observation: finalObservation
+    })
+
+    const result = await execute(registry, 'browser_fill_form', {
+      fields: [
+        { kind: 'textbox', ref: 'ax-1-11', value: 'private first value' },
+        { kind: 'textbox', ref: 'ax-1-12', value: 'private second value' }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      data: {
+        outcome: 'partial',
+        recovery: { verifiedFields: 1, failedFields: 1, skippedFields: 0 }
+      }
+    })
+    expect(result.modelContent).toContain('Do not repeat fields that were already verified')
+    expect(JSON.stringify(result)).not.toContain('private first value')
+    expect(JSON.stringify(result)).not.toContain('private second value')
   })
 
   it('rejects coordinate form targets before any browser action', async () => {

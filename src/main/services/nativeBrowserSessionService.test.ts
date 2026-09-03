@@ -877,7 +877,10 @@ describe('NativeBrowserSessionService', () => {
 
   it('verifies a native select after settling and reports a reverted selection', async () => {
     const first = await testService()
-    const opened = await first.service.open({ runId: 'select-verified', url: 'https://example.com/' })
+    const opened = await first.service.open({
+      runId: 'select-verified',
+      url: 'https://example.com/'
+    })
     const selected = await first.service.select({
       sessionId: opened.sessionId,
       target: { role: 'combobox', name: 'Language' },
@@ -1111,7 +1114,7 @@ describe('NativeBrowserSessionService', () => {
     ).toHaveLength(semanticCallsBefore + 1)
   })
 
-  it('stops at the first unverified field and leaves later fields untouched', async () => {
+  it('continues independent fields after one field fails verification', async () => {
     const { service, runtime } = await testService()
     const opened = await service.open({ runId: 'form-failure', url: 'https://example.com/' })
     const surface = runtime.surfaces[0]
@@ -1121,15 +1124,15 @@ describe('NativeBrowserSessionService', () => {
       sessionId: opened.sessionId,
       fields: [
         { kind: 'textbox', target: { ref: observedRef(opened, 'Email') }, value: 'not-applied' },
-        { kind: 'textbox', target: { ref: observedRef(opened, 'Notes') }, value: 'must-not-run' }
+        { kind: 'checkbox', target: { ref: observedRef(opened, 'Subscribe') }, checked: true }
       ]
     })
 
     expect(result).toMatchObject({
       completed: false,
       stopReason: 'field_failed',
-      attemptedFields: 1,
-      filledFields: 0,
+      attemptedFields: 2,
+      filledFields: 1,
       fields: [
         {
           index: 0,
@@ -1137,12 +1140,11 @@ describe('NativeBrowserSessionService', () => {
           error: { code: 'verification_failed' },
           verification: { passed: false }
         },
-        { index: 1, status: 'skipped' }
+        { index: 1, kind: 'checkbox', status: 'filled', verification: { passed: true } }
       ]
     })
-    expect(surface.formControls.get(14)?.value).toBe('')
+    expect(surface.formControls.get(12)?.checked).toBe(true)
     expect(JSON.stringify(result)).not.toContain('not-applied')
-    expect(JSON.stringify(result)).not.toContain('must-not-run')
   })
 
   it('stops safely when a field action navigates and does not run the remaining batch', async () => {
@@ -1228,9 +1230,9 @@ describe('NativeBrowserSessionService', () => {
 
     const deadlineAttempts = surface.captureAttempts
     surface.captureFailures = 3
-    await expect(
-      service.observe(opened.sessionId, {}, { timeoutMs: 10 })
-    ).rejects.toMatchObject({ name: 'TimeoutError' })
+    await expect(service.observe(opened.sessionId, {}, { timeoutMs: 10 })).rejects.toMatchObject({
+      name: 'TimeoutError'
+    })
     expect(surface.captureAttempts - deadlineAttempts).toBe(1)
   })
 

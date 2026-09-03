@@ -725,7 +725,7 @@ const browserSelect = definition(
 
 const browserFillForm = definition(
   'browser_fill_form',
-  'Fill up to 25 standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Fields run in order and stop on the first failure or page change. Each actual post-fill state is verified, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Use individual browser tools for custom widgets or autocomplete controls.',
+  'Fill up to 25 independent standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Every safe field is attempted even when another field fails; the batch stops early only if the page changes. Each actual post-fill state is verified, partial completion is reported explicitly, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Retry only failed fields. Use individual browser tools for custom widgets or autocomplete controls.',
   {
     type: 'object',
     required: ['fields'],

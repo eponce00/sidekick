@@ -1,6 +1,12 @@
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 
-export type BrowserActivityItemStatus = 'pending' | 'running' | 'success' | 'error' | 'denied'
+export type BrowserActivityItemStatus =
+  | 'pending'
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'error'
+  | 'denied'
 
 export interface BrowserActivityItem {
   callId: string
@@ -351,6 +357,8 @@ function statusFor(event: AgentRunEvent, result?: UnknownRecord): BrowserActivit
   const status = firstString(result ? [result] : [], ['status'])?.toLowerCase()
   if (status === 'success') return 'success'
   if (status === 'denied') return 'denied'
+  const data = result && isRecord(result.data) ? result.data : undefined
+  if (data?.outcome === 'partial') return 'partial'
   return 'error'
 }
 

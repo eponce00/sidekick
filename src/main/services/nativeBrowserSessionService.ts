@@ -874,7 +874,8 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       Number.isFinite(cssViewport.height) &&
       cssViewport.width >= 1 &&
       cssViewport.height >= 1 &&
-      (size.width !== Math.round(cssViewport.width) || size.height !== Math.round(cssViewport.height))
+      (size.width !== Math.round(cssViewport.width) ||
+        size.height !== Math.round(cssViewport.height))
     ) {
       image = image.resize({
         width: Math.round(cssViewport.width),
@@ -2400,11 +2401,15 @@ export class NativeBrowserSessionService {
     }
     const screenshot = tab.lastViewportScreenshot
     if (!screenshot || screenshot.id !== target.screenshotId) {
-      throw new Error('Browser screenshot is stale; observe the viewport again before using coordinates')
+      throw new Error(
+        'Browser screenshot is stale; observe the viewport again before using coordinates'
+      )
     }
     const currentCaptureState = await this.coordinateCaptureState(tab, signal)
     if (!this.sameCoordinateCaptureState(screenshot, currentCaptureState)) {
-      throw new Error('Browser screenshot is stale; observe the viewport again before using coordinates')
+      throw new Error(
+        'Browser screenshot is stale; observe the viewport again before using coordinates'
+      )
     }
     const imageX = finiteCoordinate(target.coordinates.x, 'target x')
     const imageY = finiteCoordinate(target.coordinates.y, 'target y')
@@ -2578,35 +2583,17 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<void> {
     await this.clickFormControl(tab, target, signal)
-    await this.assertTextEntryTarget(
-      tab,
-      target.backendNodeId!,
-      sourceUrl,
-      sourceRefEpoch,
-      signal
-    )
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
     this.setPointer(tab, target, 'type')
     const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
     tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectAllModifier] })
     tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectAllModifier] })
     await abortable(tab.surface.executeJavaScript('0'), signal)
-    await this.assertTextEntryTarget(
-      tab,
-      target.backendNodeId!,
-      sourceUrl,
-      sourceRefEpoch,
-      signal
-    )
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
     tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
     tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
     await abortable(tab.surface.executeJavaScript('0'), signal)
-    await this.assertTextEntryTarget(
-      tab,
-      target.backendNodeId!,
-      sourceUrl,
-      sourceRefEpoch,
-      signal
-    )
+    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
     if (value) await abortable(tab.surface.insertText(value), signal)
     await abortable(tab.surface.executeJavaScript('0'), signal)
   }
@@ -2839,7 +2826,7 @@ export class NativeBrowserSessionService {
               }
             })
             stopReason = 'field_failed'
-            break
+            continue
           }
           fields.push({
             index,
@@ -2863,7 +2850,7 @@ export class NativeBrowserSessionService {
               : this.formFieldFailure(error)
           })
           stopReason = changed ? 'page_changed' : 'field_failed'
-          break
+          if (changed) break
         }
       }
 
@@ -3021,7 +3008,9 @@ export class NativeBrowserSessionService {
         signal
       )
       if (result.observation.tab.url !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
-        throw new Error('Browser select changed the page before its final selection could be verified')
+        throw new Error(
+          'Browser select changed the page before its final selection could be verified'
+        )
       }
       const verificationNode = await this.resolveTarget(tab, verificationTarget, false, signal)
       const selectedAfterSettle = await this.callOnNode<string[]>(
@@ -3038,8 +3027,13 @@ export class NativeBrowserSessionService {
       )
       const expected = [...expectedSelected].sort()
       const actual = [...selectedAfterSettle].sort()
-      if (expected.length !== actual.length || expected.some((value, index) => value !== actual[index])) {
-        throw new Error('Browser select did not retain the requested selection after page handlers ran')
+      if (
+        expected.length !== actual.length ||
+        expected.some((value, index) => value !== actual[index])
+      ) {
+        throw new Error(
+          'Browser select did not retain the requested selection after page handlers ran'
+        )
       }
       return result
     })
@@ -3179,7 +3173,8 @@ export class NativeBrowserSessionService {
         signal
       )
       const changed =
-        scrollEffect.before.x !== scrollEffect.after.x || scrollEffect.before.y !== scrollEffect.after.y
+        scrollEffect.before.x !== scrollEffect.after.x ||
+        scrollEffect.before.y !== scrollEffect.after.y
       result.effect = {
         changed,
         kind: 'scroll',

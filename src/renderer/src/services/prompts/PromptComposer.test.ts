@@ -223,6 +223,8 @@ describe('PromptComposer', () => {
     expect(prompt.content).toContain('browser_verify')
     expect(prompt.content).toContain('browser_resize')
     expect(prompt.content).toContain('browser_fill_form')
+    expect(prompt.content).toContain('A partial batch is useful progress')
+    expect(prompt.content).toContain('Keep intermediate tool-call turns terse')
     expect(prompt.content).toContain('one final redacted semantic observation')
     expect(prompt.content).toContain('console errors')
   })
