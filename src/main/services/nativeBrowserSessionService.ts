@@ -36,7 +36,9 @@ export interface BrowserTarget {
   nth?: number
   /** Internal action-specific ranking when a visible name matches multiple AX roles. */
   preferredRoles?: string[]
-  /** CSS-pixel fallback used only when no semantic target resolves. */
+  /** Viewport screenshot that the coordinate fallback was read from. */
+  screenshotId?: string
+  /** Screenshot-pixel fallback used only when no semantic target resolves. */
   coordinates?: { x: number; y: number }
 }
 
@@ -467,6 +469,16 @@ interface RequestMetadata {
   startedAt: number
 }
 
+interface CoordinateCaptureState {
+  sourceUrl: string
+  refEpoch: number
+  viewportWidth: number
+  viewportHeight: number
+  scrollX: number
+  scrollY: number
+  mutationRevision: number
+}
+
 interface TabState {
   id: string
   surface: NativeBrowserSurface
@@ -476,6 +488,11 @@ interface TabState {
   consoleCursor: number
   networkCursor: number
   lastPointer?: BrowserPointer
+  lastViewportScreenshot?: {
+    id: string
+    imageWidth: number
+    imageHeight: number
+  } & CoordinateCaptureState
   lastScreenshotHashes: Partial<Record<BrowserScreenshotKind, string>>
   unchangedScreenshotStreaks: Partial<Record<BrowserScreenshotKind, number>>
   inFlight: Map<string, RequestMetadata>
@@ -711,6 +728,11 @@ function finiteCoordinate(value: number, label: string): number {
   if (!Number.isFinite(value) || value < 0)
     throw new Error(`${label} must be a non-negative number`)
   return value
+}
+
+function isTransientViewportCaptureError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.trim() === 'UnknownVizError'
 }
 
 class ElectronNativeBrowserSurface implements NativeBrowserSurface {
@@ -1398,6 +1420,7 @@ export class NativeBrowserSessionService {
     tab.refEpoch++
     tab.refs.clear()
     tab.semanticNodes = []
+    tab.lastViewportScreenshot = undefined
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
@@ -1832,15 +1855,36 @@ export class NativeBrowserSessionService {
     target: BrowserTarget | undefined,
     signal?: AbortSignal
   ): Promise<BrowserScreenshotArtifact> {
+    const createdAt = this.now()
+    const id = randomUUID()
+    const captureStateBefore =
+      kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
     const capture = await this.captureRaw(tab, kind, target, signal)
+    const captureStateAfter =
+      kind === 'viewport' ? await this.coordinateCaptureState(tab, signal) : undefined
+    const stableCaptureState =
+      captureStateBefore &&
+      captureStateAfter &&
+      this.sameCoordinateCaptureState(captureStateBefore, captureStateAfter)
+        ? captureStateAfter
+        : undefined
+    if (kind === 'viewport') {
+      tab.lastViewportScreenshot = stableCaptureState
+        ? {
+            id,
+            imageWidth: capture.width,
+            imageHeight: capture.height,
+            ...stableCaptureState
+          }
+        : undefined
+    }
+    const sourceUrlAtCapture = stableCaptureState?.sourceUrl ?? tab.surface.getURL()
     const sha256 = createHash('sha256').update(capture.png).digest('hex')
     const previousHash = tab.lastScreenshotHashes[kind]
     const changed = previousHash === undefined ? null : previousHash !== sha256
     const unchangedStreak = changed === false ? (tab.unchangedScreenshotStreaks[kind] ?? 0) + 1 : 0
     tab.unchangedScreenshotStreaks[kind] = unchangedStreak
     tab.lastScreenshotHashes[kind] = sha256
-    const createdAt = this.now()
-    const id = randomUUID()
     const directory = join(
       this.artifactRoot,
       safeSegment(session.runId),
@@ -1864,6 +1908,7 @@ export class NativeBrowserSessionService {
       await fs.rename(temporaryPath, path)
       await abortable(Promise.resolve(), signal)
     } catch (error) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
       await Promise.all([
         fs.unlink(temporaryPath).catch(() => undefined),
         fs.unlink(path).catch(() => undefined)
@@ -1881,9 +1926,15 @@ export class NativeBrowserSessionService {
       safeSegment(session.runId),
       safeSegment(session.id)
     )
-    await this.enforceArtifactBounds(path, sessionArtifactRoot)
+    try {
+      await this.enforceArtifactBounds(path, sessionArtifactRoot)
+    } catch (error) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
+      throw error
+    }
     const relativePath = relative(this.artifactRoot, path)
     if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      if (tab.lastViewportScreenshot?.id === id) tab.lastViewportScreenshot = undefined
       await fs.unlink(path).catch(() => undefined)
       throw new Error('Browser screenshot escaped the artifact root')
     }
@@ -1891,7 +1942,7 @@ export class NativeBrowserSessionService {
       .split(/[\\/]+/)
       .map(encodeURIComponent)
       .join('/')}`
-    return {
+    const artifact: BrowserScreenshotArtifact = {
       id,
       sessionId: session.id,
       tabId: tab.id,
@@ -1899,7 +1950,7 @@ export class NativeBrowserSessionService {
       url: rendererUrl,
       mimeType: 'image/png',
       kind,
-      sourceUrl: tab.surface.getURL(),
+      sourceUrl: sourceUrlAtCapture,
       width: capture.width,
       height: capture.height,
       bytes: capture.png.byteLength,
@@ -1908,6 +1959,7 @@ export class NativeBrowserSessionService {
       changed,
       unchangedStreak
     }
+    return artifact
   }
 
   private async captureRaw(
@@ -1916,7 +1968,22 @@ export class NativeBrowserSessionService {
     target: BrowserTarget | undefined,
     signal?: AbortSignal
   ): Promise<NativeBrowserSurfaceCapture> {
-    if (kind === 'viewport') return abortable(tab.surface.captureViewport(), signal)
+    if (kind === 'viewport') {
+      let lastError: unknown
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await abortable(tab.surface.captureViewport(), signal)
+        } catch (error) {
+          lastError = error
+          if (!isTransientViewportCaptureError(error) || attempt === 2) throw error
+          // captureViewport invalidates the offscreen surface first. Electron
+          // documents that this schedules a fresh paint; give Chromium's Viz
+          // compositor a bounded chance to publish that frame before retrying.
+          await delay(50 * (attempt + 1), signal)
+        }
+      }
+      throw lastError
+    }
 
     let clip: { x: number; y: number; width: number; height: number; scale: number }
     if (kind === 'element') {
@@ -2107,15 +2174,12 @@ export class NativeBrowserSessionService {
       if (exactNameMatches.length) matches = exactNameMatches
     }
     if (!role && target.preferredRoles?.length && matches.length > 1) {
-      const preferredRanks = new Map(
-        target.preferredRoles.map((preferredRole, index) => [preferredRole.toLowerCase(), index])
-      )
-      const bestRank = Math.min(
-        ...matches.map((node) => preferredRanks.get(node.role) ?? Number.MAX_SAFE_INTEGER)
-      )
-      if (bestRank !== Number.MAX_SAFE_INTEGER) {
-        matches = matches.filter((node) => preferredRanks.get(node.role) === bestRank)
-      }
+      const preferredRoles = new Set(target.preferredRoles.map((value) => value.toLowerCase()))
+      const actionableMatches = matches.filter((node) => preferredRoles.has(node.role))
+      // Action-specific roles remove headings and wrappers, but two genuinely
+      // actionable controls with the same name must remain ambiguous. Silently
+      // ranking one role above another can click a button instead of a checkbox.
+      if (actionableMatches.length) matches = actionableMatches
     }
     const nth = target.nth
     if (nth !== undefined) {
@@ -2329,12 +2393,26 @@ export class NativeBrowserSessionService {
       if (primaryError) throw primaryError
       throw new Error('Browser action requires a ref, semantic target, or CSS selector')
     }
-    const viewport = await this.currentViewport(tab)
-    const x = finiteCoordinate(target.coordinates.x, 'target x')
-    const y = finiteCoordinate(target.coordinates.y, 'target y')
-    if (x >= viewport.width || y >= viewport.height) {
-      throw new Error('Browser coordinates are outside the current viewport')
+    if (!target.screenshotId) {
+      throw new Error(
+        'Browser coordinate actions require the screenshot_id from a current viewport observation'
+      )
     }
+    const screenshot = tab.lastViewportScreenshot
+    if (!screenshot || screenshot.id !== target.screenshotId) {
+      throw new Error('Browser screenshot is stale; observe the viewport again before using coordinates')
+    }
+    const currentCaptureState = await this.coordinateCaptureState(tab, signal)
+    if (!this.sameCoordinateCaptureState(screenshot, currentCaptureState)) {
+      throw new Error('Browser screenshot is stale; observe the viewport again before using coordinates')
+    }
+    const imageX = finiteCoordinate(target.coordinates.x, 'target x')
+    const imageY = finiteCoordinate(target.coordinates.y, 'target y')
+    if (imageX >= screenshot.imageWidth || imageY >= screenshot.imageHeight) {
+      throw new Error('Browser coordinates are outside the referenced screenshot')
+    }
+    const x = (imageX * screenshot.viewportWidth) / screenshot.imageWidth
+    const y = (imageY * screenshot.viewportHeight) / screenshot.imageHeight
     return { x, y, mode: 'coordinates', fallbackUsed: hasSemantic || hasSelector }
   }
 
@@ -2387,33 +2465,15 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
-      const startedAt = this.now()
-      this.setPointer(tab, target, 'type', startedAt)
-      tab.surface.focus()
-      if (target.backendNodeId) {
-        await this.callOnNode(
-          tab,
-          target.backendNodeId,
-          `function() { this.focus(); return true; }`,
-          [],
-          signal
-        )
-      } else {
-        tab.surface.sendInputEvent({
-          type: 'mouseDown',
-          x: target.x,
-          y: target.y,
-          button: 'left',
-          clickCount: 1
-        })
-        tab.surface.sendInputEvent({
-          type: 'mouseUp',
-          x: target.x,
-          y: target.y,
-          button: 'left',
-          clickCount: 1
-        })
+      if (!target.backendNodeId) {
+        throw new Error('Browser text entry requires a semantic or selector-backed field target')
       }
+      const sourceUrl = tab.surface.getURL()
+      const sourceRefEpoch = tab.refEpoch
+      const startedAt = this.now()
+      await this.clickFormControl(tab, target, signal)
+      await this.assertTextEntryTarget(tab, target.backendNodeId, sourceUrl, sourceRefEpoch, signal)
+      this.setPointer(tab, target, 'type', startedAt)
       if (input.clear !== false) {
         const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
         tab.surface.sendInputEvent({
@@ -2426,11 +2486,36 @@ export class NativeBrowserSessionService {
           keyCode: 'A',
           modifiers: [selectAllModifier]
         })
+        // Page key handlers can navigate or move focus. Cross a renderer
+        // boundary and revalidate before the destructive clear key.
+        await abortable(tab.surface.executeJavaScript('0'), signal)
+        await this.assertTextEntryTarget(
+          tab,
+          target.backendNodeId,
+          sourceUrl,
+          sourceRefEpoch,
+          signal
+        )
         tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
         tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+        // sendInputEvent is fire-and-forget. Flush the clear keystrokes before
+        // insertText, then prove the original field still owns focus so a page
+        // handler cannot redirect sensitive text into another page or control.
+        await abortable(tab.surface.executeJavaScript('0'), signal)
+        await this.assertTextEntryTarget(
+          tab,
+          target.backendNodeId,
+          sourceUrl,
+          sourceRefEpoch,
+          signal
+        )
       }
       await abortable(tab.surface.insertText(input.text), signal)
       if (input.submit) this.sendKey(tab, 'Enter')
+      // Electron input dispatch is asynchronous relative to later CDP capture.
+      // A renderer round trip prevents the final character/key event from being
+      // overtaken by post-action observation on busy offscreen renderers.
+      await abortable(tab.surface.executeJavaScript('0'), signal)
       return this.finishAction(
         session,
         tab,
@@ -2453,6 +2538,7 @@ export class NativeBrowserSessionService {
       tab,
       backendNodeId,
       `function() {
+        if (!this.isConnected) throw new Error('Target form control is no longer connected');
         const tag = String(this.tagName || '').toLowerCase();
         const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
         const disabled = this.disabled === true || this.getAttribute?.('aria-disabled') === 'true';
@@ -2487,23 +2573,75 @@ export class NativeBrowserSessionService {
     tab: TabState,
     target: ElementPoint,
     value: string,
+    sourceUrl: string,
+    sourceRefEpoch: number,
     signal?: AbortSignal
   ): Promise<void> {
-    await this.callOnNode(
+    await this.clickFormControl(tab, target, signal)
+    await this.assertTextEntryTarget(
       tab,
       target.backendNodeId!,
-      `function() { this.focus(); return true; }`,
-      [],
+      sourceUrl,
+      sourceRefEpoch,
       signal
     )
-    tab.surface.focus()
     this.setPointer(tab, target, 'type')
     const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
     tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectAllModifier] })
     tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectAllModifier] })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+    await this.assertTextEntryTarget(
+      tab,
+      target.backendNodeId!,
+      sourceUrl,
+      sourceRefEpoch,
+      signal
+    )
     tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
     tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+    await this.assertTextEntryTarget(
+      tab,
+      target.backendNodeId!,
+      sourceUrl,
+      sourceRefEpoch,
+      signal
+    )
     if (value) await abortable(tab.surface.insertText(value), signal)
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+  }
+
+  private async assertTextEntryTarget(
+    tab: TabState,
+    backendNodeId: number,
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const assertDocumentUnchanged = (): void => {
+      if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+        throw new Error('Browser page changed before text entry; no text was inserted')
+      }
+    }
+    assertDocumentUnchanged()
+    await this.callOnNode<boolean>(
+      tab,
+      backendNodeId,
+      `function() {
+        if (!this.isConnected) throw new Error('Target text field is no longer connected');
+        const tag = String(this.tagName || '').toLowerCase();
+        const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
+        const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color', 'checkbox', 'radio']);
+        const isTextbox = tag === 'textarea' || (tag === 'input' && !unsupportedInputs.has(inputType)) || this.isContentEditable === true;
+        const active = document.activeElement;
+        const ownsFocus = active === this || (this.isContentEditable === true && active && this.contains(active));
+        if (!isTextbox || !ownsFocus) throw new Error('Target text field did not retain focus');
+        return true;
+      }`,
+      [],
+      signal
+    )
+    assertDocumentUnchanged()
   }
 
   private async updateFormSelect(
@@ -2642,7 +2780,14 @@ export class NativeBrowserSessionService {
             sensitiveStrings.add(field.value)
             if (before.readOnly) throw new Error('Target form control is read-only')
             if (before.value !== field.value) {
-              await this.replaceFormText(tab, target, field.value, signal)
+              await this.replaceFormText(
+                tab,
+                target,
+                field.value,
+                initialUrl,
+                initialRefEpoch,
+                signal
+              )
               status = 'filled'
             }
             if (pageChanged()) throw new Error('Browser page changed while filling the form')
@@ -2789,9 +2934,29 @@ export class NativeBrowserSessionService {
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
       const target = await this.resolveTarget(tab, input.target, false, signal)
+      const sourceUrl = tab.surface.getURL()
+      const sourceRefEpoch = tab.refEpoch
+      const semanticIdentity = target.backendNodeId
+        ? tab.semanticNodes.find((node) => node.backendNodeId === target.backendNodeId)
+        : undefined
+      let verificationTarget: BrowserTarget
+      if (target.mode === 'selector') {
+        if (!input.target.selector) throw new Error('Resolved select selector is unavailable')
+        verificationTarget = {
+          selector: input.target.selector,
+          ...(input.target.nth === undefined ? {} : { nth: input.target.nth })
+        }
+      } else {
+        if (!semanticIdentity) throw new Error('Resolved select semantic identity is unavailable')
+        verificationTarget = {
+          role: semanticIdentity.role,
+          name: semanticIdentity.name,
+          exact: true
+        }
+      }
       const startedAt = this.now()
       this.setPointer(tab, target, 'select', startedAt)
-      await this.callOnNode<string[]>(
+      const expectedSelected = await this.callOnNode<string[]>(
         tab,
         target.backendNodeId!,
         `function(values) {
@@ -2805,9 +2970,12 @@ export class NativeBrowserSessionService {
           for (const requested of values) {
             const raw = String(requested);
             const normalized = normalize(raw);
-            let matches = options.filter(option =>
-              option.value === raw || option.label === raw || option.text === raw
-            );
+            // Deterministic precedence matters when one option's value happens
+            // to equal another option's label.
+            let matches = options.filter(option => option.value === raw);
+            if (!matches.length) {
+              matches = options.filter(option => option.label === raw || option.text === raw);
+            }
             if (!matches.length) {
               matches = options.filter(option =>
                 [option.value, option.label, option.text].some(candidate => normalize(candidate) === normalized)
@@ -2823,10 +2991,11 @@ export class NativeBrowserSessionService {
               if (partial.length === 1) matches = partial;
             }
             if (matches.length !== 1) {
-              const available = options.slice(0, 30).map(option => option.label || option.text || option.value);
+              const safe = value => String(value).trim().replace(/\\s+/g, ' ').slice(0, 80);
+              const available = options.slice(0, 20).map(option => safe(option.label || option.text || option.value));
               const suffix = options.length > available.length ? ', ...' : '';
               throw new Error(matches.length
-                ? 'A requested select value is ambiguous; use its exact option value. Candidates: ' + matches.slice(0, 10).map(option => option.label || option.text || option.value).join(', ')
+                ? 'A requested select value is ambiguous; use its exact option value. Candidates: ' + matches.slice(0, 8).map(option => safe(option.label || option.text || option.value)).join(', ')
                 : 'No select option matched one requested value. Available options: ' + available.join(', ') + suffix);
             }
             chosen.add(matches[0]);
@@ -2841,7 +3010,7 @@ export class NativeBrowserSessionService {
         [input.values],
         signal
       )
-      return this.finishAction(
+      const result = await this.finishAction(
         session,
         tab,
         'select',
@@ -2851,6 +3020,28 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+      if (result.observation.tab.url !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+        throw new Error('Browser select changed the page before its final selection could be verified')
+      }
+      const verificationNode = await this.resolveTarget(tab, verificationTarget, false, signal)
+      const selectedAfterSettle = await this.callOnNode<string[]>(
+        tab,
+        verificationNode.backendNodeId!,
+        `function() {
+          if (!(this instanceof HTMLSelectElement) || !this.isConnected) {
+            throw new Error('Target is no longer a connected select element');
+          }
+          return Array.from(this.selectedOptions).map(option => String(option.value));
+        }`,
+        [],
+        signal
+      )
+      const expected = [...expectedSelected].sort()
+      const actual = [...selectedAfterSettle].sort()
+      if (expected.length !== actual.length || expected.some((value, index) => value !== actual[index])) {
+        throw new Error('Browser select did not retain the requested selection after page handlers ran')
+      }
+      return result
     })
   }
 
@@ -3087,6 +3278,71 @@ export class NativeBrowserSessionService {
         return state.revision;
       })()`),
       signal
+    )
+  }
+
+  private async coordinateCaptureState(
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<CoordinateCaptureState> {
+    const state = await abortable(
+      tab.surface.executeJavaScript<{
+        sourceUrl: string
+        viewportWidth: number
+        viewportHeight: number
+        scrollX: number
+        scrollY: number
+        mutationRevision: number
+      }>(`(() => {
+        // io.sidekick.browser.coordinate-capture-state
+        const key = Symbol.for('io.sidekick.browser.mutation-state');
+        let mutationState = window[key];
+        if (!mutationState) {
+          mutationState = { revision: 0 };
+          const observer = new MutationObserver(() => mutationState.revision++);
+          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
+          mutationState.observer = observer;
+          window[key] = mutationState;
+        }
+        return {
+          sourceUrl: location.href,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          scrollX: window.scrollX,
+          scrollY: window.scrollY,
+          mutationRevision: mutationState.revision
+        };
+      })()`),
+      signal
+    )
+    if (
+      !state ||
+      typeof state.sourceUrl !== 'string' ||
+      !Number.isFinite(state.viewportWidth) ||
+      !Number.isFinite(state.viewportHeight) ||
+      state.viewportWidth < 1 ||
+      state.viewportHeight < 1 ||
+      !Number.isFinite(state.scrollX) ||
+      !Number.isFinite(state.scrollY) ||
+      !Number.isFinite(state.mutationRevision)
+    ) {
+      throw new Error('Unable to bind browser coordinates to the current viewport state')
+    }
+    return { ...state, refEpoch: tab.refEpoch }
+  }
+
+  private sameCoordinateCaptureState(
+    left: CoordinateCaptureState,
+    right: CoordinateCaptureState
+  ): boolean {
+    return (
+      left.sourceUrl === right.sourceUrl &&
+      left.refEpoch === right.refEpoch &&
+      left.viewportWidth === right.viewportWidth &&
+      left.viewportHeight === right.viewportHeight &&
+      left.scrollX === right.scrollX &&
+      left.scrollY === right.scrollY &&
+      left.mutationRevision === right.mutationRevision
     )
   }
 

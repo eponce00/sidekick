@@ -408,11 +408,15 @@ function targetFromArguments(
   const nth = finiteNumber(args, 'nth')
   const x = finiteNumber(args, 'x')
   const y = finiteNumber(args, 'y')
+  const screenshotId = stringArgument(args, 'screenshot_id')
   if ((x === undefined) !== (y === undefined)) {
     throw new Error('Browser coordinates require both x and y')
   }
   if (x !== undefined && !options.coordinates) {
     throw new Error('This browser action does not accept coordinate targets')
+  }
+  if (x !== undefined && !screenshotId) {
+    throw new Error('Browser coordinates require screenshot_id from the current viewport image')
   }
   const target = {
     ...(ref ? { ref } : {}),
@@ -423,6 +427,7 @@ function targetFromArguments(
       : {}),
     ...(nth !== undefined ? { nth } : {}),
     ...(options.preferredRoles?.length ? { preferredRoles: options.preferredRoles } : {}),
+    ...(screenshotId ? { screenshotId } : {}),
     ...(x !== undefined && y !== undefined ? { coordinates: { x, y } } : {})
   } as BrowserTarget
   if (!ref && !selector && !name && !role && x === undefined) {
@@ -899,6 +904,22 @@ export function registerBrowserToolHandlers(
 
     let lease: BrowserSessionLease | undefined
     try {
+      const requestedNavigateAction =
+        name === 'browser_navigate' ? stringArgument(args, 'action') : undefined
+      const requestedNavigateUrl =
+        name === 'browser_navigate' ? stringArgument(args, 'url') : undefined
+      if (name === 'browser_navigate') {
+        if (!requestedNavigateAction) throw new Error('browser_navigate requires an action')
+        if (!['url', 'back', 'forward', 'reload'].includes(requestedNavigateAction)) {
+          throw new Error('browser_navigate action must be url, back, forward, or reload')
+        }
+        if (requestedNavigateAction === 'url' && !requestedNavigateUrl) {
+          throw new Error('browser_navigate action url requires a URL')
+        }
+        if (requestedNavigateAction !== 'url' && requestedNavigateUrl) {
+          throw new Error(`browser_navigate action ${requestedNavigateAction} does not accept a URL`)
+        }
+      }
       lease = await manager.lease(scope, context.workspaceRoot)
       if (name === 'browser_open') {
         const url = stringArgument(args, 'url')
@@ -958,13 +979,15 @@ export function registerBrowserToolHandlers(
       }
 
       if (!lease) {
-        const navigateAction = stringArgument(args, 'action')
-        const navigateUrl = stringArgument(args, 'url')
-        if (name === 'browser_navigate' && navigateAction === 'url' && navigateUrl) {
+        if (
+          name === 'browser_navigate' &&
+          requestedNavigateAction === 'url' &&
+          requestedNavigateUrl
+        ) {
           const opened = await manager.open(
             scope,
             context.runId,
-            navigateUrl,
+            requestedNavigateUrl,
             undefined,
             context.workspaceRoot ? [context.workspaceRoot] : [],
             context.signal
@@ -1126,14 +1149,12 @@ export function registerBrowserToolHandlers(
           { signal: context.signal }
         )
       } else if (name === 'browser_navigate') {
-        const action = stringArgument(args, 'action')
-        const url = stringArgument(args, 'url')
-        if (!action) throw new Error('browser_navigate requires an action')
-        if (action === 'url' && !url) throw new Error('browser_navigate action url requires a URL')
         raw = await manager.service.navigate(
           {
             sessionId: lease.sessionId,
-            ...(action === 'url' ? { url: url! } : { action })
+            ...(requestedNavigateAction === 'url'
+              ? { url: requestedNavigateUrl! }
+              : { action: requestedNavigateAction! })
           } as BrowserNavigateInput,
           { signal: context.signal }
         )

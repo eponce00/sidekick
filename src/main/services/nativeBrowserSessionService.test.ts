@@ -22,6 +22,8 @@ class FakeSurface implements NativeBrowserSurface {
   screenshot = Buffer.from('same-png')
   fullPageScreenshot = Buffer.from('full-page-png')
   mutationRevision = 0
+  scrollX = 0
+  scrollY = 0
   bodyText = 'Welcome to SideKick'
   rejectCommittedBlank = false
   failBlankBeforeCommitAttempts = 0
@@ -33,6 +35,24 @@ class FakeSurface implements NativeBrowserSurface {
   selectAllPending = false
   ignoreTextInput = false
   navigateAfterTextInput = false
+  navigateOnClickBackendNodeId: number | undefined
+  stealFocusOnClickBackendNodeId: number | undefined
+  navigateOnBackspace = false
+  stealFocusOnBackspace = false
+  captureWidth: number | undefined
+  captureHeight: number | undefined
+  captureFailures = 0
+  captureAttempts = 0
+  captureErrorMessage = 'UnknownVizError'
+  mutateDuringCapture = false
+  scrollDuringCapture = false
+  navigateDuringCapture = false
+  revertStandaloneSelect = false
+  replaceStandaloneSelect = false
+  navigateSameUrlOnStandaloneSelect = false
+  selectBackendNodeId = 10
+  selectorBackendNodeId = 9
+  extraAxNodes: Array<Record<string, unknown>> = []
   readonly formControls = new Map<
     number,
     {
@@ -152,8 +172,23 @@ class FakeSurface implements NativeBrowserSurface {
           : this.formControls.get(this.focusedBackendNodeId)
       if (control?.kind === 'textbox') control.value = ''
     }
+    if (event.type === 'keyUp' && event.keyCode === 'Backspace') {
+      if (this.stealFocusOnBackspace) this.focusedBackendNodeId = 14
+      if (this.navigateOnBackspace) {
+        this.url = 'https://example.com/after-clear'
+        this.emitDebugger('Page.frameNavigated', { frame: { id: 'main', url: this.url } })
+      }
+    }
     if (event.type === 'mouseUp' && this.lastBackendNodeId !== undefined) {
       const control = this.formControls.get(this.lastBackendNodeId)
+      if (control) this.focusedBackendNodeId = this.lastBackendNodeId
+      if (this.stealFocusOnClickBackendNodeId === this.lastBackendNodeId) {
+        this.focusedBackendNodeId = 14
+      }
+      if (this.navigateOnClickBackendNodeId === this.lastBackendNodeId) {
+        this.url = 'https://example.com/after-click'
+        this.emitDebugger('Page.frameNavigated', { frame: { id: 'main', url: this.url } })
+      }
       if (control?.kind === 'checkbox' && !control.disabled) control.checked = !control.checked
       if (control?.kind === 'radio' && !control.disabled) control.checked = true
     }
@@ -167,6 +202,16 @@ class FakeSurface implements NativeBrowserSurface {
 
   async executeJavaScript<T>(source: string): Promise<T> {
     if (source === 'document.readyState') return 'complete' as T
+    if (source.includes('io.sidekick.browser.coordinate-capture-state')) {
+      return {
+        sourceUrl: this.url,
+        viewportWidth: this.viewport.width,
+        viewportHeight: this.viewport.height,
+        scrollX: this.scrollX,
+        scrollY: this.scrollY,
+        mutationRevision: this.mutationRevision
+      } as T
+    }
     if (source.includes('window.innerWidth')) {
       return {
         width: this.viewport.width,
@@ -189,10 +234,27 @@ class FakeSurface implements NativeBrowserSurface {
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
+    this.captureAttempts++
+    if (this.captureFailures > 0) {
+      this.captureFailures--
+      throw new Error(this.captureErrorMessage)
+    }
+    if (this.mutateDuringCapture) {
+      this.mutateDuringCapture = false
+      this.mutationRevision++
+    }
+    if (this.scrollDuringCapture) {
+      this.scrollDuringCapture = false
+      this.scrollY += 100
+    }
+    if (this.navigateDuringCapture) {
+      this.navigateDuringCapture = false
+      this.emitDebugger('Page.frameNavigated', { frame: { id: 'main', url: this.url } })
+    }
     return {
       png: Buffer.from(this.screenshot),
-      width: this.viewport.width,
-      height: this.viewport.height
+      width: this.captureWidth ?? this.viewport.width,
+      height: this.captureHeight ?? this.viewport.height
     }
   }
 
@@ -214,7 +276,15 @@ class FakeSurface implements NativeBrowserSurface {
             role: { value: 'RootWebArea' },
             name: { value: 'Test page' },
             backendDOMNodeId: 1,
-            childIds: ['button', 'textbox', 'select', 'checkbox', 'radio', 'notes']
+            childIds: [
+              'button',
+              'textbox',
+              'select',
+              'checkbox',
+              'radio',
+              'notes',
+              ...this.extraAxNodes.map((node) => String(node.nodeId))
+            ]
           },
           {
             nodeId: 'button',
@@ -236,8 +306,8 @@ class FakeSurface implements NativeBrowserSurface {
             parentId: 'root',
             role: { value: 'combobox' },
             name: { value: 'Language' },
-            value: { value: this.formControls.get(10)?.selectedValues?.[0] },
-            backendDOMNodeId: 10
+            value: { value: this.formControls.get(this.selectBackendNodeId)?.selectedValues?.[0] },
+            backendDOMNodeId: this.selectBackendNodeId
           },
           {
             nodeId: 'checkbox',
@@ -262,7 +332,8 @@ class FakeSurface implements NativeBrowserSurface {
             name: { value: 'Notes' },
             value: { value: this.formControls.get(14)?.value },
             backendDOMNodeId: 14
-          }
+          },
+          ...this.extraAxNodes
         ]
       } as T
     }
@@ -271,7 +342,9 @@ class FakeSurface implements NativeBrowserSurface {
     }
     if (method === 'DOM.getDocument') return { root: { nodeId: 1 } } as T
     if (method === 'DOM.querySelectorAll') return { nodeIds: [99] } as T
-    if (method === 'DOM.describeNode') return { node: { backendNodeId: 9 } } as T
+    if (method === 'DOM.describeNode') {
+      return { node: { backendNodeId: this.selectorBackendNodeId } } as T
+    }
     if (method === 'Runtime.callFunctionOn') {
       const declaration = String(params?.functionDeclaration ?? '')
       const backendNodeId = Number(String(params?.objectId ?? '').replace('object-', ''))
@@ -282,6 +355,14 @@ class FakeSurface implements NativeBrowserSurface {
         } as T
       }
       const control = this.formControls.get(backendNodeId)
+      if (declaration.includes('Target text field did not retain focus')) {
+        if (control?.kind !== 'textbox' || this.focusedBackendNodeId !== backendNodeId) {
+          return {
+            exceptionDetails: { text: 'Target text field did not retain focus' }
+          } as T
+        }
+        return { result: { value: true } } as T
+      }
       if (declaration.includes('unsupportedInputs')) {
         if (!control) {
           return {
@@ -334,6 +415,46 @@ class FakeSurface implements NativeBrowserSurface {
         const changed = JSON.stringify(control.selectedValues) !== JSON.stringify(expectedValues)
         control.selectedValues = expectedValues
         return { result: { value: { changed, expectedValues } } } as T
+      }
+      if (declaration.includes('const chosen = new Set()')) {
+        if (control?.kind !== 'select') {
+          return { exceptionDetails: { text: 'Target is not a select element' } } as T
+        }
+        const requested = ((params?.arguments as Array<{ value?: unknown[] }> | undefined)?.[0]
+          ?.value ?? []) as string[]
+        const selected = requested.map((value) => {
+          const exactValue = control.options?.filter((option) => option.value === value) ?? []
+          const matches = exactValue.length
+            ? exactValue
+            : (control.options?.filter(
+                (option) => option.label === value || option.text === value
+              ) ?? [])
+          return matches.length === 1 ? matches[0] : undefined
+        })
+        if (selected.some((option) => !option)) {
+          return { exceptionDetails: { text: 'No select option matched one requested value' } } as T
+        }
+        const expected = [...new Set(selected.map((option) => option!.value))]
+        control.selectedValues = this.revertStandaloneSelect ? ['en'] : expected
+        if (this.replaceStandaloneSelect) {
+          this.formControls.set(17, {
+            ...control,
+            selectedValues: [...(control.selectedValues ?? [])],
+            options: control.options?.map((option) => ({ ...option }))
+          })
+          this.formControls.delete(backendNodeId)
+          this.selectBackendNodeId = 17
+        }
+        if (this.navigateSameUrlOnStandaloneSelect) {
+          this.emitDebugger('Page.frameNavigated', { frame: { id: 'main', url: this.url } })
+        }
+        return { result: { value: expected } } as T
+      }
+      if (declaration.includes('connected select element')) {
+        if (control?.kind !== 'select') {
+          return { exceptionDetails: { text: 'Target is no longer a select element' } } as T
+        }
+        return { result: { value: [...(control.selectedValues ?? [])] } } as T
       }
       if (declaration.includes('this.focus()')) {
         this.focusedBackendNodeId = backendNodeId
@@ -617,7 +738,12 @@ describe('NativeBrowserSessionService', () => {
 
     const fallback = await service.hover({
       sessionId: opened.sessionId,
-      target: { role: 'button', name: 'Missing', coordinates: { x: 11, y: 12 } }
+      target: {
+        role: 'button',
+        name: 'Missing',
+        screenshotId: first.observation.screenshot!.id,
+        coordinates: { x: 11, y: 12 }
+      }
     })
     expect(fallback).toMatchObject({ targetMode: 'coordinates', coordinateFallbackUsed: true })
     expect(fallback.observation.pointer).toMatchObject({
@@ -655,6 +781,266 @@ describe('NativeBrowserSessionService', () => {
       method: 'Page.navigateToHistoryEntry',
       params: { entryId: 1 }
     })
+  })
+
+  it('binds coordinate input to a current viewport screenshot and maps resized pixels', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'coordinate-binding', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.captureWidth = 640
+    surface.captureHeight = 400
+    const current = await service.observe(opened.sessionId)
+
+    const hovered = await service.hover({
+      sessionId: opened.sessionId,
+      target: {
+        screenshotId: current.screenshot!.id,
+        coordinates: { x: 320, y: 200 }
+      }
+    })
+    expect(hovered.observation.pointer).toMatchObject({ x: 640, y: 400 })
+
+    surface.mutationRevision++
+    await expect(
+      service.hover({
+        sessionId: opened.sessionId,
+        target: {
+          screenshotId: hovered.observation.screenshot!.id,
+          coordinates: { x: 10, y: 10 }
+        }
+      })
+    ).rejects.toThrow('screenshot is stale')
+
+    await expect(
+      service.hover({
+        sessionId: opened.sessionId,
+        target: { screenshotId: opened.screenshot!.id, coordinates: { x: 10, y: 10 } }
+      })
+    ).rejects.toThrow('screenshot is stale')
+    await expect(
+      service.hover({
+        sessionId: opened.sessionId,
+        target: { coordinates: { x: 10, y: 10 } }
+      })
+    ).rejects.toThrow('require the screenshot_id')
+
+    for (const instability of [
+      'mutateDuringCapture',
+      'scrollDuringCapture',
+      'navigateDuringCapture'
+    ] as const) {
+      surface[instability] = true
+      const unstable = await service.observe(opened.sessionId)
+      await expect(
+        service.hover({
+          sessionId: opened.sessionId,
+          target: { screenshotId: unstable.screenshot!.id, coordinates: { x: 10, y: 10 } }
+        })
+      ).rejects.toThrow('screenshot is stale')
+    }
+  })
+
+  it('filters decorative roles without silently choosing between actionable matches', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'role-filtering', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.extraAxNodes.push({
+      nodeId: 'save-heading',
+      parentId: 'root',
+      role: { value: 'heading' },
+      name: { value: 'Save' },
+      backendDOMNodeId: 15
+    })
+    await service.observe(opened.sessionId, { screenshot: 'none' })
+
+    const filtered = await service.click({
+      sessionId: opened.sessionId,
+      target: { name: 'Save', exact: true, preferredRoles: ['button', 'checkbox'] }
+    })
+    expect(filtered.targetMode).toBe('semantic')
+
+    surface.extraAxNodes.push({
+      nodeId: 'save-checkbox',
+      parentId: 'root',
+      role: { value: 'checkbox' },
+      name: { value: 'Save' },
+      backendDOMNodeId: 16
+    })
+    await service.observe(opened.sessionId, { screenshot: 'none' })
+    await expect(
+      service.click({
+        sessionId: opened.sessionId,
+        target: { name: 'Save', exact: true, preferredRoles: ['button', 'checkbox'] }
+      })
+    ).rejects.toThrow('ambiguous')
+  })
+
+  it('verifies a native select after settling and reports a reverted selection', async () => {
+    const first = await testService()
+    const opened = await first.service.open({ runId: 'select-verified', url: 'https://example.com/' })
+    const selected = await first.service.select({
+      sessionId: opened.sessionId,
+      target: { role: 'combobox', name: 'Language' },
+      values: ['Spanish']
+    })
+    expect(selected.action).toBe('select')
+    expect(first.runtime.surfaces[0].formControls.get(10)?.selectedValues).toEqual(['es'])
+
+    const replacement = await testService()
+    const replacementOpened = await replacement.service.open({
+      runId: 'select-replaced',
+      url: 'https://example.com/'
+    })
+    replacement.runtime.surfaces[0].replaceStandaloneSelect = true
+    await expect(
+      replacement.service.select({
+        sessionId: replacementOpened.sessionId,
+        target: { role: 'combobox', name: 'Language' },
+        values: ['Spanish']
+      })
+    ).resolves.toMatchObject({ action: 'select' })
+    expect(replacement.runtime.surfaces[0].formControls.get(17)?.selectedValues).toEqual(['es'])
+
+    const second = await testService()
+    const reverted = await second.service.open({
+      runId: 'select-reverted',
+      url: 'https://example.com/'
+    })
+    second.runtime.surfaces[0].revertStandaloneSelect = true
+    await expect(
+      second.service.select({
+        sessionId: reverted.sessionId,
+        target: { role: 'combobox', name: 'Language' },
+        values: ['Spanish']
+      })
+    ).rejects.toThrow('did not retain')
+
+    const fallback = await testService()
+    const fallbackOpened = await fallback.service.open({
+      runId: 'select-ref-with-fallback',
+      url: 'https://example.com/'
+    })
+    const fallbackSurface = fallback.runtime.surfaces[0]
+    fallbackSurface.formControls.set(18, {
+      kind: 'select',
+      selectedValues: ['es'],
+      options: [
+        { value: 'en', label: 'English', text: 'English' },
+        { value: 'es', label: 'Spanish', text: 'Spanish' }
+      ]
+    })
+    fallbackSurface.selectorBackendNodeId = 18
+    fallbackSurface.revertStandaloneSelect = true
+    await expect(
+      fallback.service.select({
+        sessionId: fallbackOpened.sessionId,
+        target: {
+          ref: observedRef(fallbackOpened, 'Language'),
+          selector: '#different-select'
+        },
+        values: ['Spanish']
+      })
+    ).rejects.toThrow('did not retain')
+
+    const sameUrl = await testService()
+    const sameUrlOpened = await sameUrl.service.open({
+      runId: 'select-same-url-navigation',
+      url: 'https://example.com/'
+    })
+    sameUrl.runtime.surfaces[0].navigateSameUrlOnStandaloneSelect = true
+    await expect(
+      sameUrl.service.select({
+        sessionId: sameUrlOpened.sessionId,
+        target: { role: 'combobox', name: 'Language' },
+        values: ['Spanish']
+      })
+    ).rejects.toThrow('changed the page')
+  })
+
+  it('never inserts text after click or clear navigation and focus theft', async () => {
+    const navigation = await testService()
+    const navigationOpened = await navigation.service.open({
+      runId: 'type-click-navigation',
+      url: 'https://example.com/'
+    })
+    const navigationSurface = navigation.runtime.surfaces[0]
+    navigationSurface.navigateOnClickBackendNodeId = 11
+    await expect(
+      navigation.service.type({
+        sessionId: navigationOpened.sessionId,
+        target: { role: 'textbox', name: 'Email' },
+        text: 'must-not-leak'
+      })
+    ).rejects.toThrow('page changed before text entry')
+    expect(navigationSurface.insertedText).toBe('')
+    expect(navigationSurface.formControls.get(14)?.value).toBe('')
+
+    const focus = await testService()
+    const focusOpened = await focus.service.open({
+      runId: 'form-focus-theft',
+      url: 'https://example.com/'
+    })
+    const focusSurface = focus.runtime.surfaces[0]
+    focusSurface.stealFocusOnClickBackendNodeId = 11
+    const result = await focus.service.fillForm({
+      sessionId: focusOpened.sessionId,
+      fields: [
+        {
+          kind: 'textbox',
+          target: { role: 'textbox', name: 'Email' },
+          value: 'must-not-leak'
+        }
+      ]
+    })
+    expect(result).toMatchObject({
+      completed: false,
+      fields: [{ status: 'failed' }]
+    })
+    expect(focusSurface.insertedText).toBe('')
+    expect(focusSurface.formControls.get(14)?.value).toBe('')
+    expect(JSON.stringify(result)).not.toContain('must-not-leak')
+
+    const clearNavigation = await testService()
+    const clearNavigationOpened = await clearNavigation.service.open({
+      runId: 'type-clear-navigation',
+      url: 'https://example.com/'
+    })
+    const clearNavigationSurface = clearNavigation.runtime.surfaces[0]
+    clearNavigationSurface.navigateOnBackspace = true
+    await expect(
+      clearNavigation.service.type({
+        sessionId: clearNavigationOpened.sessionId,
+        target: { role: 'textbox', name: 'Email' },
+        text: 'must-not-leak'
+      })
+    ).rejects.toThrow('page changed before text entry')
+    expect(clearNavigationSurface.insertedText).toBe('')
+    expect(clearNavigationSurface.formControls.get(14)?.value).toBe('')
+
+    const clearFocus = await testService()
+    const clearFocusOpened = await clearFocus.service.open({
+      runId: 'form-clear-focus-theft',
+      url: 'https://example.com/'
+    })
+    const clearFocusSurface = clearFocus.runtime.surfaces[0]
+    clearFocusSurface.stealFocusOnBackspace = true
+    const clearFocusResult = await clearFocus.service.fillForm({
+      sessionId: clearFocusOpened.sessionId,
+      fields: [
+        {
+          kind: 'textbox',
+          target: { role: 'textbox', name: 'Email' },
+          value: 'must-not-leak'
+        }
+      ]
+    })
+    expect(clearFocusResult).toMatchObject({
+      completed: false,
+      fields: [{ status: 'failed' }]
+    })
+    expect(clearFocusSurface.insertedText).toBe('')
+    expect(clearFocusSurface.formControls.get(14)?.value).toBe('')
+    expect(JSON.stringify(clearFocusResult)).not.toContain('must-not-leak')
   })
 
   it('fills and verifies mixed standard controls with one final observation and no value echo', async () => {
@@ -806,6 +1192,46 @@ describe('NativeBrowserSessionService', () => {
       target: { role: 'button', name: 'Save' }
     })
     expect(action.observation.screenshotChanged).toBe(false)
+  })
+
+  it('retries only transient offscreen viewport capture failures', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'capture-retry', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const attemptsBefore = surface.captureAttempts
+    surface.captureFailures = 2
+
+    await expect(service.observe(opened.sessionId)).resolves.toMatchObject({
+      screenshot: { kind: 'viewport' }
+    })
+    expect(surface.captureAttempts - attemptsBefore).toBe(3)
+
+    const nonTransientAttempts = surface.captureAttempts
+    surface.captureFailures = 1
+    surface.captureErrorMessage = 'EmbeddingTokenChanged'
+    await expect(service.observe(opened.sessionId)).rejects.toThrow('EmbeddingTokenChanged')
+    expect(surface.captureAttempts - nonTransientAttempts).toBe(1)
+
+    const abortAttempts = surface.captureAttempts
+    surface.captureFailures = 3
+    surface.captureErrorMessage = 'UnknownVizError'
+    const controller = new AbortController()
+    const abortTimer = setTimeout(() => controller.abort(), 10)
+    try {
+      await expect(
+        service.observe(opened.sessionId, {}, { signal: controller.signal })
+      ).rejects.toMatchObject({ name: 'AbortError' })
+    } finally {
+      clearTimeout(abortTimer)
+    }
+    expect(surface.captureAttempts - abortAttempts).toBe(1)
+
+    const deadlineAttempts = surface.captureAttempts
+    surface.captureFailures = 3
+    await expect(
+      service.observe(opened.sessionId, {}, { timeoutMs: 10 })
+    ).rejects.toMatchObject({ name: 'TimeoutError' })
+    expect(surface.captureAttempts - deadlineAttempts).toBe(1)
   })
 
   it('resizes the owned Chromium viewport and returns fresh visual evidence', async () => {

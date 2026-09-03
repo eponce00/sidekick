@@ -365,8 +365,22 @@ describe('native browser agent tool handlers', () => {
     const { registry, service } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
 
-    const coordinate = await execute(registry, 'browser_click', { x: 100, y: 200 })
+    const unboundCoordinate = await execute(registry, 'browser_click', { x: 100, y: 200 })
+    expect(unboundCoordinate).toMatchObject({
+      status: 'error',
+      error: { message: expect.stringContaining('screenshot_id') }
+    })
+
+    const coordinate = await execute(registry, 'browser_click', {
+      x: 100,
+      y: 200,
+      screenshot_id: 'shot-session-1'
+    })
     expect(coordinate).toMatchObject({ status: 'success', media: [{ mimeType: 'image/png' }] })
+    expect(service.click).toHaveBeenLastCalledWith(
+      expect.objectContaining({ target: expect.objectContaining({ screenshotId: 'shot-session-1' }) }),
+      expect.any(Object)
+    )
 
     await execute(registry, 'browser_type', { text: 'State', value: 'Nevada' })
     expect(service.type).toHaveBeenLastCalledWith(
@@ -378,6 +392,16 @@ describe('native browser agent tool handlers', () => {
       }),
       expect.any(Object)
     )
+  })
+
+  it('validates first-use navigation before reporting a missing session', async () => {
+    const { registry, service } = setup()
+    const invalid = await execute(registry, 'browser_navigate', { action: 'url' })
+    expect(invalid).toMatchObject({
+      status: 'error',
+      error: { message: expect.stringContaining('requires a URL') }
+    })
+    expect(service.open).not.toHaveBeenCalled()
   })
 
   it('replaces a persistent session when the conversation moves to another project', async () => {

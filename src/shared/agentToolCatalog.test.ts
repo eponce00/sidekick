@@ -134,6 +134,14 @@ describe('canonical agent tool catalog', () => {
         }
       }
     })
+    const click = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_click')
+    expect(click?.definition.function.parameters).toMatchObject({
+      anyOf: expect.arrayContaining([{ required: ['x', 'y', 'screenshot_id'] }]),
+      properties: { screenshot_id: { type: 'string' } }
+    })
   })
 
   it('exposes goal completion control only inside a durable goal run', () => {

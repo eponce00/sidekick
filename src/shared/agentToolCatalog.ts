@@ -615,7 +615,7 @@ const browserScreenshot = definition(
 
 const browserClick = definition(
   'browser_click',
-  'Perform a real user click and wait for the page to settle before returning compact semantic state. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and are interpreted 1:1 in the attached viewport image. Routine screenshots are omitted unless requested, coordinates were used, or the action had no visual effect.',
+  'Perform a real user click and wait for the page to settle before returning compact semantic state. Prefer a ref from the latest observation, then a CSS selector or visible text. Coordinates are a last-resort visual fallback and must include the screenshot_id of the viewport image they came from; SideKick rejects stale images and maps resized image pixels safely. Routine screenshots are omitted unless requested, coordinates were used, or the action had no visual effect.',
   {
     type: 'object',
     anyOf: [
@@ -624,7 +624,7 @@ const browserClick = definition(
       { required: ['text'] },
       { required: ['name'] },
       { required: ['role'] },
-      { required: ['x', 'y'] }
+      { required: ['x', 'y', 'screenshot_id'] }
     ],
     properties: {
       ref: { type: 'string' },
@@ -636,6 +636,10 @@ const browserClick = definition(
       nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
       x: { type: 'number', minimum: 0 },
       y: { type: 'number', minimum: 0 },
+      screenshot_id: {
+        type: 'string',
+        description: 'ID of the current viewport screenshot used to choose x and y.'
+      },
       button: { type: 'string', enum: ['left', 'middle', 'right'] },
       click_count: { type: 'number', minimum: 1, maximum: 3 },
       include_screenshot: {
@@ -819,14 +823,14 @@ const browserScroll = definition(
 
 const browserHover = definition(
   'browser_hover',
-  'Hover a semantic element, selector, visible text, or viewport coordinate and return the changed observation.',
+  'Hover a semantic element, selector, visible text, or viewport coordinate and return the changed observation. Coordinate targets require the screenshot_id of the current viewport image.',
   {
     type: 'object',
     anyOf: [
       { required: ['ref'] },
       { required: ['selector'] },
       { required: ['text'] },
-      { required: ['x', 'y'] }
+      { required: ['x', 'y', 'screenshot_id'] }
     ],
     properties: {
       ref: { type: 'string' },
@@ -834,6 +838,10 @@ const browserHover = definition(
       text: { type: 'string' },
       x: { type: 'number', minimum: 0 },
       y: { type: 'number', minimum: 0 },
+      screenshot_id: {
+        type: 'string',
+        description: 'ID of the current viewport screenshot used to choose x and y.'
+      },
       include_screenshot: {
         type: 'boolean',
         description: 'Attach a fresh image when visual layout must be inspected. Defaults to auto.'
