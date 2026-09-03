@@ -12,6 +12,8 @@ import type { ToolOutputStore } from './toolOutputStore'
 import {
   NativeBrowserSessionService,
   type BrowserActionResult,
+  type BrowserFillFormResult,
+  type BrowserFormFieldInput,
   type BrowserNavigateInput,
   type BrowserObservation,
   type BrowserScreenshotArtifact,
@@ -26,6 +28,7 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_click',
   'browser_type',
   'browser_select',
+  'browser_fill_form',
   'browser_press',
   'browser_scroll',
   'browser_hover',
@@ -430,6 +433,54 @@ function targetFromArguments(
   return target
 }
 
+function formFieldsFromArguments(args: Record<string, unknown>): BrowserFormFieldInput[] {
+  if (!Array.isArray(args.fields) || args.fields.length < 1) {
+    throw new Error('browser_fill_form requires at least one field')
+  }
+  if (args.fields.length > 25) throw new Error('browser_fill_form supports at most 25 fields')
+  return args.fields.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error(`browser_fill_form field ${index} must be an object`)
+    }
+    const field = raw as Record<string, unknown>
+    const kind = stringArgument(field, 'kind')
+    const target = targetFromArguments(field, { required: true, coordinates: false })!
+    if (kind === 'textbox') {
+      if (typeof field.value !== 'string') {
+        throw new Error(`browser_fill_form textbox field ${index} requires a string value`)
+      }
+      return { kind, target, value: field.value }
+    }
+    if (kind === 'select') {
+      const rawValues = Array.isArray(field.values) ? field.values : []
+      const values = rawValues.filter((value): value is string => typeof value === 'string')
+      if (!values.length || values.length !== rawValues.length || values.length > 20) {
+        throw new Error(
+          `browser_fill_form select field ${index} requires between one and 20 string values`
+        )
+      }
+      return { kind, target, values }
+    }
+    if (kind === 'checkbox') {
+      if (typeof field.checked !== 'boolean') {
+        throw new Error(`browser_fill_form checkbox field ${index} requires checked`)
+      }
+      return { kind, target, checked: field.checked }
+    }
+    if (kind === 'radio') {
+      if (field.checked !== true) {
+        throw new Error(`browser_fill_form radio field ${index} requires checked=true`)
+      }
+      return { kind, target, checked: true }
+    }
+    throw new Error(`browser_fill_form field ${index} has an unsupported kind`)
+  })
+}
+
+function publicFillForm(result: BrowserFillFormResult): unknown {
+  return { ...result, observation: publicObservation(result.observation) }
+}
+
 function errorResult(
   title: string,
   error: unknown,
@@ -782,6 +833,54 @@ async function boundedVisualSuccess(
   )
 }
 
+async function boundedVisualFormFailure(
+  outputs: ToolOutputStore,
+  manager: AgentBrowserSessionManager,
+  title: string,
+  result: BrowserFillFormResult,
+  signal: AbortSignal
+): Promise<ToolExecutionResult> {
+  const firstFailure = result.fields.find((field) => field.status === 'failed')
+  const unsupported = firstFailure?.error?.code === 'unsupported_control'
+  const recovery = unsupported
+    ? 'Use a dedicated browser action for this custom control, then resume the remaining fields.'
+    : 'Use the returned final observation to retarget only the failed and skipped fields.'
+  const data = {
+    ...(publicFillForm(result) as Record<string, unknown>),
+    recovery: {
+      action: unsupported ? 'change_strategy' : 'refresh_state',
+      instruction: recovery
+    }
+  }
+  const visual = await prepareVisualAttachment(
+    manager.service,
+    result.observation.screenshot,
+    signal,
+    'Browser form state after the batch stopped'
+  )
+  const modelData = addVisualMetadata(data, visual.metadata)
+  const bounded = await outputs.apply(JSON.stringify(modelData), {
+    maxBytes: 40 * 1024,
+    maxLines: 600,
+    maxTokens: 6_000,
+    preview: 'head-tail'
+  })
+  return toolExecutionFailed({
+    title,
+    code: unsupported ? 'unsupported' : 'conflict',
+    message:
+      firstFailure?.error?.message ??
+      'The form batch stopped because the page changed before completion.',
+    retryable: !unsupported,
+    recoveryAction: unsupported ? 'change_strategy' : 'refresh_state',
+    recovery,
+    data: addVisualMetadata(data, visual.metadata),
+    modelContent: bounded.content,
+    output: bounded.output,
+    media: visual.media
+  })
+}
+
 export function registerBrowserToolHandlers(
   registry: AgentToolHandlerRegistry,
   manager: AgentBrowserSessionManager,
@@ -983,6 +1082,15 @@ export function registerBrowserToolHandlers(
           },
           { signal: context.signal }
         )
+      } else if (name === 'browser_fill_form') {
+        const result = await manager.service.fillForm(
+          { sessionId: lease.sessionId, fields: formFieldsFromArguments(args) },
+          { signal: context.signal }
+        )
+        if (!result.completed) {
+          return boundedVisualFormFailure(outputs, manager, title, result, context.signal)
+        }
+        raw = result
       } else if (name === 'browser_press') {
         raw = await manager.service.press(
           { sessionId: lease.sessionId, key: stringArgument(args, 'key') || '' },

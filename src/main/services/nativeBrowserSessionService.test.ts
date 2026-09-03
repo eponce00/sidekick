@@ -28,6 +28,40 @@ class FakeSurface implements NativeBrowserSurface {
   focused = false
   debuggerAttached = false
   insertedText = ''
+  focusedBackendNodeId: number | undefined
+  lastBackendNodeId: number | undefined
+  selectAllPending = false
+  ignoreTextInput = false
+  navigateAfterTextInput = false
+  readonly formControls = new Map<
+    number,
+    {
+      kind: 'textbox' | 'select' | 'checkbox' | 'radio'
+      value?: string
+      selectedValues?: string[]
+      checked?: boolean
+      disabled?: boolean
+      readOnly?: boolean
+      multiple?: boolean
+      options?: Array<{ value: string; label: string; text: string }>
+    }
+  >([
+    [11, { kind: 'textbox', value: '' }],
+    [
+      10,
+      {
+        kind: 'select',
+        selectedValues: ['en'],
+        options: [
+          { value: 'en', label: 'English', text: 'English' },
+          { value: 'es', label: 'Spanish', text: 'Spanish' }
+        ]
+      }
+    ],
+    [12, { kind: 'checkbox', checked: false }],
+    [13, { kind: 'radio', checked: false }],
+    [14, { kind: 'textbox', value: '' }]
+  ])
   readonly inputEvents: Array<Parameters<NativeBrowserSurface['sendInputEvent']>[0]> = []
   readonly commands: Array<{ method: string; params?: Record<string, unknown> }> = []
   private guard: (url: string) => boolean = (url) => url === 'about:blank'
@@ -95,10 +129,34 @@ class FakeSurface implements NativeBrowserSurface {
 
   async insertText(text: string): Promise<void> {
     this.insertedText += text
+    const control =
+      this.focusedBackendNodeId === undefined
+        ? undefined
+        : this.formControls.get(this.focusedBackendNodeId)
+    if (!this.ignoreTextInput && control?.kind === 'textbox') control.value = text
+    this.selectAllPending = false
+    if (this.navigateAfterTextInput) {
+      this.navigateAfterTextInput = false
+      this.url = 'https://example.com/after-input'
+      this.emitDebugger('Page.frameNavigated', { frame: { id: 'main' } })
+    }
   }
 
   sendInputEvent(event: Parameters<NativeBrowserSurface['sendInputEvent']>[0]): void {
     this.inputEvents.push(event)
+    if (event.type === 'keyDown' && event.keyCode === 'A') this.selectAllPending = true
+    if (event.type === 'keyDown' && event.keyCode === 'Backspace' && this.selectAllPending) {
+      const control =
+        this.focusedBackendNodeId === undefined
+          ? undefined
+          : this.formControls.get(this.focusedBackendNodeId)
+      if (control?.kind === 'textbox') control.value = ''
+    }
+    if (event.type === 'mouseUp' && this.lastBackendNodeId !== undefined) {
+      const control = this.formControls.get(this.lastBackendNodeId)
+      if (control?.kind === 'checkbox' && !control.disabled) control.checked = !control.checked
+      if (control?.kind === 'radio' && !control.disabled) control.checked = true
+    }
   }
 
   resizeViewport(viewport: BrowserViewport): void {
@@ -156,7 +214,7 @@ class FakeSurface implements NativeBrowserSurface {
             role: { value: 'RootWebArea' },
             name: { value: 'Test page' },
             backendDOMNodeId: 1,
-            childIds: ['button', 'select']
+            childIds: ['button', 'textbox', 'select', 'checkbox', 'radio', 'notes']
           },
           {
             nodeId: 'button',
@@ -166,11 +224,44 @@ class FakeSurface implements NativeBrowserSurface {
             backendDOMNodeId: 9
           },
           {
+            nodeId: 'textbox',
+            parentId: 'root',
+            role: { value: 'textbox' },
+            name: { value: 'Email' },
+            value: { value: this.formControls.get(11)?.value },
+            backendDOMNodeId: 11
+          },
+          {
             nodeId: 'select',
             parentId: 'root',
             role: { value: 'combobox' },
             name: { value: 'Language' },
+            value: { value: this.formControls.get(10)?.selectedValues?.[0] },
             backendDOMNodeId: 10
+          },
+          {
+            nodeId: 'checkbox',
+            parentId: 'root',
+            role: { value: 'checkbox' },
+            name: { value: 'Subscribe' },
+            properties: [{ name: 'checked', value: { value: this.formControls.get(12)?.checked } }],
+            backendDOMNodeId: 12
+          },
+          {
+            nodeId: 'radio',
+            parentId: 'root',
+            role: { value: 'radio' },
+            name: { value: 'Plan A' },
+            properties: [{ name: 'checked', value: { value: this.formControls.get(13)?.checked } }],
+            backendDOMNodeId: 13
+          },
+          {
+            nodeId: 'notes',
+            parentId: 'root',
+            role: { value: 'textbox' },
+            name: { value: 'Notes' },
+            value: { value: this.formControls.get(14)?.value },
+            backendDOMNodeId: 14
           }
         ]
       } as T
@@ -183,10 +274,69 @@ class FakeSurface implements NativeBrowserSurface {
     if (method === 'DOM.describeNode') return { node: { backendNodeId: 9 } } as T
     if (method === 'Runtime.callFunctionOn') {
       const declaration = String(params?.functionDeclaration ?? '')
+      const backendNodeId = Number(String(params?.objectId ?? '').replace('object-', ''))
+      this.lastBackendNodeId = backendNodeId
       if (declaration.includes('getBoundingClientRect')) {
         return {
           result: { value: { x: 20, y: 30, pageX: 20, pageY: 30, width: 100, height: 40 } }
         } as T
+      }
+      const control = this.formControls.get(backendNodeId)
+      if (declaration.includes('unsupportedInputs')) {
+        if (!control) {
+          return {
+            result: {
+              value: { kind: 'unsupported', disabled: false, readOnly: false }
+            }
+          } as T
+        }
+        return {
+          result: {
+            value: {
+              kind: control.kind,
+              disabled: control.disabled ?? false,
+              readOnly: control.readOnly ?? false,
+              ...(control.value === undefined ? {} : { value: control.value }),
+              ...(control.selectedValues === undefined
+                ? {}
+                : { selectedValues: [...control.selectedValues] }),
+              ...(control.checked === undefined ? {} : { checked: control.checked })
+            }
+          }
+        } as T
+      }
+      if (declaration.includes('expectedValues')) {
+        if (control?.kind !== 'select') {
+          return {
+            exceptionDetails: { text: 'Target is not a select element' }
+          } as T
+        }
+        const requested = ((params?.arguments as Array<{ value?: unknown[] }> | undefined)?.[0]
+          ?.value ?? []) as string[]
+        if (!control.multiple && requested.length !== 1) {
+          return {
+            exceptionDetails: {
+              text: 'A single-select field requires exactly one requested option'
+            }
+          } as T
+        }
+        const matches = requested.map((value) =>
+          control.options?.find(
+            (option) => option.value === value || option.label === value || option.text === value
+          )
+        )
+        if (matches.some((option) => !option)) {
+          return {
+            exceptionDetails: { text: 'One or more requested select options were not found' }
+          } as T
+        }
+        const expectedValues = [...new Set(matches.map((option) => option!.value))]
+        const changed = JSON.stringify(control.selectedValues) !== JSON.stringify(expectedValues)
+        control.selectedValues = expectedValues
+        return { result: { value: { changed, expectedValues } } } as T
+      }
+      if (declaration.includes('this.focus()')) {
+        this.focusedBackendNodeId = backendNodeId
       }
       return { result: { value: true } } as T
     }
@@ -319,6 +469,15 @@ async function pngFiles(root: string): Promise<string[]> {
   }
   await visit(root)
   return result
+}
+
+function observedRef(observation: { semanticSnapshot?: string }, name: string): string {
+  const line = observation.semanticSnapshot
+    ?.split('\n')
+    .find((candidate) => candidate.includes(`"${name}"`))
+  const ref = line?.match(/ref=([^\s\]]+)/)?.[1]
+  if (!ref) throw new Error(`Missing semantic ref for ${name}`)
+  return ref
 }
 
 afterEach(async () => {
@@ -496,6 +655,135 @@ describe('NativeBrowserSessionService', () => {
       method: 'Page.navigateToHistoryEntry',
       params: { entryId: 1 }
     })
+  })
+
+  it('fills and verifies mixed standard controls with one final observation and no value echo', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'form-batch', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    const semanticCallsBefore = surface.commands.filter(
+      ({ method }) => method === 'Accessibility.getFullAXTree'
+    ).length
+    surface.emitConsole({ level: 'info', message: 'Stored private@example.com' })
+    surface.emitFailure({
+      url: 'https://example.com/autosave?email=private%40example.com',
+      errorText: 'Rejected private@example.com'
+    })
+
+    const result = await service.fillForm({
+      sessionId: opened.sessionId,
+      fields: [
+        {
+          kind: 'textbox',
+          target: { ref: observedRef(opened, 'Email') },
+          value: 'private@example.com'
+        },
+        {
+          kind: 'select',
+          target: { ref: observedRef(opened, 'Language') },
+          values: ['Spanish']
+        },
+        {
+          kind: 'checkbox',
+          target: { ref: observedRef(opened, 'Subscribe') },
+          checked: true
+        },
+        { kind: 'radio', target: { ref: observedRef(opened, 'Plan A') }, checked: true }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      action: 'fill_form',
+      completed: true,
+      stopReason: 'completed',
+      attemptedFields: 4,
+      filledFields: 4,
+      fields: [
+        { index: 0, kind: 'textbox', status: 'filled', verification: { passed: true } },
+        {
+          index: 1,
+          kind: 'select',
+          status: 'filled',
+          verification: { passed: true, selectedCount: 1 }
+        },
+        { index: 2, kind: 'checkbox', status: 'filled', verification: { passed: true } },
+        { index: 3, kind: 'radio', status: 'filled', verification: { passed: true } }
+      ]
+    })
+    expect(surface.formControls.get(11)?.value).toBe('private@example.com')
+    expect(surface.formControls.get(10)?.selectedValues).toEqual(['es'])
+    expect(surface.formControls.get(12)?.checked).toBe(true)
+    expect(surface.formControls.get(13)?.checked).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('private@example.com')
+    expect(JSON.stringify(result)).not.toContain('private%40example.com')
+    expect(JSON.stringify(result)).not.toContain('Spanish')
+    expect(result.observation.screenshot).toBeUndefined()
+    expect(result.observation.semanticSnapshot).toContain('value=[redacted]')
+    expect(result.observation.semanticSnapshot).toContain('checked=[redacted]')
+    expect(
+      surface.commands.filter(({ method }) => method === 'Accessibility.getFullAXTree')
+    ).toHaveLength(semanticCallsBefore + 1)
+  })
+
+  it('stops at the first unverified field and leaves later fields untouched', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'form-failure', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.ignoreTextInput = true
+
+    const result = await service.fillForm({
+      sessionId: opened.sessionId,
+      fields: [
+        { kind: 'textbox', target: { ref: observedRef(opened, 'Email') }, value: 'not-applied' },
+        { kind: 'textbox', target: { ref: observedRef(opened, 'Notes') }, value: 'must-not-run' }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      completed: false,
+      stopReason: 'field_failed',
+      attemptedFields: 1,
+      filledFields: 0,
+      fields: [
+        {
+          index: 0,
+          status: 'failed',
+          error: { code: 'verification_failed' },
+          verification: { passed: false }
+        },
+        { index: 1, status: 'skipped' }
+      ]
+    })
+    expect(surface.formControls.get(14)?.value).toBe('')
+    expect(JSON.stringify(result)).not.toContain('not-applied')
+    expect(JSON.stringify(result)).not.toContain('must-not-run')
+  })
+
+  it('stops safely when a field action navigates and does not run the remaining batch', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'form-navigation', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.navigateAfterTextInput = true
+
+    const result = await service.fillForm({
+      sessionId: opened.sessionId,
+      fields: [
+        { kind: 'textbox', target: { ref: observedRef(opened, 'Email') }, value: 'navigate' },
+        { kind: 'checkbox', target: { ref: observedRef(opened, 'Subscribe') }, checked: true }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      completed: false,
+      stopReason: 'page_changed',
+      attemptedFields: 1,
+      fields: [
+        { index: 0, status: 'failed', error: { code: 'page_changed' } },
+        { index: 1, status: 'skipped' }
+      ],
+      observation: { tab: { url: 'https://example.com/after-input' } }
+    })
+    expect(surface.formControls.get(12)?.checked).toBe(false)
   })
 
   it('compares visual changes against the same screenshot kind', async () => {

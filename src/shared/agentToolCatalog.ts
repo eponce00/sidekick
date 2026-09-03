@@ -106,6 +106,14 @@ function presentationTitle(
     }
   if (name === 'browser_observe') return { kind, title: 'Inspect browser' }
   if (name === 'browser_screenshot') return { kind, title: 'Capture browser screenshot' }
+  if (name === 'browser_fill_form') {
+    const count = Array.isArray(args.fields) ? args.fields.length : 0
+    return {
+      kind,
+      title: 'Fill browser form',
+      detail: count ? `${count} field${count === 1 ? '' : 's'}` : undefined
+    }
+  }
   if (name === 'browser_verify')
     return { kind, title: 'Verify UI visually', detail: stringArgument(args, 'criterion') }
   if (name.startsWith('browser_'))
@@ -711,6 +719,67 @@ const browserSelect = definition(
   }
 )
 
+const browserFillForm = definition(
+  'browser_fill_form',
+  'Fill up to 25 standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Fields run in order and stop on the first failure or page change. Each actual post-fill state is verified, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Use individual browser tools for custom widgets or autocomplete controls.',
+  {
+    type: 'object',
+    required: ['fields'],
+    properties: {
+      fields: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 25,
+        items: {
+          type: 'object',
+          required: ['kind'],
+          allOf: [
+            {
+              anyOf: [{ required: ['ref'] }, { required: ['selector'] }, { required: ['text'] }]
+            },
+            {
+              anyOf: [
+                { properties: { kind: { enum: ['textbox'] } }, required: ['value'] },
+                { properties: { kind: { enum: ['select'] } }, required: ['values'] },
+                { properties: { kind: { enum: ['checkbox'] } }, required: ['checked'] },
+                { properties: { kind: { enum: ['radio'] } }, required: ['checked'] }
+              ]
+            }
+          ],
+          properties: {
+            kind: { type: 'string', enum: ['textbox', 'select', 'checkbox', 'radio'] },
+            ref: {
+              type: 'string',
+              description: 'Preferred current element ref from browser_observe.'
+            },
+            selector: { type: 'string', description: 'Unique CSS selector fallback.' },
+            text: {
+              type: 'string',
+              description: 'Accessible label or placeholder fallback; must resolve unambiguously.'
+            },
+            value: {
+              type: 'string',
+              description: 'Replacement text for a textbox. It is redacted from all tool records.'
+            },
+            values: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 20,
+              items: { type: 'string' },
+              description: 'Option values or visible labels for a native select.'
+            },
+            checked: {
+              type: 'boolean',
+              description:
+                'Desired checkbox state. Radio fields require true because a real user cannot directly uncheck one radio.'
+            }
+          }
+        }
+      }
+    }
+  }
+)
+
 const browserPress = definition(
   'browser_press',
   'Perform a real keyboard press in the current page, wait for the page to settle, and return the changed observation.',
@@ -894,6 +963,7 @@ const browserTools = [
   browserClick,
   browserType,
   browserSelect,
+  browserFillForm,
   browserPress,
   browserScroll,
   browserHover,

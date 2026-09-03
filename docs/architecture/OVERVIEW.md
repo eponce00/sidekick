@@ -208,10 +208,15 @@ change streak. Click, type, select, key, scroll, hover, navigation, tab, and wai
 browser input, settle the page, and return one post-action observation. `browser_evaluate` is a
 separate inspection-only primitive: common synthetic-input and DOM-mutation APIs are rejected, and
 the tool returns only a compact expression value rather than attaching a second, later screenshot
-or semantic tree. Element refs are tied to one observation epoch, so stale refs fail rather than
-acting on a different element. Repeated identical actions with no visual change are detected and
-stopped. `browser_verify` records an explicit criterion alongside a fresh visual observation; the
-model must inspect that evidence rather than infer success from a command or load event.
+or semantic tree. `browser_fill_form` runs an ordered standard-control batch under the existing
+session lock, verifies each real post-action value without returning it, aborts remaining fields on
+the first failure or observation-epoch/URL change, settles once, and captures one final redacted
+semantic observation. It deliberately omits the result screenshot so entered values cannot leak
+back through visual tool media. Element refs are tied to one observation epoch, so stale refs fail
+rather than acting on a different element. Repeated identical actions with no visual change are
+detected and stopped. `browser_verify` records an explicit criterion alongside a fresh visual
+observation; the model must inspect that evidence rather than infer success from a command or load
+event.
 `browser_resize` changes the owned viewport and Chromium device metrics so responsive desktop,
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added a native batched form-fill browser action with semantic targeting, per-field state
+  verification, redacted values, fail-fast page-change handling, and one final observation.
+
 ## 0.6.0 — 2026-08-30
 
 SideKick 0.6.0 is a broad agent-runtime and desktop-experience release focused on reliable long

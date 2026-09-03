@@ -15,6 +15,8 @@ import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
 import type {
   BrowserActionResult,
+  BrowserFillFormInput,
+  BrowserFillFormResult,
   BrowserObservation,
   BrowserOpenInput,
   BrowserOperationOptions,
@@ -103,6 +105,7 @@ function fakeService(): NativeBrowserSessionService & {
   navigate: ReturnType<typeof vi.fn>
   close: ReturnType<typeof vi.fn>
   screenshot: ReturnType<typeof vi.fn>
+  fillForm: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
 } {
   let sequence = 0
@@ -149,6 +152,36 @@ function fakeService(): NativeBrowserSessionService & {
     select: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'select')
     ),
+    fillForm: vi.fn(async (input: BrowserFillFormInput): Promise<BrowserFillFormResult> => {
+      const value = sessions.get(input.sessionId)!
+      const formObservation = { ...value, screenshot: undefined, screenshotChanged: null }
+      return {
+        sessionId: input.sessionId,
+        tabId: value.tab.id,
+        action: 'fill_form',
+        completed: true,
+        stopReason: 'completed',
+        attemptedFields: input.fields.length,
+        filledFields: input.fields.length,
+        durationMs: 12,
+        quiescence: {
+          idle: true,
+          waitedMs: 1,
+          pendingRequests: 0,
+          mutationRevision: 0,
+          timedOut: false
+        },
+        loopProtection: { unchangedRepeatCount: 0, blockedOnNextIdenticalAction: false },
+        fields: input.fields.map((field, index) => ({
+          index,
+          kind: field.kind,
+          status: 'filled',
+          targetMode: 'ref',
+          verification: { passed: true }
+        })),
+        observation: formObservation
+      }
+    }),
     press: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'press')
     ),
@@ -448,6 +481,130 @@ describe('native browser agent tool handlers', () => {
       },
       media: [{ mimeType: 'image/png' }]
     })
+  })
+
+  it('maps a mixed form batch, returns one final observation, and never echoes field values', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const secret = 'correct horse battery staple'
+    const result = await execute(registry, 'browser_fill_form', {
+      fields: [
+        { kind: 'textbox', ref: 'ax-1-11', value: secret },
+        { kind: 'select', text: 'Language', values: ['Private selection'] },
+        { kind: 'checkbox', selector: '#subscribe', checked: true },
+        { kind: 'radio', ref: 'ax-1-13', checked: true }
+      ]
+    })
+
+    expect(service.fillForm).toHaveBeenCalledWith(
+      {
+        sessionId: 'session-1',
+        fields: [
+          { kind: 'textbox', target: { ref: 'ax-1-11' }, value: secret },
+          {
+            kind: 'select',
+            target: { name: 'Language', exact: false },
+            values: ['Private selection']
+          },
+          { kind: 'checkbox', target: { selector: '#subscribe' }, checked: true },
+          { kind: 'radio', target: { ref: 'ax-1-13' }, checked: true }
+        ]
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    )
+    expect(result).toMatchObject({
+      status: 'success',
+      data: {
+        completed: true,
+        fields: [
+          { index: 0, verification: { passed: true } },
+          { index: 1, verification: { passed: true } },
+          { index: 2, verification: { passed: true } },
+          { index: 3, verification: { passed: true } }
+        ]
+      }
+    })
+    expect((result.data as BrowserFillFormResult).observation.screenshot).toBeUndefined()
+    expect(result.media).toBeUndefined()
+    expect(JSON.stringify(result)).not.toContain(secret)
+    expect(JSON.stringify(result)).not.toContain('Private selection')
+  })
+
+  it('returns structured recovery and the final observation when a form batch stops', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const finalObservation = observation('session-1')
+    finalObservation.screenshot = undefined
+    finalObservation.screenshotChanged = null
+    service.fillForm.mockResolvedValueOnce({
+      sessionId: 'session-1',
+      tabId: finalObservation.tab.id,
+      action: 'fill_form',
+      completed: false,
+      stopReason: 'field_failed',
+      attemptedFields: 1,
+      filledFields: 0,
+      durationMs: 10,
+      quiescence: {
+        idle: true,
+        waitedMs: 1,
+        pendingRequests: 0,
+        mutationRevision: 0,
+        timedOut: false
+      },
+      loopProtection: { unchangedRepeatCount: 0, blockedOnNextIdenticalAction: false },
+      fields: [
+        {
+          index: 0,
+          kind: 'textbox',
+          status: 'failed',
+          targetMode: 'ref',
+          verification: { passed: false },
+          error: {
+            code: 'verification_failed',
+            message: 'The requested form state did not match the actual control state.'
+          }
+        },
+        { index: 1, kind: 'checkbox', status: 'skipped' }
+      ],
+      observation: finalObservation
+    })
+
+    const result = await execute(registry, 'browser_fill_form', {
+      fields: [
+        { kind: 'textbox', ref: 'ax-1-11', value: 'private failure value' },
+        { kind: 'checkbox', ref: 'ax-1-12', checked: true }
+      ]
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'conflict', retryable: true, recoveryAction: 'refresh_state' },
+      data: {
+        completed: false,
+        fields: [{ status: 'failed' }, { status: 'skipped' }]
+      }
+    })
+    expect((result.data as BrowserFillFormResult).observation.screenshot).toBeUndefined()
+    expect(result.media).toBeUndefined()
+    expect(result.modelContent).toContain('retarget only the failed and skipped fields')
+    expect(JSON.stringify(result)).not.toContain('private failure value')
+  })
+
+  it('rejects coordinate form targets before any browser action', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+
+    const result = await execute(registry, 'browser_fill_form', {
+      fields: [{ kind: 'textbox', x: 40, y: 80, value: 'must-not-run' }]
+    })
+
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'invalid_arguments', recoveryAction: 'correct_input' }
+    })
+    expect(service.fillForm).not.toHaveBeenCalled()
+    expect(JSON.stringify(result)).not.toContain('must-not-run')
   })
 
   it('keeps browser evaluation inspection-only and returns compact data without an observation', async () => {

@@ -205,6 +205,51 @@ export interface BrowserSelectInput {
   values: string[]
 }
 
+export type BrowserFormFieldInput =
+  | { kind: 'textbox'; target: BrowserTarget; value: string }
+  | { kind: 'select'; target: BrowserTarget; values: string[] }
+  | { kind: 'checkbox'; target: BrowserTarget; checked: boolean }
+  | { kind: 'radio'; target: BrowserTarget; checked: true }
+
+export interface BrowserFillFormInput {
+  sessionId: string
+  tabId?: string
+  /** Ordered fields. Execution stops at the first failed or page-changing field. */
+  fields: BrowserFormFieldInput[]
+}
+
+export interface BrowserFormFieldResult {
+  index: number
+  kind: BrowserFormFieldInput['kind']
+  status: 'filled' | 'unchanged' | 'failed' | 'skipped'
+  targetMode?: Exclude<BrowserActionResult['targetMode'], 'coordinates' | 'page'>
+  verification?: {
+    passed: boolean
+    valueLength?: number
+    selectedCount?: number
+  }
+  error?: {
+    code: 'target_not_found' | 'unsupported_control' | 'verification_failed' | 'page_changed'
+    message: string
+  }
+}
+
+export interface BrowserFillFormResult {
+  sessionId: string
+  tabId: string
+  action: 'fill_form'
+  completed: boolean
+  stopReason: 'completed' | 'field_failed' | 'page_changed'
+  attemptedFields: number
+  filledFields: number
+  durationMs: number
+  quiescence: BrowserQuiescenceResult
+  loopProtection: BrowserActionResult['loopProtection']
+  /** Contains verification metadata only; requested and actual values are never returned. */
+  fields: BrowserFormFieldResult[]
+  observation: BrowserObservation
+}
+
 export interface BrowserPressInput {
   sessionId: string
   tabId?: string
@@ -461,6 +506,20 @@ interface ElementPoint {
   fallbackUsed: boolean
 }
 
+interface BrowserFormControlState {
+  kind: 'textbox' | 'select' | 'checkbox' | 'radio' | 'unsupported'
+  disabled: boolean
+  readOnly: boolean
+  value?: string
+  selectedValues?: string[]
+  checked?: boolean
+}
+
+interface BrowserSelectMutationResult {
+  changed: boolean
+  expectedValues: string[]
+}
+
 const DEFAULT_VIEWPORT: BrowserViewport = { width: 1280, height: 800, deviceScaleFactor: 1 }
 const DEFAULT_MAX_SESSIONS_PER_RUN = 2
 const DEFAULT_MAX_TOTAL_SESSIONS = 6
@@ -596,6 +655,56 @@ function matchesText(actual: string, expected: string, mode = 'equals'): boolean
 
 function canonicalFingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function redactFormObservation(
+  observation: BrowserObservation,
+  sensitiveStrings: ReadonlySet<string>
+): BrowserObservation {
+  const variants = [...sensitiveStrings]
+    .filter(Boolean)
+    .flatMap((value) => [value, encodeURIComponent(value)])
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .sort((a, b) => b.length - a.length)
+  const redact = (text: string): string => {
+    let result = text
+    for (const value of variants) result = result.split(value).join('[redacted]')
+    return result
+  }
+  let semanticSnapshot = observation.semanticSnapshot
+  if (semanticSnapshot) {
+    semanticSnapshot = semanticSnapshot.replace(
+      /\s(value|checked|selected)=("(?:\\.|[^"])*"|[^\s\]]+)/g,
+      ' $1=[redacted]'
+    )
+    semanticSnapshot = redact(semanticSnapshot)
+  }
+  return {
+    ...observation,
+    tab: {
+      ...observation.tab,
+      title: redact(observation.tab.title),
+      url: redact(observation.tab.url)
+    },
+    tabs: observation.tabs.map((tab) => ({
+      ...tab,
+      title: redact(tab.title),
+      url: redact(tab.url)
+    })),
+    ...(semanticSnapshot === undefined ? {} : { semanticSnapshot }),
+    screenshot: undefined,
+    screenshotChanged: null,
+    console: observation.console.map((entry) => ({
+      ...entry,
+      message: redact(entry.message),
+      ...(entry.sourceId ? { sourceId: redact(entry.sourceId) } : {})
+    })),
+    failedRequests: observation.failedRequests.map((failure) => ({
+      ...failure,
+      url: redact(failure.url),
+      errorText: redact(failure.errorText)
+    }))
+  }
 }
 
 function finiteCoordinate(value: number, label: string): number {
@@ -2332,6 +2441,339 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
+    })
+  }
+
+  private async inspectFormControl(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<BrowserFormControlState> {
+    return this.callOnNode<BrowserFormControlState>(
+      tab,
+      backendNodeId,
+      `function() {
+        const tag = String(this.tagName || '').toLowerCase();
+        const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
+        const disabled = this.disabled === true || this.getAttribute?.('aria-disabled') === 'true';
+        const readOnly = this.readOnly === true || this.getAttribute?.('aria-readonly') === 'true';
+        if (tag === 'select') {
+          return {
+            kind: 'select', disabled, readOnly: false,
+            selectedValues: Array.from(this.selectedOptions || []).map(option => String(option.value))
+          };
+        }
+        if (tag === 'input' && inputType === 'checkbox') {
+          return { kind: 'checkbox', disabled, readOnly: false, checked: this.checked === true };
+        }
+        if (tag === 'input' && inputType === 'radio') {
+          return { kind: 'radio', disabled, readOnly: false, checked: this.checked === true };
+        }
+        const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color']);
+        if ((tag === 'input' && !unsupportedInputs.has(inputType)) || tag === 'textarea') {
+          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? '') };
+        }
+        if (this.isContentEditable === true) {
+          return { kind: 'textbox', disabled, readOnly, value: String(this.textContent ?? '') };
+        }
+        return { kind: 'unsupported', disabled, readOnly };
+      }`,
+      [],
+      signal
+    )
+  }
+
+  private async replaceFormText(
+    tab: TabState,
+    target: ElementPoint,
+    value: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.callOnNode(
+      tab,
+      target.backendNodeId!,
+      `function() { this.focus(); return true; }`,
+      [],
+      signal
+    )
+    tab.surface.focus()
+    this.setPointer(tab, target, 'type')
+    const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
+    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectAllModifier] })
+    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectAllModifier] })
+    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
+    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
+    if (value) await abortable(tab.surface.insertText(value), signal)
+  }
+
+  private async updateFormSelect(
+    tab: TabState,
+    backendNodeId: number,
+    values: string[],
+    signal?: AbortSignal
+  ): Promise<BrowserSelectMutationResult> {
+    return this.callOnNode<BrowserSelectMutationResult>(
+      tab,
+      backendNodeId,
+      `function(values) {
+        if (!(this instanceof HTMLSelectElement)) throw new Error('Target is not a select element');
+        if (!this.multiple && values.length !== 1) {
+          throw new Error('A single-select field requires exactly one requested option');
+        }
+        const matched = values.map(requested => Array.from(this.options).filter(option =>
+          option.value === requested || option.label === requested || option.text === requested
+        ));
+        if (matched.some(options => options.length !== 1)) {
+          throw new Error('A requested select option was missing or ambiguous');
+        }
+        const selected = matched.map(options => options[0]);
+        if (selected.some(option => option.disabled || (option.parentElement instanceof HTMLOptGroupElement && option.parentElement.disabled))) {
+          throw new Error('A requested select option is disabled');
+        }
+        const expectedValues = Array.from(new Set(selected.map(option => String(option.value))));
+        const before = Array.from(this.selectedOptions).map(option => String(option.value));
+        for (const option of this.options) option.selected = expectedValues.includes(String(option.value));
+        const after = Array.from(this.selectedOptions).map(option => String(option.value));
+        const changed = before.length !== after.length || before.some((value, index) => value !== after[index]);
+        if (changed) {
+          this.dispatchEvent(new Event('input', { bubbles: true }));
+          this.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        return { changed, expectedValues };
+      }`,
+      [values],
+      signal
+    )
+  }
+
+  private async clickFormControl(
+    tab: TabState,
+    target: ElementPoint,
+    signal?: AbortSignal
+  ): Promise<void> {
+    this.setPointer(tab, target, 'click')
+    tab.surface.focus()
+    tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+    tab.surface.sendInputEvent({
+      type: 'mouseDown',
+      x: target.x,
+      y: target.y,
+      button: 'left',
+      clickCount: 1
+    })
+    tab.surface.sendInputEvent({
+      type: 'mouseUp',
+      x: target.x,
+      y: target.y,
+      button: 'left',
+      clickCount: 1
+    })
+    await abortable(tab.surface.executeJavaScript('0'), signal)
+  }
+
+  private formFieldFailure(error: unknown): BrowserFormFieldResult['error'] {
+    const message = error instanceof Error ? error.message : String(error)
+    if (/stale|not found|no longer available|ambiguous|not visible|requires a ref/i.test(message)) {
+      return {
+        code: 'target_not_found',
+        message: 'The form field target could not be resolved from the current page state.'
+      }
+    }
+    if (
+      /not a select|requires exactly one|requested select options|unsupported|disabled|read-only/i.test(
+        message
+      )
+    ) {
+      return {
+        code: 'unsupported_control',
+        message: 'The target control does not support the requested form operation.'
+      }
+    }
+    return {
+      code: 'verification_failed',
+      message: 'The requested form state could not be verified after the browser action.'
+    }
+  }
+
+  async fillForm(
+    input: BrowserFillFormInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserFillFormResult> {
+    if (!Array.isArray(input.fields) || input.fields.length < 1) {
+      throw new Error('Form fill requires at least one field')
+    }
+    if (input.fields.length > 25) throw new Error('Form fill supports at most 25 fields')
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'fill_form', tabId: tab.id, input })
+      this.guardRepeatedAction(tab, fingerprint)
+      const startedAt = this.now()
+      const initialUrl = tab.surface.getURL()
+      const initialRefEpoch = tab.refEpoch
+      const fields: BrowserFormFieldResult[] = []
+      const sensitiveStrings = new Set<string>()
+      let stopReason: BrowserFillFormResult['stopReason'] = 'completed'
+      const pageChanged = (): boolean =>
+        tab.surface.isDestroyed() ||
+        session.activeTabId !== tab.id ||
+        tab.surface.getURL() !== initialUrl ||
+        tab.refEpoch !== initialRefEpoch
+
+      for (let index = 0; index < input.fields.length; index++) {
+        const field = input.fields[index]
+        if (pageChanged()) {
+          stopReason = 'page_changed'
+          break
+        }
+        let target: ElementPoint | undefined
+        try {
+          target = await this.resolveTarget(tab, field.target, false, signal)
+          const backendNodeId = target.backendNodeId!
+          const before = await this.inspectFormControl(tab, backendNodeId, signal)
+          if (before.kind !== field.kind) {
+            throw new Error('Target is an unsupported form control for the requested field kind')
+          }
+          if (before.disabled) throw new Error('Target form control is disabled')
+
+          let status: BrowserFormFieldResult['status'] = 'unchanged'
+          let verification: BrowserFormFieldResult['verification']
+          if (field.kind === 'textbox') {
+            sensitiveStrings.add(field.value)
+            if (before.readOnly) throw new Error('Target form control is read-only')
+            if (before.value !== field.value) {
+              await this.replaceFormText(tab, target, field.value, signal)
+              status = 'filled'
+            }
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const passed = after.kind === 'textbox' && after.value === field.value
+            verification = { passed, valueLength: after.value?.length }
+          } else if (field.kind === 'select') {
+            for (const value of field.values) sensitiveStrings.add(value)
+            if (!field.values.length || field.values.length > 20) {
+              throw new Error('Select requires between one and 20 requested options')
+            }
+            const mutation = await this.updateFormSelect(tab, backendNodeId, field.values, signal)
+            for (const value of mutation.expectedValues) sensitiveStrings.add(value)
+            status = mutation.changed ? 'filled' : 'unchanged'
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const actual = [...(after.selectedValues ?? [])].sort()
+            const expected = [...mutation.expectedValues].sort()
+            const passed =
+              after.kind === 'select' &&
+              actual.length === expected.length &&
+              actual.every((value, valueIndex) => value === expected[valueIndex])
+            verification = { passed, selectedCount: actual.length }
+            this.setPointer(tab, target, 'select')
+          } else {
+            if (field.kind === 'radio' && field.checked !== true) {
+              throw new Error('A radio field can only be checked through real user input')
+            }
+            if (before.checked !== field.checked) {
+              await this.clickFormControl(tab, target, signal)
+              status = 'filled'
+            }
+            if (pageChanged()) throw new Error('Browser page changed while filling the form')
+            const after = await this.inspectFormControl(tab, backendNodeId, signal)
+            const passed = after.kind === field.kind && after.checked === field.checked
+            verification = { passed }
+          }
+
+          if (!verification.passed) {
+            fields.push({
+              index,
+              kind: field.kind,
+              status: 'failed',
+              targetMode: target.mode as BrowserFormFieldResult['targetMode'],
+              verification,
+              error: {
+                code: 'verification_failed',
+                message: 'The requested form state did not match the actual control state.'
+              }
+            })
+            stopReason = 'field_failed'
+            break
+          }
+          fields.push({
+            index,
+            kind: field.kind,
+            status,
+            targetMode: target.mode as BrowserFormFieldResult['targetMode'],
+            verification
+          })
+        } catch (error) {
+          const changed = pageChanged()
+          fields.push({
+            index,
+            kind: field.kind,
+            status: 'failed',
+            ...(target ? { targetMode: target.mode as BrowserFormFieldResult['targetMode'] } : {}),
+            error: changed
+              ? {
+                  code: 'page_changed',
+                  message: 'The page changed before this form field could be verified.'
+                }
+              : this.formFieldFailure(error)
+          })
+          stopReason = changed ? 'page_changed' : 'field_failed'
+          break
+        }
+      }
+
+      for (let index = fields.length; index < input.fields.length; index++) {
+        fields.push({ index, kind: input.fields[index].kind, status: 'skipped' })
+      }
+
+      const quiescence = await this.waitForQuiescence(tab, {}, signal)
+      if (stopReason === 'completed' && pageChanged()) {
+        stopReason = 'page_changed'
+        const last = [...fields].reverse().find((field) => field.status !== 'skipped')
+        if (last) {
+          last.status = 'failed'
+          last.error = {
+            code: 'page_changed',
+            message: 'The page changed before the completed form batch could be confirmed.'
+          }
+        }
+      }
+      const observation = redactFormObservation(
+        await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
+          signal
+        ),
+        sensitiveStrings
+      )
+      const changed = fields.some((field) => field.status === 'filled')
+      tab.actionHistory.push({ fingerprint, changed })
+      if (tab.actionHistory.length > 30) tab.actionHistory.splice(0, tab.actionHistory.length - 30)
+      let unchangedRepeatCount = 0
+      for (let index = tab.actionHistory.length - 1; index >= 0; index--) {
+        const record = tab.actionHistory[index]
+        if (record.fingerprint !== fingerprint || record.changed) break
+        unchangedRepeatCount++
+      }
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        action: 'fill_form',
+        completed: stopReason === 'completed',
+        stopReason,
+        attemptedFields: fields.filter((field) => field.status !== 'skipped').length,
+        filledFields: fields.filter(
+          (field) => field.status === 'filled' || field.status === 'unchanged'
+        ).length,
+        durationMs: this.now() - startedAt,
+        quiescence,
+        loopProtection: {
+          unchangedRepeatCount,
+          blockedOnNextIdenticalAction: unchangedRepeatCount >= this.maxRepeatedNoChangeActions
+        },
+        fields,
+        observation
+      }
     })
   }
 
