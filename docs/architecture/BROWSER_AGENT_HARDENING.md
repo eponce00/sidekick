@@ -68,6 +68,7 @@ Current checks on 2026-09-02:
 - `npm run test:native-browser-smoke` passed **20/20 consecutive runs** against real Electron/Chromium. It checked navigation policy, CSS-sized viewport capture, semantic click/type, four verified and redacted form-control types, ephemeral partition isolation, full-page and element screenshots, console/network capture, popup handling, and clean close.
 - `npm run lint`, `npm run typecheck`, `npm run docs:check`, and `git diff --check` passed.
 - `npm run build:win` produced the NSIS installer; packaged-runtime and Windows release-artifact validation passed, followed by a launched packaged-app smoke test with the expected four Electron processes.
+- A non-breaking transitive dependency refresh reduced `npm audit` from four findings to **0 vulnerabilities**. The full 767-test suite, lint, typechecking, and a real-Electron native-browser smoke were repeated successfully afterward.
 
 These checks validate implementation contracts, not model-level performance. Release qualification should additionally:
 
