@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises'
+import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
@@ -1212,7 +1212,7 @@ describe('NativeBrowserSessionService', () => {
       allowedFileRoots: [project]
     })
 
-    expect(opened.tab.url).toBe(pathToFileURL(pdfPath).href)
+    expect(opened.tab.url).toBe(pathToFileURL(await realpath(pdfPath)).href)
     expect(runtime.surfaces[0].url).toMatch(/^sidekick-pdf:\/\/viewer\//)
     await expect(
       service.select({
