@@ -225,6 +225,7 @@ class FakeSurface implements NativeBrowserSurface {
 
   async executeJavaScript<T>(source: string): Promise<T> {
     if (source === 'document.readyState') return 'complete' as T
+    if (source.includes('sidekickPdfReady')) return 'ready' as T
     if (source.includes('unresolvedMarker') && source.includes('solvedKnownWidget')) {
       return {
         pageText: this.bodyText,
@@ -1197,6 +1198,30 @@ describe('NativeBrowserSessionService', () => {
         values: ['Spanish']
       })
     ).rejects.toThrow('changed the page')
+  })
+
+  it('verifies a select rendered through the local PDF logical URL', async () => {
+    const { service, runtime } = await testService()
+    const project = await mkdtemp(join(tmpdir(), 'sidekick-browser-pdf-select-'))
+    roots.push(project)
+    const pdfPath = join(project, 'form.pdf')
+    await writeFile(pdfPath, '%PDF-1.7\n%%EOF\n')
+    const opened = await service.open({
+      runId: 'pdf-select',
+      url: pathToFileURL(pdfPath).href,
+      allowedFileRoots: [project]
+    })
+
+    expect(opened.tab.url).toBe(pathToFileURL(pdfPath).href)
+    expect(runtime.surfaces[0].url).toMatch(/^sidekick-pdf:\/\/viewer\//)
+    await expect(
+      service.select({
+        sessionId: opened.sessionId,
+        target: { role: 'combobox', name: 'Language' },
+        values: ['Spanish']
+      })
+    ).resolves.toMatchObject({ action: 'select' })
+    expect(runtime.surfaces[0].formControls.get(10)?.selectedValues).toEqual(['es'])
   })
 
   it('never inserts text after click or clear navigation and focus theft', async () => {

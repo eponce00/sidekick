@@ -330,6 +330,14 @@ async function runSmoke(): Promise<SmokeResult> {
         fields: [...pdfFields]
       })
       assert.equal(filledPdf.completed, true, JSON.stringify(filledPdf.fields))
+      if (externalPdf) {
+        await service.select({
+          sessionId: pdf.sessionId,
+          target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
+          values: ['NV']
+        })
+        progress('Standalone PDF select and verification passed')
+      }
       await service.click({
         sessionId: pdf.sessionId,
         target: { role: 'button', name: 'Save filled copy', exact: true }

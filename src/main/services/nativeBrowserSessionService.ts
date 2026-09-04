@@ -3469,7 +3469,11 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
-      if (result.observation.tab.url !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+      // `observation.tab.url` intentionally exposes the original file:// URL
+      // while a local PDF is rendered through the private sidekick-pdf://
+      // surface. Compare the actual WebContents URL here so a successful PDF
+      // selection is not mistaken for navigation.
+      if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
         throw new Error(
           'Browser select changed the page before its final selection could be verified'
         )
