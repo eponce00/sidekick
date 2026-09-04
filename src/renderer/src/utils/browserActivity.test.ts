@@ -252,6 +252,128 @@ describe('browser activity projection', () => {
     })
   })
 
+  it('does not promote nested field verification or retain stale visual verification', () => {
+    const form = applyBrowserActivityEvent(
+      EMPTY_BROWSER_ACTIVITY,
+      event(1, 'tool.completed', {
+        name: 'browser_fill_form',
+        toolCallId: 'form-verified-fields',
+        result: {
+          status: 'success',
+          data: { fields: [{ verification: { passed: true } }] }
+        }
+      })
+    )
+    expect(form.verification).toBeUndefined()
+
+    const verified = applyBrowserActivityEvent(
+      form,
+      event(2, 'tool.completed', {
+        name: 'browser_verify',
+        toolCallId: 'verify-real',
+        result: { status: 'success', data: { passed: true } }
+      })
+    )
+    expect(verified.verification?.status).toBe('passed')
+
+    const navigated = applyBrowserActivityEvent(
+      verified,
+      event(3, 'tool.completed', {
+        name: 'browser_navigate',
+        toolCallId: 'navigate-after-verification',
+        result: { status: 'success', data: { observation: { humanVerification: null } } }
+      })
+    )
+    expect(navigated.verification).toBeUndefined()
+
+    const closed = applyBrowserActivityEvent(
+      verified,
+      event(4, 'tool.completed', {
+        name: 'browser_close',
+        toolCallId: 'close-after-verification',
+        result: { status: 'success', data: { closedSessions: ['session-1'] } }
+      })
+    )
+    expect(closed.verification).toBeUndefined()
+    expect(closed.sessionState).toBe('closed')
+  })
+
+  it('projects and clears explicit human-verification blockers', () => {
+    const blocked = applyBrowserActivityEvent(
+      EMPTY_BROWSER_ACTIVITY,
+      event(1, 'tool.completed', {
+        name: 'browser_observe',
+        toolCallId: 'observe-challenge',
+        result: {
+          status: 'success',
+          data: {
+            humanVerification: {
+              required: true,
+              kind: 'captcha_or_bot_challenge',
+              message: 'Human verification is required.'
+            }
+          }
+        }
+      })
+    )
+    expect(blocked.humanVerification).toEqual({
+      kind: 'captcha_or_bot_challenge',
+      message: 'Human verification is required.'
+    })
+
+    const rejectedAction = applyBrowserActivityEvent(
+      blocked,
+      event(2, 'tool.completed', {
+        name: 'browser_click',
+        toolCallId: 'rejected-challenge-click',
+        result: {
+          status: 'error',
+          error: { message: 'Human verification required.' }
+        }
+      })
+    )
+    expect(rejectedAction.humanVerification).toEqual(blocked.humanVerification)
+
+    const cleared = applyBrowserActivityEvent(
+      blocked,
+      event(3, 'tool.completed', {
+        name: 'browser_observe',
+        toolCallId: 'observe-cleared',
+        result: { status: 'success', data: { humanVerification: null } }
+      })
+    )
+    expect(cleared.humanVerification).toBeUndefined()
+
+    const awaitingHuman = applyBrowserActivityEvent(
+      blocked,
+      event(4, 'tool.running', {
+        name: 'browser_request_human',
+        toolCallId: 'human-takeover'
+      })
+    )
+    expect(awaitingHuman.humanVerification).toEqual(blocked.humanVerification)
+
+    const continued = applyBrowserActivityEvent(
+      awaitingHuman,
+      event(5, 'tool.completed', {
+        name: 'browser_request_human',
+        toolCallId: 'human-takeover',
+        result: { status: 'success', data: { completed: false } }
+      })
+    )
+    expect(continued.humanVerification).toBeUndefined()
+
+    const closed = applyBrowserActivityEvent(
+      blocked,
+      event(6, 'tool.completed', {
+        name: 'browser_close',
+        toolCallId: 'close-challenge',
+        result: { status: 'success', data: { closedSessions: ['session-1'] } }
+      })
+    )
+    expect(closed.humanVerification).toBeUndefined()
+  })
+
   it('keeps the activity timeline bounded', () => {
     let state = EMPTY_BROWSER_ACTIVITY
     for (let index = 1; index <= 45; index += 1) {

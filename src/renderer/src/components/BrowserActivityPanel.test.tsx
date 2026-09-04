@@ -232,4 +232,47 @@ describe('BrowserActivityPanel', () => {
     expect(container.textContent).toContain('Clicked Sign in')
     expect(container.textContent).not.toContain('semantic · 250, 100')
   })
+
+  it('shows a human-action blocker instead of stale verified status', async () => {
+    await act(async () => root.render(<BrowserActivityPanel conversationId="chat-1" />))
+    await act(async () => {
+      listener?.({ event: runEvent(1, 'run.started', { threadId: 'chat-1' }) })
+      listener?.({
+        event: runEvent(2, 'tool.completed', {
+          name: 'browser_verify',
+          toolCallId: 'verify-before-challenge',
+          result: { status: 'success', data: { passed: true } }
+        })
+      })
+      listener?.({
+        event: runEvent(3, 'tool.completed', {
+          name: 'browser_observe',
+          toolCallId: 'challenge',
+          result: {
+            status: 'success',
+            data: {
+              humanVerification: {
+                required: true,
+                kind: 'captcha_or_bot_challenge',
+                message: 'Human verification is required.'
+              }
+            }
+          }
+        })
+      })
+      listener?.({
+        event: runEvent(4, 'tool.running', {
+          name: 'browser_request_human',
+          toolCallId: 'takeover-pending'
+        })
+      })
+    })
+
+    expect(container.textContent).toContain('Human action required')
+    expect(container.textContent).toContain('Human verification is required.')
+    expect(container.textContent).not.toContain('Visual check passed')
+    expect(container.querySelector('.browser-activity-panel')?.getAttribute('data-status')).toBe(
+      'blocked'
+    )
+  })
 })

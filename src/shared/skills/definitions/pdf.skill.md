@@ -15,20 +15,28 @@ requiresPythonPackages: ['pypdf', 'pdfplumber', 'reportlab']
 
 ## Quick Reference
 
-| Task                    | Approach                                                         |
-| ----------------------- | ---------------------------------------------------------------- |
-| Read/extract text       | pdfplumber (structured) or markitdown (quick summary)            |
-| Check if form-fillable  | `python "SKILLS\pdf\check_fillable_fields.py" file.pdf`          |
-| Fill a PDF form         | `python "SKILLS\pdf\fill_fillable_fields.py" file.pdf`           |
-| Fill with annotations   | `python "SKILLS\pdf\fill_pdf_form_with_annotations.py" file.pdf` |
-| Extract form field info | `python "SKILLS\pdf\extract_form_field_info.py" file.pdf`        |
-| Convert pages to images | `python "SKILLS\pdf\convert_pdf_to_images.py" file.pdf`          |
-| Create PDF              | Use reportlab via temp script                                    |
-| Merge/split             | Use pypdf via temp script                                        |
+| Task                    | Approach                                                                                              |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| Read/extract text       | pdfplumber (structured) or markitdown (quick summary)                                                 |
+| Check if form-fillable  | `python "$env:SIDEKICK_SKILLS\pdf\check_fillable_fields.py" file.pdf`                                 |
+| Fill a PDF form         | `python "$env:SIDEKICK_SKILLS\pdf\fill_fillable_fields.py" file.pdf fields.json filled.pdf`           |
+| Fill with annotations   | `python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" file.pdf fields.json filled.pdf` |
+| Extract form field info | `python "$env:SIDEKICK_SKILLS\pdf\extract_form_field_info.py" file.pdf fields.json`                   |
+| Convert pages to images | `python "$env:SIDEKICK_SKILLS\pdf\convert_pdf_to_images.py" file.pdf pages`                           |
+| Create PDF              | Use reportlab via temp script                                                                         |
+| Merge/split             | Use pypdf via temp script                                                                             |
 
 > Skills are instructions, not package installers. Never run `pip install` as an implicit side
 > effect. If a required library is unavailable, report it clearly and ask before changing the
 > user's system.
+
+### Browser PDF Workflows
+
+When the user explicitly asks to open or fill a PDF in SideKick's browser, use `browser_open` and
+the semantic PDF form controls. Use `browser_fill_form` for compatible fields and click **Save
+filled copy** after the fields verify. Do not substitute a Python or shell form-fill unless the
+user requests a programmatic file workflow or the browser reports a concrete unsupported-PDF
+error.
 
 ---
 
@@ -69,27 +77,30 @@ Remove-Item "$env:TEMP\sk_pdf_read.py" -ErrorAction SilentlyContinue
 ### Step 1: Check if the PDF has fillable fields
 
 ```powershell
-python "SKILLS\pdf\check_fillable_fields.py" "form.pdf"
+python "$env:SIDEKICK_SKILLS\pdf\check_fillable_fields.py" "form.pdf"
 ```
 
 ### Step 2: See all field names and types
 
 ```powershell
-python "SKILLS\pdf\extract_form_field_info.py" "form.pdf"
+python "$env:SIDEKICK_SKILLS\pdf\extract_form_field_info.py" "form.pdf" "form-fields.json"
+Get-Content "form-fields.json"
 ```
 
 ### Step 3: Fill the form
 
-**Option A — Fill AcroForm fields (standard fillable PDF):**
+**Option A — Fill AcroForm fields (standard fillable PDF):** Add a `value` property to each
+field that should be filled in the extracted `form-fields.json`, then run:
 
 ```powershell
-python "SKILLS\pdf\fill_fillable_fields.py" "form.pdf" --output "filled.pdf" --data '{"FieldName": "value"}'
+python "$env:SIDEKICK_SKILLS\pdf\fill_fillable_fields.py" "form.pdf" "form-fields.json" "filled.pdf"
 ```
 
-**Option B — Fill by adding annotation overlays (scanned forms, flat PDFs):**
+**Option B — Fill by adding annotation overlays (scanned forms, flat PDFs):** Build the
+annotation JSON described by the helper's schema, then run:
 
 ```powershell
-python "SKILLS\pdf\fill_pdf_form_with_annotations.py" "form.pdf" --output "filled.pdf"
+python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" "form.pdf" "annotation-fields.json" "filled.pdf"
 ```
 
 ---

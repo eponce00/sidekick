@@ -8,7 +8,8 @@ import {
   Maximize2,
   Minimize2,
   MonitorUp,
-  MousePointer2
+  MousePointer2,
+  ShieldAlert
 } from 'lucide-react'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 import {
@@ -25,8 +26,11 @@ export interface BrowserActivityPanelProps {
   onToggleWidth?: () => void
 }
 
-function activityStatus(state: BrowserActivityState): 'live' | 'error' | 'verified' | 'idle' {
+function activityStatus(
+  state: BrowserActivityState
+): 'live' | 'blocked' | 'error' | 'verified' | 'idle' {
   const latest = state.timeline[state.timeline.length - 1]
+  if (state.humanVerification) return 'blocked'
   if (latest?.status === 'running' || latest?.status === 'pending') return 'live'
   if (latest?.status === 'partial' || latest?.status === 'error' || latest?.status === 'denied')
     return 'error'
@@ -37,6 +41,7 @@ function activityStatus(state: BrowserActivityState): 'live' | 'error' | 'verifi
 function statusLabel(state: BrowserActivityState): string {
   const status = activityStatus(state)
   if (status === 'live') return 'Live'
+  if (status === 'blocked') return 'Human action required'
   if (status === 'error') return 'Needs attention'
   if (status === 'verified') return 'Verified'
   return state.sessionState || 'Ready'
@@ -250,7 +255,17 @@ function BrowserActivityPanelSession({
               </section>
             )}
 
-            {activity.verification && (
+            {activity.humanVerification && (
+              <section
+                className="browser-human-verification"
+                aria-label="Human verification required"
+              >
+                <ShieldAlert size={14} />
+                <span>{activity.humanVerification.message}</span>
+              </section>
+            )}
+
+            {activity.verification && !activity.humanVerification && (
               <section
                 className={`browser-verification is-${activity.verification.status}`}
                 aria-label="Visual verification status"

@@ -2,9 +2,13 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app } from 'electron'
+import { app, nativeImage } from 'electron'
+import {
+  installArtifactProtocol,
+  registerArtifactScheme
+} from '../src/main/bootstrap/artifactProtocol'
 import { NativeBrowserSessionService } from '../src/main/services/nativeBrowserSessionService'
 
 const RESULT_PREFIX = 'SIDEKICK_NATIVE_BROWSER_SMOKE='
@@ -13,6 +17,7 @@ const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0
 // The production app keeps its main window alive while browser surfaces come and go.
 // This smoke has no visible app window, so keep Electron alive across session lifecycle checks.
 app.on('window-all-closed', () => undefined)
+registerArtifactScheme()
 
 interface SmokeResult {
   sessionId: string
@@ -150,6 +155,43 @@ function readPngDimensions(path: string): { width: number; height: number } {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
 }
 
+function fillablePdfFixture(): Buffer {
+  const content = [
+    'BT',
+    '/F1 20 Tf',
+    '72 720 Td',
+    '(SideKick PDF Browser Smoke) Tj',
+    '/F1 12 Tf',
+    '0 -48 Td',
+    '(Applicant name:) Tj',
+    'ET'
+  ].join('\n')
+  const appearance = 'q 1 1 1 rg 0 0 300 24 re f 0 0 0 RG 0.8 w 0 0 300 24 re S Q'
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [7 0 R] >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+    '<< /Fields [7 0 R] /NeedAppearances true /DA (/F1 12 Tf 0 g) /DR << /Font << /F1 4 0 R >> >> >>',
+    '<< /Type /Annot /Subtype /Widget /FT /Tx /T (applicant_name) /TU (Applicant name) /Rect [180 638 480 662] /P 3 0 R /F 4 /V () /DA (/F1 12 Tf 0 g) /AP << /N 8 0 R >> >>',
+    `<< /Type /XObject /Subtype /Form /BBox [0 0 300 24] /Resources << >> /Length ${Buffer.byteLength(appearance)} >>\nstream\n${appearance}\nendstream`
+  ]
+  let body = '%PDF-1.7\n'
+  const offsets = [0]
+  for (let index = 0; index < objects.length; index++) {
+    offsets.push(Buffer.byteLength(body, 'ascii'))
+    body += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`
+  }
+  const xref = Buffer.byteLength(body, 'ascii')
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const offset of offsets.slice(1)) {
+    body += `${String(offset).padStart(10, '0')} 00000 n \n`
+  }
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(body, 'ascii')
+}
+
 async function runSmoke(): Promise<SmokeResult> {
   const isolatedRoot = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_ROOT
     ? resolve(process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_ROOT)
@@ -157,6 +199,7 @@ async function runSmoke(): Promise<SmokeResult> {
   const artifactRoot = join(isolatedRoot, 'artifacts')
   const allowedRoot = join(isolatedRoot, 'allowed-project')
   const insideFile = join(allowedRoot, 'index.html')
+  const fillablePdf = join(allowedRoot, 'fillable.pdf')
   const outsideFile = join(isolatedRoot, 'outside.html')
   let server: Server | undefined
   let service: NativeBrowserSessionService | undefined
@@ -170,9 +213,11 @@ async function runSmoke(): Promise<SmokeResult> {
       'utf8'
     )
     writeFileSync(outsideFile, '<!doctype html><title>Outside</title>', 'utf8')
+    writeFileSync(fillablePdf, fillablePdfFixture())
     writeFileSync(join(isolatedRoot, 'profile-marker'), 'isolated', 'utf8')
     app.setPath('userData', join(isolatedRoot, 'electron-profile'))
     await app.whenReady()
+    await installArtifactProtocol()
     progress('Electron ready')
 
     server = createServer((request, response) => {
@@ -227,6 +272,98 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(localFile.tab.title, 'Allowed Project File')
     await service.close({ sessionId: localFile.sessionId })
     progress('Navigation policy checks passed')
+
+    const externalPdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF
+    {
+      const pdfPath = resolve(externalPdf || fillablePdf)
+      assert.ok(existsSync(pdfPath), `Diagnostic PDF does not exist: ${pdfPath}`)
+      const pdf = await service.open({
+        runId: 'pdf-diagnostic',
+        url: pathToFileURL(pdfPath).href,
+        allowedFileRoots: [dirname(pdfPath)],
+        viewport: { width: 1200, height: 900, deviceScaleFactor: 1 }
+      })
+      const image = nativeImage.createFromPath(pdf.screenshot!.path)
+      const bitmap = image.toBitmap()
+      const colors = new Set<string>()
+      const step = Math.max(4, Math.floor(bitmap.byteLength / 20_000 / 4) * 4)
+      for (let offset = 0; offset + 3 < bitmap.byteLength; offset += step) {
+        colors.add(bitmap.subarray(offset, offset + 3).toString('hex'))
+      }
+      progress(
+        `PDF diagnostic: title=${JSON.stringify(pdf.tab.title)}, semanticNodes=${pdf.semanticNodeCount ?? 0}, sampledColors=${colors.size}, screenshotBytes=${pdf.screenshot!.bytes}`
+      )
+      if (externalPdf) progress(`PDF semantics: ${JSON.stringify(pdf.semanticSnapshot ?? '')}`)
+      assert.match(pdf.semanticSnapshot ?? '', /textbox "Applicant/)
+      assert.ok(colors.size > 10, 'Rendered PDF screenshot should contain visible document detail')
+      const pdfFields = externalPdf
+        ? ([
+            {
+              kind: 'textbox',
+              target: { role: 'textbox', name: 'Applicant full legal name', exact: true },
+              value: 'Avery Test'
+            },
+            {
+              kind: 'select',
+              target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
+              values: ['NV']
+            },
+            {
+              kind: 'checkbox',
+              target: {
+                role: 'checkbox',
+                name: 'Email a copy of the completed request',
+                exact: true
+              },
+              checked: true
+            }
+          ] as const)
+        : ([
+            {
+              kind: 'textbox',
+              target: { role: 'textbox', name: 'Applicant name', exact: true },
+              value: 'Avery Test'
+            }
+          ] as const)
+      const filledPdf = await service.fillForm({
+        sessionId: pdf.sessionId,
+        fields: [...pdfFields]
+      })
+      assert.equal(filledPdf.completed, true, JSON.stringify(filledPdf.fields))
+      if (externalPdf) {
+        await service.select({
+          sessionId: pdf.sessionId,
+          target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
+          values: ['NV']
+        })
+        progress('Standalone PDF select and verification passed')
+      }
+      await service.click({
+        sessionId: pdf.sessionId,
+        target: { role: 'button', name: 'Save filled copy', exact: true }
+      })
+      await service.wait({
+        sessionId: pdf.sessionId,
+        condition: { type: 'text', text: 'Filled copy saved:', state: 'present' }
+      })
+      const saved = await service.evaluate({
+        sessionId: pdf.sessionId,
+        expression: `document.documentElement.dataset.sidekickPdfOutput || ''`
+      })
+      assert.equal(typeof saved.value, 'string')
+      assert.ok(
+        existsSync(saved.value as string),
+        'Filled PDF copy should be written beside the source'
+      )
+      assert.equal(
+        readFileSync(saved.value as string)
+          .subarray(0, 5)
+          .toString('ascii'),
+        '%PDF-'
+      )
+      progress(`PDF form fill and save passed: ${saved.value}`)
+      await service.close({ sessionId: pdf.sessionId })
+    }
 
     const opened = await service.open({
       runId: 'native-browser-smoke',
@@ -466,6 +603,25 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(blockedPopupTabs.tabs.length, 1, 'Disallowed popup URL should remain blocked')
     progress('Disallowed popup stayed blocked')
 
+    const takeover = await service.beginHumanTakeover(opened.sessionId)
+    assert.equal(takeover.active, true, 'Human takeover should reveal the existing browser surface')
+    assert.equal(takeover.observation.tab.url, opened.tab.url)
+    await service.click({
+      sessionId: opened.sessionId,
+      target: { role: 'button', name: 'Open popup', exact: true }
+    })
+    const takeoverPopup = await waitFor(
+      () => service!.tabs({ sessionId: opened.sessionId, action: 'list' }),
+      (result) => result.tabs.length === 1 && result.tabs[0]?.url === `${baseUrl}/popup`,
+      'takeover popup in the visible tab'
+    )
+    assert.equal(takeoverPopup.tabs[0]?.id, opened.tab.id)
+    const takeoverComplete = await service.completeHumanTakeover(opened.sessionId)
+    assert.equal(takeoverComplete.active, false)
+    assert.equal(takeoverComplete.observation.tab.url, `${baseUrl}/popup`)
+    assert.ok(takeoverComplete.observation.screenshot)
+    progress('Same-session human takeover reveal and recapture passed')
+
     const closeResult = await service.close({ sessionId: opened.sessionId })
     assert.deepEqual(closeResult.closedSessions, [opened.sessionId])
     await assert.rejects(
@@ -487,6 +643,7 @@ async function runSmoke(): Promise<SmokeResult> {
       networkFailures: networkResult.failures.length,
       popupTabs: popupTabs.tabs.length,
       blockedPopupTabs: blockedPopupTabs.tabs.length,
+      humanTakeover: true,
       partitionIsolated: true,
       localFileAllowed: true,
       closeSessions: closeResult.closedSessions.length

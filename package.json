@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
@@ -81,6 +81,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@mozilla/readability": "^0.6.0",
+    "@napi-rs/canvas": "1.0.8",
     "@tanstack/react-virtual": "^3.14.10",
     "@types/d3": "^7.4.3",
     "@types/leaflet": "^1.9.21",
@@ -98,6 +99,7 @@
     "lodash": "^4.17.23",
     "lucide-react": "^0.563.0",
     "mathjs": "^15.1.0",
+    "pdfjs-dist": "^6.3.289",
     "react-leaflet": "^5.0.0",
     "react-markdown": "^10.1.0",
     "react-textarea-autosize": "^8.5.9",
@@ -107,6 +109,11 @@
     "rehype-twemoji": "^0.0.6",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas-darwin-arm64": "1.0.8",
+    "@napi-rs/canvas-linux-x64-gnu": "1.0.8",
+    "@napi-rs/canvas-win32-x64-msvc": "1.0.8"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "^3.0.0",

@@ -49,7 +49,8 @@ describe('CommandService', () => {
         ORDINARY_SETTING: 'visible'
       },
       'C:\\workspace',
-      'C:\\scratch'
+      'C:\\scratch',
+      'C:\\SideKick\\skills'
     )
 
     expect(environment).toMatchObject({
@@ -57,7 +58,8 @@ describe('CommandService', () => {
       ORDINARY_SETTING: 'visible',
       WORKSPACE_FOLDER: 'C:\\workspace',
       SIDEKICK_WORKSPACE: 'C:\\workspace',
-      SIDEKICK_SCRATCH: 'C:\\scratch'
+      SIDEKICK_SCRATCH: 'C:\\scratch',
+      SIDEKICK_SKILLS: 'C:\\SideKick\\skills'
     })
     expect(environment).not.toHaveProperty('OPENAI_API_KEY')
     expect(environment).not.toHaveProperty('GITHUB_TOKEN')

@@ -146,6 +146,9 @@ function fakeService(): NativeBrowserSessionService & {
     click: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'click')
     ),
+    hold: vi.fn(async (input: { sessionId: string }) =>
+      actionResult(sessions.get(input.sessionId)!, 'hold')
+    ),
     type: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'type')
     ),
@@ -224,6 +227,14 @@ function fakeService(): NativeBrowserSessionService & {
       value: { ok: true },
       serializedBytes: 11,
       truncated: false
+    })),
+    beginHumanTakeover: vi.fn(async (sessionId: string) => ({
+      active: true,
+      observation: sessions.get(sessionId)!
+    })),
+    completeHumanTakeover: vi.fn(async (sessionId: string) => ({
+      active: false,
+      observation: sessions.get(sessionId)!
     }))
   }
   return service as unknown as ReturnType<typeof fakeService>
@@ -399,6 +410,36 @@ describe('native browser agent tool handlers', () => {
     )
   })
 
+  it('maps atomic hold arguments and blocks agent actions while a human owns the browser', async () => {
+    const { registry, service, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+
+    const held = await execute(registry, 'browser_hold', {
+      ref: 'ax-1-1',
+      duration_ms: 750
+    })
+    expect(held.status).toBe('success')
+    expect(service.hold).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sessionId: 'session-1',
+        target: expect.objectContaining({ ref: 'ax-1-1' }),
+        durationMs: 750
+      }),
+      expect.any(Object)
+    )
+
+    const reservedSessionId = await manager.reserveHumanTakeover('conversation-1')
+    await manager.beginHumanTakeover('conversation-1', reservedSessionId)
+    const raced = await execute(registry, 'browser_observe', {})
+    expect(raced).toMatchObject({ status: 'error' })
+    expect(raced.error?.message).toContain('Human browser takeover is pending')
+    await manager.completeHumanTakeover('conversation-1', reservedSessionId)
+    await manager.releaseHumanTakeover('conversation-1', reservedSessionId)
+    await expect(execute(registry, 'browser_observe', {})).resolves.toMatchObject({
+      status: 'success'
+    })
+  })
+
   it('validates first-use navigation before reporting a missing session', async () => {
     const { registry, service } = setup()
     const invalid = await execute(registry, 'browser_navigate', { action: 'url' })
@@ -458,6 +499,70 @@ describe('native browser agent tool handlers', () => {
       deleteArtifacts: false
     })
     expect(service.open).toHaveBeenCalledTimes(3)
+  })
+
+  it('pins the exact browser session while human takeover is pending', async () => {
+    const { registry, service, manager } = setup(2)
+    await execute(
+      registry,
+      'browser_open',
+      { url: 'https://example.com/a' },
+      { conversationId: 'a' }
+    )
+    await execute(
+      registry,
+      'browser_open',
+      { url: 'https://example.com/b' },
+      { conversationId: 'b' }
+    )
+    const reservedSessionId = await manager.reserveHumanTakeover('a')
+
+    await execute(
+      registry,
+      'browser_open',
+      { url: 'https://example.com/c' },
+      { conversationId: 'c' }
+    )
+
+    expect(reservedSessionId).toBe('session-1')
+    expect(service.close).toHaveBeenCalledWith({
+      sessionId: 'session-2',
+      deleteArtifacts: false
+    })
+    await expect(manager.beginHumanTakeover('a', 'different-session')).rejects.toThrow(
+      'reserved browser session'
+    )
+    await manager.releaseHumanTakeover('a', reservedSessionId)
+  })
+
+  it('parks an active takeover when its suspended run is cancelled', async () => {
+    const { registry, service, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const sessionId = await manager.reserveHumanTakeover('conversation-1')
+    await manager.beginHumanTakeover('conversation-1', sessionId)
+
+    await manager.releaseHumanTakeover('conversation-1', sessionId)
+
+    expect(service.completeHumanTakeover).toHaveBeenCalledWith(sessionId)
+    await expect(execute(registry, 'browser_observe', {})).resolves.toMatchObject({
+      status: 'success'
+    })
+  })
+
+  it('does not close an exact session while takeover is reserved', async () => {
+    const { registry, service, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const sessionId = await manager.reserveHumanTakeover('conversation-1')
+
+    await expect(manager.closeScope('conversation-1')).rejects.toThrow(
+      'Human browser takeover is pending'
+    )
+    expect(service.close).not.toHaveBeenCalled()
+
+    await manager.releaseHumanTakeover('conversation-1', sessionId)
+    await expect(manager.closeScope('conversation-1')).resolves.toMatchObject({
+      closedSessions: [sessionId]
+    })
   })
 
   it('records visual verification as evidence that the model must judge', async () => {

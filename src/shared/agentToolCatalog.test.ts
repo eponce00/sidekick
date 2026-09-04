@@ -85,6 +85,8 @@ describe('canonical agent tool catalog', () => {
         'browser_observe',
         'browser_screenshot',
         'browser_click',
+        'browser_hold',
+        'browser_request_human',
         'browser_type',
         'browser_select',
         'browser_fill_form',
@@ -142,6 +144,15 @@ describe('canonical agent tool catalog', () => {
       anyOf: expect.arrayContaining([{ required: ['x', 'y', 'screenshot_id'] }]),
       properties: { screenshot_id: { type: 'string' } }
     })
+    const hold = getAgentToolCatalog({
+      surface: 'conversation',
+      browserEnabled: true
+    }).find(({ definition }) => definition.function.name === 'browser_hold')
+    expect(hold?.definition.function.parameters).toMatchObject({
+      required: ['duration_ms'],
+      properties: { duration_ms: { minimum: 100, maximum: 10_000 } }
+    })
+    expect(hold?.definition.function.description).toContain('Never use it for CAPTCHA')
   })
 
   it('exposes goal completion control only inside a durable goal run', () => {

@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.6.2 — 2026-09-04
+
+- Added bounded press-and-hold support for ordinary browser controls with guaranteed mouse release.
+- Added durable same-session human takeover for CAPTCHA and anti-bot checkpoints, including exact
+  session reservation, trusted-origin window chrome, popup containment, cancellation cleanup, and
+  fresh post-takeover verification.
+- Prevented automated click, hold, typing, selection, form filling, keyboard, hover, and evaluation
+  paths from acting on a detected anti-bot challenge while recognizing completed provider widgets.
+- Replaced Chromium's opaque local-PDF plugin surface with a token-scoped PDF.js viewer whose
+  rendered pages, document text, and AcroForm controls are visible to the browser agent.
+- Added verified browser-native PDF form filling and safe sibling-copy saving without overwriting
+  the source document.
+- Fixed packaged skill-helper discovery, injected a stable `SIDEKICK_SKILLS` command environment,
+  and corrected the PDF, DOCX, PPTX, and XLSX helper examples to use the shipped executable files.
 
 ## 0.6.1 — 2026-09-03
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { promises as fs, realpathSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
-import { basename, isAbsolute, join, relative, resolve } from 'path'
+import { basename, extname, isAbsolute, join, relative, resolve } from 'path'
 import type {
   BrowserWindow as ElectronBrowserWindow,
   KeyboardInputEvent,
@@ -9,6 +9,14 @@ import type {
   MouseWheelInputEvent,
   WebContents
 } from 'electron'
+import {
+  browserPdfUrlAllowed,
+  browserPdfViewerUrl,
+  createBrowserPdfSession,
+  getBrowserPdfSession,
+  revokeBrowserPdfSession,
+  revokeBrowserPdfSessionsByOwner
+} from '../bootstrap/browserPdfSessionRegistry'
 
 export interface BrowserViewport {
   width: number
@@ -93,9 +101,16 @@ export interface BrowserConsoleEntry {
 export interface BrowserPointer {
   x: number
   y: number
-  action: 'click' | 'type' | 'select' | 'press' | 'scroll' | 'hover'
+  action: 'click' | 'hold' | 'type' | 'select' | 'press' | 'scroll' | 'hover'
   targetMode: BrowserActionResult['targetMode']
   updatedAt: number
+}
+
+export interface BrowserHumanVerification {
+  required: true
+  kind: 'captcha_or_bot_challenge'
+  message: string
+  detectedBy: 'accessibility' | 'page_title' | 'dom_marker'
 }
 
 export interface BrowserNetworkFailure {
@@ -130,6 +145,8 @@ export interface BrowserObservation {
   pointer?: BrowserPointer | null
   semanticSnapshot?: string
   semanticNodeCount?: number
+  /** A site-owned anti-bot checkpoint that requires same-session human takeover. */
+  humanVerification?: BrowserHumanVerification | null
   screenshot?: BrowserScreenshotArtifact
   screenshotChanged: boolean | null
   unchangedScreenshotStreak: number
@@ -189,6 +206,15 @@ export interface BrowserClickInput {
   target: BrowserTarget
   button?: 'left' | 'middle' | 'right'
   clickCount?: 1 | 2 | 3
+}
+
+export interface BrowserHoldInput {
+  sessionId: string
+  tabId?: string
+  target: BrowserTarget
+  button?: 'left' | 'middle' | 'right'
+  /** Bounded duration for ordinary press-and-hold UI controls. */
+  durationMs: number
 }
 
 export interface BrowserTypeInput {
@@ -352,6 +378,11 @@ export interface BrowserCloseInput {
   deleteArtifacts?: boolean
 }
 
+export interface BrowserHumanTakeoverResult {
+  active: boolean
+  observation: BrowserObservation
+}
+
 export interface NativeBrowserSessionServiceOptions {
   artifactRoot: string
   allowedFileRoots?: string[]
@@ -399,6 +430,9 @@ export interface NativeBrowserSurface {
   loadURL(url: string): Promise<void>
   stop(): void
   close(): Promise<void>
+  showForHumanTakeover(): void
+  hideHumanTakeover(): void
+  isHumanTakeoverVisible(): boolean
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
@@ -482,6 +516,10 @@ interface CoordinateCaptureState {
 interface TabState {
   id: string
   surface: NativeBrowserSurface
+  /** User-facing source URL when the WebContents is showing an internal viewer. */
+  logicalUrl?: string
+  pdfSessionToken?: string
+  pdfSessionTokens: Set<string>
   refEpoch: number
   refs: Map<string, SemanticRef>
   semanticNodes: SemanticRef[]
@@ -507,6 +545,7 @@ interface SessionState {
   allowedFileRoots: string[]
   tabs: Map<string, TabState>
   activeTabId: string
+  humanTakeoverTabId?: string
   console: BrowserConsoleEntry[]
   failures: BrowserNetworkFailure[]
   consoleSequence: number
@@ -554,6 +593,73 @@ const MAX_EVALUATION_BYTES = 64 * 1024
 const MAX_MODEL_SCREENSHOT_BYTES = 8 * 1024 * 1024
 const MAX_SCREENSHOT_DIMENSION = 16_384
 const MAX_SCREENSHOT_PIXELS = 40_000_000
+const MIN_HOLD_MS = 100
+const MAX_HOLD_MS = 10_000
+
+const HUMAN_VERIFICATION_PATTERNS: readonly RegExp[] = [
+  /\bpress\s*(?:&|and)\s*hold\b[\s\S]{0,160}\b(?:human|verify|verification)\b/i,
+  /\b(?:verify|confirm)\s+(?:that\s+)?(?:you(?:'re|\s+are)|yourself)\s+(?:a\s+)?human\b/i,
+  /\bi(?:'m|\s+am)\s+not\s+a\s+robot\b/i,
+  /\b(?:solve|complete|enter)\b[^\n]{0,40}\bcaptcha\b/i,
+  /\bcomplete\s+(?:the\s+)?security\s+check\b/i
+]
+
+const HUMAN_VERIFICATION_TITLE_PATTERNS: readonly RegExp[] = [
+  /\bcaptcha\b/i,
+  /\bsecurity\s+check\b/i,
+  /\b(?:verify|confirm)\b[\s\S]{0,80}\bhuman\b/i
+]
+
+class BrowserHumanVerificationError extends Error {
+  constructor() {
+    super(
+      'Human verification required. Keep this browser session open and call browser_request_human so the user can take over safely.'
+    )
+    this.name = 'BrowserHumanVerificationError'
+  }
+}
+
+function detectTextualHumanVerification(
+  title: string,
+  text: string | undefined,
+  solvedKnownWidget = false
+): BrowserHumanVerification | null {
+  // Checked accessibility nodes and completed provider widgets can remain in
+  // the DOM after a successful challenge. Do not keep a run suspended merely
+  // because their static label still says CAPTCHA or "I'm not a robot."
+  let activeText = text
+    ?.split(/\r?\n/)
+    .filter((line) => !/(?:aria-checked|checked)=(?:true|"true")/i.test(line))
+    .join('\n')
+  if (solvedKnownWidget) {
+    activeText = activeText
+      ?.split(/\r?\n/)
+      .filter((line) => !/\bnot\s+a\s+robot\b/i.test(line))
+      .join('\n')
+  }
+  if (activeText && HUMAN_VERIFICATION_PATTERNS.some((pattern) => pattern.test(activeText))) {
+    return {
+      required: true,
+      kind: 'captcha_or_bot_challenge',
+      message:
+        'This site requires a human verification step before browser automation can continue.',
+      detectedBy: 'accessibility'
+    }
+  }
+  if (
+    !solvedKnownWidget &&
+    HUMAN_VERIFICATION_TITLE_PATTERNS.some((pattern) => pattern.test(title))
+  ) {
+    return {
+      required: true,
+      kind: 'captcha_or_bot_challenge',
+      message:
+        'This site requires a human verification step before browser automation can continue.',
+      detectedBy: 'page_title'
+    }
+  }
+  return null
+}
 
 function abortError(message: string): Error {
   const error = new Error(message)
@@ -748,6 +854,8 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   private readonly openUrlListeners = new Set<(url: string) => void>()
   private navigationGuard: (url: string) => boolean = (url) => url === 'about:blank'
   private debuggerOwned = false
+  private closing = false
+  private humanTakeoverVisible = false
 
   constructor(
     private readonly contents: WebContents,
@@ -755,6 +863,20 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     readonly attached: boolean
   ) {
     this.webContentsId = contents.id
+    ownerWindow?.on('close', (event) => {
+      if (this.closing || !this.humanTakeoverVisible) return
+      // Closing the takeover window returns control to SideKick without
+      // destroying the isolated tab, cookies, form state, or browser history.
+      event.preventDefault()
+      this.hideHumanTakeover()
+    })
+    ownerWindow?.on('page-title-updated', (event) => {
+      if (!this.humanTakeoverVisible) return
+      event.preventDefault()
+      this.updateTakeoverTitle()
+    })
+    contents.on('did-navigate', () => this.updateTakeoverTitle())
+    contents.on('did-navigate-in-page', () => this.updateTakeoverTitle())
     contents.setWindowOpenHandler(({ url }) => {
       if (this.navigationGuard(url)) {
         for (const listener of this.openUrlListeners) listener(url)
@@ -826,12 +948,57 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async close(): Promise<void> {
     if (this.contents.isDestroyed()) return
+    this.closing = true
+    this.humanTakeoverVisible = false
     this.detachDebugger()
     this.clearListeners()
     if (!this.attached) {
       if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
       else this.contents.close({ waitForBeforeUnload: false })
     }
+  }
+
+  showForHumanTakeover(): void {
+    if (!this.ownerWindow || this.ownerWindow.isDestroyed() || this.contents.isDestroyed()) {
+      throw new Error('This browser surface cannot be shown for human takeover')
+    }
+    this.humanTakeoverVisible = true
+    this.ownerWindow.setSkipTaskbar(false)
+    this.ownerWindow.center()
+    this.updateTakeoverTitle()
+    this.ownerWindow.show()
+    this.ownerWindow.focus()
+    this.contents.focus()
+  }
+
+  hideHumanTakeover(): void {
+    this.humanTakeoverVisible = false
+    if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
+      this.ownerWindow.setSkipTaskbar(true)
+      this.ownerWindow.setPosition(-32_000, -32_000, false)
+      if (!this.ownerWindow.isVisible()) this.ownerWindow.showInactive()
+    }
+  }
+
+  isHumanTakeoverVisible(): boolean {
+    return Boolean(
+      this.humanTakeoverVisible &&
+      this.ownerWindow &&
+      !this.ownerWindow.isDestroyed() &&
+      this.ownerWindow.isVisible()
+    )
+  }
+
+  private updateTakeoverTitle(): void {
+    if (!this.humanTakeoverVisible || !this.ownerWindow || this.ownerWindow.isDestroyed()) return
+    let origin = 'unknown origin'
+    try {
+      const url = new URL(this.contents.getURL())
+      origin = url.protocol === 'file:' ? 'local file' : url.origin
+    } catch {
+      // Keep a main-process-owned title even for a transient navigation URL.
+    }
+    this.ownerWindow.setTitle(`SideKick Browser — ${origin}`)
   }
 
   focus(): void {
@@ -858,7 +1025,10 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
-    let image = await this.contents.capturePage()
+    let image =
+      this.ownerWindow && !this.ownerWindow.isDestroyed()
+        ? await this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
+        : await this.contents.capturePage()
     let size = image.getSize()
     // Electron's capturePage() returns native device pixels on high-DPI displays,
     // while Chromium mouse coordinates and our BrowserTarget contract use CSS
@@ -921,6 +1091,16 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+    if (
+      method === 'Page.captureScreenshot' &&
+      this.ownerWindow &&
+      !this.ownerWindow.isDestroyed() &&
+      !this.ownerWindow.isVisible()
+    ) {
+      this.ownerWindow.setSkipTaskbar(true)
+      this.ownerWindow.setPosition(-32_000, -32_000, false)
+      this.ownerWindow.showInactive()
+    }
     return (await this.contents.debugger.sendCommand(method, params)) as T
   }
 
@@ -983,9 +1163,16 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
     await electron.app.whenReady()
     const window = new electron.BrowserWindow({
       show: false,
+      x: -32_000,
+      y: -32_000,
       width: options.viewport.width,
       height: options.viewport.height,
       useContentSize: true,
+      title: 'SideKick Browser',
+      autoHideMenuBar: true,
+      skipTaskbar: true,
+      backgroundColor: '#090b0e',
+      paintWhenInitiallyHidden: true,
       webPreferences: {
         partition: options.partition,
         sandbox: true,
@@ -994,12 +1181,17 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         webSecurity: true,
         allowRunningInsecureContent: false,
         backgroundThrottling: false,
-        offscreen: true,
+        // Use a normal WebContents so this exact tab can be revealed for
+        // same-session human takeover. Full-page CDP capture briefly wakes
+        // the window offscreen to keep Chromium's compositor responsive.
+        offscreen: false,
         devTools: false
       }
     })
     window.webContents.setBackgroundThrottling(false)
     const browserSession = window.webContents.session
+    const { installBrowserPdfProtocol } = await import('../bootstrap/artifactProtocol')
+    await installBrowserPdfProtocol(browserSession.protocol)
     if (!this.securedSessions.has(browserSession)) {
       this.securedSessions.add(browserSession)
       browserSession.setPermissionRequestHandler((_contents, _permission, callback) => {
@@ -1008,6 +1200,10 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       browserSession.setPermissionCheckHandler(() => false)
       browserSession.on('will-download', (event) => event.preventDefault())
     }
+    // Keep Chromium's compositor live for background automation without
+    // putting the browser in the taskbar or on a usable display. Takeover
+    // moves this exact window on screen; completion parks it here again.
+    window.showInactive()
     return new ElectronNativeBrowserSurface(window.webContents, window, false)
   }
 
@@ -1290,14 +1486,17 @@ export class NativeBrowserSessionService {
       await surface.close()
       throw new Error(`The browser tab limit (${this.maxTabsPerSession}) is reached`)
     }
-    surface.setNavigationGuard((url) =>
-      this.navigationUrlAllowedSync(url, session.allowedFileRoots)
+    surface.setNavigationGuard(
+      (url) =>
+        this.navigationUrlAllowedSync(url, session.allowedFileRoots) ||
+        browserPdfUrlAllowed(url, session.id)
     )
     surface.setRequestGuard((url) => this.navigationUrlAllowedSync(url, session.allowedFileRoots))
     await abortable(surface.attachDebugger(), signal)
     const tab: TabState = {
       id: randomUUID(),
       surface,
+      pdfSessionTokens: new Set(),
       refEpoch: 1,
       refs: new Map(),
       semanticNodes: [],
@@ -1318,7 +1517,7 @@ export class NativeBrowserSessionService {
       ),
       surface.onDestroyed(() => this.handleSurfaceDestroyed(session, tab)),
       surface.onOpenUrl((url) => {
-        void this.openPopup(session, url).catch((error) => {
+        void this.openPopup(session, tab, url).catch((error) => {
           this.recordConsole(session, tab, {
             level: 'error',
             message: `Blocked popup: ${error instanceof Error ? error.message : String(error)}`
@@ -1425,10 +1624,16 @@ export class NativeBrowserSessionService {
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
+    for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
+    tab.pdfSessionTokens.clear()
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
+    if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
-    if (!session.tabs.size) this.sessions.delete(session.id)
+    if (!session.tabs.size) {
+      revokeBrowserPdfSessionsByOwner(session.id)
+      this.sessions.delete(session.id)
+    }
   }
 
   private async createOwnedTab(
@@ -1503,9 +1708,21 @@ export class NativeBrowserSessionService {
       : new Error('Chromium failed to commit the browser bootstrap document')
   }
 
-  private async openPopup(session: SessionState, inputUrl: string): Promise<void> {
+  private async openPopup(
+    session: SessionState,
+    opener: TabState,
+    inputUrl: string
+  ): Promise<void> {
     const url = await this.normalizeNavigationUrl(inputUrl, session.allowedFileRoots)
     await this.withSessionLock(session, {}, async (signal) => {
+      if (session.humanTakeoverTabId === opener.id && session.tabs.has(opener.id)) {
+        // A popup cannot safely become a second hidden window while the user
+        // owns the visible takeover surface. Keep the navigation in that exact
+        // window so completion always recaptures what the user interacted with.
+        session.activeTabId = opener.id
+        await this.navigateUnlocked(session, opener, url, signal)
+        return
+      }
       const viewport = await this.currentViewport(this.getTab(session))
       const tab = await this.createOwnedTab(session, viewport, signal)
       session.activeTabId = tab.id
@@ -1557,11 +1774,15 @@ export class NativeBrowserSessionService {
       id: tab.id,
       webContentsId: tab.surface.webContentsId,
       title: tab.surface.getTitle(),
-      url: tab.surface.getURL(),
+      url: this.tabUrl(tab),
       active: tab.id === session.activeTabId,
       loading: tab.surface.isLoading(),
       attached: tab.surface.attached
     }
+  }
+
+  private tabUrl(tab: TabState): string {
+    return tab.logicalUrl ?? tab.surface.getURL()
   }
 
   private tabSummaries(session: SessionState): BrowserTabSummary[] {
@@ -1598,9 +1819,10 @@ export class NativeBrowserSessionService {
       if (navigationAction === 'url') {
         navigationQuiescence = await this.navigateUnlocked(session, tab, url!, signal)
       } else if (navigationAction === 'reload') {
-        await this.normalizeNavigationUrl(tab.surface.getURL(), session.allowedFileRoots)
+        await this.normalizeNavigationUrl(this.tabUrl(tab), session.allowedFileRoots)
         this.invalidateSemanticRefs(tab)
         await abortable(tab.surface.sendDebuggerCommand('Page.reload'), signal)
+        if (tab.pdfSessionToken) await this.waitForPdfViewerReady(session, tab, signal)
         navigationQuiescence = await this.waitForQuiescence(
           tab,
           this.navigationQuiescence(tab.surface.getURL()),
@@ -1618,17 +1840,22 @@ export class NativeBrowserSessionService {
         const entry = history.entries[index]
         if (!entry)
           throw new Error(`Browser cannot navigate ${navigationAction}; no history entry exists`)
-        await this.normalizeNavigationUrl(entry.url, session.allowedFileRoots)
+        const pdfSession = getBrowserPdfSession(entry.url)
+        const entryUrl = pdfSession ? pathToFileURL(pdfSession.sourcePath).href : entry.url
+        await this.normalizeNavigationUrl(entryUrl, session.allowedFileRoots)
         this.invalidateSemanticRefs(tab)
         await abortable(
           tab.surface.sendDebuggerCommand('Page.navigateToHistoryEntry', { entryId: entry.id }),
           signal
         )
+        if (pdfSession) await this.waitForPdfViewerReady(session, tab, signal)
         navigationQuiescence = await this.waitForQuiescence(
           tab,
           this.navigationQuiescence(entry.url),
           signal
         )
+        tab.logicalUrl = pdfSession ? entryUrl : undefined
+        tab.pdfSessionToken = pdfSession?.token
       }
       return this.finishAction(
         session,
@@ -1645,25 +1872,96 @@ export class NativeBrowserSessionService {
   }
 
   private async navigateUnlocked(
-    _session: SessionState,
+    session: SessionState,
     tab: TabState,
     url: string,
     signal?: AbortSignal
   ): Promise<BrowserQuiescenceResult> {
     tab.lastPointer = undefined
     this.invalidateSemanticRefs(tab)
+    let navigationUrl = url
+    let newPdfToken: string | undefined
+    if (new URL(url).protocol === 'file:' && extname(fileURLToPath(url)).toLowerCase() === '.pdf') {
+      const pdfSession = createBrowserPdfSession(fileURLToPath(url), session.id)
+      newPdfToken = pdfSession.token
+      tab.pdfSessionTokens.add(pdfSession.token)
+      navigationUrl = browserPdfViewerUrl(pdfSession)
+    }
     try {
-      await abortable(tab.surface.loadURL(url), signal)
+      await abortable(tab.surface.loadURL(navigationUrl), signal)
+      if (newPdfToken) await this.waitForPdfViewerReady(session, tab, signal)
     } catch (error) {
       if (signal?.aborted) tab.surface.stop()
+      if (newPdfToken) {
+        tab.pdfSessionTokens.delete(newPdfToken)
+        revokeBrowserPdfSession(newPdfToken)
+      }
       throw error
     }
-    return this.waitForQuiescence(tab, this.navigationQuiescence(url), signal)
+    tab.logicalUrl = newPdfToken ? url : undefined
+    tab.pdfSessionToken = newPdfToken
+    return this.waitForQuiescence(tab, this.navigationQuiescence(navigationUrl), signal)
+  }
+
+  private async waitForPdfViewerReady(
+    session: SessionState,
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const state = await abortable(
+        tab.surface.executeJavaScript<string>(
+          `document.documentElement?.dataset.sidekickPdfReady === 'true' ? 'ready' : (document.documentElement?.dataset.sidekickPdfError === 'true' ? 'error' : 'loading')`
+        ),
+        signal
+      )
+      if (state === 'ready') return
+      if (state === 'error') {
+        const message = await abortable(
+          tab.surface.executeJavaScript<string>(
+            `document.querySelector('#status')?.textContent || 'The PDF viewer could not render this document'`
+          ),
+          signal
+        )
+        throw new Error(String(message))
+      }
+      await delay(100, signal)
+    }
+    const diagnostics = await abortable(
+      tab.surface.executeJavaScript<unknown>(`(async () => {
+        const probe = async (url) => {
+          try {
+            const response = await fetch(url);
+            return { url: response.url, status: response.status, type: response.headers.get('content-type'), bytes: (await response.arrayBuffer()).byteLength };
+          } catch (error) {
+            return { error: String(error) };
+          }
+        };
+        return {
+          url: location.href,
+          title: document.title,
+          state: document.readyState,
+          status: document.querySelector('#status')?.textContent,
+          scripts: [...document.scripts].map((script) => script.src),
+          resources: performance.getEntriesByType('resource').map((entry) => entry.name),
+          viewerModule: await probe('./viewer.mjs'),
+          pdfModule: await probe('./pdf.mjs')
+        };
+      })()`),
+      signal
+    ).catch(() => undefined)
+    throw timeoutError(
+      `The PDF viewer did not become ready within 30 seconds${diagnostics ? `: ${JSON.stringify(diagnostics)}` : ''}; console=${JSON.stringify(session.console.filter((entry) => entry.tabId === tab.id).slice(-10))}`
+    )
   }
 
   private navigationQuiescence(url: string): { idleMs?: number; maxWaitMs?: number } {
     const parsed = new URL(url)
-    if (parsed.protocol === 'file:' || parsed.protocol === 'about:') {
+    if (
+      parsed.protocol === 'file:' ||
+      parsed.protocol === 'about:' ||
+      parsed.protocol === 'sidekick-pdf:'
+    ) {
       // loadURL has already reached the document load event. Local previews have
       // no meaningful network-idle phase, so do not leave the first frame hidden
       // behind the general remote-page settling budget.
@@ -1716,6 +2014,7 @@ export class NativeBrowserSessionService {
     )
     tab.consoleCursor = session.consoleSequence
     tab.networkCursor = session.networkSequence
+    const humanVerification = await this.detectHumanVerification(tab, semanticSnapshot, signal)
     return {
       sessionId: session.id,
       runId: session.runId,
@@ -1726,6 +2025,7 @@ export class NativeBrowserSessionService {
       pointer: tab.lastPointer ?? null,
       semanticSnapshot,
       semanticNodeCount,
+      humanVerification,
       screenshot,
       screenshotChanged: screenshot?.changed ?? null,
       unchangedScreenshotStreak:
@@ -1749,6 +2049,94 @@ export class NativeBrowserSessionService {
     } catch {
       return this.defaultViewport
     }
+  }
+
+  private async detectHumanVerification(
+    tab: TabState,
+    semanticSnapshot: string | undefined,
+    signal?: AbortSignal
+  ): Promise<BrowserHumanVerification | null> {
+    const domState = await abortable(
+      tab.surface
+        .executeJavaScript<{
+          pageText: string
+          unresolvedMarker: boolean
+          solvedKnownWidget: boolean
+        }>(
+          `(() => {
+          const visible = node => {
+            const rect = node.getBoundingClientRect();
+            const style = getComputedStyle(node);
+            return rect.width > 1 && rect.height > 1 && style.display !== 'none' && style.visibility !== 'hidden';
+          };
+          const nodesFor = selectors => Array.from(new Set(
+            selectors.flatMap(selector => Array.from(document.querySelectorAll(selector)))
+          ));
+          const visibleNodes = selectors => nodesFor(selectors).filter(visible);
+          const responseCount = selectors => nodesFor(selectors).filter(node =>
+            typeof node.value === 'string' && node.value.trim().length > 8
+          ).length;
+          const challengeCheckboxes = nodesFor(['[role="checkbox"]', 'input[type="checkbox"]']).filter(node => {
+            const label = [
+              node.getAttribute('aria-label'),
+              node.getAttribute('title'),
+              node.textContent,
+              node.parentElement?.textContent
+            ].filter(Boolean).join(' ');
+            return /captcha|not\\s+a\\s+robot|verify|human/i.test(label);
+          });
+          const checkboxSolved = node => node.matches(':checked') || node.getAttribute('aria-checked') === 'true';
+          const solvedCheckbox = challengeCheckboxes.some(checkboxSolved);
+          const unresolvedCheckbox = challengeCheckboxes.some(node => !checkboxSolved(node) && visible(node));
+          const recaptchaSolved = responseCount(['textarea[name="g-recaptcha-response"]', 'input[name="g-recaptcha-response"]']);
+          const hcaptchaSolved = responseCount(['textarea[name="h-captcha-response"]', 'input[name="h-captcha-response"]']);
+          const turnstileSolved = responseCount(['input[name="cf-turnstile-response"]', 'textarea[name="cf-turnstile-response"]']);
+          const widgetCount = (containerSelector, iframeSelectors) => {
+            const containers = visibleNodes([containerSelector]).length;
+            if (containers) return containers;
+            return visibleNodes(iframeSelectors).length > 0 ? 1 : 0;
+          };
+          const recaptchaVisible = widgetCount('.g-recaptcha', ['iframe[src*="recaptcha"]']);
+          const hcaptchaVisible = widgetCount('.h-captcha', ['iframe[src*="hcaptcha"]']);
+          const turnstileVisible = widgetCount('.cf-turnstile', ['iframe[src*="challenges.cloudflare.com"]']);
+          const opaqueChallengeVisible = visibleNodes([
+            'iframe[src*="arkoselabs"]',
+            'iframe[src*="perimeterx"]'
+          ]).length > 0;
+          const genericCaptchaVisible = visibleNodes(['iframe[title*="captcha" i]']).some(node =>
+            !/recaptcha|hcaptcha|challenges\\.cloudflare\\.com/i.test(node.getAttribute('src') || '')
+          );
+          const solvedKnownWidget = solvedCheckbox || recaptchaSolved > 0 || hcaptchaSolved > 0 || turnstileSolved > 0;
+          return {
+            pageText: (document.body?.innerText || '').slice(0, 32768),
+            solvedKnownWidget,
+            unresolvedMarker:
+              recaptchaVisible > recaptchaSolved ||
+              hcaptchaVisible > hcaptchaSolved ||
+              turnstileVisible > turnstileSolved ||
+              unresolvedCheckbox ||
+              opaqueChallengeVisible ||
+              genericCaptchaVisible
+          };
+        })()`
+        )
+        .catch(() => undefined),
+      signal
+    )
+    if (domState?.unresolvedMarker) {
+      return {
+        required: true,
+        kind: 'captcha_or_bot_challenge',
+        message:
+          'This site requires a human verification step before browser automation can continue.',
+        detectedBy: 'dom_marker'
+      }
+    }
+    return detectTextualHumanVerification(
+      tab.surface.getTitle(),
+      [semanticSnapshot, domState?.pageText].filter(Boolean).join('\n'),
+      domState?.solvedKnownWidget === true
+    )
   }
 
   private async captureSemanticSnapshot(
@@ -1879,7 +2267,7 @@ export class NativeBrowserSessionService {
           }
         : undefined
     }
-    const sourceUrlAtCapture = stableCaptureState?.sourceUrl ?? tab.surface.getURL()
+    const sourceUrlAtCapture = this.tabUrl(tab)
     const sha256 = createHash('sha256').update(capture.png).digest('hex')
     const previousHash = tab.lastScreenshotHashes[kind]
     const changed = previousHash === undefined ? null : previousHash !== sha256
@@ -2431,6 +2819,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'click', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       const startedAt = this.now()
       this.setPointer(tab, target, 'click', startedAt)
@@ -2459,6 +2848,72 @@ export class NativeBrowserSessionService {
     })
   }
 
+  async hold(
+    input: BrowserHoldInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const durationMs = boundedInteger(input.durationMs, MIN_HOLD_MS, MAX_HOLD_MS, 'hold duration')
+      const fingerprint = canonicalFingerprint({
+        action: 'hold',
+        tabId: tab.id,
+        input: { ...input, durationMs }
+      })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      const target = await this.resolveTarget(tab, input.target, true, signal)
+      // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
+      // It is not an automated CAPTCHA solver; detected anti-bot checkpoints
+      // always cross the same-session human-takeover boundary.
+      const startedAt = this.now()
+      this.setPointer(tab, target, 'hold', startedAt)
+      tab.surface.focus()
+      const button = input.button ?? 'left'
+      tab.surface.sendInputEvent({ type: 'mouseMove', x: target.x, y: target.y })
+      tab.surface.sendInputEvent({
+        type: 'mouseDown',
+        x: target.x,
+        y: target.y,
+        button,
+        clickCount: 1
+      })
+      try {
+        await delay(durationMs, signal)
+      } finally {
+        if (!tab.surface.isDestroyed()) {
+          tab.surface.sendInputEvent({
+            type: 'mouseUp',
+            x: target.x,
+            y: target.y,
+            button,
+            clickCount: 1
+          })
+        }
+      }
+      return this.finishAction(
+        session,
+        tab,
+        'hold',
+        target.mode,
+        target.fallbackUsed,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  private async assertAutomatedMutationAllowed(tab: TabState, signal?: AbortSignal): Promise<void> {
+    // This DOM/text probe is intentionally cheaper than another full CDP
+    // accessibility snapshot. It gates every input/evaluation path, while the
+    // post-action observation still produces the rich semantic state once.
+    const challenge = await this.detectHumanVerification(tab, undefined, signal)
+    if (challenge) throw new BrowserHumanVerificationError()
+  }
+
   async type(
     input: BrowserTypeInput,
     operation: BrowserOperationOptions = {}
@@ -2469,6 +2924,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'type', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       if (!target.backendNodeId) {
         throw new Error('Browser text entry requires a semantic or selector-backed field target')
@@ -2733,6 +3189,7 @@ export class NativeBrowserSessionService {
       const tab = this.getTab(session, input.tabId)
       const fingerprint = canonicalFingerprint({ action: 'fill_form', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const startedAt = this.now()
       const initialUrl = tab.surface.getURL()
       const initialRefEpoch = tab.refEpoch
@@ -2751,6 +3208,10 @@ export class NativeBrowserSessionService {
           stopReason = 'page_changed'
           break
         }
+        // A site may inject a challenge after an earlier field. Re-check at
+        // each transaction boundary so the batch never drives a later field
+        // through newly appeared human verification.
+        await this.assertAutomatedMutationAllowed(tab, signal)
         let target: ElementPoint | undefined
         try {
           target = await this.resolveTarget(tab, field.target, false, signal)
@@ -2920,6 +3381,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'select', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, false, signal)
       const sourceUrl = tab.surface.getURL()
       const sourceRefEpoch = tab.refEpoch
@@ -3007,7 +3469,11 @@ export class NativeBrowserSessionService {
         startedAt,
         signal
       )
-      if (result.observation.tab.url !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+      // `observation.tab.url` intentionally exposes the original file:// URL
+      // while a local PDF is rendered through the private sidekick-pdf://
+      // surface. Compare the actual WebContents URL here so a successful PDF
+      // selection is not mistaken for navigation.
+      if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
         throw new Error(
           'Browser select changed the page before its final selection could be verified'
         )
@@ -3049,6 +3515,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'press', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = input.target
         ? await this.resolveTarget(tab, input.target, true, signal)
         : undefined
@@ -3118,6 +3585,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'scroll', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = input.target
         ? await this.resolveTarget(tab, input.target, true, signal)
         : undefined
@@ -3241,6 +3709,7 @@ export class NativeBrowserSessionService {
       const fingerprint = canonicalFingerprint({ action: 'hover', tabId: tab.id, input })
       this.guardRepeatedAction(tab, fingerprint)
       await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       const startedAt = this.now()
       this.setPointer(tab, target, 'hover', startedAt)
@@ -3509,7 +3978,7 @@ export class NativeBrowserSessionService {
         )
         satisfied = (condition.state ?? 'present') === 'present' ? present : !present
       } else if (condition.type === 'url') {
-        satisfied = matchesText(tab.surface.getURL(), condition.value, condition.match)
+        satisfied = matchesText(this.tabUrl(tab), condition.value, condition.match)
       } else {
         try {
           await this.captureSemanticSnapshot(tab, undefined, signal)
@@ -3598,11 +4067,16 @@ export class NativeBrowserSessionService {
   }
 
   private async closeTab(session: SessionState, tab: TabState): Promise<void> {
+    for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
+    tab.pdfSessionTokens.clear()
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
     await tab.surface.close()
-    if (!session.tabs.size) this.sessions.delete(session.id)
+    if (!session.tabs.size) {
+      revokeBrowserPdfSessionsByOwner(session.id)
+      this.sessions.delete(session.id)
+    }
   }
 
   async console(
@@ -3646,6 +4120,7 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session, input.tabId)
+      await this.assertAutomatedMutationAllowed(tab, signal)
       const envelope = await abortable(
         tab.surface.executeJavaScript<{ json: string; truncated: boolean }>(`(async () => {
           let value = await (0, eval)(${JSON.stringify(input.expression)});
@@ -3701,7 +4176,7 @@ export class NativeBrowserSessionService {
         let passed = false
         let actual: string | undefined
         if (assertion.type === 'url') {
-          actual = tab.surface.getURL()
+          actual = this.tabUrl(tab)
           passed = matchesText(actual, assertion.value, assertion.match)
         } else if (assertion.type === 'title') {
           actual = tab.surface.getTitle()
@@ -3736,6 +4211,56 @@ export class NativeBrowserSessionService {
         passed: results.every((assertion) => assertion.passed),
         assertions: results,
         observation
+      }
+    })
+  }
+
+  async beginHumanTakeover(
+    sessionId: string,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserHumanTakeoverResult> {
+    const session = this.getSession(sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session)
+      session.humanTakeoverTabId = tab.id
+      try {
+        tab.surface.showForHumanTakeover()
+        const observation = await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
+          signal
+        )
+        return {
+          active: tab.surface.isHumanTakeoverVisible(),
+          observation
+        }
+      } catch (error) {
+        tab.surface.hideHumanTakeover()
+        session.humanTakeoverTabId = undefined
+        throw error
+      }
+    })
+  }
+
+  async completeHumanTakeover(
+    sessionId: string,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserHumanTakeoverResult> {
+    const session = this.getSession(sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      if (!session.humanTakeoverTabId) throw new Error('Human browser takeover is not active')
+      const tab = this.getTab(session, session.humanTakeoverTabId)
+      tab.surface.hideHumanTakeover()
+      session.humanTakeoverTabId = undefined
+      this.invalidateSemanticRefs(tab)
+      await this.waitForQuiescence(tab, { idleMs: 200, maxWaitMs: 2_000 }, signal)
+      return {
+        active: false,
+        observation: await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
+          signal
+        )
       }
     })
   }

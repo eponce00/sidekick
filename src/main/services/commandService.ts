@@ -32,7 +32,8 @@ const SENSITIVE_ENVIRONMENT_NAME =
 export function shellChildEnvironment(
   source: NodeJS.ProcessEnv,
   workspaceRoot: string,
-  scratchDirectory: string
+  scratchDirectory: string,
+  skillAssetsPath?: string
 ): NodeJS.ProcessEnv {
   const safe: NodeJS.ProcessEnv = {}
   for (const [name, value] of Object.entries(source)) {
@@ -42,6 +43,7 @@ export function shellChildEnvironment(
   safe.WORKSPACE_FOLDER = workspaceRoot
   safe.SIDEKICK_WORKSPACE = workspaceRoot
   safe.SIDEKICK_SCRATCH = scratchDirectory
+  if (skillAssetsPath) safe.SIDEKICK_SKILLS = skillAssetsPath
   return safe
 }
 
@@ -77,7 +79,8 @@ export class CommandService {
   constructor(
     private readonly db: Database.Database,
     private readonly outputRoot: string,
-    private readonly onTaskUpdate: (task: OwnedBackgroundTask) => void = () => undefined
+    private readonly onTaskUpdate: (task: OwnedBackgroundTask) => void = () => undefined,
+    private readonly skillAssetsPath?: string
   ) {
     this.restore()
   }
@@ -89,7 +92,7 @@ export class CommandService {
   private shellEnvironment(runId: string, workspaceRoot: string): NodeJS.ProcessEnv {
     const scratchDirectory = join(this.outputRoot, 'scratch', runId)
     mkdirSync(scratchDirectory, { recursive: true })
-    return shellChildEnvironment(process.env, workspaceRoot, scratchDirectory)
+    return shellChildEnvironment(process.env, workspaceRoot, scratchDirectory, this.skillAssetsPath)
   }
 
   private persist(task: OwnedBackgroundTask): void {

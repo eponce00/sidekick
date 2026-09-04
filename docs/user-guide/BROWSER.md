@@ -12,6 +12,10 @@ viewport, move between tabs, wait for page state, inspect console and failed net
 verify an expected result. Screenshots are delivered as actual image input when the selected model
 supports vision.
 
+`browser_hold` provides one bounded, atomic press-and-hold gesture for ordinary controls such as
+maps, sliders, canvases, and test interfaces. It always releases the mouse even if the action is
+cancelled. It is not a CAPTCHA solver.
+
 `browser_fill_form` batches up to 25 native textboxes, selects, checkboxes, and radio buttons in
 one model turn. It uses current semantic references or unambiguous selectors/accessible names,
 never coordinates. Fields are filled in order and their actual browser state is checked after each
@@ -26,6 +30,19 @@ The Browser tab in the right workspace panel shows the live page, a highlighted 
 short user-facing activity history. The page scales to the available panel without allowing a
 narrow or mobile viewport to stretch an image beyond the layout. Browser details remain available
 to the model and diagnostics without filling the user interface with developer-only telemetry.
+
+## Human-only site checks
+
+When SideKick detects a CAPTCHA or anti-bot verification, automated input and page evaluation stop.
+The run stays suspended and a **Take control** card appears. Choose it to reveal the exact isolated
+browser tab, complete the site check yourself, and then choose **I've finished — resume**. SideKick
+recaptures the same tab and continues only after the challenge has cleared. The session is pinned
+while the card is pending, popups stay in the visible takeover window, and cancelling the run parks
+the browser safely. If the check cannot be completed, **Use another source** tells the agent to take
+a legitimate alternate route.
+
+The takeover window's native title bar shows a main-process-owned origin. CAPTCHA and anti-bot
+checks are always human-only; SideKick does not ask the model to bypass or solve them.
 
 ## Isolation and safety
 

@@ -846,6 +846,22 @@ export function installBrowserApiMock(): void {
         }
       },
       latest: async () => ({ run: null, events: [], pendingInteractions: [] }),
+      beginBrowserHumanTakeover: async (conversationId) => ({
+        active: true,
+        conversationId,
+        sessionId: 'preview-browser-session',
+        pageTitle: 'Preview browser',
+        url: 'https://example.com/',
+        humanVerificationRequired: true
+      }),
+      completeBrowserHumanTakeover: async (conversationId) => ({
+        active: false,
+        conversationId,
+        sessionId: 'preview-browser-session',
+        pageTitle: 'Preview browser',
+        url: 'https://example.com/',
+        humanVerificationRequired: false
+      }),
       resolveInteraction: async () => ({ success: true }),
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),

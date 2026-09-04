@@ -1,9 +1,11 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import type {
+  BrowserHumanTakeoverSnapshot,
   ResolveAgentInteractionInput,
   ReplacePromptAdmissionsInput,
   StartConversationAgentRunInput
 } from '../../shared/agentRunApi'
+import type { BrowserHumanTakeoverResult } from '../services/nativeBrowserSessionService'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
 import { PromptAdmissionStore } from '../services/promptAdmissionStore'
@@ -52,6 +54,58 @@ function getAgentEngineClient(): AgentEngineClient {
 
 function validId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
+}
+
+function publicBrowserTakeover(
+  conversationId: string,
+  result: BrowserHumanTakeoverResult
+): BrowserHumanTakeoverSnapshot {
+  const observation = result.observation
+  return {
+    active: result.active,
+    conversationId,
+    sessionId: observation.sessionId,
+    pageTitle: observation.tab.title,
+    url: observation.tab.url,
+    humanVerificationRequired: observation.humanVerification?.required === true,
+    ...(observation.humanVerification?.message
+      ? { message: observation.humanVerification.message }
+      : {}),
+    ...(observation.screenshot
+      ? {
+          screenshot: {
+            id: observation.screenshot.id,
+            url: observation.screenshot.url,
+            kind: observation.screenshot.kind,
+            width: observation.screenshot.width,
+            height: observation.screenshot.height
+          }
+        }
+      : {})
+  }
+}
+
+function browserTakeoverScope(interactionId: unknown): {
+  runtime: AgentRuntimeCoordinator
+  conversationId: string
+  browserSessionId: string
+} {
+  if (!validId(interactionId)) throw new Error('Invalid browser takeover interaction')
+  const runtime = getAgentRuntimeCoordinator()
+  const interaction = runtime.store.getInteraction(interactionId)
+  if (
+    !interaction ||
+    interaction.status !== 'pending' ||
+    interaction.kind !== 'question' ||
+    interaction.request.intent !== 'browser_takeover'
+  ) {
+    throw new Error('Browser takeover interaction is not pending')
+  }
+  const run = runtime.store.get(interaction.runId)
+  if (!run) throw new Error('Browser takeover run is unavailable')
+  const browserSessionId = interaction.request.browserSessionId
+  if (!validId(browserSessionId)) throw new Error('Browser takeover session is unavailable')
+  return { runtime, conversationId: run.threadId, browserSessionId }
 }
 
 function validateGoalCreate(value: unknown): CreateConversationGoalInput {
@@ -150,8 +204,7 @@ export function registerAgentRunHandlers(): void {
   }))
   ipcMain.handle('agentRuns:stop', async (_event, runId: string) => ({
     stopped:
-      typeof runId === 'string' &&
-      (await engine.request<boolean>({ type: 'run.stop', runId }))
+      typeof runId === 'string' && (await engine.request<boolean>({ type: 'run.stop', runId }))
   }))
   ipcMain.handle('agentRuns:events', (_event, runId: string, afterSequence?: number) =>
     engine.request<import('../../shared/agentRunApi').AgentRunEventsResult>({
@@ -166,12 +219,29 @@ export function registerAgentRunHandlers(): void {
       threadId
     })
   )
-  ipcMain.handle('agentRuns:resolveInteraction', async (_event, input: ResolveAgentInteractionInput) => {
-    if (!input || typeof input.interactionId !== 'string' || !input.interactionId) {
-      throw new Error('Invalid interaction response')
-    }
-    return engine.request<{ success: true }>({ type: 'run.resolveInteraction', input })
+  ipcMain.handle('agentRuns:browserTakeoverBegin', async (_event, interactionId: string) => {
+    const { runtime, conversationId, browserSessionId } = browserTakeoverScope(interactionId)
+    return publicBrowserTakeover(
+      conversationId,
+      await runtime.tools.beginBrowserHumanTakeover(conversationId, browserSessionId)
+    )
   })
+  ipcMain.handle('agentRuns:browserTakeoverComplete', async (_event, interactionId: string) => {
+    const { runtime, conversationId, browserSessionId } = browserTakeoverScope(interactionId)
+    return publicBrowserTakeover(
+      conversationId,
+      await runtime.tools.completeBrowserHumanTakeover(conversationId, browserSessionId)
+    )
+  })
+  ipcMain.handle(
+    'agentRuns:resolveInteraction',
+    async (_event, input: ResolveAgentInteractionInput) => {
+      if (!input || typeof input.interactionId !== 'string' || !input.interactionId) {
+        throw new Error('Invalid interaction response')
+      }
+      return engine.request<{ success: true }>({ type: 'run.resolveInteraction', input })
+    }
+  )
   ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
     return admissions.list(conversationId)
