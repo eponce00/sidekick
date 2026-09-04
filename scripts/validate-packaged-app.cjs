@@ -24,6 +24,16 @@ const REQUIRED_PDF_SKILL_ASSETS = [
   ['resources', 'skills', 'pdf', 'check_fillable_fields.py'],
   ['resources', 'skills', 'pdf', 'fill_fillable_fields.py']
 ]
+const PDF_NATIVE_BINDINGS = {
+  'darwin-arm64': ['node_modules', '@napi-rs', 'canvas-darwin-arm64', 'skia.darwin-arm64.node'],
+  'linux-x64': ['node_modules', '@napi-rs', 'canvas-linux-x64-gnu', 'skia.linux-x64-gnu.node'],
+  'win32-x64': [
+    'node_modules',
+    '@napi-rs',
+    'canvas-win32-x64-msvc',
+    'skia.win32-x64-msvc.node'
+  ]
+}
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -55,6 +65,12 @@ function validateResourceEntries(entries) {
   }
 }
 
+function requiredPdfNativeBinding(platform = process.platform, arch = process.arch) {
+  const binding = PDF_NATIVE_BINDINGS[`${platform}-${arch}`]
+  assert(binding, `Unsupported PDF renderer target: ${platform}-${arch}`)
+  return binding
+}
+
 function validatePackagedApp(resourcesDirectory) {
   const root = resolve(resourcesDirectory)
   const asarPath = join(root, 'app.asar')
@@ -67,6 +83,8 @@ function validatePackagedApp(resourcesDirectory) {
     const assetPath = join(unpackedRoot, ...pathParts)
     assert(existsSync(assetPath), `Packaged app is missing PDF skill asset: ${assetPath}`)
   }
+  const nativeBinding = join(unpackedRoot, ...requiredPdfNativeBinding())
+  assert(existsSync(nativeBinding), `Packaged app is missing PDF native renderer: ${nativeBinding}`)
 }
 
 if (require.main === module) {
@@ -80,4 +98,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { validatePackageEntries, validateResourceEntries }
+module.exports = { requiredPdfNativeBinding, validatePackageEntries, validateResourceEntries }

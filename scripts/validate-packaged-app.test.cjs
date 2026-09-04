@@ -1,6 +1,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
 const {
+  requiredPdfNativeBinding,
   validatePackageEntries,
   validateResourceEntries
 } = require('./validate-packaged-app.cjs')
@@ -83,6 +84,28 @@ test('requires the first-party browser PDF runtime in the packaged archive', () 
     ...requiredPdfEntries.slice(1)
   ]
   assert.throws(() => validatePackageEntries(entries), /PDF runtime entry/)
+})
+
+test('requires the native PDF renderer for every shipped platform', () => {
+  assert.deepEqual(requiredPdfNativeBinding('darwin', 'arm64'), [
+    'node_modules',
+    '@napi-rs',
+    'canvas-darwin-arm64',
+    'skia.darwin-arm64.node'
+  ])
+  assert.deepEqual(requiredPdfNativeBinding('linux', 'x64'), [
+    'node_modules',
+    '@napi-rs',
+    'canvas-linux-x64-gnu',
+    'skia.linux-x64-gnu.node'
+  ])
+  assert.deepEqual(requiredPdfNativeBinding('win32', 'x64'), [
+    'node_modules',
+    '@napi-rs',
+    'canvas-win32-x64-msvc',
+    'skia.win32-x64-msvc.node'
+  ])
+  assert.throws(() => requiredPdfNativeBinding('plan9', 'mips'), /Unsupported PDF renderer/)
 })
 
 test('rejects legacy automatic-updater configuration from packaged resources', () => {
