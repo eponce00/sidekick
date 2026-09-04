@@ -1270,7 +1270,7 @@ describe('NativeBrowserSessionService', () => {
     expect(pdfSession).toMatchObject({
       sourceName: 'official-form.pdf',
       logicalUrl: sourceUrl,
-      outputDirectory: await realpath(outputRoot)
+      outputDirectory: outputRoot
     })
     expect(await readFile(pdfSession!.sourcePath)).toEqual(pdfBytes)
 
