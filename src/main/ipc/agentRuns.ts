@@ -37,7 +37,8 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       getDb(),
       app.getPath('userData'),
       publish,
-      publishGoal
+      publishGoal,
+      { pdfOutputRoot: app.getPath('downloads') }
     )
   }
   return coordinator

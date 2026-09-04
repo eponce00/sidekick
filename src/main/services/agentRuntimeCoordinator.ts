@@ -107,6 +107,7 @@ export class AgentRuntimeCoordinator {
     options: {
       settings?: () => ProviderSettings
       skillAssetsPath?: () => string
+      pdfOutputRoot?: string
     } = {}
   ) {
     this.publishExternal = publish
@@ -124,6 +125,7 @@ export class AgentRuntimeCoordinator {
     )
     this.browser = new NativeBrowserSessionService({
       artifactRoot: join(userDataRoot, 'browser-artifacts'),
+      pdfOutputRoot: options.pdfOutputRoot,
       maxTotalSessions: 6
     })
     this.tools = new AgentToolRuntime(

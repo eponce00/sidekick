@@ -237,6 +237,7 @@ async function runSmoke(): Promise<SmokeResult> {
 
     service = new NativeBrowserSessionService({
       artifactRoot,
+      pdfOutputRoot: join(isolatedRoot, 'downloads'),
       maxTotalSessions: 4,
       maxSessionsPerRun: 2
     })
@@ -274,13 +275,14 @@ async function runSmoke(): Promise<SmokeResult> {
     progress('Navigation policy checks passed')
 
     const externalPdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF
+    const remotePdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF_URL
     {
-      const pdfPath = resolve(externalPdf || fillablePdf)
-      assert.ok(existsSync(pdfPath), `Diagnostic PDF does not exist: ${pdfPath}`)
+      const pdfPath = remotePdf ? undefined : resolve(externalPdf || fillablePdf)
+      if (pdfPath) assert.ok(existsSync(pdfPath), `Diagnostic PDF does not exist: ${pdfPath}`)
       const pdf = await service.open({
         runId: 'pdf-diagnostic',
-        url: pathToFileURL(pdfPath).href,
-        allowedFileRoots: [dirname(pdfPath)],
+        url: remotePdf || pathToFileURL(pdfPath!).href,
+        ...(pdfPath ? { allowedFileRoots: [dirname(pdfPath)] } : {}),
         viewport: { width: 1200, height: 900, deviceScaleFactor: 1 }
       })
       const image = nativeImage.createFromPath(pdf.screenshot!.path)
@@ -294,43 +296,68 @@ async function runSmoke(): Promise<SmokeResult> {
         `PDF diagnostic: title=${JSON.stringify(pdf.tab.title)}, semanticNodes=${pdf.semanticNodeCount ?? 0}, sampledColors=${colors.size}, screenshotBytes=${pdf.screenshot!.bytes}`
       )
       if (externalPdf) progress(`PDF semantics: ${JSON.stringify(pdf.semanticSnapshot ?? '')}`)
-      assert.match(pdf.semanticSnapshot ?? '', /textbox "Applicant/)
+      if (remotePdf)
+        progress(
+          `Remote PDF semantics preview: ${JSON.stringify((pdf.semanticSnapshot ?? '').slice(0, 2_000))}`
+        )
+      assert.match(pdf.semanticSnapshot ?? '', /textbox "/)
       assert.ok(colors.size > 10, 'Rendered PDF screenshot should contain visible document detail')
-      const pdfFields = externalPdf
+      const remoteTextbox = remotePdf
+        ? pdf.semanticSnapshot
+            ?.split('\n')
+            .filter(
+              (line) =>
+                line.includes('textbox "') &&
+                line.includes('Family Name (Last Name)') &&
+                !line.includes('disabled=true')
+            )
+            .map((line) => line.match(/\[ref=([^\s\]]+)/)?.[1])
+            .find(Boolean)
+        : undefined
+      if (remotePdf) assert.ok(remoteTextbox, 'Remote PDF should expose a semantic textbox')
+      const pdfFields = remotePdf
         ? ([
             {
               kind: 'textbox',
-              target: { role: 'textbox', name: 'Applicant full legal name', exact: true },
-              value: 'Avery Test'
-            },
-            {
-              kind: 'select',
-              target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
-              values: ['NV']
-            },
-            {
-              kind: 'checkbox',
-              target: {
-                role: 'checkbox',
-                name: 'Email a copy of the completed request',
-                exact: true
+              target: { ref: remoteTextbox! },
+              value: 'Test'
+            }
+          ] as const)
+        : externalPdf
+          ? ([
+              {
+                kind: 'textbox',
+                target: { role: 'textbox', name: 'Applicant full legal name', exact: true },
+                value: 'Avery Test'
               },
-              checked: true
-            }
-          ] as const)
-        : ([
-            {
-              kind: 'textbox',
-              target: { role: 'textbox', name: 'Applicant name', exact: true },
-              value: 'Avery Test'
-            }
-          ] as const)
+              {
+                kind: 'select',
+                target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
+                values: ['NV']
+              },
+              {
+                kind: 'checkbox',
+                target: {
+                  role: 'checkbox',
+                  name: 'Email a copy of the completed request',
+                  exact: true
+                },
+                checked: true
+              }
+            ] as const)
+          : ([
+              {
+                kind: 'textbox',
+                target: { role: 'textbox', name: 'Applicant name', exact: true },
+                value: 'Avery Test'
+              }
+            ] as const)
       const filledPdf = await service.fillForm({
         sessionId: pdf.sessionId,
         fields: [...pdfFields]
       })
       assert.equal(filledPdf.completed, true, JSON.stringify(filledPdf.fields))
-      if (externalPdf) {
+      if (externalPdf && !remotePdf) {
         await service.select({
           sessionId: pdf.sessionId,
           target: { role: 'combobox', name: 'Applicant mailing state', exact: true },
@@ -353,7 +380,7 @@ async function runSmoke(): Promise<SmokeResult> {
       assert.equal(typeof saved.value, 'string')
       assert.ok(
         existsSync(saved.value as string),
-        'Filled PDF copy should be written beside the source'
+        'Filled PDF copy should be written to its configured destination'
       )
       assert.equal(
         readFileSync(saved.value as string)

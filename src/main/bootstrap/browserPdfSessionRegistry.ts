@@ -8,9 +8,19 @@ export interface BrowserPdfSession {
   ownerId: string
   sourcePath: string
   sourceName: string
+  /** Original file:// or remote URL exposed to the agent while the private viewer is active. */
+  logicalUrl?: string
+  /** Trusted host-selected destination for a filled copy of a downloaded remote PDF. */
+  outputDirectory?: string
   createdAt: number
   lastOutputPath?: string
   renderedPages: Map<string, Promise<Buffer>>
+}
+
+export interface BrowserPdfSessionOptions {
+  sourceName?: string
+  logicalUrl?: string
+  outputDirectory?: string
 }
 
 const sessions = new Map<string, BrowserPdfSession>()
@@ -26,13 +36,19 @@ function tokenFromUrl(input: string): string | null {
   }
 }
 
-export function createBrowserPdfSession(sourcePath: string, ownerId: string): BrowserPdfSession {
+export function createBrowserPdfSession(
+  sourcePath: string,
+  ownerId: string,
+  options: BrowserPdfSessionOptions = {}
+): BrowserPdfSession {
   const token = randomUUID()
   const session: BrowserPdfSession = {
     token,
     ownerId,
     sourcePath,
-    sourceName: basename(sourcePath),
+    sourceName: options.sourceName ?? basename(sourcePath),
+    logicalUrl: options.logicalUrl,
+    outputDirectory: options.outputDirectory,
     createdAt: Date.now(),
     renderedPages: new Map()
   }

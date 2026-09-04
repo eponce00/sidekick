@@ -385,6 +385,8 @@ export interface BrowserHumanTakeoverResult {
 
 export interface NativeBrowserSessionServiceOptions {
   artifactRoot: string
+  /** Destination for filled copies of PDFs opened from remote URLs. */
+  pdfOutputRoot?: string
   allowedFileRoots?: string[]
   allowedAttachWebContentsIds?: ReadonlySet<number>
   canAttachWebContents?: (webContentsId: number, currentUrl: string) => boolean
@@ -393,6 +395,7 @@ export interface NativeBrowserSessionServiceOptions {
   maxTabsPerSession?: number
   maxArtifacts?: number
   maxArtifactBytes?: number
+  maxRemotePdfBytes?: number
   artifactRetentionMs?: number
   maxTelemetryEntries?: number
   maxRepeatedNoChangeActions?: number
@@ -428,6 +431,8 @@ export interface NativeBrowserSurface {
   isDestroyed(): boolean
   isLoading(): boolean
   loadURL(url: string): Promise<void>
+  /** Fetch through this tab's isolated Chromium session, preserving its cookie/network context. */
+  fetch(url: string, init?: RequestInit): Promise<Response>
   stop(): void
   close(): Promise<void>
   showForHumanTakeover(): void
@@ -520,6 +525,7 @@ interface TabState {
   logicalUrl?: string
   pdfSessionToken?: string
   pdfSessionTokens: Set<string>
+  temporaryPdfSources: Set<string>
   refEpoch: number
   refs: Map<string, SemanticRef>
   semanticNodes: SemanticRef[]
@@ -584,6 +590,7 @@ const DEFAULT_MAX_ARTIFACTS = 200
 const DEFAULT_MAX_ARTIFACT_BYTES = 250 * 1024 * 1024
 const DEFAULT_MAX_ARTIFACTS_PER_SESSION = 50
 const DEFAULT_MAX_ARTIFACT_BYTES_PER_SESSION = 64 * 1024 * 1024
+const DEFAULT_MAX_REMOTE_PDF_BYTES = 64 * 1024 * 1024
 const DEFAULT_ARTIFACT_RETENTION_MS = 24 * 60 * 60 * 1_000
 const DEFAULT_MAX_TELEMETRY = 2_000
 const DEFAULT_MAX_REPEATED_NO_CHANGE = 3
@@ -836,6 +843,72 @@ function finiteCoordinate(value: number, label: string): number {
   return value
 }
 
+function isRemotePdfUrl(url: string): boolean {
+  const parsed = new URL(url)
+  return (
+    (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+    extname(parsed.pathname).toLowerCase() === '.pdf'
+  )
+}
+
+function remotePdfName(url: string, contentDisposition: string | null): string {
+  const encodedName = contentDisposition?.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1]
+  const quotedName = contentDisposition?.match(/filename\s*=\s*"([^"]+)"/i)?.[1]
+  const plainName = contentDisposition?.match(/filename\s*=\s*([^;]+)/i)?.[1]
+  let candidate = encodedName ?? quotedName ?? plainName
+  if (encodedName) {
+    try {
+      candidate = decodeURIComponent(encodedName)
+    } catch {
+      candidate = encodedName
+    }
+  }
+  if (!candidate) {
+    try {
+      candidate = decodeURIComponent(basename(new URL(url).pathname))
+    } catch {
+      candidate = basename(new URL(url).pathname)
+    }
+  }
+  const safe = basename(String(candidate || 'document.pdf').trim())
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .replace(/\p{Cc}/gu, '_')
+    .slice(0, 180)
+  return safe.toLowerCase().endsWith('.pdf') ? safe : `${safe || 'document'}.pdf`
+}
+
+async function readBoundedResponse(
+  response: Response,
+  maxBytes: number,
+  signal?: AbortSignal
+): Promise<Buffer> {
+  const declaredLength = Number(response.headers.get('content-length') ?? 0)
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new Error(`Remote PDF exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MiB limit`)
+  }
+  if (!response.body) return Buffer.alloc(0)
+  const reader = response.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    while (true) {
+      const item = await abortable(reader.read(), signal)
+      if (item.done) break
+      const chunk = Buffer.from(item.value)
+      total += chunk.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        throw new Error(`Remote PDF exceeds the ${Math.floor(maxBytes / (1024 * 1024))} MiB limit`)
+      }
+      chunks.push(chunk)
+    }
+  } finally {
+    if (signal?.aborted) await reader.cancel().catch(() => undefined)
+  }
+  return Buffer.concat(chunks, total)
+}
+
 function isTransientViewportCaptureError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.trim() === 'UnknownVizError'
@@ -940,6 +1013,10 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async loadURL(url: string): Promise<void> {
     await this.contents.loadURL(url)
+  }
+
+  async fetch(url: string, init?: RequestInit): Promise<Response> {
+    return this.contents.session.fetch(url, init)
   }
 
   stop(): void {
@@ -1226,6 +1303,8 @@ export class NativeBrowserSessionService {
   private readonly maxTabsPerSession: number
   private readonly maxArtifacts: number
   private readonly maxArtifactBytes: number
+  private readonly maxRemotePdfBytes: number
+  private readonly pdfOutputRoot: string
   private readonly artifactRetentionMs: number
   private readonly maxTelemetryEntries: number
   private readonly maxRepeatedNoChangeActions: number
@@ -1236,6 +1315,7 @@ export class NativeBrowserSessionService {
   constructor(private readonly options: NativeBrowserSessionServiceOptions) {
     if (!options.artifactRoot) throw new Error('A browser artifact root is required')
     this.artifactRoot = resolve(options.artifactRoot)
+    this.pdfOutputRoot = resolve(options.pdfOutputRoot ?? options.artifactRoot)
     this.defaultAllowedFileRoots = (options.allowedFileRoots ?? []).map((root) => resolve(root))
     this.runtime = options.runtime ?? new ElectronNativeBrowserRuntime()
     this.maxSessionsPerRun = boundedInteger(
@@ -1267,6 +1347,12 @@ export class NativeBrowserSessionService {
       1024 * 1024,
       2_000_000_000,
       'maxArtifactBytes'
+    )
+    this.maxRemotePdfBytes = boundedInteger(
+      options.maxRemotePdfBytes ?? DEFAULT_MAX_REMOTE_PDF_BYTES,
+      1024 * 1024,
+      512 * 1024 * 1024,
+      'maxRemotePdfBytes'
     )
     this.artifactRetentionMs = boundedInteger(
       options.artifactRetentionMs ?? DEFAULT_ARTIFACT_RETENTION_MS,
@@ -1497,6 +1583,7 @@ export class NativeBrowserSessionService {
       id: randomUUID(),
       surface,
       pdfSessionTokens: new Set(),
+      temporaryPdfSources: new Set(),
       refEpoch: 1,
       refs: new Map(),
       semanticNodes: [],
@@ -1626,6 +1713,7 @@ export class NativeBrowserSessionService {
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
     for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
     tab.pdfSessionTokens.clear()
+    void this.cleanupTemporaryPdfSources(tab)
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
     if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
@@ -1841,7 +1929,9 @@ export class NativeBrowserSessionService {
         if (!entry)
           throw new Error(`Browser cannot navigate ${navigationAction}; no history entry exists`)
         const pdfSession = getBrowserPdfSession(entry.url)
-        const entryUrl = pdfSession ? pathToFileURL(pdfSession.sourcePath).href : entry.url
+        const entryUrl = pdfSession
+          ? (pdfSession.logicalUrl ?? pathToFileURL(pdfSession.sourcePath).href)
+          : entry.url
         await this.normalizeNavigationUrl(entryUrl, session.allowedFileRoots)
         this.invalidateSemanticRefs(tab)
         await abortable(
@@ -1881,8 +1971,22 @@ export class NativeBrowserSessionService {
     this.invalidateSemanticRefs(tab)
     let navigationUrl = url
     let newPdfToken: string | undefined
+    let newPdfSourcePath: string | undefined
     if (new URL(url).protocol === 'file:' && extname(fileURLToPath(url)).toLowerCase() === '.pdf') {
-      const pdfSession = createBrowserPdfSession(fileURLToPath(url), session.id)
+      const pdfSession = createBrowserPdfSession(fileURLToPath(url), session.id, {
+        logicalUrl: url
+      })
+      newPdfToken = pdfSession.token
+      tab.pdfSessionTokens.add(pdfSession.token)
+      navigationUrl = browserPdfViewerUrl(pdfSession)
+    } else if (isRemotePdfUrl(url)) {
+      const remotePdf = await this.downloadRemotePdf(session, tab, url, signal)
+      newPdfSourcePath = remotePdf.sourcePath
+      const pdfSession = createBrowserPdfSession(remotePdf.sourcePath, session.id, {
+        sourceName: remotePdf.sourceName,
+        logicalUrl: url,
+        outputDirectory: this.pdfOutputRoot
+      })
       newPdfToken = pdfSession.token
       tab.pdfSessionTokens.add(pdfSession.token)
       navigationUrl = browserPdfViewerUrl(pdfSession)
@@ -1896,11 +2000,100 @@ export class NativeBrowserSessionService {
         tab.pdfSessionTokens.delete(newPdfToken)
         revokeBrowserPdfSession(newPdfToken)
       }
+      if (newPdfSourcePath) {
+        tab.temporaryPdfSources.delete(newPdfSourcePath)
+        await fs.unlink(newPdfSourcePath).catch(() => undefined)
+      }
       throw error
     }
     tab.logicalUrl = newPdfToken ? url : undefined
     tab.pdfSessionToken = newPdfToken
     return this.waitForQuiescence(tab, this.navigationQuiescence(navigationUrl), signal)
+  }
+
+  private async downloadRemotePdf(
+    session: SessionState,
+    tab: TabState,
+    sourceUrl: string,
+    signal?: AbortSignal
+  ): Promise<{ sourcePath: string; sourceName: string }> {
+    let currentUrl = sourceUrl
+    let response: Response | undefined
+    for (let redirect = 0; redirect <= 5; redirect++) {
+      response = await abortable(
+        tab.surface.fetch(currentUrl, {
+          method: 'GET',
+          redirect: 'manual',
+          credentials: 'include',
+          headers: {
+            accept: 'application/pdf,application/octet-stream;q=0.9,*/*;q=0.1'
+          },
+          signal
+        }),
+        signal
+      )
+      if (![301, 302, 303, 307, 308].includes(response.status)) break
+      const location = response.headers.get('location')
+      await response.body?.cancel().catch(() => undefined)
+      if (!location) throw new Error('Remote PDF redirect did not include a destination')
+      if (redirect === 5) throw new Error('Remote PDF exceeded the redirect limit')
+      currentUrl = await this.normalizeNavigationUrl(
+        new URL(location, currentUrl).href,
+        session.allowedFileRoots
+      )
+      const redirected = new URL(currentUrl)
+      if (
+        redirected.protocol !== 'https:' &&
+        !(redirected.protocol === 'http:' && loopbackHost(redirected.hostname))
+      ) {
+        throw new Error('Remote PDF redirects must remain on an approved network URL')
+      }
+    }
+    if (!response?.ok) {
+      throw new Error(`Remote PDF download failed with HTTP ${response?.status ?? 'unknown'}`)
+    }
+    const bytes = await readBoundedResponse(response, this.maxRemotePdfBytes, signal)
+    if (bytes.byteLength < 5 || bytes.subarray(0, 1024).indexOf(Buffer.from('%PDF-')) < 0) {
+      const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'unknown'
+      throw new Error(`Remote URL did not return a valid PDF (content type: ${contentType})`)
+    }
+    const directory = join(
+      this.artifactRoot,
+      safeSegment(session.runId),
+      safeSegment(session.id),
+      safeSegment(tab.id)
+    )
+    await fs.mkdir(directory, { recursive: true })
+    const [realRoot, realDirectory] = await Promise.all([
+      fs.realpath(this.artifactRoot),
+      fs.realpath(directory)
+    ])
+    if (!isPathWithin(realRoot, realDirectory) || realDirectory === realRoot) {
+      throw new Error('Remote PDF cache escaped the browser artifact root')
+    }
+    const sourcePath = join(directory, `remote-${randomUUID()}.source.pdf`)
+    const partialPath = `${sourcePath}.partial`
+    try {
+      await fs.writeFile(partialPath, bytes, { flag: 'wx', mode: 0o600, signal })
+      await fs.rename(partialPath, sourcePath)
+    } catch (error) {
+      await Promise.all([
+        fs.unlink(partialPath).catch(() => undefined),
+        fs.unlink(sourcePath).catch(() => undefined)
+      ])
+      throw error
+    }
+    tab.temporaryPdfSources.add(sourcePath)
+    return {
+      sourcePath,
+      sourceName: remotePdfName(currentUrl, response.headers.get('content-disposition'))
+    }
+  }
+
+  private async cleanupTemporaryPdfSources(tab: TabState): Promise<void> {
+    const paths = [...tab.temporaryPdfSources]
+    tab.temporaryPdfSources.clear()
+    await Promise.all(paths.map((path) => fs.unlink(path).catch(() => undefined)))
   }
 
   private async waitForPdfViewerReady(
@@ -4069,6 +4262,7 @@ export class NativeBrowserSessionService {
   private async closeTab(session: SessionState, tab: TabState): Promise<void> {
     for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
     tab.pdfSessionTokens.clear()
+    await this.cleanupTemporaryPdfSources(tab)
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''

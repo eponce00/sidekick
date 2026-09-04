@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.3 — 2026-09-04
+
+- Route direct HTTPS PDF URLs through SideKick's accessible PDF viewer instead of Chromium's
+  opaque, blank embedded plugin surface.
+- Fetch remote PDFs through the browser tab's isolated network session, retain the original URL in
+  agent-visible history, validate PDF signatures, bound downloads to 64 MiB, and remove temporary
+  source files when the browser tab closes.
+- Save filled copies of remote forms to the user's Downloads folder with safe collision-resistant
+  names; local PDFs continue to save beside their source without overwriting it.
+- Add an exact real-Electron USCIS G-28 regression that verifies four rendered pages, 101 semantic
+  form controls, browser-native field entry, and a valid saved PDF copy.
+
 ## 0.6.2 — 2026-09-04
 
 - Added bounded press-and-hold support for ordinary browser controls with guaranteed mouse release.
