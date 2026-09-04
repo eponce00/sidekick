@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added bounded press-and-hold support for ordinary browser controls with guaranteed mouse release.
+- Added durable same-session human takeover for CAPTCHA and anti-bot checkpoints, including exact
+  session reservation, trusted-origin window chrome, popup containment, cancellation cleanup, and
+  fresh post-takeover verification.
+- Prevented automated click, hold, typing, selection, form filling, keyboard, hover, and evaluation
+  paths from acting on a detected anti-bot challenge while recognizing completed provider widgets.
+
 ## 0.6.1 — 2026-09-03
 
 SideKick 0.6.1 hardens and accelerates the native browser workflow introduced in 0.6.0.

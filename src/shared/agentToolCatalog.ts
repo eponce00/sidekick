@@ -650,6 +650,69 @@ const browserClick = definition(
   }
 )
 
+const browserHold = definition(
+  'browser_hold',
+  'Press and hold an ordinary browser control with real mouse down/up events, then return compact verified page state. Use for legitimate sliders, maps, canvases, and application controls. Never use it for CAPTCHA, anti-bot, or human-verification challenges; call browser_request_human instead. Coordinate targets require the current viewport screenshot_id.',
+  {
+    type: 'object',
+    required: ['duration_ms'],
+    anyOf: [
+      { required: ['ref'] },
+      { required: ['selector'] },
+      { required: ['text'] },
+      { required: ['name'] },
+      { required: ['role'] },
+      { required: ['x', 'y', 'screenshot_id'] }
+    ],
+    properties: {
+      ref: { type: 'string' },
+      selector: { type: 'string' },
+      text: { type: 'string' },
+      name: { type: 'string', description: 'Accessible name or label.' },
+      role: { type: 'string', description: 'Accessible role such as button or slider.' },
+      exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
+      nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
+      x: { type: 'number', minimum: 0 },
+      y: { type: 'number', minimum: 0 },
+      screenshot_id: {
+        type: 'string',
+        description: 'ID of the current viewport screenshot used to choose x and y.'
+      },
+      button: { type: 'string', enum: ['left', 'middle', 'right'] },
+      duration_ms: {
+        type: 'integer',
+        minimum: 100,
+        maximum: 10000,
+        description: 'How long to hold the pointer down before release.'
+      },
+      include_screenshot: {
+        type: 'boolean',
+        description: 'Attach a fresh image when visual state is needed. Defaults to auto.'
+      }
+    }
+  }
+)
+
+const browserRequestHuman = definition(
+  'browser_request_human',
+  'Pause the run for same-session human browser takeover when a CAPTCHA, anti-bot checkpoint, login confirmation, or another explicitly human-only browser step blocks progress. Keep the browser open. After the user completes the step, SideKick resumes the agent with the same cookies, DOM state, and history.',
+  {
+    type: 'object',
+    required: ['reason'],
+    properties: {
+      reason: {
+        type: 'string',
+        description: 'Concise explanation of the human-only step that blocks browser progress.'
+      },
+      challenge_type: {
+        type: 'string',
+        enum: ['captcha', 'anti_bot', 'login_confirmation', 'other'],
+        description: 'Kind of human-only checkpoint.'
+      }
+    }
+  }
+)
+
 const browserType = definition(
   'browser_type',
   'Enter text into one browser field, then return compact verified page state. Prefer browser_fill_form when two or more fields can be completed together.',
@@ -969,6 +1032,8 @@ const browserTools = [
   browserObserve,
   browserScreenshot,
   browserClick,
+  browserHold,
+  browserRequestHuman,
   browserType,
   browserSelect,
   browserFillForm,

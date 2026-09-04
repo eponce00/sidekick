@@ -3928,6 +3928,33 @@ body[data-theme='light'] .tool-approval-command {
   color: var(--text-secondary);
 }
 
+.agent-interaction-browser-takeover {
+  border-color: color-mix(in srgb, var(--color-warning) 30%, var(--border-color));
+  border-left-color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--surface-1));
+}
+
+.agent-interaction-browser-takeover .agent-interaction-copy {
+  margin-top: 7px;
+  color: var(--text-secondary);
+}
+
+.agent-browser-takeover-url {
+  margin-top: 8px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 10px/1.4 var(--font-mono, ui-monospace, monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-browser-takeover-error {
+  margin-top: 8px;
+  color: var(--color-error);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .agent-plan-contract > p {
   margin: 7px 0 9px;
   color: var(--text-secondary);

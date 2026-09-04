@@ -842,6 +842,91 @@ describe('AgentRunKernel', () => {
     expect(store.getInteraction(interaction.id)?.status).toBe('resolved')
   })
 
+  it('suspends browser human takeover and resumes the same run after completion', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'takeover-call',
+            function: {
+              name: 'browser_request_human',
+              arguments: {
+                reason: 'The site is showing a human verification checkpoint.',
+                challenge_type: 'captcha'
+              }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Continued in the same browser session.' })
+    )
+    const router = {
+      execute: vi.fn(),
+      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-1'),
+      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const interaction = store.listPendingInteractions('run-1')[0]
+    expect(interaction).toMatchObject({
+      kind: 'question',
+      request: {
+        intent: 'browser_takeover',
+        conversationId: 'thread-1',
+        browserSessionId: 'browser-session-1',
+        challengeType: 'captcha'
+      }
+    })
+    expect(store.get('run-1')?.phase).toBe('awaiting_user')
+    kernel.resolveInteraction(interaction.id, { completed: true })
+
+    const result = await running
+    expect(result).toMatchObject({
+      phase: 'completed',
+      content: 'Continued in the same browser session.'
+    })
+    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain('same session')
+    expect(router.reserveBrowserHumanTakeover).toHaveBeenCalledWith('thread-1')
+    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith('thread-1', 'browser-session-1')
+    expect(router.execute).not.toHaveBeenCalled()
+  })
+
+  it('releases a reserved browser takeover when the run is cancelled', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'takeover-cancel-call',
+            function: {
+              name: 'browser_request_human',
+              arguments: { reason: 'Human verification is required.' }
+            }
+          }
+        ]
+      })
+    )
+    const router = {
+      execute: vi.fn(),
+      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-cancel'),
+      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    expect(kernel.stop('run-1')).toBe(true)
+
+    await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
+    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith(
+      'thread-1',
+      'browser-session-cancel'
+    )
+  })
+
   it('keeps Plan mode read-only and fails honestly when the planner ignores the contract', async () => {
     let terminalAttempts = 0
     const planController = {

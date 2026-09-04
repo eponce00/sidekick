@@ -14,6 +14,7 @@ import {
   type BrowserActionResult,
   type BrowserFillFormResult,
   type BrowserFormFieldInput,
+  type BrowserHumanTakeoverResult,
   type BrowserNavigateInput,
   type BrowserObservation,
   type BrowserScreenshotArtifact,
@@ -26,6 +27,7 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_observe',
   'browser_screenshot',
   'browser_click',
+  'browser_hold',
   'browser_type',
   'browser_select',
   'browser_fill_form',
@@ -84,6 +86,8 @@ interface BrowserScopeEntry {
   sessionId: string
   lastUsed: number
   active: number
+  humanTakeoverPending: boolean
+  humanTakeoverActive: boolean
   consoleCursor: number
   networkCursor: number
   workspaceRootKey: string
@@ -294,6 +298,7 @@ function compactObservation(
     pointer: observation.pointer ?? null,
     ...(semanticSnapshot ? { semanticSnapshot } : {}),
     semanticNodeCount: observation.semanticNodeCount,
+    humanVerification: observation.humanVerification ?? null,
     visual: observation.screenshot
       ? {
           screenshotId: observation.screenshot.id,
@@ -341,6 +346,7 @@ function shouldAttachRoutineScreenshot(
   return (
     [
       'browser_click',
+      'browser_hold',
       'browser_type',
       'browser_select',
       'browser_press',
@@ -564,6 +570,16 @@ function errorResult(
         'Observe the page and choose a different action instead of repeating the unchanged one.'
     })
   }
+  if (name === 'BrowserHumanVerificationError' || /human verification required/i.test(message)) {
+    return toolExecutionFailed({
+      title,
+      code: 'unsupported',
+      message: 'The site requires human verification before automation can continue.',
+      recoveryAction: 'change_strategy',
+      recovery:
+        'Keep the current browser session open and call browser_request_human for same-session takeover.'
+    })
+  }
   if (isMissingSessionError(error)) {
     return toolExecutionFailed({
       title,
@@ -671,6 +687,9 @@ export class AgentBrowserSessionManager {
     return this.locked(async () => {
       const entry = this.scopes.get(scope)
       if (!entry) return undefined
+      if (entry.humanTakeoverPending || entry.humanTakeoverActive) {
+        throw new Error('Human browser takeover is pending; wait for the user to finish')
+      }
       const nextWorkspaceRootKey = workspaceRootKey(workspaceRoot)
       if (entry.workspaceRootKey !== nextWorkspaceRootKey) {
         if (entry.active > 0) {
@@ -713,6 +732,9 @@ export class AgentBrowserSessionManager {
     return this.locked(async () => {
       const current = this.scopes.get(scope)
       if (current) {
+        if (current.humanTakeoverPending || current.humanTakeoverActive) {
+          throw new Error('Human browser takeover is pending; wait for the user to finish')
+        }
         if (current.workspaceRootKey !== workspaceRootKey(allowedFileRoots[0])) {
           throw new Error('The conversation browser is still active in its previous project')
         }
@@ -734,7 +756,10 @@ export class AgentBrowserSessionManager {
       }
       while (this.scopes.size >= this.maxConversationSessions) {
         const evictable = [...this.scopes.entries()]
-          .filter(([, entry]) => entry.active === 0)
+          .filter(
+            ([, entry]) =>
+              entry.active === 0 && !entry.humanTakeoverPending && !entry.humanTakeoverActive
+          )
           .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0]
         if (!evictable) {
           throw new Error('All browser conversation sessions are currently active')
@@ -759,6 +784,8 @@ export class AgentBrowserSessionManager {
         sessionId: observation.sessionId,
         lastUsed: this.now(),
         active: 1,
+        humanTakeoverPending: false,
+        humanTakeoverActive: false,
         consoleCursor: 0,
         networkCursor: 0,
         workspaceRootKey: workspaceRootKey(allowedFileRoots[0])
@@ -794,6 +821,9 @@ export class AgentBrowserSessionManager {
   async closeScope(scope: string): Promise<{ closedSessions: string[]; closedTabs: string[] }> {
     const entry = await this.locked(() => {
       const value = this.scopes.get(scope)
+      if (value?.humanTakeoverPending || value?.humanTakeoverActive) {
+        throw new Error('Human browser takeover is pending; wait for the user to finish')
+      }
       this.scopes.delete(scope)
       return value
     })
@@ -804,6 +834,80 @@ export class AgentBrowserSessionManager {
       if (isMissingSessionError(error)) return { closedSessions: [], closedTabs: [] }
       throw error
     }
+  }
+
+  async reserveHumanTakeover(scope: string): Promise<string> {
+    return this.locked(() => {
+      const entry = this.scopes.get(scope)
+      if (!entry) throw new Error('No browser session exists for this conversation')
+      if (entry.active > 0) throw new Error('The conversation browser is still executing an action')
+      entry.humanTakeoverPending = true
+      entry.lastUsed = this.now()
+      return entry.sessionId
+    })
+  }
+
+  async beginHumanTakeover(
+    scope: string,
+    expectedSessionId: string
+  ): Promise<BrowserHumanTakeoverResult> {
+    return this.locked(async () => {
+      const entry = this.scopes.get(scope)
+      if (!entry) throw new Error('No browser session exists for this conversation')
+      if (entry.sessionId !== expectedSessionId) {
+        throw new Error('The reserved browser session is no longer available')
+      }
+      if (!entry.humanTakeoverPending) throw new Error('Human browser takeover is not reserved')
+      if (entry.active > 0) throw new Error('The conversation browser is still executing an action')
+      entry.lastUsed = this.now()
+      const result = await this.service.beginHumanTakeover(entry.sessionId)
+      if (!result.active) {
+        await this.service.completeHumanTakeover(entry.sessionId).catch(() => undefined)
+        throw new Error('The browser window could not be opened for human takeover')
+      }
+      entry.humanTakeoverActive = true
+      return result
+    })
+  }
+
+  async completeHumanTakeover(
+    scope: string,
+    expectedSessionId: string
+  ): Promise<BrowserHumanTakeoverResult> {
+    return this.locked(async () => {
+      const entry = this.scopes.get(scope)
+      if (!entry) throw new Error('No browser session exists for this conversation')
+      if (entry.sessionId !== expectedSessionId) {
+        throw new Error('The reserved browser session is no longer available')
+      }
+      if (!entry.humanTakeoverPending || !entry.humanTakeoverActive) {
+        throw new Error('Human browser takeover is not active')
+      }
+      entry.lastUsed = this.now()
+      try {
+        return await this.service.completeHumanTakeover(entry.sessionId)
+      } finally {
+        entry.humanTakeoverActive = false
+      }
+    })
+  }
+
+  async releaseHumanTakeover(scope: string, expectedSessionId: string): Promise<void> {
+    await this.locked(async () => {
+      const entry = this.scopes.get(scope)
+      if (!entry || entry.sessionId !== expectedSessionId) return
+      try {
+        if (entry.humanTakeoverActive) {
+          await this.service.completeHumanTakeover(entry.sessionId)
+        }
+      } catch (error) {
+        if (!isMissingSessionError(error)) throw error
+      } finally {
+        entry.humanTakeoverActive = false
+        entry.humanTakeoverPending = false
+        entry.lastUsed = this.now()
+      }
+    })
   }
 
   async forgetScopeIfEmpty(scope: string, tabs: readonly unknown[]): Promise<void> {
@@ -1113,6 +1217,22 @@ export function registerBrowserToolHandlers(
             })!,
             button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
             clickCount: (finiteNumber(args, 'click_count') as 1 | 2 | 3 | undefined) ?? 1
+          },
+          { signal: context.signal }
+        )
+      } else if (name === 'browser_hold') {
+        const durationMs = finiteNumber(args, 'duration_ms')
+        if (durationMs === undefined) throw new Error('browser_hold requires duration_ms')
+        raw = await manager.service.hold(
+          {
+            sessionId: lease.sessionId,
+            target: targetFromArguments(args, {
+              required: true,
+              coordinates: true,
+              preferredRoles: ['button', 'slider', 'canvas']
+            })!,
+            button: (stringArgument(args, 'button') as 'left' | 'middle' | 'right') ?? 'left',
+            durationMs
           },
           { signal: context.signal }
         )

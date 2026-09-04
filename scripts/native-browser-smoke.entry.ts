@@ -466,6 +466,25 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(blockedPopupTabs.tabs.length, 1, 'Disallowed popup URL should remain blocked')
     progress('Disallowed popup stayed blocked')
 
+    const takeover = await service.beginHumanTakeover(opened.sessionId)
+    assert.equal(takeover.active, true, 'Human takeover should reveal the existing browser surface')
+    assert.equal(takeover.observation.tab.url, opened.tab.url)
+    await service.click({
+      sessionId: opened.sessionId,
+      target: { role: 'button', name: 'Open popup', exact: true }
+    })
+    const takeoverPopup = await waitFor(
+      () => service!.tabs({ sessionId: opened.sessionId, action: 'list' }),
+      (result) => result.tabs.length === 1 && result.tabs[0]?.url === `${baseUrl}/popup`,
+      'takeover popup in the visible tab'
+    )
+    assert.equal(takeoverPopup.tabs[0]?.id, opened.tab.id)
+    const takeoverComplete = await service.completeHumanTakeover(opened.sessionId)
+    assert.equal(takeoverComplete.active, false)
+    assert.equal(takeoverComplete.observation.tab.url, `${baseUrl}/popup`)
+    assert.ok(takeoverComplete.observation.screenshot)
+    progress('Same-session human takeover reveal and recapture passed')
+
     const closeResult = await service.close({ sessionId: opened.sessionId })
     assert.deepEqual(closeResult.closedSessions, [opened.sessionId])
     await assert.rejects(
@@ -487,6 +506,7 @@ async function runSmoke(): Promise<SmokeResult> {
       networkFailures: networkResult.failures.length,
       popupTabs: popupTabs.tabs.length,
       blockedPopupTabs: blockedPopupTabs.tabs.length,
+      humanTakeover: true,
       partitionIsolated: true,
       localFileAllowed: true,
       closeSessions: closeResult.closedSessions.length

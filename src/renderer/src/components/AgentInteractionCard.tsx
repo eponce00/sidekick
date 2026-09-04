@@ -1,5 +1,14 @@
 import { useMemo, useState } from 'react'
-import { Check, ChevronLeft, ChevronRight, ListChecks, Loader2, ShieldAlert, X } from 'lucide-react'
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ListChecks,
+  Loader2,
+  MonitorUp,
+  ShieldAlert,
+  X
+} from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
@@ -58,6 +67,11 @@ export default function AgentInteractionCard({
   const [showOther, setShowOther] = useState<Record<string, boolean>>({})
   const [planFeedback, setPlanFeedback] = useState('')
   const [showPlanFeedback, setShowPlanFeedback] = useState(false)
+  const [takeoverState, setTakeoverState] = useState<'idle' | 'opening' | 'active' | 'checking'>(
+    'idle'
+  )
+  const [takeoverError, setTakeoverError] = useState('')
+  const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
   const [permissionSubmission, setPermissionSubmission] = useState<{
     interactionId: string
@@ -113,10 +127,7 @@ export default function AgentInteractionCard({
             >
               Approve
             </button>
-            <button
-              type="button"
-              onClick={() => void resolvePermission(false)}
-            >
+            <button type="button" onClick={() => void resolvePermission(false)}>
               Deny
             </button>
           </div>
@@ -136,6 +147,117 @@ export default function AgentInteractionCard({
               : displayedDecision
                 ? 'Approved'
                 : 'Denied'}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  if (interaction.kind === 'question' && interaction.request.intent === 'browser_takeover') {
+    const reason = String(
+      interaction.request.reason || 'This site needs a human-only browser step before continuing.'
+    )
+    const completed = interaction.response?.completed === true
+    const beginTakeover = async (): Promise<void> => {
+      setTakeoverError('')
+      setTakeoverState('opening')
+      try {
+        const snapshot = await window.api.agentRuns.beginBrowserHumanTakeover(interaction.id)
+        setTakeoverUrl(snapshot.url)
+        setTakeoverState(snapshot.active ? 'active' : 'idle')
+        if (!snapshot.active) setTakeoverError('The browser window could not be opened.')
+      } catch (error) {
+        setTakeoverState('idle')
+        setTakeoverError(error instanceof Error ? error.message : 'Could not open the browser.')
+      }
+    }
+    const completeTakeover = async (): Promise<void> => {
+      setTakeoverError('')
+      setTakeoverState('checking')
+      try {
+        const snapshot = await window.api.agentRuns.completeBrowserHumanTakeover(interaction.id)
+        setTakeoverUrl(snapshot.url)
+        if (snapshot.humanVerificationRequired) {
+          setTakeoverState('idle')
+          setTakeoverError(
+            snapshot.message ||
+              'Human verification is still visible. Take control again and finish the step.'
+          )
+          return
+        }
+        await onResolve(interaction.id, { completed: true })
+      } catch (error) {
+        setTakeoverState('idle')
+        setTakeoverError(
+          error instanceof Error ? error.message : 'Could not verify the browser state.'
+        )
+      }
+    }
+    const continueWithoutTakeover = async (): Promise<void> => {
+      if (takeoverState === 'active') {
+        await window.api.agentRuns
+          .completeBrowserHumanTakeover(interaction.id)
+          .catch(() => undefined)
+      }
+      await onResolve(interaction.id, { completed: false })
+    }
+    return (
+      <div
+        className={`agent-interaction agent-interaction-browser-takeover agent-interaction-${interaction.status}`}
+      >
+        <div className="agent-interaction-heading">
+          <MonitorUp size={14} aria-hidden="true" />
+          <span>Human browser verification required</span>
+        </div>
+        <div className="agent-interaction-copy">{reason}</div>
+        {takeoverUrl && (
+          <div className="agent-browser-takeover-url" title={takeoverUrl}>
+            {takeoverUrl}
+          </div>
+        )}
+        {takeoverError && <div className="agent-browser-takeover-error">{takeoverError}</div>}
+        {pending ? (
+          <div className="agent-interaction-actions">
+            {takeoverState === 'active' ? (
+              <button
+                type="button"
+                className="agent-interaction-primary"
+                onClick={() => void completeTakeover()}
+              >
+                I’ve finished — resume
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="agent-interaction-primary"
+                disabled={takeoverState === 'opening' || takeoverState === 'checking'}
+                onClick={() => void beginTakeover()}
+              >
+                {takeoverState === 'opening' ? (
+                  <>
+                    <Loader2 size={12} className="icon-spin" /> Opening browser…
+                  </>
+                ) : takeoverState === 'checking' ? (
+                  <>
+                    <Loader2 size={12} className="icon-spin" /> Checking…
+                  </>
+                ) : (
+                  'Take control'
+                )}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={takeoverState === 'opening' || takeoverState === 'checking'}
+              onClick={() => void continueWithoutTakeover()}
+            >
+              Use another source
+            </button>
+          </div>
+        ) : (
+          <div className="agent-interaction-status">
+            {completed ? <Check size={12} /> : <X size={12} />}
+            {completed ? 'Verification completed' : 'Continued without verification'}
           </div>
         )}
       </div>
@@ -291,11 +413,18 @@ export default function AgentInteractionCard({
   }
 
   const currentQuestion = questions[Math.min(questionIndex, Math.max(questions.length - 1, 0))]
-  const currentAnswer = currentQuestion ? answers[currentQuestion.id] ?? EMPTY_ANSWER : EMPTY_ANSWER
+  const currentAnswer = currentQuestion
+    ? (answers[currentQuestion.id] ?? EMPTY_ANSWER)
+    : EMPTY_ANSWER
   const hasCurrentAnswer =
-    currentAnswer.skipped || currentAnswer.selected.length > 0 || Boolean(currentAnswer.custom.trim())
+    currentAnswer.skipped ||
+    currentAnswer.selected.length > 0 ||
+    Boolean(currentAnswer.custom.trim())
   const atLastQuestion = questionIndex >= questions.length - 1
-  const setQuestionAnswer = (id: string, update: (current: QuestionAnswer) => QuestionAnswer): void => {
+  const setQuestionAnswer = (
+    id: string,
+    update: (current: QuestionAnswer) => QuestionAnswer
+  ): void => {
     setAnswers((current) => ({ ...current, [id]: update(current[id] ?? EMPTY_ANSWER) }))
   }
   const responseAnswers = (): Record<string, unknown> =>
@@ -309,62 +438,99 @@ export default function AgentInteractionCard({
       })
     )
   return (
-    <div className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}>
+    <div
+      className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}
+    >
       {pending && questions.length > 1 && (
         <div className="agent-question-progress">
-          <span>Question {questionIndex + 1} of {questions.length}</span>
-          <span>{questions.map((question, index) => (
-            <i key={question.id} className={index === questionIndex ? 'active' : (answers[question.id] ? 'answered' : '')} />
-          ))}</span>
+          <span>
+            Question {questionIndex + 1} of {questions.length}
+          </span>
+          <span>
+            {questions.map((question, index) => (
+              <i
+                key={question.id}
+                className={
+                  index === questionIndex ? 'active' : answers[question.id] ? 'answered' : ''
+                }
+              />
+            ))}
+          </span>
         </div>
       )}
       {pending && currentQuestion ? (
         <div className="agent-question" key={currentQuestion.id}>
-          {currentQuestion.header && <div className="agent-question-header">{currentQuestion.header}</div>}
+          {currentQuestion.header && (
+            <div className="agent-question-header">{currentQuestion.header}</div>
+          )}
           <div className="agent-question-copy">{currentQuestion.question}</div>
           {currentQuestion.options?.length ? (
             <div className="agent-question-options">
               {currentQuestion.options.map((option) => {
                 const selected = currentAnswer.selected.includes(option.label)
                 return (
-                <button
-                  type="button"
-                  key={option.label}
-                  className={selected ? 'selected' : ''}
-                  aria-pressed={selected}
-                  onClick={() => setQuestionAnswer(currentQuestion.id, (answer) => ({
-                    ...answer,
-                    skipped: false,
-                    selected: currentQuestion.multiSelect
-                      ? (selected ? answer.selected.filter((value) => value !== option.label) : [...answer.selected, option.label])
-                      : [option.label]
-                  }))}
-                >
-                  <span>{option.label}{option.recommended && <em>Recommended</em>}</span>
-                  {option.description && <small>{option.description}</small>}
-                </button>
+                  <button
+                    type="button"
+                    key={option.label}
+                    className={selected ? 'selected' : ''}
+                    aria-pressed={selected}
+                    onClick={() =>
+                      setQuestionAnswer(currentQuestion.id, (answer) => ({
+                        ...answer,
+                        skipped: false,
+                        selected: currentQuestion.multiSelect
+                          ? selected
+                            ? answer.selected.filter((value) => value !== option.label)
+                            : [...answer.selected, option.label]
+                          : [option.label]
+                      }))
+                    }
+                  >
+                    <span>
+                      {option.label}
+                      {option.recommended && <em>Recommended</em>}
+                    </span>
+                    {option.description && <small>{option.description}</small>}
+                  </button>
                 )
               })}
-              {currentQuestion.allowOther !== false && (
-                showOther[currentQuestion.id] ? (
+              {currentQuestion.allowOther !== false &&
+                (showOther[currentQuestion.id] ? (
                   <input
                     value={currentAnswer.custom}
                     autoFocus
-                    onChange={(event) => setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false, custom: event.target.value }))}
+                    onChange={(event) =>
+                      setQuestionAnswer(currentQuestion.id, (answer) => ({
+                        ...answer,
+                        skipped: false,
+                        custom: event.target.value
+                      }))
+                    }
                     placeholder="Type another answer"
                   />
                 ) : (
-                  <button type="button" className="agent-question-other" onClick={() => setShowOther((current) => ({ ...current, [currentQuestion.id]: true }))}>
+                  <button
+                    type="button"
+                    className="agent-question-other"
+                    onClick={() =>
+                      setShowOther((current) => ({ ...current, [currentQuestion.id]: true }))
+                    }
+                  >
                     <span>Something else…</span>
                   </button>
-                )
-              )}
+                ))}
             </div>
           ) : (
             <input
               value={currentAnswer.custom}
               autoFocus
-              onChange={(event) => setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false, custom: event.target.value }))}
+              onChange={(event) =>
+                setQuestionAnswer(currentQuestion.id, (answer) => ({
+                  ...answer,
+                  skipped: false,
+                  custom: event.target.value
+                }))
+              }
               placeholder="Type your answer"
             />
           )}
@@ -378,15 +544,23 @@ export default function AgentInteractionCard({
             </button>
           )}
           {currentQuestion && (
-            <button type="button" onClick={() => {
-              setQuestionAnswer(currentQuestion.id, (answer) => ({ ...answer, selected: [], custom: '', skipped: true }))
-              if (!atLastQuestion) setQuestionIndex((current) => current + 1)
-              else {
-                const response = responseAnswers()
-                delete response[currentQuestion.id]
-                void onResolve(interaction.id, response)
-              }
-            }}>
+            <button
+              type="button"
+              onClick={() => {
+                setQuestionAnswer(currentQuestion.id, (answer) => ({
+                  ...answer,
+                  selected: [],
+                  custom: '',
+                  skipped: true
+                }))
+                if (!atLastQuestion) setQuestionIndex((current) => current + 1)
+                else {
+                  const response = responseAnswers()
+                  delete response[currentQuestion.id]
+                  void onResolve(interaction.id, response)
+                }
+              }}
+            >
               Skip
             </button>
           )}
@@ -394,13 +568,25 @@ export default function AgentInteractionCard({
             type="button"
             className="agent-interaction-primary"
             disabled={!hasCurrentAnswer}
-            onClick={() => atLastQuestion
-              ? onResolve(interaction.id, responseAnswers())
-              : setQuestionIndex((current) => current + 1)}
+            onClick={() =>
+              atLastQuestion
+                ? onResolve(interaction.id, responseAnswers())
+                : setQuestionIndex((current) => current + 1)
+            }
           >
-            {atLastQuestion ? 'Send answers' : <>Next <ChevronRight size={13} /></>}
+            {atLastQuestion ? (
+              'Send answers'
+            ) : (
+              <>
+                Next <ChevronRight size={13} />
+              </>
+            )}
           </button>
-          <button type="button" className="agent-question-cancel" onClick={() => onResolve(interaction.id, {}, true)}>
+          <button
+            type="button"
+            className="agent-question-cancel"
+            onClick={() => onResolve(interaction.id, {}, true)}
+          >
             Cancel
           </button>
         </div>

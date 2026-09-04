@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   NativeBrowserSessionService,
   type BrowserViewport,
@@ -28,6 +28,11 @@ class FakeSurface implements NativeBrowserSurface {
   rejectCommittedBlank = false
   failBlankBeforeCommitAttempts = 0
   focused = false
+  humanTakeoverVisible = false
+  humanVerificationMarkerVisible = false
+  humanVerificationSolved = false
+  humanVerificationAdditionalUnresolved = false
+  showChallengeAfterNextTextInput = false
   debuggerAttached = false
   insertedText = ''
   focusedBackendNodeId: number | undefined
@@ -143,6 +148,19 @@ class FakeSurface implements NativeBrowserSurface {
     for (const listener of this.destroyedListeners) listener()
   }
 
+  showForHumanTakeover(): void {
+    if (this.attached) throw new Error('This browser surface cannot be shown for human takeover')
+    this.humanTakeoverVisible = true
+  }
+
+  hideHumanTakeover(): void {
+    this.humanTakeoverVisible = false
+  }
+
+  isHumanTakeoverVisible(): boolean {
+    return this.humanTakeoverVisible
+  }
+
   focus(): void {
     this.focused = true
   }
@@ -155,6 +173,11 @@ class FakeSurface implements NativeBrowserSurface {
         : this.formControls.get(this.focusedBackendNodeId)
     if (!this.ignoreTextInput && control?.kind === 'textbox') control.value = text
     this.selectAllPending = false
+    if (this.showChallengeAfterNextTextInput) {
+      this.showChallengeAfterNextTextInput = false
+      this.humanVerificationMarkerVisible = true
+      this.bodyText = 'Verify that you are a human'
+    }
     if (this.navigateAfterTextInput) {
       this.navigateAfterTextInput = false
       this.url = 'https://example.com/after-input'
@@ -202,6 +225,15 @@ class FakeSurface implements NativeBrowserSurface {
 
   async executeJavaScript<T>(source: string): Promise<T> {
     if (source === 'document.readyState') return 'complete' as T
+    if (source.includes('unresolvedMarker') && source.includes('solvedKnownWidget')) {
+      return {
+        pageText: this.bodyText,
+        unresolvedMarker:
+          (this.humanVerificationMarkerVisible && !this.humanVerificationSolved) ||
+          this.humanVerificationAdditionalUnresolved,
+        solvedKnownWidget: this.humanVerificationSolved
+      } as T
+    }
     if (source.includes('io.sidekick.browser.coordinate-capture-state')) {
       return {
         sourceUrl: this.url,
@@ -518,6 +550,10 @@ class FakeSurface implements NativeBrowserSurface {
     return () => this.openListeners.delete(listener)
   }
 
+  emitOpenUrl(url: string): void {
+    for (const listener of this.openListeners) listener(url)
+  }
+
   emitConsole(message: NativeBrowserSurfaceConsoleMessage): void {
     for (const listener of this.consoleListeners) listener(message)
   }
@@ -781,6 +817,209 @@ describe('NativeBrowserSessionService', () => {
       method: 'Page.navigateToHistoryEntry',
       params: { entryId: 1 }
     })
+  })
+
+  it('performs an atomic bounded hold and always releases the mouse when cancelled', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'hold', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+
+    const held = await service.hold({
+      sessionId: opened.sessionId,
+      target: { role: 'button', name: 'Save' },
+      durationMs: 100
+    })
+    expect(held.observation.pointer).toMatchObject({ action: 'hold', x: 70, y: 50 })
+    expect(surface.inputEvents.slice(-3).map((input) => input.type)).toEqual([
+      'mouseMove',
+      'mouseDown',
+      'mouseUp'
+    ])
+
+    const controller = new AbortController()
+    const cancelled = service.hold(
+      {
+        sessionId: opened.sessionId,
+        target: { role: 'button', name: 'Save' },
+        durationMs: 5_000
+      },
+      { signal: controller.signal }
+    )
+    setTimeout(() => controller.abort(), 5)
+    await expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(surface.inputEvents.at(-1)).toMatchObject({ type: 'mouseUp', x: 70, y: 50 })
+  })
+
+  it('detects human verification and refuses automated click or hold input on the challenge', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'challenge', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.extraAxNodes.push({
+      nodeId: 'human-check',
+      parentId: 'root',
+      role: { value: 'button' },
+      name: { value: 'Press & Hold to confirm you are a human' },
+      backendDOMNodeId: 22
+    })
+    surface.bodyText = 'Press & Hold to confirm you are a human'
+
+    const observed = await service.observe(opened.sessionId, { screenshot: 'none' })
+    expect(observed.humanVerification).toMatchObject({
+      required: true,
+      kind: 'captcha_or_bot_challenge',
+      detectedBy: 'accessibility'
+    })
+    const inputCount = surface.inputEvents.length
+    await expect(
+      service.click({
+        sessionId: opened.sessionId,
+        target: { role: 'button', name: 'Press & Hold to confirm you are a human' }
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.hold({
+        sessionId: opened.sessionId,
+        target: { role: 'button', name: 'Press & Hold to confirm you are a human' },
+        durationMs: 1_000
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.type({
+        sessionId: opened.sessionId,
+        target: { role: 'textbox', name: 'Verification answer' },
+        text: 'answer'
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.select({
+        sessionId: opened.sessionId,
+        target: { role: 'combobox', name: 'Verification choice' },
+        values: ['one']
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.fillForm({
+        sessionId: opened.sessionId,
+        fields: [
+          {
+            kind: 'textbox',
+            target: { role: 'textbox', name: 'Verification answer' },
+            value: 'answer'
+          }
+        ]
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.press({ sessionId: opened.sessionId, key: 'Enter' })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.hover({
+        sessionId: opened.sessionId,
+        target: { role: 'button', name: 'Press & Hold to confirm you are a human' }
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.scroll({ sessionId: opened.sessionId, deltaY: 400 })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    await expect(
+      service.evaluate({ sessionId: opened.sessionId, expression: 'document.body.click()' })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    expect(surface.inputEvents).toHaveLength(inputCount)
+  })
+
+  it('treats a solved provider widget as cleared even when its static label remains', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'solved-challenge', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.bodyText = "I'm not a robot"
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationSolved = true
+    surface.extraAxNodes.push({
+      nodeId: 'solved-human-check',
+      parentId: 'root',
+      role: { value: 'checkbox' },
+      name: { value: "I'm not a robot" },
+      properties: [{ name: 'checked', value: { value: true } }],
+      backendDOMNodeId: 23
+    })
+
+    const observed = await service.observe(opened.sessionId, { screenshot: 'none' })
+    expect(observed.humanVerification).toBeNull()
+    await expect(
+      service.click({ sessionId: opened.sessionId, target: { role: 'button', name: 'Save' } })
+    ).resolves.toMatchObject({ action: 'click' })
+  })
+
+  it('still detects another unresolved widget beside a solved provider widget', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'mixed-challenges', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.bodyText = "I'm not a robot"
+    surface.humanVerificationMarkerVisible = true
+    surface.humanVerificationSolved = true
+    surface.humanVerificationAdditionalUnresolved = true
+
+    const observed = await service.observe(opened.sessionId, { screenshot: 'none' })
+    expect(observed.humanVerification).toMatchObject({
+      required: true,
+      detectedBy: 'dom_marker'
+    })
+  })
+
+  it('stops a form batch if human verification appears between fields', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'mid-form-challenge', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+    surface.showChallengeAfterNextTextInput = true
+
+    await expect(
+      service.fillForm({
+        sessionId: opened.sessionId,
+        fields: [
+          { kind: 'textbox', target: { role: 'textbox', name: 'Email' }, value: 'first' },
+          { kind: 'textbox', target: { role: 'textbox', name: 'Notes' }, value: 'second' }
+        ]
+      })
+    ).rejects.toMatchObject({ name: 'BrowserHumanVerificationError' })
+    expect(surface.formControls.get(11)?.value).toBe('first')
+    expect(surface.formControls.get(14)?.value).toBe('')
+  })
+
+  it('reveals and hides the same browser surface for human takeover', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'takeover', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+
+    const active = await service.beginHumanTakeover(opened.sessionId)
+    expect(active.active).toBe(true)
+    expect(surface.humanTakeoverVisible).toBe(true)
+    expect(active.observation).toMatchObject({
+      sessionId: opened.sessionId,
+      tab: { url: 'https://example.com/' }
+    })
+
+    const completed = await service.completeHumanTakeover(opened.sessionId)
+    expect(completed.active).toBe(false)
+    expect(surface.humanTakeoverVisible).toBe(false)
+    expect(completed.observation).toMatchObject({
+      sessionId: opened.sessionId,
+      tab: { url: 'https://example.com/' }
+    })
+  })
+
+  it('keeps takeover popups in the exact visible tab', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'takeover-popup', url: 'https://example.com/' })
+    const surface = runtime.surfaces[0]
+
+    await service.beginHumanTakeover(opened.sessionId)
+    surface.emitOpenUrl('https://example.com/popup')
+    await vi.waitFor(() => expect(surface.url).toBe('https://example.com/popup'))
+
+    const completed = await service.completeHumanTakeover(opened.sessionId)
+    expect(runtime.surfaces).toHaveLength(1)
+    expect(surface.humanTakeoverVisible).toBe(false)
+    expect(completed.observation.tab.url).toBe('https://example.com/popup')
   })
 
   it('binds coordinate input to a current viewport screenshot and maps resized pixels', async () => {

@@ -79,6 +79,8 @@ export interface AgentKernelToolRouter {
   ) => Promise<unknown>
   title?: (name: string, args: Record<string, unknown>) => string
   safeArguments?: (name: string, args: Record<string, unknown>) => Record<string, unknown>
+  reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
+  releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
 }
 
 export interface AgentKernelContextManager {
@@ -567,6 +569,81 @@ export class AgentRunKernel {
       data: { answers: interaction.response ?? {} },
       startedAt
     })
+  }
+
+  private async executeBrowserRequestHuman(
+    runId: string,
+    title: string,
+    args: Record<string, unknown>,
+    toolRouter: AgentKernelToolRouter,
+    signal: AbortSignal,
+    startedAt: number
+  ): Promise<ToolExecutionResult> {
+    const run = this.store.get(runId)
+    const conversationId = run?.threadId ?? ''
+    if (!conversationId || !toolRouter.reserveBrowserHumanTakeover) {
+      return toolExecutionFailed({
+        title,
+        code: 'not_found',
+        message: 'No browser session is available for human takeover',
+        recoveryAction: 'change_strategy',
+        startedAt
+      })
+    }
+    const reason = String(args.reason || 'A human-only browser step is required.')
+      .trim()
+      .slice(0, 2_000)
+    const challengeType = String(args.challenge_type || 'other')
+    let browserSessionId: string
+    try {
+      browserSessionId = await toolRouter.reserveBrowserHumanTakeover(conversationId)
+    } catch (error) {
+      return toolExecutionFailed({
+        title,
+        code: 'not_found',
+        message: error instanceof Error ? error.message : 'Browser takeover could not be reserved',
+        recoveryAction: 'change_strategy',
+        startedAt
+      })
+    }
+    try {
+      const interaction = await this.suspendForInteraction(
+        runId,
+        'question',
+        {
+          intent: 'browser_takeover',
+          conversationId,
+          browserSessionId,
+          reason,
+          challengeType
+        },
+        signal
+      )
+      if (interaction.status !== 'resolved') {
+        return toolExecutionFailed({
+          title,
+          code: 'cancelled',
+          message: 'Human browser takeover was cancelled',
+          status: 'cancelled',
+          startedAt
+        })
+      }
+      const completed = interaction.response?.completed === true
+      return toolExecutionSucceeded({
+        title,
+        data: { completed },
+        modelContent: completed
+          ? 'The user completed the human-only browser step in the same session. Call browser_observe now and continue from the fresh page state.'
+          : 'The user could not complete the human-only browser step. Use a legitimate alternate source or explain the remaining blocker; do not retry or bypass the challenge.',
+        startedAt
+      })
+    } finally {
+      if (toolRouter.releaseBrowserHumanTakeover) {
+        await toolRouter
+          .releaseBrowserHumanTakeover(conversationId, browserSessionId)
+          .catch(() => undefined)
+      }
+    }
   }
 
   private async executePlanEntry(
@@ -1315,6 +1392,15 @@ The user approved this exact plan revision. Act capabilities are now available a
             if (invalid) result = invalid
             else if (call.name === 'ask_user') {
               result = await this.executeAskUser(input.id, title, call.arguments, signal, startedAt)
+            } else if (call.name === 'browser_request_human') {
+              result = await this.executeBrowserRequestHuman(
+                input.id,
+                title,
+                call.arguments,
+                input.toolRouter,
+                signal,
+                startedAt
+              )
             } else if (call.name === 'enter_plan_mode') {
               const outcome = await this.executePlanEntry(
                 input,

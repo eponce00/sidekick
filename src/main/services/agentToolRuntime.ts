@@ -301,6 +301,16 @@ export class AgentToolRuntime {
     this.childLauncher = launcher
   }
 
+  async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
+    if (!this.browser) throw new Error('Visual browser is unavailable')
+    return this.browser.beginHumanTakeover(conversationId, expectedSessionId)
+  }
+
+  async completeBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
+    if (!this.browser) throw new Error('Visual browser is unavailable')
+    return this.browser.completeHumanTakeover(conversationId, expectedSessionId)
+  }
+
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const readReceipts = new Map<string, string>()
@@ -401,7 +411,15 @@ export class AgentToolRuntime {
           return handlers.execute({ name, title, arguments: args, context })
         },
         title: (name, args) => this.title(name, args),
-        safeArguments: safeToolArguments
+        safeArguments: safeToolArguments,
+        ...(this.browser
+          ? {
+              reserveBrowserHumanTakeover: (conversationId: string) =>
+                this.browser!.reserveHumanTakeover(conversationId),
+              releaseBrowserHumanTakeover: (conversationId: string, expectedSessionId: string) =>
+                this.browser!.releaseHumanTakeover(conversationId, expectedSessionId)
+            }
+          : {})
       }
     }
   }
@@ -422,6 +440,8 @@ export class AgentToolRuntime {
     if (name === 'browser_screenshot') return 'Capture browser screenshot'
     if (name === 'browser_click')
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
+    if (name === 'browser_hold') return 'Press and hold browser control'
+    if (name === 'browser_request_human') return 'Human browser verification'
     if (name === 'browser_type') return 'Type in browser'
     if (name === 'browser_select') return 'Select browser option'
     if (name === 'browser_fill_form') return 'Fill browser form'

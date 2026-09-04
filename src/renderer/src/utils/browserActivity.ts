@@ -37,6 +37,11 @@ export interface BrowserVerification {
   label: string
 }
 
+export interface BrowserHumanVerificationState {
+  kind: 'captcha_or_bot_challenge'
+  message: string
+}
+
 export interface BrowserActivityState {
   hasActivity: boolean
   runId?: string
@@ -53,6 +58,7 @@ export interface BrowserActivityState {
   latestAction?: string
   progress?: string
   verification?: BrowserVerification
+  humanVerification?: BrowserHumanVerificationState
   consoleErrors: string[]
   failedRequests: string[]
   timeline: BrowserActivityItem[]
@@ -265,6 +271,29 @@ function pointerProjection(records: UnknownRecord[]): {
   return { present: false }
 }
 
+function humanVerificationProjection(records: UnknownRecord[]): {
+  present: boolean
+  value?: BrowserHumanVerificationState
+} {
+  for (const record of records) {
+    for (const [key, raw] of Object.entries(record)) {
+      if (normalizedKey(key) !== 'humanverification') continue
+      if (raw === null || raw === false) return { present: true }
+      if (!isRecord(raw) || raw.required !== true) return { present: true }
+      return {
+        present: true,
+        value: {
+          kind: 'captcha_or_bot_challenge',
+          message:
+            firstString([raw], ['message']) ??
+            'This site requires a human verification step before automation can continue.'
+        }
+      }
+    }
+  }
+  return { present: false }
+}
+
 function humanizeToolName(name: string): string {
   return name
     .replace(/^browser_/, '')
@@ -365,9 +394,14 @@ function statusFor(event: AgentRunEvent, result?: UnknownRecord): BrowserActivit
 function verificationFor(
   name: string,
   status: BrowserActivityItemStatus,
-  records: UnknownRecord[]
+  data: UnknownRecord | undefined
 ): BrowserVerification | undefined {
-  const raw = firstValue(records, ['verification', 'verified', 'passed'])
+  if (!name.includes('verify')) return undefined
+  if (status === 'running' || status === 'pending') {
+    return { status: 'running', label: 'Visual verification in progress' }
+  }
+  if (!data) return undefined
+  const raw = data.verification ?? data.passed
   const verificationRecord = isRecord(raw) ? raw : undefined
   const explicitStatus = (
     verificationRecord
@@ -379,38 +413,27 @@ function verificationFor(
   const evidenceCaptured = ['evidence', 'captured', 'review', 'ready_for_review'].includes(
     explicitStatus ?? ''
   )
-  const explicitPassed =
-    raw === true ||
-    firstValue(records, ['passed', 'verified']) === true ||
-    explicitStatus === 'passed'
+  const explicitPassed = raw === true || data.passed === true || explicitStatus === 'passed'
   const explicitFailed =
-    raw === false ||
-    firstValue(records, ['passed', 'verified']) === false ||
-    ['failed', 'error'].includes(explicitStatus ?? '')
-  if (!name.includes('verify') && raw === undefined) return undefined
+    raw === false || data.passed === false || ['failed', 'error'].includes(explicitStatus ?? '')
   const detail =
-    firstString(verificationRecord ? [verificationRecord] : records, [
+    firstString(verificationRecord ? [verificationRecord] : [data], [
       'label',
       'summary',
       'message',
       'detail'
     ]) ??
-    (status === 'running'
-      ? 'Visual verification in progress'
-      : explicitPassed
-        ? 'Visual check passed'
-        : status === 'success' && !explicitFailed
-          ? 'Visual evidence captured for model review'
-          : 'Visual check needs attention')
+    (explicitPassed
+      ? 'Visual check passed'
+      : status === 'success' && !explicitFailed
+        ? 'Visual evidence captured for model review'
+        : 'Visual check needs attention')
   return {
-    status:
-      status === 'running' || status === 'pending'
-        ? 'running'
-        : explicitPassed
-          ? 'passed'
-          : evidenceCaptured || (status === 'success' && !explicitFailed)
-            ? 'review'
-            : 'failed',
+    status: explicitPassed
+      ? 'passed'
+      : evidenceCaptured || (status === 'success' && !explicitFailed)
+        ? 'review'
+        : 'failed',
     label: detail
   }
 }
@@ -476,7 +499,27 @@ export function applyBrowserActivityEvent(
   const screenshot = findScreenshot(data) ?? findScreenshot(result)
   const consoleErrors = consoleErrorList(records)
   const failedRequests = failedRequestList(records)
-  const verification = verificationFor(name, status, records)
+  const verification = verificationFor(name, status, data)
+  const clearsVerification =
+    event.type === 'tool.completed' &&
+    (status === 'success' || status === 'partial') &&
+    [
+      'browser_open',
+      'browser_click',
+      'browser_hold',
+      'browser_type',
+      'browser_select',
+      'browser_fill_form',
+      'browser_press',
+      'browser_scroll',
+      'browser_hover',
+      'browser_navigate',
+      'browser_resize',
+      'browser_tabs',
+      'browser_close'
+    ].includes(name)
+  const clearsHumanVerification =
+    clearsVerification || (event.type === 'tool.completed' && name === 'browser_request_human')
   const tabValue = firstValue(records, ['tab'])
   const tab = isRecord(tabValue) ? tabValue : undefined
   const pageTitle =
@@ -500,6 +543,7 @@ export function applyBrowserActivityEvent(
 
   const viewport = parseViewport(records)
   const parsedPointer = pointerProjection(records)
+  const humanVerification = humanVerificationProjection(records)
   const pointer = name.includes('close') && status === 'success' ? { present: true } : parsedPointer
   return {
     ...state,
@@ -509,6 +553,12 @@ export function applyBrowserActivityEvent(
     toolNames: { ...state.toolNames, [callId]: name },
     timeline: updateTimeline(state.timeline, item),
     latestAction,
+    verification: verification ?? (clearsVerification ? undefined : state.verification),
+    humanVerification: humanVerification.present
+      ? humanVerification.value
+      : clearsHumanVerification
+        ? undefined
+        : state.humanVerification,
     ...(screenshot
       ? {
           screenshot: screenshot.source,
@@ -527,7 +577,6 @@ export function applyBrowserActivityEvent(
     ...(pointer.present ? { pointer: pointer.value } : {}),
     ...(consoleErrors ? { consoleErrors } : {}),
     ...(failedRequests ? { failedRequests } : {}),
-    ...(verification ? { verification } : {}),
     ...(progress ? { progress } : {})
   }
 }
