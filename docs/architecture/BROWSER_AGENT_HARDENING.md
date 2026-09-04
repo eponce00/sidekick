@@ -1,6 +1,6 @@
 # Browser agent hardening
 
-**Date:** 2026-09-03
+**Date:** 2026-09-04
 **Status:** implemented; deterministic and real-Electron verification passes, but an after-change model-level latency benchmark has not yet been run.
 
 This report records a sanitized forensic review of one failed long-form browser run and the resulting hardening work. It contains aggregate timings and tool-envelope sizes only—no chat text, form values, credentials, local database records, or user identifiers.
@@ -14,6 +14,7 @@ This report records a sanitized forensic review of one failed long-form browser 
 | Native selects | A broad label matched several accessibility nodes; the recovery message suggested `nth`, although the public schema did not expose it. A long option list also displaced later controls from the model-visible head of the snapshot. | The public target schema lagged the backend, targeting was not action-aware, and snapshot truncation favored document order rather than interactive value. |
 | Visual fallback | A high-DPI screenshot was larger than the CSS viewport. The model produced a point outside the accepted CSS coordinate space. | Image pixels and input coordinates did not share a bound, explicit coordinate system. |
 | Recovery | Slightly different clicks and scrolls produced no useful state change, but the loop continued until the agent concluded that the form was not practically automatable. | Effect reporting and loop protection were too weak, while each extra reasoning turn became increasingly expensive. A separate sanitized reproduction confirmed that the native select accepted the supported select operation. |
+| Remote PDF | A direct HTTPS form URL produced an unchanged 5 KB blank screenshot and only an opaque iframe in the accessibility tree. | The first-party PDF viewer intercepted approved local `file:` documents only, so remote `.pdf` URLs fell through to Chromium's inaccessible embedded plugin. |
 
 The primary failure was therefore not browser execution speed. It was the combination of a mismatched tool contract, noisy state, excessive model round trips, and weak post-action verification.
 
@@ -78,6 +79,12 @@ The branch currently implements the following:
 6. **Verified text-entry ownership.** Text entry uses a real pointer focus, then proves the original connected textbox still owns focus and the URL/document epoch are unchanged. When replacing content it repeats that check after both Select All and Backspace renderer boundaries, before inserting the new value. This prevents page key handlers, redirects, or autofocus from moving sensitive input into another page or field. See the [native text-entry implementation](../../src/main/services/nativeBrowserSessionService.ts).
 7. **Truthful timing and updated model guidance.** The central registry now owns canonical tool start/completion time instead of preserving near-zero handler-construction timing. The browser prompt directs models toward semantic references, form batching, native select actions, selective vision, and current screenshot IDs. See [canonical tool results](../../src/shared/agentRuntime.ts) and the [browser prompt](../../src/shared/prompts/PromptComposer.ts).
 8. **Same-session human verification fallback.** Ordinary controls can use one bounded atomic hold gesture, but detected CAPTCHA and anti-bot pages block every automated input and evaluation path. `browser_request_human` reserves the exact conversation session, suspends the durable run, and exposes a Take control card. The same WebContents is moved on screen with a trusted-origin native title, popups remain in that visible tab, solved provider widgets are distinguished from unresolved markers, and completion recaptures fresh state before resuming. Reservations are excluded from eviction and cancellation parks the surface. See the [native browser service](../../src/main/services/nativeBrowserSessionService.ts), [session manager](../../src/main/services/agentBrowserToolHandlers.ts), and [interaction card](../../src/renderer/src/components/AgentInteractionCard.tsx).
+9. **Accessible remote PDF routing.** Direct HTTPS `.pdf` URLs are fetched through the tab's
+   isolated Chromium network session, bounded to 64 MiB, signature-validated, and opened through
+   the same token-scoped viewer as local files. The original URL remains visible in observations
+   and history, temporary sources are deleted with the tab, and filled copies use safe names in
+   Downloads. The regression smoke uses the real USCIS G-28 URL and verifies 4 rendered pages, 101
+   form fields, semantic entry, and a saved PDF copy.
 
 These changes are designed to reduce redundant input and recovery turns. No latency or task-success improvement is claimed until the before workflow is rerun under the same model and server conditions.
 
@@ -94,6 +101,10 @@ Current checks on 2026-09-02:
 - After the 2026-09-03 option-tree and 60-line routine-observation change, the full **767-test** suite, lint, typechecking, diff hygiene, and another real-Electron native-browser smoke passed. A synthetic 400-option regression retained the lower State and Submit controls while omitting every option line from model content and remaining below the 8,000-character test ceiling.
 - After the partial-form and recovery-accounting correction, the full suite passed **165 files and 772 tests** with 6 files and 22 tests intentionally skipped. Focused recovery, native-browser, handler, event-projection, presentation, and prompt suites passed 74/74; lint, both TypeScript targets, documentation validation, diff hygiene, and the real-Electron native-browser smoke also passed.
 - After the same-session human-verification fallback and final edge-case hardening, the full suite passed **165 files and 791 tests** with 6 files and 22 tests intentionally skipped. The focused browser, session-manager, durable-interaction, and renderer suites passed, including challenge rechecks during multi-field forms, takeover pinning during close, and multiple-widget solved-state handling. The real-Electron smoke also passed exact-WebContents reveal/recapture and popup containment while retaining its navigation, screenshot, input, isolation, telemetry, tab, and cleanup checks.
+- After remote-PDF routing, the full suite passed **167 files and 799 tests** with 6 files and 22
+  tests intentionally skipped. The exact USCIS G-28 real-Electron smoke exposed 348 semantic nodes
+  across 4 pages and 101 form fields, rendered a non-blank screenshot, filled an enabled field,
+  saved `g-28-filled.pdf`, and reopened its PDF signature successfully.
 
 These checks validate implementation contracts, not model-level performance. Release qualification should additionally:
 

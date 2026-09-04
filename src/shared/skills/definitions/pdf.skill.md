@@ -32,11 +32,11 @@ requiresPythonPackages: ['pypdf', 'pdfplumber', 'reportlab']
 
 ### Browser PDF Workflows
 
-When the user explicitly asks to open or fill a PDF in SideKick's browser, use `browser_open` and
-the semantic PDF form controls. Use `browser_fill_form` for compatible fields and click **Save
-filled copy** after the fields verify. Do not substitute a Python or shell form-fill unless the
-user requests a programmatic file workflow or the browser reports a concrete unsupported-PDF
-error.
+When the user explicitly asks to open or fill a local PDF or a direct remote PDF URL in SideKick's
+browser, use `browser_open` and the semantic PDF form controls. Use `browser_fill_form` for
+compatible fields and click **Save filled copy** after the fields verify. A remote filled copy is
+saved to the user's Downloads folder. Do not substitute a Python or shell form-fill unless the user
+requests a programmatic file workflow or the browser reports a concrete unsupported-PDF error.
 
 ---
 

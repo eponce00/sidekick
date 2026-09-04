@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { getBrowserPdfSession } from '../bootstrap/browserPdfSessionRegistry'
 import {
   NativeBrowserSessionService,
   type BrowserViewport,
@@ -100,6 +101,8 @@ class FakeSurface implements NativeBrowserSurface {
   >()
   private readonly destroyedListeners = new Set<() => void>()
   private readonly openListeners = new Set<(url: string) => void>()
+  fetchHandler: (url: string, init?: RequestInit) => Promise<Response> = async () =>
+    new Response('Not found', { status: 404 })
 
   constructor(
     readonly webContentsId: number,
@@ -136,6 +139,10 @@ class FakeSurface implements NativeBrowserSurface {
     if (url === 'about:blank' && this.rejectCommittedBlank) {
       throw new Error("ERR_FAILED (-2) loading 'about:blank'")
     }
+  }
+
+  async fetch(url: string, init?: RequestInit): Promise<Response> {
+    return this.fetchHandler(url, init)
   }
 
   stop(): void {
@@ -575,6 +582,7 @@ class FakeRuntime implements NativeBrowserRuntime {
   autoCommitBlank = true
   rejectCommittedBlank = false
   failBlankBeforeCommitAttempts = 0
+  fetchHandler?: (url: string, init?: RequestInit) => Promise<Response>
 
   async createSurface(options: {
     partition: string
@@ -585,6 +593,7 @@ class FakeRuntime implements NativeBrowserRuntime {
     if (this.autoCommitBlank) surface.url = 'about:blank'
     surface.rejectCommittedBlank = this.rejectCommittedBlank
     surface.failBlankBeforeCommitAttempts = this.failBlankBeforeCommitAttempts
+    if (this.fetchHandler) surface.fetchHandler = this.fetchHandler
     this.surfaces.push(surface)
     return surface
   }
@@ -1222,6 +1231,74 @@ describe('NativeBrowserSessionService', () => {
       })
     ).resolves.toMatchObject({ action: 'select' })
     expect(runtime.surfaces[0].formControls.get(10)?.selectedValues).toEqual(['es'])
+  })
+
+  it('downloads a remote PDF through the tab session and opens the accessible viewer', async () => {
+    const outputRoot = await mkdtemp(join(tmpdir(), 'sidekick-browser-pdf-output-'))
+    roots.push(outputRoot)
+    const { service, runtime } = await testService({ pdfOutputRoot: outputRoot })
+    const sourceUrl = 'https://example.com/forms/application.pdf'
+    const finalUrl = 'https://cdn.example.com/download?id=official-form'
+    const pdfBytes = Buffer.from('%PDF-1.7\nremote-test\n%%EOF\n')
+    const fetches: Array<{ url: string; init?: RequestInit }> = []
+    runtime.fetchHandler = async (url, init) => {
+      fetches.push({ url, init })
+      if (url === sourceUrl) {
+        return new Response(null, { status: 302, headers: { location: finalUrl } })
+      }
+      return new Response(pdfBytes, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-length': String(pdfBytes.byteLength),
+          'content-disposition': "attachment; filename*=UTF-8''official-form.pdf"
+        }
+      })
+    }
+
+    const opened = await service.open({ runId: 'remote-pdf', url: sourceUrl })
+    const surface = runtime.surfaces[0]
+    const pdfSession = getBrowserPdfSession(surface.url)
+
+    expect(fetches).toHaveLength(2)
+    expect(fetches.map((item) => item.url)).toEqual([sourceUrl, finalUrl])
+    expect(fetches.map((item) => item.init)).toEqual([
+      expect.objectContaining({ method: 'GET', redirect: 'manual', credentials: 'include' }),
+      expect.objectContaining({ method: 'GET', redirect: 'manual', credentials: 'include' })
+    ])
+    expect(opened.tab.url).toBe(sourceUrl)
+    expect(surface.url).toMatch(/^sidekick-pdf:\/\/viewer\//)
+    expect(pdfSession).toMatchObject({
+      sourceName: 'official-form.pdf',
+      logicalUrl: sourceUrl,
+      outputDirectory: await realpath(outputRoot)
+    })
+    expect(await readFile(pdfSession!.sourcePath)).toEqual(pdfBytes)
+
+    const temporarySource = pdfSession!.sourcePath
+    await service.close({ sessionId: opened.sessionId })
+    await expect(readFile(temporarySource)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('rejects oversized or non-PDF remote responses before navigation', async () => {
+    const oversized = await testService({ maxRemotePdfBytes: 1024 * 1024 })
+    oversized.runtime.fetchHandler = async () =>
+      new Response('%PDF-1.7', { headers: { 'content-length': String(2 * 1024 * 1024) } })
+    await expect(
+      oversized.service.open({
+        runId: 'remote-pdf-oversized',
+        url: 'https://example.com/oversized.pdf'
+      })
+    ).rejects.toThrow('exceeds the 1 MiB limit')
+
+    const invalid = await testService()
+    invalid.runtime.fetchHandler = async () =>
+      new Response('<html>not a PDF</html>', { headers: { 'content-type': 'text/html' } })
+    await expect(
+      invalid.service.open({
+        runId: 'remote-pdf-invalid',
+        url: 'https://example.com/not-really.pdf'
+      })
+    ).rejects.toThrow('did not return a valid PDF')
   })
 
   it('never inserts text after click or clear navigation and focus theft', async () => {

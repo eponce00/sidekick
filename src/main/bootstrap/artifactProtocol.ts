@@ -107,11 +107,15 @@ function resolvePdfJsAssetPath(filename: 'pdf.min.mjs' | 'pdf.worker.min.mjs'): 
   return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
-async function writeFilledPdf(sourcePath: string, bytes: Buffer): Promise<string> {
-  const source = parse(sourcePath)
+async function writeFilledPdf(session: BrowserPdfSession, bytes: Buffer): Promise<string> {
+  const outputDirectory = session.outputDirectory ?? dirname(session.sourcePath)
+  await fsPromises.mkdir(outputDirectory, { recursive: true })
+  const source = parse(session.sourceName)
+  const sourceName = source.name || 'document'
+  const sourceExtension = source.ext.toLowerCase() === '.pdf' ? source.ext : '.pdf'
   for (let index = 0; index < 10_000; index++) {
     const suffix = index === 0 ? '-filled' : `-filled-${index + 1}`
-    const candidate = join(dirname(sourcePath), `${source.name}${suffix}${source.ext}`)
+    const candidate = join(outputDirectory, `${sourceName}${suffix}${sourceExtension}`)
     try {
       await fsPromises.writeFile(candidate, bytes, { flag: 'wx' })
       return candidate
@@ -141,7 +145,7 @@ async function saveBrowserPdf(request: Request, session: BrowserPdfSession): Pro
     ) {
       throw new Error('The browser did not produce a valid PDF')
     }
-    const outputPath = await writeFilledPdf(session.sourcePath, bytes)
+    const outputPath = await writeFilledPdf(session, bytes)
     session.lastOutputPath = outputPath
     return new Response(JSON.stringify({ outputPath }), {
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
