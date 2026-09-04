@@ -116,7 +116,12 @@ export class AgentRuntimeCoordinator {
     this.messages = new AgentMessageMaterializer(db, this.store)
     this.goals = new ConversationGoalStore(db, publishGoal)
     this.outputs = new ToolOutputStore(join(userDataRoot, 'tool-outputs'))
-    this.commands = new CommandService(db, join(userDataRoot, 'command-outputs'))
+    this.commands = new CommandService(
+      db,
+      join(userDataRoot, 'command-outputs'),
+      undefined,
+      this.skillAssetsPath()
+    )
     this.browser = new NativeBrowserSessionService({
       artifactRoot: join(userDataRoot, 'browser-artifacts'),
       maxTotalSessions: 6

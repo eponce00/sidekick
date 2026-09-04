@@ -14,6 +14,16 @@ const FORBIDDEN_ROOTS = new Set([
   'src'
 ])
 const FORBIDDEN_RESOURCE_FILES = new Set(['app-update.yml'])
+const REQUIRED_PDF_RUNTIME_ENTRIES = [
+  '/node_modules/@napi-rs/canvas/index.js',
+  '/node_modules/pdfjs-dist/build/pdf.min.mjs',
+  '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs',
+  '/node_modules/pdfjs-dist/legacy/build/pdf.mjs'
+]
+const REQUIRED_PDF_SKILL_ASSETS = [
+  ['resources', 'skills', 'pdf', 'check_fillable_fields.py'],
+  ['resources', 'skills', 'pdf', 'fill_fillable_fields.py']
+]
 
 function assert(condition, message) {
   if (!condition) throw new Error(message)
@@ -28,6 +38,11 @@ function validatePackageEntries(entries) {
   }
   for (const required of ['LICENSE', 'node_modules', 'out', 'package.json']) {
     assert(roots.has(required), `Packaged app is missing runtime root: ${required}`)
+  }
+
+  const normalized = new Set(entries.map((entry) => entry.replaceAll('\\', '/')))
+  for (const required of REQUIRED_PDF_RUNTIME_ENTRIES) {
+    assert(normalized.has(required), `Packaged app is missing PDF runtime entry: ${required}`)
   }
 }
 
@@ -46,6 +61,12 @@ function validatePackagedApp(resourcesDirectory) {
   assert(existsSync(asarPath), `Missing packaged archive: ${asarPath}`)
   validateResourceEntries(readdirSync(root))
   validatePackageEntries(listPackage(asarPath))
+
+  const unpackedRoot = join(root, 'app.asar.unpacked')
+  for (const pathParts of REQUIRED_PDF_SKILL_ASSETS) {
+    const assetPath = join(unpackedRoot, ...pathParts)
+    assert(existsSync(assetPath), `Packaged app is missing PDF skill asset: ${assetPath}`)
+  }
 }
 
 if (require.main === module) {

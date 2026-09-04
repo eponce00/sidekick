@@ -72,10 +72,10 @@ A .pptx file is a ZIP archive. Use the bundled office scripts (same as DOCX):
 
 ```powershell
 # Unpack
-python "SKILLS\office\unpack.py" "presentation.pptx" "pptx_unpacked"
+python "$env:SIDEKICK_SKILLS\office\unpack.py" "presentation.pptx" "pptx_unpacked"
 # Edit XML in pptx_unpacked\ppt\slides\
 # Repack (always use --validate false to avoid Windows encoding crashes)
-python "SKILLS\office\pack.py" "pptx_unpacked" "output.pptx" --validate false
+python "$env:SIDEKICK_SKILLS\office\pack.py" "pptx_unpacked" "output.pptx" --validate false
 ```
 
 ---

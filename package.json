@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
@@ -98,6 +98,7 @@
     "lodash": "^4.17.23",
     "lucide-react": "^0.563.0",
     "mathjs": "^15.1.0",
+    "pdfjs-dist": "^6.3.289",
     "react-leaflet": "^5.0.0",
     "react-markdown": "^10.1.0",
     "react-textarea-autosize": "^8.5.9",

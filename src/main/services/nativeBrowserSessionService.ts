@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import { promises as fs, realpathSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
-import { basename, isAbsolute, join, relative, resolve } from 'path'
+import { basename, extname, isAbsolute, join, relative, resolve } from 'path'
 import type {
   BrowserWindow as ElectronBrowserWindow,
   KeyboardInputEvent,
@@ -9,6 +9,14 @@ import type {
   MouseWheelInputEvent,
   WebContents
 } from 'electron'
+import {
+  browserPdfUrlAllowed,
+  browserPdfViewerUrl,
+  createBrowserPdfSession,
+  getBrowserPdfSession,
+  revokeBrowserPdfSession,
+  revokeBrowserPdfSessionsByOwner
+} from '../bootstrap/browserPdfSessionRegistry'
 
 export interface BrowserViewport {
   width: number
@@ -508,6 +516,10 @@ interface CoordinateCaptureState {
 interface TabState {
   id: string
   surface: NativeBrowserSurface
+  /** User-facing source URL when the WebContents is showing an internal viewer. */
+  logicalUrl?: string
+  pdfSessionToken?: string
+  pdfSessionTokens: Set<string>
   refEpoch: number
   refs: Map<string, SemanticRef>
   semanticNodes: SemanticRef[]
@@ -1178,6 +1190,8 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
     })
     window.webContents.setBackgroundThrottling(false)
     const browserSession = window.webContents.session
+    const { installBrowserPdfProtocol } = await import('../bootstrap/artifactProtocol')
+    await installBrowserPdfProtocol(browserSession.protocol)
     if (!this.securedSessions.has(browserSession)) {
       this.securedSessions.add(browserSession)
       browserSession.setPermissionRequestHandler((_contents, _permission, callback) => {
@@ -1472,14 +1486,17 @@ export class NativeBrowserSessionService {
       await surface.close()
       throw new Error(`The browser tab limit (${this.maxTabsPerSession}) is reached`)
     }
-    surface.setNavigationGuard((url) =>
-      this.navigationUrlAllowedSync(url, session.allowedFileRoots)
+    surface.setNavigationGuard(
+      (url) =>
+        this.navigationUrlAllowedSync(url, session.allowedFileRoots) ||
+        browserPdfUrlAllowed(url, session.id)
     )
     surface.setRequestGuard((url) => this.navigationUrlAllowedSync(url, session.allowedFileRoots))
     await abortable(surface.attachDebugger(), signal)
     const tab: TabState = {
       id: randomUUID(),
       surface,
+      pdfSessionTokens: new Set(),
       refEpoch: 1,
       refs: new Map(),
       semanticNodes: [],
@@ -1607,11 +1624,16 @@ export class NativeBrowserSessionService {
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
+    for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
+    tab.pdfSessionTokens.clear()
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
     if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
-    if (!session.tabs.size) this.sessions.delete(session.id)
+    if (!session.tabs.size) {
+      revokeBrowserPdfSessionsByOwner(session.id)
+      this.sessions.delete(session.id)
+    }
   }
 
   private async createOwnedTab(
@@ -1752,11 +1774,15 @@ export class NativeBrowserSessionService {
       id: tab.id,
       webContentsId: tab.surface.webContentsId,
       title: tab.surface.getTitle(),
-      url: tab.surface.getURL(),
+      url: this.tabUrl(tab),
       active: tab.id === session.activeTabId,
       loading: tab.surface.isLoading(),
       attached: tab.surface.attached
     }
+  }
+
+  private tabUrl(tab: TabState): string {
+    return tab.logicalUrl ?? tab.surface.getURL()
   }
 
   private tabSummaries(session: SessionState): BrowserTabSummary[] {
@@ -1793,9 +1819,10 @@ export class NativeBrowserSessionService {
       if (navigationAction === 'url') {
         navigationQuiescence = await this.navigateUnlocked(session, tab, url!, signal)
       } else if (navigationAction === 'reload') {
-        await this.normalizeNavigationUrl(tab.surface.getURL(), session.allowedFileRoots)
+        await this.normalizeNavigationUrl(this.tabUrl(tab), session.allowedFileRoots)
         this.invalidateSemanticRefs(tab)
         await abortable(tab.surface.sendDebuggerCommand('Page.reload'), signal)
+        if (tab.pdfSessionToken) await this.waitForPdfViewerReady(session, tab, signal)
         navigationQuiescence = await this.waitForQuiescence(
           tab,
           this.navigationQuiescence(tab.surface.getURL()),
@@ -1813,17 +1840,22 @@ export class NativeBrowserSessionService {
         const entry = history.entries[index]
         if (!entry)
           throw new Error(`Browser cannot navigate ${navigationAction}; no history entry exists`)
-        await this.normalizeNavigationUrl(entry.url, session.allowedFileRoots)
+        const pdfSession = getBrowserPdfSession(entry.url)
+        const entryUrl = pdfSession ? pathToFileURL(pdfSession.sourcePath).href : entry.url
+        await this.normalizeNavigationUrl(entryUrl, session.allowedFileRoots)
         this.invalidateSemanticRefs(tab)
         await abortable(
           tab.surface.sendDebuggerCommand('Page.navigateToHistoryEntry', { entryId: entry.id }),
           signal
         )
+        if (pdfSession) await this.waitForPdfViewerReady(session, tab, signal)
         navigationQuiescence = await this.waitForQuiescence(
           tab,
           this.navigationQuiescence(entry.url),
           signal
         )
+        tab.logicalUrl = pdfSession ? entryUrl : undefined
+        tab.pdfSessionToken = pdfSession?.token
       }
       return this.finishAction(
         session,
@@ -1840,25 +1872,96 @@ export class NativeBrowserSessionService {
   }
 
   private async navigateUnlocked(
-    _session: SessionState,
+    session: SessionState,
     tab: TabState,
     url: string,
     signal?: AbortSignal
   ): Promise<BrowserQuiescenceResult> {
     tab.lastPointer = undefined
     this.invalidateSemanticRefs(tab)
+    let navigationUrl = url
+    let newPdfToken: string | undefined
+    if (new URL(url).protocol === 'file:' && extname(fileURLToPath(url)).toLowerCase() === '.pdf') {
+      const pdfSession = createBrowserPdfSession(fileURLToPath(url), session.id)
+      newPdfToken = pdfSession.token
+      tab.pdfSessionTokens.add(pdfSession.token)
+      navigationUrl = browserPdfViewerUrl(pdfSession)
+    }
     try {
-      await abortable(tab.surface.loadURL(url), signal)
+      await abortable(tab.surface.loadURL(navigationUrl), signal)
+      if (newPdfToken) await this.waitForPdfViewerReady(session, tab, signal)
     } catch (error) {
       if (signal?.aborted) tab.surface.stop()
+      if (newPdfToken) {
+        tab.pdfSessionTokens.delete(newPdfToken)
+        revokeBrowserPdfSession(newPdfToken)
+      }
       throw error
     }
-    return this.waitForQuiescence(tab, this.navigationQuiescence(url), signal)
+    tab.logicalUrl = newPdfToken ? url : undefined
+    tab.pdfSessionToken = newPdfToken
+    return this.waitForQuiescence(tab, this.navigationQuiescence(navigationUrl), signal)
+  }
+
+  private async waitForPdfViewerReady(
+    session: SessionState,
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const state = await abortable(
+        tab.surface.executeJavaScript<string>(
+          `document.documentElement?.dataset.sidekickPdfReady === 'true' ? 'ready' : (document.documentElement?.dataset.sidekickPdfError === 'true' ? 'error' : 'loading')`
+        ),
+        signal
+      )
+      if (state === 'ready') return
+      if (state === 'error') {
+        const message = await abortable(
+          tab.surface.executeJavaScript<string>(
+            `document.querySelector('#status')?.textContent || 'The PDF viewer could not render this document'`
+          ),
+          signal
+        )
+        throw new Error(String(message))
+      }
+      await delay(100, signal)
+    }
+    const diagnostics = await abortable(
+      tab.surface.executeJavaScript<unknown>(`(async () => {
+        const probe = async (url) => {
+          try {
+            const response = await fetch(url);
+            return { url: response.url, status: response.status, type: response.headers.get('content-type'), bytes: (await response.arrayBuffer()).byteLength };
+          } catch (error) {
+            return { error: String(error) };
+          }
+        };
+        return {
+          url: location.href,
+          title: document.title,
+          state: document.readyState,
+          status: document.querySelector('#status')?.textContent,
+          scripts: [...document.scripts].map((script) => script.src),
+          resources: performance.getEntriesByType('resource').map((entry) => entry.name),
+          viewerModule: await probe('./viewer.mjs'),
+          pdfModule: await probe('./pdf.mjs')
+        };
+      })()`),
+      signal
+    ).catch(() => undefined)
+    throw timeoutError(
+      `The PDF viewer did not become ready within 30 seconds${diagnostics ? `: ${JSON.stringify(diagnostics)}` : ''}; console=${JSON.stringify(session.console.filter((entry) => entry.tabId === tab.id).slice(-10))}`
+    )
   }
 
   private navigationQuiescence(url: string): { idleMs?: number; maxWaitMs?: number } {
     const parsed = new URL(url)
-    if (parsed.protocol === 'file:' || parsed.protocol === 'about:') {
+    if (
+      parsed.protocol === 'file:' ||
+      parsed.protocol === 'about:' ||
+      parsed.protocol === 'sidekick-pdf:'
+    ) {
       // loadURL has already reached the document load event. Local previews have
       // no meaningful network-idle phase, so do not leave the first frame hidden
       // behind the general remote-page settling budget.
@@ -2164,7 +2267,7 @@ export class NativeBrowserSessionService {
           }
         : undefined
     }
-    const sourceUrlAtCapture = stableCaptureState?.sourceUrl ?? tab.surface.getURL()
+    const sourceUrlAtCapture = this.tabUrl(tab)
     const sha256 = createHash('sha256').update(capture.png).digest('hex')
     const previousHash = tab.lastScreenshotHashes[kind]
     const changed = previousHash === undefined ? null : previousHash !== sha256
@@ -3871,7 +3974,7 @@ export class NativeBrowserSessionService {
         )
         satisfied = (condition.state ?? 'present') === 'present' ? present : !present
       } else if (condition.type === 'url') {
-        satisfied = matchesText(tab.surface.getURL(), condition.value, condition.match)
+        satisfied = matchesText(this.tabUrl(tab), condition.value, condition.match)
       } else {
         try {
           await this.captureSemanticSnapshot(tab, undefined, signal)
@@ -3960,11 +4063,16 @@ export class NativeBrowserSessionService {
   }
 
   private async closeTab(session: SessionState, tab: TabState): Promise<void> {
+    for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
+    tab.pdfSessionTokens.clear()
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
     await tab.surface.close()
-    if (!session.tabs.size) this.sessions.delete(session.id)
+    if (!session.tabs.size) {
+      revokeBrowserPdfSessionsByOwner(session.id)
+      this.sessions.delete(session.id)
+    }
   }
 
   async console(
@@ -4064,7 +4172,7 @@ export class NativeBrowserSessionService {
         let passed = false
         let actual: string | undefined
         if (assertion.type === 'url') {
-          actual = tab.surface.getURL()
+          actual = this.tabUrl(tab)
           passed = matchesText(actual, assertion.value, assertion.match)
         } else if (assertion.type === 'title') {
           actual = tab.surface.getTitle()

@@ -15,13 +15,13 @@ requiresPythonPackages: ['openpyxl', 'pandas', 'xlrd']
 
 ## Quick Reference
 
-| Task                    | Approach                                   |
-| ----------------------- | ------------------------------------------ |
-| Read/inventory content  | openpyxl structured read (see below)       |
-| Create from scratch     | openpyxl (write to file directly)          |
-| Edit data/formulas      | openpyxl (load workbook, edit, save)       |
-| Edit complex formatting | Unpack → edit XML → repack                 |
-| Recalculate formulas    | `python "SKILLS\xlsx\recalc.py" file.xlsx` |
+| Task                    | Approach                                                 |
+| ----------------------- | -------------------------------------------------------- |
+| Read/inventory content  | openpyxl structured read (see below)                     |
+| Create from scratch     | openpyxl (write to file directly)                        |
+| Edit data/formulas      | openpyxl (load workbook, edit, save)                     |
+| Edit complex formatting | Unpack → edit XML → repack                               |
+| Recalculate formulas    | `python "$env:SIDEKICK_SKILLS\xlsx\recalc.py" file.xlsx` |
 
 > Skills are instructions, not package installers. Never run `pip install` as an implicit side
 > effect. If a required library is unavailable, report it clearly and ask before changing the
@@ -121,10 +121,10 @@ For complex formatting or structural edits:
 
 ```powershell
 # Unpack
-python "SKILLS\office\unpack.py" "file.xlsx" "xlsx_unpacked"
+python "$env:SIDEKICK_SKILLS\office\unpack.py" "file.xlsx" "xlsx_unpacked"
 # Edit XML in xlsx_unpacked\xl\worksheets\sheet1.xml
 # Repack
-python "SKILLS\office\pack.py" "xlsx_unpacked" "output.xlsx"
+python "$env:SIDEKICK_SKILLS\office\pack.py" "xlsx_unpacked" "output.xlsx"
 ```
 
 ---
@@ -134,7 +134,7 @@ python "SKILLS\office\pack.py" "xlsx_unpacked" "output.xlsx"
 If the file has formulas and they need fresh values for downstream tools:
 
 ```powershell
-python "SKILLS\xlsx\recalc.py" "output.xlsx"
+python "$env:SIDEKICK_SKILLS\xlsx\recalc.py" "output.xlsx"
 ```
 
 ---

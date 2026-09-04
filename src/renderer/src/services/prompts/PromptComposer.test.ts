@@ -227,6 +227,31 @@ describe('PromptComposer', () => {
     expect(prompt.content).toContain('Keep intermediate tool-call turns terse')
     expect(prompt.content).toContain('one final redacted semantic observation')
     expect(prompt.content).toContain('console errors')
+    expect(prompt.content).toContain('browser-accessible PDF surface')
+    expect(prompt.content).toContain('do not replace it with a shell or Python workflow')
+  })
+
+  it('advertises shipped skill helpers through the managed shell environment', () => {
+    const prompt = new PromptComposer().compose({
+      platform: 'windows',
+      capabilities: capabilitiesFromTools(getToolDefinitions(true, 'C:\\work')),
+      permissionMode: 'full-access',
+      model,
+      project: {
+        workspaceRoot: 'C:\\work',
+        instructions: '',
+        instructionSources: [],
+        memory: ''
+      },
+      currentDate: 'Friday, September 4, 2026',
+      toolRoundLimit: 100,
+      activeSkillIds: ['pdf'],
+      skillAssetsPath: 'C:\\Program Files\\SideKick\\resources\\skills'
+    })
+
+    expect(prompt.content).toContain('$env:SIDEKICK_SKILLS')
+    expect(prompt.content).toContain('do not search for or recreate a shipped helper')
+    expect(prompt.content).not.toContain('C:\\Program Files\\SideKick\\resources\\skills')
   })
 
   it('infers common model families without coupling behavior to a provider', () => {

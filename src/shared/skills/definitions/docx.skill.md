@@ -15,13 +15,13 @@ requiresNodePackages: ['docx']
 
 ## Quick Reference
 
-| Task                   | Approach                                          |
-| ---------------------- | ------------------------------------------------- |
-| Read/analyze content   | `python SKILLS\office\unpack.py` then inspect XML |
-| Create new document    | Use the `docx` npm package when it is available   |
-| Edit existing document | Unpack → edit XML → repack                        |
-| Accept tracked changes | `python SKILLS\docx\accept_changes.py`            |
-| Add comments           | `python SKILLS\docx\comment.py`                   |
+| Task                   | Approach                                                          |
+| ---------------------- | ----------------------------------------------------------------- |
+| Read/analyze content   | `python "$env:SIDEKICK_SKILLS\office\unpack.py"` then inspect XML |
+| Create new document    | Use the `docx` npm package when it is available                   |
+| Edit existing document | Unpack → edit XML → repack                                        |
+| Accept tracked changes | `python "$env:SIDEKICK_SKILLS\docx\accept_changes.py"`            |
+| Add comments           | `python "$env:SIDEKICK_SKILLS\docx\comment.py"`                   |
 
 > **SKILLS** refers to the bundled scripts path shown in the "Skill Scripts" section above.
 > Skills are instructions, not package installers. Never install packages as an implicit side effect.
@@ -153,7 +153,7 @@ Follow all 3 steps in order.
 ### Step 1: Unpack
 
 ```powershell
-python "SKILLS\office\unpack.py" "document.docx" "doc_unpacked"
+python "$env:SIDEKICK_SKILLS\office\unpack.py" "document.docx" "doc_unpacked"
 ```
 
 Extracts XML, pretty-prints, merges adjacent runs, converts smart quotes to XML entities.
@@ -195,14 +195,14 @@ Edit files in `doc_unpacked\word\`.
 **Add comments:**
 
 ```powershell
-python "SKILLS\docx\comment.py" "doc_unpacked" 0 "Comment text"
-python "SKILLS\docx\comment.py" "doc_unpacked" 1 "Reply" --parent 0
+python "$env:SIDEKICK_SKILLS\docx\comment.py" "doc_unpacked" 0 "Comment text"
+python "$env:SIDEKICK_SKILLS\docx\comment.py" "doc_unpacked" 1 "Reply" --parent 0
 ```
 
 ### Step 3: Repack
 
 ```powershell
-python "SKILLS\office\pack.py" "doc_unpacked" "output.docx" --original "document.docx" --validate false
+python "$env:SIDEKICK_SKILLS\office\pack.py" "doc_unpacked" "output.docx" --original "document.docx" --validate false
 ```
 
 Always use `--validate false` — the validator can crash on Windows due to encoding issues with non-ASCII output characters.
