@@ -44,7 +44,7 @@ test('normalizes Windows ASAR path separators before auditing roots', () => {
 })
 
 test('rejects development and release tooling from the packaged archive', () => {
-  for (const root of ['coverage', 'docs', 'scripts', 'src']) {
+  for (const root of ['coverage', 'docs', 'scripts', 'src', 'output', 'tmp']) {
     for (const forbiddenEntry of [`/${root}/file`, `\\${root}\\file`]) {
       assert.throws(
         () =>

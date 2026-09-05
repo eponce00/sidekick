@@ -10,6 +10,90 @@
   background: var(--surface-0);
 }
 
+.browser-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.browser-workspace-tabs,
+.browser-workspace-toolbar,
+.browser-workspace-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.browser-workspace-tabs {
+  overflow-x: auto;
+  min-height: 32px;
+}
+.browser-workspace button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 0;
+  border-radius: 5px;
+  padding: 5px;
+  cursor: pointer;
+}
+.browser-workspace button:hover,
+.browser-workspace [aria-selected='true'] {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+.browser-workspace button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.browser-workspace-tab {
+  display: flex;
+  min-width: 90px;
+  max-width: 180px;
+  flex-shrink: 0;
+  align-items: center;
+}
+.browser-workspace-tab [role='tab'] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.browser-workspace-toolbar input {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.browser-workspace-control {
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.browser-workspace-control button {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.browser-workspace-viewport {
+  flex: 1;
+  min-height: 80px;
+  overflow: hidden;
+}
+.browser-workspace-viewport p {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 20px;
+}
+.browser-workspace-error {
+  padding: 8px;
+  color: var(--color-error);
+  font-size: 12px;
+}
+
 .browser-activity-header {
   min-height: 46px;
   display: flex;

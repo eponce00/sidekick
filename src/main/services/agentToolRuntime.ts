@@ -280,7 +280,7 @@ export class AgentToolRuntime {
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
   private readonly verification: WorkspaceVerificationService
-  private readonly browser?: AgentBrowserSessionManager
+  readonly browser?: AgentBrowserSessionManager
 
   constructor(
     private readonly db: Database.Database,

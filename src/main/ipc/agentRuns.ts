@@ -10,6 +10,9 @@ import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
 import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
+import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
+import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
+import { ProjectStore } from '../services/projectStore'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -195,6 +198,134 @@ function validateAdmissions(value: unknown): ReplacePromptAdmissionsInput {
 }
 
 export function registerAgentRunHandlers(): void {
+  ipcMain.handle('agentRuns:browserWorkspace', async (event, input: BrowserWorkspaceRequest) => {
+    const host = BrowserWindow.fromWebContents(event.sender)
+    if (
+      !host ||
+      host.webContents !== event.sender ||
+      event.senderFrame !== event.sender.mainFrame
+    ) {
+      throw new Error('Browser controls are only available from the app window')
+    }
+    if (
+      !input ||
+      !validId(input.conversationId) ||
+      ![
+        'state',
+        'mount',
+        'unmount',
+        'control',
+        'resume',
+        'url',
+        'back',
+        'forward',
+        'reload',
+        'new',
+        'select',
+        'close'
+      ].includes(input.action)
+    ) {
+      throw new Error('Invalid browser workspace request')
+    }
+    const manager = getAgentRuntimeCoordinator().tools.browser
+    if (input.action === 'unmount') {
+      unmountBrowserHost(host)
+      return null
+    }
+    if (!manager) return null
+    if (input.action === 'state' || input.action === 'mount') {
+      const state = manager.workspaceState(input.conversationId)
+      if (input.action === 'mount') {
+        const zoom = event.sender.getZoomFactor()
+        const b = input.bounds && {
+          x: input.bounds.x * zoom,
+          y: input.bounds.y * zoom,
+          width: input.bounds.width * zoom,
+          height: input.bounds.height * zoom
+        }
+        const [width, height] = host.getContentSize()
+        if (
+          !b ||
+          !Object.values(b).every(Number.isFinite) ||
+          b.x < 0 ||
+          b.y < 0 ||
+          b.width < 1 ||
+          b.height < 1 ||
+          b.x + b.width > width + 1 ||
+          b.y + b.height > height + 1
+        )
+          throw new Error('Invalid browser panel bounds')
+        const tab = state?.tabs.find((item) => item.active)
+        if (tab)
+          mountBrowserView(
+            tab.webContentsId,
+            host,
+            {
+              x: Math.round(b.x),
+              y: Math.round(b.y),
+              width: Math.floor(b.width),
+              height: Math.floor(b.height)
+            },
+            () => manager.claimUserControl(input.conversationId)
+          )
+        else unmountBrowserHost(host)
+      }
+      return (
+        state && {
+          ...state,
+          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+            id,
+            title,
+            url,
+            active,
+            loading
+          }))
+        }
+      )
+    }
+    if (
+      !manager.workspaceState(input.conversationId) &&
+      (input.action === 'url' || input.action === 'new')
+    ) {
+      const context = new ProjectStore(getDb()).getConversationContext(input.conversationId)
+      const { lease } = await manager.open(
+        input.conversationId,
+        `browser-${input.conversationId}`,
+        input.url || 'about:blank',
+        undefined,
+        context.workspaceRoot ? [context.workspaceRoot] : [],
+        new AbortController().signal
+      )
+      await lease.release()
+      manager.claimUserControl(input.conversationId)
+      const state = manager.workspaceState(input.conversationId)
+      return (
+        state && {
+          ...state,
+          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+            id,
+            title,
+            url,
+            active,
+            loading
+          }))
+        }
+      )
+    }
+    const result = await manager.workspaceAction(input.conversationId, input)
+    return (
+      result && {
+        ...result,
+        tabs: result.tabs.map(({ id, title, url, active, loading }) => ({
+          id,
+          title,
+          url,
+          active,
+          loading
+        }))
+      }
+    )
+  })
   const engine = getAgentEngineClient()
   const admissions = new PromptAdmissionStore(getDb())
   ipcMain.handle('agentRuns:startConversation', async (_event, raw: unknown) => ({

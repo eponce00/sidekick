@@ -10,6 +10,8 @@ const FORBIDDEN_ROOTS = new Set([
   'coverage',
   'dist',
   'docs',
+  'output',
+  'tmp',
   'scripts',
   'src'
 ])
@@ -27,12 +29,7 @@ const REQUIRED_PDF_SKILL_ASSETS = [
 const PDF_NATIVE_BINDINGS = {
   'darwin-arm64': ['node_modules', '@napi-rs', 'canvas-darwin-arm64', 'skia.darwin-arm64.node'],
   'linux-x64': ['node_modules', '@napi-rs', 'canvas-linux-x64-gnu', 'skia.linux-x64-gnu.node'],
-  'win32-x64': [
-    'node_modules',
-    '@napi-rs',
-    'canvas-win32-x64-msvc',
-    'skia.win32-x64-msvc.node'
-  ]
+  'win32-x64': ['node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node']
 }
 
 function assert(condition, message) {

@@ -105,6 +105,8 @@ const api = {
       ipcRenderer.invoke('projects:moveConversation', input)
   },
   agentRuns: {
+    browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
+      ipcRenderer.invoke('agentRuns:browserWorkspace', input),
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),

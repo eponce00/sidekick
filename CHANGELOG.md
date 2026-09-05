@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.7.0 — 2026-09-05
+
+- Replace the screenshot-only browser panel with the actual embedded Chromium page shared by user
+  and agent, preserving tab identity, cookies, form state, and PDF support.
+- Add an address bar, back/forward/reload, tab creation/switching/closing, direct native input,
+  and text-edit context menus. Users can open pages without first running an agent.
+- Pause agent browser actions during user control, support cancellation while waiting, and
+  invalidate old semantic targets when the user resumes the agent.
+- Keep human takeover inside the visible Browser panel, hide the rendering host while embedded,
+  and detach native pages when the panel is hidden or an application dialog is shown.
+- Add cross-platform Electron checks for embedded page ownership, one visible application window,
+  shared manual edits, resume, and continued screenshot/PDF behavior.
+
 ## 0.6.3 — 2026-09-04
 
 - Route direct HTTPS PDF URLs through SideKick's accessible PDF viewer instead of Chromium's

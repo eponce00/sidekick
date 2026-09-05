@@ -135,6 +135,12 @@ function fakeService(): NativeBrowserSessionService & {
   const service = {
     open,
     observe,
+    workspaceSnapshot: (sessionId: string) => {
+      const value = sessions.get(sessionId)
+      if (!value) throw new Error('Browser session not found or already closed')
+      return { sessionId, activeTabId: value.tab.id, tabs: [value.tab] }
+    },
+    refreshAfterUserInput: vi.fn(),
     navigate,
     close,
     dispose: vi.fn(async () => undefined),
@@ -281,6 +287,41 @@ function execute(
 }
 
 describe('native browser agent tool handlers', () => {
+  it('waits while the user controls the same session and resumes browser tools afterward', async () => {
+    const { registry, manager, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(true)
+    let finished = false
+    const next = execute(registry, 'browser_observe', {}).then((result) => {
+      finished = true
+      return result
+    })
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    expect(finished).toBe(false)
+    await manager.workspaceAction('conversation-1', {
+      conversationId: 'conversation-1',
+      action: 'resume'
+    })
+    expect((await next).status).toBe('success')
+    expect(service.open).toHaveBeenCalledTimes(1)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+  })
+
+  it('does not steal control from an active tool, and a waiting tool can be cancelled', async () => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const lease = await manager.lease('conversation-1')
+    expect(manager.claimUserControl('conversation-1')).toBe(false)
+    await lease!.release()
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    const controller = new AbortController()
+    const waiting = execute(registry, 'browser_observe', {}, { signal: controller.signal })
+    controller.abort()
+    const result = await waiting
+    expect(result.status).not.toBe('success')
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(true)
+  })
   it('registers every browser catalog tool and returns screenshots as real vision media', async () => {
     const { registry, service } = setup()
     for (const name of AGENT_BROWSER_TOOL_NAMES) expect(registry.has(name), name).toBe(true)

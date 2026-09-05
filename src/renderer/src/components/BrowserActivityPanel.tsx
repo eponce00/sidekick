@@ -18,6 +18,7 @@ import {
   type BrowserActivityState
 } from '../utils/browserActivity'
 import './BrowserActivityPanel.css'
+import { BrowserWorkspace } from './BrowserWorkspace'
 
 export interface BrowserActivityPanelProps {
   conversationId: string | null
@@ -148,7 +149,9 @@ function BrowserActivityPanelSession({
           <strong>Browser activity</strong>
           <span className="browser-activity-status">
             <Circle size={7} fill="currentColor" />
-            {statusLabel(activity)}
+            {typeof window.api.agentRuns.browserWorkspace === 'function'
+              ? 'Shared session'
+              : statusLabel(activity)}
           </span>
         </div>
         {onToggleWidth && (
@@ -164,7 +167,9 @@ function BrowserActivityPanelSession({
         )}
       </header>
 
-      {!activity.hasActivity ? (
+      {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
+        <BrowserWorkspace conversationId={conversationId} />
+      ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />
           <strong>No browser activity yet</strong>

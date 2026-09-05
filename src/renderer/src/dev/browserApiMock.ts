@@ -741,6 +741,7 @@ export function installBrowserApiMock(): void {
       })
     },
     agentRuns: {
+      browserWorkspace: async () => null,
       startConversation: async (input) => ({
         run: {
           id: input.id,

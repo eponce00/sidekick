@@ -26,10 +26,12 @@ results. The batch intentionally omits a result screenshot because text fields c
 values visually; the live Browser panel still shows the current page. Custom widgets and
 autocomplete controls remain explicit single-action work.
 
-The Browser tab in the right workspace panel shows the live page, a highlighted cursor, and a
-short user-facing activity history. The page scales to the available panel without allowing a
-narrow or mobile viewport to stretch an image beyond the layout. Browser details remain available
-to the model and diagnostics without filling the user interface with developer-only telemetry.
+The Browser tab in the right workspace panel contains the actual interactive page. Enter an address,
+use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
+the page or choose **Take control** to type, scroll, select text, and edit forms. Browser tool calls
+wait while you have control. Choose **Resume agent** when finished; the agent must observe fresh
+state before targeting elements you changed. The current browser action finishes before takeover
+can begin. Right-click offers native text editing actions.
 
 ## Human-only site checks
 
@@ -41,7 +43,8 @@ while the card is pending, popups stay in the visible takeover window, and cance
 the browser safely. If the check cannot be completed, **Use another source** tells the agent to take
 a legitimate alternate route.
 
-The takeover window's native title bar shows a main-process-owned origin. CAPTCHA and anti-bot
+When the Browser panel is open, takeover stays inside it. The fallback takeover window's native title
+bar shows a main-process-owned origin. CAPTCHA and anti-bot
 checks are always human-only; SideKick does not ask the model to bypass or solve them.
 
 ## Isolation and safety

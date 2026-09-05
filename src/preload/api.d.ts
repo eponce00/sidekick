@@ -117,6 +117,9 @@ interface ProjectsAPI {
 }
 
 interface AgentRunsAPI {
+  browserWorkspace: (
+    input: import('../shared/browserWorkspace').BrowserWorkspaceRequest
+  ) => Promise<import('../shared/browserWorkspace').BrowserWorkspaceState | null>
   startConversation: (
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>

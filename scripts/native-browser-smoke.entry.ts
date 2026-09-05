@@ -4,7 +4,12 @@ import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, nativeImage } from 'electron'
+import { app, nativeImage, BrowserWindow, webContents } from 'electron'
+import {
+  mountBrowserView,
+  unmountBrowserHost,
+  browserViewHost
+} from '../src/main/services/browserViewHost'
 import {
   installArtifactProtocol,
   registerArtifactScheme
@@ -274,11 +279,71 @@ async function runSmoke(): Promise<SmokeResult> {
     await service.close({ sessionId: localFile.sessionId })
     progress('Navigation policy checks passed')
 
+    progress('Checking embedded shared browser')
+    const shared = await service.open({ runId: 'shared-view', url: baseUrl })
+    const host = new BrowserWindow({
+      show: false,
+      width: 1000,
+      height: 800,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+    })
+    host.showInactive()
+    const contents = webContents.fromId(shared.tab.webContentsId)!
+    const identity = contents.id
+    let userInputs = 0
+    mountBrowserView(identity, host, { x: 20, y: 80, width: 900, height: 600 }, () => {
+      userInputs++
+      return true
+    })
+    assert.equal(browserViewHost(identity), host)
+    assert.equal(contents.id, identity, 'Embedding must preserve the original tab')
+    const live = await service.observe(shared.sessionId, { screenshot: 'viewport' })
+    assert.ok(live.screenshot && live.screenshot.bytes > 1000)
+    await service.type({
+      sessionId: shared.sessionId,
+      target: { role: 'textbox', name: 'Name', exact: true },
+      text: 'Shared browser test'
+    })
+    const sharedValue = await service.evaluate({
+      sessionId: shared.sessionId,
+      expression: "document.querySelector('#name').value"
+    })
+    assert.equal(sharedValue.value, 'Shared browser test')
+    assert.equal(userInputs, 0, 'Agent-generated input must not claim user control')
+    contents.sendInputEvent({ type: 'keyDown', keyCode: '!' })
+    contents.sendInputEvent({ type: 'char', keyCode: '!' })
+    contents.sendInputEvent({ type: 'keyUp', keyCode: '!' })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.ok(userInputs > 0, 'Native user input should notify the shared control gate')
+    const manualValue = await service.evaluate({
+      sessionId: shared.sessionId,
+      expression: "document.querySelector('#name').value"
+    })
+    assert.equal(
+      manualValue.value,
+      'Shared browser test!',
+      'Agent must observe manual edits on the same page'
+    )
+    const embeddedTakeover = await service.beginHumanTakeover(shared.sessionId)
+    assert.equal(embeddedTakeover.active, true)
+    assert.equal(browserViewHost(identity), host, 'Takeover must stay embedded')
+    await service.completeHumanTakeover(shared.sessionId)
+    unmountBrowserHost(host)
+    assert.equal(browserViewHost(identity), undefined)
+    const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
+    assert.ok(parked.screenshot)
+    host.destroy()
+    await service.close({ sessionId: shared.sessionId })
+    progress(
+      `Embedded browser, same-tab input, takeover, and background recapture passed (${userInputs} input events)`
+    )
+
     const externalPdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF
     const remotePdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF_URL
     {
       const pdfPath = remotePdf ? undefined : resolve(externalPdf || fillablePdf)
       if (pdfPath) assert.ok(existsSync(pdfPath), `Diagnostic PDF does not exist: ${pdfPath}`)
+      progress('Opening PDF fixture')
       const pdf = await service.open({
         runId: 'pdf-diagnostic',
         url: remotePdf || pathToFileURL(pdfPath!).href,

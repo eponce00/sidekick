@@ -1,8 +1,9 @@
 const assert = require('node:assert/strict')
-const { existsSync, mkdirSync, mkdtempSync, rmSync } = require('node:fs')
+const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { test } = require('node:test')
+const { createServer } = require('node:http')
 const { _electron: electron } = require('playwright')
 
 const ROOT = resolve(__dirname, '..')
@@ -43,6 +44,74 @@ function removeIsolatedProfile(profile) {
   assert.ok(resolvedProfile.split(require('node:path').sep).at(-1).startsWith('sidekick-e2e-'))
   rmSync(resolvedProfile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 }
+
+test(
+  'user opens and controls a live page inside the main app window',
+  { timeout: 120_000 },
+  async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'sidekick-e2e-browser-'))
+    const server = createServer((_request, response) => {
+      response.setHeader('content-type', 'text/html')
+      response.end(
+        '<!doctype html><title>Shared browser fixture</title><h1>Shared page</h1><label>Name<input id="name"></label>'
+      )
+    })
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    let application
+    try {
+      application = await launchSideKick(profile)
+      const page = await application.firstWindow()
+      await page.getByRole('button', { name: 'Create new' }).click()
+      await page.getByRole('menuitem', { name: 'New chat' }).click()
+      const expand = page.getByRole('button', { name: 'Open Browser activity', exact: true })
+      if (await expand.isVisible()) await expand.click()
+      else await page.getByRole('button', { name: 'Open browser activity', exact: true }).click()
+      const address = page.getByRole('textbox', { name: 'Browser address' })
+      await address.fill(`http://127.0.0.1:${server.address().port}/`)
+      await address.press('Enter')
+      await waitForVisible(
+        page.getByRole('tab', { name: 'Shared browser fixture' }),
+        'user-opened tab'
+      )
+      await waitForVisible(page.getByRole('button', { name: 'Resume agent' }), 'shared control')
+      const embedded = await application.evaluate(({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().includes('/out/renderer/')
+        )
+        if (!main) throw new Error('Main window missing')
+        return {
+          visibleWindows: BrowserWindow.getAllWindows().filter((window) => window.isVisible())
+            .length,
+          tabs: main.contentView.children.filter((view) =>
+            view.webContents?.getURL().startsWith('http://127.0.0.1')
+          ).length
+        }
+      })
+      assert.equal(embedded.tabs, 1, 'The actual web page must belong to the main contentView')
+      assert.equal(embedded.visibleWindows, 1, 'Browser must not appear in a second window')
+      if (process.env.SIDEKICK_E2E_BROWSER_SCREENSHOT) {
+        const png = await application.evaluate(async ({ BrowserWindow }) => {
+          const main = BrowserWindow.getAllWindows().find((window) =>
+            window.webContents.getURL().includes('/out/renderer/')
+          )
+          return (await main.capturePage()).toPNG().toString('base64')
+        })
+        writeFileSync(process.env.SIDEKICK_E2E_BROWSER_SCREENSHOT, Buffer.from(png, 'base64'))
+      }
+      if (process.env.SIDEKICK_E2E_VISUAL_REVIEW === '1') {
+        await new Promise((resolve) => setTimeout(resolve, 45_000))
+      }
+      await page.getByRole('button', { name: 'Resume agent' }).click()
+      await waitForVisible(page.getByRole('button', { name: 'Take control' }), 'resumed browser')
+      await page.getByRole('button', { name: 'Settings', exact: true }).click()
+      await waitForVisible(page.getByRole('dialog', { name: 'Settings' }), 'settings above browser')
+    } finally {
+      await closeApplication(application)
+      await new Promise((resolve) => server.close(resolve))
+      removeIsolatedProfile(profile)
+    }
+  }
+)
 
 test(
   'critical desktop journey stays isolated, persists locally, and exposes release support UI',

@@ -652,6 +652,79 @@ function errorResult(
  * global limit; their durable screenshots are intentionally retained for chat history.
  */
 export class AgentBrowserSessionManager {
+  private readonly userControlled = new Set<string>()
+
+  workspaceState(scope: string) {
+    const entry = this.scopes.get(scope)
+    if (!entry) return null
+    try {
+      return {
+        ...this.service.workspaceSnapshot(entry.sessionId),
+        userControl: this.userControlled.has(scope) || entry.humanTakeoverActive,
+        verificationHandoff: entry.humanTakeoverPending || entry.humanTakeoverActive,
+        busy: entry.active > 0
+      }
+    } catch (error) {
+      if (!isMissingSessionError(error)) throw error
+      this.scopes.delete(scope)
+      this.userControlled.delete(scope)
+      return null
+    }
+  }
+
+  claimUserControl(scope: string): boolean {
+    const entry = this.scopes.get(scope)
+    if (!entry || entry.active > 0) return false
+    if (!entry.humanTakeoverActive) this.userControlled.add(scope)
+    entry.lastUsed = this.now()
+    return true
+  }
+
+  async workspaceAction(
+    scope: string,
+    input: import('../../shared/browserWorkspace').BrowserWorkspaceRequest
+  ) {
+    if (input.action === 'resume') {
+      const entry = this.scopes.get(scope)
+      if (entry?.active)
+        throw new Error('Wait for the current browser action to finish before resuming')
+      if (entry) this.service.refreshAfterUserInput(entry.sessionId)
+      this.userControlled.delete(scope)
+      return this.workspaceState(scope)
+    }
+    if (!this.claimUserControl(scope))
+      throw new Error('Browser action in progress. Try again when it finishes.')
+    const entry = this.scopes.get(scope)!
+    if (input.action === 'control') return this.workspaceState(scope)
+    entry.active++
+    try {
+      if (['new', 'select', 'close'].includes(input.action)) {
+        await this.service.tabs({
+          sessionId: entry.sessionId,
+          action: input.action as 'new' | 'select' | 'close',
+          tabId: input.tabId,
+          url: input.url
+        })
+      } else {
+        await this.service.navigate({
+          sessionId: entry.sessionId,
+          action: input.action as 'url' | 'back' | 'forward' | 'reload',
+          url: input.url
+        })
+      }
+    } finally {
+      entry.active = Math.max(0, entry.active - 1)
+    }
+    return this.workspaceState(scope)
+  }
+
+  async waitForUser(scope: string, signal: AbortSignal): Promise<void> {
+    while (this.userControlled.has(scope)) {
+      signal.throwIfAborted()
+      await new Promise<void>((resolve) => setTimeout(resolve, 100))
+    }
+    signal.throwIfAborted()
+  }
   private readonly scopes = new Map<string, BrowserScopeEntry>()
   private readonly maxConversationSessions: number
   private readonly now: () => number
@@ -687,6 +760,10 @@ export class AgentBrowserSessionManager {
     return this.locked(async () => {
       const entry = this.scopes.get(scope)
       if (!entry) return undefined
+      if (this.userControlled.has(scope))
+        throw new Error(
+          'User is controlling the browser. Wait for resume, then observe fresh state.'
+        )
       if (entry.humanTakeoverPending || entry.humanTakeoverActive) {
         throw new Error('Human browser takeover is pending; wait for the user to finish')
       }
@@ -732,6 +809,10 @@ export class AgentBrowserSessionManager {
     return this.locked(async () => {
       const current = this.scopes.get(scope)
       if (current) {
+        if (this.userControlled.has(scope))
+          throw new Error(
+            'User is controlling the browser. Wait for resume, then observe fresh state.'
+          )
         if (current.humanTakeoverPending || current.humanTakeoverActive) {
           throw new Error('Human browser takeover is pending; wait for the user to finish')
         }
@@ -757,8 +838,11 @@ export class AgentBrowserSessionManager {
       while (this.scopes.size >= this.maxConversationSessions) {
         const evictable = [...this.scopes.entries()]
           .filter(
-            ([, entry]) =>
-              entry.active === 0 && !entry.humanTakeoverPending && !entry.humanTakeoverActive
+            ([scope, entry]) =>
+              entry.active === 0 &&
+              !entry.humanTakeoverPending &&
+              !entry.humanTakeoverActive &&
+              !this.userControlled.has(scope)
           )
           .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0]
         if (!evictable) {
@@ -821,6 +905,8 @@ export class AgentBrowserSessionManager {
   async closeScope(scope: string): Promise<{ closedSessions: string[]; closedTabs: string[] }> {
     const entry = await this.locked(() => {
       const value = this.scopes.get(scope)
+      if (this.userControlled.has(scope))
+        throw new Error('User is controlling the browser. Wait for resume before closing it.')
       if (value?.humanTakeoverPending || value?.humanTakeoverActive) {
         throw new Error('Human browser takeover is pending; wait for the user to finish')
       }
@@ -918,6 +1004,7 @@ export class AgentBrowserSessionManager {
   }
 
   async dispose(): Promise<void> {
+    this.userControlled.clear()
     await this.locked(() => this.scopes.clear())
     await this.service.dispose()
   }
@@ -1046,6 +1133,11 @@ export function registerBrowserToolHandlers(
 ): void {
   registry.register(AGENT_BROWSER_TOOL_NAMES, async ({ name, title, arguments: args, context }) => {
     const scope = browserScope(context)
+    try {
+      await manager.waitForUser(scope, context.signal)
+    } catch (error) {
+      return errorResult(title, error, context)
+    }
     if (name === 'browser_close') {
       try {
         const result = await manager.closeScope(scope)

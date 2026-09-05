@@ -2,6 +2,13 @@ import { createHash, randomUUID } from 'crypto'
 import { promises as fs, realpathSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { basename, extname, isAbsolute, join, relative, resolve } from 'path'
+import {
+  browserViewHost,
+  registerBrowserView,
+  parkBrowserView,
+  browserAgentInput,
+  browserNavigationState
+} from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
   KeyboardInputEvent,
@@ -933,7 +940,8 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   constructor(
     private readonly contents: WebContents,
     private readonly ownerWindow: ElectronBrowserWindow | null,
-    readonly attached: boolean
+    readonly attached: boolean,
+    private readonly view?: import('electron').WebContentsView
   ) {
     this.webContentsId = contents.id
     ownerWindow?.on('close', (event) => {
@@ -1026,20 +1034,31 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   async close(): Promise<void> {
     if (this.contents.isDestroyed()) return
     this.closing = true
+    parkBrowserView(this.webContentsId)
     this.humanTakeoverVisible = false
     this.detachDebugger()
     this.clearListeners()
     if (!this.attached) {
+      if (this.view) this.contents.close({ waitForBeforeUnload: false })
       if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
       else this.contents.close({ waitForBeforeUnload: false })
     }
   }
 
   showForHumanTakeover(): void {
+    const host = browserViewHost(this.webContentsId)
+    if (host && !host.isDestroyed()) {
+      this.humanTakeoverVisible = true
+      host.focus()
+      this.contents.focus()
+      return
+    }
     if (!this.ownerWindow || this.ownerWindow.isDestroyed() || this.contents.isDestroyed()) {
       throw new Error('This browser surface cannot be shown for human takeover')
     }
     this.humanTakeoverVisible = true
+    this.ownerWindow.setOpacity(1)
+    this.ownerWindow.setFocusable(true)
     this.ownerWindow.setSkipTaskbar(false)
     this.ownerWindow.center()
     this.updateTakeoverTitle()
@@ -1050,10 +1069,12 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   hideHumanTakeover(): void {
     this.humanTakeoverVisible = false
+    if (browserViewHost(this.webContentsId)) return
     if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
       this.ownerWindow.setSkipTaskbar(true)
-      this.ownerWindow.setPosition(-32_000, -32_000, false)
-      if (!this.ownerWindow.isVisible()) this.ownerWindow.showInactive()
+      this.ownerWindow.setOpacity(0)
+      this.ownerWindow.setFocusable(false)
+      this.ownerWindow.showInactive()
     }
   }
 
@@ -1062,7 +1083,7 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.humanTakeoverVisible &&
       this.ownerWindow &&
       !this.ownerWindow.isDestroyed() &&
-      this.ownerWindow.isVisible()
+      (browserViewHost(this.webContentsId)?.isVisible() || this.ownerWindow.isVisible())
     )
   }
 
@@ -1083,14 +1104,16 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async insertText(text: string): Promise<void> {
-    await this.contents.insertText(text)
+    await browserAgentInput(this.webContentsId, () => this.contents.insertText(text))
   }
 
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
-    this.contents.sendInputEvent(event)
+    void browserAgentInput(this.webContentsId, () => this.contents.sendInputEvent(event))
   }
 
   resizeViewport(viewport: BrowserViewport): void {
+    if (this.view && !browserViewHost(this.webContentsId))
+      this.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height })
     if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
       this.ownerWindow.setContentSize(viewport.width, viewport.height, false)
     }
@@ -1102,10 +1125,18 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
+    if (
+      this.view &&
+      !browserViewHost(this.webContentsId) &&
+      this.ownerWindow &&
+      !this.ownerWindow.isDestroyed()
+    ) {
+      await this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
+    }
     let image =
-      this.ownerWindow && !this.ownerWindow.isDestroyed()
+      !this.view && this.ownerWindow && !this.ownerWindow.isDestroyed()
         ? await this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
-        : await this.contents.capturePage()
+        : await this.contents.capturePage(undefined, { stayHidden: true, stayAwake: true })
     let size = image.getSize()
     // Electron's capturePage() returns native device pixels on high-DPI displays,
     // while Chromium mouse coordinates and our BrowserTarget contract use CSS
@@ -1169,6 +1200,7 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
     if (
+      !this.view &&
       method === 'Page.captureScreenshot' &&
       this.ownerWindow &&
       !this.ownerWindow.isDestroyed() &&
@@ -1178,7 +1210,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.ownerWindow.setPosition(-32_000, -32_000, false)
       this.ownerWindow.showInactive()
     }
-    return (await this.contents.debugger.sendCommand(method, params)) as T
+    return (await browserAgentInput(this.webContentsId, () =>
+      this.contents.debugger.sendCommand(method, params)
+    )) as T
   }
 
   setNavigationGuard(guard: (url: string) => boolean): void {
@@ -1242,6 +1276,8 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       show: false,
       x: -32_000,
       y: -32_000,
+      opacity: process.platform === 'darwin' ? 0.01 : 1,
+      focusable: false,
       width: options.viewport.width,
       height: options.viewport.height,
       useContentSize: true,
@@ -1250,6 +1286,9 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       skipTaskbar: true,
       backgroundColor: '#090b0e',
       paintWhenInitiallyHidden: true,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+    })
+    const view = new electron.WebContentsView({
       webPreferences: {
         partition: options.partition,
         sandbox: true,
@@ -1265,8 +1304,11 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         devTools: false
       }
     })
-    window.webContents.setBackgroundThrottling(false)
-    const browserSession = window.webContents.session
+    window.contentView.addChildView(view)
+    view.setBounds({ x: 0, y: 0, width: options.viewport.width, height: options.viewport.height })
+    registerBrowserView(view, window)
+    view.webContents.setBackgroundThrottling(false)
+    const browserSession = view.webContents.session
     const { installBrowserPdfProtocol } = await import('../bootstrap/artifactProtocol')
     await installBrowserPdfProtocol(browserSession.protocol)
     if (!this.securedSessions.has(browserSession)) {
@@ -1281,7 +1323,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
     // putting the browser in the taskbar or on a usable display. Takeover
     // moves this exact window on screen; completion parks it here again.
     window.showInactive()
-    return new ElectronNativeBrowserSurface(window.webContents, window, false)
+    return new ElectronNativeBrowserSurface(view.webContents, window, false, view)
   }
 
   async attachSurface(webContentsId: number): Promise<NativeBrowserSurface> {
@@ -1294,6 +1336,20 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
 }
 
 export class NativeBrowserSessionService {
+  workspaceSnapshot(sessionId: string) {
+    const session = this.getSession(sessionId)
+    return {
+      sessionId,
+      activeTabId: session.activeTabId,
+      tabs: this.tabSummaries(session),
+      ...browserNavigationState(this.getTab(session).surface.webContentsId)
+    }
+  }
+
+  refreshAfterUserInput(sessionId: string): void {
+    const session = this.getSession(sessionId)
+    for (const tab of session.tabs.values()) this.invalidateSemanticRefs(tab)
+  }
   private readonly sessions = new Map<string, SessionState>()
   private readonly runtime: NativeBrowserRuntime
   private readonly artifactRoot: string

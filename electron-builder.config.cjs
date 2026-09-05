@@ -14,6 +14,8 @@ module.exports = {
     '!.claude{,/**/*}',
     '!.github{,/**/*}',
     '!coverage{,/**/*}',
+    '!output{,/**/*}',
+    '!tmp{,/**/*}',
     '!docs{,/**/*}',
     '!scripts{,/**/*}',
     '!src/*',
