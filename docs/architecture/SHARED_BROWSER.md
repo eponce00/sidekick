@@ -62,7 +62,7 @@ removes screenshot refresh as the user's display mechanism; inference latency re
 
 ### Local verification results (2026-09-05)
 
-- Windows: 803 tests passed, 22 skipped; coverage thresholds passed.
+- Windows: 804 tests passed, 22 skipped; coverage thresholds passed.
 - TypeScript, ESLint, production build, documentation check and all 23 release-contract tests passed.
   Release-contract tests require Node 24.18.0 (the system terminal's 24.13.0 does not qualify).
 - Both Electron desktop E2E tests passed. Native Windows window capture visually confirmed the
@@ -72,3 +72,6 @@ removes screenshot refresh as the user's display mechanism; inference latency re
   four pages, 101 fields, form fill and save, semantic actions, screenshots, tabs and handoff.
 - macOS placement uses the same view-parenting path but still needs an actual macOS test;
   Windows success is not evidence of macOS window-manager behavior.
+- Windows 0.7.0 installer built locally (not published or installed). Packaged resource validation
+  and startup smoke passed. The installer is unsigned; SHA-256:
+  `D8115A5AD722F7A0BCB000DF229AF44737F3A98FE8F7DD8B2EA496A2B08694B2`.
