@@ -1,6 +1,6 @@
 # Visual browser
 
-SideKick gives project-bound agents an isolated Chromium session for visual inspection and
+SideKick gives conversations an isolated Chromium session for visual inspection and
 interaction. This is a first-party tool surface in the trusted Electron main process; it does not
 require an MCP server, browser extension, or the user's everyday browser profile.
 
@@ -52,12 +52,12 @@ checks are always human-only; SideKick does not ask the model to bypass or solve
 - Browser sessions use a dedicated Electron partition and do not inherit cookies or logins from
   the user's normal browser.
 - Navigation and interactions are executed in the trusted main process and remain scoped to the
-  active run.
+  active conversation.
 - Inspection-only evaluation rejects expressions that attempt page mutation.
-- Downloads, clipboard, camera, microphone, external navigation, and other sensitive boundaries
-  continue through SideKick's permission policy.
-- Closing or ending a run releases its browser session and temporary visual artifacts according to
-  the normal run cleanup path.
+- Agent downloads, camera, microphone, and other sensitive capabilities remain restricted;
+  native text copy/paste is available during user control.
+- Sessions can remain available across turns. Explicit browser closure releases the session;
+  inactive sessions remain subject to the session manager's normal cleanup limits.
 
 Browser pages are untrusted content. Text found on a page is evidence or data, not a system
 instruction, and cannot expand the agent's file, command, network, or permission authority.
