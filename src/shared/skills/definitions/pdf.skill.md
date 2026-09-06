@@ -4,7 +4,7 @@ name: PDF Files
 icon: FileText
 description: 'Use this skill any time a .pdf file is involved as input or output. This includes: reading or extracting text from PDFs; filling in PDF forms; creating PDFs; converting PDFs to images; analyzing PDF structure or metadata; splitting or combining PDF pages. Trigger whenever the user mentions PDF or .pdf file.'
 invocation: auto
-requiresPythonPackages: ['pypdf', 'pdfplumber', 'reportlab']
+requiresPythonPackages: ["pypdf", "pdfplumber", "reportlab", "pdf2image"]
 ---
 
 ## SKILL: PDF Files
@@ -17,7 +17,7 @@ requiresPythonPackages: ['pypdf', 'pdfplumber', 'reportlab']
 
 | Task                    | Approach                                                                                              |
 | ----------------------- | ----------------------------------------------------------------------------------------------------- |
-| Read/extract text       | pdfplumber (structured) or markitdown (quick summary)                                                 |
+| Read/extract text       | pdfplumber (structured)                                                 |
 | Check if form-fillable  | `python "$env:SIDEKICK_SKILLS\pdf\check_fillable_fields.py" file.pdf`                                 |
 | Fill a PDF form         | `python "$env:SIDEKICK_SKILLS\pdf\fill_fillable_fields.py" file.pdf fields.json filled.pdf`           |
 | Fill with annotations   | `python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" file.pdf fields.json filled.pdf` |
@@ -36,15 +36,16 @@ When the user explicitly asks to open or fill a local PDF or a direct remote PDF
 browser, use `browser_open` and the semantic PDF form controls. Use `browser_fill_form` for
 compatible fields and click **Save filled copy** after the fields verify. A remote filled copy is
 saved to the user's Downloads folder. Do not substitute a Python or shell form-fill unless the user
-requests a programmatic file workflow or the browser reports a concrete unsupported-PDF error.
+requests a programmatic file workflow. If the browser reports an unsupported-PDF error, explain it
+and ask before changing a browser-only task into a programmatic file workflow.
 
 ---
 
 ## Reading Content
 
-For accurate, structured extraction use pdfplumber (preserves layout, tables, positions). Use markitdown only for a quick plain-text summary.
+For accurate, structured extraction use pdfplumber (preserves layout, tables, positions). Page rendering additionally needs pdf2image and Poppler executables (`pdfinfo`, `pdftoppm`); check the `pdf-render` workflow separately.
 
-Write to `$env:TEMP\sk_pdf_read.py`, run, delete:
+Write to `./UNIQUE_pdf_read.py`, run, delete:
 
 ```python
 import pdfplumber, sys
@@ -64,8 +65,8 @@ with pdfplumber.open(sys.argv[1]) as pdf:
 ```
 
 ```powershell
-python "$env:TEMP\sk_pdf_read.py" "path\to\file.pdf"
-Remove-Item "$env:TEMP\sk_pdf_read.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_pdf_read.py" "path\to\file.pdf"
+Remove-Item "./UNIQUE_pdf_read.py" -ErrorAction SilentlyContinue
 ```
 
 > Note: PDFs have no lossless XML edit workflow. For edits, operate directly on the original file using pypdf/pdfplumber — never rewrite from scratch.
@@ -107,7 +108,7 @@ python "$env:SIDEKICK_SKILLS\pdf\fill_pdf_form_with_annotations.py" "form.pdf" "
 
 ## Creating a PDF from Scratch
 
-Write a temp script to `$env:TEMP\sk_pdf.py`:
+Write a temp script to `./UNIQUE_pdf.py`:
 
 ```python
 from reportlab.lib.pagesizes import letter
@@ -132,8 +133,8 @@ print('Done:', output)
 **Run it (then clean up):**
 
 ```powershell
-python "$env:TEMP\sk_pdf.py"
-Remove-Item "$env:TEMP\sk_pdf.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_pdf.py"
+Remove-Item "./UNIQUE_pdf.py" -ErrorAction SilentlyContinue
 ```
 
 ---
@@ -141,7 +142,7 @@ Remove-Item "$env:TEMP\sk_pdf.py" -ErrorAction SilentlyContinue
 ## Merging / Splitting
 
 ```python
-# Write to $env:TEMP\sk_pdf.py, run, delete
+# Write to ./UNIQUE_pdf.py, run, delete
 from pypdf import PdfWriter, PdfReader
 
 # Merge multiple PDFs

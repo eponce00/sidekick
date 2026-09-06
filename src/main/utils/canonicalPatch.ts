@@ -1,5 +1,6 @@
 export interface CanonicalPatchChunk {
   marker?: string
+  endOfFile?: boolean
   lines: string[]
 }
 
@@ -82,14 +83,21 @@ export function parseCanonicalPatch(patch: string): CanonicalPatchOperation[] {
         throw new Error(`Invalid Update File section for ${path}: expected an @@ hunk header`)
       }
       const marker = lines[index].slice(2).trim() || undefined
+      if (marker && /^-\d+(?:,\d+)?\s+\+\d+/.test(marker)) {
+        throw new Error(
+          'Invalid patch: unified-diff line numbers are unsupported; use a bare @@ header'
+        )
+      }
       index++
       const hunkLines: string[] = []
+      let endOfFile = false
       while (
         index < lines.length - 1 &&
         !FILE_HEADER.test(lines[index]) &&
         !lines[index].startsWith('@@')
       ) {
         if (lines[index] === '*** End of File') {
+          endOfFile = true
           index++
           break
         }
@@ -104,7 +112,10 @@ export function parseCanonicalPatch(patch: string): CanonicalPatchOperation[] {
       if (!hunkLines.some((line) => line.startsWith('+') || line.startsWith('-'))) {
         throw new Error(`Invalid hunk for ${path}: hunk contains no changes`)
       }
-      chunks.push({ marker, lines: hunkLines })
+      chunks.push({ marker, lines: hunkLines, endOfFile })
+      if (endOfFile && index < lines.length - 1 && !FILE_HEADER.test(lines[index])) {
+        throw new Error(`Invalid patch for ${path}: End of File must terminate the file section`)
+      }
     }
     if (!chunks.length) throw new Error(`Invalid Update File section for ${path}: no hunks found`)
     operations.push({ type: 'update', path, movePath, chunks })
@@ -156,7 +167,9 @@ function findUniqueSequence(
     if (sequenceMatches(lines, needle, index)) matches.push(index)
   }
   if (!matches.length) {
-    throw new Error(`Patch could not be applied to ${path}: hunk context is stale or missing`)
+    throw new Error(
+      `Patch could not be applied to ${path}: hunk context is stale or missing. ${PATCH_WHITESPACE_HELP}`
+    )
   }
   if (matches.length > 1) {
     throw new Error(
@@ -165,6 +178,9 @@ function findUniqueSequence(
   }
   return matches[0]
 }
+
+const PATCH_WHITESPACE_HELP =
+  'Compare the exact source text and indentation. Each hunk prefix consumes exactly ONE character: -export removes "export", whereas - export removes " export" with a leading space. Do not add a separator space after + or -. SideKick preserves existing CRLF/LF endings automatically; use normal newline-separated patch lines.'
 
 /** Apply a verified Update File operation to one in-memory file. */
 export function applyCanonicalUpdate(
@@ -202,8 +218,35 @@ export function applyCanonicalUpdate(
       .filter((line) => line.startsWith(' ') || line.startsWith('+'))
       .map((line) => line.slice(1))
 
+    // Offer a concrete correction for the observed model typo, but never apply
+    // it automatically or relax exact matching. The caller must resubmit.
+    let spacingHint = ''
+    if (
+      oldLines.length === 1 &&
+      newLines.length === 1 &&
+      oldLines[0].startsWith(' ') &&
+      newLines[0].startsWith(' ') &&
+      oldLines[0].length < 500 &&
+      newLines[0].length < 500
+    ) {
+      const candidate = oldLines[0].slice(1)
+      const positions = lines.flatMap((line, index) =>
+        index >= searchStart && line === candidate ? [index] : []
+      )
+      if (positions.length === 1 && (!chunk.endOfFile || positions[0] === lines.length - 1)) {
+        spacingHint = ` Possible separator-space typo: the unique source line is ${JSON.stringify(candidate)}. If the extra spaces were unintended, replace ONLY the two changed hunk lines with:\n-${candidate}\n+${newLines[0].slice(1)}\nKeep the full patch envelope and all other requested operations. Review this suggestion; no changes were made.`
+      }
+    }
+
     let matchIndex: number
-    if (!oldLines.length) {
+    if (chunk.endOfFile) {
+      matchIndex = lines.length - oldLines.length
+      if (matchIndex < searchStart || !sequenceMatches(lines, oldLines, matchIndex)) {
+        throw new Error(
+          `Patch could not be applied to ${operation.path}: End of File context does not match the file end. ${PATCH_WHITESPACE_HELP}${spacingHint}`
+        )
+      }
+    } else if (!oldLines.length) {
       if (lines.length && !chunk.marker) {
         throw new Error(
           `Patch could not be applied to ${operation.path}: insertion-only hunks require an @@ marker`
@@ -211,7 +254,12 @@ export function applyCanonicalUpdate(
       }
       matchIndex = chunk.marker ? searchStart + 1 : 0
     } else {
-      matchIndex = findUniqueSequence(lines, oldLines, searchStart, operation.path)
+      try {
+        matchIndex = findUniqueSequence(lines, oldLines, searchStart, operation.path)
+      } catch (error) {
+        if (spacingHint && error instanceof Error) throw new Error(error.message + spacingHint)
+        throw error
+      }
     }
     lines.splice(matchIndex, oldLines.length, ...newLines)
     cursor = matchIndex + newLines.length

@@ -39,9 +39,21 @@ export function normalizeAgentToolParameters(
   input: unknown
 ): AgentToolDefinition['function']['parameters'] {
   const root = schemaRecord(input)
-  const definitions = {
-    ...schemaRecord(root.definitions),
-    ...schemaRecord(root.$defs)
+  const localDefinition = (reference: string): unknown => {
+    // RFC 6901: decode the URI fragment before splitting pointer tokens, then
+    // decode ~1 before ~0. Keep the existing direct-definition-only subset.
+    let pointer: string
+    if (!reference.startsWith('#')) return undefined
+    try {
+      pointer = decodeURIComponent(reference.slice(1))
+    } catch {
+      return undefined
+    }
+    const match = /^\/(\$defs|definitions)\/([^/]*)$/.exec(pointer)
+    if (!match || /~(?:[^01]|$)/.test(match[2]) || !Object.hasOwn(root, match[1])) return undefined
+    const definitions = schemaRecord(root[match[1]])
+    const name = match[2].replace(/~1/g, '/').replace(/~0/g, '~')
+    return Object.hasOwn(definitions, name) ? definitions[name] : undefined
   }
   const resolving = new Set<string>()
 
@@ -49,9 +61,8 @@ export function normalizeAgentToolParameters(
     if (depth > 20) return { type: 'object', description: 'Schema depth was bounded by SideKick.' }
     const source = schemaRecord(value)
     const reference = typeof source.$ref === 'string' ? source.$ref : ''
-    const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(reference)
-    if (match && !resolving.has(reference)) {
-      const target = definitions[decodeURIComponent(match[1])]
+    if (reference && !resolving.has(reference)) {
+      const target = localDefinition(reference)
       if (target) {
         resolving.add(reference)
         const resolved = normalize(target, depth + 1)
@@ -96,7 +107,7 @@ export function normalizeAgentToolParameters(
       )
       if (Array.isArray(source.required)) {
         normalized.required = source.required.filter(
-          (name): name is string => typeof name === 'string' && name in properties
+          (name): name is string => typeof name === 'string' && Object.hasOwn(properties, name)
         )
       }
     }
@@ -134,7 +145,7 @@ Format:
 *** Add File: path/to/new.ts
 +new content
 *** Update File: path/to/existing.ts
-@@ optional function or class marker
+@@
  context line
 -old line
 +new line
@@ -142,12 +153,16 @@ Format:
 *** Delete File: path/to/obsolete.ts
 *** End Patch
 
-Update hunks are context-based, not line-number based. Read every existing target first; SideKick rejects stale or missing run-scoped read receipts. Every hunk line must begin with a space, +, or -. Add-file content lines must begin with +. Paths must be project-relative. Use *** Move to: new/path immediately after an Update File header to rename while editing.`,
+Update hunks are context-based, not line-number based. Start each hunk with a bare @@ line as shown; optionally use @@ followed by actual existing function/class text to locate it. Never use unified-diff line numbers or a closing @@. Read every existing target first; SideKick rejects stale or missing run-scoped read receipts. Every hunk line must begin with a space, +, or -. Add-file content lines must begin with +. Paths must be project-relative. Use *** Move to: new/path immediately after an Update File header to rename while editing. A final *** End of File line requires that hunk to match the actual file end.`,
       parameters: {
         type: 'object',
         required: ['patch'],
         properties: {
-          patch: { type: 'string', description: 'Complete canonical patch text.' }
+          patch: {
+            type: 'string',
+            description:
+              'Complete canonical patch text. Prefixes consume one character: -export targets export; - export targets a source line with a leading space. Do not add separator spaces. Existing CRLF/LF endings are preserved automatically.'
+          }
         }
       }
     }

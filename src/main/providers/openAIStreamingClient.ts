@@ -8,6 +8,7 @@ import {
   normalizeOpenAICompatibleEndpoint
 } from './openAICompatibleClient'
 import { previewToolCallArguments } from './toolCallPreview'
+import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import {
   incompleteToolInputArguments,
   looksLikeIncompleteToolInputError,
@@ -19,6 +20,7 @@ type Emit = (chunk: ProviderStreamChunk) => void
 
 interface OpenAIStreamEvent {
   id?: string
+  model?: string
   error?: { message?: string; type?: string }
   usage?: {
     prompt_tokens?: number
@@ -130,11 +132,18 @@ export async function streamOpenAICompatibleChat(
   endpoint: string,
   requestBody: Record<string, unknown>,
   headers: Record<string, string>,
-  emit: Emit,
+  onChunk: Emit,
   fetchImpl: FetchImplementation = fetch,
   signal?: AbortSignal
 ): Promise<ProviderStreamResult> {
+  const emit: Emit = (chunk) => {
+    signal?.throwIfAborted()
+    onChunk(chunk)
+  }
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  const cancelReader = (): void => cancelProviderStreamReader(reader)
   try {
+    signal?.throwIfAborted()
     const response = await fetchImpl(
       `${normalizeOpenAICompatibleEndpoint(endpoint)}/chat/completions`,
       {
@@ -156,8 +165,10 @@ export async function streamOpenAICompatibleChat(
         retryAfter: retryAfter(response)
       }
     }
-    const reader = response.body?.getReader()
+    reader = response.body?.getReader()
     if (!reader) return { ok: false, error: 'Provider returned no response body' }
+    signal?.addEventListener('abort', cancelReader, { once: true })
+    signal?.throwIfAborted()
 
     const decoder = new TextDecoder()
     const thinkRouter = createThinkTagRouter(emit)
@@ -172,96 +183,128 @@ export async function streamOpenAICompatibleChat(
     let completionTokens = 0
     let predictedPerSecond: number | undefined
     let finishReason = 'stop'
+    let gotFinishReason = false
     let generationId: string | undefined
+    let reportedModel: string | undefined
     let streamError: string | undefined
     let gotContent = false
     let gotThinking = false
+    let streamDone = false
 
     const consumeLine = (line: string): void => {
+      signal?.throwIfAborted()
       const trimmed = line.trim()
       if (!trimmed || trimmed.startsWith(':') || !trimmed.startsWith('data:')) return
       const data = trimmed.slice(5).trim()
-      if (!data || data === '[DONE]') return
+      if (!data) return
+      if (data === '[DONE]') {
+        streamDone = true
+        return
+      }
+      let json: OpenAIStreamEvent
       try {
-        const json = JSON.parse(data) as OpenAIStreamEvent
-        if (json.error) {
-          streamError = json.error.message || json.error.type || 'Provider stream failed'
-          return
-        }
-        if (typeof json.id === 'string' && !generationId) generationId = json.id
-        if (json.usage) {
-          promptTokens = json.usage.prompt_tokens || promptTokens
-          completionTokens = json.usage.completion_tokens || completionTokens
-          if (typeof json.usage.prompt_tokens_details?.cached_tokens === 'number') {
-            cachedPromptTokens = json.usage.prompt_tokens_details.cached_tokens
-          }
-        }
-        if (typeof json.timings?.predicted_per_second === 'number') {
-          predictedPerSecond = json.timings.predicted_per_second
-        }
-        const choice = json.choices?.[0]
-        if (!choice) return
-        const delta = choice.delta || {}
-        const reasoning = reasoningText(delta)
-        if (reasoning) {
-          gotThinking = true
-          emit({ message: { thinking: reasoning }, done: false })
-        }
-        if (typeof delta.content === 'string' && delta.content) {
-          gotContent = true
-          thinkRouter.push(delta.content)
-        }
-        if (Array.isArray(delta.tool_calls)) {
-          for (const raw of delta.tool_calls) {
-            const index = raw.index ?? 0
-            const existing = toolCalls.get(index) || {
-              id: raw.id || `call_${Date.now()}_${index}`,
-              type: raw.type || 'function',
-              function: { name: '', arguments: '' }
-            }
-            if (raw.id) existing.id = raw.id
-            if (raw.type) existing.type = raw.type
-            if (raw.function?.name) existing.function.name += raw.function.name
-            if (raw.function?.arguments) existing.function.arguments += raw.function.arguments
-            toolCalls.set(index, existing)
-
-            const previewArguments = previewToolCallArguments(existing.function.arguments)
-            const previewSignature = `${existing.function.name}\n${JSON.stringify(previewArguments)}`
-            if (existing.function.name && toolPreviewSignatures.get(index) !== previewSignature) {
-              toolPreviewSignatures.set(index, previewSignature)
-              emit({
-                message: {
-                  tool_calls: [
-                    {
-                      id: existing.id,
-                      index,
-                      type: existing.type,
-                      function: { name: existing.function.name, arguments: previewArguments }
-                    }
-                  ]
-                },
-                done: false
-              })
-            }
-          }
-        }
-        if (choice.finish_reason) finishReason = choice.finish_reason
+        json = JSON.parse(data) as OpenAIStreamEvent
       } catch {
-        // Providers may split arbitrary network chunks, but never a completed SSE data line.
+        // Retain tolerance for malformed SSE JSON only. Consumer/storage failures
+        // are real turn failures and must escape to the outer result handler.
+        return
+      }
+      if (typeof json.model === 'string') reportedModel = json.model
+      if (json.error) {
+        streamError = json.error.message || json.error.type || 'Provider stream failed'
+        return
+      }
+      if (typeof json.id === 'string' && !generationId) generationId = json.id
+      if (json.usage) {
+        promptTokens = json.usage.prompt_tokens || promptTokens
+        completionTokens = json.usage.completion_tokens || completionTokens
+        if (typeof json.usage.prompt_tokens_details?.cached_tokens === 'number') {
+          cachedPromptTokens = json.usage.prompt_tokens_details.cached_tokens
+        }
+      }
+      if (typeof json.timings?.predicted_per_second === 'number') {
+        predictedPerSecond = json.timings.predicted_per_second
+      }
+      const choice = json.choices?.[0]
+      if (!choice) return
+      const delta = choice.delta || {}
+      const reasoning = reasoningText(delta)
+      if (reasoning) {
+        gotThinking = true
+        emit({ message: { thinking: reasoning }, done: false })
+      }
+      if (typeof delta.content === 'string' && delta.content) {
+        gotContent = true
+        thinkRouter.push(delta.content)
+      }
+      if (Array.isArray(delta.tool_calls)) {
+        for (const raw of delta.tool_calls) {
+          const index = raw.index ?? 0
+          const existing = toolCalls.get(index) || {
+            id: raw.id || `call_${Date.now()}_${index}`,
+            type: raw.type || 'function',
+            function: { name: '', arguments: '' }
+          }
+          if (raw.id) existing.id = raw.id
+          if (raw.type) existing.type = raw.type
+          if (raw.function?.name) existing.function.name += raw.function.name
+          if (raw.function?.arguments) existing.function.arguments += raw.function.arguments
+          toolCalls.set(index, existing)
+
+          const previewArguments = previewToolCallArguments(existing.function.arguments)
+          const previewSignature = `${existing.function.name}\n${JSON.stringify(previewArguments)}`
+          if (existing.function.name && toolPreviewSignatures.get(index) !== previewSignature) {
+            toolPreviewSignatures.set(index, previewSignature)
+            emit({
+              message: {
+                tool_calls: [
+                  {
+                    id: existing.id,
+                    index,
+                    type: existing.type,
+                    function: { name: existing.function.name, arguments: previewArguments }
+                  }
+                ]
+              },
+              done: false
+            })
+          }
+        }
+      }
+      if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
+        finishReason = choice.finish_reason
+        gotFinishReason = true
       }
     }
 
     while (true) {
+      signal?.throwIfAborted()
       const { done, value } = await reader.read()
+      signal?.throwIfAborted()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split(/\r?\n/)
       buffer = lines.pop() || ''
-      lines.forEach(consumeLine)
+      for (const line of lines) {
+        consumeLine(line)
+        if (streamDone || streamError) break
+      }
+      if (streamDone || streamError) break
     }
-    buffer += decoder.decode()
-    if (buffer) consumeLine(buffer)
+    if (!streamDone && !streamError) {
+      buffer += decoder.decode()
+      if (buffer) consumeLine(buffer)
+    }
+    signal?.throwIfAborted()
     thinkRouter.finish()
+    signal?.throwIfAborted()
+
+    // EOF alone is not a completed generation. Do not promote partial previews
+    // into executable tools or launch the empty-stream compatibility fallback.
+    // An explicit finish reason may precede usage, so it never ends reading early.
+    if (!streamDone && !gotFinishReason && !streamError) {
+      streamError = 'Provider stream ended before completion'
+    }
 
     if (streamError) {
       const incompleteCalls = [...toolCalls.entries()]
@@ -289,6 +332,7 @@ export async function streamOpenAICompatibleChat(
           eval_count: completionTokens,
           ...(predictedPerSecond ? { predicted_per_second: predictedPerSecond } : {})
         })
+        signal?.throwIfAborted()
         return { ok: true, generationId }
       }
       emit({ done: true, done_reason: 'error', error: streamError })
@@ -346,16 +390,21 @@ export async function streamOpenAICompatibleChat(
     emit({
       done: true,
       done_reason: finishReason,
+      ...(reportedModel ? { reported_model: reportedModel } : {}),
       prompt_eval_count: promptTokens,
       ...(cachedPromptTokens === undefined ? {} : { cached_prompt_tokens: cachedPromptTokens }),
       eval_count: completionTokens,
       ...(predictedPerSecond ? { predicted_per_second: predictedPerSecond } : {})
     })
+    signal?.throwIfAborted()
     return { ok: true, generationId }
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError')
       return { ok: false, error: 'aborted' }
     return { ok: false, error: error instanceof Error ? error.message : 'Provider stream failed' }
+  } finally {
+    signal?.removeEventListener('abort', cancelReader)
+    releaseProviderStreamReader(reader)
   }
 }
 

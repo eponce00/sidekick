@@ -1,6 +1,7 @@
 """Pack a directory into a DOCX, PPTX, or XLSX file.
 
-Validates with auto-repair, condenses XML formatting, and creates the Office file.
+Performs bounded structural validation, condenses XML formatting, and creates the Office file.
+Structural validation is not complete XSD validation or rendering verification.
 
 Usage:
     python pack.py <input_directory> <output_file> [--original <file>] [--validate true|false]
@@ -11,8 +12,9 @@ Examples:
 """
 
 import argparse
+import os
+import stat
 import sys
-import shutil
 
 # Ensure stdout/stderr use UTF-8 on Windows (avoids cp1252 encoding crashes)
 if hasattr(sys.stdout, 'reconfigure'):
@@ -25,7 +27,49 @@ from pathlib import Path
 
 import defusedxml.minidom
 
-from validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
+from structure import MAX_PARTS, read_package, safe_name, validate_parts
+
+TRANSACTION_PREFIXES = (".sidekick-comment-", ".sidekick-pack-")
+TRANSACTION_RESIDUE_ERROR = (
+    "Error: Office transaction residue detected. Review and recover the original parts first; "
+    "remove recognized staging/backup files only after review, then retry. Nothing was packed or removed."
+)
+
+
+def _transaction_residue(name):
+    return any(part.casefold().startswith(TRANSACTION_PREFIXES) for part in Path(name).parts)
+
+
+def _package_names_without_following_links(root):
+    """Bounded metadata-only preflight; never recurse through symlinks/reparse points."""
+    def check(info):
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+            raise ValueError("Package links and reparse points are unsupported")
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise ValueError("Package special files are unsupported")
+
+    check(root.lstat())
+    pending = [(root, 0)]
+    entries = 0
+    while pending:
+        directory, depth = pending.pop()
+        # Check again immediately before opening, including directories queued earlier.
+        check(directory.lstat())
+        with os.scandir(directory) as children:
+            for child in children:
+                entries += 1
+                if entries > MAX_PARTS or depth >= 32:
+                    raise ValueError("Package exceeds residue-scan entry/depth limits")
+                path = Path(child.path)
+                name = path.relative_to(root).as_posix()
+                if len(name) > 1024 or len(name.encode("utf-8")) > 1024:
+                    raise ValueError("Package exceeds residue-scan path limits")
+                safe_name(name)
+                info = child.stat(follow_symlinks=False)
+                check(info)
+                yield name
+                if stat.S_ISDIR(info.st_mode):
+                    pending.append((path, depth + 1))
 
 def pack(
     input_directory: str,
@@ -43,72 +87,71 @@ def pack(
 
     if suffix not in {".docx", ".pptx", ".xlsx"}:
         return None, f"Error: {output_file} must be a .docx, .pptx, or .xlsx file"
+    if os.path.lexists(output_path):
+        return None, "Error: Output already exists; choose a new output path"
 
-    if validate and original_file:
-        original_path = Path(original_file)
-        if original_path.exists():
-            success, output = _run_validation(
-                input_dir, original_path, suffix, infer_author_func
-            )
-            if output:
-                print(output)
-            if not success:
-                return None, f"Error: Validation failed for {input_dir}"
+    try:
+        # Inspect names before reading bytes, including empty residue directories.
+        # Never silently discard backups that may contain the only original content.
+        if _transaction_residue(input_dir.name) or any(
+            _transaction_residue(name) for name in _package_names_without_following_links(input_dir)
+        ):
+            return None, TRANSACTION_RESIDUE_ERROR
+        # Path/size/symlink safety applies even when semantic structural checks are disabled.
+        parts = read_package(input_dir)
+        # A residue may have appeared after the directory scan; reject that snapshot too.
+        if any(_transaction_residue(name) for name in parts):
+            return None, TRANSACTION_RESIDUE_ERROR
+    except Exception as error:
+        return None, f"Error: Unsafe or unreadable package: {error}"
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_content_dir = Path(temp_dir) / "content"
-        shutil.copytree(input_dir, temp_content_dir)
+    if validate:
+        report = validate_parts(parts)
+        if not report["valid"]:
+            return None, "Error: Structural validation failed: " + "; ".join(report["errors"])
+        print("OPC/OOXML structural checks passed; full XSD, rendering, and semantic validation not performed")
 
-        for pattern in ["*.xml", "*.rels"]:
-            for xml_file in temp_content_dir.rglob(pattern):
-                _condense_xml(xml_file)
+    staged = None
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_content_dir = Path(temp_dir) / "content"
+            temp_content_dir.mkdir()
+            for name, content in parts.items():
+                destination = temp_content_dir / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(content)
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for f in temp_content_dir.rglob("*"):
-                if f.is_file():
-                    zf.write(f, f.relative_to(temp_content_dir))
+            for pattern in ["*.xml", "*.rels"]:
+                for xml_file in temp_content_dir.rglob(pattern):
+                    _condense_xml(xml_file)
 
-    return None, f"Successfully packed {input_dir} to {output_file}"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w+b", dir=output_path.parent,
+                                             prefix=".sidekick-pack-", suffix=".tmp", delete=False) as stream:
+                staged = Path(stream.name)
+                with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for f in temp_content_dir.rglob("*"):
+                        if f.is_file():
+                            zf.write(f, f.relative_to(temp_content_dir))
+                stream.flush()
+                os.fsync(stream.fileno())
 
-
-def _run_validation(
-    unpacked_dir: Path,
-    original_file: Path,
-    suffix: str,
-    infer_author_func=None,
-) -> tuple[bool, str | None]:
-    output_lines = []
-    validators = []
-
-    if suffix == ".docx":
-        author = "Claude"
-        if infer_author_func:
+        # Same-directory hard-link publication is atomic and cannot replace a destination
+        # created since the initial check. Never fall back to copy or overwriting rename.
+        # Unsupported filesystems fail closed; a crash may leave only a hidden staging file.
+        os.link(staged, output_path)
+    except Exception as error:
+        return None, f"Error: Packing or atomic publication failed: {error}"
+    finally:
+        if staged is not None:
             try:
-                author = infer_author_func(unpacked_dir, original_file)
-            except ValueError as e:
-                print(f"Warning: {e} Using default author 'Claude'.", file=sys.stderr)
+                staged.unlink(missing_ok=True)
+            except OSError:
+                # Publication may already have succeeded. Do not misreport a complete final
+                # artifact as a failed write solely because temporary-name cleanup failed.
+                print("Warning: Could not remove a .sidekick-pack- staging file", file=sys.stderr)
 
-        validators = [
-            DOCXSchemaValidator(unpacked_dir, original_file),
-            RedliningValidator(unpacked_dir, original_file, author=author),
-        ]
-    elif suffix == ".pptx":
-        validators = [PPTXSchemaValidator(unpacked_dir, original_file)]
-
-    if not validators:
-        return True, None
-
-    total_repairs = sum(v.repair() for v in validators)
-    if total_repairs:
-        output_lines.append(f"Auto-repaired {total_repairs} issue(s)")
-
-    success = all(v.validate() for v in validators)
-
-    if success:
-        output_lines.append("All validations PASSED!")
-
-    return success, "\n".join(output_lines) if output_lines else None
+    return None, f"Successfully packed {input_dir} to {output_file}" + (" (structural validation passed; not XSD validation)" if validate else " (validation not performed)")
 
 
 def _condense_xml(xml_file: Path) -> None:
@@ -142,14 +185,14 @@ if __name__ == "__main__":
     parser.add_argument("output_file", help="Output Office file (.docx/.pptx/.xlsx)")
     parser.add_argument(
         "--original",
-        help="Original file for validation comparison",
+        help="Legacy compatibility argument; structural checks do not compare document semantics",
     )
     parser.add_argument(
         "--validate",
         type=lambda x: x.lower() == "true",
         default=True,
         metavar="true|false",
-        help="Run validation with auto-repair (default: true)",
+        help="Run non-mutating structural checks, not XSD validation (default: true)",
     )
     args = parser.parse_args()
 

@@ -11,6 +11,13 @@ const FORBIDDEN_ROOTS = new Set([
   'dist',
   'docs',
   'output',
+  'reports',
+  'artifacts',
+  'test-results',
+  'playwright-report',
+  '.codex',
+  '.agents',
+  'memory',
   'tmp',
   'scripts',
   'src'
@@ -48,6 +55,16 @@ function validatePackageEntries(entries) {
   }
 
   const normalized = new Set(entries.map((entry) => entry.replaceAll('\\', '/')))
+  for (const entry of normalized) {
+    assert(
+      !/^\/?resources\/skills\/office\/validators(?:\/|$)/i.test(entry),
+      'Packaged app contains dormant Office validators'
+    )
+    assert(
+      !/(?:^|\/)__pycache__(?:\/|$)|\.(?:pyc|pyo)$/i.test(entry),
+      'Packaged app contains a local Python bytecode cache'
+    )
+  }
   for (const required of REQUIRED_PDF_RUNTIME_ENTRIES) {
     assert(normalized.has(required), `Packaged app is missing PDF runtime entry: ${required}`)
   }

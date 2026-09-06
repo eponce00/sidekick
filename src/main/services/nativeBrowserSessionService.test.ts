@@ -40,6 +40,14 @@ class FakeSurface implements NativeBrowserSurface {
   lastBackendNodeId: number | undefined
   selectAllPending = false
   ignoreTextInput = false
+  textDiagnosticOverride?: Record<string, unknown>
+  textDiagnosticRelease?: Promise<unknown>
+  onTextDiagnostic?: () => void
+  textDiagnosticError?: Error
+  private releasingTextDiagnostic = false
+  onTextTargetRelease?: (validation: number) => void
+  private textTargetValidations = 0
+  private releasingTextTarget = false
   navigateAfterTextInput = false
   navigateOnClickBackendNodeId: number | undefined
   stealFocusOnClickBackendNodeId: number | undefined
@@ -381,6 +389,14 @@ class FakeSurface implements NativeBrowserSurface {
       return { object: { objectId: `object-${String(params?.backendNodeId)}` } } as T
     }
     if (method === 'DOM.getDocument') return { root: { nodeId: 1 } } as T
+    if (method === 'Runtime.releaseObject' && this.releasingTextTarget) {
+      this.releasingTextTarget = false
+      this.onTextTargetRelease?.(this.textTargetValidations)
+    }
+    if (method === 'Runtime.releaseObject' && this.releasingTextDiagnostic) {
+      this.releasingTextDiagnostic = false
+      return (await this.textDiagnosticRelease) as T
+    }
     if (method === 'DOM.querySelectorAll') return { nodeIds: [99] } as T
     if (method === 'DOM.describeNode') {
       return { node: { backendNodeId: this.selectorBackendNodeId } } as T
@@ -396,12 +412,29 @@ class FakeSurface implements NativeBrowserSurface {
       }
       const control = this.formControls.get(backendNodeId)
       if (declaration.includes('Target text field did not retain focus')) {
+        this.textTargetValidations += 1
+        this.releasingTextTarget = true
         if (control?.kind !== 'textbox' || this.focusedBackendNodeId !== backendNodeId) {
           return {
             exceptionDetails: { text: 'Target text field did not retain focus' }
           } as T
         }
-        return { result: { value: true } } as T
+        return { result: { value: control.value === '' } } as T
+      }
+      if (declaration.includes('documentFocused: document.hasFocus()')) {
+        this.releasingTextDiagnostic = true
+        this.onTextDiagnostic?.()
+        if (this.textDiagnosticError) throw this.textDiagnosticError
+        return {
+          result: {
+            value: this.textDiagnosticOverride ?? {
+              connected: !!control,
+              targetFocused: this.focusedBackendNodeId === backendNodeId,
+              documentFocused: true,
+              empty: control?.value === ''
+            }
+          }
+        } as T
       }
       if (declaration.includes('unsupportedInputs')) {
         if (!control) {
@@ -652,6 +685,514 @@ afterEach(async () => {
 })
 
 describe('NativeBrowserSessionService', () => {
+  it.each(['reject', 'close-failure'] as const)(
+    'retains retired parent capacity until pending child %s settles and cleanup succeeds',
+    async (outcome) => {
+      const { service, runtime } = await testService({ maxTotalSessions: 1, maxTabsPerSession: 2 })
+      const opened = await service.open({ runId: 'retired-pending-child' })
+      const retired = (service as unknown as { retiredSessions: Set<unknown> }).retiredSessions
+      const entered = Promise.withResolvers<void>()
+      const creation = Promise.withResolvers<NativeBrowserSurface>()
+      const originalCreate = runtime.createSurface.bind(runtime)
+      let options!: Parameters<FakeRuntime['createSurface']>[0]
+      const spy = vi.spyOn(runtime, 'createSurface').mockImplementationOnce((input) => {
+        options = input
+        entered.resolve()
+        return creation.promise
+      })
+      const controller = new AbortController()
+      const pending = service.tabs(
+        { sessionId: opened.sessionId, action: 'new' },
+        { signal: controller.signal }
+      )
+      const result = pending.catch(() => undefined)
+      await entered.promise
+      controller.abort()
+      await result
+      try {
+        await expect(service.close({ sessionId: opened.sessionId })).rejects.toThrow(
+          'creation is still pending'
+        )
+        await expect(service.dispose()).rejects.toThrow('creation is still pending')
+        expect(retired.size).toBe(1)
+        expect(() => service.workspaceSnapshot(opened.sessionId)).toThrow('already closed')
+        await expect(service.open({ runId: 'other-run' })).rejects.toThrow('session limit')
+        if (outcome === 'reject') {
+          creation.reject(new Error('synthetic child creation rejection'))
+          await creation.promise.catch(() => undefined)
+          await Promise.resolve()
+          await Promise.resolve()
+        } else {
+          const late = await originalCreate(options)
+          const closeEntered = Promise.withResolvers<void>()
+          const failure = new Error('synthetic child close failure')
+          const closeSpy = vi.spyOn(late, 'close').mockImplementation(async () => {
+            closeEntered.resolve()
+            throw failure
+          })
+          creation.resolve(late)
+          await closeEntered.promise
+          await expect(service.dispose()).rejects.toBe(failure)
+          expect(retired.size).toBe(1)
+          await expect(service.open({ runId: 'other-run' })).rejects.toThrow('session limit')
+          expect(late.isDestroyed()).toBe(false)
+          closeSpy.mockRestore()
+        }
+        await service.dispose()
+        expect(retired.size).toBe(0)
+        expect(runtime.surfaces.every((surface) => surface.destroyed)).toBe(true)
+        await service.open({ runId: 'recovered-parent-capacity' })
+      } finally {
+        spy.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it('closes a cancelled new-tab surface that resolves after its queue slot is released', async () => {
+    const { service, runtime } = await testService({ maxTabsPerSession: 2 })
+    const opened = await service.open({ runId: 'late-tab-creation' })
+    const entered = Promise.withResolvers<void>()
+    const creation = Promise.withResolvers<NativeBrowserSurface>()
+    const originalCreate = runtime.createSurface.bind(runtime)
+    let options!: Parameters<FakeRuntime['createSurface']>[0]
+    const spy = vi.spyOn(runtime, 'createSurface').mockImplementationOnce((input) => {
+      options = input
+      entered.resolve()
+      return creation.promise
+    })
+    const controller = new AbortController()
+    const pending = service.tabs(
+      { sessionId: opened.sessionId, action: 'new' },
+      { signal: controller.signal }
+    )
+    const result = pending.then(
+      () => 'success',
+      () => 'rejected'
+    )
+    await entered.promise
+    controller.abort()
+    expect(await result).toBe('rejected')
+    try {
+      await expect(service.tabs({ sessionId: opened.sessionId, action: 'new' })).rejects.toThrow(
+        'tab limit'
+      )
+      const late = await originalCreate(options)
+      const closed = Promise.withResolvers<void>()
+      const originalClose = late.close.bind(late)
+      vi.spyOn(late, 'close').mockImplementation(async () => {
+        await originalClose()
+        closed.resolve()
+      })
+      creation.resolve(late)
+      await closed.promise
+      await service.tabs({ sessionId: opened.sessionId, action: 'list' })
+      const replacement = await service.tabs({ sessionId: opened.sessionId, action: 'new' })
+      expect(replacement.tabs).toHaveLength(2)
+      await service.dispose()
+      expect(runtime.surfaces).toHaveLength(3)
+      expect(late.isDestroyed()).toBe(true)
+    } finally {
+      spy.mockRestore()
+      for (const surface of runtime.surfaces) await surface.close()
+      await service.dispose()
+    }
+  })
+
+  it('releases a cancelled reservation when underlying creation rejects late', async () => {
+    const { service, runtime } = await testService({ maxTotalSessions: 1 })
+    const reservations = (service as unknown as { openingReservations: Set<unknown> })
+      .openingReservations
+    const entered = Promise.withResolvers<void>()
+    const creation = Promise.withResolvers<NativeBrowserSurface>()
+    const spy = vi.spyOn(runtime, 'createSurface').mockImplementation(() => {
+      entered.resolve()
+      return creation.promise
+    })
+    const controller = new AbortController()
+    const opening = service.open({ runId: 'late-rejection' }, { signal: controller.signal })
+    const result = opening.catch(() => undefined)
+    await entered.promise
+    controller.abort()
+    await result
+    expect(reservations.size).toBe(1)
+    creation.reject(new Error('synthetic late creation rejection'))
+    // Await the exact underlying settlement; the service's observer also runs in this turn.
+    await creation.promise.catch(() => undefined)
+    await Promise.resolve()
+    await Promise.resolve()
+    spy.mockRestore()
+    try {
+      expect(reservations.size).toBe(0)
+      await service.open({ runId: 'recovered-creation' })
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('counts reservation and registering session only once during debugger attachment', async () => {
+    const { service, runtime } = await testService({ maxTotalSessions: 2, maxSessionsPerRun: 2 })
+    const entered = Promise.withResolvers<void>()
+    const attachment = Promise.withResolvers<void>()
+    const originalAttach = FakeSurface.prototype.attachDebugger
+    const spy = vi
+      .spyOn(FakeSurface.prototype, 'attachDebugger')
+      .mockImplementation(async function (this: FakeSurface) {
+        if (this === runtime.surfaces[0]) {
+          entered.resolve()
+          await attachment.promise
+        }
+        return originalAttach.call(this)
+      })
+    const first = service.open({ runId: 'attachment-capacity' })
+    const observed = first.catch(() => undefined)
+    await entered.promise
+    try {
+      await service.open({ runId: 'attachment-capacity' })
+      await expect(service.open({ runId: 'attachment-capacity' })).rejects.toThrow('session limit')
+      attachment.resolve()
+      await first
+      expect(runtime.surfaces).toHaveLength(2)
+    } finally {
+      attachment.resolve()
+      await observed
+      spy.mockRestore()
+      await service.dispose()
+    }
+  })
+
+  it('releases failed opening reservations and transfers successful opens without double counting', async () => {
+    const { service, runtime } = await testService({ maxTotalSessions: 2, maxSessionsPerRun: 2 })
+    const reservations = (service as unknown as { openingReservations: Set<unknown> })
+      .openingReservations
+    const spy = vi
+      .spyOn(runtime, 'createSurface')
+      .mockRejectedValueOnce(new Error('synthetic creation failure'))
+    try {
+      await expect(service.open({ runId: 'reservation-transfer' })).rejects.toThrow(
+        'synthetic creation failure'
+      )
+      expect(reservations.size).toBe(0)
+      const controller = new AbortController()
+      controller.abort()
+      await expect(
+        service.open({ runId: 'reservation-transfer' }, { signal: controller.signal })
+      ).rejects.toThrow()
+      expect(spy).toHaveBeenCalledTimes(1)
+      expect(reservations.size).toBe(0)
+      await expect(
+        service.open({ runId: 'reservation-transfer', allowedFileRoots: ['relative'] })
+      ).rejects.toThrow()
+      expect(reservations.size).toBe(0)
+      await service.open({ runId: 'reservation-transfer' })
+      await service.open({ runId: 'reservation-transfer' })
+      expect(reservations.size).toBe(0)
+      await expect(service.open({ runId: 'reservation-transfer' })).rejects.toThrow('session limit')
+    } finally {
+      spy.mockRestore()
+      await service.dispose()
+    }
+  })
+
+  it.each([false, true])(
+    'keeps cancelled late creation owned until cleanup succeeds (failure: %s)',
+    async (closeFails) => {
+      const { service, runtime } = await testService({ maxTotalSessions: 1 })
+      const reservations = (service as unknown as { openingReservations: Set<unknown> })
+        .openingReservations
+      const entered = Promise.withResolvers<void>()
+      const creation = Promise.withResolvers<NativeBrowserSurface>()
+      const originalCreate = runtime.createSurface.bind(runtime)
+      let options!: Parameters<FakeRuntime['createSurface']>[0]
+      const creationSpy = vi.spyOn(runtime, 'createSurface').mockImplementation((input) => {
+        options = input
+        entered.resolve()
+        return creation.promise
+      })
+      const controller = new AbortController()
+      const opening = service.open({ runId: 'cancelled-creation' }, { signal: controller.signal })
+      const result = opening.then(
+        () => 'success',
+        () => 'rejected'
+      )
+      await entered.promise
+      controller.abort()
+      expect(await result).toBe('rejected')
+      expect(reservations.size).toBe(1)
+      await expect(service.open({ runId: 'other-run' })).rejects.toThrow('session limit')
+      const surface = (await originalCreate(options)) as FakeSurface
+      const closeEntered = Promise.withResolvers<void>()
+      const closeGate = Promise.withResolvers<void>()
+      const originalClose = surface.close.bind(surface)
+      const closeFailure = new Error('synthetic late close failure')
+      const closeWork = closeGate.promise.then(async () => {
+        if (closeFails) throw closeFailure
+        await originalClose()
+      })
+      const closeResult = closeWork.catch(() => undefined)
+      const closeSpy = vi.spyOn(surface, 'close').mockImplementation(() => {
+        closeEntered.resolve()
+        return closeWork
+      })
+      try {
+        creation.resolve(surface)
+        await closeEntered.promise
+        expect(reservations.size).toBe(1)
+        await expect(service.open({ runId: 'other-run' })).rejects.toThrow('session limit')
+        closeGate.resolve()
+        await closeResult
+        if (closeFails) {
+          await expect(service.dispose()).rejects.toBe(closeFailure)
+          expect(reservations.size).toBe(1)
+          expect(surface.destroyed).toBe(false)
+          closeSpy.mockRestore()
+        }
+        await service.dispose()
+        expect(reservations.size).toBe(0)
+        expect(surface.destroyed).toBe(true)
+      } finally {
+        creation.resolve(surface)
+        closeGate.resolve()
+        await closeResult
+        closeSpy.mockRestore()
+        creationSpy.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it.each(['total', 'run'] as const)(
+    'counts pending surface creation toward the %s session limit',
+    async (limit) => {
+      const { service, runtime } = await testService(
+        limit === 'total' ? { maxTotalSessions: 1 } : { maxSessionsPerRun: 1 }
+      )
+      const entered = Promise.withResolvers<void>()
+      const creation = Promise.withResolvers<void>()
+      const createSurface = runtime.createSurface.bind(runtime)
+      const spy = vi.spyOn(runtime, 'createSurface').mockImplementation(async (options) => {
+        entered.resolve()
+        await creation.promise
+        return createSurface(options)
+      })
+      const first = service.open({ runId: 'pending-capacity' })
+      const firstResult = first.then(
+        () => 'success',
+        () => 'rejected'
+      )
+      await entered.promise
+      const second = service.open({ runId: 'pending-capacity' })
+      const secondResult = second.then(
+        () => 'success',
+        () => 'rejected'
+      )
+      try {
+        creation.resolve()
+        expect(await firstResult).toBe('success')
+        expect(await secondResult).toBe('rejected')
+        expect(spy).toHaveBeenCalledTimes(1)
+      } finally {
+        creation.resolve()
+        await Promise.all([firstResult, secondResult])
+        spy.mockRestore()
+        await service.dispose()
+      }
+    }
+  )
+
+  it('retains cleanup ownership of remaining surfaces after a close rejection', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'close-failure' })
+    await service.tabs({ sessionId: opened.sessionId, action: 'new' })
+    const spy = vi
+      .spyOn(runtime.surfaces[0], 'close')
+      .mockRejectedValueOnce(new Error('synthetic close failure'))
+    try {
+      await expect(service.close({ sessionId: opened.sessionId })).rejects.toThrow(
+        'synthetic close failure'
+      )
+      expect(runtime.surfaces[1].destroyed).toBe(true)
+      expect((service as unknown as { retiredSessions: Set<unknown> }).retiredSessions.size).toBe(1)
+      await service.dispose()
+      expect(runtime.surfaces.every((surface) => surface.destroyed)).toBe(true)
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect((service as unknown as { retiredSessions: Set<unknown> }).retiredSessions.size).toBe(0)
+    } finally {
+      spy.mockRestore()
+      for (const surface of runtime.surfaces) await surface.close()
+      await service.dispose()
+    }
+  })
+
+  it.each(['total', 'run'] as const)(
+    'retains permanent cleanup failures outside active operations and counts the %s limit',
+    async (limit) => {
+      const { service, runtime } = await testService(
+        limit === 'total' ? { maxTotalSessions: 1 } : { maxSessionsPerRun: 1 }
+      )
+      const opened = await service.open({ runId: 'permanent-close' })
+      const failure = new Error('synthetic permanent close failure')
+      const spy = vi.spyOn(runtime.surfaces[0], 'close').mockRejectedValue(failure)
+      const retired = (service as unknown as { retiredSessions: Set<unknown> }).retiredSessions
+      try {
+        await expect(service.close({ sessionId: opened.sessionId })).rejects.toBe(failure)
+        expect(() => service.workspaceSnapshot(opened.sessionId)).toThrow('already closed')
+        await expect(service.dispose()).rejects.toBe(failure)
+        expect(retired.size).toBe(1)
+        expect(runtime.surfaces[0].destroyed).toBe(false)
+        await expect(service.open({ runId: 'permanent-close' })).rejects.toThrow(
+          limit === 'total' ? 'session limit' : 'maximum 1 browser sessions'
+        )
+        expect(runtime.surfaces).toHaveLength(1)
+      } finally {
+        spy.mockRestore()
+        await service.dispose()
+      }
+      expect(retired.size).toBe(0)
+      expect(runtime.surfaces[0].destroyed).toBe(true)
+    }
+  )
+
+  it('continues surface cleanup after a disposer error and retries the failed disposer', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'disposer-failure' })
+    await service.tabs({ sessionId: opened.sessionId, action: 'new' })
+    const internals = service as unknown as {
+      sessions: Map<string, { tabs: Map<string, { disposers: Array<() => void> }> }>
+      retiredSessions: Set<unknown>
+    }
+    const failure = new Error('synthetic disposer failure')
+    const dispose = vi.fn().mockImplementationOnce(() => {
+      throw failure
+    })
+    internals.sessions.get(opened.sessionId)!.tabs.get(opened.tab.id)!.disposers.push(dispose)
+    try {
+      await expect(service.close({ sessionId: opened.sessionId })).rejects.toBe(failure)
+      expect(runtime.surfaces.every((surface) => surface.destroyed)).toBe(true)
+      expect(internals.retiredSessions.size).toBe(1)
+      await service.dispose()
+      expect(dispose).toHaveBeenCalledTimes(2)
+      expect(internals.retiredSessions.size).toBe(0)
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('does not retire a replacement session from late close or destruction callbacks', async () => {
+    const { service } = await testService()
+    const opened = await service.open({ runId: 'close-generation' })
+    const internals = service as unknown as {
+      sessions: Map<string, { id: string; tabs: Map<string, unknown> }>
+      cleanupTemporaryPdfSources: () => Promise<void>
+      handleSurfaceDestroyed: (session: unknown, tab: unknown) => void
+    }
+    const original = internals.sessions.get(opened.sessionId)!
+    const tab = [...original.tabs.values()][0]
+    const cleanup = Promise.withResolvers<void>()
+    const spy = vi.spyOn(internals, 'cleanupTemporaryPdfSources').mockReturnValue(cleanup.promise)
+    const closing = service.close({ sessionId: opened.sessionId })
+    const replacement = { ...original, tabs: new Map<string, unknown>() }
+    internals.sessions.set(opened.sessionId, replacement)
+    try {
+      internals.handleSurfaceDestroyed(original, tab)
+      expect(internals.sessions.get(opened.sessionId)).toBe(replacement)
+      cleanup.resolve()
+      await closing
+      expect(internals.sessions.get(opened.sessionId)).toBe(replacement)
+    } finally {
+      cleanup.resolve()
+      await closing
+      spy.mockRestore()
+      await service.dispose()
+    }
+  })
+
+  it('closes a late opening surface without deleting a replacement session', async () => {
+    const { service, runtime } = await testService()
+    const entered = Promise.withResolvers<void>()
+    const attachment = Promise.withResolvers<void>()
+    const spy = vi.spyOn(FakeSurface.prototype, 'attachDebugger').mockImplementation(async () => {
+      entered.resolve()
+      await attachment.promise
+    })
+    const opening = service.open({ runId: 'opening-generation' })
+    const result = opening.then(
+      () => 'success',
+      () => 'rejected'
+    )
+    await entered.promise
+    const internals = service as unknown as {
+      sessions: Map<string, { id: string; tabs: Map<string, unknown> }>
+    }
+    const original = [...internals.sessions.values()][0]
+    const replacement = { ...original, tabs: new Map<string, unknown>() }
+    internals.sessions.set(original.id, replacement)
+    try {
+      attachment.resolve()
+      expect(await result).toBe('rejected')
+      expect(runtime.surfaces[0].destroyed).toBe(true)
+      expect(internals.sessions.get(original.id)).toBe(replacement)
+    } finally {
+      attachment.resolve()
+      await result
+      spy.mockRestore()
+      await service.dispose()
+    }
+  })
+
+  it.each([
+    ['list', false],
+    ['new', false],
+    ['list', true],
+    ['new', true]
+  ] as const)(
+    'rejects late registration and queued %s after direct close (last tab: %s)',
+    async (queuedAction, lastTabOnly) => {
+      const { service, runtime } = await testService()
+      const opened = await service.open({ runId: 'retired-session' })
+      const entered = Promise.withResolvers<void>()
+      const attachment = Promise.withResolvers<void>()
+      const originalAttach = FakeSurface.prototype.attachDebugger
+      const spy = vi
+        .spyOn(FakeSurface.prototype, 'attachDebugger')
+        .mockImplementation(async function (this: FakeSurface) {
+          entered.resolve()
+          await attachment.promise
+          return originalAttach.call(this)
+        })
+      const pending = service.tabs({ sessionId: opened.sessionId, action: 'new' })
+      // Observe rejection immediately, including when close eventually rejects the operation.
+      const pendingResult = pending.then(
+        () => 'success',
+        () => 'rejected'
+      )
+      await entered.promise
+      const queued = service.tabs({ sessionId: opened.sessionId, action: queuedAction })
+      const queuedResult = queued.then(
+        () => 'success',
+        () => 'rejected'
+      )
+      try {
+        await service.close({
+          sessionId: opened.sessionId,
+          tabId: lastTabOnly ? opened.tab.id : undefined
+        })
+        attachment.resolve()
+        expect(await pendingResult).toBe('rejected')
+        expect(await queuedResult).toBe('rejected')
+        expect(runtime.surfaces).toHaveLength(2)
+        expect(runtime.surfaces.every((surface) => surface.destroyed)).toBe(true)
+        expect(() => service.workspaceSnapshot(opened.sessionId)).toThrow('already closed')
+      } finally {
+        attachment.resolve()
+        await Promise.all([pendingResult, queuedResult])
+        spy.mockRestore()
+        await service.dispose()
+        for (const surface of runtime.surfaces) await surface.close()
+      }
+    }
+  )
+
   it('opens an embedded session and returns a semantic, multimodal observation', async () => {
     const { service, runtime } = await testService()
     const observation = await service.open({ runId: 'run-1', url: 'https://example.com/' })
@@ -1301,6 +1842,40 @@ describe('NativeBrowserSessionService', () => {
     ).rejects.toThrow('did not return a valid PDF')
   })
 
+  it.each([1, 2, 3])(
+    'does not dispatch more input after cancellation during target cleanup %i',
+    async (cancelAt) => {
+      const { service, runtime } = await testService()
+      const opened = await service.open({
+        runId: 'cancel-target-cleanup',
+        url: 'https://example.com/'
+      })
+      const controller = new AbortController()
+      const surface = runtime.surfaces[0]
+      surface.onTextTargetRelease = (validation) => {
+        if (validation === cancelAt) controller.abort()
+      }
+      await expect(
+        service.type(
+          {
+            sessionId: opened.sessionId,
+            target: { role: 'textbox', name: 'Email' },
+            text: 'must-not-insert',
+            submit: true
+          },
+          { signal: controller.signal }
+        )
+      ).rejects.toMatchObject({ name: 'AbortError' })
+      expect(surface.insertedText).toBe('')
+      expect(surface.inputEvents.filter((event) => 'keyCode' in event)).toHaveLength(
+        (cancelAt - 1) * 2
+      )
+      expect(
+        surface.inputEvents.filter((event) => 'keyCode' in event && event.keyCode === 'Enter')
+      ).toHaveLength(0)
+    }
+  )
+
   it('never inserts text after click or clear navigation and focus theft', async () => {
     const navigation = await testService()
     const navigationOpened = await navigation.service.open({
@@ -1453,6 +2028,181 @@ describe('NativeBrowserSessionService', () => {
     expect(
       surface.commands.filter(({ method }) => method === 'Accessibility.getFullAXTree')
     ).toHaveLength(semanticCallsBefore + 1)
+  })
+
+  it('does not report successful text entry when native input had no effect', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'type-no-effect', url: 'https://example.com/' })
+    runtime.surfaces[0].ignoreTextInput = true
+    await expect(
+      service.type({
+        sessionId: opened.sessionId,
+        target: { ref: observedRef(opened, 'Email') },
+        text: 'sensitive-input-never-echo'
+      })
+    ).rejects.toThrow('Browser text entry could not be verified')
+    expect(runtime.surfaces[0].formControls.get(11)?.value).toBe('')
+    expect(warn).toHaveBeenCalledWith('[NativeBrowser] Text entry failure diagnostics', {
+      stage: 'verify',
+      validationsPassed: 3,
+      keysDispatched: 4,
+      insertDispatched: true,
+      insertAcknowledged: true,
+      pageEventReceipt: 'unknown',
+      sameUrl: true,
+      sameEpoch: true,
+      cancelled: false,
+      connected: true,
+      targetFocused: true,
+      documentFocused: true,
+      preInsertEmpty: true,
+      afterEmpty: true,
+      valueChanged: false
+    })
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/sensitive-input|example\.com|Email/)
+    warn.mockRestore()
+  })
+
+  it('records a changed empty field without logging the transformed content', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { service, runtime } = await testService()
+      const opened = await service.open({ runId: 'type-transformed', url: 'https://example.com/' })
+      const surface = runtime.surfaces[0]
+      vi.spyOn(surface, 'insertText').mockImplementation(async () => {
+        surface.formControls.get(11)!.value = 'private-page-transformation'
+      })
+      await expect(
+        service.type({
+          sessionId: opened.sessionId,
+          target: { ref: observedRef(opened, 'Email') },
+          text: 'private-request'
+        })
+      ).rejects.toThrow('could not be verified')
+      expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
+        preInsertEmpty: true,
+        afterEmpty: false,
+        valueChanged: true
+      })
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-|example\.com|Email/)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('bounds diagnostic cleanup and releases the session lock before a late CDP rejection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    let rejectRelease!: (error: Error) => void
+    try {
+      const { service, runtime } = await testService()
+      const opened = await service.open({
+        runId: 'type-diagnostic-release',
+        url: 'https://example.com/'
+      })
+      const surface = runtime.surfaces[0]
+      surface.ignoreTextInput = true
+      surface.textDiagnosticRelease = new Promise((_resolve, reject) => {
+        rejectRelease = reject
+      })
+      let outcome: unknown
+      const failed = service
+        .type({
+          sessionId: opened.sessionId,
+          target: { ref: observedRef(opened, 'Email') },
+          text: 'private-rejected'
+        })
+        .catch((error) => {
+          outcome = error
+        })
+      await vi.waitFor(() => expect(outcome).toBeInstanceOf(Error), { timeout: 1000 })
+      expect(String(outcome)).toContain('Browser text entry could not be verified')
+      await failed
+      surface.ignoreTextInput = false
+      await service.type({
+        sessionId: opened.sessionId,
+        target: { ref: observedRef(opened, 'Email') },
+        text: 'healthy-next-gesture'
+      })
+      expect(surface.formControls.get(11)?.value).toBe('healthy-next-gesture')
+      rejectRelease(new Error('late private CDP cleanup rejection'))
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private-')
+    } finally {
+      rejectRelease?.(new Error('test cleanup'))
+      warn.mockRestore()
+    }
+  })
+
+  it('observes a diagnostic rejection created as cancellation arrives without another gesture', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { service, runtime } = await testService()
+      const opened = await service.open({
+        runId: 'type-diagnostic-cancel',
+        url: 'https://example.com/'
+      })
+      const surface = runtime.surfaces[0]
+      const controller = new AbortController()
+      surface.ignoreTextInput = true
+      surface.onTextDiagnostic = () => controller.abort()
+      surface.textDiagnosticError = new Error('private-CDP-rejection')
+      await expect(
+        service.type(
+          {
+            sessionId: opened.sessionId,
+            target: { ref: observedRef(opened, 'Email') },
+            text: 'private-rejected',
+            submit: true
+          },
+          { signal: controller.signal }
+        )
+      ).rejects.toThrow('Browser text entry could not be verified')
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(surface.insertedText).toBe('private-rejected')
+      expect(
+        surface.inputEvents.filter((event) => 'keyCode' in event && event.keyCode === 'Enter')
+      ).toHaveLength(0)
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('private-')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('does not trust non-boolean page diagnostic fields or replace the input error', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    try {
+      const { service, runtime } = await testService()
+      const opened = await service.open({
+        runId: 'type-untrusted-diagnostic',
+        url: 'https://example.com/'
+      })
+      const surface = runtime.surfaces[0]
+      surface.ignoreTextInput = true
+      surface.textDiagnosticOverride = {
+        connected: true,
+        targetFocused: true,
+        documentFocused: 'private-page-data',
+        empty: true
+      }
+      await expect(
+        service.type({
+          sessionId: opened.sessionId,
+          target: { ref: observedRef(opened, 'Email') },
+          text: 'private-request'
+        })
+      ).rejects.toThrow('could not be verified')
+      expect(warn.mock.calls.at(-1)?.[1]).toMatchObject({
+        connected: null,
+        targetFocused: null,
+        documentFocused: null,
+        afterEmpty: null,
+        valueChanged: null
+      })
+      expect(JSON.stringify(warn.mock.calls)).not.toMatch(/private-|example\.com|Email/)
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('continues independent fields after one field fails verification', async () => {

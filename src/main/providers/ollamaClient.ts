@@ -7,6 +7,8 @@ import type {
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
 
+import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
+
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
 
@@ -120,7 +122,10 @@ export async function streamOllamaChat(
   fetchImpl: FetchImplementation = fetch,
   signal?: AbortSignal
 ): Promise<ProviderStreamResult> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  const cancelReader = (): void => cancelProviderStreamReader(reader)
   try {
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     const response = await fetchImpl(`${instance.baseUrl}/api/chat`, {
       method: 'POST',
       headers: headers(instance),
@@ -130,23 +135,32 @@ export async function streamOllamaChat(
     if (!response.ok) {
       return { ok: false, status: response.status, error: await errorMessage(response) }
     }
-    const reader = response.body?.getReader()
+    reader = response.body?.getReader()
     if (!reader) return { ok: false, error: 'Provider returned no response body' }
+    signal?.addEventListener('abort', cancelReader, { once: true })
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     const decoder = new TextDecoder()
     let buffer = ''
     let streamError: string | undefined
+    let terminal = false
     const consume = (line: string): void => {
+      if (signal?.aborted || terminal || streamError) return
       if (!line.trim()) return
+      let chunk: ProviderStreamChunk
       try {
-        const chunk = JSON.parse(line) as ProviderStreamChunk
-        if (chunk.error) streamError = chunk.error
-        emit(chunk)
+        chunk = JSON.parse(line) as ProviderStreamChunk
       } catch {
-        // Wait for a complete newline-delimited JSON record.
+        // Ignore malformed records, not exceptions from the subscriber.
+        return
       }
+      if (!chunk || typeof chunk !== 'object') return
+      if (chunk.error) streamError = chunk.error
+      terminal = chunk.done === true
+      emit(chunk)
     }
-    while (true) {
+    while (!terminal && !streamError && !signal?.aborted) {
       const { done, value } = await reader.read()
+      if (signal?.aborted) return { ok: false, error: 'aborted' }
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split(/\r?\n/)
@@ -155,15 +169,20 @@ export async function streamOllamaChat(
     }
     buffer += decoder.decode()
     if (buffer) consume(buffer)
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     if (streamError) {
-      emit({ done: true, done_reason: 'error', error: streamError })
+      if (!terminal) emit({ done: true, done_reason: 'error', error: streamError })
       return { ok: false, error: streamError }
     }
+    if (!terminal) return { ok: false, error: 'Ollama stream ended before its terminal event' }
     return { ok: true }
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError')
+    if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
     return { ok: false, error: error instanceof Error ? error.message : 'Ollama stream failed' }
+  } finally {
+    signal?.removeEventListener('abort', cancelReader)
+    releaseProviderStreamReader(reader)
   }
 }
 

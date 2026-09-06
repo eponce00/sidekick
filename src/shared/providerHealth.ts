@@ -1,4 +1,5 @@
 import type { ProviderInstanceHealth } from './settings'
+import { providerInferenceFailure } from './providerErrors'
 
 export const PROVIDER_HEALTH_STALE_AFTER_MS = 10 * 60 * 1000
 
@@ -21,6 +22,11 @@ function safeHealthMessage(value: string): string {
 
 export function providerHealthErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error || 'Connection failed')
+  const inferenceFailure = providerInferenceFailure(message)
+  if (inferenceFailure === 'gpu-memory-exhausted')
+    return 'The inference server reported exhausted GPU memory. Check its memory budget and health before retrying; restarting alone may not prevent recurrence.'
+  if (inferenceFailure === 'engine-unavailable')
+    return 'The inference engine reported that it stopped. Check backend health and recovery; an online gateway does not prove the model is available.'
   return safeHealthMessage(message) || 'Connection failed'
 }
 

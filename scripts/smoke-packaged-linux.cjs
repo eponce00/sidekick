@@ -15,7 +15,7 @@ const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const identity = require('../src/shared/productIdentity.json')
 
-const smokeSeconds = Number.parseInt(process.env.SIDEKICK_SMOKE_SECONDS || '8', 10)
+const { observeStartup, smokeDuration } = require('./packaged-smoke-lifecycle.cjs')
 
 function findPackagedExecutable() {
   const requestedPath = process.argv[2]
@@ -49,6 +49,7 @@ async function main() {
   if (process.platform !== 'linux') {
     throw new Error('The packaged Linux smoke test must run on Linux.')
   }
+  const milliseconds = smokeDuration(process.env.SIDEKICK_SMOKE_SECONDS)
 
   const executable = findPackagedExecutable()
   accessSync(executable, constants.X_OK)
@@ -58,6 +59,7 @@ async function main() {
   const stdout = openSync(stdoutPath, 'w')
   const stderr = openSync(stderrPath, 'w')
   let child
+  let descriptorsClosed = false
 
   try {
     child = spawn(
@@ -76,8 +78,9 @@ async function main() {
     )
     closeSync(stdout)
     closeSync(stderr)
+    descriptorsClosed = true
 
-    await delay(smokeSeconds * 1000)
+    await observeStartup(child, milliseconds)
     const logs = readFileSync(stderrPath, 'utf8')
     const fatalPattern =
       /uncaught|fatal|failed to load|module.*not found|unable to load preload|sandbox.*failed/i
@@ -111,7 +114,8 @@ async function main() {
       } catch {
         // The process group may already be gone.
       }
-    } else {
+    }
+    if (!descriptorsClosed) {
       closeSync(stdout)
       closeSync(stderr)
     }

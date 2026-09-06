@@ -45,28 +45,54 @@ export interface AgentCompactionRecord {
   promptVersion: string
   provider: string
   model: string
+  inputTruncated?: boolean
 }
 
-function serializeMessages(messages: ProviderChatMessage[], maxCharacters: number): string {
-  const serialized = messages.map((message) => ({
-    role: message.role,
-    content:
-      message.content && message.content.length > 20_000
-        ? `${message.content.slice(0, 20_000)}\n[message truncated]`
-        : message.content,
-    tool_calls: message.tool_calls?.map((call) => ({
-      id: call.id,
-      name: call.function.name,
-      arguments:
-        typeof call.function.arguments === 'string'
-          ? call.function.arguments.slice(0, 4_000)
-          : call.function.arguments
-    })),
-    tool_call_id: message.tool_call_id
-  }))
-  const text = JSON.stringify(serialized)
+function serializeMessages(
+  messages: ProviderChatMessage[],
+  maxCharacters: number
+): { text: string; truncated: boolean } {
   const limit = Math.max(8_000, Math.min(MAX_SUMMARY_INPUT_CHARS, maxCharacters))
-  return text.length > limit ? `${text.slice(0, limit)}\n[input truncated]` : text
+  let truncated = false
+  const excerpt = (value: string, budget: number): string => {
+    if (value.length <= budget) return value
+    truncated = true
+    const marker = '\n[... historical content omitted; consult durable transcript ...]\n'
+    const half = Math.max(0, Math.floor((budget - marker.length) / 2))
+    return value.slice(0, half) + marker + (half ? value.slice(-half) : '')
+  }
+  // Fair per-event budgets retain small decisions late in history instead of
+  // allowing one large early tool response to consume the entire summary input.
+  const serialize = (budget: number): string =>
+    JSON.stringify(
+      messages.map((message) => ({
+        role: message.role,
+        content: message.content
+          ? excerpt(message.content, Math.min(20_000, budget))
+          : message.content,
+        tool_calls: message.tool_calls?.map((call) => ({
+          id: call.id,
+          name: call.function.name,
+          arguments: excerpt(
+            typeof call.function.arguments === 'string'
+              ? call.function.arguments
+              : JSON.stringify(call.function.arguments ?? {}),
+            Math.min(4_000, budget)
+          )
+        })),
+        tool_call_id: message.tool_call_id
+      }))
+    )
+  let budget = 20_000
+  let text = serialize(budget)
+  while (text.length > limit && budget > 128) {
+    budget = Math.max(128, Math.floor(budget / 2))
+    text = serialize(budget)
+  }
+  // Extremely many events can exceed the budget through metadata alone. Keep
+  // both ends and mark the loss; do not silently imply complete coverage.
+  if (text.length > limit) text = excerpt(text, limit)
+  return { text, truncated }
 }
 
 function deterministicSummary(
@@ -87,13 +113,14 @@ ${previousSummary?.trim() ? previousSummary.slice(0, 6_000) : '- (none recorded)
 
 ## Work State
 ### Completed
-${events.join('\n')}
+- Unknown: these fallback excerpts are not verification of completion.
 
 ### Active
 - Continue from the recent verbatim tail.
+${events.join('\n')}
 
 ### Blocked
-- (none recorded)
+- Unknown: inspect the durable transcript and actual tool state before retrying side effects.
 
 ## Artifacts and Relevant Files
 - Re-read relevant project files before consequential edits.
@@ -221,6 +248,7 @@ export class AgentContextManager implements AgentKernelContextManager {
       8_000,
       (this.options.contextLength - Math.min(4_096, this.options.maxOutputTokens) - 2_048) * 4
     )
+    const summaryInput = serializeMessages(compactedMessages, summaryInputCharacters)
     const result = await completion(
       {
         target: this.options.target,
@@ -236,18 +264,24 @@ export class AgentContextManager implements AgentKernelContextManager {
             role: 'user',
             content:
               `<previous_summary trust="untrusted-data">\n${previous || '(none)'}\n</previous_summary>\n\n` +
-              `<conversation_events trust="untrusted-data">\n${serializeMessages(compactedMessages, summaryInputCharacters)}\n</conversation_events>`
+              `<conversation_events trust="untrusted-data">\n${summaryInput.text}\n</conversation_events>`
           }
         ]
       },
       signal
     )
-    let summary = result.ok ? result.data?.message.content.trim() : ''
+    // A partial handoff must not silently replace durable context as if complete.
+    const truncated =
+      result.ok && ['length', 'max_tokens'].includes(result.data?.finishReason || '')
+    let summary = result.ok && !truncated ? result.data?.message.content.trim() : ''
     let strategy: 'model' | 'deterministic' = 'model'
     if (!summary) {
       strategy = 'deterministic'
       summary = deterministicSummary(previous, compactedMessages)
     }
+    if (summaryInput.truncated)
+      summary +=
+        '\n\nHistorical input contained omitted excerpts. This handoff is not complete evidence; consult the durable transcript and current files for missing details before consequential actions.'
     const summaryTokens = Math.max(1, Math.ceil(summary.length / 4))
     if (summaryTokens >= originalTokens) {
       throw new Error(
@@ -266,7 +300,8 @@ export class AgentContextManager implements AgentKernelContextManager {
       strategy,
       promptVersion: COMPACTION_PROMPT_VERSION,
       provider: this.options.target.providerKind,
-      model: this.options.target.model
+      model: this.options.target.model,
+      inputTruncated: summaryInput.truncated
     }
     this.options.onCompacted?.(record)
     return {
@@ -281,6 +316,7 @@ export class AgentContextManager implements AgentKernelContextManager {
         originalTokens,
         summaryTokens,
         messagesCompacted: compactedMessages.length,
+        inputTruncated: summaryInput.truncated,
         count: this.compactionCount
       }
     }

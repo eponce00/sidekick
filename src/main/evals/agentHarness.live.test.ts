@@ -27,7 +27,6 @@ import type {
 } from '../../shared/providerRuntime'
 import type { ProviderKind } from '../../shared/providerRegistry'
 import {
-  editingDialectForModel,
   workspaceMutationRequestFromTool,
   workspaceMutationResultForModel
 } from '../../shared/workspaceMutations'
@@ -50,7 +49,7 @@ const enabled = process.env.SIDEKICK_AGENT_EVAL_RUN === '1' && Boolean(apiKey)
 const suite = process.env.SIDEKICK_AGENT_EVAL_SUITE?.trim() || 'full'
 const liveDescribe = enabled ? describe.sequential : describe.skip
 const extendedIt = suite === 'full' ? it : it.skip
-const scenarioVersion = '2026-07-21.3'
+const scenarioVersion = '2026-09-05.1'
 const scenarios = [
   { name: 'model-discovery', category: 'provider', weight: 2 },
   { name: 'completion', category: 'provider', weight: 4 },
@@ -88,7 +87,8 @@ const startedAt = new Date().toISOString()
 let catalogDetails: Record<string, unknown> = {}
 
 function noReasoningRequest(): Record<string, unknown> {
-  return providerKind === 'openrouter' ? {} : { reasoning_effort: 'none' }
+  // Match the deployed provider defaults rather than silently disabling thinking.
+  return {}
 }
 
 async function measured<T>(
@@ -348,20 +348,19 @@ liveDescribe('provider-neutral production agent harness', () => {
       id: 'sidekick_eval_malformed_edit',
       type: 'function',
       function: {
-        name: 'edit',
-        arguments: JSON.stringify({ file_path: 'src/status.ts', accessLevel: 'auto' })
+        name: 'apply_patch',
+        arguments: JSON.stringify({})
       }
     }
     const validationError = {
       ok: false,
       success: false,
       code: 'invalid_arguments',
-      error:
-        'edit received invalid arguments. Missing required fields: old_string, new_string. Received fields: accessLevel, file_path.',
+      error: 'apply_patch received invalid arguments. Missing required field: patch.',
       retryable: true,
       recoveryAction: 'correct_input',
       recovery:
-        'Submit one corrected edit call with every required field. Do not repeat the unchanged arguments.'
+        'Read the current file, then submit one corrected apply_patch call with the patch field. Do not repeat the unchanged arguments.'
     }
 
     try {
@@ -399,7 +398,7 @@ liveDescribe('provider-neutral production agent harness', () => {
           })
           expect(result.phase, result.error).toBe('completed')
           expect(result.toolNames).toContain('read')
-          expect(result.toolNames).toContain('edit')
+          expect(result.toolNames).toContain('apply_patch')
           expect(await fs.readFile(join(workspaceRoot, 'src/status.ts'), 'utf8')).toBe(
             "export const status = 'after'\n"
           )
@@ -428,15 +427,8 @@ liveDescribe('provider-neutral production agent harness', () => {
     await fs.writeFile(absolutePath, "export const status = 'before'\n", 'utf8')
 
     try {
-      const dialect = editingDialectForModel({ providerKind, model })
-      const mutationToolName =
-        dialect === 'apply-patch'
-          ? 'apply_patch'
-          : dialect === 'claude-edit'
-            ? 'Edit'
-            : dialect === 'search-replace'
-              ? 'search_replace'
-              : 'edit'
+      const dialect = 'apply-patch'
+      const mutationToolName = 'apply_patch'
       const mutationTool = workspaceToolDefinitions(dialect).find(
         (definition) => definition.function.name === mutationToolName
       )
@@ -446,7 +438,7 @@ liveDescribe('provider-neutral production agent harness', () => {
       ).toBeDefined()
       const mutationInstruction =
         dialect === 'apply-patch'
-          ? `Use apply_patch to update src/status.ts from 'before' to 'after'. Send one canonical patch with accessLevel auto. Do not write prose before the tool call.`
+          ? `Use apply_patch to update src/status.ts from 'before' to 'after'. Its entire current content is: export const status = 'before' followed by a newline. Send one canonical patch. Do not write prose before the tool call.`
           : `Use ${mutationToolName} on src/status.ts. Replace exactly 'before' with 'after'. Set accessLevel to auto and replace_all to false. Do not write prose before the tool call.`
       const messages = [
         {
@@ -497,7 +489,6 @@ liveDescribe('provider-neutral production agent harness', () => {
             `The stream did not contain a completed ${mutationToolName} tool call`
           ).toBeDefined()
           const args = objectArguments(toolCall!)
-          expect(args).toMatchObject({ accessLevel: 'auto' })
           if (dialect === 'apply-patch') {
             expect(args.patch).toEqual(expect.stringContaining(`*** Update File: ${relativePath}`))
           } else {
@@ -639,6 +630,15 @@ liveDescribe('provider-neutral production agent harness', () => {
                 }
             )
           expect(verificationUpdates[0]?.status).toBe('unverified')
+          enrichMetric('verification-guard-tool-loop', {
+            details: {
+              tools: result.toolNames,
+              verification: verificationUpdates,
+              toolErrors: result.events
+                .filter((event) => event.type === 'tool.completed')
+                .map((event) => event.payload)
+            }
+          })
           expect(verificationUpdates.at(-1)?.status).toBe('passed')
           expect(verificationUpdates.at(-1)?.evidence?.length).toBeGreaterThan(0)
           expect(verificationUpdates.at(-1)?.evidence).toEqual(
@@ -826,13 +826,10 @@ liveDescribe('provider-neutral production agent harness', () => {
         id: 'sidekick_eval_ambiguous_edit',
         type: 'function',
         function: {
-          name: 'edit',
+          name: 'apply_patch',
           arguments: JSON.stringify({
-            file_path: 'src/settings.ts',
-            old_string: "mode: 'draft'",
-            new_string: "mode: 'published'",
-            accessLevel: 'auto',
-            replace_all: false
+            patch:
+              "*** Begin Patch\n*** Update File: src/settings.ts\n@@\n-  mode: 'draft'\n+  mode: 'published'\n*** End Patch"
           })
         }
       }
@@ -841,7 +838,7 @@ liveDescribe('provider-neutral production agent harness', () => {
         success: false,
         code: 'multiple_matches',
         error:
-          'Edit rejected: old_string has 2 matches in src/settings.ts; add surrounding context or set replace_all.',
+          'Patch rejected: hunk context has 2 matches in src/settings.ts; add unchanged surrounding context.',
         retryable: true,
         recoveryAction: 'correct_input',
         recovery:
@@ -863,11 +860,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               workspaceRoot,
               maxToolRounds: 20,
               afterToolExecution: async (name, args) => {
-                if (
-                  !changedAfterRead &&
-                  name === 'read' &&
-                  args.file_path === 'src/settings.ts'
-                ) {
+                if (!changedAfterRead && name === 'read' && args.path === 'src/settings.ts') {
                   changedAfterRead = true
                   const current = await fs.readFile(settingsPath, 'utf8')
                   await fs.writeFile(
@@ -905,7 +898,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               result.toolNames.filter((name) => name === 'read').length
             ).toBeGreaterThanOrEqual(2)
             expect(
-              result.toolNames.filter((name) => name === 'edit').length
+              result.toolNames.filter((name) => name === 'apply_patch').length
             ).toBeGreaterThanOrEqual(2)
             enrichMetric('ambiguous-stale-edit-recovery', {
               details: {
@@ -1070,7 +1063,7 @@ liveDescribe('provider-neutral production agent harness', () => {
           model,
           contextLength: 180_000,
           maxOutputTokens: 8_192,
-          editingDialect: 'structured-edit' as const
+          editingDialect: 'apply-patch' as const
         }
         const detail = store.createGroup({
           title: 'Population artifact evaluation',

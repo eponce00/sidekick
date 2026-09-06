@@ -50,7 +50,10 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:win
       - run: npm run test:e2e:runtime
+        env:
+          SIDEKICK_E2E_EXECUTABLE: dist/win-unpacked/SideKick.exe
       - run: npm run test:native-browser-smoke
+      - run: npm run test:native-browser-fixtures
       - run: npm run validate:package -- dist/win-unpacked/resources
       - run: npm run smoke:packaged:windows
       - name: Verify the community installer is intentionally unsigned
@@ -115,11 +118,12 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:mac
       - run: npm run test:e2e:runtime
+        env:
+          SIDEKICK_E2E_EXECUTABLE: dist/mac-arm64/SideKick.app/Contents/MacOS/SideKick
       - run: npm run test:native-browser-smoke
+      - run: npm run test:native-browser-fixtures
       - run: npm run validate:package -- dist/mac-arm64/SideKick.app/Contents/Resources
       - run: npm run smoke:packaged:macos
-        env:
-          SIDEKICK_ALLOW_UNSIGNED_SMOKE: 'true'
       - name: Verify the application uses only an ad-hoc signature
         shell: bash
         run: |
@@ -193,7 +197,10 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:linux
       - run: xvfb-run --auto-servernum npm run test:e2e:runtime
+        env:
+          SIDEKICK_E2E_EXECUTABLE: dist/linux-unpacked/io.github.eponce00.sidekick
       - run: xvfb-run --auto-servernum npm run test:native-browser-smoke
+      - run: xvfb-run --auto-servernum npm run test:native-browser-fixtures
       - run: npm run validate:package -- dist/linux-unpacked/resources
       - name: Validate final Linux AppImage structure and identity
         shell: bash

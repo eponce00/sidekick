@@ -583,6 +583,8 @@ export function installBrowserApiMock(): void {
 
   window.api = {
     providers: {
+      probe: async (target) => ({ model: target.model, checks: [] }),
+      cancelProbe: async () => undefined,
       complete: async () => ({ ok: false, error: 'UI preview' }),
       discoverModels: async () => ({ ok: true, models: [] }),
       resolveContext: async () => ({
@@ -595,6 +597,7 @@ export function installBrowserApiMock(): void {
       onHealthChanged: () => () => undefined
     },
     settings: {
+      selectOfficeInterpreter: async () => ({ canceled: true }),
       save: async () => ({ success: true }),
       load: async () => previewSettings
     },

@@ -7,6 +7,13 @@ const identity = require(path.join(root, 'src/shared/productIdentity.json'))
 const packageMetadata = require(path.join(root, 'package.json'))
 const builder = require(path.join(root, 'electron-builder.config.cjs'))
 
+test('uses an explicit runtime allowlist instead of packaging arbitrary working files', () => {
+  assert.deepEqual(
+    builder.files.filter((pattern) => !pattern.startsWith('!')),
+    ['out/**/*', 'resources/**/*', 'package.json', 'LICENSE']
+  )
+})
+
 test('uses one stable reverse-DNS production identity', () => {
   assert.match(identity.appId, /^[a-z][a-z0-9]*(?:\.[a-z0-9-]+){2,}$/)
   assert.equal(identity.developmentAppId, `${identity.appId}.dev`)

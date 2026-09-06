@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import {
   AGENT_RUN_EVENT_TYPES,
   AGENT_RUN_SURFACES,
+  toolExecutionFailed,
   type AgentRunEvent,
   type AgentRunEventType,
   type AgentRunPhase,
@@ -423,6 +424,38 @@ export class AgentRunStore {
     const now = Date.now()
     this.db.transaction(() => {
       for (const row of rows) {
+        const unfinished = new Map<string, AgentRunEvent>()
+        for (const event of this.listAllEvents(row.id)) {
+          const id = event.payload.toolCallId
+          if (typeof id !== 'string') continue
+          if (event.type === 'tool.running') unfinished.set(id, event)
+          if (event.type === 'tool.completed') unfinished.delete(id)
+        }
+        for (const [toolCallId, event] of unfinished) {
+          this.appendEventRow({
+            id: `${row.id}:uncertain:${toolCallId}`,
+            runId: row.id,
+            type: 'tool.completed',
+            timestamp: now,
+            payload: {
+              toolCallId,
+              name: event.payload.name,
+              result: toolExecutionFailed({
+                title: String(event.payload.title || event.payload.name || 'Interrupted operation'),
+                code: 'cancelled',
+                message: 'Execution outcome is unknown: the app stopped before recording a result.',
+                retryable: true,
+                recoveryAction: 'refresh_state',
+                recovery:
+                  'Inspect the actual files, browser or external service before retrying. The operation may already have completed. Do not blindly repeat side effects.',
+                modelContent:
+                  'INTERRUPTED OPERATION — OUTCOME UNKNOWN. Inspect actual state before retrying; this operation may already have completed. No automatic replay was performed.',
+                startedAt: event.timestamp,
+                completedAt: now
+              })
+            }
+          })
+        }
         const pendingInteractions = this.db
           .prepare(
             `SELECT * FROM agent_pending_interactions
@@ -435,7 +468,8 @@ export class AgentRunStore {
           message: 'Run interrupted before completion',
           retryable: true,
           recoveryAction: 'refresh_state',
-          recovery: 'Resume from the durable event stream.'
+          recovery:
+            'Review the durable event stream and reconcile unknown tool outcomes against actual state before resuming. Do not blindly replay side effects.'
         }
         this.db
           .prepare(

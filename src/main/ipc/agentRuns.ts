@@ -13,6 +13,7 @@ import { getDb } from './state'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { ProjectStore } from '../services/projectStore'
+import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -21,17 +22,14 @@ import {
 
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
+const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
 
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('agentRuns:event', { event })
-  }
+  publishDesktopEvent('agentRuns:event', { event })
 }
 
 function publishGoal(goal: import('../../shared/conversationGoals').ConversationGoal): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send('conversationGoals:changed', { goal })
-  }
+  publishDesktopEvent('conversationGoals:changed', { goal })
 }
 
 export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {

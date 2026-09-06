@@ -76,14 +76,6 @@ export class ToolExecutionPipeline {
       arguments: frozenArguments,
       signal: input.signal
     }
-    input.onStage?.('preparing')
-    for (const hook of this.beforeHooks) await hook(context)
-    input.onStage?.('guarding')
-    for (const guard of this.guards) {
-      const denial = guard({ name: input.name, arguments: frozenArguments })
-      if (denial) throw new Error(`Tool execution denied: ${denial}`)
-    }
-
     if (input.signal.aborted) throw new DOMException('Tool execution cancelled', 'AbortError')
     const timeoutController = new AbortController()
     let timedOut = false
@@ -95,35 +87,60 @@ export class ToolExecutionPipeline {
       : undefined
     timeout?.unref()
     const signal = AbortSignal.any([input.signal, timeoutController.signal])
+    let onAbort!: () => void
     const aborted = new Promise<never>((_, reject) => {
-      signal.addEventListener(
-        'abort',
-        () =>
-          reject(
-            timedOut
-              ? new ToolRuntimeTimeoutError(input.timeoutMs!)
-              : new DOMException('Tool execution cancelled', 'AbortError')
-          ),
-        { once: true }
-      )
+      onAbort = () =>
+        reject(
+          timedOut
+            ? new ToolRuntimeTimeoutError(input.timeoutMs!)
+            : new DOMException('Tool execution cancelled', 'AbortError')
+        )
+      signal.addEventListener('abort', onAbort, { once: true })
     })
     try {
       const executionContext = { ...context, signal }
-      let dispatch = (): Promise<T> => input.body(signal)
-      for (const hook of [...this.aroundHooks].reverse()) {
-        const next = dispatch
-        dispatch = () => hook(executionContext, next)
+      const checkCancelled = (): void => {
+        if (signal.aborted) throw signal.reason
       }
-      input.onStage?.('executing')
-      let result = (await Promise.race([dispatch(), aborted])) as T
-      input.onStage?.('finalizing')
-      for (const hook of this.afterHooks) {
-        result = (await hook(executionContext, result)) as T
+      const lifecycle = async (): Promise<T> => {
+        input.onStage?.('preparing')
+        for (const hook of this.beforeHooks) {
+          checkCancelled()
+          await hook(executionContext)
+        }
+        checkCancelled()
+        input.onStage?.('guarding')
+        for (const guard of this.guards) {
+          const denial = guard({ name: input.name, arguments: frozenArguments })
+          if (denial) throw new Error(`Tool execution denied: ${denial}`)
+        }
+        let dispatched = false
+        let dispatch = (): Promise<T> => {
+          checkCancelled()
+          if (dispatched) throw new Error('Tool executor may only be invoked once')
+          dispatched = true
+          return input.body(signal)
+        }
+        for (const hook of [...this.aroundHooks].reverse()) {
+          const next = dispatch
+          dispatch = () => hook(executionContext, next)
+        }
+        input.onStage?.('executing')
+        let result: T = await dispatch()
+        checkCancelled()
+        input.onStage?.('finalizing')
+        for (const hook of this.afterHooks) {
+          checkCancelled()
+          result = (await hook(executionContext, result)) as T
+        }
+        checkCancelled()
+        input.onStage?.('completed')
+        return result
       }
-      input.onStage?.('completed')
-      return result
+      return await Promise.race([lifecycle(), aborted])
     } finally {
       if (timeout) clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
     }
   }
 }

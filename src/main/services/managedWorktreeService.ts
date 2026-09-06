@@ -6,6 +6,7 @@ import { promisify } from 'util'
 import type Database from 'better-sqlite3'
 import type { Project } from '../../shared/projects'
 import { ProjectStore } from './projectStore'
+import { shellChildEnvironment } from './commandService'
 
 const execFileAsync = promisify(execFile)
 const MAX_MANAGED_WORKTREES = 8
@@ -22,10 +23,16 @@ interface ManagedWorktreeRow {
 }
 
 async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
-    windowsHide: true,
-    maxBuffer: 10 * 1024 * 1024
-  })
+  const { stdout } = await execFileAsync(
+    'git',
+    ['-c', 'core.hooksPath=/dev/null', '-C', cwd, ...args],
+    {
+      windowsHide: true,
+      env: shellChildEnvironment(process.env, cwd, cwd),
+      timeout: 60000,
+      maxBuffer: 10 * 1024 * 1024
+    }
+  )
   return stdout.trim()
 }
 
@@ -76,6 +83,21 @@ export class ManagedWorktreeService {
   private async removeIfSafe(row: ManagedWorktreeRow): Promise<boolean> {
     if (this.projectIsInUse(row.project_id)) return false
     try {
+      const [storage, target] = await Promise.all([
+        fs.realpath(this.storageRoot),
+        fs.realpath(row.worktree_root)
+      ])
+      const child = relative(storage, target)
+      if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child))
+        return false
+      const parts = child.split(sep)
+      if (
+        parts.length !== 2 ||
+        parts[0] !== row.source_project_id ||
+        row.branch !== `sidekick/${parts[1]}`
+      )
+        return false
+      if ((await git(target, ['branch', '--show-current'])) !== row.branch) return false
       if ((await git(row.worktree_root, ['status', '--porcelain'])).trim()) return false
       if (
         !(await gitSucceeds(row.repository_root, [
@@ -87,9 +109,10 @@ export class ManagedWorktreeService {
       ) {
         return false
       }
-      await git(row.repository_root, ['worktree', 'remove', '--force', row.worktree_root])
+      // Git rechecks cleanliness at removal time, closing the status/remove race.
+      if (this.projectIsInUse(row.project_id)) return false
+      await git(row.repository_root, ['worktree', 'remove', target])
       await git(row.repository_root, ['branch', '-d', row.branch])
-      await fs.rm(row.worktree_root, { recursive: true, force: true })
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(row.project_id)
       this.db.prepare('DELETE FROM managed_worktrees WHERE id = ?').run(row.id)
       return true
@@ -114,6 +137,8 @@ export class ManagedWorktreeService {
   }
 
   async create(sourceProjectId: string, conversationTitle: string): Promise<Project> {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sourceProjectId))
+      throw new Error('Invalid source project identity')
     const source = this.projects.get(sourceProjectId)
     if (!source) throw new Error('The source project no longer exists')
     await this.enforceLimit()
@@ -142,9 +167,23 @@ export class ManagedWorktreeService {
     const worktreeRoot = join(this.storageRoot, sourceProjectId, name)
     const projectFolder = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
     await fs.mkdir(join(this.storageRoot, sourceProjectId), { recursive: true })
+    const [canonicalStorage, canonicalParent] = await Promise.all([
+      fs.realpath(this.storageRoot),
+      fs.realpath(join(this.storageRoot, sourceProjectId))
+    ])
+    const parentChild = relative(canonicalStorage, canonicalParent)
+    if (
+      !parentChild ||
+      parentChild === '..' ||
+      parentChild.startsWith(`..${sep}`) ||
+      isAbsolute(parentChild)
+    )
+      throw new Error('Managed worktree parent escapes storage')
+    let created = false
 
     try {
       await git(repositoryRoot, ['worktree', 'add', '-b', branch, worktreeRoot, 'HEAD'])
+      created = true
       const project = this.projects.create(projectFolder, `${source.name} · ${basename(name)}`)
       const now = Date.now()
       this.db
@@ -157,9 +196,16 @@ export class ManagedWorktreeService {
         .run(id, project.id, sourceProjectId, repositoryRoot, worktreeRoot, branch, now, now)
       return project
     } catch (error) {
-      await git(repositoryRoot, ['worktree', 'remove', '--force', worktreeRoot]).catch(() => '')
-      await git(repositoryRoot, ['branch', '-D', branch]).catch(() => '')
-      await fs.rm(worktreeRoot, { recursive: true, force: true }).catch(() => undefined)
+      // Never delete an unrelated pre-existing branch or changed checkout after
+      // an incomplete setup. A cleanup failure leaves recoverable Git state.
+      if (created) {
+        try {
+          await git(repositoryRoot, ['worktree', 'remove', worktreeRoot])
+          await git(repositoryRoot, ['branch', '-d', branch])
+        } catch {
+          /* Preserve files and refs for manual recovery. */
+        }
+      }
       throw error
     }
   }
@@ -169,12 +215,9 @@ export class ManagedWorktreeService {
       .prepare('SELECT * FROM managed_worktrees WHERE project_id = ?')
       .get(projectId) as ManagedWorktreeRow | undefined
     if (!row) return
-    await git(row.repository_root, ['worktree', 'remove', '--force', row.worktree_root]).catch(
-      () => ''
-    )
-    await git(row.repository_root, ['branch', '-D', row.branch]).catch(() => '')
-    await fs.rm(row.worktree_root, { recursive: true, force: true }).catch(() => undefined)
-    this.db.prepare('DELETE FROM managed_worktrees WHERE id = ?').run(row.id)
-    this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId)
+    if (!(await this.removeIfSafe(row)))
+      throw new Error(
+        'Worktree cleanup refused: preserve modified, in-use, unmerged, or out-of-storage work for manual recovery'
+      )
   }
 }

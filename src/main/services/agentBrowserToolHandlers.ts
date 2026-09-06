@@ -30,6 +30,8 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_hold',
   'browser_type',
   'browser_select',
+  'browser_upload',
+  'browser_download',
   'browser_fill_form',
   'browser_press',
   'browser_scroll',
@@ -1103,7 +1105,21 @@ async function boundedVisualFormFailure(
     signal,
     'Browser form state after the batch stopped'
   )
-  const modelData = addVisualMetadata(data, visual.metadata)
+  // Failed selects may need their available choices for recovery. Other field
+  // failures use the existing routine snapshot policy, without changing UI data
+  // or any field outcome/recovery metadata.
+  const failedSelect = result.fields.some(
+    (field) => field.status === 'failed' && field.kind === 'select'
+  )
+  const modelData = addVisualMetadata(
+    failedSelect
+      ? data
+      : {
+          ...data,
+          observation: compactObservation(result.observation, Boolean(visual.media?.length))
+        },
+    visual.metadata
+  )
   const bounded = await outputs.apply(JSON.stringify(modelData), {
     maxBytes: 40 * 1024,
     maxLines: 600,
@@ -1340,6 +1356,32 @@ export function registerBrowserToolHandlers(
             text: typeof args.value === 'string' ? args.value : '',
             clear: args.clear !== false,
             submit: args.submit === true
+          },
+          { signal: context.signal }
+        )
+      } else if (name === 'browser_download') {
+        if (!context.workspaceRoot) throw new Error('Downloads require a project workspace')
+        const data = await manager.service.download(
+          {
+            sessionId: lease.sessionId,
+            workspaceRoot: context.workspaceRoot,
+            url: stringArgument(args, 'url') || '',
+            destination: stringArgument(args, 'destination') || ''
+          },
+          { signal: context.signal }
+        )
+        return boundedInspectionSuccess(outputs, title, data)
+      } else if (name === 'browser_upload') {
+        if (!context.workspaceRoot) throw new Error('File uploads require a project workspace')
+        const paths = Array.isArray(args.paths)
+          ? args.paths.filter((path): path is string => typeof path === 'string')
+          : []
+        raw = await manager.service.upload(
+          {
+            sessionId: lease.sessionId,
+            workspaceRoot: context.workspaceRoot,
+            paths,
+            target: targetFromArguments(args, { required: true, coordinates: false })!
           },
           { signal: context.signal }
         )

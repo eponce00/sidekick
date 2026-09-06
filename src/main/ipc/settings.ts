@@ -8,6 +8,22 @@ import {
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
 import { getStore } from './state'
+import { validateOfficeInterpreter } from '../services/officeHelperService'
+import { randomUUID } from 'node:crypto'
+import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
+
+const CREDENTIAL_STORAGE_ERROR =
+  'Secure credential storage is unavailable. Unlock or enable your operating system keychain or password manager, then try again. Settings without new credentials can still be saved.'
+
+function encryptCredential(secret: string): string {
+  if (!isSecureCredentialStorageAvailable()) throw new Error(CREDENTIAL_STORAGE_ERROR)
+  try {
+    return safeStorage.encryptString(secret).toString('base64')
+  } catch {
+    // Native errors are not safe to echo into IPC or logs.
+    throw new Error(CREDENTIAL_STORAGE_ERROR)
+  }
+}
 
 const SECRET_KEYS = ['openRouterApiKey', 'ollamaCloudApiKey', 'lmStudioApiKey'] as const
 type SettingsRecord = Record<string, unknown> & {
@@ -41,20 +57,21 @@ function providerTypeHasSecret(
 }
 
 export function protectSettings(value: unknown, existingValue?: unknown): unknown {
-  if (!value || typeof value !== 'object' || !safeStorage.isEncryptionAvailable()) return value
+  if (!value || typeof value !== 'object') return value
   const settings = { ...(value as SettingsRecord) }
   const existing =
     existingValue && typeof existingValue === 'object'
       ? (existingValue as SettingsRecord)
       : undefined
   const encrypted = {
-    ...(existing?.__encryptedSecrets ?? {}),
-    ...(settings.__encryptedSecrets ?? {})
+    ...(existing?.__encryptedSecrets ?? {})
   }
   for (const key of SECRET_KEYS) {
-    const secret = settings[key]
+    // Migrate a historical plaintext fallback on the next save. If the vault is
+    // locked, encryption fails before persistence instead of silently losing it.
+    const secret = settings[key] === undefined ? existing?.[key] : settings[key]
     if (typeof secret === 'string' && secret) {
-      encrypted[key] = safeStorage.encryptString(secret).toString('base64')
+      encrypted[key] = encryptCredential(secret)
     } else if (secret === '') {
       delete encrypted[key]
     }
@@ -62,8 +79,7 @@ export function protectSettings(value: unknown, existingValue?: unknown): unknow
   }
   settings.__encryptedSecrets = encrypted
   const providerSecrets = {
-    ...(existing?.__encryptedProviderSecrets ?? {}),
-    ...(settings.__encryptedProviderSecrets ?? {})
+    ...(existing?.__encryptedProviderSecrets ?? {})
   }
   if (Array.isArray(settings.providerInstances)) {
     const retainedProviderIds = new Set<string>()
@@ -71,11 +87,16 @@ export function protectSettings(value: unknown, existingValue?: unknown): unknow
       if (!raw || typeof raw !== 'object') return raw
       const instance = { ...(raw as Record<string, unknown>) }
       const id = typeof instance.id === 'string' ? instance.id : ''
-      const secret = instance.apiKey
+      const previousInstance = Array.isArray(existing?.providerInstances)
+        ? existing.providerInstances.find(
+            (candidate) => candidate && typeof candidate === 'object' && candidate.id === id
+          )
+        : undefined
+      const secret = instance.apiKey === undefined ? previousInstance?.apiKey : instance.apiKey
       delete instance.apiKeyConfigured
       if (id) retainedProviderIds.add(id)
       if (id && typeof secret === 'string' && secret) {
-        providerSecrets[id] = safeStorage.encryptString(secret).toString('base64')
+        providerSecrets[id] = encryptCredential(secret)
       } else if (id && secret === '') {
         delete providerSecrets[id]
       }
@@ -103,7 +124,24 @@ export function revealSettings(value: unknown): unknown {
   const providerSecrets = settings.__encryptedProviderSecrets
   delete settings.__encryptedSecrets
   delete settings.__encryptedProviderSecrets
-  if (!safeStorage.isEncryptionAvailable()) return settings
+  if (!isSecureCredentialStorageAvailable()) {
+    // Never expose old plaintext fallback values while secure storage is locked.
+    for (const key of SECRET_KEYS) {
+      settings[`${key}Configured`] = Boolean(encrypted?.[key])
+      delete settings[key]
+    }
+    if (Array.isArray(settings.providerInstances)) {
+      settings.providerInstances = settings.providerInstances.map((raw) => {
+        if (!raw || typeof raw !== 'object') return raw
+        const instance = { ...(raw as Record<string, unknown>) }
+        const id = typeof instance.id === 'string' ? instance.id : ''
+        instance.apiKeyConfigured = Boolean(id && providerSecrets?.[id])
+        delete instance.apiKey
+        return instance
+      })
+    }
+    return settings
+  }
   if (encrypted) {
     for (const key of SECRET_KEYS) {
       const encoded = encrypted[key]
@@ -118,9 +156,10 @@ export function revealSettings(value: unknown): unknown {
       }
       try {
         settings[key] = safeStorage.decryptString(Buffer.from(encoded, 'base64'))
-      } catch (error) {
-        console.warn(`[Settings] Could not decrypt ${key}:`, error)
-        settings[key] = ''
+      } catch {
+        console.warn('[Settings] Could not decrypt a stored credential.')
+        settings[`${key}Configured`] = true
+        delete settings[key]
       }
     }
   }
@@ -133,8 +172,9 @@ export function revealSettings(value: unknown): unknown {
       if (encoded) {
         try {
           instance.apiKey = safeStorage.decryptString(Buffer.from(encoded, 'base64'))
-        } catch (error) {
-          console.warn(`[Settings] Could not decrypt provider secret ${id}:`, error)
+        } catch {
+          console.warn('[Settings] Could not decrypt a stored provider credential.')
+          instance.apiKeyConfigured = true
           delete instance.apiKey
         }
       }
@@ -180,16 +220,21 @@ export function updateStoredProviderModel(
 export function publicSettings(value: unknown): unknown {
   if (!value || typeof value !== 'object') return value
   const settings = { ...(value as SettingsRecord) }
+  delete settings.__encryptedSecrets
+  delete settings.__encryptedProviderSecrets
   for (const key of SECRET_KEYS) {
     const secret = settings[key]
-    settings[`${key}Configured`] = typeof secret === 'string' && Boolean(secret)
+    settings[`${key}Configured`] =
+      settings[`${key}Configured`] === true || (typeof secret === 'string' && Boolean(secret))
     delete settings[key]
   }
   if (Array.isArray(settings.providerInstances)) {
     settings.providerInstances = settings.providerInstances.map((raw) => {
       if (!raw || typeof raw !== 'object') return raw
       const instance = { ...(raw as Record<string, unknown>) }
-      instance.apiKeyConfigured = typeof instance.apiKey === 'string' && Boolean(instance.apiKey)
+      instance.apiKeyConfigured =
+        instance.apiKeyConfigured === true ||
+        (typeof instance.apiKey === 'string' && Boolean(instance.apiKey))
       delete instance.apiKey
       return instance
     })
@@ -200,6 +245,9 @@ export function publicSettings(value: unknown): unknown {
 function migrateLegacySettingsForStorage(store: ReturnType<typeof getStore>): SettingsRecord {
   const stored = store.get('settings', {})
   const revealed = asSettingsRecord(revealSettings(stored)) as unknown as ProviderSettings
+  // Defer migration rather than persisting a credential-less projection while
+  // the keychain is locked. The original encrypted store remains untouched.
+  if (!isSecureCredentialStorageAvailable()) return revealed as unknown as SettingsRecord
   if (revealed.providerInstances) return revealed as unknown as SettingsRecord
   const pinnedModels = store.get('pinnedModels', []) as PinnedModel[]
   const providerInstances = migrateLegacyProviderInstances(revealed, pinnedModels)
@@ -234,7 +282,7 @@ function mcpSummary(value: unknown): string {
     .slice(0, 3_000)
 }
 
-async function confirmSensitiveSettingsChange(
+export async function confirmSensitiveSettingsChange(
   previous: SettingsRecord,
   next: SettingsRecord,
   sender: WebContents
@@ -244,9 +292,21 @@ async function confirmSensitiveSettingsChange(
     normalizePermissionMode(next.commandPermissionMode) === 'full-access'
   const mcpChanged =
     JSON.stringify(previous.mcpServers ?? []) !== JSON.stringify(next.mcpServers ?? [])
-  if (!enablingFullAccess && !mcpChanged) return true
+  const disablingShellIsolation =
+    previous.shellIsolation === 'docker' && next.shellIsolation !== 'docker'
+  const officeInterpreterChanged =
+    previous.officeHelperInterpreter !== next.officeHelperInterpreter &&
+    Boolean(next.officeHelperInterpreter)
+  if (!enablingFullAccess && !mcpChanged && !disablingShellIsolation && !officeInterpreterChanged)
+    return true
 
   const reasons = [
+    officeInterpreterChanged
+      ? 'The selected Office Python executable will run trusted bundled read-only helpers with your account permissions in host mode. Only choose an interpreter you trust. No dependencies will be installed.'
+      : null,
+    disablingShellIsolation
+      ? 'Shell commands will leave container isolation and run directly on this computer with your account permissions.'
+      : null,
     enablingFullAccess
       ? 'Full access lets in-scope agent operations run without approval prompts.'
       : null,
@@ -275,11 +335,34 @@ async function confirmSensitiveSettingsChange(
 
 export function registerSettingsHandlers(): void {
   const store = getStore()
+  ipcMain.handle('settings:selectOfficeInterpreter', async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const options = {
+      title: 'Choose trusted Python executable for Office helpers',
+      properties: ['openFile'] as ['openFile']
+    }
+    const selected = parent
+      ? await dialog.showOpenDialog(parent, options)
+      : await dialog.showOpenDialog(options)
+    if (selected.canceled || selected.filePaths.length !== 1) return { canceled: true }
+    try {
+      return { canceled: false, path: await validateOfficeInterpreter(selected.filePaths[0]) }
+    } catch {
+      return { canceled: false, error: 'Selected interpreter is unavailable or invalid' }
+    }
+  })
 
   ipcMain.handle('settings:save', async (event, settings) => {
     try {
       const next = asSettingsRecord(settings)
+      if (next.officeHelperInterpreter !== undefined)
+        next.officeHelperInterpreter = await validateOfficeInterpreter(next.officeHelperInterpreter)
       const previous = asSettingsRecord(revealSettings(store.get('settings', {})))
+      next.officeHelperConfigurationId =
+        previous.officeHelperInterpreter !== next.officeHelperInterpreter ||
+        previous.shellIsolation !== next.shellIsolation
+          ? randomUUID()
+          : previous.officeHelperConfigurationId
       if (!(await confirmSensitiveSettingsChange(previous, next, event.sender))) {
         return { success: false, error: 'Settings change cancelled' }
       }

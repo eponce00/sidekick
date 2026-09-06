@@ -2,8 +2,45 @@ import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { AgentRunStore } from './agentRunStore'
+import { mkdtemp, rm } from 'fs/promises'
+import { join } from 'path'
+import { tmpdir } from 'os'
 
 describe('AgentRunStore', () => {
+  it('recovers an on-disk interrupted run once without duplicating recovery events', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-run-reopen-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'state.db')
+      disk = new Database(path)
+      applyDatabaseSchema(disk)
+      let durable = new AgentRunStore(disk)
+      durable.start({
+        id: 'disk-run',
+        threadId: 'disk-thread',
+        profile: {
+          surface: 'conversation',
+          executionMode: 'act',
+          capabilities: ['workspace.read']
+        },
+        provider: 'openai-compatible',
+        model: 'fixture',
+        workspaceRoot: root
+      })
+      durable.transition('disk-run', 'streaming', 'start-stream')
+      disk.close()
+      disk = new Database(path)
+      durable = new AgentRunStore(disk)
+      expect(durable.recoverInterrupted('disk-thread')).toHaveLength(1)
+      const events = durable.listEvents('disk-run')
+      expect(durable.get('disk-run')?.phase).toBe('interrupted')
+      expect(durable.recoverInterrupted('disk-thread')).toHaveLength(0)
+      expect(durable.listEvents('disk-run')).toEqual(events)
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
   let db: Database.Database
   let store: AgentRunStore
 

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { AgentToolLoopError, classifyAgentKernelFailure, withToolGuard } from './agentKernelFailure'
 import {
   getAgentToolDefinitions,
   getAgentToolEntry,
@@ -61,6 +62,7 @@ export interface AgentKernelModelTurn {
     doneReason: string
     tokensPerSecond?: number
     timeToFirstTokenMs?: number
+    providerDurationMs?: number
   }
   generationId?: string
 }
@@ -123,6 +125,9 @@ export interface AgentKernelPlanController {
 }
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
+  /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
+  projectStartCommands?: string[]
+  projectCompletionCommands?: string[]
   catalog: AgentToolCatalogOptions | (() => AgentToolCatalogOptions)
   messages: ProviderChatMessage[]
   request: Omit<ProviderChatRequest, 'messages' | 'tools'>
@@ -176,13 +181,6 @@ interface PendingResolver {
   resolve: (interaction: PendingAgentInteraction) => void
 }
 
-class AgentToolLoopError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'AgentToolLoopError'
-  }
-}
-
 const RESEARCH_SOURCE_TOOLS = new Set(['web_search', 'web_fetch'])
 const RESEARCH_SOURCE_GUARD = `<sidekick_research_guard trust="app-policy">
 This research report cannot finish without attempting source retrieval. Use web_search to discover relevant sources and web_fetch to verify the material claims. If retrieval fails, report that limitation explicitly. Do not repeat the unverified answer from the previous turn.
@@ -226,26 +224,6 @@ function parsedToolArguments(call: ProviderToolCall): {
 
 function objectArguments(call: ProviderToolCall): Record<string, unknown> {
   return parsedToolArguments(call).arguments
-}
-
-function withToolGuard(result: ToolExecutionResult, guard: string): ToolExecutionResult {
-  return {
-    ...result,
-    modelContent: `${result.modelContent}\n${guard}`,
-    ...(result.error
-      ? {
-          error: {
-            ...result.error,
-            recovery: [
-              result.error.recovery,
-              'SideKick detected repeated behavior; do not repeat the unchanged approach.'
-            ]
-              .filter(Boolean)
-              .join(' ')
-          }
-        }
-      : {})
-  }
 }
 
 function safePreview(call: ProviderToolCall): Record<string, unknown> {
@@ -421,6 +399,7 @@ export async function sampleProviderTurn(
         completionTokens,
         doneReason,
         tokensPerSecond,
+        providerDurationMs: Math.max(0, Date.now() - requestStartedAt),
         ...(firstGeneratedAt === undefined
           ? {}
           : { timeToFirstTokenMs: firstGeneratedAt - requestStartedAt })
@@ -484,11 +463,18 @@ export class AgentRunKernel {
     response: Record<string, unknown>,
     cancelled = false
   ): PendingAgentInteraction {
+    const pending = this.store.getInteraction(interactionId)
+    const before = pending ? (this.store.get(pending.runId)?.lastSequence ?? 0) : 0
     const interaction = this.store.resolveInteraction(interactionId, response, cancelled)
-    const event = this.store.listEvents(interaction.runId, 0).at(-1)
-    if (event) this.publish(event)
-    this.pendingResolvers.get(interactionId)?.resolve(interaction)
-    this.pendingResolvers.delete(interactionId)
+    const event = this.store.listEvents(interaction.runId, before, 1)[0]
+    try {
+      if (event) this.publish(event)
+    } finally {
+      // The response is durable already. An observer failure must not strand its waiter
+      // or require another response (which the store correctly rejects as a duplicate).
+      this.pendingResolvers.get(interactionId)?.resolve(interaction)
+      this.pendingResolvers.delete(interactionId)
+    }
     return interaction
   }
 
@@ -524,26 +510,32 @@ export class AgentRunKernel {
     const before = this.store.get(runId)?.lastSequence ?? 0
     this.store.createInteraction({ id, runId, kind, request })
     const event = this.store.listEvents(runId, before, 1)[0]
-    if (event) this.publish(event)
     return new Promise<PendingAgentInteraction>((resolve) => {
-      const abort = (): void => {
-        if (this.store.getInteraction(id)?.status === 'pending') {
-          const cancelled = this.store.resolveInteraction(id, { reason: 'run_cancelled' }, true)
-          const resolvedEvent = this.store.listEvents(runId, event?.sequence ?? before, 1)[0]
-          if (resolvedEvent) this.publish(resolvedEvent)
-          resolve(cancelled)
-        }
+      const finish = (interaction: PendingAgentInteraction): void => {
+        signal.removeEventListener('abort', abort)
         this.pendingResolvers.delete(id)
+        resolve(interaction)
       }
-      if (signal.aborted) return abort()
+      const abort = (): void => {
+        const current = this.store.getInteraction(id)
+        if (current?.status === 'pending') {
+          try {
+            this.resolveInteraction(id, { reason: 'run_cancelled' }, true)
+          } catch (error) {
+            const resolved = this.store.getInteraction(id)
+            // Abort listeners have no caller to receive an observer error. Once the
+            // cancellation is durable, finish it rather than crashing the event loop.
+            if (resolved && resolved.status !== 'pending') finish(resolved)
+            else throw error
+          }
+        } else if (current) finish(current)
+      }
       signal.addEventListener('abort', abort, { once: true })
-      this.pendingResolvers.set(id, {
-        runId,
-        resolve: (resolved) => {
-          signal.removeEventListener('abort', abort)
-          resolve(resolved)
-        }
-      })
+      // A subscriber may answer or cancel synchronously while receiving this event.
+      // Install the waiter first so the persisted response cannot strand the run.
+      this.pendingResolvers.set(id, { runId, resolve: finish })
+      if (event) this.publish(event)
+      if (signal.aborted) abort()
     })
   }
 
@@ -935,8 +927,105 @@ The user approved this exact plan revision. Act capabilities are now available a
     let contextOverflowRetryAttempted = false
     let activeRequest = input.request
     let activeContextManager = input.contextManager
+    let completionHooksRun = false
 
+    const runProjectHooks = async (
+      commands: string[] | undefined,
+      title: string
+    ): Promise<void> => {
+      if (
+        input.profile.executionMode !== 'plan' &&
+        getAgentToolEntry(currentCatalog(input), 'shell')
+      ) {
+        // Snapshot before waiting for approval; changes to settings cannot replace reviewed commands.
+        const hooks = [...(commands ?? [])].slice(0, 10)
+        for (const command of hooks) {
+          const call: AgentToolCall = { id: randomUUID(), name: 'shell', arguments: { command } }
+          const startedAt = Date.now()
+          this.append(input.id, 'tool.pending', {
+            toolCallId: call.id,
+            name: call.name,
+            title,
+            arguments: call.arguments
+          })
+          const approval = await this.suspendForInteraction(
+            input.id,
+            'permission',
+            {
+              toolCallId: call.id,
+              name: call.name,
+              title,
+              arguments: call.arguments,
+              requestedAccess: 'confirm',
+              mode: 'always-ask',
+              workspaceRoot: input.workspaceRoot
+            },
+            signal
+          )
+          if (
+            signal.aborted ||
+            approval.status !== 'resolved' ||
+            approval.response?.approved !== true
+          ) {
+            this.append(input.id, 'tool.completed', {
+              toolCallId: call.id,
+              name: call.name,
+              result: toolExecutionFailed({
+                title,
+                code: 'permission_denied',
+                message: `${title} was not approved`,
+                status: 'denied',
+                startedAt
+              })
+            })
+            throw new Error(`${title} was not approved; the run was stopped`)
+          }
+          this.transition(input.id, 'executing_tool')
+          this.append(input.id, 'tool.running', {
+            toolCallId: call.id,
+            name: call.name,
+            title,
+            arguments: call.arguments
+          })
+          const result = await this.tools.execute(
+            {
+              catalog: currentCatalog(input),
+              call,
+              title,
+              context: {
+                runId: input.id,
+                conversationId: input.threadId,
+                workspaceRoot: input.workspaceRoot,
+                signal,
+                onOutput: ({ chunk, stream }) =>
+                  this.append(input.id, 'tool.output.delta', { toolCallId: call.id, stream, chunk })
+              }
+            },
+            ((args, context) =>
+              input.toolRouter.execute('shell', args, context)) as AgentToolExecutor
+          )
+          this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
+          if (result.status !== 'success')
+            throw new Error(`${title} failed; inspect its output before retrying`)
+          messages.push(
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: call.id,
+                  type: 'function',
+                  function: { name: 'shell', arguments: JSON.stringify(call.arguments) }
+                }
+              ]
+            },
+            { role: 'tool', tool_call_id: call.id, content: result.modelContent }
+          )
+        }
+      }
+    }
     try {
+      await runProjectHooks(input.projectStartCommands, 'Project start hook')
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
         if (input.beforeModelStep) {
@@ -1099,6 +1188,16 @@ The user approved this exact plan revision. Act capabilities are now available a
             ? await input.planController?.afterTerminalTurn()
             : undefined
         const planDecision = planningDecision ?? executionPlanDecision
+        const completionHooksPending =
+          !completionHooksRun &&
+          input.profile.executionMode === 'act' &&
+          input.profile.surface === 'conversation' &&
+          !input.goalController &&
+          (!input.planController || input.planController.stage() === 'inactive') &&
+          !turn.toolCalls.length &&
+          verificationDecision?.continue !== true &&
+          Boolean(input.projectCompletionCommands?.length) &&
+          Boolean(getAgentToolEntry(currentCatalog(input), 'shell'))
         if (verificationDecision) {
           this.append(input.id, 'verification.updated', {
             summary: verificationDecision.summary
@@ -1121,6 +1220,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           usage: turn.usage,
           generationId: turn.generationId,
           provisional:
+            completionHooksPending ||
             needsResearchSource ||
             verificationDecision?.continue === true ||
             planDecision?.continue === true ||
@@ -1157,6 +1257,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
 
         if (
+          !completionHooksPending &&
           verificationDecision?.continue !== true &&
           planDecision?.continue !== true &&
           !planDecision?.error
@@ -1216,6 +1317,17 @@ The user approved this exact plan revision. Act capabilities are now available a
               goalContinuationTurn = true
               continue
             }
+          }
+          if (completionHooksPending) {
+            completionHooksRun = true
+            await runProjectHooks(input.projectCompletionCommands, 'Project completion hook')
+            messages.push({
+              role: 'user',
+              content:
+                'The approved completion hooks finished. Inspect their results, reverify any changed workspace state, then give the final response. Do not repeat the hooks.'
+            })
+            this.transition(input.id, 'streaming')
+            continue
           }
           this.transition(input.id, 'completed')
           return {
@@ -1313,7 +1425,8 @@ The user approved this exact plan revision. Act capabilities are now available a
                   parallelItem.call,
                   parallelItem.title,
                   parallelStartedAt,
-                  parallelItem.prepared.repairs
+                  parallelItem.prepared.repairs,
+                  parallelItem.prepared.argumentSnapshotFailed
                 )
                 if (invalid) {
                   preExecuted.set(parallelItem.call.id, invalid)
@@ -1387,7 +1500,8 @@ The user approved this exact plan revision. Act capabilities are now available a
               call,
               title,
               startedAt,
-              prepared.repairs
+              prepared.repairs,
+              prepared.argumentSnapshotFailed
             )
             if (invalid) result = invalid
             else if (call.name === 'ask_user') {
@@ -1571,34 +1685,17 @@ The user approved this exact plan revision. Act capabilities are now available a
       }
       throw new DOMException('Agent run cancelled', 'AbortError')
     } catch (error) {
-      const cancelled = signal.aborted || (error instanceof Error && error.name === 'AbortError')
-      const loopDetected = error instanceof AgentToolLoopError
-      const message = cancelled
-        ? 'Agent run cancelled'
-        : error instanceof Error
-          ? error.message
-          : String(error)
-      const failure = toolExecutionFailed({
-        title: 'Agent run',
-        code: cancelled ? 'cancelled' : loopDetected ? 'loop_detected' : 'internal',
-        message,
-        retryable: !cancelled && !loopDetected,
-        recoveryAction: cancelled || loopDetected ? 'stop' : 'retry_later',
-        recovery: loopDetected
-          ? 'The run stopped because its tool calls were no longer making progress. Change the approach or provide new information before starting again.'
-          : undefined,
-        status: cancelled ? 'cancelled' : 'error'
-      })
-      this.transition(input.id, cancelled ? 'cancelled' : 'failed', failure.error)
+      const failure = classifyAgentKernelFailure(error, signal.aborted)
+      this.transition(input.id, failure.phase, failure.error)
       return {
         runId: input.id,
-        phase: cancelled ? 'cancelled' : 'failed',
+        phase: failure.phase,
         content: finalContent,
         finalResponse: '',
         thinking: finalThinking,
         messages,
         toolRounds,
-        error: message
+        error: failure.message
       }
     }
   }

@@ -1,5 +1,14 @@
 const assert = require('node:assert/strict')
-const { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs')
+const {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} = require('node:fs')
+const { spawn, execFile } = require('node:child_process')
+const { promisify } = require('node:util')
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 const { test } = require('node:test')
@@ -9,14 +18,116 @@ const { _electron: electron } = require('playwright')
 const ROOT = resolve(__dirname, '..')
 const APP_ENTRY = join(ROOT, 'out', 'main', 'index.js')
 
+test(
+  'a killed desktop recovers an uncertain tool journal through the real preload API without replay',
+  { timeout: 90000 },
+  async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'sidekick-e2e-crash-'))
+    let application
+    let writer
+    try {
+      application = await launchSideKick(profile)
+      await waitForVisible(
+        (await application.firstWindow()).getByRole('heading', { name: 'What’s next?' }),
+        'startup'
+      )
+      // Inject a real durable partial-run boundary in this disposable profile. The
+      // provider/tool is synthetic; restart and recovery use the actual application.
+      const script = join(profile, 'crash-writer.cjs')
+      await require('esbuild').build({
+        entryPoints: [join(ROOT, 'src/main/services/fixtures/crashRunWriter.ts')],
+        outfile: script,
+        bundle: true,
+        platform: 'node',
+        format: 'cjs',
+        packages: 'external'
+      })
+      writer = spawn(
+        require('electron'),
+        [script, join(profile, 'conversations.db'), join(profile, 'effect.txt')],
+        {
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          env: {
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            ELECTRON_RUN_AS_NODE: '1',
+            NODE_PATH: join(ROOT, 'node_modules')
+          }
+        }
+      )
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('Crash writer checkpoint timed out')),
+          10000
+        )
+        writer.once('message', () => {
+          clearTimeout(timer)
+          resolve()
+        })
+        writer.once('error', (error) => {
+          clearTimeout(timer)
+          reject(error)
+        })
+        writer.once('exit', () => {
+          clearTimeout(timer)
+          reject(new Error('Crash writer exited before checkpoint'))
+        })
+      })
+      const writerStopped = new Promise((resolve) => writer.once('exit', resolve))
+      writer.kill('SIGKILL')
+      await writerStopped
+      writer = undefined
+      const ownedProcess = application.process()
+      const stopped = new Promise((resolve) => ownedProcess.once('exit', resolve))
+      if (process.platform === 'win32')
+        await promisify(execFile)('taskkill', ['/PID', String(ownedProcess.pid), '/T', '/F'], {
+          windowsHide: true
+        })
+      else ownedProcess.kill('SIGKILL')
+      await stopped
+      application = undefined
+      for (let attempt = 0; attempt < 2; attempt++) {
+        application = await launchSideKick(profile)
+        const page = await application.firstWindow()
+        const state = await page.evaluate(() => window.api.agentRuns.latest('crash-thread'))
+        assert.equal(state.run.phase, 'interrupted')
+        const completed = state.events.filter((event) => event.type === 'tool.completed')
+        assert.equal(completed.length, 1)
+        assert.match(JSON.stringify(completed[0]), /OUTCOME UNKNOWN/)
+        assert.equal(completed[0].payload.result.error.recoveryAction, 'refresh_state')
+        assert.equal(state.events.filter((event) => event.type === 'run.finalized').length, 1)
+        assert.equal(readFileSync(join(profile, 'effect.txt'), 'utf8'), 'effect\n')
+        await closeApplication(application)
+        application = undefined
+      }
+    } finally {
+      if (writer && writer.exitCode === null) {
+        const stopped = new Promise((resolve) => writer.once('exit', resolve))
+        writer.kill('SIGKILL')
+        await stopped
+      }
+      await closeApplication(application)
+      removeIsolatedProfile(profile)
+    }
+  }
+)
+
 async function launchSideKick(profile) {
+  const executablePath = process.env.SIDEKICK_E2E_EXECUTABLE
   assert.ok(
-    existsSync(APP_ENTRY),
+    existsSync(executablePath || APP_ENTRY),
     'The Electron runtime is not built. Run `npm run build` before the runtime E2E test.'
   )
 
   return electron.launch({
-    args: [ROOT, '--disable-gpu', '--sidekick-packaged-smoke-test', '--sidekick-e2e'],
+    ...(executablePath ? { executablePath: resolve(executablePath) } : {}),
+    args: [
+      ...(executablePath ? [] : [ROOT]),
+      '--disable-gpu',
+      '--sidekick-packaged-smoke-test',
+      '--sidekick-e2e'
+    ],
     env: {
       ...process.env,
       NODE_ENV: 'production',
@@ -166,6 +277,62 @@ test(
         await page.getByText(/Excludes conversations, prompts, files/).textContent(),
         /credentials/
       )
+
+      // Actual preload/IPC export; replace only the native picker in this owned
+      // profile. Independently identify the package bytes, not its version label.
+      const diagnosticPath = join(profile, 'synthetic-diagnostics.json')
+      await application.evaluate(({ dialog }, filePath) => {
+        globalThis.sidekickTestOriginalSaveDialog = dialog.showSaveDialog
+        dialog.showSaveDialog = async () => ({ canceled: false, filePath })
+      }, diagnosticPath)
+      try {
+        const result = await page.evaluate(() => window.api.support.export())
+        assert.equal(result.success, true)
+        const report = JSON.parse(readFileSync(diagnosticPath, 'utf8'))
+        const appRoot = await application.evaluate(({ app }) => app.getAppPath())
+        const code = process.env.SIDEKICK_E2E_EXECUTABLE
+          ? require('@electron/asar').extractFile(appRoot, join('out', 'main', 'index.js'))
+          : readFileSync(join(appRoot, 'out', 'main', 'index.js'))
+        assert.deepEqual(report.application.artifact, {
+          scope: 'main-bundle-on-disk', algorithm: 'sha256',
+          sha256: require('node:crypto').createHash('sha256').update(code).digest('hex')
+        })
+        assert.equal(JSON.stringify(report).includes(profile), false)
+      } finally {
+        await application.evaluate(({ dialog }) => {
+          dialog.showSaveDialog = globalThis.sidekickTestOriginalSaveDialog
+          delete globalThis.sidekickTestOriginalSaveDialog
+        })
+      }
+
+      await page.getByRole('button', { name: /^Agent/ }).click()
+      const completionHooks = page.locator('section.settings-card').filter({
+        has: page.getByRole('heading', { name: 'Project completion hooks', exact: true })
+      })
+      await completionHooks
+        .getByRole('textbox', { name: 'completion hook project folder' })
+        .fill(profile)
+      await completionHooks
+        .getByRole('textbox', { name: 'completion hook command' })
+        .fill('echo fixture-only')
+      await completionHooks.getByRole('button', { name: 'Add disabled hook' }).click()
+      assert.equal(await completionHooks.getByRole('checkbox').isChecked(), false)
+      await completionHooks.getByRole('button', { name: 'Remove hook' }).click()
+      assert.equal(await completionHooks.getByRole('checkbox').count(), 0)
+
+      const worktreeHooks = page.locator('section.settings-card').filter({
+        has: page.getByRole('heading', { name: 'Project worktree hooks', exact: true })
+      })
+      await worktreeHooks
+        .getByRole('textbox', { name: 'worktree hook project folder' })
+        .fill(profile)
+      await worktreeHooks
+        .getByRole('textbox', { name: 'worktree hook command' })
+        .fill('echo fixture-only')
+      await worktreeHooks.getByRole('button', { name: 'Add disabled hook' }).click()
+      assert.equal(await worktreeHooks.getByRole('checkbox').isChecked(), false)
+      await worktreeHooks.getByRole('button', { name: 'Remove hook' }).click()
+      assert.equal(await worktreeHooks.getByRole('checkbox').count(), 0)
 
       await page.getByRole('button', { name: /^Providers/ }).click()
       await waitForVisible(page.getByRole('heading', { name: 'Providers' }), 'provider settings')

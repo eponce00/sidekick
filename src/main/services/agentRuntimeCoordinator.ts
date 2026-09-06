@@ -6,7 +6,7 @@ import type {
   ResolveAgentInteractionInput,
   StartConversationAgentRunInput
 } from '../../shared/agentRunApi'
-import type { AgentRunEvent, AgentRunSnapshot } from '../../shared/agentRuntime'
+import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { normalizePermissionMode } from '../../shared/permissions'
@@ -14,7 +14,13 @@ import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import type { ProviderInstance } from '../../shared/settings'
 import type { ProviderSettings } from '../../shared/settings'
-import { providerDefinition, type ProviderKind } from '../../shared/providerRegistry'
+import {
+  providerDefinition,
+  providerKindForTransport,
+  type ProviderKind
+} from '../../shared/providerRegistry'
+import { abortablePromise } from './abortablePromise'
+import { classifyAgentKernelFailure } from './agentKernelFailure'
 import {
   capabilitiesFromTools,
   createPromptModelProfile,
@@ -32,6 +38,7 @@ import {
 } from './conversationRunPreparer'
 import { AgentRunKernel, type AgentKernelRunResult } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
+import { recoverAgentRunMaterializations } from './agentRunRecovery'
 import { AgentMessageMaterializer } from './agentMessageMaterializer'
 import { AgentToolRuntime } from './agentToolRuntime'
 import { CommandService } from './commandService'
@@ -44,6 +51,7 @@ import type { AgentCollaborationToolHandler } from './agentToolRuntime'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
+import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import type {
@@ -56,6 +64,14 @@ interface ActiveConversationRun {
   input: StartConversationAgentRunInput
   prepared: PreparedConversationAgentRun
   capture: { promise: Promise<string | null> | null }
+}
+
+interface PreparingRun {
+  identity: StartAgentRunInput
+  controller: AbortController
+  done: Promise<void>
+  finish: () => void
+  goalId?: string
 }
 
 export interface CollaborationKernelRunInput {
@@ -94,6 +110,8 @@ export class AgentRuntimeCoordinator {
   private readonly commands: CommandService
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()
+  private readonly preparations = new Map<string, PreparingRun>()
+  private closing = false
   private readonly observers = new Map<string, Set<(event: AgentRunEvent) => void>>()
   private readonly publishExternal: (event: AgentRunEvent) => void
   private readonly settings: () => ProviderSettings
@@ -121,7 +139,8 @@ export class AgentRuntimeCoordinator {
       db,
       join(userDataRoot, 'command-outputs'),
       undefined,
-      this.skillAssetsPath()
+      this.skillAssetsPath(),
+      () => this.settings().shellIsolation === 'docker'
     )
     this.browser = new NativeBrowserSessionService({
       artifactRoot: join(userDataRoot, 'browser-artifacts'),
@@ -136,7 +155,8 @@ export class AgentRuntimeCoordinator {
       this.mcp,
       undefined,
       undefined,
-      this.browser
+      this.browser,
+      new OfficeHelperService(this.settings, this.skillAssetsPath)
     )
     this.kernel = new AgentRunKernel(this.store, undefined, undefined, (event) =>
       this.publishEvent(event)
@@ -152,11 +172,7 @@ export class AgentRuntimeCoordinator {
   }
 
   private recoverInterruptedRuns(): void {
-    const recovered = this.store.recoverInterrupted()
-    for (const run of recovered) {
-      const events = this.store.listEvents(run.id, 0, 10_000)
-      const started = events.find((event) => event.type === 'run.started')
-      const outputMessageId = String(started?.payload.outputMessageId || '')
+    recoverAgentRunMaterializations(this.db, this.store, (run, events) => {
       const latestUserMessage = this.db
         .prepare(
           `SELECT id, timestamp FROM messages
@@ -165,20 +181,7 @@ export class AgentRuntimeCoordinator {
         )
         .get(run.threadId, run.startedAt) as { id: string; timestamp: number } | undefined
       this.persistCompactionFromLedger(run.threadId, events, latestUserMessage)
-      if ((run.surface === 'conversation' || run.surface === 'research') && outputMessageId) {
-        this.messages.materialize(run.id)
-      }
-      this.store.appendEvent({
-        id: `${run.id}:finalized`,
-        runId: run.id,
-        type: 'run.finalized',
-        payload: {
-          outputMessageId: outputMessageId || null,
-          persisted: Boolean(outputMessageId),
-          recovered: true
-        }
-      })
-    }
+    })
   }
 
   private persistCompactionFromLedger(
@@ -213,75 +216,174 @@ export class AgentRuntimeCoordinator {
     for (const observer of this.observers.get(event.runId) ?? []) observer(event)
   }
 
+  private beginPreparation(identity: StartAgentRunInput): PreparingRun {
+    if (this.closing) throw new Error('Agent runtime is closing')
+    if (this.preparations.has(identity.id) || this.store.get(identity.id)) {
+      throw new Error(`Agent run already exists: ${identity.id}`)
+    }
+    if (
+      identity.outputMessageId &&
+      [...this.preparations.values()].some(
+        (pending) =>
+          pending.identity.outputMessageId && pending.identity.threadId === identity.threadId
+      )
+    )
+      throw new Error('This conversation already has an active run')
+    let finish!: () => void
+    const done = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const preparation = { identity, controller: new AbortController(), done, finish }
+    this.preparations.set(identity.id, preparation)
+    return preparation
+  }
+
+  private finishPreparation(preparation: PreparingRun): void {
+    if (this.preparations.get(preparation.identity.id) === preparation) {
+      this.preparations.delete(preparation.identity.id)
+    }
+    preparation.finish()
+  }
+
+  private async awaitPreparation<T>(promise: Promise<T>, preparation: PreparingRun): Promise<T> {
+    const { signal } = preparation.controller
+    // A late, signal-ignoring initializer cannot recreate an instruction scope after cancellation.
+    return abortablePromise(
+      promise.finally(() => {
+        if (signal.aborted) clearWorkspaceInstructionScope(preparation.identity.id)
+      }),
+      signal
+    )
+  }
+
+  private cancelPreparation(preparation: PreparingRun): AgentRunSnapshot {
+    const { identity } = preparation
+    preparation.controller.abort()
+    const existing = this.store.get(identity.id)
+    if (existing) return existing
+    const failure = classifyAgentKernelFailure(undefined, true)
+    this.db.transaction(() => {
+      this.store.start(identity)
+      this.store.transition(
+        identity.id,
+        'cancelled',
+        `${identity.id}:preparation-cancelled`,
+        failure.error
+      )
+      if (identity.outputMessageId) {
+        this.messages.materialize(identity.id)
+        this.store.appendEvent({
+          id: `${identity.id}:finalized`,
+          runId: identity.id,
+          type: 'run.finalized',
+          payload: {
+            assistantMessageId: identity.outputMessageId,
+            checkpointHash: null,
+            persisted: true
+          }
+        })
+      }
+    })()
+    const publicationErrors: unknown[] = []
+    for (const event of this.store.listAllEvents(identity.id)) {
+      try {
+        this.publishEvent(event)
+      } catch (error) {
+        publicationErrors.push(error)
+      }
+    }
+    // The preparation is already aborted and durable, but internal observer errors
+    // still belong to the caller; they are not merely renderer notification failures.
+    if (publicationErrors.length) throw publicationErrors[0]
+    return this.store.get(identity.id)!
+  }
+
   async runCollaborationParticipant(
     input: CollaborationKernelRunInput
   ): Promise<AgentKernelRunResult> {
-    if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
-    const currentSettings = this.settings()
-    const configuredThreshold = Number(currentSettings.autoCompactThreshold)
-    const configuredInstances = Array.isArray(currentSettings.providerInstances)
-      ? (currentSettings.providerInstances as ProviderInstance[])
-      : []
-    const target = refreshProviderTargetMetadata(input.target, configuredInstances)
-    const resolved = await resolveProviderContext(target)
-    const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
-    const maxOutputTokens = resolveMaxOutputTokens(contextLength, target.maxOutputTokens)
-    const session = await this.tools.createSession({
-      runId: input.id,
-      surface: 'collaboration',
+    const preparation = this.beginPreparation({
+      id: input.id,
+      threadId: input.threadId,
       workspaceRoot: input.workspaceRoot,
-      webSearchEnabled: true,
-      collaboration: input.collaboration,
-      instructionScopeId: input.id,
-      onWorkspaceWillMutate: input.onWorkspaceWillMutate
+      provider: input.target.providerKind,
+      model: input.target.model,
+      profile: { surface: 'collaboration', executionMode: 'act', capabilities: [] }
     })
-    const catalog = session.catalog()
-    const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
-    const provider = providerDefinition(input.target.providerKind).transport
-    const composed = new PromptComposer().compose({
-      platform:
-        process.platform === 'win32'
-          ? 'windows'
-          : process.platform === 'darwin'
-            ? 'macos'
-            : 'linux',
-      capabilities: capabilitiesFromTools(getAgentToolDefinitions(catalog)),
-      permissionMode,
-      model: createPromptModelProfile({
-        id: `${target.providerKind}:${target.model}`,
-        name: target.model,
-        provider,
-        providerKind: target.providerKind,
-        providerModelId: target.model
-      }),
-      project: {
-        workspaceRoot: input.workspaceRoot,
-        instructions: input.projectInstructions.content,
-        instructionSources: input.projectInstructions.sources,
-        memory: input.projectMemory ?? ''
-      },
-      currentDate: new Intl.DateTimeFormat('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      }).format(new Date()),
-      toolRoundLimit: normalizeToolCallLimit(input.maxToolRounds ?? currentSettings.toolCallLimit),
-      activeSkillIds: [],
-      skillAssetsPath: this.skillAssetsPath()
-    })
-    const messages: ProviderChatMessage[] = [
-      {
-        role: 'system',
-        content: `${composed.content}\n\n## Collaboration role\n${input.collaborationInstructions}`
-      },
-      ...(composed.projectInstructionsMessage
-        ? [{ role: 'user' as const, content: composed.projectInstructionsMessage }]
-        : []),
-      ...input.messages
-    ]
+    const { signal } = preparation.controller
     try {
-      return await this.kernel.start({
+      if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
+      const currentSettings = this.settings()
+      const configuredThreshold = Number(currentSettings.autoCompactThreshold)
+      const configuredInstances = Array.isArray(currentSettings.providerInstances)
+        ? (currentSettings.providerInstances as ProviderInstance[])
+        : []
+      const target = refreshProviderTargetMetadata(input.target, configuredInstances)
+      const resolved = await resolveProviderContext(target, signal)
+      signal.throwIfAborted()
+      const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
+      const maxOutputTokens = resolveMaxOutputTokens(contextLength, target.maxOutputTokens)
+      const session = await this.awaitPreparation(
+        this.tools.createSession({
+          runId: input.id,
+          surface: 'collaboration',
+          workspaceRoot: input.workspaceRoot,
+          webSearchEnabled: true,
+          collaboration: input.collaboration,
+          instructionScopeId: input.id,
+          onWorkspaceWillMutate: input.onWorkspaceWillMutate
+        }),
+        preparation
+      )
+      signal.throwIfAborted()
+      const catalog = session.catalog()
+      const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
+      const provider = providerDefinition(input.target.providerKind).transport
+      const composed = new PromptComposer().compose({
+        platform:
+          process.platform === 'win32'
+            ? 'windows'
+            : process.platform === 'darwin'
+              ? 'macos'
+              : 'linux',
+        capabilities: capabilitiesFromTools(getAgentToolDefinitions(catalog)),
+        permissionMode,
+        model: createPromptModelProfile({
+          id: `${target.providerKind}:${target.model}`,
+          name: target.model,
+          provider,
+          providerKind: target.providerKind,
+          providerModelId: target.model
+        }),
+        project: {
+          workspaceRoot: input.workspaceRoot,
+          instructions: input.projectInstructions.content,
+          instructionSources: input.projectInstructions.sources,
+          memory: input.projectMemory ?? ''
+        },
+        currentDate: new Intl.DateTimeFormat('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        }).format(new Date()),
+        toolRoundLimit: normalizeToolCallLimit(
+          input.maxToolRounds ?? currentSettings.toolCallLimit
+        ),
+        activeSkillIds: [],
+        skillAssetsPath: this.skillAssetsPath()
+      })
+      const messages: ProviderChatMessage[] = [
+        {
+          role: 'system',
+          content: `${composed.content}\n\n## Collaboration role\n${input.collaborationInstructions}`
+        },
+        ...(composed.projectInstructionsMessage
+          ? [{ role: 'user' as const, content: composed.projectInstructionsMessage }]
+          : []),
+        ...input.messages
+      ]
+      signal.throwIfAborted()
+      const run = this.kernel.start({
         id: input.id,
         threadId: input.threadId,
         profile: agentRunProfile(catalog),
@@ -317,7 +419,23 @@ export class AgentRuntimeCoordinator {
           enabled: currentSettings.autoCompactEnabled !== false
         })
       })
+      this.finishPreparation(preparation)
+      if (signal.aborted) this.kernel.stop(input.id)
+      return await run
+    } catch (error) {
+      if (!signal.aborted) throw error
+      this.cancelPreparation(preparation)
+      return {
+        runId: input.id,
+        phase: 'cancelled',
+        content: '',
+        thinking: '',
+        messages: [],
+        toolRounds: 0,
+        error: 'Agent run cancelled'
+      }
     } finally {
+      this.finishPreparation(preparation)
       this.observers.delete(input.id)
       clearWorkspaceInstructionScope(input.id)
     }
@@ -331,38 +449,74 @@ export class AgentRuntimeCoordinator {
     if (active && !['completed', 'failed', 'cancelled', 'interrupted'].includes(active.phase)) {
       throw new Error('This conversation already has an active run')
     }
-    const capture = { promise: null as Promise<string | null> | null }
-    let workspaceRoot: string | null = null
-    const ensureCapture = async (): Promise<void> => {
-      if (!workspaceRoot || capture.promise) {
-        await capture.promise
-        return
+    const preparation = this.beginPreparation({
+      id: input.id,
+      threadId: input.conversationId,
+      outputMessageId: input.assistantMessageId,
+      provider: input.model.providerKind ?? providerKindForTransport(input.model.provider),
+      model: input.model.providerModelId || input.model.name,
+      profile: {
+        surface: input.mode === 'research' ? 'research' : 'conversation',
+        executionMode: input.mode === 'plan' ? 'plan' : 'act',
+        capabilities: []
       }
-      capture.promise = beginCheckpointCapture(
-        workspaceRoot,
-        input.conversationId,
-        input.assistantMessageId
-      ).catch((error) => {
-        console.warn('[History] Could not begin run capture:', error)
-        return null
-      })
-      await capture.promise
+    })
+    const { signal } = preparation.controller
+    let kernelStarted = false
+    try {
+      if (!input.mode || input.mode === 'conversation') {
+        preparation.goalId = this.goals.runnable(input.conversationId)?.id
+      }
+      const capture = { promise: null as Promise<string | null> | null }
+      let workspaceRoot: string | null = null
+      const ensureCapture = async (): Promise<void> => {
+        if (!workspaceRoot || capture.promise) {
+          await capture.promise
+          return
+        }
+        capture.promise = beginCheckpointCapture(
+          workspaceRoot,
+          input.conversationId,
+          input.assistantMessageId
+        ).catch((error) => {
+          console.warn('[History] Could not begin run capture:', error)
+          return null
+        })
+        await capture.promise
+      }
+      const prepared = await this.awaitPreparation(
+        new ConversationRunPreparer(
+          this.db,
+          this.tools,
+          this.goals,
+          this.settings,
+          this.skillAssetsPath
+        ).prepare(input, ensureCapture, signal),
+        preparation
+      )
+      signal.throwIfAborted()
+      if (prepared.goalId && this.goals.get(prepared.goalId)?.status !== 'active') {
+        return this.cancelPreparation(preparation)
+      }
+      workspaceRoot = prepared.workspaceRoot
+      this.activeConversations.set(input.id, { input, prepared, capture })
+      const run = this.kernel.start(prepared.kernelInput)
+      kernelStarted = true
+      this.finishPreparation(preparation)
+      if (signal.aborted) this.kernel.stop(input.id)
+      if (prepared.goalId && !signal.aborted) this.goals.bindRun(prepared.goalId, input.id)
+      void run
+        .then((result) => this.finalizeConversation(input.id, result))
+        .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
+      return this.store.get(input.id)!
+    } catch (error) {
+      if (signal.aborted) return this.cancelPreparation(preparation)
+      throw error
+    } finally {
+      this.finishPreparation(preparation)
+      if (!kernelStarted) this.activeConversations.delete(input.id)
+      if (!this.activeConversations.has(input.id)) clearWorkspaceInstructionScope(input.id)
     }
-    const prepared = await new ConversationRunPreparer(
-      this.db,
-      this.tools,
-      this.goals,
-      this.settings,
-      this.skillAssetsPath
-    ).prepare(input, ensureCapture)
-    workspaceRoot = prepared.workspaceRoot
-    this.activeConversations.set(input.id, { input, prepared, capture })
-    const run = this.kernel.start(prepared.kernelInput)
-    if (prepared.goalId) this.goals.bindRun(prepared.goalId, input.id)
-    void run
-      .then((result) => this.finalizeConversation(input.id, result))
-      .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
-    return this.store.get(input.id)!
   }
 
   private async finishCheckpointCapture(
@@ -579,6 +733,15 @@ export class AgentRuntimeCoordinator {
   }
 
   stop(runId: string): boolean {
+    const preparation = this.preparations.get(runId)
+    if (preparation) {
+      try {
+        this.cancelPreparation(preparation)
+      } finally {
+        this.tools.cancelRun(runId)
+      }
+      return true
+    }
     const stopped = this.kernel.stop(runId)
     if (stopped) this.tools.cancelRun(runId)
     return stopped
@@ -599,6 +762,9 @@ export class AgentRuntimeCoordinator {
   pauseGoal(goalId: string): ConversationGoal {
     const goal = this.goals.pause(goalId)
     if (goal.currentRunId) this.stop(goal.currentRunId)
+    for (const [runId, preparation] of this.preparations) {
+      if (preparation.goalId === goalId) this.stop(runId)
+    }
     for (const [runId, active] of this.activeConversations) {
       if (active.prepared.goalId === goalId) this.stop(runId)
     }
@@ -612,6 +778,9 @@ export class AgentRuntimeCoordinator {
   clearGoal(goalId: string): ConversationGoal {
     const existing = this.goals.get(goalId)
     if (existing?.currentRunId) this.stop(existing.currentRunId)
+    for (const [runId, preparation] of this.preparations) {
+      if (preparation.goalId === goalId) this.stop(runId)
+    }
     for (const [runId, active] of this.activeConversations) {
       if (active.prepared.goalId === goalId) this.stop(runId)
     }
@@ -657,12 +826,26 @@ export class AgentRuntimeCoordinator {
   }
 
   hasActiveRuns(): boolean {
-    return this.kernel.hasActiveRuns()
+    return this.preparations.size > 0 || this.kernel.hasActiveRuns()
   }
 
   async close(): Promise<void> {
+    this.closing = true
+    const preparing = [...this.preparations.values()]
+    const errors: unknown[] = []
+    for (const preparation of preparing) {
+      try {
+        this.cancelPreparation(preparation)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
     this.commands.cancelAll()
+    await Promise.all(preparing.map((preparation) => preparation.done))
+    // A synchronous start-event observer can initiate shutdown before the kernel
+    // registers its active promise. Drain only after preparation handoffs finish.
     await this.kernel.stopAll()
     await Promise.all([this.tools.close(), this.mcp.close()])
+    if (errors.length) throw errors[0]
   }
 }

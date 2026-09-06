@@ -122,6 +122,21 @@ macOS verifies strict bundle integrity, an ad-hoc signature, and the absence of 
 authority. Linux extracts and validates its AppImage metadata and icon identity, then launches the
 final AppImage under Xvfb.
 
+The desktop journeys explicitly launch the built platform executable through
+`SIDEKICK_E2E_EXECUTABLE`, not development Electron. They use disposable profiles
+to check first startup, same-window native browsing, settings persistence, and
+durable interrupted-run recovery. The Linux journey uses the unpacked executable;
+the separate AppImage smoke checks the final launcher. macOS release startup must
+pass strict code-signature validation even though its signature is ad-hoc.
+
+These automated gates do not prove installation or an upgrade from a prior released
+version. In particular, the synthetic crash journal is not an old-version database
+fixture. Real macOS Gatekeeper/keychain prompts, Linux desktop integration, and
+profile/credential retention across an installed upgrade require qualification on
+those platforms. Windows-hosted contract tests only validate the gate wiring, not
+macOS/Linux execution. Do not label a platform qualified before its jobs and those
+manual checks have actually passed.
+
 The publisher then:
 
 1. downloads all three validated platform artifact sets;
@@ -138,6 +153,47 @@ never-published draft may be deleted before a clean rerun. Never delete, replace
 published version or source tag.
 
 ## Creating and proving a release
+
+### Optional qualification evidence contract
+
+`npm run validate:qualification -- <manifest.json> <artifact> <expected-git-sha>
+<report-directory> [trusted-identity.json]` is an opt-in metadata/integrity gate.
+It does not change ordinary community builds or certify the whole product. Use
+private, sanitized metadata; never include keys, URLs with credentials, raw chats,
+prompts, or generations. The validator prints no rejected input values.
+
+Schema version 1 requires exactly these fields (no additional properties):
+
+- `schemaVersion: 1`, `claim: "evidence" | "qualified"`.
+- `app`: stable `version`, full 40-character `sourceCommit`, boolean `dirty`, and
+  `artifactSha256`. The caller supplies the expected commit and actual artifact;
+  the validator compares their revision and digest. This is not a reproducible-build
+  proof that an arbitrary binary was built from that commit.
+- `model`: `requested`, nullable `reported`, and nullable `before` / `after`.
+  Each observation contains `checkpoint`, immutable hexadecimal `revision`, and
+  `runtimeDigest` (64 hexadecimal characters, without a `sha256:` prefix).
+- `results`: 1–100 unique summaries, each with safe basename `scenario`, `scope`
+  (`tool-harness`, `kernel`, `native-browser`, `packaged-ui`, or `installed-upgrade`),
+  integer `samples`, `passed`, `falseCompletions`, `safetyViolations`, and
+  `reportSha256`. Reports live at `<report-directory>/<scenario>.json`; their exact
+  bytes are hashed without printing or interpreting their contents.
+
+Aliases and server-reported strings never verify a checkpoint. Optional trusted
+identity is a separate operator-supplied file containing `before` and `after`
+observations with the same fields above, obtained independently from the trusted
+deployment. Both must agree and match the manifest. The output deliberately says
+`operator-attested`, not cryptographically verified. Without this file identity
+remains `unverified`, even if the manifest includes plausible checkpoint names.
+
+`qualified` requires a clean-source assertion, matching trusted observations,
+all declared samples passing, and zero false completions/safety violations.
+`evidence` can retain unknown identity, dirty-source and unsuccessful results.
+The validator does not inspect test semantics or establish minimum repetition
+counts and required scenario coverage. Passing it qualifies only the integrity
+contract for declared evidence, not missing platform tests or the acceptance
+matrix. Review coverage and sample budgets separately before any readiness claim.
+
+### Release procedure
 
 1. Set the same stable version in `package.json` and `package-lock.json`.
 2. Run `npm run check`, `npm run test:release`, and `npm run test:e2e`.

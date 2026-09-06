@@ -108,6 +108,7 @@ export interface TokenUsage {
   tokensPerSecond?: number // Generation speed (completion tokens / eval duration)
   /** Provider dispatch to first reasoning, text, or tool delta. */
   timeToFirstTokenMs?: number
+  providerTimings?: import('../../../shared/providerRuntime').ProviderRequestTiming[]
   /** Durable wall-clock timing for the full agent run, including tools and research. */
   runStartedAt?: number
   runCompletedAt?: number

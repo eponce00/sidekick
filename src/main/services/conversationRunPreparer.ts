@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
+import { projectStartCommands } from './projectHooks'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { estimateProviderRequestTokens, resolveMaxOutputTokens } from '../../shared/contextBudget'
@@ -125,7 +126,10 @@ function compactLegacyBrowserReceipt(
   name: string,
   content: string
 ): { content: string; compacted: boolean } {
-  if (!LEGACY_VERBOSE_BROWSER_ACTIONS.has(name) || content.length <= LEGACY_BROWSER_RECEIPT_THRESHOLD) {
+  if (
+    !LEGACY_VERBOSE_BROWSER_ACTIONS.has(name) ||
+    content.length <= LEGACY_BROWSER_RECEIPT_THRESHOLD
+  ) {
     return { content, compacted: false }
   }
   try {
@@ -165,8 +169,7 @@ function compactLegacyBrowserReceipt(
         ...(value.quiescence && typeof value.quiescence === 'object'
           ? { quiescence: value.quiescence }
           : {}),
-        note:
-          'SideKick compacted this legacy full-page action receipt. Inspect the current page only if it is still relevant.'
+        note: 'SideKick compacted this legacy full-page action receipt. Inspect the current page only if it is still relevant.'
       })
     }
   } catch {
@@ -347,8 +350,10 @@ export class ConversationRunPreparer {
 
   async prepare(
     input: StartConversationAgentRunInput,
-    onWorkspaceWillMutate: () => Promise<void>
+    onWorkspaceWillMutate: () => Promise<void>,
+    signal?: AbortSignal
   ): Promise<PreparedConversationAgentRun> {
+    signal?.throwIfAborted()
     const surface = input.mode === 'research' ? 'research' : 'conversation'
     const initialPlanStage = input.mode === 'plan' ? 'planning' : 'inactive'
     const requestedPlanningModel = input.plannerModel ?? input.model
@@ -372,6 +377,7 @@ export class ConversationRunPreparer {
     const rules = workspaceRoot
       ? await beginWorkspaceInstructionScope(input.id, workspaceRoot)
       : { content: '', sources: [], truncated: false }
+    signal?.throwIfAborted()
     const memory = workspaceRoot
       ? ((
           this.db
@@ -455,6 +461,7 @@ export class ConversationRunPreparer {
           }
         : undefined
     })
+    signal?.throwIfAborted()
     const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
     const composeRuntimePrompt = (
       model: PinnedModel,
@@ -463,7 +470,7 @@ export class ConversationRunPreparer {
       const runtimeCatalog = { ...toolSession.catalog(), planStage }
       const toolDefinitions =
         model.supportsTools === false ? [] : getAgentToolDefinitions(runtimeCatalog)
-      return new PromptComposer().compose({
+      const composed = new PromptComposer().compose({
         platform:
           process.platform === 'win32'
             ? 'windows'
@@ -494,6 +501,12 @@ export class ConversationRunPreparer {
         activeSkillIds: runtimeCatalog.activeSkillIds ?? activeSkillIds,
         skillAssetsPath: this.skillAssetsPath()
       })
+      return currentSettings.shellIsolation === 'docker'
+        ? {
+            ...composed,
+            content: `${composed.content}\nShell isolation is enabled. Shell commands run in Linux /bin/sh with Node.js, project mounted at /workspace, no network, read-only container root, and writable /tmp. Use POSIX syntax and project-relative paths, not host Windows paths. Background commands are unavailable. If required host tools or network are missing, explain the limitation; do not attempt to escape the sandbox. File/browser tools retain their own policies.`
+          }
+        : composed
     }
     const initialActPrompt = composeRuntimePrompt(input.model, 'inactive')
     const planningPrompt = composeRuntimePrompt(planningModel, 'planning')
@@ -538,9 +551,10 @@ export class ConversationRunPreparer {
       messages.push({ role: 'user', content: goalContinuation(goal) })
     }
     const [resolvedExecutionContext, resolvedPlanningContext] = await Promise.all([
-      resolveProviderContext(executionTarget),
-      resolveProviderContext(planningTarget)
+      resolveProviderContext(executionTarget, signal),
+      resolveProviderContext(planningTarget, signal)
     ])
+    signal?.throwIfAborted()
     const latestUsageIndex = projected.findLastIndex(
       (row) => row.role === 'agent' && storedPromptTokens(row, runUsage) !== null
     )
@@ -633,6 +647,14 @@ export class ConversationRunPreparer {
       ...(goal ? { goalId: goal.id } : {}),
       toolSession,
       kernelInput: {
+        projectStartCommands: projectStartCommands(
+          currentSettings.projectStartHooks,
+          workspaceRoot
+        ),
+        projectCompletionCommands: projectStartCommands(
+          currentSettings.projectCompletionHooks,
+          workspaceRoot
+        ),
         id: input.id,
         threadId: input.conversationId,
         outputMessageId: input.assistantMessageId,

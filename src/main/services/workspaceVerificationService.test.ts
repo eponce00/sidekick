@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -22,8 +22,73 @@ describe('WorkspaceVerificationService', () => {
   })
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     db.close()
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('hashes a repeated evidence file set once per summary, never across summaries', async () => {
+    await writeFile(join(root, 'a.ts'), 'a\n')
+    service.recordChanges('run', root, 'workspace_tool', [{ path: 'a.ts', kind: 'update' }])
+    service.recordDiagnostics('run', root, [], ['a.ts'])
+    service.recordDiagnostics('run', root, [], ['a.ts'])
+    const fingerprint = vi.spyOn(
+      service as unknown as { fingerprint(root: string, paths: string[]): string | undefined },
+      'fingerprint'
+    )
+    expect(service.summary('run', root, 0).status).toBe('passed')
+    expect(fingerprint).toHaveBeenCalledTimes(1)
+    await writeFile(join(root, 'a.ts'), 'external change\n')
+    expect(service.summary('run', root, 0).status).toBe('stale')
+    expect(fingerprint).toHaveBeenCalledTimes(2)
+  })
+
+  it('requires diagnostic coverage of every changed file and invalidates only stale evidence', async () => {
+    await writeFile(join(root, 'a.ts'), 'a\n')
+    await writeFile(join(root, 'b.ts'), 'b\n')
+    const baseline = service.beginSession(root)
+    service.recordChanges('run', root, 'workspace_tool', [
+      { path: 'a.ts', kind: 'update' },
+      { path: 'b.ts', kind: 'update' }
+    ])
+    service.recordDiagnostics('run', root, [], ['a.ts'])
+    expect(service.summary('run', root, baseline).status).toBe('unverified')
+    service.recordDiagnostics('run', root, [], ['b.ts'])
+    expect(service.summary('run', root, baseline).status).toBe('passed')
+    await writeFile(join(root, 'a.ts'), 'changed externally\n')
+    expect(service.summary('run', root, baseline).status).not.toBe('passed')
+  })
+
+  it('does not let a passing lint check erase a failing test', async () => {
+    await writeFile(join(root, 'a.ts'), 'a\n')
+    const baseline = service.beginSession(root)
+    service.recordChanges('run', root, 'workspace_tool', [{ path: 'a.ts', kind: 'update' }])
+    service.recordCommand(
+      'run',
+      root,
+      'npm test',
+      undefined,
+      { success: false, exitCode: 1, stdout: '', stderr: 'failure' },
+      Date.now()
+    )
+    service.recordCommand(
+      'run',
+      root,
+      'npm run lint',
+      undefined,
+      { success: true, exitCode: 0, stdout: '', stderr: '' },
+      Date.now()
+    )
+    expect(service.summary('run', root, baseline).status).toBe('failed')
+    service.recordCommand(
+      'run',
+      root,
+      'npm test',
+      undefined,
+      { success: true, exitCode: 0, stdout: '', stderr: '' },
+      Date.now()
+    )
+    expect(service.summary('run', root, baseline).status).toBe('passed')
   })
 
   it('ties evidence to a workspace revision and detects external staleness', async () => {
@@ -87,7 +152,10 @@ describe('WorkspaceVerificationService', () => {
 
   it('advances revisions only when a command actually changes workspace files', async () => {
     await writeFile(join(root, 'app.ts'), 'before\n')
-    const readOnlySnapshot = service.captureCommandWorkspace(root, 'Invoke-WebRequest https://example.com')
+    const readOnlySnapshot = service.captureCommandWorkspace(
+      root,
+      'Invoke-WebRequest https://example.com'
+    )
     service.recordCommand(
       'run-observed',
       root,

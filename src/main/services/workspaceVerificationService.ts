@@ -150,11 +150,7 @@ function commandSummary(kind: VerificationKind, result: ShellCommandResult): str
     .split(/\r?\n/)
     .map((line) => line.trim())
     .find(
-      (line) =>
-        line &&
-        line !== '#< CLIXML' &&
-        !line.startsWith('<Objs ') &&
-        !/^={3,}/.test(line)
+      (line) => line && line !== '#< CLIXML' && !line.startsWith('<Objs ') && !/^={3,}/.test(line)
     )
   return `${label} failed${detail ? `: ${detail.slice(0, 240)}` : ` with exit code ${result.exitCode}`}.`
 }
@@ -428,7 +424,7 @@ export class WorkspaceVerificationService {
     const rows = this.db
       .prepare(
         `SELECT * FROM workspace_verification_events
-         WHERE run_id = ? AND workspace_root = ? ORDER BY completed_at ASC`
+         WHERE run_id = ? AND workspace_root = ? ORDER BY completed_at ASC, rowid ASC`
       )
       .all(runId, resolve(workspaceRoot)) as EvidenceRow[]
     return rows.map(evidenceFromRow)
@@ -456,20 +452,36 @@ export class WorkspaceVerificationService {
       }
     }
     const evidence = this.evidence(runId, root)
-    const fingerprint = this.fingerprint(root, changedPaths)
+    // Reuse identical file-set checks within this summary only. Never cache across
+    // summaries: external edits must invalidate verification immediately.
+    const fingerprints = new Map<string, string | undefined>()
+    const currentFingerprint = (paths: string[]): string | undefined => {
+      const key = JSON.stringify(paths)
+      if (!fingerprints.has(key)) fingerprints.set(key, this.fingerprint(root, paths))
+      return fingerprints.get(key)
+    }
     const fresh = evidence.filter(
       (item) =>
         item.revision === currentRevision &&
-        (!item.fingerprint || !fingerprint || item.fingerprint === fingerprint)
+        (!item.fingerprint || item.fingerprint === currentFingerprint(item.changedPaths))
     )
     const passing = fresh.filter((item) => item.status === 'passed')
     const failing = fresh.filter((item) => item.status === 'failed')
-    const newestPassing = passing.at(-1)
-    const newestFailing = failing.at(-1)
-    if (
-      newestFailing &&
-      (!newestPassing || newestFailing.completedAt > newestPassing.completedAt)
-    ) {
+    // A different successful check does not repair a failing check. Require a later
+    // success for the same command (or diagnostic coverage) before clearing it.
+    const unresolvedFailures = failing.filter(
+      (failed) =>
+        !passing.some(
+          (passed) =>
+            fresh.indexOf(passed) > fresh.indexOf(failed) &&
+            passed.kind === failed.kind &&
+            passed.command === failed.command &&
+            passed.cwd === failed.cwd &&
+            failed.changedPaths.every((path) => passed.changedPaths.includes(path))
+        )
+    )
+    const newestFailing = unresolvedFailures.at(-1)
+    if (newestFailing) {
       return {
         status: 'failed',
         workspaceRoot: root,
@@ -482,7 +494,8 @@ export class WorkspaceVerificationService {
         detail: 'The latest verification for the current workspace revision failed.'
       }
     }
-    if (passing.length) {
+    const coveredPaths = new Set(passing.flatMap((item) => item.changedPaths))
+    if (passing.length && changedPaths.every((path) => coveredPaths.has(path))) {
       const kinds = [...new Set(passing.map((item) => item.kind))]
       return {
         status: 'passed',
@@ -496,7 +509,7 @@ export class WorkspaceVerificationService {
         detail: `${changedPaths.length} changed path${changedPaths.length === 1 ? '' : 's'} at revision ${currentRevision}.`
       }
     }
-    if (evidence.length) {
+    if (evidence.length && !fresh.length) {
       return {
         status: 'stale',
         workspaceRoot: root,

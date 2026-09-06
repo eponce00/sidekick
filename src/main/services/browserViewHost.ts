@@ -22,21 +22,40 @@ export function registerBrowserView(view: WebContentsView, parking: BrowserWindo
       event.preventDefault()
   })
   view.webContents.on('context-menu', async (_event, params) => {
-    if (!entry.host || !entry.allowInput?.()) return
-    const { Menu } = await import('electron')
+    const host = entry.host
     const contents = view.webContents
-    if (contents.isDestroyed() || !entry.host || entry.host.isDestroyed()) return
+    const canUseMenu = (): boolean =>
+      Boolean(
+        host &&
+        views.get(id) === entry &&
+        entry.host === host &&
+        !host.isDestroyed() &&
+        !contents.isDestroyed() &&
+        entry.allowInput?.()
+      )
+    if (!canUseMenu()) return
+    const { Menu } = await import('electron')
+    if (!canUseMenu()) return
+    const guarded =
+      (action: () => void): (() => void) =>
+      () => {
+        if (canUseMenu()) action()
+      }
     Menu.buildFromTemplate([
-      { label: 'Cut', enabled: params.editFlags.canCut, click: () => contents.cut() },
-      { label: 'Copy', enabled: params.editFlags.canCopy, click: () => contents.copy() },
-      { label: 'Paste', enabled: params.editFlags.canPaste, click: () => contents.paste() },
+      { label: 'Cut', enabled: params.editFlags.canCut, click: guarded(() => contents.cut()) },
+      { label: 'Copy', enabled: params.editFlags.canCopy, click: guarded(() => contents.copy()) },
+      {
+        label: 'Paste',
+        enabled: params.editFlags.canPaste,
+        click: guarded(() => contents.paste())
+      },
       { type: 'separator' },
       {
         label: 'Select all',
         enabled: params.editFlags.canSelectAll,
-        click: () => contents.selectAll()
+        click: guarded(() => contents.selectAll())
       }
-    ]).popup({ window: entry.host })
+    ]).popup({ window: host })
   })
   view.webContents.on('before-mouse-event', (event, input) => {
     if (
@@ -125,4 +144,14 @@ export async function browserAgentInput<T>(
   } finally {
     if (entry) entry.agentInput--
   }
+}
+
+/** Only CDP input injection owns an input exemption. Read-only debugger requests
+ * can be slow and must not mask real user input while their promises are pending. */
+export function browserDebuggerCommand<T>(
+  id: number,
+  method: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  return method.startsWith('Input.') ? browserAgentInput(id, operation) : operation()
 }

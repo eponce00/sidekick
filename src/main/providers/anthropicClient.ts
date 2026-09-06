@@ -8,6 +8,7 @@ import type {
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
 import { previewToolCallArguments } from './toolCallPreview'
+import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 
 type FetchImplementation = typeof fetch
@@ -238,7 +239,10 @@ export async function streamAnthropicChat(
   fetchImpl: FetchImplementation = fetch,
   signal?: AbortSignal
 ): Promise<ProviderStreamResult> {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  const cancelReader = (): void => cancelProviderStreamReader(reader)
   try {
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     const response = await fetchImpl(`${instance.baseUrl}/messages`, {
       method: 'POST',
       headers: headers(instance, request),
@@ -253,153 +257,169 @@ export async function streamAnthropicChat(
         error: await responseError(response)
       }
     }
-    const reader = response.body?.getReader()
+    reader = response.body?.getReader()
     if (!reader) return { ok: false, error: 'Anthropic returned no response body' }
+    signal?.addEventListener('abort', cancelReader, { once: true })
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     const decoder = new TextDecoder()
     const toolBlocks = new Map<number, { id: string; name: string; json: string }>()
     const toolPreviewSignatures = new Map<number, string>()
     const thinkingBlocks = new Map<number, ProviderThinkingBlock>()
     let buffer = ''
-    let promptTokens = 0
-    let completionTokens = 0
+    let promptTokens: number | undefined
+    let completionTokens: number | undefined
     let finishReason = 'end_turn'
     let generationId: string | undefined
     let streamError: string | undefined
+    let terminal = false
 
     const consume = (line: string): void => {
+      if (signal?.aborted || terminal || streamError) return
       const trimmed = line.trim()
       if (!trimmed.startsWith('data:')) return
+      let event: AnthropicStreamEvent
       try {
-        const event = JSON.parse(trimmed.slice(5).trim()) as AnthropicStreamEvent
-        switch (event.type) {
-          case 'message_start':
-            generationId = event.message?.id
-            promptTokens = event.message?.usage?.input_tokens || 0
-            completionTokens = event.message?.usage?.output_tokens || 0
-            break
-          case 'content_block_start':
-            if (event.content_block?.type === 'tool_use') {
-              const tool = {
-                id: event.content_block.id || '',
-                name: event.content_block.name || '',
-                json: Object.keys(event.content_block.input || {}).length
-                  ? JSON.stringify(event.content_block.input)
-                  : ''
-              }
-              toolBlocks.set(event.index, tool)
-              const previewArguments = previewToolCallArguments(tool.json)
-              toolPreviewSignatures.set(
-                event.index,
-                `${tool.name}\n${JSON.stringify(previewArguments)}`
-              )
-              emit({
-                message: {
-                  tool_calls: [
-                    {
-                      id: tool.id,
-                      index: event.index,
-                      type: 'function',
-                      function: { name: tool.name, arguments: previewArguments }
-                    }
-                  ]
-                },
-                done: false
-              })
-            } else if (event.content_block?.type === 'thinking') {
-              thinkingBlocks.set(event.index, {
-                type: 'thinking',
-                thinking: event.content_block.thinking || '',
-                signature: event.content_block.signature || ''
-              })
-            } else if (event.content_block?.type === 'redacted_thinking') {
-              thinkingBlocks.set(event.index, {
-                type: 'redacted_thinking',
-                data: event.content_block.data || ''
-              })
-            } else if (event.content_block?.type === 'text' && event.content_block.text) {
-              emit({ message: { content: event.content_block.text }, done: false })
+        event = JSON.parse(trimmed.slice(5).trim()) as AnthropicStreamEvent
+      } catch {
+        // Ignore malformed events, not exceptions from the subscriber.
+        return
+      }
+      if (!event || typeof event !== 'object') return
+      switch (event.type) {
+        case 'message_start':
+          generationId = event.message?.id
+          promptTokens = event.message?.usage?.input_tokens
+          completionTokens = event.message?.usage?.output_tokens
+          break
+        case 'content_block_start':
+          if (event.content_block?.type === 'tool_use') {
+            const tool = {
+              id: event.content_block.id || '',
+              name: event.content_block.name || '',
+              json: Object.keys(event.content_block.input || {}).length
+                ? JSON.stringify(event.content_block.input)
+                : ''
             }
-            break
-          case 'content_block_delta':
-            if (event.delta?.type === 'text_delta' && event.delta.text) {
-              emit({ message: { content: event.delta.text }, done: false })
-            } else if (event.delta?.type === 'thinking_delta' && event.delta.thinking) {
-              emit({ message: { thinking: event.delta.thinking }, done: false })
-              const block = thinkingBlocks.get(event.index)
-              if (block?.type === 'thinking') block.thinking += event.delta.thinking
-            } else if (event.delta?.type === 'signature_delta' && event.delta.signature) {
-              const block = thinkingBlocks.get(event.index)
-              if (block?.type === 'thinking') block.signature += event.delta.signature
-            } else if (event.delta?.type === 'input_json_delta') {
-              const tool = toolBlocks.get(event.index)
-              if (tool) {
-                tool.json += event.delta.partial_json || ''
-                const previewArguments = previewToolCallArguments(tool.json)
-                const previewSignature = `${tool.name}\n${JSON.stringify(previewArguments)}`
-                if (toolPreviewSignatures.get(event.index) !== previewSignature) {
-                  toolPreviewSignatures.set(event.index, previewSignature)
-                  emit({
-                    message: {
-                      tool_calls: [
-                        {
-                          id: tool.id,
-                          index: event.index,
-                          type: 'function',
-                          function: { name: tool.name, arguments: previewArguments }
-                        }
-                      ]
-                    },
-                    done: false
-                  })
-                }
-              }
-            }
-            break
-          case 'content_block_stop': {
-            const thinking = thinkingBlocks.get(event.index)
-            if (thinking) {
-              emit({ message: { thinking_blocks: [thinking] }, done: false })
-              thinkingBlocks.delete(event.index)
-            }
+            toolBlocks.set(event.index, tool)
+            const previewArguments = previewToolCallArguments(tool.json)
+            toolPreviewSignatures.set(
+              event.index,
+              `${tool.name}\n${JSON.stringify(previewArguments)}`
+            )
+            emit({
+              message: {
+                tool_calls: [
+                  {
+                    id: tool.id,
+                    index: event.index,
+                    type: 'function',
+                    function: { name: tool.name, arguments: previewArguments }
+                  }
+                ]
+              },
+              done: false
+            })
+          } else if (event.content_block?.type === 'thinking') {
+            thinkingBlocks.set(event.index, {
+              type: 'thinking',
+              thinking: event.content_block.thinking || '',
+              signature: event.content_block.signature || ''
+            })
+          } else if (event.content_block?.type === 'redacted_thinking') {
+            thinkingBlocks.set(event.index, {
+              type: 'redacted_thinking',
+              data: event.content_block.data || ''
+            })
+          } else if (event.content_block?.type === 'text' && event.content_block.text) {
+            emit({ message: { content: event.content_block.text }, done: false })
+          }
+          break
+        case 'content_block_delta':
+          if (event.delta?.type === 'text_delta' && event.delta.text) {
+            emit({ message: { content: event.delta.text }, done: false })
+          } else if (event.delta?.type === 'thinking_delta' && event.delta.thinking) {
+            emit({ message: { thinking: event.delta.thinking }, done: false })
+            const block = thinkingBlocks.get(event.index)
+            if (block?.type === 'thinking') block.thinking += event.delta.thinking
+          } else if (event.delta?.type === 'signature_delta' && event.delta.signature) {
+            const block = thinkingBlocks.get(event.index)
+            if (block?.type === 'thinking') block.signature += event.delta.signature
+          } else if (event.delta?.type === 'input_json_delta') {
             const tool = toolBlocks.get(event.index)
             if (tool) {
-              const normalized = normalizeCompletedToolInput(tool.json)
-              const args =
-                typeof normalized.arguments === 'string'
-                  ? (JSON.parse(normalized.arguments) as Record<string, unknown>)
-                  : normalized.arguments
-              emit({
-                message: {
-                  tool_calls: [
-                    {
-                      id: tool.id,
-                      index: event.index,
-                      type: 'function',
-                      function: { name: tool.name, arguments: args }
-                    }
-                  ]
-                },
-                done: false
-              })
-              toolBlocks.delete(event.index)
-              toolPreviewSignatures.delete(event.index)
+              tool.json += event.delta.partial_json || ''
+              const previewArguments = previewToolCallArguments(tool.json)
+              const previewSignature = `${tool.name}\n${JSON.stringify(previewArguments)}`
+              if (toolPreviewSignatures.get(event.index) !== previewSignature) {
+                toolPreviewSignatures.set(event.index, previewSignature)
+                emit({
+                  message: {
+                    tool_calls: [
+                      {
+                        id: tool.id,
+                        index: event.index,
+                        type: 'function',
+                        function: { name: tool.name, arguments: previewArguments }
+                      }
+                    ]
+                  },
+                  done: false
+                })
+              }
             }
-            break
           }
-          case 'message_delta':
-            finishReason = event.delta?.stop_reason || finishReason
-            completionTokens = event.usage?.output_tokens || completionTokens
-            break
-          case 'error':
-            streamError = event.error?.message || event.error?.type || 'Anthropic stream failed'
-            break
+          break
+        case 'content_block_stop': {
+          const thinking = thinkingBlocks.get(event.index)
+          if (thinking) {
+            emit({ message: { thinking_blocks: [thinking] }, done: false })
+            thinkingBlocks.delete(event.index)
+          }
+          const tool = toolBlocks.get(event.index)
+          if (tool) {
+            const normalized = normalizeCompletedToolInput(tool.json)
+            const args =
+              typeof normalized.arguments === 'string'
+                ? (JSON.parse(normalized.arguments) as Record<string, unknown>)
+                : normalized.arguments
+            emit({
+              message: {
+                tool_calls: [
+                  {
+                    id: tool.id,
+                    index: event.index,
+                    type: 'function',
+                    function: { name: tool.name, arguments: args }
+                  }
+                ]
+              },
+              done: false
+            })
+            toolBlocks.delete(event.index)
+            toolPreviewSignatures.delete(event.index)
+          }
+          break
         }
-      } catch {
-        // Ignore unknown future SSE events as required by Anthropic's versioning policy.
+        case 'message_delta':
+          finishReason = event.delta?.stop_reason || finishReason
+          completionTokens = event.usage?.output_tokens ?? completionTokens
+          break
+        case 'message_stop':
+          // A message terminator cannot finalize missing block-stop events.
+          // Otherwise a preview or unfinished signature could be treated as final.
+          if (toolBlocks.size || thinkingBlocks.size) {
+            streamError = 'Anthropic stream ended with unfinished content blocks'
+          }
+          terminal = true
+          break
+        case 'error':
+          streamError = event.error?.message || event.error?.type || 'Anthropic stream failed'
+          break
       }
     }
-    while (true) {
+    while (!terminal && !streamError && !signal?.aborted) {
       const { done, value } = await reader.read()
+      if (signal?.aborted) return { ok: false, error: 'aborted' }
       if (done) break
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split(/\r?\n/)
@@ -408,21 +428,27 @@ export async function streamAnthropicChat(
     }
     buffer += decoder.decode()
     if (buffer) consume(buffer)
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     if (streamError) {
       emit({ done: true, done_reason: 'error', error: streamError })
       return { ok: false, error: streamError }
     }
+    if (!terminal) return { ok: false, error: 'Anthropic stream ended before its terminal event' }
     emit({
       done: true,
       done_reason: finishReason,
       prompt_eval_count: promptTokens,
       eval_count: completionTokens
     })
+    if (signal?.aborted) return { ok: false, error: 'aborted' }
     return { ok: true, generationId }
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError')
+    if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
     return { ok: false, error: error instanceof Error ? error.message : 'Anthropic stream failed' }
+  } finally {
+    signal?.removeEventListener('abort', cancelReader)
+    releaseProviderStreamReader(reader)
   }
 }
 

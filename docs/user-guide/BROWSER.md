@@ -19,7 +19,8 @@ cancelled. It is not a CAPTCHA solver.
 `browser_fill_form` batches up to 25 native textboxes, selects, checkboxes, and radio buttons in
 one model turn. It uses current semantic references or unambiguous selectors/accessible names,
 never coordinates. Fields are filled in order and their actual browser state is checked after each
-action. The batch stops before later fields when a field fails or the page changes, then returns one
+action. Independent fields continue after a field-level failure; navigation or page changes stop
+the remaining batch. It then returns one
 fresh semantic observation with per-field filled, unchanged, failed, or skipped status. Entered
 text, selected option values, and checked choices are redacted from durable tool records and
 results. The batch intentionally omits a result screenshot because text fields could expose those
@@ -48,6 +49,20 @@ bar shows a main-process-owned origin. CAPTCHA and anti-bot
 checks are always human-only; SideKick does not ask the model to bypass or solve them.
 
 ## Isolation and safety
+
+`browser_upload` selects up to eight project-relative regular files (25 MiB total)
+on an observed file input, then verifies the actual selection. Symlinks and paths
+outside the project are rejected. Selection can immediately expose files to the site
+if its JavaScript auto-uploads; it is not inherently a local-only action.
+
+`browser_download` saves a direct HTTPS resource using the conversation browser's
+session into a new project-relative file (25 MiB maximum). Its parent directory must
+exist; existing files are never overwritten. Loopback HTTP is allowed for local tests.
+Downloads publish only after the complete file is written. The destination filesystem
+must support hard links; unsupported filesystems fail without a partial final file.
+A process crash can leave a `.sidekick-download-*.partial` staging file.
+Each redirect is checked before following it, with a five-hop limit. Neither tool
+submits a form automatically.
 
 - Browser sessions use a dedicated Electron partition and do not inherit cookies or logins from
   the user's normal browser.

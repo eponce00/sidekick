@@ -33,6 +33,21 @@ renderer contain only `apiKeyConfigured`; a newly typed replacement key crosses 
 once and is removed from renderer state after the save completes. The main runtime resolves and
 decrypts the matching secret immediately before a provider request.
 
+Saving a new or replacement credential requires an available OS-protected
+keychain/password manager. SideKick refuses to save it if that service is locked
+or unavailable; on Linux, the `basic_text` fallback and an unknown backend are
+also refused. Enable or unlock a supported desktop password manager and retry.
+Settings without new credentials and no-key local providers remain usable.
+Unrelated saves preserve existing encrypted credentials while storage is locked;
+explicitly clearing a key or removing its provider still removes that credential.
+Presence markers mean a saved credential exists, not that it can currently be
+decrypted. Historical plaintext fallback values are not exposed while storage is
+unavailable, and legacy migration is deferred until secure storage is available.
+If an older installation already stored a plaintext key, unrelated saves are
+blocked until it can be securely migrated; explicitly clear the key or remove
+its provider to discard it. This prevents both plaintext rewrites and silent
+credential loss during an unavailable-keychain session.
+
 Streaming adapters normalize all providers to text, thinking, tool-call, usage, finish, retry, and
 error chunks. Stream cancellation is isolated by renderer window and request id. OpenAI-compatible
 SSE and Ollama NDJSON parsers tolerate arbitrary network fragmentation. Anthropic preserves signed
@@ -50,6 +65,26 @@ context because `num_ctx` is a supported request option.
 Discovered model inventories are searchable in real time. Providers without reliable discovery,
 such as a fixed llama.cpp server, support manual model ids. A model can be enabled or hidden without
 deleting its provider connection.
+
+## Active capability checks and timing
+
+In provider settings, save your connection first, then explicitly choose a model
+under **Test actual model capabilities**. The check sends two synthetic requests;
+the optional vision checkbox adds a third. Each allows up to 1,024 output tokens
+and retains existing thinking defaults. Requests can incur charges or load a model.
+Cancel stops the probe; the overall deadline is two minutes. Proposed tools never
+execute. Observed/not-observed results are smoke checks, not quality benchmarks.
+
+Server-reported model names may still be aliases. Missing identity and cache
+telemetry are shown as unreported, not inferred. **Copy anonymous test summary**
+copies only check statuses and metrics, excluding endpoint/model identities and
+generated content.
+
+Open a response's token statistics and **Model request timeline** to see each
+request's total duration, wait to first output, streaming time and cache counts.
+Wait includes network, queue and prefill; SideKick does not pretend to separate
+these without backend telemetry. Streaming time includes reasoning. Old runs
+without recorded timings cannot display this breakdown retroactively.
 
 ## LiteLLM
 

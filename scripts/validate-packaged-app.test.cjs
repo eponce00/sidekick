@@ -1,5 +1,6 @@
 const { test } = require('node:test')
 const assert = require('node:assert/strict')
+const builder = require('../electron-builder.config.cjs')
 const {
   requiredPdfNativeBinding,
   validatePackageEntries,
@@ -12,6 +13,64 @@ const requiredPdfEntries = [
   '/node_modules/pdfjs-dist/build/pdf.worker.min.mjs',
   '/node_modules/pdfjs-dist/legacy/build/pdf.mjs'
 ]
+
+test('packaging explicitly excludes Python bytecode and cache directories', () => {
+  assert(builder.files.includes('!**/__pycache__{,/**/*}'))
+  assert(builder.files.includes('!**/*.{pyc,pyo}'))
+})
+
+test('packaging excludes dormant Office validators but retains supported helper roots', () => {
+  assert(builder.files.includes('!resources/skills/office/validators{,/**/*}'))
+  assert(builder.files.includes('resources/**/*'))
+  const base = [
+    '/LICENSE',
+    '/node_modules/a',
+    '/out/main/index.js',
+    '/package.json',
+    ...requiredPdfEntries
+  ]
+  assert.doesNotThrow(() =>
+    validatePackageEntries([
+      ...base,
+      ...[
+        'structure.py',
+        'validate.py',
+        'pack.py',
+        'unpack.py',
+        'render.py',
+        'helpers/merge_runs.py'
+      ].map((name) => `/resources/skills/office/${name}`)
+    ])
+  )
+  for (const entry of [
+    '/resources/skills/office/validators',
+    '/resources/skills/office/validators/base.py',
+    'resources/skills/office/validators/docx.py',
+    '\\resources\\skills\\office\\validators\\pptx.py',
+    '/resources/skills/office/VALIDATORS/__init__.py'
+  ])
+    assert.throws(() => validatePackageEntries([...base, entry]), /dormant Office validators/)
+})
+
+test('archive audit rejects Python caches while preserving skill source', () => {
+  const base = [
+    '/LICENSE',
+    '/node_modules/a',
+    '/out/main/index.js',
+    '/package.json',
+    ...requiredPdfEntries
+  ]
+  assert.doesNotThrow(() => validatePackageEntries([...base, '/resources/skills/pdf/fill.py']))
+  for (const entry of [
+    '/resources/skills/pdf/__pycache__',
+    '/resources/skills/pdf/__pycache__/fill.cpython-313.pyc',
+    '/resources/skills/xlsx/helper.pyc',
+    '/resources/skills/docx/helper.pyo',
+    '\\resources\\skills\\pdf\\__pycache__\\fill.cpython-313.pyc'
+  ]) {
+    assert.throws(() => validatePackageEntries([...base, entry]), /Python bytecode cache/)
+  }
+})
 
 test('accepts the minimal production runtime archive roots', () => {
   assert.doesNotThrow(() =>
@@ -44,7 +103,20 @@ test('normalizes Windows ASAR path separators before auditing roots', () => {
 })
 
 test('rejects development and release tooling from the packaged archive', () => {
-  for (const root of ['coverage', 'docs', 'scripts', 'src', 'output', 'tmp']) {
+  for (const root of [
+    'coverage',
+    'docs',
+    'scripts',
+    'src',
+    'output',
+    'tmp',
+    'reports',
+    'artifacts',
+    'test-results',
+    '.codex',
+    '.agents',
+    'memory'
+  ]) {
     for (const forbiddenEntry of [`/${root}/file`, `\\${root}\\file`]) {
       assert.throws(
         () =>

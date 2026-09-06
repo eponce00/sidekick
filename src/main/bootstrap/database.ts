@@ -298,11 +298,44 @@ function applyVersionedMigrations(db: Database.Database): void {
   }
 }
 
+function assertSupportedMigrationLedger(db: Database.Database): void {
+  if (
+    !db
+      .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+      .get()
+  )
+    return
+  const migrations = new Map(SCHEMA_MIGRATIONS.map((migration) => [migration.id, migration]))
+  for (const row of db.prepare('SELECT id, checksum FROM schema_migrations').all() as Array<{
+    id: string
+    checksum: string
+  }>) {
+    const migration = migrations.get(row.id)
+    if (!migration)
+      throw new Error(
+        `Database contains an unsupported migration: ${row.id}. Use a compatible newer app.`
+      )
+    if (
+      row.checksum !== migrationChecksum(migration) &&
+      row.checksum !== legacyMigrationChecksum(migration)
+    ) {
+      throw new Error(`Database migration checksum mismatch: ${row.id}`)
+    }
+  }
+}
+
 export function applyDatabaseSchema(db: Database.Database): void {
+  // Refuse incompatible/downgraded databases before even changing journal mode.
+  assertSupportedMigrationLedger(db)
   db.pragma('foreign_keys = ON')
   db.pragma('busy_timeout = 5000')
   db.pragma('journal_mode = WAL')
+  // Base DDL, destructive legacy cleanup, ledger upgrades and final indexes must
+  // commit together. Individual migration transactions become nested savepoints.
+  db.transaction(() => applyDatabaseSchemaTransaction(db)).immediate()
+}
 
+function applyDatabaseSchemaTransaction(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
@@ -803,12 +836,21 @@ export function openApplicationDatabase(path: string): Database.Database {
   const existed = path !== ':memory:' && existsSync(path)
   const db = new Database(path)
   try {
+    assertSupportedMigrationLedger(db)
     const hasMigrationLedger = Boolean(
       db
         .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
         .get()
     )
-    if (existed && !hasMigrationLedger) {
+    const appliedIds = hasMigrationLedger
+      ? new Set(
+          (db.prepare('SELECT id FROM schema_migrations').all() as Array<{ id: string }>).map(
+            (row) => row.id
+          )
+        )
+      : new Set<string>()
+    const needsMigration = SCHEMA_MIGRATIONS.some((migration) => !appliedIds.has(migration.id))
+    if (existed && needsMigration) {
       const backupPath = `${path}.pre-versioned-migrations-${Date.now()}.bak`
       db.exec(`VACUUM INTO '${backupPath.replaceAll("'", "''")}'`)
       console.log(`[Database] Created pre-migration backup: ${backupPath}`)

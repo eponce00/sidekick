@@ -17,6 +17,7 @@ import { ACCENT_PALETTES, applyAccentPalette } from '../constants/accentPalettes
 import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
+import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { AppUpdateSettings } from './AppUpdateControls'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
@@ -394,7 +395,87 @@ function SettingsModal({
               />
             </label>
             <PermissionAuditPanel />
+            <div className="modern-field">
+              <span>Direct Office helper Python (optional)</span>
+              <input
+                aria-label="Office Python interpreter"
+                readOnly
+                value={settings.officeHelperInterpreter ?? ''}
+                placeholder="Not configured - direct Office tools disabled"
+              />
+              <button
+                type="button"
+                className="modern-button secondary"
+                onClick={async () => {
+                  const choice = await window.api.settings.selectOfficeInterpreter().catch(() => ({
+                    canceled: false,
+                    path: undefined,
+                    error: 'Interpreter selection failed'
+                  }))
+                  if (choice.error) setSaveError(choice.error)
+                  if (choice.path) {
+                    setSaveError(null)
+                    setSettings((current) => ({ ...current, officeHelperInterpreter: choice.path }))
+                  }
+                }}
+              >
+                Choose trusted Python
+              </button>
+              <button
+                type="button"
+                className="modern-button secondary"
+                disabled={!settings.officeHelperInterpreter}
+                onClick={() =>
+                  setSettings((current) => ({ ...current, officeHelperInterpreter: undefined }))
+                }
+              >
+                Clear Office Python
+              </button>
+              <small>
+                Only read-only preflight and structural validation are enabled after loading an
+                Office skill in a project. Uses your chosen host executable and normal execution
+                approvals. Disabled in Docker. Selecting a file does not execute it or install
+                packages.
+              </small>
+            </div>
+            <label className="modern-field">
+              <span>Shell execution environment</span>
+              <select
+                value={settings.shellIsolation ?? 'host'}
+                onChange={(event) =>
+                  setSettings({
+                    ...settings,
+                    shellIsolation: event.target.value as 'host' | 'docker'
+                  })
+                }
+              >
+                <option value="host">Host shell (not sandboxed)</option>
+                <option value="docker">Isolated Linux container (no network)</option>
+              </select>
+              <small>
+                Docker mode requires a local Linux Docker daemon and the pinned Node image. Only the
+                project is mounted; no host fallback. Host tools, background commands and network
+                are unavailable. Other tools and language servers are not container-isolated.
+                Changing back to Host is an explicit permission expansion.
+              </small>
+            </label>
           </SettingCard>
+          <ProjectHooksPanel
+            hooks={settings.projectStartHooks ?? []}
+            onChange={(projectStartHooks) => setSettings({ ...settings, projectStartHooks })}
+          />
+          <ProjectHooksPanel
+            stage="completion"
+            hooks={settings.projectCompletionHooks ?? []}
+            onChange={(projectCompletionHooks) =>
+              setSettings({ ...settings, projectCompletionHooks })
+            }
+          />
+          <ProjectHooksPanel
+            stage="worktree"
+            hooks={settings.projectWorktreeHooks ?? []}
+            onChange={(projectWorktreeHooks) => setSettings({ ...settings, projectWorktreeHooks })}
+          />
         </div>
       )
     }

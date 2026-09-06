@@ -1031,6 +1031,34 @@ function MessageItemInner({
                       Cost <strong>${msg.tokenUsage.cost.toFixed(4)}</strong>
                     </span>
                   )}
+                  {!!msg.tokenUsage.providerTimings?.length && (
+                    <details>
+                      <summary>
+                        Model request timeline ({msg.tokenUsage.providerTimings.length})
+                      </summary>
+                      <p>
+                        Wait includes network, server queue and prefill; these are not separately
+                        measured. Stream time includes reasoning and output.
+                      </p>
+                      <ol>
+                        {msg.tokenUsage.providerTimings.map((timing, index) => (
+                          <li key={index}>
+                            Request {index + 1}: {(timing.durationMs / 1000).toFixed(1)} s total ·
+                            wait{' '}
+                            {timing.timeToFirstTokenMs === undefined
+                              ? 'not reported'
+                              : `${(timing.timeToFirstTokenMs / 1000).toFixed(1)} s`}{' '}
+                            · stream{' '}
+                            {timing.timeToFirstTokenMs === undefined
+                              ? 'not reported'
+                              : `${(Math.max(0, timing.durationMs - timing.timeToFirstTokenMs) / 1000).toFixed(1)} s`}{' '}
+                            · input {timing.promptTokens.toLocaleString()} · cached{' '}
+                            {timing.cachedPromptTokens?.toLocaleString() ?? 'not reported'}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
+                  )}
                 </div>
               </details>
             )}

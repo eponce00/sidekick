@@ -4,16 +4,20 @@ name: Spreadsheets
 icon: Table
 description: 'Use this skill any time a .xlsx/.xls/.csv file is involved as input or output. This includes: creating spreadsheets, financial models, or trackers; reading or extracting data from spreadsheets; editing cells, formulas, or formatting in existing files; pivot tables, charts, or conditional formatting; data analysis with pandas. Trigger whenever the user mentions spreadsheet, Excel, .xlsx, .xls, .csv, or financial model.'
 invocation: auto
-requiresPythonPackages: ['openpyxl', 'pandas', 'xlrd']
+requiresPythonPackages: ["openpyxl", "pandas", "xlrd"]
 ---
 
 ## SKILL: XLSX Spreadsheets
 
 ### ⚠️ Critical Rule: Never Regenerate an Existing File
 
-**If the file already exists, ALWAYS open it with openpyxl, make targeted edits, and save.** Never recreate the workbook from scratch and overwrite the old file — that destroys all tabs, formulas, formatting, and data that were in the original. Use `load_workbook('path/to/file.xlsx')` and only change what was requested.
+**For an existing .xlsx, open it with openpyxl, make targeted edits, and save.** Never recreate the workbook from scratch and overwrite the old file. Use `load_workbook('path/to/file.xlsx')` and only change what was requested. openpyxl does not support legacy .xls or CSV: inventory .xls with xlrd and CSV with csv/pandas; agree on a supported output format before converting. For .xlsm, preserve VBA with `keep_vba=True` and explicitly verify that unsupported workbook features have not been lost.
 
 ## Quick Reference
+
+Run the `xlsx` preflight for normal .xlsx work; it checks openpyxl only. The declared pandas
+and xlrd packages serve other workflows, not every spreadsheet task: `data-analysis` checks
+pandas and `xls-read` checks xlrd for legacy .xls. Missing xlrd must not block an .xlsx edit.
 
 | Task                    | Approach                                                 |
 | ----------------------- | -------------------------------------------------------- |
@@ -31,9 +35,9 @@ requiresPythonPackages: ['openpyxl', 'pandas', 'xlrd']
 
 ## Reading Content
 
-Always use openpyxl for a structured, lossless inventory — never markitdown (lossy).
+Always use openpyxl for a structured inventory — never markitdown (lossy).
 
-Write to `$env:TEMP\sk_xlsx_read.py`, run, delete:
+Write to `./UNIQUE_xlsx_read.py`, run, delete:
 
 ```python
 import openpyxl, sys
@@ -55,8 +59,8 @@ for sheet_name in wb.sheetnames:
 ```
 
 ```powershell
-python "$env:TEMP\sk_xlsx_read.py" "path\to\file.xlsx"
-Remove-Item "$env:TEMP\sk_xlsx_read.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_xlsx_read.py" "path\to\file.xlsx"
+Remove-Item "./UNIQUE_xlsx_read.py" -ErrorAction SilentlyContinue
 ```
 
 For larger analysis, use pandas after the inventory:
@@ -71,7 +75,7 @@ print(df.describe())
 
 ## Creating or Editing with openpyxl
 
-Write a temp script to `$env:TEMP\sk_xlsx.py`:
+Write a temp script to `./UNIQUE_xlsx.py`:
 
 ```python
 import openpyxl
@@ -109,8 +113,8 @@ print('Done')
 **Run it (then clean up):**
 
 ```powershell
-python "$env:TEMP\sk_xlsx.py"
-Remove-Item "$env:TEMP\sk_xlsx.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_xlsx.py"
+Remove-Item "./UNIQUE_xlsx.py" -ErrorAction SilentlyContinue
 ```
 
 ---
@@ -124,12 +128,19 @@ For complex formatting or structural edits:
 python "$env:SIDEKICK_SKILLS\office\unpack.py" "file.xlsx" "xlsx_unpacked"
 # Edit XML in xlsx_unpacked\xl\worksheets\sheet1.xml
 # Repack
-python "$env:SIDEKICK_SKILLS\office\pack.py" "xlsx_unpacked" "output.xlsx"
+python "$env:SIDEKICK_SKILLS\office\pack.py" "xlsx_unpacked" "NEW_output.xlsx"
 ```
 
 ---
 
 ## Formula Recalculation
+
+The office pack helper checks package structure, relationships, sheet IDs and duplicate cell
+references by default; this is not full XLSX schema validation. Reopen with openpyxl and verify
+changed cells, formulas, and sheets independently. Use `office/render.py` with a new directory to
+render PDF/page images when LibreOffice is available. Formula recalculation remains a separate step.
+
+Check the `xlsx-recalc` workflow first: LibreOffice (`soffice` on PATH) is required in addition to openpyxl. Missing LibreOffice is a blocker, not authorization to install it. The helper preserves the input and creates `NAME-recalculated.xlsx` (or a new `--output` destination), using a disposable LibreOffice profile. Conversion may change workbook formatting/features; retain the original and inspect the recalculated copy. Never claim fresh formula values when recalculation failed or timed out.
 
 If the file has formulas and they need fresh values for downstream tools:
 

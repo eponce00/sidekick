@@ -25,6 +25,7 @@ export interface AgentToolCatalogOptions {
   browserEnabled?: boolean
   workspaceRoot?: string | null
   activeSkillIds?: readonly string[]
+  officeHelpersAvailable?: boolean
   capabilities?: readonly AgentCapability[]
   mcpTools?: readonly AgentToolDefinition[]
   mcpToolRisks?: Readonly<Record<string, ToolRisk>>
@@ -1026,7 +1027,32 @@ const browserClose = definition(
   { type: 'object', properties: {} }
 )
 
+const browserUpload = definition(
+  'browser_upload',
+  'Select 1–8 project-relative files in an observed file input (25 MiB combined maximum). This exposes file contents to the website immediately, which may auto-upload them. Use only files the user authorized for that destination. Does not click submit. No absolute paths, traversal or symlinks.',
+  {
+    type: 'object',
+    required: ['paths'],
+    anyOf: [{ required: ['ref'] }, { required: ['selector'] }],
+    properties: {
+      paths: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' } },
+      ref: { type: 'string' },
+      selector: { type: 'string' }
+    }
+  }
+)
+
 const browserTools = [
+  definition(
+    'browser_download',
+    'Download an observed HTTPS file URL using the current browser session into a NEW project-relative destination file (25 MiB maximum). Preserves session cookies; validates redirects. Never overwrites existing files. Parent directory must exist. Do not use for a request that would trigger unintended side effects.',
+    {
+      type: 'object',
+      required: ['url', 'destination'],
+      properties: { url: { type: 'string' }, destination: { type: 'string' } }
+    }
+  ),
+  browserUpload,
   viewImage,
   browserOpen,
   browserObserve,
@@ -1417,6 +1443,13 @@ export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEnt
   return skillId === WEB_ARTIFACTS_SKILL_ID ? [entry(createArtifact, 'artifacts', 'write')] : []
 }
 
+export function officeHelperWorkflows(skills: readonly string[]): string[] {
+  const workflows = skills.flatMap((id) =>
+    id === 'docx' ? ['docx-comment'] : id === 'xlsx' ? ['xlsx'] : id === 'pptx' ? ['pptx-read'] : []
+  )
+  return workflows.length ? ['office', 'office-validate', ...new Set(workflows)] : []
+}
+
 export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentToolCatalogEntry[] {
   const profile = agentRunProfile(options)
   const allowed = new Set(profile.capabilities)
@@ -1429,6 +1462,50 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     ...(options.goalEnabled ? goalEntries : []),
     ...(planStage === 'kept' ? [] : planEntries[planStage]),
     ...workspaceEntries(options),
+    ...(options.officeHelpersAvailable &&
+    options.workspaceRoot &&
+    officeHelperWorkflows(options.activeSkillIds ?? []).length
+      ? [
+          entry(
+            definition(
+              'office_preflight',
+              'Discover dependencies for the loaded Office skill using the user-configured host Python. Read-only; no installation. Availability is not execution qualification.',
+              {
+                type: 'object',
+                required: ['workflow'],
+                properties: {
+                  workflow: {
+                    type: 'string',
+                    enum: officeHelperWorkflows(options.activeSkillIds ?? [])
+                  }
+                }
+              }
+            ),
+            'command.execute',
+            'execute',
+            { host: 'main', concurrency: 'exclusive', timeoutMs: 35000 }
+          ),
+          entry(
+            definition(
+              'office_validate',
+              'Run bundled structural validation on a project-relative Office file or unpacked directory. Read-only, not full XSD, rendering, or content equivalence.',
+              {
+                type: 'object',
+                required: ['path'],
+                properties: {
+                  path: {
+                    type: 'string',
+                    description: 'Project-relative Office file or unpacked directory.'
+                  }
+                }
+              }
+            ),
+            'command.execute',
+            'execute',
+            { host: 'main', concurrency: 'exclusive', timeoutMs: 35000 }
+          )
+        ]
+      : []),
     ...(options.surface === 'collaboration' ? collaborationEntries : []),
     ...(options.activeSkillIds ?? []).flatMap(getSkillToolCatalogEntries),
     ...(options.mcpTools ?? []).map((tool) =>
@@ -1467,6 +1544,7 @@ export function enableSkillToolDefinitions(tools: AgentToolDefinition[], skillId
 }
 
 export function toolCapabilityForName(name: string): AgentCapability | undefined {
+  if (name === 'office_preflight' || name === 'office_validate') return 'command.execute'
   if (isWorkspaceMutationTool(name)) return 'workspace.write'
   if (name === 'code_intelligence') return 'code.intelligence'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
@@ -1478,6 +1556,7 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
 }
 
 export function toolRiskForName(name: string): ToolRisk | undefined {
+  if (name === 'office_preflight' || name === 'office_validate') return 'execute'
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'

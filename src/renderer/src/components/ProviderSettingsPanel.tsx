@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { ProviderCapabilityPanel } from './ProviderCapabilityPanel'
 import {
   Check,
   ChevronRight,
@@ -364,6 +365,8 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                   {statusMessage}
                 </div>
               )}
+
+              <ProviderCapabilityPanel key={selected.id} instance={selected} />
 
               {selected.type === 'litellm' &&
                 selected.models.some(

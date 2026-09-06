@@ -1,5 +1,8 @@
 import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
+import { resolve } from 'path'
+import { stat } from 'node:fs/promises'
+import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import {
   normalizeAgentToolParameters,
   type AgentToolDefinition
@@ -26,6 +29,7 @@ import {
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService } from './commandService'
+import type { OfficeHelperService } from './officeHelperService'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore, type ToolOutputPolicy } from './toolOutputStore'
 import type { AgentKernelToolRouter } from './agentRunKernel'
@@ -144,6 +148,8 @@ export function safeToolArguments(
   name: string,
   args: Record<string, unknown>
 ): Record<string, unknown> {
+  if (name === 'office_preflight') return { workflow: stringArg(args, 'workflow') }
+  if (name === 'office_validate') return { path: stringArg(args, 'path') }
   if (isWorkspaceMutationTool(name)) {
     return {
       file_path: args.file_path,
@@ -290,7 +296,8 @@ export class AgentToolRuntime {
     private readonly mcp: McpClientManager,
     languageIntelligence?: LanguageIntelligenceService,
     verification?: WorkspaceVerificationService,
-    browser?: NativeBrowserSessionService
+    browser?: NativeBrowserSessionService,
+    private readonly officeHelpers?: OfficeHelperService
   ) {
     this.languageIntelligence = languageIntelligence ?? new LanguageIntelligenceService()
     this.verification = verification ?? new WorkspaceVerificationService(db)
@@ -313,6 +320,7 @@ export class AgentToolRuntime {
 
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
+    const officeSession = this.officeHelpers?.session(input.workspaceRoot)
     const readReceipts = new Map<string, string>()
     const mcpByFunction = new Map<string, McpToolInfo>()
     const enabledMcpByFunction = new Map<string, McpToolInfo>()
@@ -344,9 +352,78 @@ export class AgentToolRuntime {
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
+      officeHelpersAvailable: () => officeSession?.available() ?? false,
       readReceipts,
       childLauncher: () => this.childLauncher
     })
+    handlers.register(
+      ['office_preflight', 'office_validate'],
+      async ({ name, title, arguments: args, context }) => {
+        if (!officeSession?.available())
+          return toolExecutionFailed({
+            title,
+            code: 'unsupported',
+            message: 'Direct Office helpers are not configured for this host run'
+          })
+        try {
+          const targetPath = name === 'office_validate' ? stringArg(args, 'path') : ''
+          const isDirectory =
+            name === 'office_validate'
+              ? (
+                  await stat(
+                    await resolveSecureWorkspacePath(this.requireWorkspace(input), targetPath)
+                  )
+                ).isDirectory()
+              : true
+          const instructions = await this.scopedInstructions(input, targetPath, isDirectory, false)
+          if (instructions.retryRequired)
+            return this.success(
+              title,
+              { executed: false, retryRequired: true },
+              instructions.content
+            )
+          const receipt = await officeSession.execute(name, args, context, [...activeSkillIds])
+          if ('outcome' in receipt && receipt.outcome === 'cancelled')
+            return toolExecutionFailed({
+              title,
+              code: 'cancelled',
+              status: 'cancelled',
+              message: 'Office helper execution cancelled'
+            })
+          if ('outcome' in receipt && receipt.outcome === 'timed_out')
+            return toolExecutionFailed({
+              title,
+              code: 'timeout',
+              message: 'Office helper execution timed out'
+            })
+          if (
+            !('outcome' in receipt) ||
+            receipt.outcome !== 'exited' ||
+            !receipt.report ||
+            receipt.report.status === 'unusable_output'
+          )
+            return toolExecutionFailed({
+              title,
+              code: 'command_failed',
+              message: 'Office helper did not produce a usable result'
+            })
+          return toolExecutionSucceeded({
+            title,
+            data: { helper: receipt.helper, report: receipt.report },
+            modelContent:
+              instructions.content +
+              JSON.stringify({ helper: receipt.helper, report: receipt.report })
+          })
+        } catch {
+          return toolExecutionFailed({
+            title,
+            code: 'command_failed',
+            message:
+              'Office helper request is invalid, unavailable, or its trusted configuration changed'
+          })
+        }
+      }
+    )
     registerMcpToolHandlers(handlers, {
       mcp: this.mcp,
       available: mcpByFunction,
@@ -386,6 +463,7 @@ export class AgentToolRuntime {
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
       activeSkillIds: [...activeSkillIds],
+      officeHelpersAvailable: officeSession?.available() ?? false,
       capabilities: input.capabilities,
       mcpTools: [...enabledMcpByFunction.values()].map(mcpDefinition),
       mcpToolRisks: Object.fromEntries(
@@ -583,18 +661,23 @@ export class AgentToolRuntime {
       // The project-local process crossed the normal permission boundary on its first successful
       // request. Further semantic queries in this run are read-only.
       sessionState.codeIntelligenceRisk = 'read'
-      if (operation === 'diagnostics' && Array.isArray(result.result)) {
+      if (operation === 'diagnostics' && Array.isArray(result.result) && !result.truncated) {
         const changedPaths = this.verification.changedPaths(
           input.runId,
           this.requireWorkspace(input),
           sessionState.baselineRevision
         )
-        if (changedPaths.length) {
+        const checkedPaths = changedPaths.filter(
+          (path) =>
+            resolve(this.requireWorkspace(input), path) ===
+            resolve(this.requireWorkspace(input), filePath)
+        )
+        if (checkedPaths.length) {
           this.verification.recordDiagnostics(
             input.runId,
             this.requireWorkspace(input),
             result.result as ToolDiagnostic[],
-            changedPaths,
+            checkedPaths,
             `${result.serverId} diagnostics`
           )
         }
@@ -632,14 +715,24 @@ export class AgentToolRuntime {
           failureCode === 'stale_read' ||
           /stale|re-?read|read receipt/i.test(result.error || '')
         const ambiguous = failureCode === 'multiple_matches'
+        const patchSyntax =
+          name === 'apply_patch' &&
+          /^Invalid (?:patch|Add File|Delete File|Update File|hunk)/i.test(result.error || '')
         return toolExecutionFailed({
           title,
-          code: stale ? 'stale_read' : 'conflict',
+          code: patchSyntax ? 'invalid_arguments' : stale ? 'stale_read' : 'conflict',
           message: result.error || 'Workspace mutation failed',
           retryable: true,
-          recoveryAction: ambiguous ? 'correct_input' : stale ? 'refresh_state' : 'change_strategy',
+          recoveryAction:
+            patchSyntax || ambiguous
+              ? 'correct_input'
+              : stale
+                ? 'refresh_state'
+                : 'change_strategy',
           recovery:
-            result.failure?.recovery ||
+            (patchSyntax
+              ? 'Send one corrected apply_patch call. Use *** Begin Patch and *** End Patch, a file header, then bare @@ (no unified-diff line numbers). Put *** Move to: immediately after *** Update File:. Prefix hunk lines with space, - or +. Example:\n*** Begin Patch\n*** Update File: path/file.txt\n@@\n-old text\n+new text\n*** End Patch'
+              : result.failure?.recovery) ||
             (stale
               ? 'Re-read the affected file, then submit one corrected mutation.'
               : 'Change the mutation arguments or use a different editing strategy.'),

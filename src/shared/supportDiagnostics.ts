@@ -8,6 +8,11 @@ export interface SupportDiagnostics {
     version: string
     appId: string
     packaged: boolean
+    artifact?: {
+      scope: 'main-bundle-on-disk'
+      algorithm: 'sha256'
+      sha256: string | null
+    }
   }
   system: {
     platform: string
@@ -20,6 +25,8 @@ export interface SupportDiagnostics {
   security: {
     protectedCredentialStorageAvailable: boolean
     rendererSandboxed: true
+    shellSandboxed: boolean
+    shellIsolationScope?: 'shell-commands-only'
   }
   storage: {
     databaseOpen: boolean

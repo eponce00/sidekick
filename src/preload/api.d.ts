@@ -12,6 +12,7 @@ import type {
 } from '../shared/providerRuntime'
 
 interface SettingsAPI {
+  selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
   save: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
   load: () => Promise<PublicProviderSettings | null>
 }
@@ -19,6 +20,11 @@ interface SettingsAPI {
 interface ProvidersAPI {
   complete: (request: ProviderChatRequest) => Promise<ProviderCompletionResult>
   discoverModels: (request: ProviderDiscoveryRequest) => Promise<ProviderDiscoveryResult>
+  probe: (
+    target: import('../shared/providerRuntime').ProviderTarget,
+    includeVision?: boolean
+  ) => Promise<import('../shared/providerRuntime').ProviderProbeResult>
+  cancelProbe: () => Promise<void>
   resolveContext: (target: ProviderTarget) => Promise<ProviderContextResult>
   getGenerationStats: (
     target: ProviderTarget,

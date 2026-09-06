@@ -28,6 +28,7 @@ import defusedxml.minidom
 
 from helpers.merge_runs import merge_runs as do_merge_runs
 from helpers.simplify_redlines import simplify_redlines as do_simplify_redlines
+from structure import read_package
 
 SMART_QUOTE_REPLACEMENTS = {
     "\u201c": "&#x201C;",  
@@ -40,8 +41,8 @@ SMART_QUOTE_REPLACEMENTS = {
 def unpack(
     input_file: str,
     output_directory: str,
-    merge_runs: bool = True,
-    simplify_redlines: bool = True,
+    merge_runs: bool = False,
+    simplify_redlines: bool = False,
 ) -> tuple[None, str]:
     input_path = Path(input_file)
     output_path = Path(output_directory)
@@ -54,10 +55,13 @@ def unpack(
         return None, f"Error: {input_file} must be a .docx, .pptx, or .xlsx file"
 
     try:
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        with zipfile.ZipFile(input_path, "r") as zf:
-            zf.extractall(output_path)
+        # Read and validate all member paths/size limits before creating any output.
+        parts = read_package(input_path)
+        output_path.mkdir(parents=True, exist_ok=False)
+        for name, content in parts.items():
+            destination = output_path / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
 
         xml_files = list(output_path.rglob("*.xml")) + list(output_path.rglob("*.rels"))
         for xml_file in xml_files:
@@ -113,16 +117,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--merge-runs",
         type=lambda x: x.lower() == "true",
-        default=True,
+        default=False,
         metavar="true|false",
-        help="Merge adjacent runs with identical formatting (DOCX only, default: true)",
+        help="Merge adjacent runs with identical formatting (DOCX only, default: false)",
     )
     parser.add_argument(
         "--simplify-redlines",
         type=lambda x: x.lower() == "true",
-        default=True,
+        default=False,
         metavar="true|false",
-        help="Merge adjacent tracked changes from same author (DOCX only, default: true)",
+        help="Merge adjacent tracked changes from same author (DOCX only, default: false)",
     )
     args = parser.parse_args()
 

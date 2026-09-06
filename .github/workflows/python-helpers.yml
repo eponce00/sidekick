@@ -1,0 +1,37 @@
+name: Python helper safety
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-helpers:
+    name: Python helper safety (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14, ubuntu-22.04]
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: scripts/requirements-python-helpers-ci.txt
+      - name: Install only CI helper test dependencies
+        run: >-
+          python -m pip install --disable-pip-version-check --only-binary=:all: --no-deps -r scripts/requirements-python-helpers-ci.txt
+      - name: Verify helper CI scope and skip policy
+        run: python -B scripts/test-python-helper-ci.py
+      - name: Run synthetic package safety and selected bundled helper tests
+        run: python -B scripts/run-python-helper-ci.py

@@ -1,9 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { open } from 'fs/promises'
 import { release } from 'os'
 import { PRODUCT_IDENTITY } from '../../shared/productIdentity'
 import type { SupportDiagnosticsExportResult } from '../../shared/supportDiagnostics'
 import { createSupportDiagnostics } from '../services/supportDiagnostics'
+import { recentRunDiagnostics } from '../services/runDiagnostics'
+import { applicationArtifact } from '../services/applicationArtifact'
+import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
 import { getDb, getStore } from './state'
 
 function diagnosticFileName(date: Date): string {
@@ -18,26 +21,30 @@ export function registerSupportHandlers(): void {
     'support:exportDiagnostics',
     async (event): Promise<SupportDiagnosticsExportResult> => {
       const generatedAt = new Date()
-      const diagnostics = createSupportDiagnostics({
-        generatedAt,
-        application: {
-          name: PRODUCT_IDENTITY.productName,
-          version: app.getVersion(),
-          appId: PRODUCT_IDENTITY.appId,
-          packaged: app.isPackaged
-        },
-        system: {
-          platform: process.platform,
-          architecture: process.arch,
-          operatingSystemRelease: release(),
-          electronVersion: process.versions.electron ?? 'unknown',
-          chromeVersion: process.versions.chrome ?? 'unknown',
-          nodeVersion: process.versions.node
-        },
-        protectedCredentialStorageAvailable: safeStorage.isEncryptionAvailable(),
-        databaseOpen: getDb().open,
-        settings: getStore().get('settings', {})
-      })
+      const diagnostics = {
+        ...createSupportDiagnostics({
+          generatedAt,
+          application: {
+            name: PRODUCT_IDENTITY.productName,
+            version: app.getVersion(),
+            appId: PRODUCT_IDENTITY.appId,
+            packaged: app.isPackaged,
+            artifact: await applicationArtifact(app.getAppPath())
+          },
+          system: {
+            platform: process.platform,
+            architecture: process.arch,
+            operatingSystemRelease: release(),
+            electronVersion: process.versions.electron ?? 'unknown',
+            chromeVersion: process.versions.chrome ?? 'unknown',
+            nodeVersion: process.versions.node
+          },
+          protectedCredentialStorageAvailable: isSecureCredentialStorageAvailable(),
+          databaseOpen: getDb().open,
+          settings: getStore().get('settings', {})
+        }),
+        recentRuns: recentRunDiagnostics(getDb())
+      }
 
       const parent = BrowserWindow.fromWebContents(event.sender)
       const options = {

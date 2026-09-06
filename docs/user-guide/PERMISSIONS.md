@@ -33,6 +33,31 @@ kernel operation. Broker approvals are bound to a SHA-256 fingerprint of the nor
 operation, expire after one minute, and are single-use. Replays, missing tokens, expired tokens, and
 mismatched operations are rejected.
 
+## Optional isolated shell
+
+Settings → Agent → Permissions offers **Isolated Linux container (no network)**.
+This is opt-in; the default remains host execution. Switching back to host execution
+requires a native confirmation. Isolation applies to shell commands, including project
+start hooks, not to browser, language-server, MCP, or other host processes.
+
+Install Docker with a local Linux-container daemon and explicitly pull the pinned image:
+
+```sh
+docker pull node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+```
+
+Commands use Linux `/bin/sh` and Node, not the host's PowerShell or installed tools.
+Only the selected project is mounted writable at `/workspace`; `/tmp` is temporary.
+The container has no network, no Docker socket, a read-only root, dropped capabilities,
+and bounded memory, CPU, processes, and lifetime. Background commands are unsupported.
+Missing Docker, image, or tools fail explicitly: there is no automatic host fallback.
+Project writes still change real files; isolation does not replace approvals or backups.
+Cancellation removes the command container. An independent deadline also limits its
+lifetime if SideKick or the Docker client exits unexpectedly.
+
+Windows Docker boundary and client-crash tests pass; macOS/Linux native qualification
+remains pending. This is command isolation, not a claim that the entire harness is sandboxed.
+
 ## Audit records
 
 Kernel decisions live in `agent_run_events`; broker authorization/consumption records live in the

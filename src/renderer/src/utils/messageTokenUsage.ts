@@ -18,6 +18,7 @@ export function messageTokenUsageFromMetadata(
   const cachedPromptTokens = finiteNonNegative(nested.cachedPromptTokens)
   const tokensPerSecond = finiteNonNegative(nested.tokensPerSecond)
   const timeToFirstTokenMs = finiteNonNegative(nested.timeToFirstTokenMs)
+  const providerDurationMs = finiteNonNegative(nested.providerDurationMs)
   if (
     promptTokens === undefined &&
     completionTokens === undefined &&
@@ -32,7 +33,19 @@ export function messageTokenUsageFromMetadata(
     ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
     completionTokens: completionTokens ?? 0,
     ...(tokensPerSecond !== undefined && tokensPerSecond > 0 ? { tokensPerSecond } : {}),
-    ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs })
+    ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs }),
+    ...(providerDurationMs === undefined
+      ? {}
+      : {
+          providerTimings: [
+            {
+              durationMs: providerDurationMs,
+              promptTokens: promptTokens ?? 0,
+              ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
+              ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs })
+            }
+          ]
+        })
   }
 }
 
@@ -52,7 +65,7 @@ export function mergeMessageTokenUsage(
   )
   return {
     promptTokens: left.promptTokens + right.promptTokens,
-    ...((left.cachedPromptTokens ?? 0) + (right.cachedPromptTokens ?? 0) > 0
+    ...(left.cachedPromptTokens !== undefined && right.cachedPromptTokens !== undefined
       ? { cachedPromptTokens: (left.cachedPromptTokens ?? 0) + (right.cachedPromptTokens ?? 0) }
       : {}),
     completionTokens: left.completionTokens + right.completionTokens,
@@ -64,6 +77,9 @@ export function mergeMessageTokenUsage(
       ? { timeToFirstTokenMs: left.timeToFirstTokenMs }
       : right.timeToFirstTokenMs !== undefined
         ? { timeToFirstTokenMs: right.timeToFirstTokenMs }
-        : {})
+        : {}),
+    ...(left.providerTimings?.length || right.providerTimings?.length
+      ? { providerTimings: [...(left.providerTimings ?? []), ...(right.providerTimings ?? [])] }
+      : {})
   }
 }

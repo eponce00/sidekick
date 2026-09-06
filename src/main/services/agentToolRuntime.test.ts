@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -14,6 +14,8 @@ import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
+import { LanguageIntelligenceService } from './languageIntelligence/languageIntelligenceService'
+import { WorkspaceVerificationService } from './workspaceVerificationService'
 
 const roots: string[] = []
 
@@ -92,10 +94,76 @@ async function temporaryRoot(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
 describe('AgentToolRuntime file receipts', () => {
+  it.each([false, true])(
+    'records only complete diagnostics for the inspected file (truncated=%s)',
+    async (truncated) => {
+      const workspace = await temporaryRoot('sidekick-diagnostic-scope-')
+      const data = await temporaryRoot('sidekick-diagnostic-data-')
+      await writeFile(join(workspace, 'a.ts'), 'before\n')
+      await writeFile(join(workspace, 'b.ts'), 'before\n')
+      vi.spyOn(LanguageIntelligenceService.prototype, 'diagnosticsAfterChanges').mockResolvedValue({
+        diagnostics: [],
+        attemptedFiles: [],
+        failedFiles: [],
+        complete: false
+      })
+      vi.spyOn(LanguageIntelligenceService.prototype, 'execute').mockResolvedValue({
+        operation: 'diagnostics',
+        serverId: 'fixture',
+        filePath: 'a.ts',
+        result: [],
+        resultCount: 0,
+        truncated
+      })
+      const db = new Database(':memory:')
+      applyDatabaseSchema(db)
+      const runtime = new AgentToolRuntime(
+        db,
+        new WorkspaceReadService(),
+        new CommandService(db, join(data, 'commands')),
+        new ToolOutputStore(join(data, 'outputs')),
+        new McpClientManager()
+      )
+      const session = await runtime.createSession({
+        runId: 'scope',
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['workspace.read', 'workspace.write', 'command.execute']
+      })
+      const context = {
+        runId: 'scope',
+        workspaceRoot: workspace,
+        signal: new AbortController().signal
+      }
+      try {
+        for (const path of ['a.ts', 'b.ts']) await session.router.execute('read', { path }, context)
+        const patch =
+          '*** Begin Patch\n*** Update File: a.ts\n@@\n-before\n+after\n*** Update File: b.ts\n@@\n-before\n+after\n*** End Patch'
+        expect(await session.router.execute('apply_patch', { patch }, context)).toMatchObject({
+          status: 'success'
+        })
+        await session.router.execute(
+          'code_intelligence',
+          { operation: 'diagnostics', file_path: 'a.ts' },
+          context
+        )
+        const verification = new WorkspaceVerificationService(db)
+        expect(verification.evidence('scope', workspace).map((item) => item.changedPaths)).toEqual(
+          truncated ? [] : [['a.ts']]
+        )
+        expect(verification.summary('scope', workspace, 0).status).toBe('unverified')
+      } finally {
+        await runtime.close()
+        db.close()
+      }
+    }
+  )
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
