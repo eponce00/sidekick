@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { expect, it, vi } from 'vitest'
@@ -62,7 +62,7 @@ it('maps only configured bundled helpers read-only into the isolated container',
     expect(valuesAfter('--mount')).toHaveLength(2)
     expect(valuesAfter('--mount')[0]).toContain('dst=/workspace')
     expect(valuesAfter('--mount')[1]).toBe(
-      `type=bind,src=${helpers},dst=/sidekick-skills,readonly,bind-recursive=disabled`
+      `type=bind,src=${await realpath(helpers)},dst=/sidekick-skills,readonly,bind-recursive=disabled`
     )
     expect(args.slice(-3)).toEqual(['/bin/sh', '-c', command])
     expect(args).toContain('--pull=never')
