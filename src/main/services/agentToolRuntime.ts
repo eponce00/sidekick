@@ -48,6 +48,8 @@ import { registerConversationToolHandlers } from './agentConversationToolHandler
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { externalImageApprovalForMode } from './externalImageApproval'
+import type { PermissionMode } from '../../shared/permissions'
 import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 
@@ -82,6 +84,7 @@ export interface AgentChildRunLauncher {
 }
 
 export interface AgentToolRuntimeSessionInput {
+  permissionMode?: PermissionMode
   runId: string
   surface: AgentRunSurface
   workspaceRoot?: string
@@ -345,7 +348,7 @@ export class AgentToolRuntime {
     const handlers = new AgentToolHandlerRegistry()
     registerCoreToolHandlers(handlers, this.outputs)
     registerWebToolHandlers(handlers, this.outputs)
-    registerVisionToolHandlers(handlers)
+    registerVisionToolHandlers(handlers, externalImageApprovalForMode(input.permissionMode))
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs)
     }

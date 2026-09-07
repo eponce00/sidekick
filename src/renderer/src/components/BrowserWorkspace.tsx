@@ -1,18 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, RotateCw, Plus, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  ArrowRight,
+  RotateCw,
+  Plus,
+  X,
+  Globe,
+  Maximize2,
+  Minimize2,
+  Pause
+} from 'lucide-react'
 import type {
   BrowserWorkspaceRequest,
   BrowserWorkspaceState
 } from '../../../shared/browserWorkspace'
+import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 
 export function BrowserWorkspace({
-  conversationId
+  conversationId,
+  onToggleWidth,
+  isWide
 }: {
   conversationId: string
+  onToggleWidth?: () => void
+  isWide?: boolean
 }): React.JSX.Element {
   const [state, setState] = useState<BrowserWorkspaceState | null>(null)
   const [address, setAddress] = useState('')
   const [error, setError] = useState('')
+  const [layoutError, setLayoutError] = useState('')
   const [pending, setPending] = useState(false)
   const viewport = useRef<HTMLDivElement>(null)
   const editing = useRef(false)
@@ -26,22 +42,18 @@ export function BrowserWorkspace({
     const element = viewport.current
     if (!element) return
     const rect = element.getBoundingClientRect()
+    const bounds = clipBrowserPanelBounds(rect, window.innerWidth, window.innerHeight)
     const hidden =
       document.hidden ||
-      rect.width < 1 ||
-      rect.height < 1 ||
+      !bounds ||
       element.closest('[hidden], [aria-hidden="true"]') ||
       document.querySelector('[role="dialog"], [aria-modal="true"]')
     const result = await window.api.agentRuns.browserWorkspace({
       conversationId,
       action: hidden ? 'unmount' : 'mount',
-      bounds: {
-        x: Math.max(0, rect.x),
-        y: Math.max(0, rect.y),
-        width: Math.min(rect.width, window.innerWidth - rect.x),
-        height: Math.min(rect.height, window.innerHeight - rect.y)
-      }
+      ...(hidden ? {} : { bounds: bounds! })
     })
+    setLayoutError('')
     if (!hidden)
       setState((previous) =>
         JSON.stringify(previous) === JSON.stringify(result) ? previous : result
@@ -58,7 +70,7 @@ export function BrowserWorkspace({
       try {
         await refresh()
       } catch (e) {
-        if (!stopped) setError(String(e))
+        if (!stopped) setLayoutError(String(e))
       } finally {
         running = false
       }
@@ -98,7 +110,7 @@ export function BrowserWorkspace({
     setError('')
     try {
       setState(await window.api.agentRuns.browserWorkspace({ conversationId, action, ...extra }))
-      await refresh()
+      await refresh().catch((e) => setLayoutError(String(e)))
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -108,34 +120,53 @@ export function BrowserWorkspace({
 
   return (
     <div className="browser-workspace">
-      <div className="browser-workspace-tabs" role="tablist" aria-label="Browser tabs">
-        {state?.tabs.map((tab) => (
-          <div key={tab.id} className="browser-workspace-tab">
-            <button
-              role="tab"
-              aria-selected={tab.active}
-              title={tab.url}
-              disabled={pending || state.busy}
-              onClick={() => void act('select', { tabId: tab.id })}
-            >
-              {tab.title || 'New tab'}
-            </button>
-            <button
-              aria-label={`Close ${tab.title || 'tab'}`}
-              disabled={pending || state.busy}
-              onClick={() => void act('close', { tabId: tab.id })}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        ))}
-        <button
-          aria-label="New browser tab"
-          disabled={pending || state?.busy}
-          onClick={() => void act('new')}
-        >
-          <Plus size={15} />
-        </button>
+      <div className="browser-workspace-topbar">
+        <div className="browser-workspace-tabs" role="tablist" aria-label="Browser tabs">
+          {!state?.tabs.length && (
+            <span className="browser-workspace-new-label">
+              <Globe size={15} />
+              New tab
+            </span>
+          )}
+          {state?.tabs.map((tab) => (
+            <div key={tab.id} className="browser-workspace-tab">
+              <button
+                role="tab"
+                aria-selected={tab.active}
+                title={tab.url}
+                disabled={pending || state.busy}
+                onClick={() => void act('select', { tabId: tab.id })}
+              >
+                <Globe size={13} aria-hidden="true" />
+                <span>{tab.title || 'New tab'}</span>
+              </button>
+              <button
+                aria-label={`Close ${tab.title || 'tab'}`}
+                disabled={pending || state.busy}
+                onClick={() => void act('close', { tabId: tab.id })}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          <button
+            aria-label="New browser tab"
+            disabled={pending || state?.busy}
+            onClick={() => void act('new')}
+          >
+            <Plus size={15} />
+          </button>
+        </div>
+        {onToggleWidth && (
+          <button
+            className="browser-workspace-width"
+            onClick={onToggleWidth}
+            aria-label={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
+            title={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
+          >
+            {isWide ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+          </button>
+        )}
       </div>
       <form
         className="browser-workspace-toolbar"
@@ -184,29 +215,27 @@ export function BrowserWorkspace({
           }}
           onChange={(event) => setAddress(event.target.value)}
         />
-      </form>
-      <div className="browser-workspace-control">
-        <span>
-          {state?.verificationHandoff
-            ? 'Finish the verification using the conversation handoff card'
-            : state?.userControl
-              ? 'You have control · agent browser actions paused'
-              : state?.busy
-                ? 'Agent is using this page'
-                : 'Click the page to take control'}
-        </span>
-        {state && !state.verificationHandoff && (
-          <button
-            disabled={pending || state.busy}
-            onClick={() => void act(state.userControl ? 'resume' : 'control')}
+        {state?.verificationHandoff ? (
+          <span
+            className="browser-workspace-status"
+            title="Finish the verification using the conversation handoff card"
+            aria-label="Finish the verification using the conversation handoff card"
           >
-            {state.userControl ? 'Resume agent' : 'Take control'}
-          </button>
-        )}
-      </div>
-      {error && (
+            <Pause size={14} />
+          </span>
+        ) : state?.busy ? (
+          <span
+            className="browser-workspace-status"
+            aria-label="Agent is using this page"
+            title="Agent is using this page"
+          >
+            <span className="browser-workspace-live-dot" />
+          </span>
+        ) : null}
+      </form>
+      {(error || layoutError) && (
         <div role="alert" className="browser-workspace-error">
-          {error}
+          {error || layoutError}
         </div>
       )}
       <div ref={viewport} className="browser-workspace-viewport" aria-label="Live browser page">

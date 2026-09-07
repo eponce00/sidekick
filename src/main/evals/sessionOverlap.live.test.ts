@@ -17,7 +17,7 @@ it.skipIf(process.env.SIDEKICK_SESSION_OVERLAP_RUN !== '1')(
     const workspace = join(root, 'project')
     await mkdir(workspace)
     const harness = new AgentScenarioHarness(join(root, 'runtime'), {
-      endpoint: process.env.SIDEKICK_AGENT_EVAL_URL || 'https://llm.midecasa.com/v1',
+      endpoint: process.env.SIDEKICK_AGENT_EVAL_URL || 'http://127.0.0.1:8000/v1',
       model: process.env.SIDEKICK_AGENT_EVAL_MODEL || 'local-loaded-model',
       headers: openAICompatibleHeaders(key),
       maxOutputTokens: 2048,

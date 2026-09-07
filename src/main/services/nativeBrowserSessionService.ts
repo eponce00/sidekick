@@ -167,6 +167,8 @@ export interface BrowserObservation {
   /** A site-owned anti-bot checkpoint that requires same-session human takeover. */
   humanVerification?: BrowserHumanVerification | null
   screenshot?: BrowserScreenshotArtifact
+  /** Capture failed transiently; no image was observed. The page remains usable. */
+  screenshotError?: string
   screenshotChanged: boolean | null
   unchangedScreenshotStreak: number
   console: BrowserConsoleEntry[]
@@ -941,7 +943,9 @@ async function readBoundedResponse(
 
 function isTransientViewportCaptureError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return message.trim() === 'UnknownVizError'
+  return ['UnknownVizError', 'Current display surface not available for capture'].includes(
+    message.trim()
+  )
 }
 
 class ElectronNativeBrowserSurface implements NativeBrowserSurface {
@@ -2545,10 +2549,18 @@ export class NativeBrowserSessionService {
       semanticNodeCount = semantic.count
     }
     const screenshotKind = options.screenshot ?? 'viewport'
-    const screenshot =
-      screenshotKind === 'none'
-        ? undefined
-        : await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
+    let screenshot: BrowserScreenshotArtifact | undefined
+    let screenshotError: string | undefined
+    if (screenshotKind !== 'none') {
+      try {
+        screenshot = await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (!isTransientViewportCaptureError(error) || tab.surface.isDestroyed()) throw error
+        screenshotError =
+          'Screenshot temporarily unavailable; no image was captured. The tab remains open. Observe again before making visual claims.'
+      }
+    }
     const consoleEntries = session.console.filter(
       (entry) => entry.tabId === tab.id && entry.sequence > tab.consoleCursor
     )
@@ -2570,6 +2582,7 @@ export class NativeBrowserSessionService {
       semanticNodeCount,
       humanVerification,
       screenshot,
+      ...(screenshotError ? { screenshotError } : {}),
       screenshotChanged: screenshot?.changed ?? null,
       unchangedScreenshotStreak:
         screenshot?.unchangedStreak ?? tab.unchangedScreenshotStreaks.viewport ?? 0,

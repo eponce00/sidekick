@@ -530,12 +530,16 @@ const webFetch = definition(
 
 const viewImage = definition(
   'view_image',
-  'Inspect a project image as real vision input. Use this for screenshots, generated artwork, diagrams, and other raster files already present in the active project.',
+  'Inspect an image as real vision input. External image access follows the configured permission mode: Full access needs no extra confirmation; other modes request exact-file approval. Never bypass denial with shell or another tool.',
   {
     type: 'object',
     required: ['path'],
     properties: {
-      path: { type: 'string', description: 'Image path relative to the active project root.' },
+      path: {
+        type: 'string',
+        description:
+          'Project-relative or absolute image path. External access follows the configured permission mode.'
+      },
       detail: {
         type: 'string',
         enum: ['auto', 'high', 'original'],

@@ -57,6 +57,8 @@ module.exports = {
     createDesktopShortcut: 'always'
   },
   mac: {
+    // Explicit ad-hoc signing also works when CI disables identity discovery.
+    identity: '-',
     artifactName: '${productName}-${version}-macos-${arch}.${ext}',
     icon: 'build/icon.icns',
     hardenedRuntime: true,

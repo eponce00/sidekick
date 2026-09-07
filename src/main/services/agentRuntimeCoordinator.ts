@@ -324,6 +324,7 @@ export class AgentRuntimeCoordinator {
       const maxOutputTokens = resolveMaxOutputTokens(contextLength, target.maxOutputTokens)
       const session = await this.awaitPreparation(
         this.tools.createSession({
+          permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
           runId: input.id,
           surface: 'collaboration',
           workspaceRoot: input.workspaceRoot,
@@ -684,6 +685,7 @@ export class AgentRuntimeCoordinator {
     const parentInput = parent.prepared.kernelInput
     const target = parentInput.request.target
     const session = await this.tools.createSession({
+      permissionMode: parentInput.permissionMode,
       runId: id,
       surface: 'subagent',
       workspaceRoot: parentContext.workspaceRoot,

@@ -4,6 +4,10 @@ const test = require('node:test')
 
 const root = path.resolve(__dirname, '..')
 const identity = require(path.join(root, 'src/shared/productIdentity.json'))
+
+test('community mac builds explicitly request ad-hoc signing without identity discovery', () => {
+  assert.equal(require(path.join(root, 'electron-builder.config.cjs')).mac.identity, '-')
+})
 const packageMetadata = require(path.join(root, 'package.json'))
 const builder = require(path.join(root, 'electron-builder.config.cjs'))
 

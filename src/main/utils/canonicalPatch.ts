@@ -16,6 +16,11 @@ function normalizedPatchLines(patch: string): string[] {
   const lines = patch.replace(/\r\n?/g, '\n').split('\n')
   while (lines[0] === '') lines.shift()
   while (lines.at(-1) === '') lines.pop()
+  // Strip only one complete Markdown wrapper, never prose or missing markers.
+  if (/^```(?:diff|patch)?$/.test(lines[0] ?? '') && lines.at(-1) === '```') {
+    lines.shift()
+    lines.pop()
+  }
   if (lines[0] !== '*** Begin Patch' || lines.at(-1) !== '*** End Patch') {
     throw new Error('Invalid patch: expected *** Begin Patch and *** End Patch sentinels')
   }
@@ -122,20 +127,36 @@ export function parseCanonicalPatch(patch: string): CanonicalPatchOperation[] {
   }
 
   if (!operations.length) throw new Error('Patch rejected: no file operations found')
-  const touched = new Set<string>()
+  const consolidated: CanonicalPatchOperation[] = []
   for (const operation of operations) {
+    const previous = consolidated.at(-1)
+    if (
+      previous?.type === 'update' &&
+      operation.type === 'update' &&
+      previous.path === operation.path &&
+      !previous.movePath &&
+      !operation.movePath &&
+      !previous.chunks.some((chunk) => chunk.endOfFile)
+    ) {
+      previous.chunks.push(...operation.chunks)
+    } else consolidated.push(operation)
+  }
+  const touched = new Set<string>()
+  for (const operation of consolidated) {
     for (const path of [
       operation.path,
       operation.type === 'update' ? operation.movePath : undefined
     ]) {
       if (!path) continue
       if (touched.has(path)) {
-        throw new Error(`Patch rejected: path is modified more than once: ${path}`)
+        throw new Error(
+          `Patch rejected: path is modified more than once: ${path}. Use one Update File section with ordered hunks. For a full rewrite, read the current file and replace its exact contents in one update hunk. Do not delete and add the same path in one patch.`
+        )
       }
       touched.add(path)
     }
   }
-  return operations
+  return consolidated
 }
 
 interface FileLines {

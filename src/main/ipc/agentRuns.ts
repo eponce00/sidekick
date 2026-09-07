@@ -12,6 +12,7 @@ import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
+import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
@@ -247,24 +248,17 @@ export function registerAgentRunHandlers(): void {
           !Object.values(b).every(Number.isFinite) ||
           b.x < 0 ||
           b.y < 0 ||
-          b.width < 1 ||
-          b.height < 1 ||
-          b.x + b.width > width + 1 ||
-          b.y + b.height > height + 1
+          b.width <= 0 ||
+          b.height <= 0
         )
           throw new Error('Invalid browser panel bounds')
         const tab = state?.tabs.find((item) => item.active)
-        if (tab)
-          mountBrowserView(
-            tab.webContentsId,
-            host,
-            {
-              x: Math.round(b.x),
-              y: Math.round(b.y),
-              width: Math.floor(b.width),
-              height: Math.floor(b.height)
-            },
-            () => manager.claimUserControl(input.conversationId)
+        // A renderer snapshot can arrive after a host resize/zoom. Keep native
+        // content inside the current host instead of rejecting valid stale layout.
+        const clipped = clipBrowserPanelBounds(b, width, height)
+        if (tab && clipped)
+          mountBrowserView(tab.webContentsId, host, clipped, () =>
+            manager.claimUserControl(input.conversationId)
           )
         else unmountBrowserHost(host)
       }

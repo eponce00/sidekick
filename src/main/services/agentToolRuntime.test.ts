@@ -306,6 +306,53 @@ describe('AgentToolRuntime file receipts', () => {
     ).resolves.toMatchObject({ status: 'error', error: { code: 'workspace_scope' } })
   })
 
+  it('passes the trusted full-access mode to external image reads in a real tool session', async () => {
+    const workspace = await temporaryRoot('sidekick-image-mode-project-')
+    const data = await temporaryRoot('sidekick-image-mode-external-')
+    const image = join(data, 'pixel.png')
+    await writeFile(image, Buffer.from('89504e470d0a1a0a', 'hex'))
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    try {
+      const runtime = new AgentToolRuntime(
+        db,
+        new WorkspaceReadService(),
+        new CommandService(db, join(data, 'commands')),
+        new ToolOutputStore(join(data, 'outputs')),
+        new McpClientManager()
+      )
+      const session = await runtime.createSession({
+        runId: 'image-mode',
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        permissionMode: 'full-access'
+      })
+      const result = await session.router.execute(
+        'view_image',
+        { path: image },
+        {
+          runId: 'image-mode',
+          workspaceRoot: workspace,
+          signal: new AbortController().signal
+        }
+      )
+      expect(result).toMatchObject({
+        status: 'success',
+        media: [
+          {
+            source: {
+              type: 'data_url',
+              dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+            }
+          }
+        ]
+      })
+    } finally {
+      db.close()
+    }
+  })
+
   it('reports a nonzero foreground command exit as a failed tool call', async () => {
     const workspace = await temporaryRoot('sidekick-command-failure-workspace-')
     const data = await temporaryRoot('sidekick-command-failure-data-')

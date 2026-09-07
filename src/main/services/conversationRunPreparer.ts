@@ -409,6 +409,7 @@ export class ConversationRunPreparer {
           )
         : null
     const toolSession = await this.tools.createSession({
+      permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
       runId: input.id,
       surface,
       workspaceRoot: workspaceRoot ?? undefined,

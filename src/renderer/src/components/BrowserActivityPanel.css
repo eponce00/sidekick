@@ -16,18 +16,34 @@
   flex: 1;
   min-height: 0;
 }
-.browser-workspace-tabs,
-.browser-workspace-toolbar,
-.browser-workspace-control {
+.browser-workspace-topbar,
+.browser-workspace-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 8px;
+  gap: 6px;
+  padding: 7px 8px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--border-subtle);
 }
 .browser-workspace-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
   overflow-x: auto;
   min-height: 32px;
+}
+.browser-workspace-new-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.browser-workspace-width {
+  flex-shrink: 0;
 }
 .browser-workspace button {
   background: transparent;
@@ -52,12 +68,26 @@
   max-width: 180px;
   flex-shrink: 0;
   align-items: center;
+  border-radius: 9px;
+  background: var(--surface-1);
 }
 .browser-workspace-tab [role='tab'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 11px;
+}
+.browser-workspace-tab [role='tab'] span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.browser-workspace-tab svg {
+  flex-shrink: 0;
 }
 .browser-workspace-toolbar input {
   flex: 1;
@@ -69,14 +99,31 @@
   padding: 6px 8px;
   font-size: 12px;
 }
-.browser-workspace-control {
-  justify-content: space-between;
+.browser-workspace-resume {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
   font-size: 11px;
-  color: var(--text-muted);
-}
-.browser-workspace-control button {
   color: var(--accent);
   flex-shrink: 0;
+}
+.browser-workspace-status {
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  color: var(--text-muted);
+}
+.browser-workspace-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+@media (max-width: 600px) {
+  .browser-workspace-resume span {
+    display: none;
+  }
 }
 .browser-workspace-viewport {
   flex: 1;

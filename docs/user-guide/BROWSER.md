@@ -29,10 +29,12 @@ autocomplete controls remain explicit single-action work.
 
 The Browser tab in the right workspace panel contains the actual interactive page. Enter an address,
 use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
-the page or choose **Take control** to type, scroll, select text, and edit forms. Browser tool calls
-wait while you have control. Choose **Resume agent** when finished; the agent must observe fresh
-state before targeting elements you changed. The current browser action finishes before takeover
-can begin. Right-click offers native text editing actions.
+the page to type, scroll, select text, and edit forms. Ordinary browsing has no takeover or
+resume button: the agent can use the same session on its next browser action without waiting
+for your approval. Manual page input is blocked during an in-flight browser action to avoid
+interleaving; retry your input when it finishes. Manual changes invalidate old element references,
+so the agent must observe fresh state before reusing them. Focusing the address bar does not
+pause the agent. Right-click offers native text editing actions.
 
 ## Human-only site checks
 

@@ -14,7 +14,7 @@ it.skipIf(process.env.SIDEKICK_DOCKER_AGENT_EVAL_RUN !== '1')(
     const workspaceRoot = join(root, 'project')
     await mkdir(workspaceRoot)
     const harness = new AgentScenarioHarness(join(root, 'runtime'), {
-      endpoint: process.env.SIDEKICK_AGENT_EVAL_URL || 'https://llm.midecasa.com/v1',
+      endpoint: process.env.SIDEKICK_AGENT_EVAL_URL || 'http://127.0.0.1:8000/v1',
       model: process.env.SIDEKICK_AGENT_EVAL_MODEL || 'local-loaded-model',
       headers: openAICompatibleHeaders(key),
       shellIsolation: true,

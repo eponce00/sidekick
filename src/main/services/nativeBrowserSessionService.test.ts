@@ -685,6 +685,28 @@ afterEach(async () => {
 })
 
 describe('NativeBrowserSessionService', () => {
+  it('keeps new tabs and first sessions alive when the compositor cannot capture yet', async () => {
+    const { service, runtime } = await testService()
+    const capture = vi
+      .spyOn(FakeSurface.prototype, 'captureViewport')
+      .mockRejectedValue(new Error('Current display surface not available for capture'))
+    try {
+      const opened = await service.open({ runId: 'capture-startup', url: 'about:blank' })
+      expect(opened.screenshot).toBeUndefined()
+      expect(opened.screenshotError).toContain('no image was captured')
+      const added = await service.tabs({ sessionId: opened.sessionId, action: 'new' })
+      expect(added.tabs).toHaveLength(2)
+      expect(added.observation?.screenshotError).toContain('no image was captured')
+      expect(runtime.surfaces.every((surface) => !surface.isDestroyed())).toBe(true)
+      capture.mockRestore()
+      const observed = await service.observe(opened.sessionId)
+      expect(observed.screenshot).toBeDefined()
+      expect(observed.screenshotError).toBeUndefined()
+    } finally {
+      capture.mockRestore()
+      await service.dispose()
+    }
+  })
   it.each(['reject', 'close-failure'] as const)(
     'retains retired parent capacity until pending child %s settles and cleanup succeeds',
     async (outcome) => {

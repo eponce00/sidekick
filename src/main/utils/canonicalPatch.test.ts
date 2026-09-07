@@ -10,6 +10,32 @@ function update(original: string, hunk: string): string {
 }
 
 describe('canonical patch EOF constraints', () => {
+  it('accepts a single complete Markdown wrapper without guessing missing syntax', () => {
+    const text = '*** Begin Patch\n*** Update File: test.txt\n@@\n-before\n+after\n*** End Patch'
+    expect(parseCanonicalPatch('```diff\n' + text + '\n```')).toEqual(parseCanonicalPatch(text))
+    expect(() => parseCanonicalPatch('Explanation\n' + text)).toThrow('sentinels')
+  })
+  it('consolidates consecutive updates into one exact ordered operation', () => {
+    const ops = parseCanonicalPatch(
+      '*** Begin Patch\n*** Update File: test.txt\n@@\n-one\n+ONE\n*** Update File: test.txt\n@@\n-two\n+TWO\n*** End Patch'
+    )
+    expect(ops).toHaveLength(1)
+    if (ops[0].type !== 'update') throw new Error('Expected update')
+    expect(applyCanonicalUpdate('one\ntwo\n', ops[0])).toBe('ONE\nTWO\n')
+    expect(() =>
+      applyCanonicalUpdate(
+        'one\nexternal\n',
+        ops[0] as Extract<(typeof ops)[number], { type: 'update' }>
+      )
+    ).toThrow()
+  })
+  it('does not turn delete-and-add or repeated moves into replacements', () => {
+    expect(() =>
+      parseCanonicalPatch(
+        '*** Begin Patch\n*** Delete File: test.txt\n*** Add File: test.txt\n+replacement\n*** End Patch'
+      )
+    ).toThrow('one Update File')
+  })
   it.each([
     '*** Update File: test.txt\n@@\n-before\n+after',
     '*** Update File: test.txt\n@@\n-before\n+after\n*** End Patch',

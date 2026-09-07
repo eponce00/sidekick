@@ -138,7 +138,7 @@ function applyPatchDefinition(): AgentToolDefinition {
     type: 'function',
     function: {
       name: 'apply_patch',
-      description: `Apply one verified, potentially multi-file patch using the canonical Codex patch grammar. The entire patch is parsed and checked before any file is written. Any empty patch, stale or ambiguous hunk, invalid path, skipped hunk, or no-op fails the complete call.
+      description: `Apply one verified, potentially multi-file patch using the canonical Codex patch grammar. The entire patch is parsed and checked before any file is written. Any empty patch, stale or ambiguous hunk, invalid path, skipped hunk, or no-op fails the complete call. Read existing targets in this run before the first edit, even if their contents appear in earlier conversation history. Use one Update File section per existing file with hunks in source order. For full rewrites, replace exact current contents in one update hunk; never delete and add the same path. Do not recreate unchanged lines from memory.
 
 Format:
 *** Begin Patch

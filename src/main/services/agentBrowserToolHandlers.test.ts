@@ -414,32 +414,30 @@ describe('native browser agent tool handlers', () => {
     expect(actual.modelContent).toContain('Do not repeat fields that were already verified')
   })
 
-  it('waits while the user controls the same session and resumes browser tools afterward', async () => {
+  it('automatically reuses the same session after manual input without resume', async () => {
     const { registry, manager, service } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
     expect(manager.claimUserControl('conversation-1')).toBe(true)
-    expect(manager.workspaceState('conversation-1')?.userControl).toBe(true)
-    let finished = false
-    const next = execute(registry, 'browser_observe', {}).then((result) => {
-      finished = true
-      return result
-    })
-    await new Promise((resolve) => setTimeout(resolve, 120))
-    expect(finished).toBe(false)
-    await manager.workspaceAction('conversation-1', {
-      conversationId: 'conversation-1',
-      action: 'resume'
-    })
-    expect((await next).status).toBe('success')
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+    expect((await execute(registry, 'browser_observe', {})).status).toBe('success')
+    expect(service.refreshAfterUserInput).toHaveBeenCalledTimes(1)
     expect(service.open).toHaveBeenCalledTimes(1)
     expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
   })
 
-  it('does not steal control from an active tool, and a waiting tool can be cancelled', async () => {
+  it('does not interleave active actions and still respects cancellation', async () => {
     const { registry, manager } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
     const lease = await manager.lease('conversation-1')
     expect(manager.claimUserControl('conversation-1')).toBe(false)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+    await expect(manager.lease('conversation-1')).rejects.toThrow('Browser action in progress')
+    await expect(
+      manager.workspaceAction('conversation-1', {
+        conversationId: 'conversation-1',
+        action: 'resume'
+      })
+    ).rejects.toThrow('Wait for the current browser action')
     await lease!.release()
     expect(manager.claimUserControl('conversation-1')).toBe(true)
     const controller = new AbortController()
@@ -447,7 +445,27 @@ describe('native browser agent tool handlers', () => {
     controller.abort()
     const result = await waiting
     expect(result.status).not.toBe('success')
-    expect(manager.workspaceState('conversation-1')?.userControl).toBe(true)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+  })
+
+  it.each([
+    ['browser_open', { url: 'https://example.com/next' }],
+    ['browser_tabs', { action: 'list' }],
+    ['browser_close', {}]
+  ])('allows %s after manual interaction without an explicit resume', async (name, args) => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    expect((await execute(registry, name as string, args)).status).toBe('success')
+  })
+
+  it('does not turn automatic takeover into permission to bypass a human handoff', async () => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    await manager.reserveHumanTakeover('conversation-1')
+    expect((await execute(registry, 'browser_observe', {})).status).not.toBe('success')
+    expect((await execute(registry, 'browser_close', {})).status).not.toBe('success')
+    expect(manager.workspaceState('conversation-1')?.verificationHandoff).toBe(true)
   })
   it('registers every browser catalog tool and returns screenshots as real vision media', async () => {
     const { registry, service } = setup()

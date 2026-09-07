@@ -14,7 +14,7 @@ it.skipIf(process.env.SIDEKICK_COMPACTION_EVAL_RUN !== '1').each([5, 11, 14])(
   async (correctionBatch) => {
     const key = process.env.SIDEKICK_AGENT_EVAL_API_KEY || ''
     expect(Boolean(key)).toBe(true)
-    const endpoint = process.env.SIDEKICK_AGENT_EVAL_URL || 'https://llm.midecasa.com/v1'
+    const endpoint = process.env.SIDEKICK_AGENT_EVAL_URL || 'http://127.0.0.1:8000/v1'
     const model = process.env.SIDEKICK_AGENT_EVAL_MODEL || 'local-loaded-model'
     const headers = openAICompatibleHeaders(key)
     const root = await mkdtemp(join(tmpdir(), 'sidekick-compaction-live-'))

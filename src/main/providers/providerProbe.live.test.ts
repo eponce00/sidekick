@@ -12,7 +12,7 @@ it.skipIf(process.env.SIDEKICK_PROVIDER_PROBE_RUN !== '1')(
       { providerKind: 'litellm', model: 'local-loaded-model' },
       (request, emit, signal) =>
         streamOpenAICompatibleChat(
-          process.env.SIDEKICK_AGENT_EVAL_URL || 'https://llm.midecasa.com/v1',
+          process.env.SIDEKICK_AGENT_EVAL_URL || 'http://127.0.0.1:8000/v1',
           openAIRequest(request),
           { Authorization: `Bearer ${key}` },
           emit,

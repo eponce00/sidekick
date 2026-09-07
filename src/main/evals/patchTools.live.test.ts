@@ -21,7 +21,7 @@ import type { ToolExecutionResult } from '../../shared/agentRuntime'
 
 // Opt-in only. All mutations are confined to newly created synthetic temporary projects.
 const enabled = process.env.SIDEKICK_PATCH_EVAL_RUN === '1'
-const endpoint = process.env.SIDEKICK_AGENT_EVAL_URL || 'https://llm.midecasa.com/v1'
+const endpoint = process.env.SIDEKICK_AGENT_EVAL_URL || 'http://127.0.0.1:8000/v1'
 const model = process.env.SIDEKICK_AGENT_EVAL_MODEL || 'local-loaded-model'
 const key = process.env.SIDEKICK_AGENT_EVAL_API_KEY || ''
 const repetitions = Math.min(20, Math.max(1, Number(process.env.SIDEKICK_PATCH_EVAL_N || 5)))
