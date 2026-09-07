@@ -21,12 +21,15 @@ jobs:
           - name: Windows x64
             os: windows-latest
             smoke: windows
+            executable: dist/win-unpacked/SideKick.exe
           - name: macOS arm64
             os: macos-14
             smoke: macos
+            executable: dist/mac-arm64/SideKick.app/Contents/MacOS/SideKick
           - name: Linux x64
             os: ubuntu-22.04
             smoke: linux
+            executable: dist/linux-unpacked/io.github.eponce00.sidekick
 
     steps:
       - uses: actions/checkout@v7
@@ -51,19 +54,31 @@ jobs:
       - run: npm run test:docs
       - run: npm run test:coverage
       - run: npm run test:release
+      - name: Check packaged PDF runner contracts
+        run: node --test scripts/electron-packaged-pdf-readonly.contract.test.cjs scripts/electron-packaged-pdf-save.contract.test.cjs scripts/run-publication-directory-linux.test.cjs
       - run: npm run build:unpack
-      - name: Run real-Electron journey
+      - name: Run packaged real-Electron journey
         if: matrix.smoke != 'linux'
         run: npm run test:e2e:runtime
-      - name: Run real-Electron journey on Linux
+        env:
+          SIDEKICK_E2E_EXECUTABLE: ${{ matrix.executable }}
+      - name: Run packaged real-Electron journey on Linux
         if: matrix.smoke == 'linux'
         run: xvfb-run --auto-servernum npm run test:e2e:runtime
+        env:
+          SIDEKICK_E2E_EXECUTABLE: ${{ matrix.executable }}
       - name: Smoke-test native browser tools
         if: matrix.smoke != 'linux'
         run: npm run test:native-browser-smoke
       - name: Smoke-test native browser tools on Linux
         if: matrix.smoke == 'linux'
         run: xvfb-run --auto-servernum npm run test:native-browser-smoke
+      - name: Verify native browser form recovery and saved PDF fixtures
+        if: matrix.smoke != 'linux'
+        run: npm run test:native-browser-fixtures
+      - name: Verify native browser fixtures on Linux
+        if: matrix.smoke == 'linux'
+        run: xvfb-run --auto-servernum npm run test:native-browser-fixtures
       - name: Audit Windows packaged content
         if: matrix.smoke == 'windows'
         run: npm run validate:package -- dist/win-unpacked/resources

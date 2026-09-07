@@ -4,10 +4,19 @@ name: Word Documents
 icon: FileType2
 description: 'Use this skill whenever the user wants to create, read, edit, or manipulate Word documents (.docx files). Triggers include: any mention of Word doc, word document, .docx, or requests to produce professional documents with formatting like tables of contents, headings, page numbers, or letterheads. Also use when extracting or reorganizing content from .docx files, inserting or replacing images, performing find-and-replace in Word files, working with tracked changes or comments, or converting content into a polished Word document. If the user asks for a report, memo, letter, template, or similar deliverable as a Word file, use this skill.'
 invocation: auto
-requiresNodePackages: ['docx']
+requiresNodePackages: ["docx"]
+requiresPythonPackages: ["defusedxml", "lxml", "python-docx"]
 ---
 
 ## SKILL: DOCX Creation & Editing
+
+### Bundled capability limits
+
+Classic anchored DOCX comments and non-mutating OPC/OOXML structural validation are supported.
+Threaded replies and full XSD conformance validation are not supported. Existing thread-extension
+parts are preserved, but the helper creates classic comments, not modern thread metadata.
+Tracked-change acceptance and rendering require local LibreOffice. They passed synthetic Linux
+LibreOffice qualification; do not generalize that to all documents or untested native platforms.
 
 ### ⚠️ Critical Rule: Never Regenerate an Existing File
 
@@ -18,12 +27,14 @@ requiresNodePackages: ['docx']
 | Task                   | Approach                                                          |
 | ---------------------- | ----------------------------------------------------------------- |
 | Read/analyze content   | `python "$env:SIDEKICK_SKILLS\office\unpack.py"` then inspect XML |
-| Create new document    | Use the `docx` npm package when it is available                   |
+| Create new document    | Available `python-docx` or Node `docx` engine, checked explicitly |
 | Edit existing document | Unpack → edit XML → repack                                        |
 | Accept tracked changes | `python "$env:SIDEKICK_SKILLS\docx\accept_changes.py"`            |
-| Add comments           | `python "$env:SIDEKICK_SKILLS\docx\comment.py"`                   |
+| Add comments           | `python "$env:SIDEKICK_SKILLS\docx\comment.py" DIR auto "Text" --paragraph 0` |
+| Validate structure     | `python "$env:SIDEKICK_SKILLS\office\validate.py" document.docx` |
+| Render PDF/page images | `python "$env:SIDEKICK_SKILLS\office\render.py" document.docx NEW_DIR --images` |
 
-> **SKILLS** refers to the bundled scripts path shown in the "Skill Scripts" section above.
+> `SIDEKICK_SKILLS` is the read-only bundled scripts directory supplied to shell commands.
 > Skills are instructions, not package installers. Never install packages as an implicit side effect.
 > If a required local runtime is unavailable, report the missing dependency clearly and ask before
 > changing the user's system.
@@ -32,10 +43,37 @@ requiresNodePackages: ['docx']
 
 ## Creating New Documents
 
-Use the available `docx` npm package. Write the temp script to `$env:TEMP` (never to the workspace), run it, then it auto-deletes.
+### Choose an available creation engine
+
+Check `docx-create-python` for Python `python-docx`, or `docx-create` for Node `docx`.
+These are separate supported engines: discovering one does not imply the other is installed.
+If the user explicitly requests an engine, honor it and report missing dependencies instead of
+switching. Otherwise use an available engine with the required features; never install implicitly.
+
+For straightforward new documents, the qualified Python creation route is:
+
+```python
+from docx import Document
+from docx.shared import Inches
+doc = Document()
+section = doc.sections[0]
+section.page_width, section.page_height = Inches(8.5), Inches(11)
+doc.add_heading('Document title', 0)
+doc.add_paragraph('Document content.')
+# Choose a NEW workspace output path. Never regenerate an existing document.
+doc.save('NEW_document.docx')
+```
+
+Reopen with `Document('NEW_document.docx')`, verify paragraphs/tables, run structural validation,
+then render and inspect pages when the required tools are available. High-level libraries may
+not preserve every Office feature; use targeted XML for existing documents.
+
+### Node docx creation route
+
+Use `docx` only after dependency discovery succeeds. Create a uniquely named temporary script with the file-editing tool in a writable project-relative location (or managed scratch if supported); run it and explicitly clean up that script.
 
 ```javascript
-// Script goes in $env:TEMP — keeps the workspace clean
+// Use a uniquely named temporary script created through the file-editing tool.
 const {
   Document,
   Packer,
@@ -59,7 +97,7 @@ const {
   VerticalAlign,
   PageNumber,
   PageBreak
-} = require('docx')
+} = require(require.resolve('docx', { paths: [process.env.WORKSPACE_FOLDER || process.cwd()] }))
 const fs = require('fs')
 const path = require('path')
 
@@ -111,24 +149,14 @@ Packer.toBuffer(doc).then((buf) => {
 })
 ```
 
-**Run it (script lives in TEMP, output goes to workspace):**
+**Run the script created with the file-editing tool; output goes to the workspace:**
 
 ```powershell
-# Set NODE_PATH so Node can find globally installed packages
-$env:NODE_PATH = (npm root -g 2>$null)
-$scriptPath = Join-Path $env:TEMP 'sk_docx.js'
-# ... (do not put generated script source into a shell command; create it with the file-writing tool)
-# Better pattern: write script inline with Set-Content, then run it
-$script = @'
-<paste full script here>
-'@
-Set-Content -Path (Join-Path $env:TEMP 'sk_docx.js') -Value $script -Encoding UTF8
-$env:NODE_PATH = (npm root -g 2>$null)
-node (Join-Path $env:TEMP 'sk_docx.js')
-Remove-Item (Join-Path $env:TEMP 'sk_docx.js') -ErrorAction SilentlyContinue
+node './UNIQUE_docx.cjs'
+# Delete only the temporary script after verifying the output.
 ```
 
-> **Important:** Always write the script to `$env:TEMP`, not to the workspace. The output `.docx` file should go to `$env:WORKSPACE_FOLDER`.
+> The output `.docx` belongs in the workspace. Never overwrite an existing output unintentionally.
 
 ### Critical Rules for docx-js
 
@@ -156,19 +184,17 @@ Follow all 3 steps in order.
 python "$env:SIDEKICK_SKILLS\office\unpack.py" "document.docx" "doc_unpacked"
 ```
 
-Extracts XML, pretty-prints, merges adjacent runs, converts smart quotes to XML entities.
+Extracts into a new directory and pretty-prints XML. Run merging and tracked-change simplification
+are disabled by default so unrelated document history is not rewritten. Unsafe archive paths and
+oversized packages are rejected before output creation.
 
 ### Step 2: Edit XML
 
 Edit files in `doc_unpacked\word\`.
 
-**IMPORTANT — prefer full file rewrites over partial edits:**
-
-- `document.xml` uses CRLF line endings and compact formatting — partial string replacements are unreliable and often fail with "Target string not found"
-- For any structural change (adding paragraphs, sections, tables), **rewrite the entire `document.xml`** using the file-writing capability provided for the active model
-- Only use targeted edits for trivial single-word/phrase changes where the exact XML is known
-
-**Use "Claude" as author** for tracked changes and comments.
+Use targeted XML-aware edits and preserve unrelated elements, relationships, styles, metadata,
+and namespace declarations. Avoid whole-document regeneration. Use the user's requested author,
+or "SideKick" when none is specified, for tracked changes and comments.
 
 **Smart quotes in XML — use entities:**
 | Entity | Character |
@@ -194,18 +220,31 @@ Edit files in `doc_unpacked\word\`.
 
 **Add comments:**
 
+Check `docx-comment`, inventory body paragraphs, and select the exact zero-based paragraph index
+to annotate (including body-table paragraphs in document order). Pass plain text, not pre-escaped
+XML. The helper creates the comment part, relationship, content type, and matching range/reference
+markers together; do not add a second set manually. `auto` chooses an unused ID. Existing IDs and
+unrelated document parts are preserved. Duplicate IDs, invalid paragraph indices, and `--parent`
+(threaded replies) fail before mutation.
+
 ```powershell
-python "$env:SIDEKICK_SKILLS\docx\comment.py" "doc_unpacked" 0 "Comment text"
-python "$env:SIDEKICK_SKILLS\docx\comment.py" "doc_unpacked" 1 "Reply" --parent 0
+python "$env:SIDEKICK_SKILLS\docx\comment.py" "doc_unpacked" auto "Review this paragraph" --paragraph 2 --author "SideKick"
 ```
 
 ### Step 3: Repack
 
 ```powershell
-python "$env:SIDEKICK_SKILLS\office\pack.py" "doc_unpacked" "output.docx" --original "document.docx" --validate false
+python "$env:SIDEKICK_SKILLS\office\pack.py" "doc_unpacked" "NEW_output.docx"
 ```
 
-Always use `--validate false` — the validator can crash on Windows due to encoding issues with non-ASCII output characters.
+Packing runs structural checks by default: XML safety, content types, relationships, and selected
+Office invariants including comment IDs/anchors. This is not complete XSD or semantic validation.
+If a helper reports incomplete rollback or transaction residue, stop and preserve the unpacked
+directory and retained backups for recovery; never delete them merely to bypass the check.
+Packing uses atomic no-overwrite publication and may reject filesystems without hard-link support.
+Reopen and inspect changed content, then use `office-render` / `office-render-images` preflight
+and the render helper to inspect layout. If the user requires full XSD validation, explain the
+unsupported scope; `--xsd` fails explicitly rather than pretending structural checks are equivalent.
 
 ---
 

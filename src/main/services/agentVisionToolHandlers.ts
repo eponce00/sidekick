@@ -1,97 +1,162 @@
-import { stat } from 'fs/promises'
-import { extname, relative, resolve } from 'path'
+import { open, realpath, stat } from 'fs/promises'
+import { extname, isAbsolute, relative, resolve, sep } from 'path'
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
   type ToolResultImageMimeType
 } from '../../shared/agentRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
-
-const IMAGE_MIME_TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
+const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
   '.gif': 'image/gif'
 }
-
-function projectImagePath(workspaceRoot: string, requested: string): string {
-  const root = resolve(workspaceRoot)
-  const target = resolve(root, requested)
-  const rel = relative(root, target)
-  if (!requested.trim() || rel.startsWith('..') || rel.includes(':') || resolve(root, rel) !== target) {
-    throw new Error('Image path must stay inside the active project')
+const LIMIT = 8 * 1024 * 1024
+export type ExternalImageApproval = (canonicalPath: string, signal: AbortSignal) => Promise<boolean>
+async function approved(
+  approve: ExternalImageApproval,
+  path: string,
+  signal: AbortSignal
+): Promise<boolean> {
+  if (signal.aborted) return false
+  let onAbort: () => void = () => {}
+  const cancelled = new Promise<boolean>((resolve) => {
+    onAbort = () => resolve(false)
+  })
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([approve(path, signal), cancelled])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
   }
-  return target
 }
-
-export function registerVisionToolHandlers(registry: AgentToolHandlerRegistry): void {
+export function registerVisionToolHandlers(
+  registry: AgentToolHandlerRegistry,
+  approveExternal?: ExternalImageApproval
+): void {
   registry.register('view_image', async ({ title, arguments: args, context }) => {
-    if (!context.workspaceRoot) {
-      return toolExecutionFailed({
+    const cancelled = () =>
+      toolExecutionFailed({
         title,
-        code: 'workspace_scope',
-        message: 'view_image requires an active project workspace',
-        recoveryAction: 'change_strategy'
+        code: 'cancelled',
+        status: 'cancelled',
+        message: 'Image access cancelled'
       })
-    }
+    if (context.signal.aborted) return cancelled()
     const requested = typeof args.path === 'string' ? args.path : ''
-    let path: string
-    try {
-      path = projectImagePath(context.workspaceRoot, requested)
-    } catch (error) {
+    if (
+      !requested.trim() ||
+      requested.includes('\0') ||
+      (!context.workspaceRoot && !isAbsolute(requested))
+    )
       return toolExecutionFailed({
         title,
         code: 'workspace_scope',
-        message: error instanceof Error ? error.message : String(error),
-        recoveryAction: 'correct_input'
+        message: 'Choose an absolute image path or an active project image.'
       })
-    }
-    const mimeType = IMAGE_MIME_TYPES[extname(path).toLowerCase()]
-    if (!mimeType) {
-      return toolExecutionFailed({
+    try {
+      const path = await realpath(resolve(context.workspaceRoot ?? '', requested))
+      const root = context.workspaceRoot ? await realpath(context.workspaceRoot) : undefined
+      const rel = root ? relative(root, path) : undefined
+      const external =
+        rel === undefined || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+      const mimeType = TYPES[extname(path).toLowerCase()]
+      if (!mimeType)
+        return toolExecutionFailed({
+          title,
+          code: 'unsupported',
+          message: 'view_image supports PNG, JPEG, WebP, and GIF files'
+        })
+      const before = await stat(path)
+      if (!before.isFile() || before.size <= 0 || before.size > LIMIT)
+        return toolExecutionFailed({
+          title,
+          code: 'unsupported',
+          message: 'Image must be a nonempty regular file no larger than 8 MiB.'
+        })
+      if (external) {
+        if (!approveExternal)
+          return toolExecutionFailed({
+            title,
+            code: 'workspace_scope',
+            message: 'External image access requires explicit user confirmation.'
+          })
+        if (!(await approved(approveExternal, path, context.signal))) {
+          if (context.signal.aborted) return cancelled()
+          return toolExecutionFailed({
+            title,
+            code: 'permission_denied',
+            status: 'denied',
+            message: 'External image access denied. Do not retry through shell or another tool.'
+          })
+        }
+      }
+      if (context.signal.aborted) return cancelled()
+      // Pin one canonical identity and snapshot bounded bytes; no deferred path read.
+      if ((await realpath(path)) !== path) throw new Error('changed')
+      const file = await open(path, 'r')
+      let bytes: Buffer
+      try {
+        const current = await file.stat()
+        if (
+          !current.isFile() ||
+          current.dev !== before.dev ||
+          current.ino !== before.ino ||
+          current.size !== before.size ||
+          current.mtimeMs !== before.mtimeMs
+        )
+          throw new Error('changed')
+        const buffer = Buffer.alloc(LIMIT + 1)
+        let length = 0
+        while (length < buffer.length) {
+          const read = await file.read(buffer, length, buffer.length - length, null)
+          if (!read.bytesRead) break
+          length += read.bytesRead
+        }
+        const after = await file.stat()
+        if (
+          length !== before.size ||
+          length > LIMIT ||
+          after.mtimeMs !== before.mtimeMs ||
+          (await realpath(path)) !== path
+        )
+          throw new Error('changed')
+        bytes = buffer.subarray(0, length)
+      } finally {
+        await file.close()
+      }
+      if (context.signal.aborted) return cancelled()
+      return toolExecutionSucceeded({
         title,
-        code: 'unsupported',
-        message: 'view_image supports PNG, JPEG, WebP, and GIF files',
-        recoveryAction: 'correct_input'
+        data: {
+          path: requested,
+          mimeType,
+          bytes: bytes.length,
+          detail: args.detail === 'original' || args.detail === 'high' ? args.detail : 'auto'
+        },
+        modelContent: `Attached image ${requested} (${mimeType}, ${bytes.length} bytes) for visual inspection.`,
+        media: [
+          {
+            type: 'image',
+            mimeType,
+            name: requested,
+            description: 'Image selected by view_image',
+            source: {
+              type: 'data_url',
+              dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`
+            }
+          }
+        ]
       })
-    }
-    const info = await stat(path)
-    if (!info.isFile()) {
+    } catch {
+      if (context.signal.aborted) return cancelled()
       return toolExecutionFailed({
         title,
         code: 'not_found',
-        message: 'Image path is not a file',
-        recoveryAction: 'correct_input'
+        message: 'Image is unavailable or changed during access; select it again.'
       })
     }
-    if (info.size > 8 * 1024 * 1024) {
-      return toolExecutionFailed({
-        title,
-        code: 'unsupported',
-        message: `Image is ${info.size} bytes; the vision input limit is 8 MiB`,
-        recoveryAction: 'change_strategy',
-        recovery: 'Resize or convert the image, then inspect the smaller project file.'
-      })
-    }
-    return toolExecutionSucceeded({
-      title,
-      data: {
-        path: requested,
-        mimeType,
-        bytes: info.size,
-        detail: args.detail === 'original' || args.detail === 'high' ? args.detail : 'auto'
-      },
-      modelContent: `Attached project image ${requested} (${mimeType}, ${info.size} bytes) for visual inspection.`,
-      media: [
-        {
-          type: 'image',
-          mimeType,
-          name: requested,
-          description: 'Project image selected by view_image',
-          source: { type: 'file', path }
-        }
-      ]
-    })
   })
 }

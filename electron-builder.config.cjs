@@ -10,10 +10,25 @@ module.exports = {
   },
   afterSign: 'scripts/after-sign.cjs',
   files: [
+    // Ship only reviewed runtime roots; ignored reports and local agent state
+    // must not become installer content merely because a developer generated them.
+    'out/**/*',
+    'resources/**/*',
+    'package.json',
+    'LICENSE',
+    // Local Python helper runs must not ship interpreter-specific caches or
+    // embedded developer paths in bytecode alongside the reviewed skill source.
+    '!**/__pycache__{,/**/*}',
+    '!**/*.{pyc,pyo}',
+    // Dormant XSD-era validators are not used by the supported structural helpers.
+    '!resources/skills/office/validators{,/**/*}',
     '!**/.vscode/*',
     '!.claude{,/**/*}',
     '!.github{,/**/*}',
     '!coverage{,/**/*}',
+    '!output{,/**/*}',
+    '!reports{,/**/*}',
+    '!tmp{,/**/*}',
     '!docs{,/**/*}',
     '!scripts{,/**/*}',
     '!src/*',
@@ -42,6 +57,8 @@ module.exports = {
     createDesktopShortcut: 'always'
   },
   mac: {
+    // Explicit ad-hoc signing also works when CI disables identity discovery.
+    identity: '-',
     artifactName: '${productName}-${version}-macos-${arch}.${ext}',
     icon: 'build/icon.icns',
     hardenedRuntime: true,

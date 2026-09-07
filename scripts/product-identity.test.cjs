@@ -4,8 +4,19 @@ const test = require('node:test')
 
 const root = path.resolve(__dirname, '..')
 const identity = require(path.join(root, 'src/shared/productIdentity.json'))
+
+test('community mac builds explicitly request ad-hoc signing without identity discovery', () => {
+  assert.equal(require(path.join(root, 'electron-builder.config.cjs')).mac.identity, '-')
+})
 const packageMetadata = require(path.join(root, 'package.json'))
 const builder = require(path.join(root, 'electron-builder.config.cjs'))
+
+test('uses an explicit runtime allowlist instead of packaging arbitrary working files', () => {
+  assert.deepEqual(
+    builder.files.filter((pattern) => !pattern.startsWith('!')),
+    ['out/**/*', 'resources/**/*', 'package.json', 'LICENSE']
+  )
+})
 
 test('uses one stable reverse-DNS production identity', () => {
   assert.match(identity.appId, /^[a-z][a-z0-9]*(?:\.[a-z0-9-]+){2,}$/)

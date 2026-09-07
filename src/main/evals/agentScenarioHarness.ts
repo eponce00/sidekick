@@ -4,8 +4,12 @@ import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { streamOpenAICompatibleChat } from '../providers/openAIStreamingClient'
-import { toOpenAICompatibleMessages } from '../providers/providerRuntime'
+import {
+  materializeProviderRequestMedia,
+  toOpenAICompatibleMessages
+} from '../providers/providerRuntime'
 import { AgentRunKernel, type AgentKernelProviderSampler } from '../services/agentRunKernel'
+import type { AgentKernelContextManager } from '../services/agentRunKernel'
 import { AgentRunStore } from '../services/agentRunStore'
 import { AgentToolRuntime, type AgentCollaborationToolHandler } from '../services/agentToolRuntime'
 import { CommandService } from '../services/commandService'
@@ -13,7 +17,7 @@ import { McpClientManager } from '../services/mcpClientManager'
 import { ToolOutputStore } from '../services/toolOutputStore'
 import { WorkspaceReadService } from '../services/workspaceReadService'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
-import type { AgentRunEvent, AgentRunSurface } from '../../shared/agentRuntime'
+import type { AgentCapability, AgentRunEvent, AgentRunSurface } from '../../shared/agentRuntime'
 import type {
   ProviderChatMessage,
   ProviderTarget,
@@ -23,8 +27,13 @@ import type {
 import type { CollaborationKernelRunInput } from '../services/agentRuntimeCoordinator'
 import type { ProviderKind } from '../../shared/providerRegistry'
 import { AgentPlanService } from '../services/agentPlanService'
+import type { NativeBrowserSessionService } from '../services/nativeBrowserSessionService'
 
 export interface AgentScenarioConfig {
+  browser?: NativeBrowserSessionService
+  /** Explicit shipped helper root, matching production CommandService environment wiring. */
+  skillAssetsPath?: string
+  shellIsolation?: boolean
   endpoint: string
   model: string
   headers: Record<string, string>
@@ -34,6 +43,8 @@ export interface AgentScenarioConfig {
 }
 
 export interface AgentKernelScenarioInput {
+  contextManager?: AgentKernelContextManager
+  capabilities?: readonly AgentCapability[]
   workspaceRoot: string
   messages: ProviderChatMessage[]
   surface?: Extract<AgentRunSurface, 'conversation' | 'collaboration'>
@@ -67,6 +78,8 @@ export interface AgentKernelScenarioResult {
 
 function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
   return async (request, signal, onChunk) => {
+    const startedAt = performance.now()
+    let firstTokenMs: number | undefined
     const requestSignal = AbortSignal.any([
       signal,
       AbortSignal.timeout(config.requestTimeoutMs ?? 120_000)
@@ -77,23 +90,30 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
     const toolCalls: ProviderToolCall[] = []
     let promptTokens = 0
     let completionTokens = 0
+    let cachedPromptTokens: number | undefined
     let doneReason = 'stop'
     let tokensPerSecond: number | undefined
+    const prepared = await materializeProviderRequestMedia(request)
     const completion = await streamOpenAICompatibleChat(
       config.endpoint,
       {
         model: config.model,
-        messages: toOpenAICompatibleMessages(request.messages),
+        messages: toOpenAICompatibleMessages(prepared.messages),
         tools: request.tools?.length ? request.tools : undefined,
         max_tokens: Math.min(
           request.maxOutputTokens ?? config.maxOutputTokens ?? 4_096,
           config.maxOutputTokens ?? 8_192
         ),
-        temperature: request.temperature ?? 0,
-        ...(config.providerKind === 'openrouter' ? {} : { reasoning_effort: 'none' })
+        temperature: request.temperature ?? 0
+        // Preserve server defaults, including production thinking. Never silently disable it.
       },
       config.headers,
       (chunk) => {
+        if (
+          firstTokenMs === undefined &&
+          (chunk.message?.content || chunk.message?.thinking || chunk.message?.tool_calls?.length)
+        )
+          firstTokenMs = performance.now() - startedAt
         if (chunk.message?.content) content += chunk.message.content
         if (chunk.message?.thinking) thinking += chunk.message.thinking
         if (chunk.message?.thinking_blocks) thinkingBlocks.push(...chunk.message.thinking_blocks)
@@ -108,6 +128,8 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
         }
         if (chunk.prompt_eval_count !== undefined) promptTokens = chunk.prompt_eval_count
         if (chunk.eval_count !== undefined) completionTokens = chunk.eval_count
+        if (chunk.cached_prompt_tokens !== undefined)
+          cachedPromptTokens = chunk.cached_prompt_tokens
         if (chunk.done_reason) doneReason = chunk.done_reason
         if (chunk.predicted_per_second !== undefined) tokensPerSecond = chunk.predicted_per_second
         onChunk(chunk)
@@ -129,6 +151,7 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
           toolCalls,
           usage: {
             promptTokens,
+            ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
             completionTokens,
             doneReason: 'error'
           }
@@ -144,8 +167,11 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
         toolCalls: toolCalls.map((call) => ({ ...call, id: call.id || randomUUID() })),
         usage: {
           promptTokens,
+          ...(cachedPromptTokens !== undefined ? { cachedPromptTokens } : {}),
           completionTokens,
           doneReason,
+          providerDurationMs: performance.now() - startedAt,
+          ...(firstTokenMs !== undefined ? { timeToFirstTokenMs: firstTokenMs } : {}),
           ...(tokensPerSecond ? { tokensPerSecond } : {})
         },
         ...(completion.generationId ? { generationId: completion.generationId } : {})
@@ -172,9 +198,18 @@ export class AgentScenarioHarness {
     this.tools = new AgentToolRuntime(
       this.db,
       new WorkspaceReadService(),
-      new CommandService(this.db, join(runtimeRoot, 'command-outputs')),
+      new CommandService(
+        this.db,
+        join(runtimeRoot, 'command-outputs'),
+        undefined,
+        config.skillAssetsPath,
+        () => config.shellIsolation === true
+      ),
       new ToolOutputStore(join(runtimeRoot, 'tool-outputs')),
-      this.mcp
+      this.mcp,
+      undefined,
+      undefined,
+      config.browser
     )
   }
 
@@ -191,7 +226,7 @@ export class AgentScenarioHarness {
     const target: ProviderTarget = {
       providerKind: this.config.providerKind ?? 'litellm',
       model: this.config.model,
-      editingDialect: 'structured-edit'
+      editingDialect: 'apply-patch'
     }
     const planService = input.planMode
       ? new AgentPlanService(this.db, runId, this.config.model, this.config.model, 'planning')
@@ -200,6 +235,8 @@ export class AgentScenarioHarness {
       runId,
       surface,
       workspaceRoot: input.workspaceRoot,
+      capabilities: input.capabilities,
+      browserEnabled: Boolean(this.config.browser),
       webSearchEnabled: false,
       collaboration: input.collaboration,
       plan: planService
@@ -259,6 +296,7 @@ export class AgentScenarioHarness {
         maxToolRounds: input.maxToolRounds ?? 60,
         permissionMode: 'full-access',
         toolRouter,
+        contextManager: input.contextManager,
         verificationController: session.verificationController,
         planController: planService
           ? {
@@ -373,6 +411,10 @@ export class AgentScenarioHarness {
     for (const [runId, kernel] of this.activeKernels) kernel.stop(runId)
     await Promise.all([this.tools.close(), this.mcp.close()])
     if (options.closeDatabase !== false) this.db.close()
+  }
+
+  browserState(threadId: string) {
+    return this.tools.browser?.workspaceState(threadId)
   }
 }
 

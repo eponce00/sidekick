@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.7.0 — 2026-09-06
+
+- Replace the screenshot-only browser panel with the actual embedded Chromium page shared by user
+  and agent, preserving tab identity, cookies, form state, and PDF support.
+- Add an address bar, back/forward/reload, tab creation/switching/closing, direct native input,
+  and text-edit context menus. Users can open pages without first running an agent.
+- Let the agent resume ordinary browsing automatically after manual interaction, without a
+  persistent takeover button; invalidate old semantic targets after manual changes.
+- Keep human takeover inside the visible Browser panel, hide the rendering host while embedded,
+  and detach native pages when the panel is hidden or an application dialog is shown.
+- Add cross-platform Electron checks for embedded page ownership, one visible application window,
+  shared manual edits, handoff, and continued screenshot/PDF behavior.
+- Preserve browser resource ownership across cancellation and late tab creation, and recheck
+  context-menu authorization before actions execute.
+- Verify PDF saved field values and appearances before publication, preserve source forms,
+  and strengthen safe file publication and interrupted-run recovery.
+- Add opt-in configured Office helper tools, bundled helper validation and safer process cleanup.
+- Improve tool error feedback, queued argument stability, provider diagnostics and release tests.
+- Explicitly request ad-hoc signing for community macOS builds; notarization remains unavailable.
+- Keep new browser tabs open when compositor screenshots are temporarily unavailable.
+- Respect Full access for external image reads, and improve exact patch format recovery.
+- Use a compact two-row browser toolbar and clip embedded views safely during resize and zoom.
+
 ## 0.6.3 — 2026-09-04
 
 - Route direct HTTPS PDF URLs through SideKick's accessible PDF viewer instead of Chromium's

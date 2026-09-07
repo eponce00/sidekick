@@ -1,9 +1,86 @@
 import Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
-import { applyDatabaseSchema } from './database'
+import { applyDatabaseSchema, openApplicationDatabase } from './database'
+import { mkdtemp, readdir, rm } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 describe('database schema migrations', () => {
+  it('refuses a newer migration ledger without changing schema or data', () => {
+    db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    db.exec("INSERT INTO schema_migrations VALUES ('20990101_future', 'future', 1)")
+    db.exec('DROP TABLE workspace_memory')
+    const before = db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()
+    expect(() => applyDatabaseSchema(db!)).toThrow('unsupported migration')
+    expect(db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(before)
+  })
+
+  it('rolls back the entire schema upgrade when a later migration fails, then retries cleanly', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-fault-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = new Database(path)
+      disk.exec(`
+        CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        INSERT INTO conversations VALUES ('fixture', 'Keep me', 1, 1);
+        CREATE TABLE conversation_runs (id TEXT PRIMARY KEY);
+        INSERT INTO conversation_runs VALUES ('legacy-run');
+        CREATE TABLE agent_prompt_admissions (conflict TEXT);
+      `)
+      const before = disk.prepare('SELECT * FROM sqlite_master ORDER BY name').all()
+      disk.close()
+      expect(() => openApplicationDatabase(path)).toThrow('already exists')
+      disk = new Database(path)
+      expect(disk.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(before)
+      expect(disk.prepare('SELECT * FROM conversation_runs').all()).toEqual([{ id: 'legacy-run' }])
+      expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
+      disk.exec('DROP TABLE agent_prompt_admissions')
+      disk.close()
+      disk = openApplicationDatabase(path)
+      expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
+      expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
+        count: 7
+      })
+      expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('backs up pending upgrades even when a migration ledger already exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-upgrade-'))
+    let disk: Database.Database | undefined
+    let backup: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      const missing = '20260830_003_title_backfill_attempt_versions'
+      disk.prepare('DELETE FROM schema_migrations WHERE id = ?').run(missing)
+      disk.close()
+      disk = openApplicationDatabase(path)
+      const backups = (await readdir(root)).filter((name) => name.endsWith('.bak'))
+      expect(backups).toHaveLength(1)
+      backup = new Database(join(root, backups[0]), { readonly: true })
+      expect(
+        backup.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(missing)
+      ).toBeUndefined()
+      expect(
+        disk.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(missing)
+      ).toBeDefined()
+      disk.close()
+      disk = openApplicationDatabase(path)
+      expect((await readdir(root)).filter((name) => name.endsWith('.bak'))).toEqual(backups)
+    } finally {
+      if (backup?.open) backup.close()
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
   let db: Database.Database | null = null
 
   afterEach(() => db?.close())
@@ -127,7 +204,10 @@ describe('database schema migrations', () => {
     db = new Database(':memory:')
     applyDatabaseSchema(db)
     db.prepare('UPDATE schema_migrations SET checksum = ?').run('tampered')
+    db.exec('DROP TABLE workspace_memory')
+    const before = db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()
     expect(() => applyDatabaseSchema(db!)).toThrow('Database migration checksum mismatch')
+    expect(db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(before)
   })
 
   it('upgrades legacy label-only checksums without replaying migrations', () => {

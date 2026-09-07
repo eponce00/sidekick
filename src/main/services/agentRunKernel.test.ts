@@ -12,6 +12,10 @@ import {
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
+import { CommandService } from './commandService'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 function sampledTurn(
   turn: Partial<AgentKernelModelTurn>,
@@ -75,6 +79,247 @@ describe('AgentRunKernel', () => {
       toolRouter
     }
   }
+
+  it('requires approval for each project hook even with full access, in order', async () => {
+    const router = {
+      execute: vi.fn(async (_name: string, _args: Record<string, unknown>) => ({
+        content: 'setup complete'
+      }))
+    }
+    const sampler = sampledTurn({ content: 'Ready' })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start({
+      ...input(router),
+      projectStartCommands: ['echo first', 'echo second']
+    })
+    for (const command of ['echo first', 'echo second']) {
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const interaction = store.listPendingInteractions('run-1')[0]
+      expect(interaction.request.arguments).toEqual({ command })
+      expect(sampler).not.toHaveBeenCalled()
+      kernel.resolveInteraction(interaction.id, { approved: true })
+    }
+    expect((await running).phase).toBe('completed')
+    expect(router.execute.mock.calls.map((call) => call[1])).toEqual([
+      { command: 'echo first' },
+      { command: 'echo second' }
+    ])
+  })
+
+  it('executes a synchronously approved hook once despite a throwing resolution observer', async () => {
+    const router = { execute: vi.fn(async () => ({ content: 'hook complete' })) }
+    const sampler = sampledTurn({ content: 'Ready' })
+    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
+      if (event.type === 'permission.requested')
+        kernel.resolveInteraction(String(event.payload.interactionId), { approved: true })
+      if (event.type === 'permission.resolved') throw new Error('Observer disconnected')
+    })
+    const result = await kernel.start({ ...input(router), projectStartCommands: ['echo fixture'] })
+    expect(result.phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(1)
+    expect(sampler).toHaveBeenCalledTimes(1)
+    expect(store.listPendingInteractions()).toEqual([])
+    expect(
+      store.listEvents('run-1').filter((event) => event.type === 'permission.resolved')
+    ).toHaveLength(1)
+    expect(
+      store.listEvents('run-1').filter((event) => event.type === 'tool.completed')
+    ).toHaveLength(1)
+  })
+
+  it('runs an approved hook through the real command service before sampling', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sidekick-hook-run-'))
+    try {
+      const commands = new CommandService(db, join(root, 'output'))
+      const router: StartAgentKernelRunInput['toolRouter'] = {
+        execute: async (_name, args, context) => {
+          const result = await commands.execute({
+            runId: context.runId,
+            title: 'hook',
+            command: String(args.command),
+            workspaceRoot: root,
+            signal: context.signal
+          })
+          expect('stdout' in result && result.stdout).toContain('hook-ok')
+          expect('exitCode' in result && result.exitCode).toBe(0)
+          return toolExecutionSucceeded({
+            title: 'hook',
+            data: result,
+            modelContent: 'hook-ok',
+            startedAt: Date.now()
+          })
+        }
+      }
+      const sampler = sampledTurn({ content: 'Ready' })
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const running = kernel.start({
+        ...input(router),
+        workspaceRoot: root,
+        projectStartCommands: ['echo hook-ok']
+      })
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      expect(sampler).not.toHaveBeenCalled()
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
+      expect((await running).phase).toBe('completed')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('stops before sampling or executing when a hook is denied', async () => {
+    const router = { execute: vi.fn() }
+    const sampler = sampledTurn({ content: 'Must not run' })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start({ ...input(router), projectStartCommands: ['echo denied'] })
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: false })
+    expect((await running).phase).toBe('failed')
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(sampler).not.toHaveBeenCalled()
+  })
+
+  it('does not run project hooks in Plan mode', async () => {
+    const sampler = sampledTurn({ content: 'Plan only' })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input()
+    await kernel.start({
+      ...runInput,
+      profile: { ...runInput.profile, executionMode: 'plan' },
+      projectStartCommands: ['echo forbidden']
+    })
+    expect(store.listEvents('run-1').some((event) => event.type === 'tool.running')).toBe(false)
+  })
+
+  it('does not run later hooks or the model after a hook failure', async () => {
+    const router = {
+      execute: vi.fn(async () =>
+        toolExecutionFailed({
+          title: 'hook',
+          code: 'internal',
+          message: 'fixture failure',
+          startedAt: Date.now()
+        })
+      )
+    }
+    const sampler = sampledTurn({ content: 'Must not run' })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start({
+      ...input(router),
+      projectStartCommands: ['echo first', 'echo must-not-run']
+    })
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
+    expect((await running).phase).toBe('failed')
+    expect(router.execute).toHaveBeenCalledTimes(1)
+    expect(sampler).not.toHaveBeenCalled()
+  })
+
+  it('approves completion hooks once and resamples before publishing a final result', async () => {
+    const router = {
+      execute: vi.fn(async () =>
+        toolExecutionSucceeded({
+          title: 'completion',
+          modelContent: 'completion evidence',
+          startedAt: Date.now()
+        })
+      )
+    }
+    const first = sampledTurn({ content: 'Provisional answer' })
+    const final = sampledTurn({ content: 'Verified final answer' })
+    const verificationController = {
+      afterTerminalTurn: vi.fn(async () => ({
+        continue: false,
+        summary: {
+          status: 'not_applicable' as const,
+          workspaceRoot: '',
+          baselineRevision: 0,
+          currentRevision: 0,
+          changedPaths: [],
+          evidence: [],
+          suggestedChecks: [],
+          headline: 'Checked'
+        }
+      }))
+    }
+    const kernel = new AgentRunKernel(store, undefined, sequence(first, final))
+    const running = kernel.start({
+      ...input(router),
+      projectCompletionCommands: ['echo completion'],
+      verificationController,
+      // Production prepares a plan controller even for an ordinary Act run.
+      planController: {
+        stage: () => 'inactive',
+        enter: vi.fn(),
+        prepareReview: vi.fn(),
+        approve: vi.fn(),
+        revise: vi.fn(),
+        keep: vi.fn(),
+        afterTerminalTurn: async () => ({ continue: false })
+      }
+    })
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(final).not.toHaveBeenCalled()
+    expect(
+      store.listEvents('run-1').find((event) => event.type === 'assistant.completed')?.payload
+    ).toMatchObject({ provisional: true })
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
+    const result = await running
+    expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Verified final answer' })
+    expect(router.execute).toHaveBeenCalledTimes(1)
+    expect(final).toHaveBeenCalledTimes(1)
+    expect(verificationController.afterTerminalTurn).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(final).mock.calls[0][0].messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: 'tool', content: 'completion evidence' })
+      ])
+    )
+  })
+
+  it.each(['denied', 'failed'] as const)(
+    'does not finalize after a %s completion hook',
+    async (outcome) => {
+      const router = {
+        execute: vi.fn(async () =>
+          toolExecutionFailed({
+            title: 'completion',
+            code: 'internal',
+            message: 'fixture failure',
+            startedAt: Date.now()
+          })
+        )
+      }
+      const sampler = sampledTurn({ content: 'Provisional' })
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const running = kernel.start({
+        ...input(router),
+        projectCompletionCommands: ['echo first', 'echo second']
+      })
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
+        approved: outcome !== 'denied'
+      })
+      expect((await running).phase).toBe('failed')
+      expect(sampler).toHaveBeenCalledTimes(1)
+      expect(router.execute).toHaveBeenCalledTimes(outcome === 'denied' ? 0 : 1)
+    }
+  )
+
+  it.each(['plan', 'goal'] as const)('excludes %s runs from completion hooks', async (mode) => {
+    const router = { execute: vi.fn() }
+    const kernel = new AgentRunKernel(store, undefined, sampledTurn({ content: 'Done' }))
+    const runInput = input(router)
+    const result = await kernel.start({
+      ...runInput,
+      profile: { ...runInput.profile, executionMode: mode === 'plan' ? 'plan' : 'act' },
+      goalController:
+        mode === 'goal' ? { afterTerminalTurn: async () => ({ continue: false }) } : undefined,
+      projectCompletionCommands: ['echo forbidden']
+    })
+    expect(result.phase).toBe('completed')
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+  })
 
   it('streams durable deltas and completes a text-only run', async () => {
     const published: string[] = []
@@ -809,6 +1054,150 @@ describe('AgentRunKernel', () => {
     expect(result.phase).toBe('failed')
     expect(result.error).toContain('identical read-only calls')
     expect(router.execute).toHaveBeenCalledTimes(5)
+  })
+
+  it('publishes the actual resolution after a long event history', () => {
+    store.start(input())
+    for (let index = 0; index < 1005; index++)
+      store.appendEvent({
+        id: `history-${index}`,
+        runId: 'run-1',
+        type: 'assistant.delta',
+        payload: { content: 'x' }
+      })
+    store.createInteraction({ id: 'long-question', runId: 'run-1', kind: 'question', request: {} })
+    const publish = vi.fn()
+    const kernel = new AgentRunKernel(store, undefined, sampledTurn({}), publish)
+    kernel.resolveInteraction('long-question', { answer: 'yes' })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(publish.mock.calls[0][0]).toMatchObject({
+      type: 'question.resolved',
+      sequence: store.get('run-1')!.lastSequence,
+      payload: { interactionId: 'long-question', response: { answer: 'yes' } }
+    })
+  })
+
+  it('accepts a synchronous interaction response from its event subscriber', async () => {
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'question',
+            function: {
+              name: 'ask_user',
+              arguments: { questions: [{ id: 'format', question: 'Which format?' }] }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Using CSV' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
+      if (event.type === 'question.requested')
+        kernel.resolveInteraction(String(event.payload.interactionId), { format: 'CSV' })
+    })
+    const running = kernel.start(input())
+    let settled = false
+    void running.then(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(settled).toBe(true), { timeout: 300 })
+    expect(await running).toMatchObject({ phase: 'completed', content: 'Using CSV' })
+    expect(store.listPendingInteractions()).toEqual([])
+  })
+
+  it('cancels during interaction publication and publishes exactly its durable resolution', async () => {
+    const published: string[] = []
+    const sampler = sampledTurn({
+      toolCalls: [
+        {
+          id: 'question',
+          function: {
+            name: 'ask_user',
+            arguments: { questions: [{ id: 'format', question: 'Which format?' }] }
+          }
+        }
+      ]
+    })
+    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
+      published.push(event.type)
+      if (event.type === 'question.requested') {
+        store.appendEvent({
+          id: 'intervening-event',
+          runId: event.runId,
+          type: 'assistant.delta',
+          payload: { content: 'concurrent diagnostic' }
+        })
+        expect(kernel.stop(event.runId)).toBe(true)
+      }
+    })
+    const result = await kernel.start(input())
+    expect(result.phase).toBe('cancelled')
+    expect(result.finalResponse).toBe('')
+    expect(published.filter((type) => type === 'question.resolved')).toHaveLength(1)
+    expect(published.filter((type) => type === 'run.completed')).toHaveLength(1)
+    expect(store.listPendingInteractions()).toEqual([])
+    expect(kernel.hasActiveRuns()).toBe(false)
+    await kernel.stopAll()
+  })
+
+  it('settles a durable response even when its resolution subscriber throws', async () => {
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'question',
+            function: {
+              name: 'ask_user',
+              arguments: { questions: [{ id: 'format', question: 'Which format?' }] }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Using CSV' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
+      if (event.type === 'question.resolved') throw new Error('Observer disconnected')
+    })
+    const running = kernel.start(input())
+    await vi.waitFor(() => expect(store.listPendingInteractions()).toHaveLength(1))
+    const id = store.listPendingInteractions()[0].id
+    expect(() => kernel.resolveInteraction(id, { format: 'CSV' })).toThrow('Observer disconnected')
+    expect(() => kernel.resolveInteraction(id, { format: 'JSON' })).toThrow('already resolved')
+    let settled = false
+    void running.then(() => {
+      settled = true
+    })
+    await vi.waitFor(() => expect(settled).toBe(true), { timeout: 300 })
+    expect(await running).toMatchObject({ phase: 'completed', content: 'Using CSV' })
+    expect(store.getInteraction(id)?.response).toEqual({ format: 'CSV' })
+    expect(
+      store.listEvents('run-1').filter((event) => event.type === 'tool.completed')
+    ).toHaveLength(1)
+    expect(kernel.hasActiveRuns()).toBe(false)
+  })
+
+  it('finishes cancellation when a resolution observer throws during abort dispatch', async () => {
+    const sampler = sampledTurn({
+      toolCalls: [
+        {
+          id: 'question',
+          function: {
+            name: 'ask_user',
+            arguments: { questions: [{ id: 'format', question: 'Which format?' }] }
+          }
+        }
+      ]
+    })
+    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
+      if (event.type === 'question.resolved') throw new Error('Observer disconnected')
+    })
+    const running = kernel.start(input())
+    await vi.waitFor(() => expect(store.listPendingInteractions()).toHaveLength(1))
+    expect(kernel.stop('run-1')).toBe(true)
+    expect((await running).phase).toBe('cancelled')
+    expect(store.listPendingInteractions()).toEqual([])
+    expect(kernel.hasActiveRuns()).toBe(false)
   })
 
   it('durably suspends ask_user and resumes only with the human response', async () => {

@@ -92,6 +92,7 @@ export interface ProjectedAgentRunMessage {
     completionTokens: number
     tokensPerSecond?: number
     timeToFirstTokenMs?: number
+    providerTimings?: import('./providerRuntime').ProviderRequestTiming[]
     runStartedAt?: number
     runCompletedAt?: number
   }
@@ -129,6 +130,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let measuredCompletionTokens = 0
   let measuredGenerationSeconds = 0
   let timeToFirstTokenMs: number | undefined
+  const providerTimings: import('./providerRuntime').ProviderRequestTiming[] = []
   let phase: AgentRunPhase | null = null
   let committedContent = ''
   let committedThinking = ''
@@ -164,6 +166,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       // Prompt sizes from sequential tool-loop turns overlap almost entirely.
       // Only the latest sample represents the live context window.
       promptTokens = Number(event.payload.promptTokens || 0)
+      cachedPromptTokens = undefined
       if (typeof event.payload.cachedPromptTokens === 'number') {
         cachedPromptTokens = Math.max(0, event.payload.cachedPromptTokens)
       }
@@ -174,6 +177,20 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         timeToFirstTokenMs = Math.max(0, event.payload.timeToFirstTokenMs)
       }
       completionTokens = turnCompletionTokens
+      if (
+        typeof event.payload.providerDurationMs === 'number' &&
+        Number.isFinite(event.payload.providerDurationMs)
+      ) {
+        providerTimings.push({
+          durationMs: Math.max(0, event.payload.providerDurationMs),
+          promptTokens,
+          ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),
+          ...(typeof event.payload.timeToFirstTokenMs === 'number' &&
+          Number.isFinite(event.payload.timeToFirstTokenMs)
+            ? { timeToFirstTokenMs: Math.max(0, event.payload.timeToFirstTokenMs) }
+            : {})
+        })
+      }
       if (turnCompletionTokens > 0 && turnTokensPerSecond > 0) {
         measuredCompletionTokens += turnCompletionTokens
         measuredGenerationSeconds += turnCompletionTokens / turnTokensPerSecond
@@ -502,7 +519,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         : {}),
       ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs }),
       ...(runStartedAt === undefined ? {} : { runStartedAt }),
-      ...(runCompletedAt === undefined ? {} : { runCompletedAt })
+      ...(runCompletedAt === undefined ? {} : { runCompletedAt }),
+      ...(providerTimings.length ? { providerTimings } : {})
     },
     phase
   }

@@ -6,6 +6,9 @@ import type { DesktopApi } from './api'
 // Custom APIs for renderer
 const api = {
   providers: {
+    probe: (target: import('../shared/providerRuntime').ProviderTarget, includeVision?: boolean) =>
+      ipcRenderer.invoke('providers:probe', target, includeVision),
+    cancelProbe: () => ipcRenderer.invoke('providers:cancelProbe'),
     complete: (request: import('../shared/providerRuntime').ProviderChatRequest) =>
       ipcRenderer.invoke('providers:complete', request),
     discoverModels: (request: import('../shared/providerRuntime').ProviderDiscoveryRequest) =>
@@ -28,6 +31,7 @@ const api = {
     }
   },
   settings: {
+    selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),
     load: () => ipcRenderer.invoke('settings:load')
   },
@@ -105,6 +109,8 @@ const api = {
       ipcRenderer.invoke('projects:moveConversation', input)
   },
   agentRuns: {
+    browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
+      ipcRenderer.invoke('agentRuns:browserWorkspace', input),
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),

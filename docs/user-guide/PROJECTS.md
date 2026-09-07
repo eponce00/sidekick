@@ -60,6 +60,58 @@ higher-priority task.
 
 ## Interface
 
+### Project start hooks
+
+Agent settings include **Project start hooks** for setup commands in an exact
+absolute project folder. Add a command, enable its checkbox and save settings.
+New hooks are disabled by default. SideKick does not search repositories for
+executable hook files, and hooks do not automatically apply to subprojects or
+new worktree paths.
+
+Each matching hook requires approval before every agent run, including follow-up
+messages and full-access mode. Commands run in listed order through the normal
+command service, with output visible in the conversation. Denial or failure stops
+before model sampling; inspect any partial side effects before starting again.
+Plan mode and profiles without shell access do not run hooks. Commands use the
+selected host or Docker shell environment; only approve trusted commands.
+
+### Project completion hooks
+
+Completion hooks use the same exact-folder matching, disabled-by-default setting,
+ordered execution, and per-command approval. They run once before the final answer
+of an ordinary Act conversation, not Plan or goal-driven runs. The preliminary
+answer remains provisional while hooks run. Afterwards the agent receives the
+results and the workspace verification gate runs again before completion.
+Denial or failure stops the run rather than publishing a successful final answer.
+Interrupted commands are not automatically replayed; inspect their actual effects
+before retrying.
+
+### Worktree creation hooks
+
+The **Project worktree hooks** settings are disabled by default. They match the
+original project's exact folder and run only when a new isolated conversation
+fork has been saved successfully. Commands execute inside the new worktree, in
+order, with a separate native approval for each command in every permission mode.
+Skipping is the default. No repository Git hooks are discovered or enabled.
+
+Each command has a two-minute limit and uses the selected host or Docker shell;
+Docker failure never falls back to the host. Closing the requesting window or
+quitting the app cancels active setup. Completion or failure is reported with
+private output-log paths. Failure, denial, or interrupted setup preserves the
+fork and any files already changed. Inspect those files before manually retrying;
+commands are never automatically replayed. There are no automatic removal hooks.
+
+### Managed worktree cleanup
+
+Cleanup refuses in-use, modified, unmerged, or out-of-storage worktrees. It checks
+the managed path and branch before invoking non-force Git removal; there is no
+recursive-delete fallback. Failed setup preserves changed files for inspection.
+SideKick's managed worktree commands disable implicit Git hooks for that invocation
+without changing your Git configuration. This is not a sandbox for arbitrary Git
+filters or manually executed commands.
+
+### Sidebar
+
 The sidebar has two explicit sections:
 
 - **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename, and

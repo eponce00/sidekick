@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
+import { fillablePdfFixture } from './fixtures/fillablePdf'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, nativeImage } from 'electron'
+import { app, nativeImage, BrowserWindow, webContents } from 'electron'
+import {
+  mountBrowserView,
+  unmountBrowserHost,
+  browserViewHost
+} from '../src/main/services/browserViewHost'
 import {
   installArtifactProtocol,
   registerArtifactScheme
@@ -67,6 +73,9 @@ function pageHtml(): string {
         <button id="change" type="button">Change scene</button>
         <label for="name">Name</label>
         <input id="name" name="name" autocomplete="off">
+        <label for="rejected-text">Rejected text</label>
+        <input id="rejected-text" onbeforeinput="event.preventDefault()">
+        <label>Upload fixture<input id="upload" type="file"></label>
         <p id="typed" aria-live="polite">Nothing typed</p>
         <form id="profile-form">
           <label for="account-token">Account token</label>
@@ -155,43 +164,6 @@ function readPngDimensions(path: string): { width: number; height: number } {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) }
 }
 
-function fillablePdfFixture(): Buffer {
-  const content = [
-    'BT',
-    '/F1 20 Tf',
-    '72 720 Td',
-    '(SideKick PDF Browser Smoke) Tj',
-    '/F1 12 Tf',
-    '0 -48 Td',
-    '(Applicant name:) Tj',
-    'ET'
-  ].join('\n')
-  const appearance = 'q 1 1 1 rg 0 0 300 24 re f 0 0 0 RG 0.8 w 0 0 300 24 re S Q'
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R /AcroForm 6 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R /Annots [7 0 R] >>',
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
-    '<< /Fields [7 0 R] /NeedAppearances true /DA (/F1 12 Tf 0 g) /DR << /Font << /F1 4 0 R >> >> >>',
-    '<< /Type /Annot /Subtype /Widget /FT /Tx /T (applicant_name) /TU (Applicant name) /Rect [180 638 480 662] /P 3 0 R /F 4 /V () /DA (/F1 12 Tf 0 g) /AP << /N 8 0 R >> >>',
-    `<< /Type /XObject /Subtype /Form /BBox [0 0 300 24] /Resources << >> /Length ${Buffer.byteLength(appearance)} >>\nstream\n${appearance}\nendstream`
-  ]
-  let body = '%PDF-1.7\n'
-  const offsets = [0]
-  for (let index = 0; index < objects.length; index++) {
-    offsets.push(Buffer.byteLength(body, 'ascii'))
-    body += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`
-  }
-  const xref = Buffer.byteLength(body, 'ascii')
-  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
-  for (const offset of offsets.slice(1)) {
-    body += `${String(offset).padStart(10, '0')} 00000 n \n`
-  }
-  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
-  return Buffer.from(body, 'ascii')
-}
-
 async function runSmoke(): Promise<SmokeResult> {
   const isolatedRoot = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_ROOT
     ? resolve(process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_ROOT)
@@ -222,6 +194,36 @@ async function runSmoke(): Promise<SmokeResult> {
 
     server = createServer((request, response) => {
       const requestUrl = new URL(request.url ?? '/', 'http://127.0.0.1')
+      if (requestUrl.pathname === '/download') {
+        response.setHeader('content-type', 'application/octet-stream')
+        response.end('download-fixture')
+        return
+      }
+      if (requestUrl.pathname === '/oversized-download') {
+        response.setHeader('content-length', String(26 * 1024 * 1024))
+        response.end(Buffer.alloc(26 * 1024 * 1024))
+        return
+      }
+      if (requestUrl.pathname === '/unsafe-download') {
+        response.writeHead(302, { location: 'http://example.com/file' })
+        response.end()
+        return
+      }
+      if (requestUrl.pathname === '/redirect-download') {
+        response.writeHead(302, { location: '/download' })
+        response.end()
+        return
+      }
+      if (requestUrl.pathname === '/redirected.pdf') {
+        response.writeHead(302, { location: '/fixture.pdf' })
+        response.end()
+        return
+      }
+      if (requestUrl.pathname === '/fixture.pdf') {
+        response.setHeader('content-type', 'application/pdf')
+        response.end(fillablePdfFixture())
+        return
+      }
       if (requestUrl.pathname === '/drop') {
         request.socket.destroy()
         return
@@ -274,11 +276,109 @@ async function runSmoke(): Promise<SmokeResult> {
     await service.close({ sessionId: localFile.sessionId })
     progress('Navigation policy checks passed')
 
+    progress('Checking embedded shared browser')
+    const shared = await service.open({ runId: 'shared-view', url: baseUrl })
+    const host = new BrowserWindow({
+      show: false,
+      width: 1000,
+      height: 800,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+    })
+    host.showInactive()
+    const contents = webContents.fromId(shared.tab.webContentsId)!
+    const identity = contents.id
+    let userInputs = 0
+    mountBrowserView(identity, host, { x: 20, y: 80, width: 900, height: 600 }, () => {
+      userInputs++
+      return true
+    })
+    assert.equal(browserViewHost(identity), host)
+    assert.equal(contents.id, identity, 'Embedding must preserve the original tab')
+    const live = await service.observe(shared.sessionId, { screenshot: 'viewport' })
+    assert.ok(live.screenshot && live.screenshot.bytes > 1000)
+    const sharedType = await service.type({
+      sessionId: shared.sessionId,
+      target: { role: 'textbox', name: 'Name', exact: true },
+      text: 'Shared browser test'
+    })
+    const sharedValue = await service.evaluate({
+      sessionId: shared.sessionId,
+      expression: "document.querySelector('#name').value"
+    })
+    if (sharedValue.value !== 'Shared browser test') {
+      // Capture focus and action evidence only after a mismatch: no retry or
+      // extra pre-assertion wait that could conceal an input-dispatch race.
+      const focusState = await contents.executeJavaScript(`({
+        documentFocused: document.hasFocus(),
+        targetActive: document.activeElement === document.querySelector('#name')
+      })`)
+      assert.fail(
+        `Embedded type did not persist exact text: ${JSON.stringify({
+          hostFocused: host.isFocused(),
+          contentsFocused: contents.isFocused(),
+          ...focusState,
+          observedLength: typeof sharedValue.value === 'string' ? sharedValue.value.length : null,
+          action: sharedType.action,
+          targetMode: sharedType.targetMode,
+          durationMs: sharedType.durationMs,
+          screenshotChanged: sharedType.observation.screenshotChanged
+        })}`
+      )
+    }
+    assert.equal(userInputs, 0, 'Agent-generated input must not claim user control')
+    contents.sendInputEvent({ type: 'keyDown', keyCode: '!' })
+    contents.sendInputEvent({ type: 'char', keyCode: '!' })
+    contents.sendInputEvent({ type: 'keyUp', keyCode: '!' })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.ok(userInputs > 0, 'Native user input should notify the shared control gate')
+    const manualValue = await service.evaluate({
+      sessionId: shared.sessionId,
+      expression: "document.querySelector('#name').value"
+    })
+    assert.equal(
+      manualValue.value,
+      'Shared browser test!',
+      'Agent must observe manual edits on the same page'
+    )
+    await assert.rejects(
+      service.type({
+        sessionId: shared.sessionId,
+        target: { role: 'textbox', name: 'Rejected text', exact: true },
+        text: 'vetoed-text'
+      }),
+      /Browser text entry could not be verified/
+    )
+    assert.equal(
+      (
+        await service.evaluate({
+          sessionId: shared.sessionId,
+          expression: "document.querySelector('#rejected-text').value"
+        })
+      ).value,
+      ''
+    )
+    progress('Native beforeinput veto rejected without false-success or retry')
+
+    const embeddedTakeover = await service.beginHumanTakeover(shared.sessionId)
+    assert.equal(embeddedTakeover.active, true)
+    assert.equal(browserViewHost(identity), host, 'Takeover must stay embedded')
+    await service.completeHumanTakeover(shared.sessionId)
+    unmountBrowserHost(host)
+    assert.equal(browserViewHost(identity), undefined)
+    const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
+    assert.ok(parked.screenshot)
+    host.destroy()
+    await service.close({ sessionId: shared.sessionId })
+    progress(
+      `Embedded browser, same-tab input, takeover, and background recapture passed (${userInputs} input events)`
+    )
+
     const externalPdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF
     const remotePdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF_URL
     {
       const pdfPath = remotePdf ? undefined : resolve(externalPdf || fillablePdf)
       if (pdfPath) assert.ok(existsSync(pdfPath), `Diagnostic PDF does not exist: ${pdfPath}`)
+      progress('Opening PDF fixture')
       const pdf = await service.open({
         runId: 'pdf-diagnostic',
         url: remotePdf || pathToFileURL(pdfPath!).href,
@@ -457,6 +557,121 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.equal(typedValue.value, 'Ada Lovelace')
     assert.match(typed.observation.semanticSnapshot ?? '', /Typed: Ada Lovelace/)
     progress('Semantic type passed')
+    await service.evaluate({
+      sessionId: opened.sessionId,
+      expression: `(() => {
+        window.__shadowFixture = [];
+        for (const mode of ['open', 'closed', 'nested']) {
+          const host = document.createElement('div');
+          document.querySelector('main').prepend(host);
+          let root = host.attachShadow({mode: mode === 'closed' ? 'closed' : 'open'});
+          if (mode === 'nested') {
+            const inner = document.createElement('div'); root.append(inner);
+            root = inner.attachShadow({mode:'closed'});
+          }
+          const input = document.createElement('input');
+          input.setAttribute('aria-label', 'Shadow ' + mode);
+          root.append(input); window.__shadowFixture.push({input, host});
+        }
+      })()`
+    })
+    await service.observe(opened.sessionId)
+    for (const mode of ['open', 'closed', 'nested']) {
+      await service.type({
+        sessionId: opened.sessionId,
+        target: { role: 'textbox', name: 'Shadow ' + mode, exact: true },
+        text: 'fixture-' + mode
+      })
+    }
+    const shadowValues = await service.evaluate({
+      sessionId: opened.sessionId,
+      expression: `window.__shadowFixture.map(({input}) => input.value)`
+    })
+    assert.deepEqual(shadowValues.value, ['fixture-open', 'fixture-closed', 'fixture-nested'])
+    progress('Open, closed and nested shadow textbox native input passed')
+    await assert.rejects(
+      service.upload({
+        sessionId: opened.sessionId,
+        workspaceRoot: allowedRoot,
+        paths: ['../outside.txt'],
+        target: { selector: '#upload' }
+      }),
+      /escapes/
+    )
+    await assert.rejects(
+      service.upload({
+        sessionId: opened.sessionId,
+        workspaceRoot: allowedRoot,
+        paths: [insideFile],
+        target: { selector: '#upload' }
+      }),
+      /project-relative/
+    )
+    await service.upload({
+      sessionId: opened.sessionId,
+      workspaceRoot: allowedRoot,
+      paths: [relative(allowedRoot, insideFile)],
+      target: { selector: '#upload' }
+    })
+    const selectedFile = await service.evaluate({
+      sessionId: opened.sessionId,
+      expression: `document.querySelector('#upload').files[0].name`
+    })
+    assert.equal(selectedFile.value, relative(allowedRoot, insideFile))
+    progress('Real file input selection and upload path boundaries passed')
+    const downloaded = await service.download({
+      sessionId: opened.sessionId,
+      workspaceRoot: allowedRoot,
+      url: `${baseUrl}/download`,
+      destination: 'downloaded.txt'
+    })
+    assert.equal(readFileSync(downloaded.path, 'utf8'), 'download-fixture')
+    await assert.rejects(
+      service.download({
+        sessionId: opened.sessionId,
+        workspaceRoot: allowedRoot,
+        url: `${baseUrl}/download`,
+        destination: 'downloaded.txt'
+      }),
+      /EEXIST/
+    )
+    assert.equal(readFileSync(downloaded.path, 'utf8'), 'download-fixture')
+    const redirectedDownload = await service.download({
+      sessionId: opened.sessionId,
+      url: `${baseUrl}/redirect-download`,
+      workspaceRoot: allowedRoot,
+      destination: 'redirected-download.txt'
+    })
+    assert.equal(readFileSync(redirectedDownload.path, 'utf8'), 'download-fixture')
+    await assert.rejects(
+      service.download({
+        sessionId: opened.sessionId,
+        workspaceRoot: allowedRoot,
+        url: `${baseUrl}/unsafe-download`,
+        destination: 'unsafe.txt'
+      })
+    )
+    assert.equal(existsSync(join(allowedRoot, 'unsafe.txt')), false)
+    await assert.rejects(
+      service.download({
+        sessionId: opened.sessionId,
+        workspaceRoot: allowedRoot,
+        url: `${baseUrl}/oversized-download`,
+        destination: 'oversized.bin'
+      }),
+      /limit|exceed|large/i
+    )
+    assert.equal(existsSync(join(allowedRoot, 'oversized.bin')), false)
+    progress('Session download, no-overwrite and redirect boundaries passed')
+    const redirectedPdf = await service.open({
+      runId: 'redirected-pdf-smoke',
+      url: `${baseUrl}/redirected.pdf`,
+      allowedFileRoots: [allowedRoot]
+    })
+    assert.match(redirectedPdf.semanticSnapshot ?? '', /textbox "/)
+    assert.equal(redirectedPdf.tab.url, `${baseUrl}/redirected.pdf`)
+    await service.close({ sessionId: redirectedPdf.sessionId })
+    progress('Redirected remote PDF rendered with accessible form fields')
 
     const sensitiveFormValue = 'native-browser-smoke-sensitive-9472'
     const filledForm = await service.fillForm({

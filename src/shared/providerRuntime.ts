@@ -82,6 +82,7 @@ export interface ProviderHealthChangedEvent {
 }
 
 export interface ProviderStreamChunk {
+  reported_model?: string
   message?: {
     content?: string
     thinking?: string
@@ -142,6 +143,26 @@ export interface ProviderDiscoveryResult {
   models?: ProviderInstanceModel[]
   error?: string
   status?: number
+}
+
+export interface ProviderProbeResult {
+  model: string
+  reportedModels?: string[]
+  checks: Array<{
+    capability: 'streaming' | 'tools' | 'reasoning' | 'vision'
+    status: 'observed' | 'not-observed' | 'failed'
+    durationMs: number
+    firstTokenMs?: number
+    promptTokens?: number
+    cachedTokens?: number
+  }>
+}
+
+export interface ProviderRequestTiming {
+  durationMs: number
+  timeToFirstTokenMs?: number
+  promptTokens: number
+  cachedPromptTokens?: number
 }
 
 export interface ProviderEditingCalibrationRequest {

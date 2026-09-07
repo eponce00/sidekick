@@ -2,6 +2,24 @@ import { describe, expect, it } from 'vitest'
 import { mergeMessageTokenUsage, messageTokenUsageFromMetadata } from './messageTokenUsage'
 
 describe('messageTokenUsageFromMetadata', () => {
+  it('retains timing after history reload and preserves zero versus absent cache data', () => {
+    const usage = messageTokenUsageFromMetadata({
+      usage: {
+        promptTokens: 3,
+        completionTokens: 2,
+        cachedPromptTokens: 0,
+        providerDurationMs: 500,
+        timeToFirstTokenMs: 100
+      }
+    })!
+    expect(usage.providerTimings).toEqual([
+      { promptTokens: 3, cachedPromptTokens: 0, durationMs: 500, timeToFirstTokenMs: 100 }
+    ])
+    expect(mergeMessageTokenUsage(usage, usage)?.cachedPromptTokens).toBe(0)
+    const merged = mergeMessageTokenUsage(usage, { promptTokens: 4, completionTokens: 1 })!
+    expect(merged.cachedPromptTokens).toBeUndefined()
+    expect(merged.providerTimings).toEqual(usage.providerTimings)
+  })
   it('reads persisted nested provider telemetry', () => {
     expect(
       messageTokenUsageFromMetadata({

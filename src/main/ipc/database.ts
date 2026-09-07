@@ -19,6 +19,7 @@ import { validateMessageImages } from '../../shared/messageImages'
 import { validateMessageContextAttachments } from '../../shared/messageContextAttachments'
 import type { ForkConversationInput } from '../../shared/projects'
 import { ManagedWorktreeService } from '../services/managedWorktreeService'
+import { setupCreatedWorktree } from './worktreeSetup'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -121,7 +122,7 @@ export function registerDatabaseHandlers(): void {
     }
   )
 
-  ipcMain.handle('conversations:fork', async (_, input: ForkConversationInput) => {
+  ipcMain.handle('conversations:fork', async (event, input: ForkConversationInput) => {
     if (
       !input ||
       typeof input.sourceId !== 'string' ||
@@ -247,6 +248,21 @@ export function registerDatabaseHandlers(): void {
       throw error
     }
 
+    if (createdWorktreeProjectId && source.project_id && targetWorkspaceRoot) {
+      const sourceProject = db
+        .prepare('SELECT folder_path FROM projects WHERE id = ?')
+        .get(source.project_id) as { folder_path: string } | undefined
+      if (sourceProject) {
+        // The fork is already durable. Setup denial or failure must never undo it.
+        await setupCreatedWorktree(
+          event.sender,
+          sourceProject.folder_path,
+          targetWorkspaceRoot
+        ).catch(() => {
+          console.warn('[Worktrees] Setup could not finish; created fork preserved')
+        })
+      }
+    }
     return {
       id,
       title,

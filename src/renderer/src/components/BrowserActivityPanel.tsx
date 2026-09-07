@@ -18,6 +18,7 @@ import {
   type BrowserActivityState
 } from '../utils/browserActivity'
 import './BrowserActivityPanel.css'
+import { BrowserWorkspace } from './BrowserWorkspace'
 
 export interface BrowserActivityPanelProps {
   conversationId: string | null
@@ -140,31 +141,41 @@ function BrowserActivityPanelSession({
       aria-label="Browser activity"
       data-status={stateStatus}
     >
-      <header className="browser-activity-header">
-        <div className="browser-activity-heading-icon" aria-hidden="true">
-          <MonitorUp size={16} />
-        </div>
-        <div className="browser-activity-heading">
-          <strong>Browser activity</strong>
-          <span className="browser-activity-status">
-            <Circle size={7} fill="currentColor" />
-            {statusLabel(activity)}
-          </span>
-        </div>
-        {onToggleWidth && (
-          <button
-            className="browser-activity-icon-button"
-            type="button"
-            onClick={onToggleWidth}
-            title={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-            aria-label={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-          >
-            {isWide ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-        )}
-      </header>
+      {!(conversationId && typeof window.api.agentRuns.browserWorkspace === 'function') && (
+        <header className="browser-activity-header">
+          <div className="browser-activity-heading-icon" aria-hidden="true">
+            <MonitorUp size={16} />
+          </div>
+          <div className="browser-activity-heading">
+            <strong>Browser activity</strong>
+            <span className="browser-activity-status">
+              <Circle size={7} fill="currentColor" />
+              {typeof window.api.agentRuns.browserWorkspace === 'function'
+                ? 'Shared session'
+                : statusLabel(activity)}
+            </span>
+          </div>
+          {onToggleWidth && (
+            <button
+              className="browser-activity-icon-button"
+              type="button"
+              onClick={onToggleWidth}
+              title={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
+              aria-label={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
+            >
+              {isWide ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+            </button>
+          )}
+        </header>
+      )}
 
-      {!activity.hasActivity ? (
+      {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
+        <BrowserWorkspace
+          conversationId={conversationId}
+          onToggleWidth={onToggleWidth}
+          isWide={isWide}
+        />
+      ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />
           <strong>No browser activity yet</strong>

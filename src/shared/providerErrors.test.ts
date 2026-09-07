@@ -1,5 +1,32 @@
 import { describe, expect, it } from 'vitest'
-import { providerContextWindowError } from './providerErrors'
+import { providerContextWindowError, providerInferenceFailure } from './providerErrors'
+
+describe('providerInferenceFailure', () => {
+  it('recognizes explicit GPU allocation exhaustion and engine death', () => {
+    expect(providerInferenceFailure('CUDA out of memory. Tried to allocate 144 MiB')).toBe(
+      'gpu-memory-exhausted'
+    )
+    expect(providerInferenceFailure('torch.OutOfMemoryError: GPU 0')).toBe('gpu-memory-exhausted')
+    expect(providerInferenceFailure('litellm.InternalServerError: EngineDeadError')).toBe(
+      'engine-unavailable'
+    )
+    expect(providerInferenceFailure('Engine core encountered an issue. See traceback')).toBe(
+      'engine-unavailable'
+    )
+  })
+  it('does not attribute ambiguous timeouts, CPU errors or other CUDA failures to GPU capacity', () => {
+    for (const message of [
+      null,
+      '',
+      'Request timed out',
+      'JavaScript heap out of memory',
+      'CUDA illegal memory access',
+      'Invalid API key',
+      'GPU temperature is high'
+    ])
+      expect(providerInferenceFailure(message)).toBeNull()
+  })
+})
 
 describe('providerContextWindowError', () => {
   it('extracts LiteLLM context overflow details', () => {

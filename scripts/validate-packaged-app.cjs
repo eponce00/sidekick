@@ -10,6 +10,15 @@ const FORBIDDEN_ROOTS = new Set([
   'coverage',
   'dist',
   'docs',
+  'output',
+  'reports',
+  'artifacts',
+  'test-results',
+  'playwright-report',
+  '.codex',
+  '.agents',
+  'memory',
+  'tmp',
   'scripts',
   'src'
 ])
@@ -27,12 +36,7 @@ const REQUIRED_PDF_SKILL_ASSETS = [
 const PDF_NATIVE_BINDINGS = {
   'darwin-arm64': ['node_modules', '@napi-rs', 'canvas-darwin-arm64', 'skia.darwin-arm64.node'],
   'linux-x64': ['node_modules', '@napi-rs', 'canvas-linux-x64-gnu', 'skia.linux-x64-gnu.node'],
-  'win32-x64': [
-    'node_modules',
-    '@napi-rs',
-    'canvas-win32-x64-msvc',
-    'skia.win32-x64-msvc.node'
-  ]
+  'win32-x64': ['node_modules', '@napi-rs', 'canvas-win32-x64-msvc', 'skia.win32-x64-msvc.node']
 }
 
 function assert(condition, message) {
@@ -51,6 +55,16 @@ function validatePackageEntries(entries) {
   }
 
   const normalized = new Set(entries.map((entry) => entry.replaceAll('\\', '/')))
+  for (const entry of normalized) {
+    assert(
+      !/^\/?resources\/skills\/office\/validators(?:\/|$)/i.test(entry),
+      'Packaged app contains dormant Office validators'
+    )
+    assert(
+      !/(?:^|\/)__pycache__(?:\/|$)|\.(?:pyc|pyo)$/i.test(entry),
+      'Packaged app contains a local Python bytecode cache'
+    )
+  }
   for (const required of REQUIRED_PDF_RUNTIME_ENTRIES) {
     assert(normalized.has(required), `Packaged app is missing PDF runtime entry: ${required}`)
   }

@@ -28,6 +28,7 @@ export function normalizePowerShellStderr(value: string): string {
 }
 
 export interface CommandRunOptions {
+  process?: { file: string; args: string[] }
   id: string
   command: string
   cwd: string
@@ -47,13 +48,26 @@ export class CommandRunner {
     signal: NodeJS.Signals = 'SIGTERM'
   ): boolean {
     if (!child.pid) return false
+    const killChild = (): boolean => {
+      try {
+        return child.kill(signal)
+      } catch {
+        // A rejected termination request must not escape cancellation/timer
+        // callbacks, nor be interpreted as proof that the process exited.
+        return false
+      }
+    }
     if (process.platform === 'win32') {
-      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
-        windowsHide: true,
-        stdio: 'ignore'
-      })
-      killer.on('error', () => child.kill(signal))
-      return true
+      try {
+        const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+          windowsHide: true,
+          stdio: 'ignore'
+        })
+        killer.on('error', killChild)
+        return true
+      } catch {
+        return killChild()
+      }
     }
     try {
       // Unix shells can exit while a background child keeps stdout/stderr open.
@@ -62,7 +76,7 @@ export class CommandRunner {
       process.kill(-child.pid, signal)
       return true
     } catch {
-      return child.kill(signal)
+      return killChild()
     }
   }
 
@@ -114,7 +128,7 @@ export class CommandRunner {
             Buffer.from(windowsCommand, 'utf16le').toString('base64')
           ]
         : ['-c', options.command]
-    const child = spawn(shell, args, {
+    const child = spawn(options.process?.file ?? shell, options.process?.args ?? args, {
       cwd: options.cwd,
       windowsHide: true,
       env: options.env,
@@ -187,9 +201,9 @@ export class CommandRunner {
         if (settled) return
         const rawChunk = data.toString()
         const marker = new RegExp(`${WINDOWS_EXIT_MARKER}(-?\\d+)\\r?\\n?`, 'g')
-        const matches = [...rawChunk.matchAll(marker)]
+        const matches = options.process ? [] : [...rawChunk.matchAll(marker)]
         if (matches.length) reportedWindowsExitCode = Number(matches.at(-1)?.[1])
-        const chunk = rawChunk.replace(marker, '')
+        const chunk = options.process ? rawChunk : rawChunk.replace(marker, '')
         if (!chunk) return
         log.write(`[stderr]\n${chunk}`)
         stderr += capture(chunk)
@@ -204,7 +218,7 @@ export class CommandRunner {
         const finalStderr =
           process.platform === 'win32' ? normalizePowerShellStderr(stderr) : stderr
         finish({
-          success: effectiveCode === 0 && !timedOut,
+          success: effectiveCode === 0 && !timedOut && !cancelled,
           exitCode: effectiveCode,
           stdout,
           stderr: finalStderr,

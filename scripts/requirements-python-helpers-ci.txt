@@ -1,0 +1,7 @@
+# CI-only synthetic helper tests. Not application/runtime requirements.
+# Verified 2026-09-06 against https://pypi.org/project/lxml/ and
+# https://pypi.org/project/defusedxml/ . Keep pins reviewed, not copied from local runtimes.
+# lxml 6.1.3 fixes external parameter entity default parsing (LP#2165901):
+# https://github.com/lxml/lxml/blob/master/CHANGES.txt
+lxml==6.1.3
+defusedxml==0.7.1

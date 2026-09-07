@@ -7,6 +7,35 @@ const test = require('node:test')
 const root = path.resolve(__dirname, '..')
 const packageMetadata = require(path.join(root, 'package.json'))
 
+test('restricts Vitest discovery to owned source tests, never generated or private workspaces', async () => {
+  const { loadConfigFromFile } = await import('vite')
+  const loaded = await loadConfigFromFile(
+    { command: 'serve', mode: 'test' },
+    path.join(root, 'vitest.config.ts'),
+    root
+  )
+  assert.ok(loaded, 'Vitest must have an explicit discovery configuration')
+  const include = loaded.config.test.include
+  assert.deepEqual(include, ['src/**/*.{test,spec}.?(c|m)[jt]s?(x)'])
+  const matches = require('picomatch')(include)
+  for (const owned of [
+    'src/main/services/agentRunRecovery.test.ts',
+    'src/renderer/src/utils/view.spec.tsx'
+  ]) {
+    assert.equal(matches(owned), true, owned)
+  }
+  // Synthetic path strings only: never inspect private output to test exclusion.
+  for (const external of [
+    'output/private.test.ts',
+    'dist/package.spec.ts',
+    'reports/generated.test.ts',
+    'scripts/release.test.cjs',
+    'another-output/project.test.ts'
+  ]) {
+    assert.equal(matches(external), false, external)
+  }
+})
+
 test('keeps development, CI, and Electron on one Node.js runtime', () => {
   const canonicalNodeVersion = readFileSync(path.join(root, '.node-version'), 'utf8').trim()
   const canonicalNodeMajor = canonicalNodeVersion.split('.')[0]

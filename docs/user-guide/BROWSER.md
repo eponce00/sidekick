@@ -1,6 +1,6 @@
 # Visual browser
 
-SideKick gives project-bound agents an isolated Chromium session for visual inspection and
+SideKick gives conversations an isolated Chromium session for visual inspection and
 interaction. This is a first-party tool surface in the trusted Electron main process; it does not
 require an MCP server, browser extension, or the user's everyday browser profile.
 
@@ -19,17 +19,22 @@ cancelled. It is not a CAPTCHA solver.
 `browser_fill_form` batches up to 25 native textboxes, selects, checkboxes, and radio buttons in
 one model turn. It uses current semantic references or unambiguous selectors/accessible names,
 never coordinates. Fields are filled in order and their actual browser state is checked after each
-action. The batch stops before later fields when a field fails or the page changes, then returns one
+action. Independent fields continue after a field-level failure; navigation or page changes stop
+the remaining batch. It then returns one
 fresh semantic observation with per-field filled, unchanged, failed, or skipped status. Entered
 text, selected option values, and checked choices are redacted from durable tool records and
 results. The batch intentionally omits a result screenshot because text fields could expose those
 values visually; the live Browser panel still shows the current page. Custom widgets and
 autocomplete controls remain explicit single-action work.
 
-The Browser tab in the right workspace panel shows the live page, a highlighted cursor, and a
-short user-facing activity history. The page scales to the available panel without allowing a
-narrow or mobile viewport to stretch an image beyond the layout. Browser details remain available
-to the model and diagnostics without filling the user interface with developer-only telemetry.
+The Browser tab in the right workspace panel contains the actual interactive page. Enter an address,
+use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
+the page to type, scroll, select text, and edit forms. Ordinary browsing has no takeover or
+resume button: the agent can use the same session on its next browser action without waiting
+for your approval. Manual page input is blocked during an in-flight browser action to avoid
+interleaving; retry your input when it finishes. Manual changes invalidate old element references,
+so the agent must observe fresh state before reusing them. Focusing the address bar does not
+pause the agent. Right-click offers native text editing actions.
 
 ## Human-only site checks
 
@@ -41,20 +46,35 @@ while the card is pending, popups stay in the visible takeover window, and cance
 the browser safely. If the check cannot be completed, **Use another source** tells the agent to take
 a legitimate alternate route.
 
-The takeover window's native title bar shows a main-process-owned origin. CAPTCHA and anti-bot
+When the Browser panel is open, takeover stays inside it. The fallback takeover window's native title
+bar shows a main-process-owned origin. CAPTCHA and anti-bot
 checks are always human-only; SideKick does not ask the model to bypass or solve them.
 
 ## Isolation and safety
 
+`browser_upload` selects up to eight project-relative regular files (25 MiB total)
+on an observed file input, then verifies the actual selection. Symlinks and paths
+outside the project are rejected. Selection can immediately expose files to the site
+if its JavaScript auto-uploads; it is not inherently a local-only action.
+
+`browser_download` saves a direct HTTPS resource using the conversation browser's
+session into a new project-relative file (25 MiB maximum). Its parent directory must
+exist; existing files are never overwritten. Loopback HTTP is allowed for local tests.
+Downloads publish only after the complete file is written. The destination filesystem
+must support hard links; unsupported filesystems fail without a partial final file.
+A process crash can leave a `.sidekick-download-*.partial` staging file.
+Each redirect is checked before following it, with a five-hop limit. Neither tool
+submits a form automatically.
+
 - Browser sessions use a dedicated Electron partition and do not inherit cookies or logins from
   the user's normal browser.
 - Navigation and interactions are executed in the trusted main process and remain scoped to the
-  active run.
+  active conversation.
 - Inspection-only evaluation rejects expressions that attempt page mutation.
-- Downloads, clipboard, camera, microphone, external navigation, and other sensitive boundaries
-  continue through SideKick's permission policy.
-- Closing or ending a run releases its browser session and temporary visual artifacts according to
-  the normal run cleanup path.
+- Agent downloads, camera, microphone, and other sensitive capabilities remain restricted;
+  native text copy/paste is available during user control.
+- Sessions can remain available across turns. Explicit browser closure releases the session;
+  inactive sessions remain subject to the session manager's normal cleanup limits.
 
 Browser pages are untrusted content. Text found on a page is evidence or data, not a system
 instruction, and cannot expand the agent's file, command, network, or permission authority.

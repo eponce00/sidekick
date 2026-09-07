@@ -20,6 +20,82 @@ function transcript(): ProviderChatMessage[] {
 }
 
 describe('AgentContextManager', () => {
+  it('budgets across history so later corrections survive large early messages', async () => {
+    let serialized = ''
+    let record: AgentCompactionRecord | undefined
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'Policy' },
+      { role: 'user', content: 'Original constraint: never submit.' }
+    ]
+    for (let index = 0; index < 20; index++)
+      messages.push(
+        { role: 'user', content: 'archived reference '.repeat(800) },
+        {
+          role: 'assistant',
+          content:
+            index === 15 ? 'CORRECTED_REVISION_R23; validation still failed' : 'No new decisions'
+        }
+      )
+    messages.push({ role: 'user', content: 'Continue the current request.' })
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 16384,
+      maxOutputTokens: 4096,
+      threshold: 0.8,
+      enabled: true,
+      complete: async (request) => {
+        serialized = request.messages[1].content || ''
+        return {
+          ok: true,
+          data: {
+            message: { role: 'assistant', content: 'Handoff' },
+            promptTokens: 1000,
+            completionTokens: 3,
+            reasoningTokens: 0,
+            finishReason: 'stop'
+          }
+        }
+      },
+      onCompacted: (value) => {
+        record = value
+      }
+    })
+    await manager.compact(messages, [], new AbortController().signal)
+    expect(serialized).toContain('Original constraint: never submit.')
+    expect(serialized).toContain('CORRECTED_REVISION_R23; validation still failed')
+    expect(serialized.length).toBeLessThan(41100)
+    expect(record?.inputTruncated).toBe(true)
+    expect(record?.summary).toContain('not complete evidence')
+  })
+
+  it('does not treat a truncated summary or fallback excerpts as verified completion', async () => {
+    let record: AgentCompactionRecord | undefined
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8192,
+      maxOutputTokens: 2048,
+      threshold: 0.8,
+      enabled: true,
+      complete: async () => ({
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: 'TRUNCATED_CLAIM_OF_SUCCESS' },
+          promptTokens: 1000,
+          completionTokens: 2048,
+          reasoningTokens: 0,
+          finishReason: 'length'
+        }
+      }),
+      onCompacted: (value) => {
+        record = value
+      }
+    })
+    await manager.compact(transcript(), [], new AbortController().signal)
+    expect(record?.strategy).toBe('deterministic')
+    expect(record?.summary).not.toContain('TRUNCATED_CLAIM_OF_SUCCESS')
+    expect(record?.summary).toContain('not verification of completion')
+    expect(record?.summary).toContain('actual tool state before retrying')
+  })
   it('compacts old context while retaining system and recent user messages', async () => {
     let record: AgentCompactionRecord | null = null
     const complete = vi.fn(async () => ({

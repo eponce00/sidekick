@@ -1,8 +1,13 @@
 import { app } from 'electron'
-import { existsSync, promises as fs } from 'fs'
+import { existsSync } from 'fs'
 import { createRequire } from 'module'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+
+// Match native browser screenshot allocation limits. Reject rather than resize:
+// the viewer's page and annotation coordinates must retain their requested scale.
+const MAX_PDF_RENDER_DIMENSION = 16_384
+const MAX_PDF_RENDER_PIXELS = 40_000_000
 
 let pdfRuntime: Promise<{
   pdfjs: typeof import('pdfjs-dist/legacy/build/pdf.mjs')
@@ -35,14 +40,16 @@ async function runtime(): Promise<Awaited<NonNullable<typeof pdfRuntime>>> {
 
 /** Render one PDF page outside Chromium's hidden compositor. */
 export async function renderBrowserPdfPage(
-  sourcePath: string,
+  sourceBytes: Uint8Array,
   pageNumber: number,
   scale: number
 ): Promise<Buffer> {
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new Error('PDF page render scale must be a finite positive number')
+  }
   const { pdfjs, canvas } = await runtime()
-  const bytes = await fs.readFile(sourcePath)
   const task = pdfjs.getDocument({
-    data: new Uint8Array(bytes),
+    data: new Uint8Array(sourceBytes),
     useSystemFonts: true
   })
   try {
@@ -52,7 +59,28 @@ export async function renderBrowserPdfPage(
     }
     const page = await document.getPage(pageNumber)
     const viewport = page.getViewport({ scale })
-    const target = canvas.createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height))
+    if (
+      !Number.isFinite(viewport.width) ||
+      !Number.isFinite(viewport.height) ||
+      viewport.width <= 0 ||
+      viewport.height <= 0
+    ) {
+      throw new Error(
+        'PDF page render has invalid dimensions; page dimensions must be finite and positive'
+      )
+    }
+    const width = Math.ceil(viewport.width)
+    const height = Math.ceil(viewport.height)
+    if (
+      width > MAX_PDF_RENDER_DIMENSION ||
+      height > MAX_PDF_RENDER_DIMENSION ||
+      width * height > MAX_PDF_RENDER_PIXELS
+    ) {
+      throw new Error(
+        'PDF page render exceeds the safety budget of 16,384 pixels per side and 40,000,000 total pixels. Use a lower rendering scale where available, or open the document in an external PDF viewer.'
+      )
+    }
+    const target = canvas.createCanvas(width, height)
     const context = target.getContext('2d')
     await page.render({
       canvas: target as unknown as HTMLCanvasElement,

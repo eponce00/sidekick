@@ -12,6 +12,19 @@ import {
 describe('provider health', () => {
   const now = 1_000_000
 
+  it('replaces explicit inference crash details with actionable private-safe diagnostics', () => {
+    const memory = providerHealthErrorMessage('torch.OutOfMemoryError: private-path secret=fixture')
+    expect(memory).toContain('GPU memory')
+    expect(memory).toContain('restarting alone may not prevent recurrence')
+    expect(memory).not.toContain('private-path')
+    expect(memory).not.toContain('fixture')
+    const engine = offlineProviderHealth('EngineDeadError: hidden details', now)
+    expect(engine.status).toBe('offline')
+    expect(engine.message).toContain('online gateway does not prove')
+    expect(engine.message).not.toContain('hidden details')
+    expect(providerHealthErrorMessage('Request timed out')).toBe('Request timed out')
+  })
+
   it('treats a missing durable result as unknown', () => {
     expect(unknownProviderHealth()).toEqual({ status: 'unknown' })
     expect(describeProviderHealth(undefined, now)).toMatchObject({

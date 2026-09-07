@@ -97,7 +97,11 @@ export function createSupportDiagnostics(input: SupportDiagnosticsInput): Suppor
     system: input.system,
     security: {
       protectedCredentialStorageAvailable: input.protectedCredentialStorageAvailable,
-      rendererSandboxed: true
+      rendererSandboxed: true,
+      shellSandboxed: settings.shellIsolation === 'docker',
+      ...(settings.shellIsolation === 'docker'
+        ? { shellIsolationScope: 'shell-commands-only' as const }
+        : {})
     },
     storage: { databaseOpen: input.databaseOpen },
     configuration: {

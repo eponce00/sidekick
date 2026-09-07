@@ -1,4 +1,5 @@
 import type { Skill, SkillActivationScope, SkillInvocation } from './types'
+import { getSkillRuntimeGuidance } from './runtimeGuidance'
 import webArtifactsRaw from './definitions/web-artifacts.skill.md?raw'
 import pdfRaw from './definitions/pdf.skill.md?raw'
 import docxRaw from './definitions/docx.skill.md?raw'
@@ -7,6 +8,7 @@ import xlsxRaw from './definitions/xlsx.skill.md?raw'
 import locationResearchRaw from './definitions/location-research.skill.md?raw'
 
 export type { Skill, SkillActivationScope, SkillInvocation } from './types'
+export { getSkillRuntimeGuidance } from './runtimeGuidance'
 
 export function parseSkillMarkdown(raw: string): Skill {
   const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)/)
@@ -96,7 +98,10 @@ export function getActiveSkillInjections(activeSkillIds: readonly string[]): str
   )
   if (!active.length) return ''
   const sections = active
-    .map((skill) => `### SKILL: ${skill.name}\n${skill.systemPromptInjection}`)
+    .map(
+      (skill) =>
+        `### SKILL: ${skill.name}\n${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}`
+    )
     .join('\n\n')
   return `\n---\n## Active Skills\n${sections}\n---`
 }

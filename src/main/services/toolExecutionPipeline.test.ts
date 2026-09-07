@@ -2,6 +2,60 @@ import { describe, expect, it, vi } from 'vitest'
 import { ToolExecutionPipeline, ToolRuntimeTimeoutError } from './toolExecutionPipeline'
 
 describe('ToolExecutionPipeline', () => {
+  it.each(['before', 'after'] as const)(
+    'bounds hanging %s hooks by the tool timeout',
+    async (stage) => {
+      const pipeline = new ToolExecutionPipeline()
+      let release!: () => void
+      const hanging = () =>
+        new Promise<never>((resolve) => {
+          release = () => resolve('late' as never)
+        })
+      if (stage === 'before') pipeline.registerBefore(hanging)
+      else pipeline.registerAfter(hanging)
+      const body = vi.fn(async () => 'ok')
+      await expect(
+        pipeline.execute({
+          name: 'read',
+          arguments: {},
+          signal: new AbortController().signal,
+          timeoutMs: 10,
+          body
+        })
+      ).rejects.toBeInstanceOf(ToolRuntimeTimeoutError)
+      release()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(body).toHaveBeenCalledTimes(stage === 'before' ? 0 : 1)
+    }
+  )
+
+  it('does not run hooks for an already cancelled call', async () => {
+    const pipeline = new ToolExecutionPipeline()
+    const before = vi.fn()
+    pipeline.registerBefore(before)
+    await expect(
+      pipeline.execute({
+        name: 'read',
+        arguments: {},
+        signal: AbortSignal.abort(),
+        body: async () => 'ok'
+      })
+    ).rejects.toThrow()
+    expect(before).not.toHaveBeenCalled()
+  })
+
+  it('prevents an around hook from executing the side effect twice', async () => {
+    const pipeline = new ToolExecutionPipeline()
+    pipeline.registerAround(async (_input, next) => {
+      await next()
+      return next()
+    })
+    const body = vi.fn(async () => 'ok')
+    await expect(
+      pipeline.execute({ name: 'shell', arguments: {}, signal: new AbortController().signal, body })
+    ).rejects.toThrow('only be invoked once')
+    expect(body).toHaveBeenCalledOnce()
+  })
   it('freezes a canonical argument snapshot before guards and execution', async () => {
     const pipeline = new ToolExecutionPipeline()
     const seen: Readonly<Record<string, unknown>>[] = []

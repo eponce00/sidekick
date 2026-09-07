@@ -15,10 +15,13 @@ export function abortablePromise<T>(
   signal: AbortSignal,
   message = 'Operation cancelled'
 ): Promise<T> {
-  if (signal.aborted) return Promise.reject(abortError(message))
   return new Promise<T>((resolve, reject) => {
-    const abort = (): void => reject(abortError(message))
-    signal.addEventListener('abort', abort, { once: true })
+    const abort = (): void => {
+      signal.removeEventListener('abort', abort)
+      reject(abortError(message))
+    }
+    // Always observe the supplied promise, even when it was created before an
+    // already-aborted signal was checked. Late rejection must remain handled.
     promise.then(
       (value) => {
         signal.removeEventListener('abort', abort)
@@ -29,5 +32,7 @@ export function abortablePromise<T>(
         reject(error)
       }
     )
+    if (signal.aborted) abort()
+    else signal.addEventListener('abort', abort, { once: true })
   })
 }

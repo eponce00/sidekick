@@ -4,10 +4,17 @@ name: Presentations
 icon: GalleryHorizontal
 description: 'Use this skill any time a .pptx file is involved as input or output. This includes: creating slide decks, pitch decks, or presentations; reading or extracting text from .pptx files; editing or updating existing presentations; combining or splitting slide files; working with templates, layouts, speaker notes, or comments. Trigger whenever the user mentions deck, slides, presentation, or references a .pptx filename.'
 invocation: auto
-requiresNodePackages: ['pptxgenjs']
+requiresNodePackages: ["pptxgenjs"]
+requiresPythonPackages: ["python-pptx", "defusedxml", "lxml"]
 ---
 
 ## SKILL: PPTX Presentations
+
+### Bundled capability limits
+
+The bundle supports non-mutating OPC/OOXML structural validation, not full XSD conformance.
+Unpack/edit/repack runs structural checks by default; independently verify content and rendering.
+Rendering requires local LibreOffice; missing tools must be reported, not silently installed.
 
 ### ⚠️ Critical Rule: Never Regenerate an Existing File
 
@@ -18,7 +25,7 @@ requiresNodePackages: ['pptxgenjs']
 | Task                   | Approach                                         |
 | ---------------------- | ------------------------------------------------ |
 | Read/inventory content | python-pptx structured read (see below)          |
-| Create from scratch    | Use `pptxgenjs` npm package (globally installed) |
+| Create from scratch    | Available `python-pptx` or `pptxgenjs`, checked explicitly |
 | Edit existing .pptx    | Unpack → edit XML → repack                       |
 
 > Skills are instructions, not package installers. Never install packages as an implicit side
@@ -30,9 +37,9 @@ requiresNodePackages: ['pptxgenjs']
 
 ## Reading Content
 
-Always use python-pptx for a structured, lossless inventory — never markitdown (lossy).
+Always use python-pptx for a structured inventory — never markitdown (lossy).
 
-Write to `$env:TEMP\sk_pptx_read.py`, run, delete:
+Write to `./UNIQUE_pptx_read.py`, run, delete:
 
 ```python
 from pptx import Presentation
@@ -62,8 +69,8 @@ for i, slide in enumerate(prs.slides):
 ```
 
 ```powershell
-python "$env:TEMP\sk_pptx_read.py" "path\to\presentation.pptx"
-Remove-Item "$env:TEMP\sk_pptx_read.py" -ErrorAction SilentlyContinue
+python "./UNIQUE_pptx_read.py" "path\to\presentation.pptx"
+Remove-Item "./UNIQUE_pptx_read.py" -ErrorAction SilentlyContinue
 ```
 
 ## Editing Existing Presentations
@@ -74,19 +81,45 @@ A .pptx file is a ZIP archive. Use the bundled office scripts (same as DOCX):
 # Unpack
 python "$env:SIDEKICK_SKILLS\office\unpack.py" "presentation.pptx" "pptx_unpacked"
 # Edit XML in pptx_unpacked\ppt\slides\
-# Repack (always use --validate false to avoid Windows encoding crashes)
-python "$env:SIDEKICK_SKILLS\office\pack.py" "pptx_unpacked" "output.pptx" --validate false
+# Repack with structural checks (not full XSD validation).
+python "$env:SIDEKICK_SKILLS\office\pack.py" "pptx_unpacked" "NEW_output.pptx"
 ```
 
 ---
 
 ## Creating Presentations with pptxgenjs
 
-Write the temp script to `$env:TEMP` (never to the workspace), run it, it auto-deletes.
+### Choose an available creation engine
+
+Check `pptx-create-python` for Python `python-pptx`, or `pptx-create` for Node `pptxgenjs`.
+These are separate supported engines; never claim Node packages are installed because Python
+is available. Honor a user-requested engine and report its missing dependency rather than silently
+switching. Otherwise use an available engine that supports the task. For straightforward new decks:
+
+```python
+from pptx import Presentation
+from pptx.util import Inches
+deck = Presentation()
+deck.slide_width, deck.slide_height = Inches(13.333), Inches(7.5)
+slide = deck.slides.add_slide(deck.slide_layouts[1])
+slide.shapes.title.text = 'Presentation title'
+slide.placeholders[1].text = 'Key point'
+# Choose a NEW workspace output path. Never regenerate an existing deck.
+deck.save('NEW_presentation.pptx')
+```
+
+Reopen with `Presentation(...)`, verify slide/shape/text counts, and run
+`office/validate.py NEW_presentation.pptx`. With LibreOffice and Poppler available, use
+`office/render.py NEW_presentation.pptx NEW_RENDER_DIR --images` and inspect the pages.
+Synthetic create/reopen/render passed on Linux LibreOffice; complex features still need verification.
+
+### Node pptxgenjs route
+
+Create a uniquely named temporary script with the file-editing tool in a writable project-relative location (or managed scratch if supported); run it and explicitly clean up that script. Files do not auto-delete.
 
 ```javascript
-// Script goes in $env:TEMP — keeps the workspace clean
-const pptx = require('pptxgenjs')
+// Use a uniquely named temporary script created through the file-editing tool.
+const pptx = require(require.resolve('pptxgenjs', { paths: [process.env.WORKSPACE_FOLDER || process.cwd()] }))
 const path = require('path')
 const pres = new pptx()
 pres.layout = 'LAYOUT_WIDE' // 16:9 — full width is 13.33 inches
@@ -146,13 +179,13 @@ slide.addImage({ data: 'image/png;base64,iVBORw0...', x: 0.5, y: 0.5, w: 2, h: 1
 **If external URLs are blocked (VPN/firewall):** Download images first with PowerShell, then reference by local path:
 
 ```powershell
-Invoke-WebRequest -Uri 'https://example.com/logo.png' -OutFile "$env:TEMP\logo.png" -UseBasicParsing
+Invoke-WebRequest -Uri 'https://example.com/logo.png' -OutFile "$env:SIDEKICK_SCRATCH\UNIQUE_logo.png" -UseBasicParsing
 ```
 
 If `Invoke-WebRequest` is also blocked, use `curl.exe`:
 
 ```powershell
-curl.exe -L -o "$env:TEMP\logo.png" 'https://example.com/logo.png'
+curl.exe -L -o "$env:SIDEKICK_SCRATCH\UNIQUE_logo.png" 'https://example.com/logo.png'
 ```
 
 ### ⚠️ addShape API — Critical: Shape Type is the FIRST Argument
@@ -185,19 +218,16 @@ slide.addShape(pres.ShapeType.roundRect, {
 
 **To layer text over a shape**, call `addShape` first, then `addText` at the same coordinates.
 
-**Run it (script lives in TEMP, output goes to workspace):**
+**Run the script created with the file-editing tool; output goes to the workspace:**
 
 ```powershell
-$script = @'
-<paste full script here>
-'@
-Set-Content -Path (Join-Path $env:TEMP 'sk_pptx.js') -Value $script -Encoding UTF8
-$env:NODE_PATH = (npm root -g 2>$null)
-node (Join-Path $env:TEMP 'sk_pptx.js')
-Remove-Item (Join-Path $env:TEMP 'sk_pptx.js') -ErrorAction SilentlyContinue
+node './UNIQUE_pptx.cjs'
+# Delete only the temporary script after verifying the output.
 ```
 
-> **Important:** Always write the script to `$env:TEMP`, not to the workspace. The output `.pptx` file should go to `$env:WORKSPACE_FOLDER`.
+> The output `.pptx` belongs in the workspace. Never overwrite an existing output unintentionally.
+> Structural validation is not XSD validation. Report missing rendering tools; `--validate false`
+> skips even structural checks and must never be presented as a validation pass.
 
 ### Design Principles — DO NOT make boring slides
 

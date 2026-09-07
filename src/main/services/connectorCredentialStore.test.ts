@@ -1,6 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+const { backend, nativeEncrypt, persistenceWrite } = vi.hoisted(() => ({
+  backend: vi.fn(() => 'basic_text'),
+  nativeEncrypt: vi.fn(),
+  persistenceWrite: vi.fn()
+}))
+vi.mock('electron', () => ({
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: backend,
+    encryptString: nativeEncrypt,
+    decryptString: vi.fn()
+  }
+}))
+vi.mock('../ipc/state', () => ({ getStore: () => ({ get: () => ({}), set: persistenceWrite }) }))
 import {
   ConnectorCredentialStore,
+  createConnectorCredentialStore,
   ConnectorCredentialUnavailableError,
   type ConnectorCredentialPersistence,
   type ConnectorSecretCipher
@@ -16,7 +31,10 @@ function fixtures(available = true): {
     cipher: {
       isAvailable: () => available,
       encrypt: (value) => Buffer.from(`sealed:${value}`),
-      decrypt: (value) => Buffer.from(value).toString().replace(/^sealed:/, '')
+      decrypt: (value) =>
+        Buffer.from(value)
+          .toString()
+          .replace(/^sealed:/, '')
     },
     persistence: {
       read: () => ({ ...values }),
@@ -29,6 +47,22 @@ function fixtures(available = true): {
 }
 
 describe('ConnectorCredentialStore', () => {
+  it('production factory refuses Linux basic_text for reads and writes', async () => {
+    vi.stubGlobal('process', { ...process, platform: 'linux' })
+    try {
+      const store = createConnectorCredentialStore()
+      await expect(store.set('connector:test', 'secret')).rejects.toBeInstanceOf(
+        ConnectorCredentialUnavailableError
+      )
+      await expect(store.get('connector:test')).rejects.toBeInstanceOf(
+        ConnectorCredentialUnavailableError
+      )
+      expect(nativeEncrypt).not.toHaveBeenCalled()
+      expect(persistenceWrite).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
   it('persists only encrypted material and round-trips the secret', async () => {
     const fixture = fixtures()
     const store = new ConnectorCredentialStore(fixture.cipher, fixture.persistence)

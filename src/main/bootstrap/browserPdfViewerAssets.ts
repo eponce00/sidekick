@@ -1,3 +1,5 @@
+import { verifyBrowserPdfSave } from './browserPdfSaveVerifier'
+
 export const BROWSER_PDF_VIEWER_HTML = `<!doctype html>
 <html lang="en">
   <head>
@@ -53,6 +55,8 @@ input.pdf-field[type="checkbox"], input.pdf-field[type="radio"] { padding: 0; ac
 export const BROWSER_PDF_VIEWER_MODULE = `
 import * as pdfjs from './pdf.mjs';
 
+const verifySavedForm = ${verifyBrowserPdfSave.toString()};
+
 let workerBlobUrl;
 
 const pagesRoot = document.querySelector('#pages');
@@ -61,7 +65,29 @@ const saveButton = document.querySelector('#save');
 const documentName = document.querySelector('#document-name');
 const documentMeta = document.querySelector('#document-meta');
 let pdfDocument;
+let viewerWorker;
+const fieldDescriptors = new Map();
+const pendingFields = new Map();
 let dirty = false;
+let editRevision = 0;
+let saveInFlight = false;
+let formEditingAllowed = false;
+let permissionMessage = 'Checking PDF form permissions';
+
+async function checkFormPermissions() {
+  formEditingAllowed = false;
+  try {
+    const permissions = await pdfDocument.getPermissions();
+    if (permissions !== null && !(permissions instanceof Set)) throw new Error('Invalid permissions');
+    formEditingAllowed = permissions === null ||
+      permissions.has(pdfjs.PermissionFlag.MODIFY_ANNOTATIONS) ||
+      permissions.has(pdfjs.PermissionFlag.FILL_INTERACTIVE_FORMS);
+    permissionMessage = formEditingAllowed ? '' : 'Read-only — this PDF does not permit filling form fields';
+  } catch {
+    permissionMessage = 'Read-only — could not verify PDF form permissions';
+  }
+  saveButton.disabled = saveInFlight || !formEditingAllowed || !dirty;
+}
 
 function setStatus(message, kind = '') {
   status.textContent = message;
@@ -97,7 +123,7 @@ function optionValue(option) {
   return String(option.exportValue ?? option.displayValue ?? '');
 }
 
-function createField(annotation, viewport) {
+function createField(annotation, viewport, pageIndex = 0) {
   if (!annotation.rect || !annotation.fieldName) return null;
   const label = fieldLabel(annotation);
   const current = annotation.fieldValue;
@@ -145,25 +171,42 @@ function createField(annotation, viewport) {
   element.setAttribute('aria-label', accessibleLabel);
   element.dataset.annotationId = annotation.id;
   element.dataset.fieldName = annotation.fieldName;
-  element.disabled = Boolean(annotation.readOnly);
+  element.disabled = !formEditingAllowed || Boolean(annotation.readOnly);
   positionField(element, viewportBox(viewport, annotation.rect));
+  fieldDescriptors.set(annotation.id, { id: annotation.id, page: pageIndex, name: annotation.fieldName });
 
   const synchronize = () => {
+    if (!formEditingAllowed || annotation.readOnly) return;
     let value;
     if (element instanceof HTMLSelectElement) {
       const selected = [...element.selectedOptions].map((option) => option.value);
       value = element.multiple ? selected : (selected[0] ?? '');
     } else if (element instanceof HTMLInputElement && element.type === 'checkbox') {
-      value = element.checked ? element.value : 'Off';
+      value = element.checked;
     } else if (element instanceof HTMLInputElement && element.type === 'radio') {
       if (!element.checked) return;
-      value = element.value;
+      // PDF.js stores booleans per widget; it maps them to the original export
+      // names when saving. Clear stale sibling entries when switching selection.
+      for (const other of document.querySelectorAll('input.pdf-field[type="radio"]')) {
+        if (other.name === element.name && other.dataset.annotationId) {
+          pdfDocument.annotationStorage.setValue(other.dataset.annotationId, { value: other === element });
+        }
+      }
+      value = true;
     } else {
       value = element.value;
     }
     pdfDocument.annotationStorage.setValue(annotation.id, { value });
+    const type = annotation.fieldType === 'Btn' ? (annotation.radioButton ? 'radio' : 'checkbox') : annotation.fieldType;
+    const logicalValue = type === 'checkbox' ? (element.checked ? element.value : 'Off') :
+      type === 'radio' ? element.value : type === 'Ch' ? [...element.selectedOptions].map(option => option.value) : value;
+    pendingFields.set(annotation.fieldName, { name: annotation.fieldName, type, value: logicalValue,
+      widgets: [...fieldDescriptors.values()].filter(item => item.name === annotation.fieldName).map(({id,page}) => ({id,page})) });
     dirty = true;
-    saveButton.disabled = false;
+    editRevision += 1;
+    document.documentElement.dataset.sidekickPdfSaved = 'false';
+    delete document.documentElement.dataset.sidekickPdfVerification;
+    saveButton.disabled = saveInFlight;
     setStatus('Unsaved form changes');
   };
   element.addEventListener('input', synchronize);
@@ -212,7 +255,7 @@ async function renderPage(pageNumber) {
   formLayer.setAttribute('aria-label', 'Form fields on page ' + pageNumber);
   const annotations = await page.getAnnotations({ intent: 'display' });
   for (const annotation of annotations) {
-    const field = createField(annotation, viewport);
+    const field = createField(annotation, viewport, pageNumber - 1);
     if (field) formLayer.append(field);
   }
   section.append(formLayer);
@@ -220,11 +263,20 @@ async function renderPage(pageNumber) {
 }
 
 saveButton.addEventListener('click', async () => {
-  if (!pdfDocument || !dirty) return;
+  if (!pdfDocument || !dirty || saveInFlight || !formEditingAllowed) return;
+  saveInFlight = true;
+  const savingRevision = editRevision;
   saveButton.disabled = true;
   setStatus('Saving filled copy…');
   try {
+    // Capture the same revision as PDF.js's synchronous serialization dispatch.
+    // Newer edits remain pending and dirty while verification/publication awaits.
+    const expected = structuredClone([...pendingFields.values()]);
     const bytes = await pdfDocument.saveDocument();
+    let sourceXfa;
+    try { sourceXfa = (await pdfDocument.getMetadata()).info.IsXFAPresent; } catch {}
+    if (typeof sourceXfa !== 'boolean') throw new Error('Could not verify saved PDF form values; no copy was saved');
+    const verificationScope = await verifySavedForm(pdfjs, bytes, viewerWorker, expected, sourceXfa);
     const response = await fetch('./save', {
       method: 'POST',
       headers: { 'content-type': 'application/pdf' },
@@ -232,13 +284,20 @@ saveButton.addEventListener('click', async () => {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || 'Could not save the filled PDF');
-    dirty = false;
-    document.documentElement.dataset.sidekickPdfSaved = 'true';
+    dirty = editRevision !== savingRevision;
+    document.documentElement.dataset.sidekickPdfSaved = String(!dirty);
     document.documentElement.dataset.sidekickPdfOutput = result.outputPath;
-    setStatus('Filled copy saved: ' + result.outputPath, 'success');
+    document.documentElement.dataset.sidekickPdfVerification = verificationScope;
+    const qualification = verificationScope === 'acroform-xfa-unverified'
+      ? 'AcroForm verified; XFA compatibility unverified — ' : 'AcroForm verified — ';
+    setStatus(dirty
+      ? qualification + 'Unsaved newer form changes — earlier copy saved: ' + result.outputPath
+      : qualification + 'Filled copy saved: ' + result.outputPath, dirty ? '' : 'success');
   } catch (error) {
-    saveButton.disabled = false;
     setStatus(error instanceof Error ? error.message : String(error), 'error');
+  } finally {
+    saveInFlight = false;
+    saveButton.disabled = !dirty || !formEditingAllowed;
   }
 });
 
@@ -251,7 +310,21 @@ async function main() {
     document.title = metadata.name;
     setStatus('Reading PDF…');
     const pdfResponse = await fetch('./document.pdf');
-    if (!pdfResponse.ok) throw new Error('Could not read the PDF document');
+    if (!pdfResponse.ok) {
+      let message = 'Could not read the PDF document';
+      try {
+        const detail = await pdfResponse.json();
+        const expected = new Set([
+          'PDF session or source is no longer available',
+          'PDF source must be a nonempty regular file',
+          'PDF source exceeds the 64 MiB input limit; open a smaller document',
+          'PDF source changed while being read; close and reopen the document',
+          'Could not read the PDF source safely; close and reopen the document'
+        ]);
+        if (expected.has(detail.error)) message = detail.error;
+      } catch { /* Keep the safe generic error for unexpected responses. */ }
+      throw new Error(message);
+    }
     const pdfBytes = new Uint8Array(await pdfResponse.arrayBuffer());
     setStatus('Starting PDF renderer…');
     const workerResponse = await fetch('./pdf.worker.mjs');
@@ -259,8 +332,10 @@ async function main() {
     workerBlobUrl = URL.createObjectURL(new Blob([await workerResponse.text()], { type: 'text/javascript' }));
     const workerPort = new Worker(workerBlobUrl, { type: 'module', name: 'sidekick-pdf-renderer' });
     const worker = new pdfjs.PDFWorker({ port: workerPort });
+    viewerWorker = worker;
     const task = pdfjs.getDocument({ data: pdfBytes, worker, isEvalSupported: false });
     pdfDocument = await task.promise;
+    await checkFormPermissions();
     setStatus('Rendering pages…');
     let fieldCount = 0;
     for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber++) {
@@ -268,7 +343,7 @@ async function main() {
     }
     documentMeta.textContent = pdfDocument.numPages + (pdfDocument.numPages === 1 ? ' page' : ' pages') + ' · ' + fieldCount + (fieldCount === 1 ? ' form field' : ' form fields');
     saveButton.hidden = fieldCount === 0;
-    setStatus(fieldCount ? 'Ready — fill fields, then save a copy' : 'Ready — this PDF has no interactive form fields');
+    setStatus(permissionMessage || (fieldCount ? 'Ready — fill fields, then save a copy' : 'Ready — this PDF has no interactive form fields'));
     document.documentElement.dataset.sidekickPdfReady = 'true';
   } catch (error) {
     console.error(error);

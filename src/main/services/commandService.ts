@@ -5,6 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'path'
 import type { BackgroundTask, ShellCommandResult } from '../../shared/types'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { CommandRunner } from './commandRunner'
+import { isolatedShellProcess } from './dockerShellIsolation'
 
 export interface CommandServiceRunInput {
   runId: string
@@ -80,7 +81,8 @@ export class CommandService {
     private readonly db: Database.Database,
     private readonly outputRoot: string,
     private readonly onTaskUpdate: (task: OwnedBackgroundTask) => void = () => undefined,
-    private readonly skillAssetsPath?: string
+    private readonly skillAssetsPath?: string,
+    private readonly isolationEnabled: () => boolean = () => false
   ) {
     this.restore()
   }
@@ -183,13 +185,32 @@ export class CommandService {
   }
 
   async execute(input: CommandServiceRunInput): Promise<ShellCommandResult | OwnedBackgroundTask> {
+    if (input.signal?.aborted) throw new Error('Command cancelled before execution')
     if (!input.command.trim()) throw new Error('Command is required')
     const cwd = await resolveSecureWorkspacePath(
       input.workspaceRoot,
       projectRelativeCommandCwd(input.workspaceRoot, input.cwd)
     )
     const id = randomUUID()
+    const isolate = this.isolationEnabled()
+    if (isolate && input.background)
+      throw new Error(
+        'Background commands are not supported in isolated mode; run a bounded foreground command'
+      )
     if (input.background) return this.startBackground(id, cwd, input)
+    const env = this.shellEnvironment(input.runId, input.workspaceRoot)
+    const sandbox = isolate
+      ? await isolatedShellProcess({
+          id,
+          cwd,
+          workspaceRoot: input.workspaceRoot,
+          command: input.command,
+          timeoutSecs: input.timeoutSecs,
+          env,
+          skillAssetsPath: this.skillAssetsPath
+        })
+      : undefined
+    if (input.signal?.aborted) throw new Error('Command cancelled before execution')
     const abort = (): void => {
       this.runner.cancel(id)
     }
@@ -198,14 +219,16 @@ export class CommandService {
       return await this.runner.run({
         id,
         command: input.command,
+        process: sandbox,
         cwd,
         timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30)) * 1_000,
         outputPath: this.outputPath(id),
-        env: this.shellEnvironment(input.runId, input.workspaceRoot),
+        env,
         onOutput: input.onOutput
       })
     } finally {
       input.signal?.removeEventListener('abort', abort)
+      await sandbox?.cleanup()
     }
   }
 

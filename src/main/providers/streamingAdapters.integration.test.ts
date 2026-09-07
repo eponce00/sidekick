@@ -48,9 +48,349 @@ function text(chunks: ProviderStreamChunk[], key: 'content' | 'thinking'): strin
 }
 
 describe('provider streaming adapters', () => {
+  it.each([
+    'data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"stop"}]}\ndata: [DONE]\n',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"lookup","arguments":"{"}}]}}]}\ndata: {"error":{"message":"Unterminated string"}}\n'
+  ])('preserves OpenAI cancellation from the terminal subscriber', async (data) => {
+    const controller = new AbortController()
+    const source = streamingResponse([data])
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      (chunk) => {
+        if (chunk.done) controller.abort()
+      },
+      vi.fn(async () => source) as unknown as typeof fetch,
+      controller.signal
+    )
+    expect(result).toEqual({ ok: false, error: 'aborted' })
+  })
+  it.each([
+    {},
+    { content: 'partial answer' },
+    {
+      tool_calls: [
+        {
+          index: 0,
+          id: 'incomplete-turn',
+          function: { name: 'lookup', arguments: '{"query":"complete-looking"}' }
+        }
+      ]
+    }
+  ])('fails closed on EOF without a protocol terminal: %j', async (delta) => {
+    const response = streamingResponse([`data: ${JSON.stringify({ choices: [{ delta }] })}\n`])
+    const chunks: ProviderStreamChunk[] = []
+    const fetchImpl = vi.fn(async () => response) as unknown as typeof fetch
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { tools: request.tools },
+      {},
+      (chunk) => chunks.push(chunk),
+      fetchImpl
+    )
+    expect(result).toEqual({ ok: false, error: 'Provider stream ended before completion' })
+    expect(chunks.filter((chunk) => chunk.done)).toEqual([
+      { done: true, done_reason: 'error', error: 'Provider stream ended before completion' }
+    ])
+    expect(
+      chunks
+        .flatMap((chunk) => chunk.message?.tool_calls ?? [])
+        .some((call) => typeof call.function.arguments === 'string')
+    ).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+
+  it('accepts explicit finish reason plus EOF and retains subsequent usage, reasoning and exact tools', async () => {
+    const response = streamingResponse([
+      'data: {"choices":[{"delta":{"reasoning_content":"retained reasoning","tool_calls":[{"index":0,"id":"exact-call","function":{"name":"lookup","arguments":"{\\"query\\":\\"exact\\"}"}}]},"finish_reason":"tool_calls"}]}\n',
+      'data: {"choices":[],"usage":{"prompt_tokens":17,"completion_tokens":9,"prompt_tokens_details":{"cached_tokens":4}}}\n'
+    ])
+    const chunks: ProviderStreamChunk[] = []
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { tools: request.tools },
+      {},
+      (chunk) => chunks.push(chunk),
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+    expect(result.ok).toBe(true)
+    expect(text(chunks, 'thinking')).toBe('retained reasoning')
+    expect(chunks.flatMap((chunk) => chunk.message?.tool_calls ?? []).at(-1)).toMatchObject({
+      id: 'exact-call',
+      function: { name: 'lookup', arguments: '{"query":"exact"}' }
+    })
+    expect(chunks.at(-1)).toMatchObject({
+      done: true,
+      done_reason: 'tool_calls',
+      prompt_eval_count: 17,
+      eval_count: 9,
+      cached_prompt_tokens: 4
+    })
+  })
+
+  it('terminates on an error frame without waiting for EOF or starting fallback', async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>
+    const cancel = vi.fn()
+    const response = new Response(
+      new ReadableStream({
+        start(value) {
+          controller = value
+          value.enqueue(
+            new TextEncoder().encode(
+              'data: {"error":{"message":"provider capacity unavailable"}}\n\n'
+            )
+          )
+        },
+        cancel
+      })
+    )
+    const chunks: ProviderStreamChunk[] = []
+    const fetchImpl = vi.fn(async () => response) as unknown as typeof fetch
+    let result: unknown
+    const running = streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { tools: request.tools },
+      {},
+      (chunk) => chunks.push(chunk),
+      fetchImpl
+    ).then((value) => {
+      result = value
+    })
+    try {
+      await vi.waitFor(
+        () => expect(result).toEqual({ ok: false, error: 'provider capacity unavailable' }),
+        { timeout: 300 }
+      )
+      expect(chunks).toEqual([
+        { done: true, done_reason: 'error', error: 'provider capacity unavailable' }
+      ])
+      expect(fetchImpl).toHaveBeenCalledOnce()
+      expect(cancel).toHaveBeenCalledOnce()
+    } finally {
+      if (response.body?.locked) controller.close()
+      await running
+    }
+  })
+
+  it('returns a consumer failure rather than swallowing it as malformed SSE', async () => {
+    const response = streamingResponse([
+      'data: {"choices":[{"delta":{"content":"answer"}}]}\ndata: [DONE]\n'
+    ])
+    const chunks: ProviderStreamChunk[] = []
+    let rejected = false
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      (chunk) => {
+        chunks.push(chunk)
+        if (chunk.message?.content && !rejected) {
+          rejected = true
+          throw new Error('durable consumer failed')
+        }
+      },
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+    expect(result).toEqual({ ok: false, error: 'durable consumer failed' })
+    expect(chunks).toHaveLength(1)
+    expect(chunks.some((chunk) => chunk.done)).toBe(false)
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it.each([false, true])(
+    'keeps the original stream result when cleanup throws (read failure=%s)',
+    async (readFailure) => {
+      const reader = {
+        read: vi.fn(async () => {
+          if (readFailure) throw new Error('original read failure')
+          return {
+            done: false,
+            value: new TextEncoder().encode(
+              'data: {"choices":[{"delta":{"content":"answer"}}]}\ndata: [DONE]\n'
+            )
+          }
+        }),
+        cancel: vi.fn(() => {
+          throw new Error('cleanup cancel failed')
+        }),
+        releaseLock: vi.fn(() => {
+          throw new Error('cleanup release failed')
+        })
+      }
+      const response = new Response()
+      Object.defineProperty(response, 'body', { value: { getReader: () => reader } })
+      const result = await streamOpenAICompatibleChat(
+        'https://provider.test/v1',
+        {},
+        {},
+        vi.fn(),
+        vi.fn(async () => response) as unknown as typeof fetch
+      )
+      expect(result).toEqual(
+        readFailure
+          ? { ok: false, error: 'original read failure' }
+          : { ok: true, generationId: undefined }
+      )
+      expect(reader.cancel).toHaveBeenCalledOnce()
+      expect(reader.releaseLock).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('retains the malformed JSON line policy without suppressing later valid chunks', async () => {
+    const response = streamingResponse([
+      'data: {malformed}\ndata: {"choices":[{"delta":{"content":"answer"}}]}\ndata: [DONE]\n'
+    ])
+    const chunks: ProviderStreamChunk[] = []
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      (chunk) => chunks.push(chunk),
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+    expect(result.ok).toBe(true)
+    expect(text(chunks, 'content')).toBe('answer')
+  })
+
+  it('finishes at the OpenAI DONE marker even when the SSE connection stays open', async () => {
+    const cancel = vi.fn()
+    let streamController!: ReadableStreamDefaultController<Uint8Array>
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          streamController = controller
+          controller.enqueue(
+            new TextEncoder().encode(
+              'data: {"choices":[{"delta":{"content":"Answer"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\ndata: {"choices":[{"delta":{"content":"must-not-appear"}}]}\n\n'
+            )
+          )
+        },
+        cancel
+      })
+    )
+    const chunks: ProviderStreamChunk[] = []
+    let outcome: unknown
+    const running = streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      (chunk) => chunks.push(chunk),
+      vi.fn(async () => response) as unknown as typeof fetch
+    ).then((result) => {
+      outcome = result
+    })
+    try {
+      await vi.waitFor(() => expect(outcome).toEqual({ ok: true, generationId: undefined }), {
+        timeout: 300
+      })
+      await running
+      expect(text(chunks, 'content')).toBe('Answer')
+      expect(chunks.filter((chunk) => chunk.done)).toHaveLength(1)
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(response.body?.locked).toBe(false)
+    } finally {
+      // Only the unfixed implementation remains locked; don't leave a test read pending.
+      if (response.body?.locked) streamController.close()
+      await running
+    }
+  })
+
+  it('honors cancellation triggered by a content subscriber before processing buffered events', async () => {
+    const controller = new AbortController()
+    const chunks: ProviderStreamChunk[] = []
+    const response = streamingResponse([
+      'data: {"choices":[{"delta":{"content":"first"}}]}\n',
+      'data: {"choices":[{"delta":{"content":"after-cancel"}}]}\ndata: [DONE]\n'
+    ])
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { tools: request.tools },
+      {},
+      (chunk) => {
+        chunks.push(chunk)
+        if (chunk.message?.content) controller.abort()
+      },
+      vi.fn(async () => response) as unknown as typeof fetch,
+      controller.signal
+    )
+    expect(result).toEqual({ ok: false, error: 'aborted' })
+    expect(text(chunks, 'content')).toBe('first')
+    expect(chunks.some((chunk) => chunk.done)).toBe(false)
+    expect(response.body?.locked).toBe(false)
+  })
+
+  it('does not emit content or tools after cancellation within a combined reasoning delta', async () => {
+    const controller = new AbortController()
+    const chunks: ProviderStreamChunk[] = []
+    const response = streamingResponse([
+      'data: {"choices":[{"delta":{"reasoning_content":"reason","content":"after-cancel","tool_calls":[{"index":0,"id":"c1","function":{"name":"lookup","arguments":"{}"}}]}}]}\ndata: [DONE]\n'
+    ])
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      (chunk) => {
+        chunks.push(chunk)
+        controller.abort()
+      },
+      vi.fn(async () => response) as unknown as typeof fetch,
+      controller.signal
+    )
+    expect(result).toEqual({ ok: false, error: 'aborted' })
+    expect(chunks).toEqual([{ message: { thinking: 'reason' }, done: false }])
+  })
+
+  it('cancels a pending SSE read without awaiting hung cleanup or starting an empty-stream fallback', async () => {
+    const controller = new AbortController()
+    let rejectCleanup!: (reason: Error) => void
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCleanup = reject
+        })
+    )
+    const response = new Response(new ReadableStream({ cancel }))
+    const fetchImpl = vi.fn(async () => response) as unknown as typeof fetch
+    const emit = vi.fn()
+    const running = streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { tools: request.tools },
+      {},
+      emit,
+      fetchImpl,
+      controller.signal
+    )
+    await vi.waitFor(() => expect(response.body?.locked).toBe(true))
+    controller.abort()
+    expect(await running).toEqual({ ok: false, error: 'aborted' })
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(response.body?.locked).toBe(false)
+    expect(fetchImpl).toHaveBeenCalledOnce()
+    expect(emit).not.toHaveBeenCalled()
+    rejectCleanup(new Error('late cleanup failure'))
+    await new Promise((resolve) => setImmediate(resolve))
+  })
+
+  it('does not dispatch an already cancelled request', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fetchImpl = vi.fn()
+    const result = await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      {},
+      {},
+      vi.fn(),
+      fetchImpl as unknown as typeof fetch,
+      controller.signal
+    )
+    expect(result).toEqual({ ok: false, error: 'aborted' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
   it('normalizes fragmented OpenAI SSE reasoning, think tags, tools, usage, and ids', async () => {
     const response = streamingResponse([
-      'data: {"id":"gen-1","choices":[{"delta":{"reasoning_content":"reason "}}]}\n',
+      'data: {"id":"gen-1","model":"reported-model","choices":[{"delta":{"reasoning_content":"reason "}}]}\n',
       'data: {"choices":[{"delta":{"content":"<thi"}}]}\n',
       'data: {"choices":[{"delta":{"content":"nk>plan</th"}}]}\n',
       'data: {"choices":[{"delta":{"content":"ink>Answer"}}]}\n',
@@ -86,6 +426,7 @@ describe('provider streaming adapters', () => {
       done_reason: 'tool_calls',
       prompt_eval_count: 21,
       cached_prompt_tokens: 13,
+      reported_model: 'reported-model',
       eval_count: 8
     })
   })

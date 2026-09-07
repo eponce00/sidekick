@@ -1,7 +1,26 @@
 import { createHash, randomUUID } from 'crypto'
+import { browserTextTargetOwnsFocus } from './browserTextFocus'
+import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { atomicNewFile } from '../utils/atomicNewFile'
+import { capturePublicationDirectory } from '../utils/publicationDirectory'
 import { promises as fs, realpathSync } from 'fs'
 import { fileURLToPath, pathToFileURL } from 'url'
-import { basename, extname, isAbsolute, join, relative, resolve } from 'path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 'path'
+import { enterBrowserText, type BrowserTextEntryDriver } from './browserTextEntry'
+import {
+  captureBrowserScreenshot,
+  MAX_MODEL_SCREENSHOT_BYTES,
+  type BrowserCaptureBox,
+  type BrowserLayoutMetrics
+} from './browserScreenshotCapture'
+import {
+  browserViewHost,
+  registerBrowserView,
+  parkBrowserView,
+  browserAgentInput,
+  browserDebuggerCommand,
+  browserNavigationState
+} from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
   KeyboardInputEvent,
@@ -148,6 +167,8 @@ export interface BrowserObservation {
   /** A site-owned anti-bot checkpoint that requires same-session human takeover. */
   humanVerification?: BrowserHumanVerification | null
   screenshot?: BrowserScreenshotArtifact
+  /** Capture failed transiently; no image was observed. The page remains usable. */
+  screenshotError?: string
   screenshotChanged: boolean | null
   unchangedScreenshotStreak: number
   console: BrowserConsoleEntry[]
@@ -242,7 +263,7 @@ export type BrowserFormFieldInput =
 export interface BrowserFillFormInput {
   sessionId: string
   tabId?: string
-  /** Ordered fields. Execution stops at the first failed or page-changing field. */
+  /** Ordered fields. Independent fields continue after a field error; page changes stop the batch. */
   fields: BrowserFormFieldInput[]
 }
 
@@ -544,12 +565,23 @@ interface TabState {
   disposers: Array<() => void>
 }
 
+interface OpeningReservation {
+  runId: string
+  tabParent?: SessionState
+  session?: SessionState
+  surface?: NativeBrowserSurface
+  creating: boolean
+  abandoned: boolean
+  cleanup?: Promise<void>
+}
+
 interface SessionState {
   id: string
   runId: string
   partition: string
   allowedFileRoots: string[]
   tabs: Map<string, TabState>
+  pendingTabs: Set<OpeningReservation>
   activeTabId: string
   humanTakeoverTabId?: string
   console: BrowserConsoleEntry[]
@@ -597,9 +629,6 @@ const DEFAULT_MAX_REPEATED_NO_CHANGE = 3
 const MAX_SEMANTIC_NODES = 800
 const MAX_SEMANTIC_CHARS = 96 * 1024
 const MAX_EVALUATION_BYTES = 64 * 1024
-const MAX_MODEL_SCREENSHOT_BYTES = 8 * 1024 * 1024
-const MAX_SCREENSHOT_DIMENSION = 16_384
-const MAX_SCREENSHOT_PIXELS = 40_000_000
 const MIN_HOLD_MS = 100
 const MAX_HOLD_MS = 10_000
 
@@ -706,6 +735,9 @@ function currentSignal(
 async function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise
   if (signal.aborted) {
+    // Callers may have already dispatched CDP before cancellation became visible.
+    // Observe its eventual rejection even when we cannot await its result.
+    void promise.catch(() => undefined)
     if (signal.reason?.name === 'TimeoutError') throw timeoutError('Browser operation timed out')
     throw abortError('Browser operation cancelled')
   }
@@ -911,7 +943,9 @@ async function readBoundedResponse(
 
 function isTransientViewportCaptureError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
-  return message.trim() === 'UnknownVizError'
+  return ['UnknownVizError', 'Current display surface not available for capture'].includes(
+    message.trim()
+  )
 }
 
 class ElectronNativeBrowserSurface implements NativeBrowserSurface {
@@ -933,7 +967,8 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   constructor(
     private readonly contents: WebContents,
     private readonly ownerWindow: ElectronBrowserWindow | null,
-    readonly attached: boolean
+    readonly attached: boolean,
+    private readonly view?: import('electron').WebContentsView
   ) {
     this.webContentsId = contents.id
     ownerWindow?.on('close', (event) => {
@@ -1016,7 +1051,66 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async fetch(url: string, init?: RequestInit): Promise<Response> {
-    return this.contents.session.fetch(url, init)
+    if (init?.redirect !== 'manual') return this.contents.session.fetch(url, init)
+    // Electron fetch rejects manual redirects instead of returning their headers.
+    // Expose one hop; the service validates each destination before another request.
+    const { net } = await import('electron')
+    return new Promise<Response>((resolve, reject) => {
+      const request = net.request({
+        url,
+        method: init.method || 'GET',
+        session: this.contents.session,
+        credentials: init.credentials || 'include',
+        redirect: 'manual',
+        headers: Object.fromEntries(new Headers(init.headers).entries())
+      })
+      const abort = (): void => {
+        reject(init.signal?.reason || new Error('Download cancelled'))
+        request.abort()
+      }
+      request.on('error', reject)
+      request.once('close', () => init.signal?.removeEventListener('abort', abort))
+      request.once('redirect', (status, _method, destination) => {
+        resolve(new Response(null, { status, headers: { location: destination } }))
+        request.abort()
+      })
+      request.once('response', (incoming) => {
+        const headers = new Headers()
+        for (const [name, values] of Object.entries(incoming.headers)) {
+          for (const value of Array.isArray(values) ? values : [values]) headers.append(name, value)
+        }
+        let ended = false
+        const body = [204, 205, 304].includes(incoming.statusCode)
+          ? null
+          : new ReadableStream<Uint8Array>({
+              start(controller) {
+                const fail = (error: Error): void => {
+                  if (ended) return
+                  ended = true
+                  controller.error(error)
+                }
+                incoming.on('data', (chunk) => {
+                  if (!ended) controller.enqueue(chunk)
+                })
+                incoming.once('end', () => {
+                  if (ended) return
+                  ended = true
+                  controller.close()
+                })
+                incoming.once('error', fail)
+                incoming.once('aborted', () => fail(new Error('Download interrupted')))
+              },
+              cancel() {
+                ended = true
+                request.abort()
+              }
+            })
+        resolve(new Response(body, { status: incoming.statusCode, headers }))
+      })
+      init.signal?.addEventListener('abort', abort, { once: true })
+      if (init.signal?.aborted) abort()
+      else request.end()
+    })
   }
 
   stop(): void {
@@ -1026,20 +1120,31 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   async close(): Promise<void> {
     if (this.contents.isDestroyed()) return
     this.closing = true
+    parkBrowserView(this.webContentsId)
     this.humanTakeoverVisible = false
     this.detachDebugger()
     this.clearListeners()
     if (!this.attached) {
+      if (this.view) this.contents.close({ waitForBeforeUnload: false })
       if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
       else this.contents.close({ waitForBeforeUnload: false })
     }
   }
 
   showForHumanTakeover(): void {
+    const host = browserViewHost(this.webContentsId)
+    if (host && !host.isDestroyed()) {
+      this.humanTakeoverVisible = true
+      host.focus()
+      this.contents.focus()
+      return
+    }
     if (!this.ownerWindow || this.ownerWindow.isDestroyed() || this.contents.isDestroyed()) {
       throw new Error('This browser surface cannot be shown for human takeover')
     }
     this.humanTakeoverVisible = true
+    this.ownerWindow.setOpacity(1)
+    this.ownerWindow.setFocusable(true)
     this.ownerWindow.setSkipTaskbar(false)
     this.ownerWindow.center()
     this.updateTakeoverTitle()
@@ -1050,10 +1155,12 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   hideHumanTakeover(): void {
     this.humanTakeoverVisible = false
+    if (browserViewHost(this.webContentsId)) return
     if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
       this.ownerWindow.setSkipTaskbar(true)
-      this.ownerWindow.setPosition(-32_000, -32_000, false)
-      if (!this.ownerWindow.isVisible()) this.ownerWindow.showInactive()
+      this.ownerWindow.setOpacity(0)
+      this.ownerWindow.setFocusable(false)
+      this.ownerWindow.showInactive()
     }
   }
 
@@ -1062,7 +1169,7 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.humanTakeoverVisible &&
       this.ownerWindow &&
       !this.ownerWindow.isDestroyed() &&
-      this.ownerWindow.isVisible()
+      (browserViewHost(this.webContentsId)?.isVisible() || this.ownerWindow.isVisible())
     )
   }
 
@@ -1083,14 +1190,16 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async insertText(text: string): Promise<void> {
-    await this.contents.insertText(text)
+    await browserAgentInput(this.webContentsId, () => this.contents.insertText(text))
   }
 
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
-    this.contents.sendInputEvent(event)
+    void browserAgentInput(this.webContentsId, () => this.contents.sendInputEvent(event))
   }
 
   resizeViewport(viewport: BrowserViewport): void {
+    if (this.view && !browserViewHost(this.webContentsId))
+      this.view.setBounds({ x: 0, y: 0, width: viewport.width, height: viewport.height })
     if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
       this.ownerWindow.setContentSize(viewport.width, viewport.height, false)
     }
@@ -1102,10 +1211,36 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
-    let image =
-      this.ownerWindow && !this.ownerWindow.isDestroyed()
-        ? await this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
-        : await this.contents.capturePage()
+    if (
+      this.view &&
+      !browserViewHost(this.webContentsId) &&
+      this.ownerWindow &&
+      !this.ownerWindow.isDestroyed()
+    ) {
+      // Warming the parking window is best-effort: its compositor surface may
+      // disappear during tab swaps even when the actual page can be captured.
+      await this.ownerWindow
+        .capturePage(undefined, { stayHidden: true, stayAwake: true })
+        .catch((error) => {
+          if (!isTransientViewportCaptureError(error)) throw error
+        })
+    }
+    let image = await (
+      !this.view && this.ownerWindow && !this.ownerWindow.isDestroyed()
+        ? this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
+        : this.contents.capturePage(undefined, { stayHidden: true, stayAwake: true })
+    ).catch(async (error) => {
+      if (!isTransientViewportCaptureError(error)) throw error
+      // The native window surface can be unavailable for parked popups. Ask
+      // Chromium for the current viewport directly; never reuse an old image.
+      const response = await this.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false
+      })
+      const { nativeImage } = await import('electron')
+      return nativeImage.createFromBuffer(Buffer.from(response.data, 'base64'))
+    })
     let size = image.getSize()
     // Electron's capturePage() returns native device pixels on high-DPI displays,
     // while Chromium mouse coordinates and our BrowserTarget contract use CSS
@@ -1169,6 +1304,7 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
     if (
+      !this.view &&
       method === 'Page.captureScreenshot' &&
       this.ownerWindow &&
       !this.ownerWindow.isDestroyed() &&
@@ -1178,7 +1314,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.ownerWindow.setPosition(-32_000, -32_000, false)
       this.ownerWindow.showInactive()
     }
-    return (await this.contents.debugger.sendCommand(method, params)) as T
+    return (await browserDebuggerCommand(this.webContentsId, method, () =>
+      this.contents.debugger.sendCommand(method, params)
+    )) as T
   }
 
   setNavigationGuard(guard: (url: string) => boolean): void {
@@ -1242,6 +1380,8 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       show: false,
       x: -32_000,
       y: -32_000,
+      opacity: process.platform === 'darwin' ? 0.01 : 1,
+      focusable: false,
       width: options.viewport.width,
       height: options.viewport.height,
       useContentSize: true,
@@ -1250,6 +1390,9 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       skipTaskbar: true,
       backgroundColor: '#090b0e',
       paintWhenInitiallyHidden: true,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+    })
+    const view = new electron.WebContentsView({
       webPreferences: {
         partition: options.partition,
         sandbox: true,
@@ -1265,8 +1408,11 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         devTools: false
       }
     })
-    window.webContents.setBackgroundThrottling(false)
-    const browserSession = window.webContents.session
+    window.contentView.addChildView(view)
+    view.setBounds({ x: 0, y: 0, width: options.viewport.width, height: options.viewport.height })
+    registerBrowserView(view, window)
+    view.webContents.setBackgroundThrottling(false)
+    const browserSession = view.webContents.session
     const { installBrowserPdfProtocol } = await import('../bootstrap/artifactProtocol')
     await installBrowserPdfProtocol(browserSession.protocol)
     if (!this.securedSessions.has(browserSession)) {
@@ -1281,7 +1427,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
     // putting the browser in the taskbar or on a usable display. Takeover
     // moves this exact window on screen; completion parks it here again.
     window.showInactive()
-    return new ElectronNativeBrowserSurface(window.webContents, window, false)
+    return new ElectronNativeBrowserSurface(view.webContents, window, false, view)
   }
 
   async attachSurface(webContentsId: number): Promise<NativeBrowserSurface> {
@@ -1294,7 +1440,23 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
 }
 
 export class NativeBrowserSessionService {
+  workspaceSnapshot(sessionId: string) {
+    const session = this.getSession(sessionId)
+    return {
+      sessionId,
+      activeTabId: session.activeTabId,
+      tabs: this.tabSummaries(session),
+      ...browserNavigationState(this.getTab(session).surface.webContentsId)
+    }
+  }
+
+  refreshAfterUserInput(sessionId: string): void {
+    const session = this.getSession(sessionId)
+    for (const tab of session.tabs.values()) this.invalidateSemanticRefs(tab)
+  }
   private readonly sessions = new Map<string, SessionState>()
+  private readonly retiredSessions = new Set<SessionState>()
+  private readonly openingReservations = new Set<OpeningReservation>()
   private readonly runtime: NativeBrowserRuntime
   private readonly artifactRoot: string
   private readonly defaultAllowedFileRoots: string[]
@@ -1382,10 +1544,14 @@ export class NativeBrowserSessionService {
   ): Promise<BrowserObservation> {
     const signal = currentSignal(operation, this.now)
     if (!input.runId.trim()) throw new Error('A browser runId is required')
-    if (this.sessions.size >= this.maxTotalSessions) {
+    const ownedSessions = new Set([...this.sessions.values(), ...this.retiredSessions])
+    const pending = [...this.openingReservations].filter(
+      (reservation) => !reservation.session || !ownedSessions.has(reservation.session)
+    )
+    if (ownedSessions.size + pending.length >= this.maxTotalSessions) {
       throw new Error(`The browser session limit (${this.maxTotalSessions}) is reached`)
     }
-    const runCount = [...this.sessions.values()].filter(
+    const runCount = [...ownedSessions, ...pending].filter(
       (session) => session.runId === input.runId
     ).length
     if (runCount >= this.maxSessionsPerRun) {
@@ -1394,6 +1560,88 @@ export class NativeBrowserSessionService {
       )
     }
 
+    const reservation: OpeningReservation = {
+      runId: input.runId,
+      creating: false,
+      abandoned: false
+    }
+    this.openingReservations.add(reservation)
+    try {
+      signal?.throwIfAborted()
+      return await this.openReserved(input, signal, reservation)
+    } finally {
+      reservation.abandoned = true
+      if (this.openingReservations.has(reservation) && !reservation.creating) {
+        await abortable(this.cleanupOpening(reservation), AbortSignal.timeout(2_000)).catch(
+          () => undefined
+        )
+      }
+    }
+  }
+
+  private async createOpeningSurface(
+    reservation: OpeningReservation,
+    create: () => Promise<NativeBrowserSurface>,
+    signal?: AbortSignal
+  ): Promise<NativeBrowserSurface> {
+    signal?.throwIfAborted()
+    reservation.creating = true
+    const creation = Promise.resolve()
+      .then(() => {
+        signal?.throwIfAborted()
+        return create()
+      })
+      .then(
+        (surface) => {
+          reservation.creating = false
+          reservation.surface = surface
+          if (reservation.abandoned) void this.cleanupOpening(reservation).catch(() => undefined)
+          return surface
+        },
+        (error) => {
+          reservation.creating = false
+          if (reservation.abandoned) this.releaseReservation(reservation)
+          throw error
+        }
+      )
+    return abortable(creation, signal)
+  }
+
+  private cleanupOpening(reservation: OpeningReservation): Promise<void> {
+    if (reservation.cleanup) return reservation.cleanup
+    const cleanup = Promise.resolve().then(async () => {
+      if (reservation.creating) throw new Error('Browser surface creation is still pending')
+      if (reservation.surface) await reservation.surface.close()
+      reservation.surface = undefined
+      this.releaseReservation(reservation)
+    })
+    reservation.cleanup = cleanup
+    void cleanup.then(
+      () => {
+        reservation.cleanup = undefined
+      },
+      () => {
+        reservation.cleanup = undefined
+      }
+    )
+    return cleanup
+  }
+
+  private releaseReservation(reservation: OpeningReservation): void {
+    this.openingReservations.delete(reservation)
+    if (reservation.tabParent) {
+      reservation.tabParent.pendingTabs.delete(reservation)
+      if (this.sessions.get(reservation.tabParent.id) !== reservation.tabParent) {
+        this.retireSession(reservation.tabParent)
+      }
+    }
+  }
+
+  private async openReserved(
+    input: BrowserOpenInput,
+    signal: AbortSignal | undefined,
+    reservation: OpeningReservation
+  ): Promise<BrowserObservation> {
     const viewport = this.normalizeViewport(input.viewport ?? this.defaultViewport)
     const allowedFileRoots = await this.resolveFileRoots(input.allowedFileRoots ?? [])
     const initialUrl = input.url
@@ -1402,18 +1650,23 @@ export class NativeBrowserSessionService {
     const id = randomUUID()
     const partition = `sidekick-browser-${safeSegment(input.runId)}-${id}`
     let surface: NativeBrowserSurface | undefined
+    let openingSession: SessionState | undefined
     try {
       if (input.attachWebContentsId !== undefined) {
         const allowlisted = this.options.allowedAttachWebContentsIds?.has(input.attachWebContentsId)
         if (!allowlisted && !this.options.canAttachWebContents) {
           throw new Error('Attaching arbitrary WebContents is disabled')
         }
-        surface = await abortable(this.runtime.attachSurface(input.attachWebContentsId), signal)
+        const webContentsId = input.attachWebContentsId
+        surface = await this.createOpeningSurface(
+          reservation,
+          () => this.runtime.attachSurface(webContentsId),
+          signal
+        )
         if (
           !allowlisted &&
           !this.options.canAttachWebContents?.(input.attachWebContentsId, surface.getURL())
         ) {
-          await surface.close()
           throw new Error('This WebContents is not approved for browser attachment')
         }
         const attachedUrl = surface.getURL() || 'about:blank'
@@ -1422,7 +1675,11 @@ export class NativeBrowserSessionService {
         }
         await this.normalizeNavigationUrl(attachedUrl, allowedFileRoots)
       } else {
-        surface = await abortable(this.runtime.createSurface({ partition, viewport }), signal)
+        surface = await this.createOpeningSurface(
+          reservation,
+          () => this.runtime.createSurface({ partition, viewport }),
+          signal
+        )
         // A committed document is required before Accessibility/DOM domains are enabled.
         await this.commitBlankDocument(surface, signal)
       }
@@ -1433,6 +1690,7 @@ export class NativeBrowserSessionService {
         partition,
         allowedFileRoots,
         tabs: new Map(),
+        pendingTabs: new Set(),
         activeTabId: '',
         console: [],
         failures: [],
@@ -1441,8 +1699,12 @@ export class NativeBrowserSessionService {
         tail: Promise.resolve(),
         createdAt: this.now()
       }
+      openingSession = session
+      reservation.session = session
       this.sessions.set(id, session)
       const tab = await this.registerSurface(session, surface, signal)
+      reservation.surface = undefined
+      this.openingReservations.delete(reservation)
       session.activeTabId = tab.id
       if (initialUrl) {
         await this.navigateUnlocked(session, tab, initialUrl, signal)
@@ -1457,9 +1719,13 @@ export class NativeBrowserSessionService {
         signal
       )
     } catch (error) {
-      this.sessions.delete(id)
-      if (surface) {
-        await abortable(surface.close(), AbortSignal.timeout(2_000)).catch(() => undefined)
+      if (openingSession) {
+        this.retireSession(openingSession)
+        if (openingSession.tabs.size) {
+          await abortable(this.closeSessionTabs(openingSession), AbortSignal.timeout(2_000)).catch(
+            () => undefined
+          )
+        }
       }
       throw error
     }
@@ -1568,6 +1834,7 @@ export class NativeBrowserSessionService {
     surface: NativeBrowserSurface,
     signal?: AbortSignal
   ): Promise<TabState> {
+    this.assertCurrentSession(session)
     if (session.tabs.size >= this.maxTabsPerSession) {
       await surface.close()
       throw new Error(`The browser tab limit (${this.maxTabsPerSession}) is reached`)
@@ -1579,6 +1846,7 @@ export class NativeBrowserSessionService {
     )
     surface.setRequestGuard((url) => this.navigationUrlAllowedSync(url, session.allowedFileRoots))
     await abortable(surface.attachDebugger(), signal)
+    this.assertCurrentSession(session)
     const tab: TabState = {
       id: randomUUID(),
       surface,
@@ -1719,8 +1987,7 @@ export class NativeBrowserSessionService {
     if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
     if (!session.tabs.size) {
-      revokeBrowserPdfSessionsByOwner(session.id)
-      this.sessions.delete(session.id)
+      this.retireSession(session)
     }
   }
 
@@ -1729,20 +1996,37 @@ export class NativeBrowserSessionService {
     viewport: BrowserViewport,
     signal?: AbortSignal
   ): Promise<TabState> {
-    let surface: NativeBrowserSurface | undefined
+    this.assertCurrentSession(session)
+    if (session.tabs.size + session.pendingTabs.size >= this.maxTabsPerSession) {
+      throw new Error(`The browser tab limit (${this.maxTabsPerSession}) is reached`)
+    }
+    const reservation: OpeningReservation = {
+      runId: session.runId,
+      tabParent: session,
+      creating: false,
+      abandoned: false
+    }
+    session.pendingTabs.add(reservation)
     try {
-      surface = await abortable(
-        this.runtime.createSurface({ partition: session.partition, viewport }),
+      const surface = await this.createOpeningSurface(
+        reservation,
+        () => this.runtime.createSurface({ partition: session.partition, viewport }),
         signal
       )
+      this.assertCurrentSession(session)
       // CDP Accessibility/DOM domains can stall until Chromium commits its first document.
       await this.commitBlankDocument(surface, signal)
-      return await this.registerSurface(session, surface, signal)
-    } catch (error) {
-      if (surface) {
-        await abortable(surface.close(), AbortSignal.timeout(2_000)).catch(() => undefined)
+      const tab = await this.registerSurface(session, surface, signal)
+      reservation.surface = undefined
+      this.releaseReservation(reservation)
+      return tab
+    } finally {
+      reservation.abandoned = true
+      if (session.pendingTabs.has(reservation) && !reservation.creating) {
+        await abortable(this.cleanupOpening(reservation), AbortSignal.timeout(2_000)).catch(
+          () => undefined
+        )
       }
-      throw error
     }
   }
 
@@ -1851,10 +2135,26 @@ export class NativeBrowserSessionService {
     session.tail = previous.then(() => turn)
     try {
       await abortable(previous, signal)
+      this.assertCurrentSession(session)
       return await body(signal)
     } finally {
       release()
     }
+  }
+
+  private assertCurrentSession(session: SessionState): void {
+    if (this.sessions.get(session.id) !== session) {
+      throw new Error('Browser session not found or already closed')
+    }
+  }
+
+  private retireSession(session: SessionState): void {
+    if (this.sessions.get(session.id) === session) {
+      revokeBrowserPdfSessionsByOwner(session.id)
+      this.sessions.delete(session.id)
+      if (session.tabs.size || session.pendingTabs.size) this.retiredSessions.add(session)
+    }
+    if (!session.tabs.size && !session.pendingTabs.size) this.retiredSessions.delete(session)
   }
 
   private tabSummary(session: SessionState, tab: TabState): BrowserTabSummary {
@@ -1974,6 +2274,9 @@ export class NativeBrowserSessionService {
     let newPdfSourcePath: string | undefined
     if (new URL(url).protocol === 'file:' && extname(fileURLToPath(url)).toLowerCase() === '.pdf') {
       const pdfSession = createBrowserPdfSession(fileURLToPath(url), session.id, {
+        publicationRoot: session.allowedFileRoots.find((root) =>
+          isPathWithin(root, fileURLToPath(url))
+        ),
         logicalUrl: url
       })
       newPdfToken = pdfSession.token
@@ -2090,6 +2393,57 @@ export class NativeBrowserSessionService {
     }
   }
 
+  async download(
+    input: { sessionId: string; url: string; workspaceRoot: string; destination: string },
+    operation: BrowserOperationOptions = {}
+  ): Promise<{ path: string; bytes: number }> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      signal?.throwIfAborted()
+      const publication = await capturePublicationDirectory(
+        input.workspaceRoot,
+        dirname(resolve(input.workspaceRoot, input.destination))
+      )
+      const destination = await resolveSecureWorkspacePath(input.workspaceRoot, input.destination, {
+        rejectSymlinks: true
+      })
+      const tab = this.getTab(session)
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      let url = input.url
+      let response: Response | undefined
+      for (let redirect = 0; redirect <= 5; redirect++) {
+        url = await this.normalizeNavigationUrl(url, [])
+        const parsed = new URL(url)
+        if (
+          parsed.protocol !== 'https:' &&
+          !(parsed.protocol === 'http:' && loopbackHost(parsed.hostname))
+        )
+          throw new Error('Downloads require HTTPS or a loopback fixture URL')
+        response = await abortable(
+          tab.surface.fetch(url, { redirect: 'manual', credentials: 'include', signal }),
+          signal
+        )
+        if (![301, 302, 303, 307, 308].includes(response.status)) break
+        const location = response.headers.get('location')
+        await response.body?.cancel().catch(() => undefined)
+        if (!location || redirect === 5)
+          throw new Error('Download redirect limit or invalid destination')
+        url = new URL(location, url).href
+      }
+      if (!response?.ok) throw new Error(`Download failed: HTTP ${response?.status ?? 'unknown'}`)
+      const bytes = await readBoundedResponse(response, 25 * 1024 * 1024, signal)
+      if (signal?.aborted) throw signal.reason
+      await publication.prepare(signal)
+      await atomicNewFile(
+        destination,
+        (handle) => handle.writeFile(bytes, { signal }),
+        signal,
+        () => publication.assertUnchanged()
+      )
+      return { path: destination, bytes: bytes.length }
+    })
+  }
+
   private async cleanupTemporaryPdfSources(tab: TabState): Promise<void> {
     const paths = [...tab.temporaryPdfSources]
     tab.temporaryPdfSources.clear()
@@ -2195,10 +2549,18 @@ export class NativeBrowserSessionService {
       semanticNodeCount = semantic.count
     }
     const screenshotKind = options.screenshot ?? 'viewport'
-    const screenshot =
-      screenshotKind === 'none'
-        ? undefined
-        : await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
+    let screenshot: BrowserScreenshotArtifact | undefined
+    let screenshotError: string | undefined
+    if (screenshotKind !== 'none') {
+      try {
+        screenshot = await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
+      } catch (error) {
+        signal?.throwIfAborted()
+        if (!isTransientViewportCaptureError(error) || tab.surface.isDestroyed()) throw error
+        screenshotError =
+          'Screenshot temporarily unavailable; no image was captured. The tab remains open. Observe again before making visual claims.'
+      }
+    }
     const consoleEntries = session.console.filter(
       (entry) => entry.tabId === tab.id && entry.sequence > tab.consoleCursor
     )
@@ -2220,6 +2582,7 @@ export class NativeBrowserSessionService {
       semanticNodeCount,
       humanVerification,
       screenshot,
+      ...(screenshotError ? { screenshotError } : {}),
       screenshotChanged: screenshot?.changed ?? null,
       unchangedScreenshotStreak:
         screenshot?.unchangedStreak ?? tab.unchangedScreenshotStreaks.viewport ?? 0,
@@ -2567,67 +2930,35 @@ export class NativeBrowserSessionService {
       throw lastError
     }
 
-    let clip: { x: number; y: number; width: number; height: number; scale: number }
+    let elementBox: BrowserCaptureBox | undefined
     if (kind === 'element') {
       if (!target) throw new Error('An element screenshot requires a semantic target')
       const resolved = await this.resolveTarget(tab, target, false, signal)
       if (!resolved.backendNodeId) {
         throw new Error('Element screenshots require a semantic ref or role/name target')
       }
-      const box = await this.elementBox(tab, resolved.backendNodeId, signal)
-      clip = { ...box, scale: this.screenshotScale(box.width, box.height) }
-    } else {
-      const metrics = await abortable(
-        tab.surface.sendDebuggerCommand<{
-          contentSize?: { x?: number; y?: number; width: number; height: number }
-          cssContentSize?: { x?: number; y?: number; width: number; height: number }
-        }>('Page.getLayoutMetrics'),
-        signal
-      )
-      const size = metrics.cssContentSize ?? metrics.contentSize
-      if (!size) throw new Error('Unable to determine full-page screenshot dimensions')
-      const width = Math.max(1, Math.min(MAX_SCREENSHOT_DIMENSION, Math.ceil(size.width)))
-      const height = Math.max(1, Math.min(MAX_SCREENSHOT_DIMENSION, Math.ceil(size.height)))
-      clip = {
-        x: size.x ?? 0,
-        y: size.y ?? 0,
-        width,
-        height,
-        scale: this.screenshotScale(width, height)
-      }
+      elementBox = await this.elementBox(tab, resolved.backendNodeId, signal)
     }
-    let png = Buffer.alloc(0)
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const response = await abortable(
-        tab.surface.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
-          format: 'png',
-          fromSurface: true,
-          captureBeyondViewport: true,
-          clip
-        }),
-        signal
-      )
-      png = Buffer.from(response.data, 'base64')
-      if (png.byteLength <= MAX_MODEL_SCREENSHOT_BYTES) break
-      clip.scale = Math.max(
-        0.1,
-        clip.scale * Math.min(0.8, Math.sqrt(MAX_MODEL_SCREENSHOT_BYTES / png.byteLength) * 0.9)
-      )
-    }
-    if (!png.length) throw new Error('Chromium returned an empty screenshot')
-    if (png.byteLength > MAX_MODEL_SCREENSHOT_BYTES) {
-      throw new Error('Browser screenshot exceeds the 8 MiB vision input limit after downscaling')
-    }
-    return {
-      png,
-      width: Math.max(1, Math.round(clip.width * clip.scale)),
-      height: Math.max(1, Math.round(clip.height * clip.scale))
-    }
-  }
-
-  private screenshotScale(width: number, height: number): number {
-    if (width * height <= MAX_SCREENSHOT_PIXELS) return 1
-    return Math.max(0.1, Math.sqrt(MAX_SCREENSHOT_PIXELS / (width * height)))
+    return captureBrowserScreenshot(
+      {
+        layoutMetrics: () =>
+          abortable(
+            tab.surface.sendDebuggerCommand<BrowserLayoutMetrics>('Page.getLayoutMetrics'),
+            signal
+          ),
+        capture: (clip) =>
+          abortable(
+            tab.surface.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
+              format: 'png',
+              fromSurface: true,
+              captureBeyondViewport: true,
+              clip
+            }),
+            signal
+          )
+      },
+      elementBox
+    )
   }
 
   private async enforceArtifactBounds(protectedPath: string, sessionRoot: string): Promise<void> {
@@ -3125,55 +3456,110 @@ export class NativeBrowserSessionService {
       const sourceUrl = tab.surface.getURL()
       const sourceRefEpoch = tab.refEpoch
       const startedAt = this.now()
-      await this.clickFormControl(tab, target, signal)
-      await this.assertTextEntryTarget(tab, target.backendNodeId, sourceUrl, sourceRefEpoch, signal)
-      this.setPointer(tab, target, 'type', startedAt)
-      if (input.clear !== false) {
-        const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
-        tab.surface.sendInputEvent({
-          type: 'keyDown',
-          keyCode: 'A',
-          modifiers: [selectAllModifier]
-        })
-        tab.surface.sendInputEvent({
-          type: 'keyUp',
-          keyCode: 'A',
-          modifiers: [selectAllModifier]
-        })
-        // Page key handlers can navigate or move focus. Cross a renderer
-        // boundary and revalidate before the destructive clear key.
-        await abortable(tab.surface.executeJavaScript('0'), signal)
-        await this.assertTextEntryTarget(
-          tab,
-          target.backendNodeId,
-          sourceUrl,
-          sourceRefEpoch,
-          signal
-        )
-        tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
-        tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
-        // sendInputEvent is fire-and-forget. Flush the clear keystrokes before
-        // insertText, then prove the original field still owns focus so a page
-        // handler cannot redirect sensitive text into another page or control.
-        await abortable(tab.surface.executeJavaScript('0'), signal)
-        await this.assertTextEntryTarget(
-          tab,
-          target.backendNodeId,
-          sourceUrl,
-          sourceRefEpoch,
-          signal
-        )
-      }
-      await abortable(tab.surface.insertText(input.text), signal)
-      if (input.submit) this.sendKey(tab, 'Enter')
-      // Electron input dispatch is asynchronous relative to later CDP capture.
-      // A renderer round trip prevents the final character/key event from being
-      // overtaken by post-action observation on busy offscreen renderers.
-      await abortable(tab.surface.executeJavaScript('0'), signal)
+      await enterBrowserText(
+        {
+          text: input.text,
+          clear: input.clear !== false,
+          submit: input.submit,
+          insertEmpty: true,
+          platform: process.platform
+        },
+        {
+          ...this.textEntryDriver(tab, target, sourceUrl, sourceRefEpoch, signal, startedAt),
+          verify:
+            input.clear !== false
+              ? async () => {
+                  if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
+                    throw new Error(
+                      'Browser page changed after text entry; inspect the current page before retrying'
+                    )
+                  }
+                  const actual = await this.inspectFormControl(tab, target.backendNodeId!, signal)
+                  if (actual.kind !== 'textbox' || actual.value !== input.text) {
+                    throw new Error(
+                      'Browser text entry could not be verified; the field may have rejected or transformed the input. Inspect the page before retrying.'
+                    )
+                  }
+                }
+              : undefined
+        }
+      )
       return this.finishAction(
         session,
         tab,
         'type',
+        target.mode,
+        target.fallbackUsed,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  async upload(
+    input: { sessionId: string; target: BrowserTarget; workspaceRoot: string; paths: string[] },
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      if (!input.workspaceRoot || !input.paths.length || input.paths.length > 8)
+        throw new Error('Upload requires a project and 1–8 project-relative files')
+      const files: string[] = []
+      let bytes = 0
+      for (const path of input.paths) {
+        const file = await resolveSecureWorkspacePath(input.workspaceRoot, path, {
+          rejectSymlinks: true
+        })
+        const info = await fs.stat(file)
+        if (!info.isFile()) throw new Error('Uploads must be regular files')
+        bytes += info.size
+        if (bytes > 25 * 1024 * 1024) throw new Error('Upload exceeds the 25 MiB combined limit')
+        files.push(file)
+      }
+      const tab = this.getTab(session)
+      const fingerprint = canonicalFingerprint({ action: 'upload', input })
+      this.guardRepeatedAction(tab, fingerprint)
+      await this.ensureBaselineHash(session, tab, signal)
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      const target = await this.resolveTarget(tab, input.target, false, signal)
+      if (!target.backendNodeId)
+        throw new Error('Upload requires a file-input reference or selector')
+      const valid = await this.callOnNode<boolean>(
+        tab,
+        target.backendNodeId,
+        `function() { return this.isConnected && this.tagName === 'INPUT' && this.type === 'file' && !this.disabled && (${files.length} === 1 || this.multiple); }`,
+        [],
+        signal
+      )
+      if (!valid)
+        throw new Error('Target must be an enabled file input supporting the selected file count')
+      const startedAt = this.now()
+      await abortable(
+        tab.surface.sendDebuggerCommand('DOM.setFileInputFiles', {
+          backendNodeId: target.backendNodeId,
+          files
+        }),
+        signal
+      )
+      const selected = await this.callOnNode<string[]>(
+        tab,
+        target.backendNodeId,
+        'function() { return Array.from(this.files || []).map(file => file.name); }',
+        [],
+        signal
+      )
+      if (
+        selected.length !== files.length ||
+        selected.some((name, index) => name !== basename(files[index]))
+      )
+        throw new Error(
+          'Upload selection could not be verified; inspect page state before retrying'
+        )
+      return this.finishAction(
+        session,
+        tab,
+        'upload',
         target.mode,
         target.fallbackUsed,
         fingerprint,
@@ -3231,20 +3617,135 @@ export class NativeBrowserSessionService {
     sourceRefEpoch: number,
     signal?: AbortSignal
   ): Promise<void> {
-    await this.clickFormControl(tab, target, signal)
-    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
-    this.setPointer(tab, target, 'type')
-    const selectAllModifier = process.platform === 'darwin' ? 'meta' : 'control'
-    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'A', modifiers: [selectAllModifier] })
-    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'A', modifiers: [selectAllModifier] })
-    await abortable(tab.surface.executeJavaScript('0'), signal)
-    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
-    tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Backspace' })
-    tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Backspace' })
-    await abortable(tab.surface.executeJavaScript('0'), signal)
-    await this.assertTextEntryTarget(tab, target.backendNodeId!, sourceUrl, sourceRefEpoch, signal)
-    if (value) await abortable(tab.surface.insertText(value), signal)
-    await abortable(tab.surface.executeJavaScript('0'), signal)
+    await enterBrowserText(
+      { text: value, clear: true, platform: process.platform },
+      this.textEntryDriver(tab, target, sourceUrl, sourceRefEpoch, signal)
+    )
+  }
+
+  private textEntryDriver(
+    tab: TabState,
+    target: ElementPoint,
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal,
+    startedAt?: number
+  ): BrowserTextEntryDriver {
+    let preInsertEmpty: boolean | null = null
+    let initialFocusCheck = true
+    return {
+      click: () => this.clickFormControl(tab, target, signal),
+      assertTarget: async () => {
+        // Native mouse dispatch can acknowledge before Chromium applies focus.
+        // Only settle the initial click: never retry after clearing/inserting,
+        // refocus a different node, or tolerate navigation/cancellation.
+        const attempts = initialFocusCheck ? 5 : 1
+        initialFocusCheck = false
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          try {
+            preInsertEmpty = await this.assertTextEntryTarget(
+              tab,
+              target.backendNodeId!,
+              sourceUrl,
+              sourceRefEpoch,
+              signal
+            )
+            break
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !error.message.includes('Target text field did not retain focus') ||
+              attempt === attempts - 1
+            )
+              throw error
+            await delay(25, signal)
+          }
+        }
+      },
+      markPointer: () => this.setPointer(tab, target, 'type', startedAt),
+      sendKey: (event) => {
+        signal?.throwIfAborted()
+        tab.surface.sendInputEvent(event)
+      },
+      insert: (text) => {
+        // Check before constructing the promise: insertText dispatches immediately.
+        signal?.throwIfAborted()
+        return abortable(tab.surface.insertText(text), signal)
+      },
+      flush: async () => {
+        await abortable(tab.surface.executeJavaScript('0'), signal)
+      },
+      failed: async (trace) => {
+        type DiagnosticState = {
+          connected: boolean
+          targetFocused: boolean
+          documentFocused: boolean
+          empty: boolean
+        }
+        let state: DiagnosticState | null = null
+        // Failure-only, read-only and bounded. No listeners or page state survive
+        // this probe, and no values, target identifiers or page URLs are recorded.
+        if (
+          !signal?.aborted &&
+          tab.surface.getURL() === sourceUrl &&
+          tab.refEpoch === sourceRefEpoch
+        ) {
+          const timeout = AbortSignal.timeout(250)
+          const diagnosticSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
+          try {
+            // Bound the entire probe, including callOnNode's releaseObject
+            // finally block. Cleanup may finish later but must not hold the lock.
+            const observed = await abortable(
+              this.callOnNode<DiagnosticState>(
+                tab,
+                target.backendNodeId!,
+                `function() {
+              return {
+                connected: this.isConnected === true,
+                targetFocused: (${browserTextTargetOwnsFocus.toString()})(this),
+                documentFocused: document.hasFocus(),
+                empty: String(this.isContentEditable === true ? this.textContent ?? '' : this.value ?? '') === ''
+              };
+            }`,
+                [],
+                diagnosticSignal
+              ),
+              diagnosticSignal
+            )
+            if (
+              observed &&
+              ['connected', 'targetFocused', 'documentFocused', 'empty'].every(
+                (key) => typeof observed[key as keyof DiagnosticState] === 'boolean'
+              )
+            )
+              state = observed
+          } catch {
+            /* Keep unknown distinct from a negative observation. */
+          }
+        }
+        console.warn('[NativeBrowser] Text entry failure diagnostics', {
+          ...trace,
+          sameUrl: tab.surface.getURL() === sourceUrl,
+          sameEpoch: tab.refEpoch === sourceRefEpoch,
+          cancelled: signal?.aborted === true,
+          connected: state?.connected ?? null,
+          targetFocused: state?.targetFocused ?? null,
+          documentFocused: state?.documentFocused ?? null,
+          preInsertEmpty,
+          afterEmpty: state?.empty ?? null,
+          // Nonempty-to-nonempty is deliberately unknown: do not retain content
+          // or a content-derived hash just to diagnose a failed gesture.
+          valueChanged:
+            preInsertEmpty === null || !state
+              ? null
+              : preInsertEmpty !== state.empty
+                ? true
+                : state.empty
+                  ? false
+                  : null
+        })
+      }
+    }
   }
 
   private async assertTextEntryTarget(
@@ -3253,14 +3754,16 @@ export class NativeBrowserSessionService {
     sourceUrl: string,
     sourceRefEpoch: number,
     signal?: AbortSignal
-  ): Promise<void> {
+  ): Promise<boolean | null> {
     const assertDocumentUnchanged = (): void => {
+      // callOnNode also awaits object cleanup after reading the target state.
+      signal?.throwIfAborted()
       if (tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch) {
         throw new Error('Browser page changed before text entry; no text was inserted')
       }
     }
     assertDocumentUnchanged()
-    await this.callOnNode<boolean>(
+    const empty = await this.callOnNode<boolean | null>(
       tab,
       backendNodeId,
       `function() {
@@ -3269,15 +3772,17 @@ export class NativeBrowserSessionService {
         const inputType = tag === 'input' ? String(this.type || 'text').toLowerCase() : '';
         const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color', 'checkbox', 'radio']);
         const isTextbox = tag === 'textarea' || (tag === 'input' && !unsupportedInputs.has(inputType)) || this.isContentEditable === true;
-        const active = document.activeElement;
-        const ownsFocus = active === this || (this.isContentEditable === true && active && this.contains(active));
+        const ownsFocus = (${browserTextTargetOwnsFocus.toString()})(this);
         if (!isTextbox || !ownsFocus) throw new Error('Target text field did not retain focus');
-        return true;
+        try {
+          return String(this.isContentEditable === true ? this.textContent ?? '' : this.value ?? '') === '';
+        } catch { return null; }
       }`,
       [],
       signal
     )
     assertDocumentUnchanged()
+    return typeof empty === 'boolean' ? empty : null
   }
 
   private async updateFormSelect(
@@ -4263,13 +4768,71 @@ export class NativeBrowserSessionService {
     for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
     tab.pdfSessionTokens.clear()
     await this.cleanupTemporaryPdfSources(tab)
-    for (const dispose of tab.disposers.splice(0)) dispose()
+    const errors: unknown[] = []
+    for (const dispose of tab.disposers.splice(0)) {
+      try {
+        dispose()
+      } catch (error) {
+        tab.disposers.push(dispose)
+        errors.push(error)
+      }
+    }
+    try {
+      await tab.surface.close()
+    } catch (error) {
+      errors.push(error)
+    }
+    if (errors.length) {
+      // Teardown may fail even after a destruction callback; preserve retry ownership.
+      session.tabs.set(tab.id, tab)
+      if (this.sessions.get(session.id) !== session) this.retiredSessions.add(session)
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, 'Browser tab cleanup failed')
+    }
     session.tabs.delete(tab.id)
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
-    await tab.surface.close()
     if (!session.tabs.size) {
-      revokeBrowserPdfSessionsByOwner(session.id)
-      this.sessions.delete(session.id)
+      this.retireSession(session)
+    }
+  }
+
+  private async closeSessionTabs(session: SessionState): Promise<void> {
+    const errors: unknown[] = []
+    for (const tab of [...session.tabs.values()]) {
+      try {
+        await this.closeTab(session, tab)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    try {
+      await this.cleanupPendingTabs(session)
+    } catch (error) {
+      errors.push(error)
+    }
+    this.retireSession(session)
+    if (errors.length) {
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, 'Browser session cleanup failed')
+    }
+  }
+
+  private async cleanupPendingTabs(session: SessionState): Promise<void> {
+    const errors: unknown[] = []
+    for (const reservation of [...session.pendingTabs]) {
+      reservation.abandoned = true
+      try {
+        await abortable(this.cleanupOpening(reservation), AbortSignal.timeout(2_000))
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length) {
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, 'Browser tab creation cleanup failed')
     }
   }
 
@@ -4473,15 +5036,16 @@ export class NativeBrowserSessionService {
     for (const session of sessions) {
       if (input.tabId) {
         const tab = this.getTab(session, input.tabId)
+        if (session.tabs.size === 1) this.retireSession(session)
         closedTabs.push(tab.id)
         await this.closeTab(session, tab)
+        if (this.sessions.get(session.id) !== session) await this.cleanupPendingTabs(session)
         if (input.deleteArtifacts) await this.deleteTabArtifacts(session, tab.id)
       } else {
-        for (const tab of [...session.tabs.values()]) {
-          closedTabs.push(tab.id)
-          await this.closeTab(session, tab)
-        }
-        this.sessions.delete(session.id)
+        // Direct close bypasses the operation queue: retire before any cleanup await.
+        this.retireSession(session)
+        closedTabs.push(...session.tabs.keys())
+        await this.closeSessionTabs(session)
         closedSessions.push(session.id)
         if (input.deleteArtifacts) await this.deleteSessionArtifacts(session)
       }
@@ -4530,9 +5094,26 @@ export class NativeBrowserSessionService {
   }
 
   async dispose(): Promise<void> {
-    for (const session of [...this.sessions.values()]) {
-      for (const tab of [...session.tabs.values()]) await this.closeTab(session, tab)
-      this.sessions.delete(session.id)
+    const sessions = new Set([...this.sessions.values(), ...this.retiredSessions])
+    for (const session of sessions) this.retireSession(session)
+    const errors: unknown[] = []
+    for (const session of sessions) {
+      try {
+        await this.closeSessionTabs(session)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    for (const reservation of this.openingReservations) {
+      if (!reservation.abandoned) continue
+      try {
+        await abortable(this.cleanupOpening(reservation), AbortSignal.timeout(2_000))
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    if (errors.length) {
+      throw errors.length === 1 ? errors[0] : new AggregateError(errors, 'Browser cleanup failed')
     }
   }
 }

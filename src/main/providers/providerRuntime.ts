@@ -24,6 +24,7 @@ import type {
 import type { ProviderInstance } from '../../shared/settings'
 import { offlineProviderHealth, onlineProviderHealth } from '../../shared/providerHealth'
 import { PRODUCT_IDENTITY, PRODUCT_REPOSITORY_URL } from '../../shared/productIdentity'
+import { abortablePromise } from '../services/abortablePromise'
 import { completeOpenAIChat, streamOpenAICompatibleChat } from './openAIStreamingClient'
 import { fetchOpenAICompatibleModels, openAICompatibleHeaders } from './openAICompatibleClient'
 import {
@@ -481,40 +482,65 @@ export async function discoverProviderModels(
 
 async function resolveOpenAIContext(
   instance: ProviderInstance,
-  model: string
+  model: string,
+  signal?: AbortSignal
 ): Promise<number | undefined> {
+  signal?.throwIfAborted()
+  // Nested catalog adapters may try optional endpoints after a late response.
+  // Guard each actual fetch, not just the outer discovery await.
+  const contextFetch: typeof fetch = async (url, options) => {
+    signal?.throwIfAborted()
+    return fetch(url, { ...options, signal })
+  }
   const definition = providerDefinitionForInstance(instance)
   if (definition.capabilities.context === 'lmstudio-native') {
     try {
       const root = instance.baseUrl.replace(/\/v1$/, '')
-      const response = await fetch(`${root}/api/v0/models/${encodeURIComponent(model)}`, {
-        headers: openAIHeaders(instance)
+      const response = await contextFetch(`${root}/api/v0/models/${encodeURIComponent(model)}`, {
+        headers: openAIHeaders(instance),
+        signal
       })
       if (response.ok) {
         const data = (await response.json()) as { max_context_length?: number }
         if (data.max_context_length) return data.max_context_length
       }
     } catch {
+      signal?.throwIfAborted()
       // Fall through to standard model metadata.
     }
   }
   try {
+    signal?.throwIfAborted()
     if (definition.capabilities.context === 'litellm-model-metadata') {
-      const result = await discoverLiteLLMModels(instance, openAIHeaders(instance))
+      const result = await discoverLiteLLMModels(
+        instance,
+        openAIHeaders(instance),
+        contextFetch,
+        signal
+      )
+      signal?.throwIfAborted()
       const match = result.data?.models.find((candidate) => candidate.id === model)
       if (match?.contextLength) return match.contextLength
     }
-    const result = await fetchOpenAICompatibleModels(instance.baseUrl, openAIHeaders(instance))
+    const result = await fetchOpenAICompatibleModels(
+      instance.baseUrl,
+      openAIHeaders(instance),
+      contextFetch,
+      signal
+    )
+    signal?.throwIfAborted()
     const match = result.data?.data.find((candidate) => candidate.id === model)
     const resolved = match ? openAIModelContextLength(match) : undefined
     if (resolved) return resolved
   } catch {
+    signal?.throwIfAborted()
     // Fall through to llama.cpp server props.
   }
   if (definition.capabilities.context === 'llamacpp-server') {
     try {
-      const response = await fetch(`${instance.baseUrl.replace(/\/v1$/, '')}/props`, {
-        headers: openAIHeaders(instance)
+      const response = await contextFetch(`${instance.baseUrl.replace(/\/v1$/, '')}/props`, {
+        headers: openAIHeaders(instance),
+        signal
       })
       if (response.ok) {
         const data = (await response.json()) as {
@@ -525,6 +551,7 @@ async function resolveOpenAIContext(
         return data.default_generation_settings?.n_ctx || data.n_ctx || data.n_ctx_train
       }
     } catch {
+      signal?.throwIfAborted()
       return undefined
     }
   }
@@ -532,8 +559,10 @@ async function resolveOpenAIContext(
 }
 
 export async function resolveProviderContext(
-  target: ProviderChatRequest['target']
+  target: ProviderChatRequest['target'],
+  signal?: AbortSignal
 ): Promise<ProviderContextResult> {
+  signal?.throwIfAborted()
   if (target.contextLength) {
     return {
       ok: true,
@@ -547,18 +576,24 @@ export async function resolveProviderContext(
     const definition = providerDefinitionForInstance(instance)
     let contextLength: number | undefined
     if (definition.protocol === 'ollama') {
-      contextLength = await resolveOllamaContext(instance, target.model)
+      const discovery = resolveOllamaContext(instance, target.model, (url, options) =>
+        fetch(url, { ...options, signal })
+      )
+      contextLength = signal ? await abortablePromise(discovery, signal) : await discovery
     } else if (definition.protocol === 'anthropic') {
       contextLength =
         instance.models.find((model) => model.id === target.model)?.contextLength || 200_000
     } else {
-      contextLength = await resolveOpenAIContext(instance, target.model)
+      const discovery = resolveOpenAIContext(instance, target.model, signal)
+      contextLength = signal ? await abortablePromise(discovery, signal) : await discovery
     }
+    signal?.throwIfAborted()
     if (contextLength) {
       return { ok: true, contextLength, reliable: true, source: 'provider' }
     }
     return { ok: true, contextLength: 32_768, reliable: false, source: 'fallback' }
   } catch (error) {
+    signal?.throwIfAborted()
     return {
       ok: false,
       contextLength: 32_768,

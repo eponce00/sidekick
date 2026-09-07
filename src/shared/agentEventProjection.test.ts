@@ -11,6 +11,23 @@ function event(
 }
 
 describe('projectAgentRunEvents', () => {
+  it('preserves per-request timing and does not carry cache telemetry into an unreported turn', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'usage.updated', {
+        promptTokens: 100,
+        completionTokens: 2,
+        cachedPromptTokens: 0,
+        providerDurationMs: 200,
+        timeToFirstTokenMs: 50
+      }),
+      event(2, 'usage.updated', { promptTokens: 150, completionTokens: 3, providerDurationMs: 300 })
+    ])
+    expect(projection.tokenUsage.cachedPromptTokens).toBeUndefined()
+    expect(projection.tokenUsage.providerTimings).toEqual([
+      { promptTokens: 100, durationMs: 200, timeToFirstTokenMs: 50, cachedPromptTokens: 0 },
+      { promptTokens: 150, durationMs: 300 }
+    ])
+  })
   it('projects streamed turns once and preserves tool ordering', () => {
     const projection = projectAgentRunEvents([
       event(1, 'run.started', {}),

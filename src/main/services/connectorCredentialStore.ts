@@ -1,5 +1,6 @@
 import { safeStorage } from 'electron'
 import { getStore } from '../ipc/state'
+import { isSecureCredentialStorageAvailable } from './secureCredentialStorage'
 
 export interface ConnectorSecretCipher {
   isAvailable(): boolean
@@ -95,7 +96,7 @@ export function createConnectorCredentialStore(): ConnectorCredentialStore {
   const store = getStore()
   return new ConnectorCredentialStore(
     {
-      isAvailable: () => safeStorage.isEncryptionAvailable(),
+      isAvailable: isSecureCredentialStorageAvailable,
       encrypt: (value) => safeStorage.encryptString(value),
       decrypt: (value) => safeStorage.decryptString(Buffer.from(value))
     },

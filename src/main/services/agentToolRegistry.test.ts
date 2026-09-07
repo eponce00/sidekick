@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
-import { AgentToolExecutionError, AgentToolRegistry } from './agentToolRegistry'
+import {
+  AgentToolExecutionError,
+  AgentToolRegistry,
+  type AgentToolExecutor
+} from './agentToolRegistry'
+import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import { toolExecutionSucceeded } from '../../shared/agentRuntime'
 
 const registry = new AgentToolRegistry()
 
@@ -19,6 +25,84 @@ function input(
 }
 
 describe('AgentToolRegistry', () => {
+  it('takes correlation from the prepared call and trusted run context, not arguments', async () => {
+    const request = input('wait', {
+      seconds: 1,
+      toolCallId: 'argument-spoof',
+      runId: 'argument-run'
+    })
+    const executor = vi.fn<AgentToolExecutor>(async () => ({}))
+    await registry.execute(
+      { ...request, context: { ...request.context, toolCallId: 'context-spoof' } },
+      executor
+    )
+    expect(executor.mock.calls[0][1]).toMatchObject({ runId: 'run-1', toolCallId: 'call-1' })
+    expect(request.context).not.toHaveProperty('toolCallId')
+  })
+
+  it('keeps distinct concurrent call IDs in private executor callbacks', async () => {
+    const local = new AgentToolRegistry()
+    const seen: Array<{ runId: string; toolCallId?: string }> = []
+    const releases: Array<() => void> = []
+    const run = (id: string) => {
+      const request = input('tool_output', { handle: id })
+      request.call.id = id
+      return local.execute(request, async (_args, context) => {
+        const observe = () => seen.push({ runId: context.runId, toolCallId: context.toolCallId })
+        await new Promise<void>((resolve) => releases.push(resolve))
+        observe()
+        return {}
+      })
+    }
+    const first = run('first')
+    const second = run('second')
+    await vi.waitFor(() => expect(releases).toHaveLength(2))
+    releases[1]()
+    releases[0]()
+    await Promise.all([first, second])
+    expect(seen).toEqual([
+      { runId: 'run-1', toolCallId: 'second' },
+      { runId: 'run-1', toolCallId: 'first' }
+    ])
+  })
+
+  it('snapshots queued correlation despite caller context and call mutation', async () => {
+    const local = new AgentToolRegistry()
+    let release!: () => void
+    const blocking = local.execute(input('wait', { seconds: 1 }), async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return {}
+    })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const request = input('wait', { seconds: 1 })
+    request.call.id = 'queued-call'
+    const executor = vi.fn<AgentToolExecutor>(async () => ({}))
+    const pending = local.execute(request, executor)
+    request.context.runId = 'changed-run'
+    request.call.id = 'changed-call'
+    release()
+    await Promise.all([blocking, pending])
+    expect(executor.mock.calls[0][1]).toMatchObject({ runId: 'run-1', toolCallId: 'queued-call' })
+  })
+
+  it('does not invent correlation for direct handler invocations', async () => {
+    const handlers = new AgentToolHandlerRegistry()
+    const observe = vi.fn()
+    handlers.register('direct', async ({ context }) => {
+      observe(context)
+      return toolExecutionSucceeded({ title: 'Direct', data: {} })
+    })
+    await handlers.execute({
+      name: 'direct',
+      title: 'Direct',
+      arguments: { toolCallId: 'spoof' },
+      context: { runId: 'internal', signal: new AbortController().signal }
+    })
+    expect(observe.mock.calls[0][0]).not.toHaveProperty('toolCallId')
+  })
+
   it('rejects unavailable tools without calling an executor', async () => {
     const executor = vi.fn()
     const result = await registry.execute(input('not_a_tool', {}), executor)
@@ -104,6 +188,13 @@ describe('AgentToolRegistry', () => {
     )
     expect(result.status).toBe('cancelled')
     expect(executor).not.toHaveBeenCalled()
+  })
+
+  it('classifies missing filesystem resources as recoverable not-found errors', async () => {
+    const result = await registry.execute(input('wait', { seconds: 1 }), async () => {
+      throw Object.assign(new Error('Missing fixture'), { code: 'ENOENT' })
+    })
+    expect(result).toMatchObject({ status: 'error', error: { code: 'not_found', retryable: true } })
   })
 
   it('settles cancellation when an executor ignores AbortSignal', async () => {

@@ -75,6 +75,14 @@ export interface ProviderInstance {
 }
 
 export interface ProviderSettings {
+  shellIsolation?: 'host' | 'docker'
+  /** Explicit user-selected canonical host Python; unset means no direct Office tools. */
+  officeHelperInterpreter?: string
+  /** Main-owned identity invalidates pending helper requests when configuration changes. */
+  officeHelperConfigurationId?: string
+  projectStartHooks?: import('./projectHooks').ProjectStartHook[]
+  projectCompletionHooks?: import('./projectHooks').ProjectStartHook[]
+  projectWorktreeHooks?: import('./projectHooks').ProjectStartHook[]
   providerInstances?: ProviderInstance[]
   openRouterApiKey: string
   ollamaEndpoint: string

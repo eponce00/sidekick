@@ -1,5 +1,5 @@
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
-import { getSkillById } from '../../shared/skills'
+import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import type { AgentChildRunLauncher } from './agentToolRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 
@@ -9,6 +9,7 @@ export function registerSkillToolHandlers(
     activeSkillIds: Set<string>
     readReceipts: Map<string, string>
     childLauncher: () => AgentChildRunLauncher | undefined
+    officeHelpersAvailable?: () => boolean
   }
 ): void {
   registry.register('use_skill', async ({ title, arguments: args }) => {
@@ -24,10 +25,22 @@ export function registerSkillToolHandlers(
     options.activeSkillIds.add(skill.id)
     return toolExecutionSucceeded({
       title,
-      data: { id: skill.id, name: skill.name },
+      data: {
+        id: skill.id,
+        name: skill.name,
+        dependencies: {
+          status: 'not_checked',
+          python: skill.requiresPythonPackages ?? [],
+          node: skill.requiresNodePackages ?? []
+        }
+      },
       modelContent:
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
-        `${skill.systemPromptInjection}\n</skill_instructions>`
+        `${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n` +
+        (options.officeHelpersAvailable?.() && ['docx', 'xlsx', 'pptx'].includes(skill.id)
+          ? 'Direct Office tools are configured for this host run. Prefer advertised office_preflight for supported dependency checks and office_validate for structural validation instead of invoking those helpers through shell. They do not install dependencies or prove semantic/rendering correctness. Other creation/edit helpers still use the skill workflows.\n'
+          : '') +
+        '</skill_instructions>'
     })
   })
 

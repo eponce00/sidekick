@@ -135,6 +135,12 @@ function fakeService(): NativeBrowserSessionService & {
   const service = {
     open,
     observe,
+    workspaceSnapshot: (sessionId: string) => {
+      const value = sessions.get(sessionId)
+      if (!value) throw new Error('Browser session not found or already closed')
+      return { sessionId, activeTabId: value.tab.id, tabs: [value.tab] }
+    },
+    refreshAfterUserInput: vi.fn(),
     navigate,
     close,
     dispose: vi.fn(async () => undefined),
@@ -281,6 +287,186 @@ function execute(
 }
 
 describe('native browser agent tool handlers', () => {
+  it('does not repeat unrelated select inventories after a textbox-only failure', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const value = observation('session-1')
+    value.screenshot = undefined
+    value.semanticSnapshot = [
+      '- document "Synthetic form"',
+      '  - combobox "Unrelated country" [ref=ax-1-2]',
+      ...Array.from(
+        { length: 100 },
+        (_, i) => `    - option "Unrelated country ${i}" [ref=ax-1-${i + 10}]`
+      ),
+      '  - textbox "Delivery note" [ref=ax-1-900]',
+      '  - button "Save" [ref=ax-1-901]'
+    ].join('\n')
+    value.semanticNodeCount = 104
+    const success: BrowserFillFormResult = {
+      ...actionResult(value, 'fill_form'),
+      action: 'fill_form',
+      completed: true,
+      stopReason: 'completed',
+      attemptedFields: 1,
+      filledFields: 1,
+      fields: [{ index: 0, kind: 'textbox', status: 'filled', verification: { passed: true } }]
+    }
+    service.fillForm.mockResolvedValueOnce(success)
+    const args = { fields: [{ kind: 'textbox', ref: 'ax-1-900', value: 'synthetic text' }] }
+    const routine = await execute(registry, 'browser_fill_form', args)
+    const failure: BrowserFillFormResult = {
+      ...success,
+      completed: false,
+      stopReason: 'field_failed',
+      filledFields: 0,
+      fields: [
+        {
+          index: 0,
+          kind: 'textbox',
+          status: 'failed',
+          verification: { passed: false },
+          error: {
+            code: 'verification_failed',
+            message: 'The requested form state did not match the actual control state.'
+          }
+        }
+      ]
+    }
+    service.fillForm.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure)
+    const first = await execute(registry, 'browser_fill_form', args)
+    const second = await execute(registry, 'browser_fill_form', args)
+    const inventoryCount = (content: string) =>
+      (content.match(/Unrelated country \d+/g) || []).length
+    console.info(
+      JSON.stringify({
+        scope: 'synthetic-textbox-failure-only',
+        successBytes: Buffer.byteLength(routine.modelContent),
+        failureBytes: Buffer.byteLength(first.modelContent),
+        successOptionNodes: inventoryCount(routine.modelContent),
+        firstFailureOptionNodes: inventoryCount(first.modelContent),
+        secondFailureOptionNodes: inventoryCount(second.modelContent)
+      })
+    )
+    expect(first.status).toBe('error')
+    expect(first.modelContent).toContain('retarget only the failed fields')
+    expect(first.modelContent).toContain('ax-1-900')
+    expect(inventoryCount(first.modelContent)).toBe(0)
+    expect(inventoryCount(second.modelContent)).toBe(0)
+    const ui = first.data as Record<string, unknown> & { observation: BrowserObservation }
+    const model = JSON.parse(first.modelContent)
+    expect(ui.observation.semanticSnapshot).toBe(value.semanticSnapshot)
+    expect(inventoryCount(JSON.stringify(ui))).toBe(100)
+    expect(model.observation.semanticSnapshot).toContain('100 option nodes omitted')
+    const { observation: _modelObservation, ...modelDetails } = model
+    const { observation: _uiObservation, ...uiDetails } = ui
+    expect(modelDetails).toEqual(uiDetails)
+  })
+
+  it('retains option inventories when any failed field is a select', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const value = observation('session-1')
+    value.screenshot = undefined
+    value.semanticSnapshot = [
+      '- textbox "Note" [ref=ax-1-1]',
+      '- combobox "Country" [ref=ax-1-2]',
+      ...Array.from(
+        { length: 100 },
+        (_, i) => `  - option "Available country ${i}" [ref=ax-1-${i + 10}]`
+      )
+    ].join('\n')
+    const result: BrowserFillFormResult = {
+      ...actionResult(value, 'fill_form'),
+      action: 'fill_form',
+      completed: false,
+      stopReason: 'field_failed',
+      attemptedFields: 2,
+      filledFields: 0,
+      fields: [
+        {
+          index: 0,
+          kind: 'textbox',
+          status: 'failed',
+          verification: { passed: false },
+          error: { code: 'verification_failed', message: 'Textbox verification failed' }
+        },
+        {
+          index: 1,
+          kind: 'select',
+          status: 'failed',
+          verification: { passed: false },
+          error: { code: 'verification_failed', message: 'Select verification failed' }
+        }
+      ]
+    }
+    service.fillForm.mockResolvedValueOnce(result)
+    const actual = await execute(registry, 'browser_fill_form', {
+      fields: [
+        { kind: 'textbox', ref: 'ax-1-1', value: 'synthetic text' },
+        { kind: 'select', ref: 'ax-1-2', values: ['not available'] }
+      ]
+    })
+    expect(actual.status).toBe('error')
+    expect(actual.modelContent.match(/Available country \d+/g) || []).toHaveLength(100)
+    expect(JSON.parse(actual.modelContent)).toEqual(actual.data)
+    expect(JSON.parse(actual.modelContent).fields).toEqual(result.fields)
+    expect(actual.modelContent).toContain('Do not repeat fields that were already verified')
+  })
+
+  it('automatically reuses the same session after manual input without resume', async () => {
+    const { registry, manager, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+    expect((await execute(registry, 'browser_observe', {})).status).toBe('success')
+    expect(service.refreshAfterUserInput).toHaveBeenCalledTimes(1)
+    expect(service.open).toHaveBeenCalledTimes(1)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+  })
+
+  it('does not interleave active actions and still respects cancellation', async () => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const lease = await manager.lease('conversation-1')
+    expect(manager.claimUserControl('conversation-1')).toBe(false)
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+    await expect(manager.lease('conversation-1')).rejects.toThrow('Browser action in progress')
+    await expect(
+      manager.workspaceAction('conversation-1', {
+        conversationId: 'conversation-1',
+        action: 'resume'
+      })
+    ).rejects.toThrow('Wait for the current browser action')
+    await lease!.release()
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    const controller = new AbortController()
+    const waiting = execute(registry, 'browser_observe', {}, { signal: controller.signal })
+    controller.abort()
+    const result = await waiting
+    expect(result.status).not.toBe('success')
+    expect(manager.workspaceState('conversation-1')?.userControl).toBe(false)
+  })
+
+  it.each([
+    ['browser_open', { url: 'https://example.com/next' }],
+    ['browser_tabs', { action: 'list' }],
+    ['browser_close', {}]
+  ])('allows %s after manual interaction without an explicit resume', async (name, args) => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    expect(manager.claimUserControl('conversation-1')).toBe(true)
+    expect((await execute(registry, name as string, args)).status).toBe('success')
+  })
+
+  it('does not turn automatic takeover into permission to bypass a human handoff', async () => {
+    const { registry, manager } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    await manager.reserveHumanTakeover('conversation-1')
+    expect((await execute(registry, 'browser_observe', {})).status).not.toBe('success')
+    expect((await execute(registry, 'browser_close', {})).status).not.toBe('success')
+    expect(manager.workspaceState('conversation-1')?.verificationHandoff).toBe(true)
+  })
   it('registers every browser catalog tool and returns screenshots as real vision media', async () => {
     const { registry, service } = setup()
     for (const name of AGENT_BROWSER_TOOL_NAMES) expect(registry.has(name), name).toBe(true)
@@ -781,6 +967,10 @@ describe('native browser agent tool handlers', () => {
     expect(result.modelContent).toContain('Do not repeat fields that were already verified')
     expect(JSON.stringify(result)).not.toContain('private first value')
     expect(JSON.stringify(result)).not.toContain('private second value')
+    const model = JSON.parse(result.modelContent)
+    const ui = result.data as { fields: unknown; recovery: unknown }
+    expect(model.fields).toEqual(ui.fields)
+    expect(model.recovery).toEqual(ui.recovery)
   })
 
   it('rejects coordinate form targets before any browser action', async () => {

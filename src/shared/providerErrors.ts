@@ -4,6 +4,18 @@ export interface ProviderContextWindowErrorDetails {
   inputTokens?: number
 }
 
+/** Only classify explicit inference failures, never infer hardware trouble from a timeout. */
+export function providerInferenceFailure(
+  message: string | null | undefined
+): 'gpu-memory-exhausted' | 'engine-unavailable' | null {
+  if (!message) return null
+  if (/(?:cuda|gpu)[^\n]{0,100}out\s+of\s+memory|torch\.OutOfMemoryError/i.test(message))
+    return 'gpu-memory-exhausted'
+  if (/\bEngineDeadError\b|\bengine core (?:is dead|encountered an issue)\b/i.test(message))
+    return 'engine-unavailable'
+  return null
+}
+
 function numericMatch(message: string, pattern: RegExp): number | undefined {
   const raw = message.match(pattern)?.[1]?.replaceAll(',', '')
   if (!raw) return undefined

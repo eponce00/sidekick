@@ -24,6 +24,9 @@ import {
 
 export interface AgentToolExecutionContext {
   runId: string
+  /** Set from the prepared call by AgentToolRegistry, never from tool arguments.
+   * Absent for direct/internal invocations that have no tool call. */
+  toolCallId?: string
   conversationId?: string
   workspaceRoot?: string
   signal: AbortSignal
@@ -74,6 +77,46 @@ export interface AgentToolArgumentIssue {
 export interface PreparedAgentToolCall {
   call: AgentToolCall
   repairs: string[]
+  argumentSnapshotFailed?: boolean
+}
+
+/** Tool arguments are JSON-like data, including optional undefined object fields.
+ * Reject accessors, cycles and runtime objects instead
+ * of invoking getters or silently changing their meaning during snapshotting. */
+function snapshotArguments(args: Record<string, unknown>): Record<string, unknown> {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Not JSON data')
+  const ancestors = new Set<object>()
+  const check = (value: unknown): void => {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return
+    if (typeof value === 'number' && Number.isFinite(value)) return
+    if (!value || typeof value !== 'object' || ancestors.has(value))
+      throw new Error('Not JSON data')
+    const array = Array.isArray(value)
+    const prototype = Object.getPrototypeOf(value)
+    if (
+      array ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null
+    )
+      throw new Error('Not JSON data')
+    ancestors.add(value)
+    const keys = Reflect.ownKeys(value).filter((key) => !array || key !== 'length')
+    if (array && keys.length !== value.length) throw new Error('Not JSON data')
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!
+      if (
+        typeof key !== 'string' ||
+        !descriptor.enumerable ||
+        !('value' in descriptor) ||
+        (array && (!/^(0|[1-9]\d*)$/.test(key) || Number(key) >= value.length))
+      )
+        throw new Error('Not JSON data')
+      // Internal calls may explicitly provide optional fields as undefined. Keep
+      // their ownership/value; the existing schema still rejects required fields.
+      if (array || descriptor.value !== undefined) check(descriptor.value)
+    }
+    ancestors.delete(value)
+  }
+  check(args)
+  return structuredClone(args)
 }
 
 function propertyMatchesType(value: unknown, type: string): boolean {
@@ -212,7 +255,11 @@ function collectSchemaIssues(
       ? schema.required.filter((item): item is string => typeof item === 'string')
       : []
     for (const requiredName of required) {
-      if (record[requiredName] === undefined || record[requiredName] === null) {
+      if (
+        !Object.hasOwn(record, requiredName) ||
+        record[requiredName] === undefined ||
+        record[requiredName] === null
+      ) {
         const requiredPath = childPath(path, requiredName)
         issues.push({
           path: requiredPath,
@@ -222,7 +269,7 @@ function collectSchemaIssues(
       }
     }
     for (const [name, propertyValue] of Object.entries(record)) {
-      const property = properties[name]
+      const property = Object.hasOwn(properties, name) ? properties[name] : undefined
       if (!property || propertyValue === undefined || propertyValue === null) continue
       collectSchemaIssues(property, propertyValue, childPath(path, name), issues)
     }
@@ -345,6 +392,13 @@ export function prepareAgentToolCall(
   catalog: AgentToolCatalogOptions,
   call: AgentToolCall
 ): PreparedAgentToolCall {
+  let argumentSnapshot: Record<string, unknown>
+  try {
+    argumentSnapshot = snapshotArguments(call.arguments)
+  } catch {
+    // Never retain or echo the rejected object or native clone/getter error.
+    return { call: { ...call, arguments: {} }, repairs: [], argumentSnapshotFailed: true }
+  }
   const entries = getAgentToolCatalog(catalog)
   const exact = entries.find(({ definition }) => definition.function.name === call.name)
   const caseMatches = exact
@@ -353,12 +407,12 @@ export function prepareAgentToolCall(
         ({ definition }) => definition.function.name.toLowerCase() === call.name.toLowerCase()
       )
   const entry = exact ?? (caseMatches.length === 1 ? caseMatches[0] : undefined)
-  if (!entry) return { call, repairs: [] }
+  if (!entry) return { call: { ...call, arguments: argumentSnapshot }, repairs: [] }
   const repairs =
     entry.definition.function.name === call.name
       ? []
       : [`${call.name} → ${entry.definition.function.name}`]
-  const normalized = normalizeAgentToolArguments(entry.definition, call.arguments)
+  const normalized = normalizeAgentToolArguments(entry.definition, argumentSnapshot)
   return {
     call: { ...call, name: entry.definition.function.name, arguments: normalized.arguments },
     repairs: [...repairs, ...normalized.repairs]
@@ -394,7 +448,8 @@ export function validatePreparedAgentToolCall(
   call: AgentToolCall,
   title: string,
   startedAt = Date.now(),
-  repairs: readonly string[] = []
+  repairs: readonly string[] = [],
+  argumentSnapshotFailed = false
 ): ToolExecutionResult | null {
   const catalogEntry = getAgentToolEntry(catalog, call.name)
   if (!catalogEntry) {
@@ -404,6 +459,16 @@ export function validatePreparedAgentToolCall(
       message: `Tool is not available in this run: ${call.name}`,
       recoveryAction: 'change_strategy',
       recovery: 'Choose a tool from the current tool catalog.',
+      startedAt
+    })
+  }
+  if (argumentSnapshotFailed) {
+    return toolExecutionFailed({
+      title,
+      code: 'invalid_arguments',
+      message: 'Tool arguments must be safely copyable JSON data.',
+      retryable: true,
+      recoveryAction: 'correct_input',
       startedAt
     })
   }
@@ -450,8 +515,9 @@ function executionError(
       code: 'timeout',
       message: error.message,
       retryable: true,
-      recoveryAction: 'retry_later',
-      recovery: 'Reduce the operation scope or request a longer shell timeout when justified.',
+      recoveryAction: 'refresh_state',
+      recovery:
+        'The operation timed out, but side effects may already have occurred. Inspect current state or command status before retrying. Never blindly replay a mutation or external submission. Reduce scope where possible.',
       startedAt
     })
   }
@@ -474,6 +540,18 @@ function executionError(
   }
   const message = error instanceof Error ? error.message : String(error)
   const cancelled = signal.aborted || (error instanceof Error && error.name === 'AbortError')
+  if (!cancelled && error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+    return toolExecutionFailed({
+      title,
+      code: 'not_found',
+      message,
+      retryable: true,
+      recoveryAction: 'correct_input',
+      recovery:
+        'The requested file or executable was not found. Verify the path or dependency. If the task explicitly requires a new file, use apply_patch Add File; do not retry reading the unchanged missing path.',
+      startedAt
+    })
+  }
   return toolExecutionFailed({
     title,
     code: cancelled ? 'cancelled' : 'internal',
@@ -553,10 +631,14 @@ export class AgentToolRegistry {
       prepared.call,
       input.title,
       startedAt,
-      prepared.repairs
+      prepared.repairs,
+      prepared.argumentSnapshotFailed
     )
     if (invalid) return invalid
-    if (input.context.signal.aborted) {
+    // Snapshot correlation before queueing; a reused caller context must not relabel
+    // a delayed execution. The prepared call overrides any caller-supplied call ID.
+    const executionContext = { ...input.context, toolCallId: prepared.call.id }
+    if (executionContext.signal.aborted) {
       return toolExecutionFailed({
         title: input.title,
         code: 'cancelled',
@@ -573,20 +655,20 @@ export class AgentToolRegistry {
             5_000
           : undefined
       const value = await this.schedule(
-        input.context.runId,
+        executionContext.runId,
         entry?.concurrency ?? 'exclusive',
         () =>
           this.pipeline.execute({
             name: prepared.call.name,
             arguments: prepared.call.arguments,
-            signal: input.context.signal,
+            signal: executionContext.signal,
             timeoutMs: requestedShellTimeout ?? entry?.timeoutMs,
-            body: (signal) => executor(prepared.call.arguments, { ...input.context, signal })
+            body: (signal) => executor(prepared.call.arguments, { ...executionContext, signal })
           })
       )
       return normalizeToolExecutionResult(input.title, value, startedAt, Date.now())
     } catch (error) {
-      return executionError(input.title, error, startedAt, input.context.signal)
+      return executionError(input.title, error, startedAt, executionContext.signal)
     }
   }
 }

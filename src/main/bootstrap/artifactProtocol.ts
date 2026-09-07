@@ -5,6 +5,9 @@ import { is } from '@electron-toolkit/utils'
 import { resolveDevelopmentArtifactUrl } from './artifactProtocolSecurity'
 import {
   BROWSER_PDF_SCHEME,
+  browserPdfSessionBytes,
+  browserPdfSessionSignal,
+  browserPdfPublicationDirectory,
   getBrowserPdfSession,
   type BrowserPdfSession
 } from './browserPdfSessionRegistry'
@@ -14,6 +17,9 @@ import {
   BROWSER_PDF_VIEWER_MODULE
 } from './browserPdfViewerAssets'
 import { renderBrowserPdfPage } from './browserPdfRenderer'
+import { BrowserPdfSnapshotError } from './browserPdfSnapshot'
+import { atomicNewFile } from '../utils/atomicNewFile'
+import { readBoundedRequestBody, RequestBodyTooLargeError } from '../utils/boundedRequestBody'
 
 const ARTIFACT_SCHEME = 'sidekick-artifact'
 const BROWSER_ARTIFACT_SCHEME = 'sidekick-browser'
@@ -107,17 +113,40 @@ function resolvePdfJsAssetPath(filename: 'pdf.min.mjs' | 'pdf.worker.min.mjs'): 
   return candidates.find((candidate) => existsSync(candidate)) ?? null
 }
 
-async function writeFilledPdf(session: BrowserPdfSession, bytes: Buffer): Promise<string> {
+async function writeFilledPdf(
+  session: BrowserPdfSession,
+  bytes: Buffer,
+  signal: AbortSignal
+): Promise<string> {
+  signal.throwIfAborted()
+  const publication = await browserPdfPublicationDirectory(session)
+  await publication.prepare(signal)
   const outputDirectory = session.outputDirectory ?? dirname(session.sourcePath)
-  await fsPromises.mkdir(outputDirectory, { recursive: true })
   const source = parse(session.sourceName)
   const sourceName = source.name || 'document'
   const sourceExtension = source.ext.toLowerCase() === '.pdf' ? source.ext : '.pdf'
   for (let index = 0; index < 10_000; index++) {
+    signal.throwIfAborted()
+    await publication.assertUnchanged(signal)
     const suffix = index === 0 ? '-filled' : `-filled-${index + 1}`
     const candidate = join(outputDirectory, `${sourceName}${suffix}${sourceExtension}`)
+    // Avoid rewriting a large stage for names already occupied (including symlinks).
+    // This is only an optimization; the exclusive hard link remains the race guard.
     try {
-      await fsPromises.writeFile(candidate, bytes, { flag: 'wx' })
+      await fsPromises.lstat(candidate)
+      continue
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    try {
+      // Atomic publication retains private 0600 stage permissions on POSIX. No
+      // copy/overwrite fallback is permitted when the filesystem lacks hard links.
+      await atomicNewFile(
+        candidate,
+        (handle) => handle.writeFile(bytes, { signal }),
+        signal,
+        () => publication.assertUnchanged()
+      )
       return candidate
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue
@@ -129,23 +158,15 @@ async function writeFilledPdf(session: BrowserPdfSession, bytes: Buffer): Promis
 
 async function saveBrowserPdf(request: Request, session: BrowserPdfSession): Promise<Response> {
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-  const declaredLength = Number(request.headers.get('content-length') ?? 0)
-  if (declaredLength > MAX_BROWSER_PDF_SAVE_BYTES) {
-    return new Response(JSON.stringify({ error: 'Filled PDF exceeds the save limit' }), {
-      status: 413,
-      headers: { 'content-type': 'application/json; charset=utf-8' }
-    })
-  }
+  const signal = AbortSignal.any([request.signal, browserPdfSessionSignal(session)])
   try {
-    const bytes = Buffer.from(await request.arrayBuffer())
-    if (
-      bytes.byteLength < 5 ||
-      bytes.byteLength > MAX_BROWSER_PDF_SAVE_BYTES ||
-      !bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))
-    ) {
+    const bytes = await readBoundedRequestBody(request, MAX_BROWSER_PDF_SAVE_BYTES, signal)
+    if (bytes.byteLength < 5 || !bytes.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
       throw new Error('The browser did not produce a valid PDF')
     }
-    const outputPath = await writeFilledPdf(session, bytes)
+    // The publisher's hard link is the commit point. Revocation after that point
+    // must never delete an already-published valid copy.
+    const outputPath = await writeFilledPdf(session, bytes, signal)
     session.lastOutputPath = outputPath
     return new Response(JSON.stringify({ outputPath }), {
       headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
@@ -153,7 +174,10 @@ async function saveBrowserPdf(request: Request, session: BrowserPdfSession): Pro
   } catch (error) {
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' } }
+      {
+        status: error instanceof RequestBodyTooLargeError ? 413 : 400,
+        headers: { 'content-type': 'application/json; charset=utf-8' }
+      }
     )
   }
 }
@@ -181,10 +205,23 @@ async function handleBrowserPdfRequest(request: Request): Promise<Response> {
   }
   if (route === 'document.pdf') {
     try {
-      const data = await fsPromises.readFile(session.sourcePath)
+      const data = await browserPdfSessionBytes(session)
       return browserPdfAssetResponse(data, 'application/pdf')
-    } catch {
-      return new Response('PDF not found', { status: 404 })
+    } catch (error) {
+      const safe =
+        error instanceof BrowserPdfSnapshotError ? error : new BrowserPdfSnapshotError('unreadable')
+      const status =
+        safe.code === 'unavailable'
+          ? 404
+          : safe.code === 'oversized'
+            ? 413
+            : safe.code === 'changed'
+              ? 409
+              : 400
+      return new Response(JSON.stringify({ error: safe.message }), {
+        status,
+        headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
+      })
     }
   }
   const pageMatch = /^page-(\d+)\.png$/.exec(route)
@@ -195,7 +232,9 @@ async function handleBrowserPdfRequest(request: Request): Promise<Response> {
     const cacheKey = `${pageNumber}@${scale}`
     let rendering = session.renderedPages.get(cacheKey)
     if (!rendering) {
-      rendering = renderBrowserPdfPage(session.sourcePath, pageNumber, scale)
+      rendering = browserPdfSessionBytes(session).then((bytes) =>
+        renderBrowserPdfPage(bytes, pageNumber, scale)
+      )
       session.renderedPages.set(cacheKey, rendering)
     }
     try {

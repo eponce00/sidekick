@@ -1107,6 +1107,9 @@ body[data-theme='light'] .message-user .message-action:hover {
   box-shadow: var(--shadow-md);
   color: var(--text-secondary);
   font-size: var(--text-xs);
+  max-width: min(420px, 80vw);
+  max-height: min(420px, 60vh);
+  overflow: auto;
 }
 
 .message-run-stats-popover span {

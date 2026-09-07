@@ -14,6 +14,7 @@ import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { shutdownCollaboration } from './ipc/collaboration'
 import { shutdownAgentRuntime } from './ipc/agentRuns'
+import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import { startWorkspaceWatcher } from './ipc/workspace'
 import {
@@ -43,14 +44,16 @@ function prepareApplicationShutdown(): Promise<void> {
   if (applicationShutdown) return applicationShutdown
   appUpdateService?.stop()
   shutdownCollaboration()
-  applicationShutdown = Promise.allSettled([shutdownAgentRuntime(), closeMcpConnections()]).then(
-    (results) => {
-      for (const result of results) {
-        if (result.status === 'rejected') console.error('[Shutdown] Cleanup failed:', result.reason)
-      }
-      shutdownReady = true
+  applicationShutdown = Promise.allSettled([
+    shutdownAgentRuntime(),
+    closeMcpConnections(),
+    shutdownWorktreeSetup()
+  ]).then((results) => {
+    for (const result of results) {
+      if (result.status === 'rejected') console.error('[Shutdown] Cleanup failed:', result.reason)
     }
-  )
+    shutdownReady = true
+  })
   return applicationShutdown
 }
 

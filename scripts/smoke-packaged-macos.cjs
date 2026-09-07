@@ -12,7 +12,7 @@ const {
 const { tmpdir } = require('node:os')
 const { join, resolve } = require('node:path')
 
-const smokeSeconds = Number.parseInt(process.env.SIDEKICK_SMOKE_SECONDS || '8', 10)
+const { observeStartup, smokeDuration } = require('./packaged-smoke-lifecycle.cjs')
 const allowUnsignedBundle = process.env.SIDEKICK_ALLOW_UNSIGNED_SMOKE === 'true'
 
 function findPackagedApp() {
@@ -29,6 +29,12 @@ function findPackagedApp() {
   const appCandidates = readdirSync(distPath, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith('mac'))
     .map((entry) => join(distPath, entry.name, 'SideKick.app'))
+    .filter((path) => existsSync(path) && statSync(path).isDirectory())
+  if (appCandidates.length !== 1) {
+    throw new Error(
+      `Expected exactly one packaged macOS app; found ${appCandidates.length}. Pass an explicit app path.`
+    )
+  }
   const appPath = appCandidates[0]
   if (!appPath) throw new Error('No packaged macOS app found under dist/mac*/SideKick.app')
   return appPath
@@ -39,6 +45,10 @@ function delay(milliseconds) {
 }
 
 async function main() {
+  if (process.platform !== 'darwin') {
+    throw new Error('The packaged macOS smoke test must run on macOS.')
+  }
+  const milliseconds = smokeDuration(process.env.SIDEKICK_SMOKE_SECONDS)
   const appPath = findPackagedApp()
   const executable = join(appPath, 'Contents', 'MacOS', 'SideKick')
   const profile = mkdtempSync(join(tmpdir(), 'sidekick-smoke-'))
@@ -47,6 +57,7 @@ async function main() {
   const stdout = openSync(stdoutPath, 'w')
   const stderr = openSync(stderrPath, 'w')
   let child
+  let descriptorsClosed = false
 
   try {
     try {
@@ -69,8 +80,9 @@ async function main() {
     )
     closeSync(stdout)
     closeSync(stderr)
+    descriptorsClosed = true
 
-    await delay(smokeSeconds * 1000)
+    await observeStartup(child, milliseconds)
     const logs = readFileSync(stderrPath, 'utf8')
     const fatalPattern = /uncaught|fatal|failed to load|module.*not found|unable to load preload/i
 
@@ -105,7 +117,8 @@ async function main() {
       } catch {
         // The process group may already be gone.
       }
-    } else {
+    }
+    if (!descriptorsClosed) {
       closeSync(stdout)
       closeSync(stderr)
     }

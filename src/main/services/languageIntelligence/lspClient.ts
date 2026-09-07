@@ -5,6 +5,7 @@ import type { ToolDiagnostic } from '../../../shared/agentRuntime'
 import { PRODUCT_IDENTITY } from '../../../shared/productIdentity'
 import packageMetadata from '../../../../package.json'
 import { languageIdForFile, type ResolvedLanguageServer } from './serverRegistry'
+import { shellChildEnvironment } from '../commandService'
 
 interface JsonRpcMessage {
   jsonrpc: '2.0'
@@ -57,12 +58,26 @@ export class LspClient {
   }
 
   private async startProcess(signal?: AbortSignal): Promise<void> {
-    const child = spawn(this.server.command, this.server.args, {
-      cwd: this.workspaceRoot,
-      env: { ...process.env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true
-    })
+    const batch = process.platform === 'win32' && /\.(cmd|bat)$/i.test(this.server.command)
+    const words = [this.server.command, ...this.server.args]
+    if (batch && words.some((word) => /["%!\r\n\0]/.test(word))) {
+      throw new Error(
+        'Language server batch path or arguments contain unsupported shell expansion characters'
+      )
+    }
+    const child = spawn(
+      batch ? 'cmd.exe' : this.server.command,
+      batch
+        ? ['/d', '/s', '/c', `"${words.map((word) => `"${word}"`).join(' ')}"`]
+        : this.server.args,
+      {
+        cwd: this.workspaceRoot,
+        env: shellChildEnvironment(process.env, this.workspaceRoot, this.workspaceRoot),
+        stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
+        windowsVerbatimArguments: batch
+      }
+    )
     this.process = child
     child.stdout.on('data', (chunk: Buffer) => {
       this.buffer = Buffer.concat([this.buffer, chunk])
@@ -212,7 +227,15 @@ export class LspClient {
       timeout.unref()
       child.once('close', done)
       child.once('error', done)
-      child.kill()
+      if (process.platform === 'win32' && child.pid) {
+        const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+          windowsHide: true,
+          stdio: 'ignore'
+        })
+        killer.once('error', () => child.kill())
+      } else {
+        child.kill()
+      }
     })
   }
 

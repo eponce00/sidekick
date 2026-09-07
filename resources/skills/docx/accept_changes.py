@@ -7,14 +7,11 @@ import argparse
 import logging
 import shutil
 import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
 
-from office.soffice import get_soffice_env
-
 logger = logging.getLogger(__name__)
-
-LIBREOFFICE_PROFILE = "/tmp/libreoffice_docx_profile"
-MACRO_DIR = f"{LIBREOFFICE_PROFILE}/user/basic/Standard"
 
 ACCEPT_CHANGES_MACRO = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE script:module PUBLIC "-//OpenOffice.org//DTD OfficeDocument 1.0//EN" "module.dtd">
@@ -46,41 +43,49 @@ def accept_changes(
     if not input_path.suffix.lower() == ".docx":
         return None, f"Error: Input file is not a DOCX file: {input_file}"
 
+    if output_path.exists() or input_path.resolve() == output_path.resolve():
+        return None, "Error: Output must be a new file; existing files are preserved"
+    executable = shutil.which("soffice")
+    if not executable:
+        return None, "Error: Missing dependency: LibreOffice (soffice on PATH). Nothing installed."
     try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(input_path, output_path)
-    except Exception as e:
-        return None, f"Error: Failed to copy input file to output location: {e}"
-
-    if not _setup_libreoffice_macro():
-        return None, "Error: Failed to setup LibreOffice macro"
-
-    cmd = [
-        "soffice",
-        "--headless",
-        f"-env:UserInstallation=file://{LIBREOFFICE_PROFILE}",
-        "--norestore",
-        "vnd.sun.star.script:Standard.Module1.AcceptAllTrackedChanges?language=Basic&location=application",
-        str(output_path.absolute()),
-    ]
-
+        import defusedxml.ElementTree as ET
+    except ImportError:
+        return None, "Error: Missing dependency: defusedxml. Nothing installed."
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-            env=get_soffice_env(),
-        )
+        with tempfile.TemporaryDirectory(prefix="sidekick-docx-accept-") as temporary:
+            root = Path(temporary)
+            profile = root / "profile"
+            working = root / "working.docx"
+            shutil.copy2(input_path, working)
+            if not _setup_libreoffice_macro(profile, executable):
+                return None, "Error: Failed to set up isolated LibreOffice macro"
+            result = subprocess.run(
+                [executable, "--headless", f"-env:UserInstallation={profile.as_uri()}",
+                 "--norestore", str(working),
+                 "vnd.sun.star.script:Standard.Module1.AcceptAllTrackedChanges?language=Basic&location=application"],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            if result.returncode != 0:
+                return None, "Error: LibreOffice failed; no output published"
+            # Do not treat a successful process launch as successful revision acceptance.
+            with zipfile.ZipFile(working) as archive:
+                if "word/document.xml" not in archive.namelist():
+                    return None, "Error: Output is not a valid DOCX package; no output published"
+                for name in archive.namelist():
+                    if name.startswith("word/") and name.endswith(".xml"):
+                        for node in ET.fromstring(archive.read(name)).iter():
+                            if not node.tag.startswith("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"):
+                                continue
+                            tag = node.tag.rsplit("}", 1)[-1]
+                            if tag in {"ins", "del", "moveFrom", "moveTo", "cellIns", "cellDel", "cellMerge"} or tag.endswith("Change") or tag.startswith(("moveFromRange", "moveToRange")):
+                                return None, "Error: Tracked changes remain; no output published"
+            with output_path.open("xb") as target, working.open("rb") as content:
+                shutil.copyfileobj(content, target)
     except subprocess.TimeoutExpired:
-        return (
-            None,
-            f"Successfully accepted all tracked changes: {input_file} -> {output_file}",
-        )
-
-    if result.returncode != 0:
-        return None, f"Error: LibreOffice failed: {result.stderr}"
+        return None, "Error: LibreOffice timed out; acceptance is unverified and no output was published"
+    except Exception as error:
+        return None, f"Error: {error}"
 
     return (
         None,
@@ -88,8 +93,8 @@ def accept_changes(
     )
 
 
-def _setup_libreoffice_macro() -> bool:
-    macro_dir = Path(MACRO_DIR)
+def _setup_libreoffice_macro(profile: Path, executable: str) -> bool:
+    macro_dir = profile / "user" / "basic" / "Standard"
     macro_file = macro_dir / "Module1.xba"
 
     if macro_file.exists() and "AcceptAllTrackedChanges" in macro_file.read_text():
@@ -98,15 +103,14 @@ def _setup_libreoffice_macro() -> bool:
     if not macro_dir.exists():
         subprocess.run(
             [
-                "soffice",
+                executable,
                 "--headless",
-                f"-env:UserInstallation=file://{LIBREOFFICE_PROFILE}",
+                f"-env:UserInstallation={profile.as_uri()}",
                 "--terminate_after_init",
             ],
             capture_output=True,
             timeout=10,
             check=False,
-            env=get_soffice_env(),
         )
         macro_dir.mkdir(parents=True, exist_ok=True)
 
