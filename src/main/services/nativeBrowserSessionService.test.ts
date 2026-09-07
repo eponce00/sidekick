@@ -685,6 +685,28 @@ afterEach(async () => {
 })
 
 describe('NativeBrowserSessionService', () => {
+  it('settles an initial delayed focus before dispatching keyboard input', async () => {
+    const { service, runtime } = await testService()
+    const opened = await service.open({ runId: 'focus-settle', url: 'https://example.com/' })
+    const internal = service as unknown as {
+      assertTextEntryTarget(...args: unknown[]): Promise<boolean | null>
+    }
+    const check = vi.spyOn(internal, 'assertTextEntryTarget').mockImplementationOnce(async () => {
+      expect(runtime.surfaces[0].insertedText).toBe('')
+      expect(runtime.surfaces[0].inputEvents.filter((event) => 'keyCode' in event)).toHaveLength(0)
+      throw new Error('Target text field did not retain focus')
+    })
+    await service.type({
+      sessionId: opened.sessionId,
+      target: { role: 'textbox', name: 'Email' },
+      text: 'focus-ready',
+      clear: true
+    })
+    expect(runtime.surfaces[0].insertedText).toBe('focus-ready')
+    expect(check.mock.calls.length).toBeGreaterThan(3)
+    check.mockRestore()
+    await service.dispose()
+  })
   it('keeps new tabs and first sessions alive when the compositor cannot capture yet', async () => {
     const { service, runtime } = await testService()
     const capture = vi

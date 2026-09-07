@@ -3632,16 +3632,35 @@ export class NativeBrowserSessionService {
     startedAt?: number
   ): BrowserTextEntryDriver {
     let preInsertEmpty: boolean | null = null
+    let initialFocusCheck = true
     return {
       click: () => this.clickFormControl(tab, target, signal),
       assertTarget: async () => {
-        preInsertEmpty = await this.assertTextEntryTarget(
-          tab,
-          target.backendNodeId!,
-          sourceUrl,
-          sourceRefEpoch,
-          signal
-        )
+        // Native mouse dispatch can acknowledge before Chromium applies focus.
+        // Only settle the initial click: never retry after clearing/inserting,
+        // refocus a different node, or tolerate navigation/cancellation.
+        const attempts = initialFocusCheck ? 5 : 1
+        initialFocusCheck = false
+        for (let attempt = 0; attempt < attempts; attempt++) {
+          try {
+            preInsertEmpty = await this.assertTextEntryTarget(
+              tab,
+              target.backendNodeId!,
+              sourceUrl,
+              sourceRefEpoch,
+              signal
+            )
+            break
+          } catch (error) {
+            if (
+              !(error instanceof Error) ||
+              !error.message.includes('Target text field did not retain focus') ||
+              attempt === attempts - 1
+            )
+              throw error
+            await delay(25, signal)
+          }
+        }
       },
       markPointer: () => this.setPointer(tab, target, 'type', startedAt),
       sendKey: (event) => {
