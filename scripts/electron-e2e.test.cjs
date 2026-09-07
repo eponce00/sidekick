@@ -139,8 +139,11 @@ async function launchSideKick(profile) {
 }
 
 async function waitForVisible(locator, label) {
-  await locator.waitFor({ state: 'visible', timeout: 20_000 })
-  assert.equal(await locator.isVisible(), true, `${label} should be visible`)
+  try {
+    await locator.waitFor({ state: 'visible', timeout: 20_000 })
+  } catch (cause) {
+    throw new Error(`${label} should be visible`, { cause })
+  }
 }
 
 async function closeApplication(application) {
@@ -219,7 +222,11 @@ test(
       await page.getByRole('tab', { name: 'Shared browser fixture' }).click()
       await address.fill(`http://127.0.0.1:${server.address().port}/again`)
       await address.press('Enter')
-      await waitForVisible(page.getByRole('tab', { name: 'Shared browser fixture' }), 'continued browsing')
+      await page.waitForFunction((url) => {
+        const tab = [...document.querySelectorAll('[role="tab"]')].find((item) => item.title === url)
+        return tab?.getAttribute('aria-selected') === 'true' && !tab.disabled &&
+          tab.textContent.includes('Shared browser fixture')
+      }, `http://127.0.0.1:${server.address().port}/again`)
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await waitForVisible(page.getByRole('dialog', { name: 'Settings' }), 'settings above browser')
     } finally {
