@@ -179,9 +179,12 @@ The community distribution targets are deliberately narrow:
 
 Published versions are available from
 [GitHub Releases](https://github.com/eponce00/sidekick/releases). Each release includes exact
-SHA-256 checksums and GitHub/Sigstore provenance. Installed builds check for a newer stable release
-and open its public release page when the user chooses **View release**. They never silently
-download or execute an unsigned replacement.
+SHA-256 checksums and GitHub/Sigstore provenance. Builds with the community updater check for a
+newer stable release and download its package in the background. **Restart and update** verifies
+the checksum again, closes SideKick cleanly and starts the Windows installer or macOS replacement.
+Only SideKick restarts, never the computer. System approval prompts may remain. Linux downloads
+are verified and revealed for manual AppImage replacement. Version 0.7.0 and earlier need one
+manual upgrade to obtain this feature. See the release guide for limitations and qualification.
 
 Intel macOS builds and portable Windows executables are not currently part of the community release
 contract. The [release guide](./docs/development/RELEASES.md) explains the permanent zero-cost

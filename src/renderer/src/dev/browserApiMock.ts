@@ -1017,6 +1017,11 @@ export function installBrowserApiMock(): void {
       onCommand: () => () => undefined
     },
     appUpdates: {
+      install: async () => ({
+        status: 'disabled' as const,
+        currentVersion: '0.7.0',
+        reason: 'development' as const
+      }),
       getState: async () => ({
         status: 'disabled' as const,
         currentVersion: '0.6.0',

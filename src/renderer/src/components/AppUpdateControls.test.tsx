@@ -26,6 +26,7 @@ describe('AppUpdateToast', () => {
   let publish: (state: AppUpdateState) => void
   const openRelease = vi.fn(async () => ({ opened: true }))
   const check = vi.fn()
+  const install = vi.fn()
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -35,6 +36,7 @@ describe('AppUpdateToast', () => {
         appUpdates: {
           getState: async () => available,
           check,
+          install,
           openRelease,
           onState: (callback: (state: AppUpdateState) => void) => {
             publish = callback
@@ -53,7 +55,7 @@ describe('AppUpdateToast', () => {
     container.remove()
   })
 
-  it('offers the verified public release instead of installing an unsigned update', async () => {
+  it('offers the public release for notification-only states', async () => {
     await act(async () => root.render(<AppUpdateToast />))
     expect(container.textContent).toContain('SideKick 2.0.0 is available.')
 
@@ -73,11 +75,27 @@ describe('AppUpdateToast', () => {
         message: 'offline'
       })
     )
-    expect(container.textContent).toContain('Release check failed: offline')
+    expect(container.textContent).toContain('Update failed: offline')
     const button = [...container.querySelectorAll('button')].find(({ textContent }) =>
       textContent?.includes('Retry')
     )
     await act(async () => button?.click())
     expect(check).toHaveBeenCalledOnce()
+  })
+
+  it('offers an app-only restart after verification, never during download', async () => {
+    await act(async () => root.render(<AppUpdateToast />))
+    const update = available.status === 'available' ? available.update : undefined!
+    await act(async () =>
+      publish({ status: 'downloading', currentVersion: '1.0.0', update, percent: 42 })
+    )
+    expect(container.textContent).toContain('42%')
+    expect(container.querySelector('button')).toBeNull()
+    await act(async () =>
+      publish({ status: 'ready', currentVersion: '1.0.0', update, installMode: 'restart' })
+    )
+    expect(container.textContent).toContain('Only the app will restart')
+    await act(async () => container.querySelector('button')?.click())
+    expect(install).toHaveBeenCalledOnce()
   })
 })

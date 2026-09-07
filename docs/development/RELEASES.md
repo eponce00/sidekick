@@ -34,10 +34,35 @@ and users of the GitHub package follow Apple's per-app **Open Anyway** flow.
 
 ## Security model
 
-The app checks the public GitHub Releases API after startup and every six hours. A newer stable
-version produces a **View release** action. SideKick does not download, execute, or replace itself:
-automatic installation would turn an unavoidable unsigned-distribution limitation into a remote
-code-execution path.
+The app checks the public GitHub Releases API after startup and every six hours. The community
+updater downloads newer stable packages automatically, streams them to a private staging directory,
+and verifies the exact asset against that release's `SHA256SUMS.txt`. It permits only the canonical
+GitHub release path and GitHub's release-assets HTTPS host. It never accepts an installer URL or
+file path from the renderer. Installation requires **Restart and update** and a native confirmation;
+normal closing does not silently install. The computer is never restarted.
+
+This is an explicit change from the notification-only policy in 0.7.0. Checksums protect against
+corrupt/mismatched downloads, not a compromised publisher or GitHub account. The updater does not
+automatically verify Sigstore provenance, and ad-hoc signing does not authenticate a publisher.
+The release workflow's provenance remains independently verifiable below. No OS security setting
+is changed; there is no quarantine removal, elevation helper or Gatekeeper bypass.
+
+Windows launches the existing NSIS installer with `--updated --force-run` after graceful shutdown;
+its normal OS/installer prompts remain. macOS arm64 extracts the verified ZIP beside the installed
+app, checks bundle ID/version and strict code-signature integrity, then uses a fixed, argument-based
+helper to wait for exit and replace the app. It retains `SideKick.previous.app` in the adjacent
+`.sidekick-update-*` directory and rolls back a failed move or immediately failed `open` command.
+That is not a post-launch health guarantee: Gatekeeper can still block a launch after `open` returns.
+The previous bundle remains available for recovery. Installer output stays under the user-data
+`updates/pending-*/installer.log`; asynchronous Mac helper failures show an OS alert.
+
+The Mac app must run outside a DMG/translocation, in a writable installation directory (for example
+`~/Applications`). An unwritable `/Applications` installation uses the manual release fallback;
+SideKick never changes directory permissions. Linux receives a verified AppImage and **Show
+downloaded update**, without moving an arbitrary user-selected installation. Unsupported
+architectures get a visible error and **View release**. Development builds cannot install updates.
+Interrupted downloads are removed; completed downloads are rehashed before reuse and installation.
+Old verified downloads and Mac backups are retained, not silently deleted. No profile data is moved.
 
 Every tagged release instead has four independent trust signals:
 
@@ -86,8 +111,8 @@ PNG derivatives are checked in and hash-validated so clean release runners do no
 conversion download and cannot silently fall back to Electron artwork.
 
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
-from the public release, and the final merged-set validator rejects them because SideKick does not
-perform unattended binary updates. Portable Windows executables remain outside the current release
+from the public release, and the final merged-set validator rejects them because the community
+updater uses full packages and SHA-256 manifests. Portable Windows executables remain outside the current release
 contract.
 
 The Linux package uses the modern static AppImage runtime instead of the legacy FUSE2-dependent
@@ -203,8 +228,11 @@ matrix. Review coverage and sample budgets separately before any readiness claim
 6. Verify the release contains the exact artifact contract and a valid attestation.
 7. Install on clean physical machines and test the documented first-launch warning, app launch,
    permissions, data persistence, release notification, uninstall, and data retention.
-8. Publish a small patch release and prove that the existing app notices it and opens the exact
-   public GitHub release.
+8. Publish a small patch release and prove download progress, checksum failure rejection, cancel,
+   graceful agent shutdown, installed replacement/relaunch, and profile retention. Test macOS
+   Gatekeeper and both writable/unwritable installation locations on a real Mac. Version 0.7.0
+   cannot bootstrap this automatically: one manual installation of an updater-enabled build is
+   required. Do not call mock/contract tests an installed upgrade qualification.
 
 Do not bypass a failed validation gate with manually uploaded replacement assets. Community
 packages are intentionally unsigned or ad-hoc signed; integrity comes from the public source,
