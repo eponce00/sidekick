@@ -184,7 +184,8 @@ test(
         page.getByRole('tab', { name: 'Shared browser fixture' }),
         'user-opened tab'
       )
-      await waitForVisible(page.getByRole('button', { name: 'Resume agent' }), 'shared control')
+      assert.equal(await page.getByRole('button', { name: 'Resume agent' }).count(), 0)
+      assert.equal(await page.getByRole('button', { name: 'Take control' }).count(), 0)
       const embedded = await application.evaluate(({ BrowserWindow }) => {
         const main = BrowserWindow.getAllWindows().find((window) =>
           window.webContents.getURL().includes('/out/renderer/')
@@ -212,8 +213,13 @@ test(
       if (process.env.SIDEKICK_E2E_VISUAL_REVIEW === '1') {
         await new Promise((resolve) => setTimeout(resolve, 45_000))
       }
-      await page.getByRole('button', { name: 'Resume agent' }).click()
-      await waitForVisible(page.getByRole('button', { name: 'Take control' }), 'resumed browser')
+      await page.getByRole('button', { name: 'New browser tab' }).click()
+      await waitForVisible(page.getByRole('tab', { name: 'about:blank', exact: true }), 'new blank tab')
+      assert.equal(await page.getByRole('tab', { name: 'Shared browser fixture' }).count(), 1)
+      await page.getByRole('tab', { name: 'Shared browser fixture' }).click()
+      await address.fill(`http://127.0.0.1:${server.address().port}/again`)
+      await address.press('Enter')
+      await waitForVisible(page.getByRole('tab', { name: 'Shared browser fixture' }), 'continued browsing')
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await waitForVisible(page.getByRole('dialog', { name: 'Settings' }), 'settings above browser')
     } finally {
