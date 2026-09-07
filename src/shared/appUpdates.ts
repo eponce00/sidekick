@@ -18,6 +18,13 @@ export type AppUpdateState =
   | (AppUpdateStateBase & { status: 'checking' })
   | (AppUpdateStateBase & { status: 'up-to-date'; checkedAt: number })
   | (AppUpdateStateBase & { status: 'available'; update: AppUpdateInfo })
+  | (AppUpdateStateBase & { status: 'downloading'; update: AppUpdateInfo; percent: number })
+  | (AppUpdateStateBase & {
+      status: 'ready'
+      update: AppUpdateInfo
+      installMode: 'restart' | 'manual'
+    })
+  | (AppUpdateStateBase & { status: 'installing' })
   | (AppUpdateStateBase & {
       status: 'error'
       message: string
@@ -26,6 +33,7 @@ export type AppUpdateState =
 export interface AppUpdatesAPI {
   getState: () => Promise<AppUpdateState>
   check: () => Promise<AppUpdateState>
+  install: () => Promise<AppUpdateState>
   openRelease: () => Promise<{ opened: boolean }>
   onState: (callback: (state: AppUpdateState) => void) => () => void
 }

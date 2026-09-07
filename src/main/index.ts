@@ -115,6 +115,10 @@ async function bootstrapApplication(): Promise<void> {
 
   registerAllHandlers()
   appUpdateService = new AppUpdateService({
+    beforeQuit: async () => {
+      await prepareApplicationShutdown()
+      closeApplicationDatabase()
+    },
     disabledReason: process.argv.includes('--sidekick-packaged-smoke-test')
       ? 'development'
       : undefined

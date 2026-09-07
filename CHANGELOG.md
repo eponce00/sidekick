@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.1 — 2026-09-07
+
+- Download stable updates in the background from the canonical GitHub release and verify their
+  SHA-256 checksums before offering installation. Show progress, retry, and manual release fallback.
+- Add **Restart and update** on Windows and Apple Silicon macOS, with confirmation and graceful
+  session shutdown. Only the app restarts, never the computer. System security prompts remain.
+- Keep the previous Mac app bundle for filesystem recovery; validate the new bundle identity,
+  version and signature structure before replacement. Unwritable/translocated installs use the
+  manual fallback. Linux downloads a verified AppImage for manual replacement.
+- Restrict install requests to the app main frame and recover the current app if installer launch
+  fails after shutdown. Never change Gatekeeper, quarantine or system-wide security settings.
+- Existing 0.7.0 installations need one manual upgrade to obtain the updater. Real installed
+  upgrade and macOS permission-prompt qualification remain separate from automated package tests.
+
 ## 0.7.0 — 2026-09-06
 
 - Replace the screenshot-only browser panel with the actual embedded Chromium page shared by user

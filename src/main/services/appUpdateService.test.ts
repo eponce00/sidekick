@@ -45,7 +45,7 @@ describe('AppUpdateService', () => {
   it('checks the public release feed and opens only the selected GitHub release', async () => {
     const fetchLatestRelease = vi.fn(async () => release)
     const openExternal = vi.fn(async () => undefined)
-    const service = new AppUpdateService({ fetchLatestRelease, openExternal })
+    const service = new AppUpdateService({ fetchLatestRelease, openExternal, downloadUpdate: null })
 
     expect(await service.check()).toMatchObject({ status: 'available', update: release })
     expect(await service.openRelease()).toEqual({ opened: true })
@@ -62,6 +62,56 @@ describe('AppUpdateService', () => {
       status: 'up-to-date',
       checkedAt: 42
     })
+  })
+
+  it('downloads automatically, preserves a ready update across checks, and installs only on request', async () => {
+    const downloadUpdate = vi.fn(async (_version, progress) => {
+      progress(30)
+      return {
+        path: '/private/update',
+        sha256: 'digest',
+        version: release.version,
+        mode: 'restart' as const
+      }
+    })
+    const installUpdate = vi.fn(async () => false)
+    const beforeQuit = vi.fn(async () => undefined)
+    const service = new AppUpdateService({
+      fetchLatestRelease: async () => release,
+      downloadUpdate,
+      installUpdate,
+      beforeQuit
+    })
+    const states: string[] = []
+    service.subscribe((state) => states.push(state.status))
+    expect(await service.check(false)).toMatchObject({ status: 'ready', installMode: 'restart' })
+    await service.check()
+    expect(downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(states).toContain('downloading')
+    expect(installUpdate).not.toHaveBeenCalled()
+    await service.install()
+    expect(installUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ version: '2.0.0' }),
+      beforeQuit
+    )
+    expect(service.getState().status).toBe('ready')
+  })
+
+  it('surfaces failed automatic downloads and never allows installation', async () => {
+    const installUpdate = vi.fn()
+    const service = new AppUpdateService({
+      fetchLatestRelease: async () => release,
+      downloadUpdate: async () => {
+        throw new Error('checksum mismatch')
+      },
+      installUpdate
+    })
+    expect(await service.check(false)).toMatchObject({
+      status: 'error',
+      message: 'checksum mismatch'
+    })
+    await service.install()
+    expect(installUpdate).not.toHaveBeenCalled()
   })
 
   it('does not initialize network checks for development builds', () => {

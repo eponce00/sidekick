@@ -263,6 +263,7 @@ const api = {
   appUpdates: {
     getState: () => ipcRenderer.invoke('appUpdates:getState'),
     check: () => ipcRenderer.invoke('appUpdates:check'),
+    install: () => ipcRenderer.invoke('appUpdates:install'),
     openRelease: () => ipcRenderer.invoke('appUpdates:openRelease'),
     onState: (callback: (state: import('../shared/appUpdates').AppUpdateState) => void) => {
       const listener = (

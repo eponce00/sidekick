@@ -301,6 +301,12 @@ jobs:
           cat > release-notes.md <<EOF
           Free SideKick community packages built from \`$GITHUB_REPOSITORY@$GITHUB_SHA\`.
 
+          Read the [version changelog](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/CHANGELOG.md) for changes and migration notes.
+
+          ## Updating
+
+          Version 0.7.1 introduces background update downloads with checksum verification and an app-only **Restart and update** action on Windows and Apple Silicon macOS. Existing 0.7.0 installations need one manual installation of this release to get that feature. OS approval prompts can remain; macOS needs a writable installation folder outside the DMG. Linux reveals a verified AppImage for manual replacement. Real installed upgrades and Mac permission prompts still require device qualification.
+
           ## Downloads
 
           | Operating system | Architecture | Recommended package | Alternative |

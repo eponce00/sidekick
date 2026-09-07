@@ -34,8 +34,16 @@ function updateStatus(state: AppUpdateState): string {
       return 'SideKick is up to date.'
     case 'available':
       return `SideKick ${state.update.version} is available.`
+    case 'downloading':
+      return `Downloading SideKick ${state.update.version}… ${state.percent}%`
+    case 'ready':
+      return state.installMode === 'restart'
+        ? `SideKick ${state.update.version} is ready. Only the app will restart.`
+        : `SideKick ${state.update.version} downloaded and verified. Replace your AppImage to update.`
+    case 'installing':
+      return 'Preparing update…'
     case 'error':
-      return `Release check failed: ${state.message}`
+      return `Update failed: ${state.message}`
     default:
       return `SideKick ${state.currentVersion}`
   }
@@ -46,6 +54,13 @@ function primaryAction(state: AppUpdateState): {
   icon: typeof ExternalLink
   run: () => Promise<unknown>
 } | null {
+  if (state.status === 'ready') {
+    return {
+      label: state.installMode === 'restart' ? 'Restart and update' : 'Show downloaded update',
+      icon: RefreshCw,
+      run: () => window.api.appUpdates.install()
+    }
+  }
   if (state.status === 'available') {
     return {
       label: 'View release',
@@ -92,6 +107,11 @@ export function AppUpdateToast(): React.JSX.Element | null {
           </button>
         </div>
       )}
+      {state.status === 'error' && (
+        <button type="button" onClick={() => void window.api.appUpdates.openRelease()}>
+          View release
+        </button>
+      )}
     </aside>
   )
 }
@@ -100,7 +120,7 @@ export function AppUpdateSettings(): React.JSX.Element {
   const state = useAppUpdateState()
   if (!state) return <div className="app-update-settings">Loading release status…</div>
   const action = primaryAction(state)
-  const busy = state.status === 'checking'
+  const busy = ['checking', 'downloading', 'installing'].includes(state.status)
 
   return (
     <div className="app-update-settings">

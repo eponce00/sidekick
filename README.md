@@ -24,7 +24,7 @@
   <a href="https://github.com/eponce00/sidekick/actions/workflows/ci.yml">
     <img src="https://github.com/eponce00/sidekick/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" />
   </a>
-  <img src="https://img.shields.io/badge/source-v0.7.0-35d0ba" alt="Source version 0.7.0" />
+  <img src="https://img.shields.io/badge/source-v0.7.1-35d0ba" alt="Source version 0.7.1" />
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple" alt="macOS Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11" alt="Windows x64" />
   <img src="https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=111827" alt="Linux x64" />
@@ -179,9 +179,12 @@ The community distribution targets are deliberately narrow:
 
 Published versions are available from
 [GitHub Releases](https://github.com/eponce00/sidekick/releases). Each release includes exact
-SHA-256 checksums and GitHub/Sigstore provenance. Installed builds check for a newer stable release
-and open its public release page when the user chooses **View release**. They never silently
-download or execute an unsigned replacement.
+SHA-256 checksums and GitHub/Sigstore provenance. Builds with the community updater check for a
+newer stable release and download its package in the background. **Restart and update** verifies
+the checksum again, closes SideKick cleanly and starts the Windows installer or macOS replacement.
+Only SideKick restarts, never the computer. System approval prompts may remain. Linux downloads
+are verified and revealed for manual AppImage replacement. Version 0.7.0 and earlier need one
+manual upgrade to obtain this feature. See the release guide for limitations and qualification.
 
 Intel macOS builds and portable Windows executables are not currently part of the community release
 contract. The [release guide](./docs/development/RELEASES.md) explains the permanent zero-cost

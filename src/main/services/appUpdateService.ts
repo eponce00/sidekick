@@ -6,6 +6,7 @@ import type {
   AppUpdateState
 } from '../../shared/appUpdates'
 import { PRODUCT_IDENTITY } from '../../shared/productIdentity'
+import { downloadAppUpdate, installAppUpdate, type PreparedAppUpdate } from './appUpdateInstaller'
 
 const INITIAL_CHECK_DELAY_MS = 15_000
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000
@@ -28,6 +29,9 @@ interface AppUpdateServiceOptions {
   fetchLatestRelease?: () => Promise<AppUpdateInfo | null>
   openExternal?: (url: string) => Promise<void>
   now?: () => number
+  downloadUpdate?: typeof downloadAppUpdate | null
+  installUpdate?: typeof installAppUpdate
+  beforeQuit?: () => Promise<void>
 }
 
 function stableVersion(value: string): [number, number, number] | null {
@@ -71,7 +75,8 @@ export function parseGitHubRelease(value: unknown): AppUpdateInfo {
   const version = tag.startsWith('v') ? tag.slice(1) : ''
   if (!stableVersion(version)) throw new Error('GitHub returned an invalid stable release tag')
   const releaseUrl = trustedReleaseUrl(release.html_url)
-  if (!releaseUrl) throw new Error('GitHub returned an untrusted release URL')
+  if (releaseUrl !== `${RELEASES_URL}/tag/v${version}`)
+    throw new Error('GitHub returned an untrusted release URL')
 
   return {
     version,
@@ -119,6 +124,12 @@ export class AppUpdateService {
   private readonly openExternal: (url: string) => Promise<void>
   private readonly now: () => number
   private checkPromise: Promise<AppUpdateState> | null = null
+  private prepared: PreparedAppUpdate | null = null
+  private readonly downloadUpdate: typeof downloadAppUpdate | null
+  private readonly installUpdate: typeof installAppUpdate
+  private readonly beforeQuit: () => Promise<void>
+  private controller = new AbortController()
+  private installing = false
   private initialCheckTimer: ReturnType<typeof setTimeout> | null = null
   private checkInterval: ReturnType<typeof setInterval> | null = null
 
@@ -130,6 +141,10 @@ export class AppUpdateService {
     this.fetchLatestRelease = options.fetchLatestRelease ?? fetchLatestGitHubRelease
     this.openExternal = options.openExternal ?? ((url) => shell.openExternal(url))
     this.now = options.now ?? Date.now
+    this.downloadUpdate =
+      options.downloadUpdate === undefined ? downloadAppUpdate : options.downloadUpdate
+    this.installUpdate = options.installUpdate ?? installAppUpdate
+    this.beforeQuit = options.beforeQuit ?? (async () => undefined)
     log.initialize()
     log.transports.file.level = 'info'
   }
@@ -153,6 +168,7 @@ export class AppUpdateService {
 
   check(userInitiated = true): Promise<AppUpdateState> {
     if (this.state.status === 'disabled') return Promise.resolve(this.state)
+    if (this.state.status === 'ready' || this.installing) return Promise.resolve(this.state)
     if (this.checkPromise) return this.checkPromise
 
     const base = { currentVersion: app.getVersion() }
@@ -164,13 +180,29 @@ export class AppUpdateService {
           ? this.transition({ ...base, status: 'up-to-date', checkedAt: this.now() })
           : this.transition({ ...base, status: 'idle' })
       }
-      return this.transition({ ...base, status: 'available', update: latest })
+      this.transition({ ...base, status: 'available', update: latest })
+      if (!this.downloadUpdate) return this.state
+      this.transition({ ...base, status: 'downloading', update: latest, percent: 0 })
+      this.controller = new AbortController()
+      this.prepared = await this.downloadUpdate(
+        latest.version,
+        (percent) => {
+          if (this.state.status !== 'downloading' || this.state.percent !== percent) {
+            this.transition({ ...base, status: 'downloading', update: latest, percent })
+          }
+        },
+        this.controller.signal
+      )
+      return this.transition({
+        ...base,
+        status: 'ready',
+        update: latest,
+        installMode: this.prepared.mode
+      })
     })()
       .catch((error) => {
         log.warn('Release check failed', { message: errorMessage(error), userInitiated })
-        return userInitiated
-          ? this.transition({ ...base, status: 'error', message: errorMessage(error) })
-          : this.transition({ ...base, status: 'idle' })
+        return this.transition({ ...base, status: 'error', message: errorMessage(error) })
       })
       .finally(() => {
         this.checkPromise = null
@@ -179,9 +211,29 @@ export class AppUpdateService {
   }
 
   async openRelease(): Promise<{ opened: boolean }> {
-    const url = this.state.status === 'available' ? this.state.update.releaseUrl : RELEASES_URL
+    const url = 'update' in this.state ? this.state.update.releaseUrl : RELEASES_URL
     await this.openExternal(url)
     return { opened: true }
+  }
+
+  async install(): Promise<AppUpdateState> {
+    if (this.installing || this.state.status !== 'ready' || !this.prepared) return this.state
+    this.installing = true
+    const ready = this.state
+    this.transition({ currentVersion: ready.currentVersion, status: 'installing' })
+    try {
+      if (!(await this.installUpdate(this.prepared, this.beforeQuit))) this.transition(ready)
+    } catch (error) {
+      this.prepared = null
+      this.transition({
+        currentVersion: ready.currentVersion,
+        status: 'error',
+        message: errorMessage(error)
+      })
+    } finally {
+      this.installing = false
+    }
+    return this.state
   }
 
   start(): void {
@@ -196,6 +248,7 @@ export class AppUpdateService {
   }
 
   stop(): void {
+    this.controller.abort()
     if (this.initialCheckTimer) clearTimeout(this.initialCheckTimer)
     if (this.checkInterval) clearInterval(this.checkInterval)
     this.initialCheckTimer = null
