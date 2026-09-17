@@ -11,9 +11,11 @@ const evaluation = resolveAgentEvalEnvironment()
 
 const suite = process.argv.includes('--verification')
   ? 'verification'
-  : process.argv.includes('--quick')
-    ? 'quick'
-    : process.env.SIDEKICK_AGENT_EVAL_SUITE || 'full'
+  : process.argv.includes('--visual')
+    ? 'visual'
+    : process.argv.includes('--quick')
+      ? 'quick'
+      : process.env.SIDEKICK_AGENT_EVAL_SUITE || 'full'
 
 if (!evaluation.apiKey) {
   console.error(
@@ -27,6 +29,7 @@ console.info(`[agent-eval] using ${evaluation.credentialSource}`)
 const runner = join(__dirname, 'run-vitest.cjs')
 const vitestArgs = [runner, 'src/main/evals/agentHarness.live.test.ts']
 if (suite === 'verification') vitestArgs.push('-t', 'production completion guard')
+if (suite === 'visual') vitestArgs.push('-t', 'self-contained SVG visual')
 const result = spawnSync(process.execPath, vitestArgs, {
   stdio: 'inherit',
   env: {

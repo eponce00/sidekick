@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { ProviderCapabilityPanel } from './ProviderCapabilityPanel'
 import {
   Check,
   ChevronRight,
@@ -30,10 +29,7 @@ import {
   type ProviderDefinition
 } from '../../../shared/providerRegistry'
 import { getModelDisplayInfo } from '../../../shared/modelDisplay'
-import {
-  discoverProviderModels,
-  testProviderConnection as checkProviderConnection
-} from '../services/providers/providerDiscovery'
+import { testProviderConnection as checkProviderConnection } from '../services/providers/providerDiscovery'
 import { ProviderIcon } from './ProviderIcon'
 import { filterModelsByQuery } from '../utils/modelSearch'
 
@@ -99,26 +95,6 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
       )
     )
     setStatus('idle')
-  }
-
-  const discoverModels = async (): Promise<void> => {
-    if (!selected) return
-    setStatus('loading')
-    setStatusMessage('Connecting…')
-    try {
-      const discovered = await discoverProviderModels(window.api, selected)
-      updateSelected({
-        models: discovered,
-        health: onlineProviderHealth(undefined, discovered.length)
-      })
-      setStatus('success')
-      setStatusMessage(`${discovered.length} models found`)
-    } catch (error) {
-      const message = providerHealthErrorMessage(error)
-      updateSelected({ health: offlineProviderHealth(error) })
-      setStatus('error')
-      setStatusMessage(message)
-    }
   }
 
   const testConnection = async (): Promise<void> => {
@@ -324,6 +300,28 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                 )}
               </div>
 
+              <div className="provider-connection-row">
+                <button
+                  type="button"
+                  className="settings-secondary-action"
+                  onClick={() => void testConnection()}
+                  disabled={status === 'loading'}
+                >
+                  <RefreshCw size={14} className={status === 'loading' ? 'icon-spin' : ''} />
+                  {status === 'loading' ? 'Testing…' : 'Test connection'}
+                </button>
+                {status !== 'idle' && (
+                  <span
+                    className={`provider-connection-status provider-status-${status}`}
+                    role="status"
+                  >
+                    {status === 'success' && <Check size={14} />}
+                    {status === 'error' && <X size={14} />}
+                    {statusMessage}
+                  </span>
+                )}
+              </div>
+
               <div className="provider-model-header">
                 <div>
                   <h3>Models shown in chat</h3>
@@ -333,40 +331,7 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                       : 'Context limits come from the server or provider metadata.'}
                   </p>
                 </div>
-                {selected.modelSource === 'discover' && (
-                  <button
-                    type="button"
-                    className="settings-secondary-action"
-                    onClick={() => void discoverModels()}
-                    disabled={status === 'loading'}
-                  >
-                    <RefreshCw size={14} className={status === 'loading' ? 'icon-spin' : ''} />
-                    {selected.models.length ? 'Refresh' : 'Connect & discover'}
-                  </button>
-                )}
-                {selected.modelSource === 'manual' && (
-                  <button
-                    type="button"
-                    className="settings-secondary-action"
-                    onClick={() => void testConnection()}
-                    disabled={status === 'loading'}
-                  >
-                    <RefreshCw size={14} className={status === 'loading' ? 'icon-spin' : ''} />
-                    Test connection
-                  </button>
-                )}
               </div>
-
-              {status !== 'idle' && (
-                <div className={`provider-status provider-status-${status}`}>
-                  {status === 'success' && <Check size={14} />}
-                  {status === 'error' && <X size={14} />}
-                  {status === 'loading' && <RefreshCw size={14} className="icon-spin" />}
-                  {statusMessage}
-                </div>
-              )}
-
-              <ProviderCapabilityPanel key={selected.id} instance={selected} />
 
               {selected.type === 'litellm' &&
                 selected.models.some(

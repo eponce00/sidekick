@@ -247,4 +247,58 @@ describe('conversation provider history', () => {
     expect(tool.media).toBeUndefined()
     db.close()
   })
+
+  it('removes legacy inline image bytes while rebuilding durable provider history', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'local-loaded-model', 1);
+    `)
+    const inlineImage = 'QUFB'.repeat(30_000)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    add.run(
+      'run-1',
+      2,
+      'assistant.completed',
+      JSON.stringify({
+        content: 'I found an image.',
+        toolCalls: [{ id: 'search-1', name: 'web_image_search', arguments: { query: 'robot' } }]
+      })
+    )
+    add.run(
+      'run-1',
+      3,
+      'tool.completed',
+      JSON.stringify({
+        toolCallId: 'search-1',
+        result: {
+          modelContent: JSON.stringify({
+            results: [
+              {
+                title: 'Robot',
+                imageUrl: 'https://images.example/robot.png',
+                imageBase64: inlineImage
+              }
+            ]
+          })
+        }
+      })
+    )
+
+    const history = durableProviderHistory(
+      db,
+      'conversation-1',
+      [row({ id: 'assistant-1', content: 'I found an image.' })],
+      { providerKind: 'openai-compatible', model: 'local-loaded-model' }
+    )
+    const toolContent = String(history.find((message) => message.role === 'tool')?.content ?? '')
+
+    expect(toolContent).toContain('https://images.example/robot.png')
+    expect(toolContent).toContain('"historicalVisualPayloadsOmitted":1')
+    expect(toolContent).not.toContain(inlineImage)
+    expect(toolContent.length).toBeLessThan(500)
+    db.close()
+  })
 })

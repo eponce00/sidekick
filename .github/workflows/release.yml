@@ -305,7 +305,7 @@ jobs:
 
           ## Updating
 
-          Version 0.7.1 introduces background update downloads with checksum verification and an app-only **Restart and update** action on Windows and Apple Silicon macOS. Existing 0.7.0 installations need one manual installation of this release to get that feature. OS approval prompts can remain; macOS needs a writable installation folder outside the DMG. Linux reveals a verified AppImage for manual replacement. Real installed upgrades and Mac permission prompts still require device qualification.
+          Install the current package over an existing SideKick installation; application data remains in the platform user-data directory. Releases from 0.7.1 onward can download verified updates and offer an app-only **Restart and update** action on Windows and Apple Silicon macOS. OS approval prompts can remain; macOS needs a writable installation folder outside the DMG. Linux reveals a verified AppImage for manual replacement. Real installed upgrades and Mac permission prompts still require device qualification.
 
           ## Downloads
 

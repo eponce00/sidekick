@@ -2,6 +2,7 @@ import { getPermissionPrompt } from '../permissions'
 import { getActiveSkillInjections, getSkillsDirectory } from '../skills'
 import { AGENT_PROMPT_VERSION, type ComposedPrompt, type PromptComposerInput } from './promptTypes'
 import { formatProjectInstructionsMessage } from '../projectInstructions'
+import { isWorkspaceMutationTool } from '../workspaceMutations'
 
 interface PromptSection {
   id: string
@@ -142,10 +143,12 @@ An artifact is an interactive result rendered inside this chat, not a durable pr
 
 function workspaceSection(input: PromptComposerInput): string {
   if (!input.project.workspaceRoot || !input.capabilities.workspace) return ''
-  const hasMutation = input.capabilities.availableToolNames.includes('apply_patch')
-  const mutationGuidance = !hasMutation
+  const mutationTools = input.capabilities.availableToolNames.filter(isWorkspaceMutationTool)
+  const mutationGuidance = !mutationTools.length
     ? 'This run can inspect the project but cannot modify it.'
-    : 'Use apply_patch for additions, targeted changes, whole-file changes, moves, and deletions. Its complete multi-file patch is verified before any write. Do not use shell commands for ordinary file editing.'
+    : mutationTools.includes('apply_patch')
+      ? 'Use apply_patch for additions, targeted changes, whole-file changes, moves, and deletions. Its complete multi-file patch is verified before any write. Do not use shell commands for ordinary file editing.'
+      : `Use ${mutationTools.join(', ')} for project changes: exact edit for localized replacements, write for new or complete-file content, and delete_file only when the intended final state is absent. Do not use shell commands for ordinary file editing.`
   return `## Active project
 Workspace root: \`${input.project.workspaceRoot}\`
 

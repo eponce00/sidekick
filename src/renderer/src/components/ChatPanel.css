@@ -1165,6 +1165,11 @@ body[data-theme='light'] .message-user .message-action:hover {
 
 .action-item {
   min-width: 0;
+  /* Long agent runs can contain hundreds of completed tool rows. Chromium may
+     skip layout/paint for rows far outside the scroll viewport while preserving
+     their place and making them available immediately when scrolled into view. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 32px;
 }
 
 .action-item:last-child {

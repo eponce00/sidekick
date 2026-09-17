@@ -4,6 +4,10 @@ export interface ProviderContextWindowErrorDetails {
   inputTokens?: number
 }
 
+export interface ProviderImageLimitErrorDetails {
+  maxImages?: number
+}
+
 /** Only classify explicit inference failures, never infer hardware trouble from a timeout. */
 export function providerInferenceFailure(
   message: string | null | undefined
@@ -54,5 +58,25 @@ export function providerContextWindowError(
         message,
         /(?:prompt contains at least|input(?:_tokens| tokens)?[=:])\s*([\d,]+)/i
       ) ?? numericMatch(message, /prompt is too long:\s*([\d,]+)\s*tokens/i)
+  }
+}
+
+/** Recognizes image-count limits returned by OpenAI-compatible vision gateways. */
+export function providerImageLimitError(
+  message: string | null | undefined
+): ProviderImageLimitErrorDetails | null {
+  if (!message) return null
+  const normalized = message.toLowerCase()
+  if (
+    !/at most\s+[\d,]+\s+image\(s\)\s+may be provided/i.test(message) &&
+    !/maximum(?: number of)?\s+[\d,]+\s+images?/i.test(message) &&
+    !normalized.includes('too many images')
+  ) {
+    return null
+  }
+  return {
+    maxImages:
+      numericMatch(message, /at most\s+([\d,]+)\s+image/i) ??
+      numericMatch(message, /maximum(?: number of)?\s+([\d,]+)\s+images?/i)
   }
 }

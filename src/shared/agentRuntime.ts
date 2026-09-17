@@ -472,10 +472,18 @@ export function toolExecutionSucceeded<TData>(input: {
   const startedAt = input.startedAt ?? Date.now()
   const completedAt = input.completedAt ?? Date.now()
   const media = normalizeToolResultMedia(input.media)
+  const modelContent = input.modelContent ?? stringifyModelContent(input.data)
+  for (const attachment of media ?? []) {
+    if (attachment.source.type !== 'data_url') continue
+    const encoded = attachment.source.dataUrl.slice(attachment.source.dataUrl.indexOf(',') + 1)
+    if (encoded.length >= 64 && modelContent.includes(encoded)) {
+      throw new Error('Tool result image bytes must not be duplicated in model-facing text')
+    }
+  }
   return {
     status: 'success',
     title: input.title,
-    modelContent: input.modelContent ?? stringifyModelContent(input.data),
+    modelContent,
     ...(input.data === undefined ? {} : { data: input.data }),
     ...(input.output ? { output: input.output } : {}),
     ...(input.diagnostics ? { diagnostics: input.diagnostics } : {}),

@@ -47,7 +47,10 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_close'
 ] as const
 
-const DEFAULT_MAX_CONVERSATION_SESSIONS = 6
+// Browser pages are real Chromium renderers, not lightweight metadata. Retain the
+// current conversation and one recently used conversation; older inactive scopes
+// are closed before opening another browser instead of accumulating for app lifetime.
+const DEFAULT_MAX_CONVERSATION_SESSIONS = 2
 const MAX_PERSISTED_SEMANTIC_LINES = 300
 const MAX_ACTION_SEMANTIC_LINES = 60
 const MAX_ACTION_SEMANTIC_LINE_CHARS = 480

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.7.5 — 2026-09-17
+
+- Keep long visual and research runs responsive by batching renderer projections, compacting legacy
+  browser receipts, omitting historical inline image payloads, and enforcing one global two-image
+  provider budget across uploads, search results, and browser captures.
+- Pass the top web-image result to vision-capable models without embedding base64 data in tool text,
+  and prevent LiteLLM requests from exceeding common per-prompt image limits.
+- Replace premature mutation-churn stops with progressive repeated-call and state-revisit guidance,
+  while preserving hard limits for genuine repeated failures and failed turns.
+- Select model-compatible edit, write, delete, search/replace, or patch contracts and improve stale
+  read, no-op mutation, malformed tool-call, transport, and provider error recovery.
+- Add multi-turn comprehensive and SVG agent evals covering scoped file reads, localized edits, new
+  files, deletion, commands, web/image search, browser inspection, visual feedback, and cleanup.
+- Simplify provider settings to one responsive **Test connection** action, remove synthetic
+  capability probes from the UI, and fix the narrow-panel CSS collision that compressed controls.
+- Refresh the public application screenshots and expand architecture, search, tools, testing, and
+  prompt/context documentation for the current runtime behavior.
+
 ## 0.7.1 — 2026-09-07
 
 - Download stable updates in the background from the canonical GitHub release and verify their

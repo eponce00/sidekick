@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { providerContextWindowError, providerInferenceFailure } from './providerErrors'
+import {
+  providerContextWindowError,
+  providerImageLimitError,
+  providerInferenceFailure
+} from './providerErrors'
 
 describe('providerInferenceFailure', () => {
   it('recognizes explicit GPU allocation exhaustion and engine death', () => {
@@ -53,5 +57,14 @@ describe('providerContextWindowError', () => {
     expect(
       providerContextWindowError('Too many tokens per minute; retry after 10 seconds')
     ).toBeNull()
+  })
+})
+
+describe('providerImageLimitError', () => {
+  it('extracts image limits without matching unrelated image failures', () => {
+    expect(providerImageLimitError('At most 2 image(s) may be provided in one prompt.')).toEqual({
+      maxImages: 2
+    })
+    expect(providerImageLimitError('Image download failed with status 404')).toBeNull()
   })
 })

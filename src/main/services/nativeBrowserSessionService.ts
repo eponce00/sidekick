@@ -616,8 +616,8 @@ interface BrowserSelectMutationResult {
 
 const DEFAULT_VIEWPORT: BrowserViewport = { width: 1280, height: 800, deviceScaleFactor: 1 }
 const DEFAULT_MAX_SESSIONS_PER_RUN = 2
-const DEFAULT_MAX_TOTAL_SESSIONS = 6
-const DEFAULT_MAX_TABS = 8
+const DEFAULT_MAX_TOTAL_SESSIONS = 3
+const DEFAULT_MAX_TABS = 4
 const DEFAULT_MAX_ARTIFACTS = 200
 const DEFAULT_MAX_ARTIFACT_BYTES = 250 * 1024 * 1024
 const DEFAULT_MAX_ARTIFACTS_PER_SESSION = 50

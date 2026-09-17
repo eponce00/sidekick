@@ -3,7 +3,7 @@ import {
   workspaceReadToolDefinitions,
   type AgentToolDefinition
 } from './agentToolDefinitions'
-import { isWorkspaceMutationTool } from './workspaceMutations'
+import { isWorkspaceMutationTool, type EditingDialect } from './workspaceMutations'
 import {
   type AgentCapability,
   type AgentRunProfile,
@@ -33,6 +33,8 @@ export interface AgentToolCatalogOptions {
   codeIntelligenceAvailable?: boolean
   codeIntelligenceRisk?: ToolRisk
   planStage?: AgentPlanStage
+  /** Provider/model-calibrated workspace editing contract. */
+  editingDialect?: EditingDialect
 }
 
 function definition(
@@ -506,7 +508,8 @@ const webImageSearch = definition(
       query: { type: 'string', description: 'Specific image search query.' },
       include_image_data: {
         type: 'boolean',
-        description: 'Include bounded image payloads for top results when useful.'
+        description:
+          'Attach one bounded top result for visual inspection. Use only when pixels must be inspected; image URLs and metadata are always returned.'
       }
     }
   }
@@ -1433,7 +1436,7 @@ function workspaceEntries(options: AgentToolCatalogOptions): AgentToolCatalogEnt
       concurrency: 'parallel'
     })
   )
-  const writes = editingToolDefinitions('apply-patch').map((tool) =>
+  const writes = editingToolDefinitions(options.editingDialect ?? 'apply-patch').map((tool) =>
     entry(tool, 'workspace.write', 'write', {
       host: 'main',
       timeoutMs: 30_000,

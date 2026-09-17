@@ -1599,11 +1599,6 @@ The user approved this exact plan revision. Act capabilities are now available a
               })
           if (guard.warning) {
             result = withToolGuard(result, guard.warning)
-            this.append(input.id, 'run.retrying', {
-              reason: `tool_guard_${guard.reason}`,
-              tool: call.name,
-              count: guard.count
-            })
           }
           if (guard.stopReason) {
             callStopReason = guard.stopReason
@@ -1675,10 +1670,6 @@ The user approved this exact plan revision. Act capabilities are now available a
         const turnGuard = toolRecovery.observeTurn(turnSuccessCount, turnFailureCount)
         if (turnGuard.warning && lastToolMessage) {
           lastToolMessage.content = `${lastToolMessage.content || ''}\n${turnGuard.warning}`
-          this.append(input.id, 'run.retrying', {
-            reason: `tool_guard_${turnGuard.reason}`,
-            count: turnGuard.count
-          })
         }
         if (turnGuard.stopReason) throw new AgentToolLoopError(turnGuard.stopReason)
         if (!signal.aborted) this.transition(input.id, 'streaming')

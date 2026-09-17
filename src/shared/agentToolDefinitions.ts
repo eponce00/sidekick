@@ -133,6 +133,72 @@ const filePath: AgentToolParameterProperty = {
   description: 'Path relative to the project root.'
 }
 
+function exactEditDefinition(name: 'Edit' | 'search_replace' | 'edit'): AgentToolDefinition {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description:
+        'Replace exact text in a project file. Read the relevant file first. Set replace_all to false for one unique match or true only when every exact match should change. If a unique edit reports multiple matches, retry once with more surrounding context. Use the write tool to create or intentionally replace a complete file.',
+      parameters: {
+        type: 'object',
+        required: ['file_path', 'old_string', 'new_string', 'replace_all'],
+        properties: {
+          file_path: filePath,
+          old_string: {
+            type: 'string',
+            description: 'Exact current file text to replace.'
+          },
+          new_string: {
+            type: 'string',
+            description: 'Replacement text; it must differ from old_string.'
+          },
+          replace_all: {
+            type: 'boolean',
+            description:
+              'Set false for one uniquely identified occurrence. Set true only when every exact occurrence should change.'
+          }
+        }
+      }
+    }
+  }
+}
+
+function writeDefinition(name: 'Write' | 'write'): AgentToolDefinition {
+  return {
+    type: 'function',
+    function: {
+      name,
+      description:
+        'Create a new project file or intentionally replace an existing file with complete content. Read an existing target first; SideKick rejects stale or missing read receipts and no-op writes. Use the edit tool for localized changes.',
+      parameters: {
+        type: 'object',
+        required: ['file_path', 'content'],
+        properties: {
+          file_path: filePath,
+          content: { type: 'string', description: 'Complete desired file content.' }
+        }
+      }
+    }
+  }
+}
+
+function deleteDefinition(): AgentToolDefinition {
+  return {
+    type: 'function',
+    function: {
+      name: 'delete_file',
+      description:
+        'Delete a project file only when its intended final state is absent. Read it first. Never delete a file merely to work around a failed edit or before recreating the same path.',
+      parameters: {
+        type: 'object',
+        required: ['file_path'],
+        properties: { file_path: filePath }
+      }
+    }
+  }
+}
+
 function applyPatchDefinition(): AgentToolDefinition {
   return {
     type: 'function',
@@ -170,10 +236,14 @@ Update hunks are context-based, not line-number based. Start each hunk with a ba
 }
 
 export function editingToolDefinitions(dialect: EditingDialect): AgentToolDefinition[] {
-  // ToolRuntimeV2 intentionally exposes one editing contract to every provider.
-  // Keep the argument while callers migrate away from provider-specific dialect selection.
-  void dialect
-  return [applyPatchDefinition()]
+  if (dialect === 'apply-patch') return [applyPatchDefinition()]
+  if (dialect === 'claude-edit') {
+    return [exactEditDefinition('Edit'), writeDefinition('Write'), deleteDefinition()]
+  }
+  if (dialect === 'search-replace') {
+    return [exactEditDefinition('search_replace'), writeDefinition('write'), deleteDefinition()]
+  }
+  return [exactEditDefinition('edit'), writeDefinition('write'), deleteDefinition()]
 }
 
 /** Canonical bounded project reader used by every provider and run surface. */

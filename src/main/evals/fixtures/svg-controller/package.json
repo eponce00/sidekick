@@ -1,0 +1,8 @@
+{
+  "name": "sidekick-svg-controller-eval",
+  "private": true,
+  "scripts": {
+    "test:base": "node test/verify.mjs base",
+    "test": "node test/verify.mjs final"
+  }
+}

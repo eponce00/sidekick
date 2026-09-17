@@ -6,15 +6,16 @@ research inputs, not runtime dependencies or vendored source.
 
 ## Catalog
 
-| Project      | Repository                                                                | Primary research areas                                     |
-| ------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Codex        | [openai/codex](https://github.com/openai/codex)                           | agent loop, approvals, configuration, project instructions |
-| OpenCode     | [anomalyco/opencode](https://github.com/anomalyco/opencode)               | sessions, tools, provider abstraction, desktop UX          |
-| Cline        | [cline/cline](https://github.com/cline/cline)                             | Plan/Act UX, MCP, checkpoints, provider settings           |
-| Pi           | [badlogic/pi-mono](https://github.com/badlogic/pi-mono)                   | compact agent loop, tool filtering, extensions             |
-| Hermes Agent | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent) | skills, memory, tool orchestration                         |
-| Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)       | command UX, hooks, permissions, project configuration      |
-| Grok Build   | [xai-org/grok-build](https://github.com/xai-org/grok-build)               | planning transitions and review interaction                |
+| Project      | Repository                                                                      | Primary research areas                                     |
+| ------------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Codex        | [openai/codex](https://github.com/openai/codex)                                 | agent loop, approvals, configuration, project instructions |
+| OpenCode     | [anomalyco/opencode](https://github.com/anomalyco/opencode)                     | sessions, tools, provider abstraction, desktop UX          |
+| DeepSeek     | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) | agent loop, tool guards, plugin boundaries                 |
+| Cline        | [cline/cline](https://github.com/cline/cline)                                   | Plan/Act UX, MCP, checkpoints, provider settings           |
+| Pi           | [badlogic/pi-mono](https://github.com/badlogic/pi-mono)                         | compact agent loop, tool filtering, extensions             |
+| Hermes Agent | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)       | skills, memory, tool orchestration                         |
+| Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |
+| Grok Build   | [xai-org/grok-build](https://github.com/xai-org/grok-build)                     | planning transitions and review interaction                |
 
 The catalog must contain only public sources with licenses compatible with the intended use. A
 useful idea does not by itself authorize copying its implementation.

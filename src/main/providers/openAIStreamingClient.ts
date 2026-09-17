@@ -5,7 +5,8 @@ import type {
 } from '../../shared/providerRuntime'
 import {
   completeOpenAICompatibleChat,
-  normalizeOpenAICompatibleEndpoint
+  normalizeOpenAICompatibleEndpoint,
+  requestFailureMessage
 } from './openAICompatibleClient'
 import { previewToolCallArguments } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
@@ -401,7 +402,7 @@ export async function streamOpenAICompatibleChat(
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError')
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: error instanceof Error ? error.message : 'Provider stream failed' }
+    return { ok: false, error: requestFailureMessage(error) }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)

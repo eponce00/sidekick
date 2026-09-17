@@ -33,4 +33,27 @@ describe('AgentRunClientModel', () => {
     expect(model.getSnapshot()).toBe(snapshot)
     expect(listener).toHaveBeenCalledTimes(1)
   })
+
+  it('coalesces deferred events into one projection refresh', () => {
+    const model = new AgentRunClientModel()
+    const listener = vi.fn()
+    model.subscribe(listener)
+    model.replace(null, [event(1)])
+    const before = model.getSnapshot()
+
+    for (let sequence = 2; sequence <= 100; sequence++) {
+      model.ingest(event(sequence), { deferProjection: true })
+    }
+
+    expect(model.getSnapshot()).toBe(before)
+    expect(listener).toHaveBeenCalledTimes(1)
+    const refreshed = model.refresh()
+    expect(refreshed.highestSequence).toBe(100)
+    expect(refreshed.projection.content).toBe(
+      Array.from({ length: 100 }, (_, index) => String(index + 1)).join('')
+    )
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(model.refresh()).toBe(refreshed)
+    expect(listener).toHaveBeenCalledTimes(2)
+  })
 })

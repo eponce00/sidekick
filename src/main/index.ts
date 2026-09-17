@@ -71,7 +71,17 @@ if (is.dev || e2eUserDataPath) {
   app.setPath('userData', e2eUserDataPath ?? join(app.getPath('appData'), 'sidekick-dev'))
 }
 
-registerArtifactScheme()
+const ownsSingleInstance = e2eUserDataPath ? true : app.requestSingleInstanceLock()
+
+if (!ownsSingleInstance) {
+  app.quit()
+} else {
+  registerArtifactScheme()
+  app.on('second-instance', () => {
+    const target = appState.mainWindowRef ?? BrowserWindow.getAllWindows()[0]
+    revealWindow(target)
+  })
+}
 
 async function bootstrapApplication(): Promise<void> {
   configureBrowserArtifactRoot(join(app.getPath('userData'), 'browser-artifacts'))
@@ -153,33 +163,37 @@ async function bootstrapApplication(): Promise<void> {
   })
 }
 
-void app
-  .whenReady()
-  .then(bootstrapApplication)
-  .catch((error: unknown) => {
-    const message = error instanceof Error ? error.stack || error.message : String(error)
-    console.error('[Startup] Application initialization failed:', error)
-    dialog.showErrorBox('SideKick could not start', message)
-    app.quit()
-  })
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
-
-app.on('before-quit', (event) => {
-  if (shutdownReady) {
-    closeApplicationDatabase()
-    return
-  }
-  event.preventDefault()
-  if (quitAfterShutdownRequested) return
-  quitAfterShutdownRequested = true
-  void prepareApplicationShutdown()
-    .catch((error) => console.error('[Shutdown] Cleanup failed:', error))
-    .finally(() => {
-      shutdownReady = true
-      closeApplicationDatabase()
+if (ownsSingleInstance) {
+  void app
+    .whenReady()
+    .then(bootstrapApplication)
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.stack || error.message : String(error)
+      console.error('[Startup] Application initialization failed:', error)
+      dialog.showErrorBox('SideKick could not start', message)
       app.quit()
     })
-})
+}
+
+if (ownsSingleInstance) {
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+
+  app.on('before-quit', (event) => {
+    if (shutdownReady) {
+      closeApplicationDatabase()
+      return
+    }
+    event.preventDefault()
+    if (quitAfterShutdownRequested) return
+    quitAfterShutdownRequested = true
+    void prepareApplicationShutdown()
+      .catch((error) => console.error('[Shutdown] Cleanup failed:', error))
+      .finally(() => {
+        shutdownReady = true
+        closeApplicationDatabase()
+        app.quit()
+      })
+  })
+}

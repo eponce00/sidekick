@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>System Console</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="console" aria-labelledby="page-title">
+      <header class="console__header">
+        <p class="eyebrow">Local control surface</p>
+        <h1 id="page-title">System Console</h1>
+        <p id="controller-status" role="status" aria-live="polite">Before</p>
+      </header>
+      <section class="console__panel" aria-label="Theme controls">
+        <button id="mode-toggle" type="button" aria-pressed="false">Enable focus mode</button>
+      </section>
+    </main>
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

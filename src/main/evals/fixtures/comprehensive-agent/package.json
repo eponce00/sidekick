@@ -1,0 +1,9 @@
+{
+  "name": "sidekick-comprehensive-agent-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:base": "node test/verify.mjs base",
+    "test": "node test/verify.mjs final"
+  }
+}

@@ -64,8 +64,8 @@ global policy is Full access.
   handle; it is not silently inserted into the prompt.
 - Web pages and MCP responses are untrusted content. They cannot promote their text into system
   instructions.
-- Repeated identical failures and unproductive tool loops are stopped by the shared runtime rather
-  than retried indefinitely.
+- Repeated successful calls receive quiet model guidance rather than visible warning banners or
+  false failures. Repeated actual failures and global run-budget exhaustion still stop safely.
 
 The [permission policy](PERMISSIONS.md) controls which eligible tools execute automatically, which
 ask first, and which are denied. The [architecture guide](../architecture/OVERVIEW.md) describes the
