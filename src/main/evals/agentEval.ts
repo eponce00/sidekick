@@ -4,6 +4,7 @@ export type AgentEvalCategory =
   | 'recovery'
   | 'workspace'
   | 'projects'
+  | 'visual'
   | 'planning'
   | 'collaboration'
 

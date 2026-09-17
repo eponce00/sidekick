@@ -24,6 +24,8 @@ export class AgentRunClientModel {
   private run: AgentRunSnapshot | null = null
   private readonly eventsBySequence = new Map<number, AgentRunEvent>()
   private listeners = new Set<() => void>()
+  private projectionDirty = false
+  private contiguous = 0
   private current: AgentRunClientSnapshot = {
     run: null,
     events: [],
@@ -42,22 +44,31 @@ export class AgentRunClientModel {
   replace(run: AgentRunSnapshot | null, events: readonly AgentRunEvent[]): void {
     this.run = run
     this.eventsBySequence.clear()
+    this.contiguous = 0
     for (const event of events) this.accept(event)
     this.publish()
   }
 
-  ingest(event: AgentRunEvent): { accepted: boolean; gapAfter?: number } {
+  ingest(
+    event: AgentRunEvent,
+    options: { deferProjection?: boolean } = {}
+  ): { accepted: boolean; gapAfter?: number } {
     if (this.run && event.runId !== this.run.id) return { accepted: false }
     if (this.eventsBySequence.has(event.sequence)) return { accepted: false }
-    const contiguousBefore = this.contiguousSequence()
+    const contiguousBefore = this.contiguous
     this.accept(event)
-    this.publish()
+    if (options.deferProjection) this.projectionDirty = true
+    else this.publish()
     return event.sequence > contiguousBefore + 1
       ? { accepted: true, gapAfter: contiguousBefore }
       : { accepted: true }
   }
 
-  merge(run: AgentRunSnapshot | null, events: readonly AgentRunEvent[]): void {
+  merge(
+    run: AgentRunSnapshot | null,
+    events: readonly AgentRunEvent[],
+    options: { deferProjection?: boolean } = {}
+  ): void {
     if (run) this.run = run
     let changed = false
     for (const event of events) {
@@ -65,17 +76,25 @@ export class AgentRunClientModel {
       this.accept(event)
       changed = true
     }
-    if (changed || run) this.publish()
+    if (changed || run) {
+      if (options.deferProjection) this.projectionDirty = true
+      else this.publish()
+    }
+  }
+
+  /**
+   * Rebuild the human projection once at the renderer's scheduled frame boundary.
+   * Durable events still enter the journal immediately, but token deltas no longer
+   * re-sort and re-project the entire run hundreds of times per second.
+   */
+  refresh(): AgentRunClientSnapshot {
+    if (this.projectionDirty) this.publish()
+    return this.current
   }
 
   private accept(event: AgentRunEvent): void {
     this.eventsBySequence.set(event.sequence, event)
-  }
-
-  private contiguousSequence(): number {
-    let sequence = 0
-    while (this.eventsBySequence.has(sequence + 1)) sequence++
-    return sequence
+    while (this.eventsBySequence.has(this.contiguous + 1)) this.contiguous++
   }
 
   private publish(): void {
@@ -86,9 +105,10 @@ export class AgentRunClientModel {
       run: this.run,
       events,
       projection: projectAgentRunEvents(events),
-      contiguousSequence: this.contiguousSequence(),
+      contiguousSequence: this.contiguous,
       highestSequence: events.at(-1)?.sequence ?? 0
     }
+    this.projectionDirty = false
     for (const listener of this.listeners) listener()
   }
 }

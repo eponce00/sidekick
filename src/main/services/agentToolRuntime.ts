@@ -91,6 +91,7 @@ export interface AgentToolRuntimeSessionInput {
   webSearchEnabled: boolean
   /** Enable SideKick's built-in visual browser for this model/run. */
   browserEnabled?: boolean
+  editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
   mcpConfigs?: readonly McpServerConfig[]
@@ -475,7 +476,8 @@ export class AgentToolRuntime {
       goalEnabled: Boolean(input.goal),
       planStage: input.plan?.stage() ?? 'inactive',
       codeIntelligenceAvailable,
-      codeIntelligenceRisk: sessionState.codeIntelligenceRisk
+      codeIntelligenceRisk: sessionState.codeIntelligenceRisk,
+      editingDialect: input.editingDialect
     })
     return {
       catalog,
@@ -743,6 +745,14 @@ export class AgentToolRuntime {
         })
       }
       const modelResult = workspaceMutationResultForModel(result)
+      // Keep the complete bounded aggregate diff for the expandable human review,
+      // while the provider receives only the compact modelResult below. Per-file
+      // diffs are omitted from presentation data to avoid storing them twice.
+      const presentationResult = {
+        ...modelResult,
+        diff: result.diff,
+        diffTruncated: result.diffTruncated === true
+      }
       for (const file of result.files) {
         const previousPath = file.path.replaceAll('\\', '/')
         if (file.action === 'delete' || file.action === 'move') readReceipts.delete(previousPath)
@@ -805,10 +815,15 @@ export class AgentToolRuntime {
                 : 'no current errors'
           }${diagnostics.length ? `\n${JSON.stringify(diagnostics.slice(0, 30))}` : ''}`
         : ''
-      return this.success(title, modelResult, JSON.stringify(modelResult) + diagnosticContent, {
-        changes,
-        diagnostics
-      })
+      return this.success(
+        title,
+        presentationResult,
+        JSON.stringify(modelResult) + diagnosticContent,
+        {
+          changes,
+          diagnostics
+        }
+      )
     }
     if (name === 'shell') {
       const command = stringArg(args, 'command')

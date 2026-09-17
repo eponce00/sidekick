@@ -66,6 +66,22 @@ The planner retains a verbatim recent tail of 20% of context, bounded to 2,000â€
 
 The shared context-budget projection accounts for message text, tool calls, multimodal payload estimates, all tool schemas (including MCP), provider framing, in-flight response text, output reserve, and a safety margin. Compaction is evaluated against the lower of the configured threshold and the effective provider input limit. A preflight check runs before every provider boundary, not only after a provider reports a context error.
 
+Workspace mutations keep two projections: complete bounded diffs for expandable human review and a
+compact model-facing acknowledgement. The model receives file paths, hashes, change counts, and only
+a short diff preview, preventing repeated edits from turning the context into a copy of every prior
+file version.
+
+Long runs are bounded by capacity rather than a raw count of successful edits. The normal tool-round
+pause is 80 rounds and a continuous run stops after 45 minutes. Consecutive calls with identical
+canonical arguments receive model-only advisory reminders at selected thresholds, while exact file
+state revisits receive separate convergence guidance. Neither condition rewrites or blocks a
+successful tool result: hard loop stops are reserved for repeated failures and the explicit global
+run budgets.
+
+The renderer stores every durable run event but coalesces live projection at the UI frame boundary.
+It does not re-sort and rebuild the whole run transcript for every streamed token, and offscreen tool
+rows use Chromium content visibility to avoid unnecessary layout and paint work.
+
 `agent_runs` stores the trusted profile and prompt context, while sequence-numbered compaction events and `conversation_compactions` record actual model/deterministic strategy, prompt version, provider/model, anchors, token counts, and lineage. This makes unexpected compaction decisions diagnosable without logging prompt contents or secrets.
 
 ## Verification

@@ -103,33 +103,68 @@ type MaterializedToolMedia = ToolResultMediaAttachment & {
 }
 
 /**
- * Visual browser loops can produce an image after every action. Keep the durable
- * ledger complete, but send only the newest states to the inference server so a
- * long local-model session does not accumulate an unbounded image prompt.
+ * Local vision gateways commonly cap a request at two images. The budget is
+ * global: composer attachments and tool/browser media are serialized into the
+ * same provider prompt and must not be bounded independently.
  */
-export const MAX_PROVIDER_TOOL_MEDIA_ATTACHMENTS = 2
+export const MAX_PROVIDER_IMAGE_ATTACHMENTS = 2
 
-function withRecentToolMedia(messages: ProviderChatMessage[]): ProviderChatMessage[] {
-  let remaining = MAX_PROVIDER_TOOL_MEDIA_ATTACHMENTS
+function withProviderImageBudget(messages: ProviderChatMessage[]): ProviderChatMessage[] {
+  let remaining = MAX_PROVIDER_IMAGE_ATTACHMENTS
   let changed = false
-  const selected = new Array<ProviderChatMessage>(messages.length)
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    const media = message.media ?? []
-    if (!media.length) {
-      selected[index] = message
-      continue
+  const selected = [...messages]
+  const keptImageIndexes = new Set<number>()
+  const latestAttachedImageIndex = messages.findLastIndex((message) =>
+    Boolean(message.images?.length)
+  )
+
+  const keepImages = (index: number): void => {
+    const message = selected[index]
+    const images = message.images ?? []
+    if (!images.length) return
+    // The first images in a user-authored attachment set carry the user's explicit
+    // ordering, so preserve those when the provider budget is smaller than the set.
+    const kept = images.slice(0, remaining)
+    remaining -= kept.length
+    if (kept.length) keptImageIndexes.add(index)
+    if (kept.length !== images.length) {
+      changed = true
+      selected[index] = { ...message, images: kept.length ? kept : undefined }
     }
+  }
+
+  // Preserve the newest user-supplied visual before allocating space to automatic
+  // browser captures. This keeps the screenshot that motivated the task in view.
+  if (latestAttachedImageIndex >= 0) keepImages(latestAttachedImageIndex)
+
+  // Then retain only the freshest visual tool states. The durable event ledger is
+  // left untouched; this selection exists solely at the provider I/O boundary.
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = selected[index]
+    const media = message.media ?? []
+    if (!media.length) continue
     const keepCount = Math.min(remaining, media.length)
     const kept = keepCount ? media.slice(media.length - keepCount) : []
-    remaining -= keepCount
-    if (kept.length === media.length) {
-      selected[index] = message
-    } else {
+    remaining -= kept.length
+    if (kept.length !== media.length) {
       changed = true
       selected[index] = { ...message, media: kept.length ? kept : undefined }
     }
   }
+
+  // Use any remaining capacity for older explicit attachments, newest first.
+  for (let index = messages.length - 1; index >= 0 && remaining > 0; index--) {
+    if (index !== latestAttachedImageIndex) keepImages(index)
+  }
+
+  // Clear older attachment sets that could not fit after the global budget was
+  // allocated. They remain available in chat history and the durable database.
+  for (let index = 0; index < messages.length; index++) {
+    if (!selected[index].images?.length || keptImageIndexes.has(index)) continue
+    changed = true
+    selected[index] = { ...selected[index], images: undefined }
+  }
+
   return changed ? selected : messages
 }
 
@@ -198,7 +233,7 @@ async function materializeAttachment(
 export async function materializeProviderRequestMedia(
   request: ProviderChatRequest
 ): Promise<ProviderChatRequest> {
-  const selectedMessages = withRecentToolMedia(request.messages)
+  const selectedMessages = withProviderImageBudget(request.messages)
   let changed = selectedMessages !== request.messages
   const messages = await Promise.all(
     selectedMessages.map(async (message) => {

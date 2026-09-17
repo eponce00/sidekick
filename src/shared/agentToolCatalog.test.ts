@@ -31,19 +31,32 @@ describe('canonical agent tool catalog', () => {
     )
   })
 
-  it('ignores provider editing dialect metadata and exposes one contract', () => {
+  it('uses the configured provider editing dialect', () => {
     const openAi = names({
       surface: 'conversation',
-      workspaceRoot: '/workspace'
+      workspaceRoot: '/workspace',
+      editingDialect: 'apply-patch'
     })
     expect(openAi).toContain('apply_patch')
     expect(openAi).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
 
     const claude = names({
       surface: 'collaboration',
-      workspaceRoot: '/workspace'
+      workspaceRoot: '/workspace',
+      editingDialect: 'claude-edit'
     })
-    expect(claude).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
+    expect(claude).toEqual(
+      expect.arrayContaining(['read', 'shell', 'Edit', 'Write', 'delete_file', 'tool_output'])
+    )
+    expect(claude).not.toContain('apply_patch')
+
+    const local = names({
+      surface: 'conversation',
+      workspaceRoot: '/workspace',
+      editingDialect: 'structured-edit'
+    })
+    expect(local).toEqual(expect.arrayContaining(['read', 'edit', 'write', 'delete_file']))
+    expect(local).not.toContain('apply_patch')
   })
 
   it('uses capabilities as the only tool availability filter', () => {

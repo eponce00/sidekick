@@ -27,6 +27,7 @@ import type {
 } from '../../shared/providerRuntime'
 import type { ProviderKind } from '../../shared/providerRegistry'
 import {
+  editingDialectForModel,
   workspaceMutationRequestFromTool,
   workspaceMutationResultForModel
 } from '../../shared/workspaceMutations'
@@ -36,7 +37,7 @@ import {
   type AgentEvalScenarioDefinition,
   type AgentEvalMetric
 } from './agentEval'
-import { AgentScenarioHarness, copyEvalFixture } from './agentScenarioHarness'
+import { AgentScenarioHarness, copyEvalFixture, withIsolatedEvalRoot } from './agentScenarioHarness'
 
 const DEFAULT_ENDPOINT = 'http://127.0.0.1:1234/v1'
 const DEFAULT_MODEL = 'local-loaded-model'
@@ -48,7 +49,7 @@ const providerKind = (process.env.SIDEKICK_AGENT_EVAL_PROVIDER_KIND?.trim() ||
 const enabled = process.env.SIDEKICK_AGENT_EVAL_RUN === '1' && Boolean(apiKey)
 const suite = process.env.SIDEKICK_AGENT_EVAL_SUITE?.trim() || 'full'
 const liveDescribe = enabled ? describe.sequential : describe.skip
-const extendedIt = suite === 'full' ? it : it.skip
+const extendedIt = suite === 'full' || suite === 'visual' ? it : it.skip
 const scenarioVersion = '2026-09-05.1'
 const scenarios = [
   { name: 'model-discovery', category: 'provider', weight: 2 },
@@ -59,6 +60,8 @@ const scenarios = [
   { name: 'verification-guard-tool-loop', category: 'workspace', weight: 10 },
   { name: 'multi-turn-project-create', category: 'projects', weight: 8 },
   { name: 'multi-turn-project-revise', category: 'projects', weight: 8 },
+  { name: 'svg-controller-create', category: 'visual', weight: 10 },
+  { name: 'svg-controller-revise', category: 'visual', weight: 12 },
   { name: 'ambiguous-stale-edit-recovery', category: 'recovery', weight: 12 },
   { name: 'plan-contract-tool-loop', category: 'planning', weight: 10 },
   { name: 'group-artifact-collaboration', category: 'collaboration', weight: 12 },
@@ -67,9 +70,11 @@ const scenarios = [
 const plannedScenarios =
   suite === 'verification'
     ? scenarios.filter((scenario) => scenario.name === 'verification-guard-tool-loop')
-    : suite === 'quick'
-      ? scenarios.slice(0, 6)
-      : scenarios
+    : suite === 'visual'
+      ? scenarios.filter((scenario) => scenario.category === 'visual')
+      : suite === 'quick'
+        ? scenarios.slice(0, 6)
+        : scenarios
 const scenarioByName = new Map(scenarios.map((scenario) => [scenario.name, scenario]))
 const headers = {
   ...openAICompatibleHeaders(apiKey),
@@ -184,6 +189,10 @@ function assertMutationTools(toolNames: string[]): void {
     toolNames.some((name) => ['edit', 'write', 'apply_patch'].includes(name)),
     `Expected a workspace mutation tool, received: ${toolNames.join(', ')}`
   ).toBe(true)
+}
+
+function assertSvgPart(html: string, name: string): void {
+  expect(html).toMatch(new RegExp(`data-part=["']${name}["']`, 'i'))
 }
 
 async function installEvaluationLanguageServer(workspaceRoot: string): Promise<void> {
@@ -342,25 +351,27 @@ liveDescribe('provider-neutral production agent harness', () => {
       model,
       headers,
       providerKind,
-      maxOutputTokens: 2_048
+      maxOutputTokens: 2_048,
+      editingDialect: 'structured-edit'
     })
     const malformedCall = {
       id: 'sidekick_eval_malformed_edit',
       type: 'function',
       function: {
-        name: 'apply_patch',
-        arguments: JSON.stringify({})
+        name: 'edit',
+        arguments: JSON.stringify({ file_path: 'src/status.ts' })
       }
     }
     const validationError = {
       ok: false,
       success: false,
       code: 'invalid_arguments',
-      error: 'apply_patch received invalid arguments. Missing required field: patch.',
+      error:
+        'edit received invalid arguments. Missing required fields: old_string, new_string. Received field: file_path.',
       retryable: true,
       recoveryAction: 'correct_input',
       recovery:
-        'Read the current file, then submit one corrected apply_patch call with the patch field. Do not repeat the unchanged arguments.'
+        'Read the current file, then submit one corrected edit call with old_string and new_string. Do not repeat the unchanged arguments.'
     }
 
     try {
@@ -398,7 +409,7 @@ liveDescribe('provider-neutral production agent harness', () => {
           })
           expect(result.phase, result.error).toBe('completed')
           expect(result.toolNames).toContain('read')
-          expect(result.toolNames).toContain('apply_patch')
+          expect(result.toolNames).toContain('edit')
           expect(await fs.readFile(join(workspaceRoot, 'src/status.ts'), 'utf8')).toBe(
             "export const status = 'after'\n"
           )
@@ -427,8 +438,15 @@ liveDescribe('provider-neutral production agent harness', () => {
     await fs.writeFile(absolutePath, "export const status = 'before'\n", 'utf8')
 
     try {
-      const dialect = 'apply-patch'
-      const mutationToolName = 'apply_patch'
+      const dialect = editingDialectForModel({ providerKind, model })
+      const mutationToolName =
+        dialect === 'apply-patch'
+          ? 'apply_patch'
+          : dialect === 'claude-edit'
+            ? 'Edit'
+            : dialect === 'search-replace'
+              ? 'search_replace'
+              : 'edit'
       const mutationTool = workspaceToolDefinitions(dialect).find(
         (definition) => definition.function.name === mutationToolName
       )
@@ -438,8 +456,8 @@ liveDescribe('provider-neutral production agent harness', () => {
       ).toBeDefined()
       const mutationInstruction =
         dialect === 'apply-patch'
-          ? `Use apply_patch to update src/status.ts from 'before' to 'after'. Its entire current content is: export const status = 'before' followed by a newline. Send one canonical patch. Do not write prose before the tool call.`
-          : `Use ${mutationToolName} on src/status.ts. Replace exactly 'before' with 'after'. Set accessLevel to auto and replace_all to false. Do not write prose before the tool call.`
+          ? `Use apply_patch to update src/status.ts from 'before' to 'after'. Send one canonical patch. Do not write prose before the tool call.`
+          : `Use ${mutationToolName} on src/status.ts. Replace exactly 'before' with 'after' and set replace_all to false. Do not write prose before the tool call.`
       const messages = [
         {
           role: 'system',
@@ -590,7 +608,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               {
                 role: 'system',
                 content:
-                  'This is a deterministic SideKick completion-boundary evaluation. Read AGENTS.md and src/status.ts, then use apply_patch to change the status from before to after. On the first turn after the edit, do not run a shell command or code-intelligence query: reply with only CHANGE_APPLIED. If SideKick sends an app-authored verification guard, first call code_intelligence with operation diagnostics for src/status.ts, then run the suggested project check with shell. After both succeed, reply with only SIDEKICK_EVAL_VERIFICATION_OK.'
+                  'This is a deterministic SideKick completion-boundary evaluation. Read AGENTS.md and src/status.ts, then use the available workspace mutation tool to change the status from before to after. On the first turn after the edit, do not run a shell command or code-intelligence query: reply with only CHANGE_APPLIED. If SideKick sends an app-authored verification guard, first call code_intelligence with operation diagnostics for src/status.ts, then run the suggested project check with shell. After both succeed, reply with only SIDEKICK_EVAL_VERIFICATION_OK.'
               },
               {
                 role: 'user',
@@ -727,7 +745,7 @@ liveDescribe('provider-neutral production agent harness', () => {
                 {
                   role: 'system',
                   content:
-                    'You are completing a deterministic evaluation in a small isolated project. Read AGENTS.md and all relevant source and test files before editing. Use read and apply_patch for files and shell for verification. Finish only after npm test passes.'
+                    'You are completing a deterministic evaluation in a small isolated project. Read AGENTS.md and all relevant source and test files before editing. Use the workspace read and mutation tools for files and shell for verification. Finish only after npm test passes.'
                 },
                 {
                   role: 'user',
@@ -809,6 +827,144 @@ liveDescribe('provider-neutral production agent harness', () => {
   )
 
   extendedIt(
+    'builds and revises a self-contained SVG visual across two isolated turns',
+    async () => {
+      await withIsolatedEvalRoot('sidekick-svg-controller-eval-', async (scenarioRoot) => {
+        const workspaceRoot = join(scenarioRoot, 'project')
+        const harness = new AgentScenarioHarness(join(scenarioRoot, 'runtime'), {
+          endpoint,
+          model,
+          headers,
+          providerKind,
+          maxOutputTokens: 8_192,
+          requestTimeoutMs: 180_000
+        })
+        const conversationId = randomUUID()
+
+        try {
+          await copyEvalFixture(join(fixtureRoot, 'svg-controller'), workspaceRoot)
+          await harness.initialize()
+          const instructionsBefore = await fs.readFile(join(workspaceRoot, 'AGENTS.md'), 'utf8')
+
+          const first = await measured(
+            'svg-controller-create',
+            async () => {
+              const result = await harness.run({
+                workspaceRoot,
+                threadId: conversationId,
+                maxToolRounds: 60,
+                messages: [
+                  {
+                    role: 'system',
+                    content:
+                      'This is an isolated SideKick visual-artifact evaluation. Read AGENTS.md and the existing project before editing. Use project tools for all file work, preserve instruction files, run the requested check, and keep working until it passes.'
+                  },
+                  {
+                    role: 'user',
+                    content:
+                      'Replace the placeholder in index.html with a polished, self-contained front view of a white Xbox-style controller drawn as inline SVG. Use viewBox="0 0 1200 700", a solid white page background, accessible SVG naming, responsive max-width sizing, and exact data-part values controller-shell, left-stick, right-stick, dpad, button-a, button-b, button-x, and button-y. Keep everything in this one HTML file and run npm run test:base.'
+                  }
+                ]
+              })
+              expect(result.phase, result.error).toBe('completed')
+              const html = await fs.readFile(join(workspaceRoot, 'index.html'), 'utf8')
+              for (const marker of [
+                'controller-shell',
+                'left-stick',
+                'right-stick',
+                'dpad',
+                'button-a',
+                'button-b',
+                'button-x',
+                'button-y'
+              ]) {
+                assertSvgPart(html, marker)
+              }
+              expect(result.toolNames).toContain('shell')
+              assertMutationTools(result.toolNames)
+              return result
+            },
+            'visual'
+          )
+
+          const firstHtml = await fs.readFile(join(workspaceRoot, 'index.html'), 'utf8')
+          const second = await measured(
+            'svg-controller-revise',
+            async () => {
+              const result = await harness.run({
+                workspaceRoot,
+                threadId: conversationId,
+                maxToolRounds: 60,
+                messages: [
+                  ...first.messages,
+                  {
+                    role: 'user',
+                    content:
+                      'Follow-up revision: preserve every existing controller part and improve the SVG with exact data-part values left-bumper, right-bumper, xbox-button, menu-button, and share-button. Add a compact-screen @media layout and visible interaction feedback in an element with id="controller-status"; clicking a controller button must update it through addEventListener("click", ...). Re-read the current file first, keep it self-contained, and run npm test until it passes.'
+                  }
+                ]
+              })
+              expect(result.phase, result.error).toBe('completed')
+              const html = await fs.readFile(join(workspaceRoot, 'index.html'), 'utf8')
+              expect(html).not.toBe(firstHtml)
+              for (const marker of [
+                'controller-shell',
+                'left-stick',
+                'right-stick',
+                'dpad',
+                'button-a',
+                'button-b',
+                'button-x',
+                'button-y',
+                'left-bumper',
+                'right-bumper',
+                'xbox-button',
+                'menu-button',
+                'share-button'
+              ]) {
+                assertSvgPart(html, marker)
+              }
+              expect(html).toMatch(/@media\b/i)
+              expect(html).toMatch(/id=["']controller-status["']/i)
+              expect(result.toolNames).toContain('read')
+              expect(result.toolNames).toContain('shell')
+              assertMutationTools(result.toolNames)
+              return result
+            },
+            'visual'
+          )
+
+          expect(await fs.readFile(join(workspaceRoot, 'AGENTS.md'), 'utf8')).toBe(
+            instructionsBefore
+          )
+          enrichMetric('svg-controller-create', {
+            details: {
+              turns: 1,
+              toolRounds: first.toolRounds,
+              tools: [...new Set(first.toolNames)],
+              structuralContractPassed: true
+            }
+          })
+          enrichMetric('svg-controller-revise', {
+            details: {
+              turns: 2,
+              toolRounds: second.toolRounds,
+              tools: [...new Set(second.toolNames)],
+              preservedPriorParts: true,
+              responsiveContractPassed: true,
+              interactionContractPassed: true,
+              projectInstructionsPreserved: true
+            }
+          })
+        } finally {
+          await harness.close()
+        }
+      })
+    },
+    600_000
+  )
+
+  extendedIt(
     'recovers from both an ambiguous edit and a concurrent stale read',
     async () => {
       const scenarioRoot = await fs.mkdtemp(join(tmpdir(), 'sidekick-agent-stale-eval-'))
@@ -819,17 +975,20 @@ liveDescribe('provider-neutral production agent harness', () => {
         model,
         headers,
         providerKind,
-        maxOutputTokens: 4_096
+        maxOutputTokens: 4_096,
+        editingDialect: 'structured-edit'
       })
       let changedAfterRead = false
       const ambiguousCall = {
         id: 'sidekick_eval_ambiguous_edit',
         type: 'function',
         function: {
-          name: 'apply_patch',
+          name: 'edit',
           arguments: JSON.stringify({
-            patch:
-              "*** Begin Patch\n*** Update File: src/settings.ts\n@@\n-  mode: 'draft'\n+  mode: 'published'\n*** End Patch"
+            file_path: 'src/settings.ts',
+            old_string: "mode: 'draft'",
+            new_string: "mode: 'published'",
+            replace_all: false
           })
         }
       }
@@ -838,7 +997,7 @@ liveDescribe('provider-neutral production agent harness', () => {
         success: false,
         code: 'multiple_matches',
         error:
-          'Patch rejected: hunk context has 2 matches in src/settings.ts; add unchanged surrounding context.',
+          'Edit rejected: old_string has 2 matches in src/settings.ts; add surrounding context or set replace_all.',
         retryable: true,
         recoveryAction: 'correct_input',
         recovery:
@@ -898,7 +1057,7 @@ liveDescribe('provider-neutral production agent harness', () => {
               result.toolNames.filter((name) => name === 'read').length
             ).toBeGreaterThanOrEqual(2)
             expect(
-              result.toolNames.filter((name) => name === 'apply_patch').length
+              result.toolNames.filter((name) => name === 'edit').length
             ).toBeGreaterThanOrEqual(2)
             enrichMetric('ambiguous-stale-edit-recovery', {
               details: {
@@ -1063,7 +1222,7 @@ liveDescribe('provider-neutral production agent harness', () => {
           model,
           contextLength: 180_000,
           maxOutputTokens: 8_192,
-          editingDialect: 'apply-patch' as const
+          editingDialect: editingDialectForModel({ providerKind, model })
         }
         const detail = store.createGroup({
           title: 'Population artifact evaluation',

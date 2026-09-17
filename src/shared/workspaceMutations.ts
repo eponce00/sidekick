@@ -108,7 +108,7 @@ export interface WorkspaceMutationFailure {
 /** Keep verified mutation feedback useful without duplicating large diffs into model context. */
 export function workspaceMutationResultForModel(
   result: WorkspaceMutationResult,
-  maxDiffCharacters = 16_000,
+  maxDiffCharacters = 2_000,
   maxFiles = 200
 ): Record<string, unknown> {
   const diffTruncated = result.diffTruncated === true || result.diff.length > maxDiffCharacters

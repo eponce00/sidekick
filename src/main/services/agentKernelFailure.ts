@@ -1,4 +1,5 @@
 import type { ToolExecutionError, ToolExecutionResult } from '../../shared/agentRuntime'
+import { providerImageLimitError } from '../../shared/providerErrors'
 
 export class AgentToolLoopError extends Error {
   constructor(message: string) {
@@ -37,21 +38,35 @@ export function classifyAgentKernelFailure(error: unknown, aborted: boolean) {
     : error instanceof Error
       ? error.message
       : String(error)
+  const imageLimit = cancelled ? null : providerImageLimitError(message)
+  const displayMessage = imageLimit
+    ? `The model accepts at most ${imageLimit.maxImages ?? 'a limited number of'} images per request. SideKick could not send this turn.`
+    : message
   const failure: ToolExecutionError = {
-    code: cancelled ? 'cancelled' : loopDetected ? 'loop_detected' : 'internal',
-    message,
-    retryable: !cancelled && !loopDetected,
-    recoveryAction: cancelled || loopDetected ? 'stop' : 'retry_later',
-    ...(loopDetected
+    code: cancelled
+      ? 'cancelled'
+      : loopDetected
+        ? 'loop_detected'
+        : imageLimit
+          ? 'invalid_arguments'
+          : 'internal',
+    message: displayMessage,
+    retryable: !cancelled && !loopDetected && !imageLimit,
+    recoveryAction: cancelled || loopDetected || imageLimit ? 'stop' : 'retry_later',
+    ...(imageLimit
       ? {
-          recovery:
-            'The run stopped because its tool calls were no longer making progress. Change the approach or provide new information before starting again.'
+          recovery: 'Reduce the number of attached images or use a model with a higher image limit.'
         }
-      : {})
+      : loopDetected
+        ? {
+            recovery:
+              'The run stopped because its tool calls were no longer making progress. Change the approach or provide new information before starting again.'
+          }
+        : {})
   }
   return {
     phase: cancelled ? ('cancelled' as const) : ('failed' as const),
-    message,
+    message: displayMessage,
     error: failure
   }
 }

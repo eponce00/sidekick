@@ -3,10 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ProviderChatRequest } from '../../shared/providerRuntime'
-import {
-  MAX_PROVIDER_TOOL_MEDIA_ATTACHMENTS,
-  materializeProviderRequestMedia
-} from './providerRuntime'
+import { MAX_PROVIDER_IMAGE_ATTACHMENTS, materializeProviderRequestMedia } from './providerRuntime'
 
 function requestWithFile(path: string): ProviderChatRequest {
   return {
@@ -83,8 +80,66 @@ describe('provider media materialization', () => {
     }
 
     const materialized = await materializeProviderRequestMedia(request)
-    expect(MAX_PROVIDER_TOOL_MEDIA_ATTACHMENTS).toBe(2)
+    expect(MAX_PROVIDER_IMAGE_ATTACHMENTS).toBe(2)
     expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([0, 1, 1])
     expect(request.messages.map((message) => message.media?.length ?? 0)).toEqual([1, 1, 1])
+  })
+
+  it('shares one image budget between user attachments and browser tool screenshots', async () => {
+    const request: ProviderChatRequest = {
+      target: { providerKind: 'litellm', model: 'vision-model' },
+      purpose: 'continuation',
+      messages: [
+        {
+          role: 'user',
+          content: 'Fix what is shown here.',
+          images: ['data:image/png;base64,USER']
+        },
+        ...[0, 1].map((index) => ({
+          role: 'tool',
+          tool_call_id: `observe-${index}`,
+          content: `Observation ${index}`,
+          media: [
+            {
+              type: 'image' as const,
+              mimeType: 'image/png' as const,
+              source: {
+                type: 'data_url' as const,
+                dataUrl: `data:image/png;base64,VE9PTD${index === 0 ? 'A=' : 'E='}`
+              }
+            }
+          ]
+        }))
+      ]
+    }
+
+    const materialized = await materializeProviderRequestMedia(request)
+
+    expect(materialized.messages[0].images).toEqual(['data:image/png;base64,USER'])
+    expect(materialized.messages.map((message) => message.media?.length ?? 0)).toEqual([0, 0, 1])
+    expect(
+      materialized.messages.reduce(
+        (count, message) => count + (message.images?.length ?? 0) + (message.media?.length ?? 0),
+        0
+      )
+    ).toBe(MAX_PROVIDER_IMAGE_ATTACHMENTS)
+    expect(request.messages[1].media).toHaveLength(1)
+  })
+
+  it('uses spare capacity for the next-newest explicit attachment', async () => {
+    const request: ProviderChatRequest = {
+      target: { providerKind: 'litellm', model: 'vision-model' },
+      purpose: 'continuation',
+      messages: [
+        { role: 'user', content: 'Earlier', images: ['data:image/png;base64,EARLIER'] },
+        { role: 'assistant', content: 'Continue.' },
+        { role: 'user', content: 'Latest', images: ['data:image/png;base64,LATEST'] }
+      ]
+    }
+
+    const materialized = await materializeProviderRequestMedia(request)
+
+    expect(materialized.messages[0].images).toEqual(['data:image/png;base64,EARLIER'])
+    expect(materialized.messages[2].images).toEqual(['data:image/png;base64,LATEST'])
   })
 })

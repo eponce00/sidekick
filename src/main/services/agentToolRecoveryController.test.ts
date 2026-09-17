@@ -134,15 +134,47 @@ describe('AgentToolRecoveryController', () => {
     expect(observations[7].stopReason).toContain('8')
   })
 
-  it('stops read-only calls that repeatedly return identical output', () => {
+  it('advises on consecutive identical calls without blocking them', () => {
     const controller = new AgentToolRecoveryController()
     const result = toolExecutionSucceeded({ title: 'Read', modelContent: 'same output' })
-    const observations = Array.from({ length: 5 }, () =>
+    const observations = Array.from({ length: 10 }, () =>
       controller.observeCall({ name: 'read', arguments: { path: 'a.ts' }, result, readOnly: true })
     )
 
-    expect(observations[1].warning).toContain('same result')
-    expect(observations[4].stopReason).toContain('identical read-only calls')
+    expect(observations[2]).toMatchObject({ reason: 'repeat_call', count: 3 })
+    expect(observations[4]).toMatchObject({ reason: 'repeat_call', count: 5 })
+    expect(observations[7]).toMatchObject({ reason: 'repeat_call', count: 8 })
+    expect(observations.every(({ stopReason }) => !stopReason)).toBe(true)
+    expect(observations[8]).toEqual({})
+  })
+
+  it('resets repeat detection on different work while treating todo updates as transparent', () => {
+    const controller = new AgentToolRecoveryController()
+    const success = toolExecutionSucceeded({ title: 'Done' })
+    const read = () =>
+      controller.observeCall({
+        name: 'read',
+        arguments: { path: 'a.ts' },
+        result: success,
+        readOnly: true
+      })
+
+    expect(read()).toEqual({})
+    expect(read()).toEqual({})
+    controller.observeCall({
+      name: 'manage_todo_list',
+      arguments: { operation: 'read' },
+      result: success,
+      readOnly: false
+    })
+    expect(read()).toMatchObject({ reason: 'repeat_call', count: 3 })
+    controller.observeCall({
+      name: 'search',
+      arguments: { query: 'different work' },
+      result: success,
+      readOnly: true
+    })
+    expect(read()).toEqual({})
   })
 
   it('tracks consecutive all-failed turns independently of call signatures', () => {
@@ -180,5 +212,83 @@ describe('AgentToolRecoveryController', () => {
     expect(observations[5].stopReason).toContain(
       'edit omitted required fields: old_string, new_string (2 calls)'
     )
+  })
+
+  it('does not classify successful full-file rewrites as a loop by count alone', () => {
+    const controller = new AgentToolRecoveryController()
+    const observations = Array.from({ length: 12 }, (_, index) =>
+      controller.observeCall({
+        name: 'write',
+        arguments: { file_path: 'controller.svg', content: `<svg data-version="${index}"/>` },
+        result: toolExecutionSucceeded({
+          title: 'Write',
+          changes: [
+            {
+              path: 'controller.svg',
+              kind: 'update',
+              beforeHash: `before-${index}`,
+              afterHash: `after-${index}`
+            }
+          ]
+        }),
+        readOnly: false
+      })
+    )
+
+    expect(observations).toEqual(Array.from({ length: 12 }, () => ({})))
+  })
+
+  it('advises on exact file-state oscillation without rewriting success as failure', () => {
+    const controller = new AgentToolRecoveryController()
+    const hashes = ['a', 'b', 'a', 'b', 'a']
+    const observations = hashes.map((afterHash, index) =>
+      controller.observeCall({
+        name: 'edit',
+        arguments: { file_path: 'controller.html' },
+        result: toolExecutionSucceeded({
+          title: 'Edit',
+          changes: [
+            {
+              path: 'controller.html',
+              kind: 'update',
+              beforeHash: `before-${index}`,
+              afterHash
+            }
+          ]
+        }),
+        readOnly: false
+      })
+    )
+
+    expect(observations[3]).toMatchObject({ reason: 'state_revisit', count: 2 })
+    expect(observations[4]).toMatchObject({ reason: 'state_revisit', count: 3 })
+    expect(observations.every(({ stopReason }) => !stopReason)).toBe(true)
+  })
+
+  it('allows long sequences of distinct successful targeted mutations', () => {
+    const controller = new AgentToolRecoveryController()
+    const observations = Array.from({ length: 40 }, (_, index) =>
+      controller.observeCall({
+        name: 'edit',
+        arguments: {
+          file_path: 'controller.svg',
+          old_string: `before-${index}`,
+          new_string: `after-${index}`
+        },
+        result: toolExecutionSucceeded({
+          title: 'Edit',
+          changes: [
+            {
+              path: 'controller.svg',
+              kind: 'update',
+              afterHash: `state-${index}`
+            }
+          ]
+        }),
+        readOnly: false
+      })
+    )
+
+    expect(observations).toEqual(Array.from({ length: 40 }, () => ({})))
   })
 })

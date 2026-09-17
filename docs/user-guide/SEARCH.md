@@ -18,6 +18,13 @@ This is a federation, not a fallback chain: a slow or changed source does not st
 
 Image discovery uses DuckDuckGo's browser-facing image flow directly. SideKick establishes the same short-lived query session used by the public site, normalizes the returned image metadata, and can download a small number of images into memory when a vision-capable model needs pixels. Electron decodes and resizes those images locally before they reach the model.
 
+Search presentation, model text, and visual input are separate channels. The interface keeps the
+linked result metadata it needs to render the gallery, while the model receives compact metadata
+and, only when requested, one typed visual attachment from that search. Raw image bytes are never
+serialized into tool-result text. Immediately before inference, SideKick applies one global budget
+of two images across user attachments, image searches, and browser screenshots, retaining the
+newest relevant tool visuals without rewriting the durable conversation history.
+
 `web_fetch` requests a page directly and extracts its main text with Mozilla Readability. If the initial HTML has no readable body or the site requires JavaScript, SideKick performs one isolated render in a hidden Electron window and runs Readability on the rendered document.
 
 ## Runtime and privacy boundaries

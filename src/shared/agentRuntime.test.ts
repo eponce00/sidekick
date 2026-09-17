@@ -59,6 +59,23 @@ describe('agent runtime contracts', () => {
     expect(isToolExecutionResult(result)).toBe(true)
   })
 
+  it('rejects typed image bytes duplicated into model-facing text', () => {
+    const encoded = 'QUFB'.repeat(20)
+    expect(() =>
+      toolExecutionSucceeded({
+        title: 'Bad image result',
+        modelContent: JSON.stringify({ imageBase64: encoded }),
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            source: { type: 'data_url', dataUrl: `data:image/png;base64,${encoded}` }
+          }
+        ]
+      })
+    ).toThrow('must not be duplicated')
+  })
+
   it('rejects malformed or unsupported tool media before persistence', () => {
     expect(() =>
       normalizeToolResultMedia([

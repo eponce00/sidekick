@@ -19,5 +19,7 @@ describe('agent round limits', () => {
     expect(resolveStoredToolCallLimit(15, 2)).toBe(15)
     expect(resolveStoredToolCallLimit(100, 2)).toBe(DEFAULT_TOOL_CALL_LIMIT)
     expect(resolveStoredToolCallLimit(100, 3)).toBe(100)
+    expect(resolveStoredToolCallLimit(1000, 3)).toBe(DEFAULT_TOOL_CALL_LIMIT)
+    expect(resolveStoredToolCallLimit(240, 4)).toBe(240)
   })
 })

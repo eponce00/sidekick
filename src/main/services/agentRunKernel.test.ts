@@ -1026,9 +1026,9 @@ describe('AgentRunKernel', () => {
     expect(router.execute).not.toHaveBeenCalled()
   })
 
-  it('stops repeated read-only calls that return no new information', async () => {
+  it('keeps repeated-call reminders model-only and lets the run recover', async () => {
     let callIndex = 0
-    const repeatedRead: AgentKernelProviderSampler = async () => {
+    const repeatedRead = (): AgentKernelProviderSampler => async () => {
       callIndex++
       return {
         result: { ok: true },
@@ -1047,13 +1047,29 @@ describe('AgentRunKernel', () => {
       }
     }
     const router = { execute: vi.fn(async () => ({ tasks: [] })) }
-    const kernel = new AgentRunKernel(store, undefined, repeatedRead)
+    const kernel = new AgentRunKernel(
+      store,
+      undefined,
+      sequence(
+        ...Array.from({ length: 8 }, () => repeatedRead()),
+        sampledTurn({ content: 'Stopped polling and finished.' })
+      )
+    )
 
     const result = await kernel.start(input(router))
 
-    expect(result.phase).toBe('failed')
-    expect(result.error).toContain('identical read-only calls')
-    expect(router.execute).toHaveBeenCalledTimes(5)
+    expect(result).toMatchObject({ phase: 'completed', content: 'Stopped polling and finished.' })
+    expect(router.execute).toHaveBeenCalledTimes(8)
+    const toolMessages = result.messages.filter(({ role }) => role === 'tool')
+    expect(
+      toolMessages.filter(({ content }) => content?.includes('reason="repeat_call"'))
+    ).toHaveLength(3)
+    expect(
+      store
+        .listEvents('run-1')
+        .filter(({ type }) => type === 'run.retrying')
+        .some(({ payload }) => String(payload.reason).startsWith('tool_guard_'))
+    ).toBe(false)
   })
 
   it('publishes the actual resolution after a long event history', () => {
@@ -1767,6 +1783,32 @@ describe('AgentRunKernel', () => {
       'run.completed'
     ])
     expect(projectAgentRunEvents(events).content).toBe('Partial answer')
+  })
+
+  it('presents provider image-count rejection as a non-retryable input limit', async () => {
+    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        error: 'litellm.BadRequestError: At most 2 image(s) may be provided in one prompt.'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    await kernel.start(input())
+
+    expect(store.get('run-1')?.error).toMatchObject({
+      code: 'invalid_arguments',
+      message: 'The model accepts at most 2 images per request. SideKick could not send this turn.',
+      retryable: false,
+      recoveryAction: 'stop'
+    })
   })
 
   it('settles cancellation even when a provider ignores AbortSignal and drops late chunks', async () => {

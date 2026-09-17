@@ -2,15 +2,16 @@ import { describe, expect, it } from 'vitest'
 import { normalizeAgentToolParameters, workspaceToolDefinitions } from './agentToolDefinitions'
 
 describe('workspace tool definitions', () => {
-  it.each(['apply-patch', 'claude-edit', 'search-replace', 'structured-edit'] as const)(
-    'exposes one canonical contract regardless of legacy %s metadata',
-    (dialect) => {
-      expect(workspaceToolDefinitions(dialect).map(({ function: tool }) => tool.name)).toEqual([
-        'read',
-        'apply_patch'
-      ])
-    }
-  )
+  it.each([
+    ['apply-patch', ['read', 'apply_patch']],
+    ['claude-edit', ['read', 'Edit', 'Write', 'delete_file']],
+    ['search-replace', ['read', 'search_replace', 'write', 'delete_file']],
+    ['structured-edit', ['read', 'edit', 'write', 'delete_file']]
+  ] as const)('exposes the calibrated %s editing contract', (dialect, expected) => {
+    expect(workspaceToolDefinitions(dialect).map(({ function: tool }) => tool.name)).toEqual(
+      expected
+    )
+  })
 
   it('requires project-relative paths for the canonical read contract', () => {
     const read = workspaceToolDefinitions('apply-patch').find(

@@ -109,12 +109,14 @@ original call identity; it never aborts the provider loop by itself.
 
 Errors separate retry permission from the required recovery action: `correct_input`,
 `refresh_state`, `retry_later`, `change_strategy`, or `stop`. The run-scoped
-`AgentToolRecoveryController` independently fingerprints canonical tool arguments and results. It
-warns and ultimately stops identical failures, same-tool argument churn, identical read-only output,
-and consecutive all-failed tool turns. A successful call clears the relevant failure state. This
-applies in the shared kernel, so direct, group, child-agent, and research runs cannot diverge.
-Terminal guard messages summarize the concrete failing tools, missing fields, and call counts so
-the user sees the cause instead of only a generic loop-limit notice.
+`AgentToolRecoveryController` independently fingerprints canonical tool arguments and results.
+Consecutive byte-equivalent calls receive sparse, model-only advisory reminders; successful file
+state revisits receive the same non-blocking treatment. A raw number of successful edits or rewrites
+is never considered proof of a loop, and post-execution guidance cannot replace success with an
+error. Identical failures, same-tool failure streaks, and consecutive all-failed tool turns remain
+hard recovery boundaries. This applies in the shared kernel, so direct, group, child-agent, and
+research runs cannot diverge. Terminal failure messages summarize the concrete failing tools,
+missing fields, and call counts.
 
 Workspace search accepts either a file or directory scope. Invalid regular expressions, nonexistent
 paths, and schema mistakes return actionable `invalid_arguments` results instead of leaking raw

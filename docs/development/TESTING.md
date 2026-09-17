@@ -65,11 +65,30 @@ The live evaluation harness sends synthetic projects through the real main-proce
 It verifies edits, command use, recovery, verification evidence, plan transitions, and completion
 contracts instead of grading assistant prose alone.
 
+Every scenario must run in a uniquely named temporary root and remove that complete root in a
+`finally` block. Prefer `withIsolatedEvalRoot` for new scenarios so generated workspaces, command
+output, browser artifacts, and runtime databases are removed after passes, failures, and thrown
+assertions. Never point a live evaluation at a developer's working project; copy only the required
+synthetic fixture into the isolated root.
+
 Run the small loop during development:
 
 ```bash
 npm run test:agent-eval:quick
 ```
+
+On a desktop where SideKick already has a selected provider, the configured variants reuse that
+selection and decrypt its protected credential only in memory:
+
+```bash
+npm run test:agent-eval:configured:quick
+npm run test:agent-eval:configured:verification
+npm run test:agent-eval:configured:visual
+npm run test:agent-eval:configured:comprehensive
+npm run test:agent-eval:configured
+```
+
+These commands do not write the provider key to an environment file, report, or command line.
 
 Use `npm run test:agent-eval:verification` for the revision-bound completion scenario and
 `npm run test:agent-eval` for the full configured matrix. The harness reads provider, model,
@@ -88,6 +107,24 @@ npm run benchmark:agent-evals -- before.json after.json
 Generated evaluation reports are local artifacts. Review them for private prompts, provider
 metadata, tokens, local paths, and account details before sharing them; do not commit raw reports by
 default.
+
+Complex visual-artifact scenarios use two result layers. Deterministic requirements—valid SVG/DOM
+structure, accessibility names, responsive layout contracts, preserved elements across follow-up
+turns, real project checks, and ordered read/edit/verify events—are release-gating. Screenshot
+changes, rendered bounds at desktop and mobile viewports, console/network cleanliness, and optional
+reference-image similarity are supporting evidence. Subjective aesthetic scoring is never allowed
+to turn an otherwise valid harness run into a harness defect by itself. The full live suite includes
+a two-turn inline-SVG creation and revision scenario; the native-browser smoke separately proves
+real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup.
+
+The configured comprehensive lane combines those boundaries in one real Electron-backed journey.
+It requires todo state, project reads, raster image inspection, new-file creation, localized
+existing-file edits, deletion, commands, verification evidence, desktop and compact browser
+observations, real clicks, screenshots, console/network inspection, browser resize and close, plus
+a follow-up turn over the first turn's transcript. Plan contracts remain in their dedicated eval so
+the comprehensive integration lane measures tool interoperability without paying for a second copy
+of the Plan-mode state machine. Its fixture and every browser/runtime artifact live under one
+temporary root that the parent process removes even after a failed or timed out child run.
 
 ## Search and packaged-app tests
 

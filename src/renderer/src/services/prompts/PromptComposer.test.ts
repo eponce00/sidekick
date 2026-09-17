@@ -192,6 +192,31 @@ describe('PromptComposer', () => {
     expect(executing.content).toContain('Approved plan execution')
     expect(executing.content).toContain('call complete_plan with evidence')
     expect(executing.content).toContain('Use apply_patch for additions')
+
+    const structuredTools = getAgentToolDefinitions({
+      surface: 'conversation',
+      workspaceRoot: '/workspace',
+      planStage: 'executing',
+      editingDialect: 'structured-edit'
+    })
+    const structured = new PromptComposer().compose({
+      platform: 'windows',
+      capabilities: capabilitiesFromTools(structuredTools),
+      permissionMode: 'full-access',
+      model,
+      project: {
+        workspaceRoot: '/workspace',
+        instructions: '',
+        instructionSources: [],
+        memory: ''
+      },
+      currentDate: 'Tuesday, July 21, 2026',
+      toolRoundLimit: 100,
+      activeSkillIds: [],
+      skillAssetsPath: null
+    })
+    expect(structured.content).toContain('Use edit, write, delete_file for project changes')
+    expect(structured.content).not.toContain('Use apply_patch for additions')
   })
 
   it('teaches vision-capable runs the native observe-act-verify browser loop', () => {

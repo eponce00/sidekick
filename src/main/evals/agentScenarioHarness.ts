@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { promises as fs } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { applyDatabaseSchema } from '../bootstrap/database'
@@ -20,6 +21,7 @@ import { agentRunProfile } from '../../shared/agentToolCatalog'
 import type { AgentCapability, AgentRunEvent, AgentRunSurface } from '../../shared/agentRuntime'
 import type {
   ProviderChatMessage,
+  ProviderChatRequest,
   ProviderTarget,
   ProviderThinkingBlock,
   ProviderToolCall
@@ -28,6 +30,7 @@ import type { CollaborationKernelRunInput } from '../services/agentRuntimeCoordi
 import type { ProviderKind } from '../../shared/providerRegistry'
 import { AgentPlanService } from '../services/agentPlanService'
 import type { NativeBrowserSessionService } from '../services/nativeBrowserSessionService'
+import { editingDialectForModel, type EditingDialect } from '../../shared/workspaceMutations'
 
 export interface AgentScenarioConfig {
   browser?: NativeBrowserSessionService
@@ -40,6 +43,7 @@ export interface AgentScenarioConfig {
   providerKind?: ProviderKind
   maxOutputTokens?: number
   requestTimeoutMs?: number
+  editingDialect?: EditingDialect
 }
 
 export interface AgentKernelScenarioInput {
@@ -180,6 +184,14 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
   }
 }
 
+/** Production-faithful provider serialization used by live scenario regression tests. */
+export async function serializeAgentScenarioMessages(
+  request: ProviderChatRequest
+): Promise<Array<Record<string, unknown>>> {
+  const prepared = await materializeProviderRequestMedia(request)
+  return toOpenAICompatibleMessages(prepared.messages)
+}
+
 export class AgentScenarioHarness {
   readonly db: Database.Database
   private readonly mcp = new McpClientManager()
@@ -223,10 +235,16 @@ export class AgentScenarioHarness {
   async run(input: AgentKernelScenarioInput): Promise<AgentKernelScenarioResult> {
     const runId = input.runId ?? randomUUID()
     const surface = input.surface ?? 'conversation'
+    const editingDialect =
+      this.config.editingDialect ??
+      editingDialectForModel({
+        providerKind: this.config.providerKind ?? 'litellm',
+        model: this.config.model
+      })
     const target: ProviderTarget = {
       providerKind: this.config.providerKind ?? 'litellm',
       model: this.config.model,
-      editingDialect: 'apply-patch'
+      editingDialect
     }
     const planService = input.planMode
       ? new AgentPlanService(this.db, runId, this.config.model, this.config.model, 'planning')
@@ -238,6 +256,7 @@ export class AgentScenarioHarness {
       capabilities: input.capabilities,
       browserEnabled: Boolean(this.config.browser),
       webSearchEnabled: false,
+      editingDialect,
       collaboration: input.collaboration,
       plan: planService
         ? {
@@ -421,4 +440,17 @@ export class AgentScenarioHarness {
 export async function copyEvalFixture(source: string, destination: string): Promise<void> {
   await fs.mkdir(destination, { recursive: true })
   await fs.cp(source, destination, { recursive: true, force: true })
+}
+
+/** Run an evaluation in a unique temporary root and remove every generated artifact afterward. */
+export async function withIsolatedEvalRoot<T>(
+  prefix: string,
+  operation: (root: string) => Promise<T>
+): Promise<T> {
+  const root = await fs.mkdtemp(join(tmpdir(), prefix))
+  try {
+    return await operation(root)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+  }
 }

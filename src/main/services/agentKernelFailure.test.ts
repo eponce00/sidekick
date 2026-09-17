@@ -44,6 +44,23 @@ describe('kernel terminal policy', () => {
     )
   })
 
+  it('classifies provider image limits as non-retryable input errors', () => {
+    expect(
+      classifyAgentKernelFailure(
+        new Error('At most 2 image(s) may be provided in one prompt.'),
+        false
+      )
+    ).toMatchObject({
+      phase: 'failed',
+      message: 'The model accepts at most 2 images per request. SideKick could not send this turn.',
+      error: {
+        code: 'invalid_arguments',
+        retryable: false,
+        recoveryAction: 'stop'
+      }
+    })
+  })
+
   it('keeps no-progress failures terminal and preserves their recovery contract', () => {
     expect(
       classifyAgentKernelFailure(new AgentToolLoopError('unchanged approach'), false)

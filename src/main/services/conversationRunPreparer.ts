@@ -107,6 +107,38 @@ function durableToolMedia(value: unknown): ToolResultMediaAttachment[] {
   }
 }
 
+function sanitizeHistoricalToolModelContent(content: string): string {
+  if (!content.includes('"imageBase64"')) return content
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(content)
+  } catch {
+    return content
+  }
+
+  let removedImages = 0
+  const stripInlineImages = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stripInlineImages)
+    if (!value || typeof value !== 'object') return value
+    const sanitized: Record<string, unknown> = {}
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      if (key === 'imageBase64') {
+        removedImages += 1
+        continue
+      }
+      sanitized[key] = stripInlineImages(entry)
+    }
+    return sanitized
+  }
+
+  const sanitized = stripInlineImages(parsed)
+  if (!removedImages) return content
+  if (sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)) {
+    ;(sanitized as Record<string, unknown>).historicalVisualPayloadsOmitted = removedImages
+  }
+  return JSON.stringify(sanitized)
+}
+
 const LEGACY_VERBOSE_BROWSER_ACTIONS = new Set([
   'browser_click',
   'browser_fill_form',
@@ -247,7 +279,10 @@ export function durableProviderHistory(
           ? (payload.result as Record<string, unknown>)
           : {}
       const name = String(payload.name || '')
-      const rawContent = typeof result.modelContent === 'string' ? result.modelContent : ''
+      const rawContent =
+        typeof result.modelContent === 'string'
+          ? sanitizeHistoricalToolModelContent(result.modelContent)
+          : ''
       const receipt = compactLegacyBrowserReceipt(name, rawContent)
       const media = receipt.compacted ? [] : durableToolMedia(result.media)
       history.push({

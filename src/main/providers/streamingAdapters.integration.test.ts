@@ -48,6 +48,19 @@ function text(chunks: ProviderStreamChunk[], key: 'content' | 'thinking'): strin
 }
 
 describe('provider streaming adapters', () => {
+  it('preserves the network cause when an OpenAI-compatible stream cannot connect', async () => {
+    const cause = Object.assign(new Error('connect timed out'), {
+      code: 'UND_ERR_CONNECT_TIMEOUT'
+    })
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError('fetch failed', { cause })
+    }) as unknown as typeof fetch
+
+    await expect(
+      streamOpenAICompatibleChat('https://provider.test/v1', {}, {}, () => undefined, fetchImpl)
+    ).resolves.toEqual({ ok: false, error: 'fetch failed (UND_ERR_CONNECT_TIMEOUT)' })
+  })
+
   it.each([
     'data: {"choices":[{"delta":{"content":"complete"},"finish_reason":"stop"}]}\ndata: [DONE]\n',
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"lookup","arguments":"{"}}]}}]}\ndata: {"error":{"message":"Unterminated string"}}\n'

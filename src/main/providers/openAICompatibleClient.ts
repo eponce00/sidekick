@@ -57,7 +57,7 @@ export interface OpenAICompatibleChatResult {
 
 type FetchImplementation = typeof fetch
 
-function requestFailureMessage(error: unknown): string {
+export function requestFailureMessage(error: unknown): string {
   if (!(error instanceof Error)) return 'Unknown error'
   const cause = error.cause
   if (cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string') {

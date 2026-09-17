@@ -162,7 +162,7 @@ export function useConversationRun({
 
   const project = useCallback(
     (active: ActiveRun): void => {
-      const snapshot = active.model.getSnapshot()
+      const snapshot = active.model.refresh()
       const events = snapshot.events
       const projection = snapshot.projection
       const finalized = events.some((event) => event.type === 'run.finalized')
@@ -225,14 +225,14 @@ export function useConversationRun({
         return
       }
       if (event.runId !== active.runId) return
-      const accepted = active.model.ingest(event)
+      const accepted = active.model.ingest(event, { deferProjection: true })
       if (accepted.gapAfter !== undefined && !active.repairPromise) {
         active.repairPromise = window.api.agentRuns
           .events(active.runId, accepted.gapAfter)
           .then(completeJournalWindow)
           .then((result) => {
             if (activeRef.current?.runId !== active.runId) return
-            active.model.merge(result.run, result.events)
+            active.model.merge(result.run, result.events, { deferProjection: true })
             scheduleProject(active, true)
           })
           .catch((error) => console.error('[AgentRun] Could not repair event gap', error))
@@ -283,7 +283,9 @@ export function useConversationRun({
         }
         activeRef.current = active
         active.model.replace(run, result.events)
-        active.model.merge(run, unattachedEventsRef.current.get(run.id) ?? [])
+        active.model.merge(run, unattachedEventsRef.current.get(run.id) ?? [], {
+          deferProjection: true
+        })
         unattachedEventsRef.current.delete(run.id)
         setRunConversationId(conversationId)
         setActiveMode(active.mode)
@@ -338,7 +340,7 @@ export function useConversationRun({
         const current = activeRef.current
         if (current?.runId === input.id) {
           // Preserve live events ingested while the durable snapshot was in flight.
-          current.model.merge(snapshot.run, snapshot.events)
+          current.model.merge(snapshot.run, snapshot.events, { deferProjection: true })
           scheduleProject(current, true)
         }
         await completion

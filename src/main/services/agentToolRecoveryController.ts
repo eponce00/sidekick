@@ -6,10 +6,10 @@ export interface ToolRecoveryGuardrails {
   exactFailureLimit: number
   sameToolFailureWarning: number
   sameToolFailureLimit: number
-  noProgressWarning: number
-  noProgressLimit: number
   failedTurnWarning: number
   failedTurnLimit: number
+  repeatCallThresholds: readonly number[]
+  stateRevisitThresholds: readonly number[]
 }
 
 export const DEFAULT_TOOL_RECOVERY_GUARDRAILS: ToolRecoveryGuardrails = {
@@ -17,16 +17,16 @@ export const DEFAULT_TOOL_RECOVERY_GUARDRAILS: ToolRecoveryGuardrails = {
   exactFailureLimit: 5,
   sameToolFailureWarning: 3,
   sameToolFailureLimit: 8,
-  noProgressWarning: 2,
-  noProgressLimit: 5,
   failedTurnWarning: 3,
-  failedTurnLimit: 6
+  failedTurnLimit: 6,
+  repeatCallThresholds: [3, 5, 8],
+  stateRevisitThresholds: [2, 3, 5]
 }
 
 export interface ToolRecoveryObservation {
   warning?: string
   stopReason?: string
-  reason?: 'exact_failure' | 'same_tool_failure' | 'no_progress' | 'failed_turn'
+  reason?: 'exact_failure' | 'same_tool_failure' | 'repeat_call' | 'failed_turn' | 'state_revisit'
   count?: number
 }
 
@@ -106,7 +106,9 @@ export class AgentToolRecoveryController {
     string,
     { toolName: string; message: string; count: number }
   >()
-  private readonly readResults = new Map<string, { output: string; count: number }>()
+  private repeatCallChain?: { fingerprint: string; count: number }
+  private readonly seenHashesByPath = new Map<string, Set<string>>()
+  private readonly revisitsByPath = new Map<string, number>()
   private consecutiveFailedTurns = 0
 
   constructor(private readonly limits = DEFAULT_TOOL_RECOVERY_GUARDRAILS) {}
@@ -118,40 +120,19 @@ export class AgentToolRecoveryController {
     readOnly: boolean
   }): ToolRecoveryObservation {
     const toolName = input.name.toLowerCase()
+    const repeatedCall = this.observeRepeatedCall(toolName, input.arguments)
     if (input.result.status === 'success') {
       if (input.readOnly) this.clearToolFailures(toolName)
       else this.clearFailures()
-      if (!input.readOnly) return {}
-      const callFingerprint = canonicalToolFingerprint(toolName, input.arguments)
-      const outputFingerprint = canonicalToolFingerprint('result', input.result.modelContent)
-      const previous = this.readResults.get(callFingerprint)
-      const count = previous?.output === outputFingerprint ? previous.count + 1 : 1
-      this.readResults.set(callFingerprint, { output: outputFingerprint, count })
-      if (count >= this.limits.noProgressLimit) {
-        return {
-          reason: 'no_progress',
-          count,
-          stopReason: `${input.name} was stopped after ${count} identical read-only calls returned the same result.`
-        }
-      }
-      if (count >= this.limits.noProgressWarning) {
-        return {
-          reason: 'no_progress',
-          count,
-          warning: warning(
-            'no_progress',
-            count,
-            `${input.name} returned the same result for the same arguments ${count} times. Use the information already returned or choose a materially different query.`
-          )
-        }
-      }
-      return {}
+      if (input.readOnly) return repeatedCall
+      const stateRevisit = this.observeSuccessfulMutation(input.result)
+      return stateRevisit.warning ? stateRevisit : repeatedCall
     }
 
-    if (input.result.status !== 'error') return {}
+    if (input.result.status !== 'error') return repeatedCall
     if (madeMaterialProgress(input.result)) {
       this.clearFailures()
-      return {}
+      return repeatedCall
     }
     const errorCode = input.result.error?.code ?? 'internal'
     const exact = canonicalToolFingerprint(toolName, {
@@ -210,7 +191,66 @@ export class AgentToolRecoveryController {
         )
       }
     }
-    return {}
+    return repeatedCall
+  }
+
+  private observeRepeatedCall(
+    toolName: string,
+    args: Record<string, unknown>
+  ): ToolRecoveryObservation {
+    // Bookkeeping calls are transparent: they neither trigger reminders nor
+    // launder an otherwise consecutive repeated work call.
+    if (toolName === 'manage_todo_list') return {}
+    const fingerprint = canonicalToolFingerprint(toolName, args)
+    const count =
+      this.repeatCallChain?.fingerprint === fingerprint ? this.repeatCallChain.count + 1 : 1
+    this.repeatCallChain = { fingerprint, count }
+    if (!this.limits.repeatCallThresholds.includes(count)) return {}
+    const firstThreshold = this.limits.repeatCallThresholds[0]
+    return {
+      reason: 'repeat_call',
+      count,
+      warning: warning(
+        'repeat_call',
+        count,
+        count === firstThreshold
+          ? `${toolName} has been called ${count} consecutive times with identical arguments. Review the prior result before repeating it again.`
+          : `${toolName} has been called ${count} consecutive times with identical arguments. Reuse the existing result, wait only when external state is expected to change, or choose a materially different action.`
+      )
+    }
+  }
+
+  private observeSuccessfulMutation(result: ToolExecutionResult): ToolRecoveryObservation {
+    const targets = (result.changes ?? []).map((change) => ({
+      path: change.path,
+      afterHash: change.afterHash
+    }))
+    let strongest: ToolRecoveryObservation = {}
+
+    for (const target of targets) {
+      const path = target.path.replaceAll('\\', '/')
+      if (target.afterHash) {
+        const seen = this.seenHashesByPath.get(path) ?? new Set<string>()
+        if (seen.has(target.afterHash)) {
+          const revisitCount = (this.revisitsByPath.get(path) ?? 0) + 1
+          this.revisitsByPath.set(path, revisitCount)
+          if (this.limits.stateRevisitThresholds.includes(revisitCount)) {
+            strongest = {
+              reason: 'state_revisit',
+              count: revisitCount,
+              warning: warning(
+                'state_revisit',
+                revisitCount,
+                `${path} has returned to a previously produced state ${revisitCount} times. Compare against explicit acceptance criteria and stop toggling between prior versions.`
+              )
+            }
+          }
+        }
+        seen.add(target.afterHash)
+        this.seenHashesByPath.set(path, seen)
+      }
+    }
+    return strongest
   }
 
   observeTurn(successCount: number, failureCount: number): ToolRecoveryObservation {
