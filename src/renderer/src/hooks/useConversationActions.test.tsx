@@ -32,6 +32,8 @@ describe('useConversationActions', () => {
     runMode: 'research'
   }
 
+  let latestMessages: Message[] = []
+
   function Harness(): null {
     const [messages, setMessages] = useState<Message[]>([researchRequest, researchResponse])
     const value = useConversationActions({
@@ -45,6 +47,9 @@ describe('useConversationActions', () => {
     useEffect(() => {
       controller = value
     }, [value])
+    useEffect(() => {
+      latestMessages = messages
+    }, [messages])
     return null
   }
 
@@ -80,6 +85,21 @@ describe('useConversationActions', () => {
       expect(rerunStream).toHaveBeenCalledWith([researchRequest], 'conversation-1', 'research')
     })
     expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 1)
+  })
+
+  it('does not answer on top of history it failed to truncate', async () => {
+    deleteMessagesAfter.mockRejectedValueOnce(new Error('database is locked'))
+
+    act(() => controller.retryMessage(researchResponse))
+
+    await vi.waitFor(() => expect(deleteMessagesAfter).toHaveBeenCalled())
+    // Replying here would interleave the stale response with the new one the
+    // next time this conversation is loaded from the database.
+    expect(rerunStream).not.toHaveBeenCalled()
+    await vi.waitFor(() =>
+      expect(latestMessages.at(-1)).toMatchObject({ role: 'agent', noticeTone: 'error' })
+    )
+    expect(latestMessages.at(-1)?.content).toContain('database is locked')
   })
 
   it('undoes the changes owned by the response instead of restoring its after-state', async () => {

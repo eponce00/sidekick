@@ -515,14 +515,18 @@ export function registerDatabaseHandlers(): void {
   })
 
   ipcMain.handle('conversations:updateMessage', async (_, message: Record<string, unknown>) => {
-    const existing = db.prepare('SELECT timestamp FROM messages WHERE id = ?').get(message.id) as
-      | { timestamp: number }
-      | undefined
+    // Scope every statement to the conversation the caller named. An id that
+    // belongs elsewhere must miss loudly rather than rewrite another
+    // conversation's message and invalidate the wrong compaction window.
+    const existing = db
+      .prepare('SELECT timestamp FROM messages WHERE id = ? AND conversation_id = ?')
+      .get(message.id, message.conversation_id) as { timestamp: number } | undefined
+    if (!existing) throw new Error('Message not found in conversation')
     const stmt = db.prepare(
       `UPDATE messages
        SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?, checkpoint_hash = ?,
            checkpoint_workspace_root = ?, timestamp = ?
-       WHERE id = ?`
+       WHERE id = ? AND conversation_id = ?`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
     const images = validateMessageImages(message.images)
@@ -540,14 +544,13 @@ export function registerDatabaseHandlers(): void {
       message.checkpointHash || null,
       message.checkpointWorkspaceRoot || null,
       message.timestamp,
-      message.id
+      message.id,
+      message.conversation_id
     )
 
     const updateStmt = db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
     updateStmt.run(Date.now(), message.conversation_id)
-    if (existing) {
-      compactions.invalidateFromTimestamp(String(message.conversation_id), existing.timestamp)
-    }
+    compactions.invalidateFromTimestamp(String(message.conversation_id), existing.timestamp)
 
     return { success: true }
   })

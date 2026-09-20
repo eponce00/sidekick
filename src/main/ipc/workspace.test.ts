@@ -69,6 +69,14 @@ vi.mock('./state', () => ({
   getStore: () => ({ get: vi.fn(), set: vi.fn() })
 }))
 
+const watchMock = vi.hoisted(() => vi.fn())
+// Only `watch` is faked; the rest of fs stays real so the file-IPC tests above
+// keep operating on their temporary directories.
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof import('fs')>('fs')
+  return { ...actual, watch: watchMock }
+})
+
 vi.mock('./workspaceUtils', () => ({
   getStoredWorkspace: () => workspaceState.root,
   resolveKnownWorkspace: (passedRoot?: string) => passedRoot || workspaceState.root,
@@ -98,7 +106,8 @@ vi.mock('../services/externalOpeners', () => ({
   ])
 }))
 
-import { registerWorkspaceHandlers } from './workspace'
+import { registerWorkspaceHandlers, startWorkspaceWatcher } from './workspace'
+import { appState } from './state'
 
 type TrashFileHandler = (
   event: unknown,
@@ -257,5 +266,70 @@ describe('workspace file IPC', () => {
     expect(menuTemplates.at(-1)?.map((item) => item.label)).toEqual(['app/main.js', 'demo/main.js'])
     expect(menuPopup).toHaveBeenCalledOnce()
     expect(openPath).not.toHaveBeenCalled()
+  })
+})
+
+describe('workspace watcher resilience', () => {
+  function fakeWatcher(): {
+    on: ReturnType<typeof vi.fn>
+    close: ReturnType<typeof vi.fn>
+    fail: (error: Error) => void
+  } {
+    const listeners = new Map<string, (error: Error) => void>()
+    return {
+      on: vi.fn((event: string, handler: (error: Error) => void) => {
+        listeners.set(event, handler)
+      }),
+      close: vi.fn(),
+      fail: (error: Error) => listeners.get('error')?.(error)
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    watchMock.mockReset()
+    appState.workspaceWatcher = null
+    appState.watchDebounceTimer = null
+    appState.mainWindowRef = {
+      isDestroyed: () => false,
+      webContents: { send: vi.fn() }
+    } as unknown as typeof appState.mainWindowRef
+  })
+
+  afterEach(() => {
+    startWorkspaceWatcher(null)
+    vi.useRealTimers()
+    appState.mainWindowRef = null
+  })
+
+  it('re-establishes a watch that drops instead of going silent for the session', async () => {
+    const first = fakeWatcher()
+    const second = fakeWatcher()
+    watchMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
+
+    startWorkspaceWatcher('C:\\project')
+    expect(watchMock).toHaveBeenCalledTimes(1)
+
+    first.fail(new Error('EPERM'))
+    expect(appState.workspaceWatcher).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(watchMock).toHaveBeenCalledTimes(2)
+    expect(appState.workspaceWatcher).toBe(second)
+  })
+
+  it('stops retrying a folder that never comes back', async () => {
+    watchMock.mockImplementation(() => {
+      const watcher = fakeWatcher()
+      queueMicrotask(() => watcher.fail(new Error('ENOENT')))
+      return watcher
+    })
+
+    startWorkspaceWatcher('C:\\deleted')
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    // One initial attempt plus the bounded retry budget, then it gives up
+    // rather than spinning for the lifetime of the app.
+    expect(watchMock).toHaveBeenCalledTimes(6)
   })
 })

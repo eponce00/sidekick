@@ -87,6 +87,30 @@ describe('conversation fork IPC', () => {
     ).toEqual({ forked_from_conversation_id: 'source', forked_from_message_id: 'first' })
   })
 
+  it('refuses to edit a message that belongs to a different conversation', async () => {
+    const insertConversation = mocks.db!.prepare(
+      `INSERT INTO conversations (id, title, created_at, updated_at, sidebar_order)
+       VALUES (?, ?, 1, 1, 0)`
+    )
+    insertConversation.run('mine', 'My chat')
+    insertConversation.run('theirs', 'Their chat')
+    mocks
+      .db!.prepare(
+        `INSERT INTO messages (id, conversation_id, role, content, timestamp)
+         VALUES ('target', 'theirs', 'user', 'Original content', 5)`
+      )
+      .run()
+
+    const updateMessage = mocks.handlers.get('conversations:updateMessage') as RegisteredHandler
+    await expect(
+      updateMessage({}, { id: 'target', conversation_id: 'mine', content: 'Hijacked', timestamp: 5 })
+    ).rejects.toThrow('Message not found in conversation')
+
+    expect(mocks.db!.prepare('SELECT content FROM messages WHERE id = ?').get('target')).toEqual({
+      content: 'Original content'
+    })
+  })
+
   it('pins a chat and lists it ahead of unpinned chats', async () => {
     const insert = mocks.db!.prepare(
       `INSERT INTO conversations (id, title, created_at, updated_at, sidebar_order)

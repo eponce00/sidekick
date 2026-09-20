@@ -676,14 +676,21 @@ function App(): React.JSX.Element {
     )
   }
 
+  // Forking from a specific message only copies history already committed to the
+  // database, so it stays available while the conversation is still running.
+  // Forking from the tip would copy the in-flight message, so that still waits.
+  const forkBlockedByRun = (conversationId: string, messageId?: string): boolean =>
+    !messageId && busyConversationIds.has(conversationId)
+
   const handleForkConversation = (id: string, messageId?: string): void => {
-    if (busyConversationIds.has(id)) return
+    if (forkBlockedByRun(id, messageId)) return
     setForkError(null)
     setPendingFork({ conversationId: id, messageId })
   }
 
   const executeForkConversation = async (workspaceMode: 'current' | 'worktree'): Promise<void> => {
-    if (!pendingFork || forkBusy || busyConversationIds.has(pendingFork.conversationId)) return
+    if (!pendingFork || forkBusy) return
+    if (forkBlockedByRun(pendingFork.conversationId, pendingFork.messageId)) return
     setForkBusy(true)
     setForkError(null)
     try {
