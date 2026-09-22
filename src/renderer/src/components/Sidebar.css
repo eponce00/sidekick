@@ -286,7 +286,7 @@
 }
 .group-sidebar-copy strong {
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 400;
 }
 .group-sidebar-copy small {
   display: flex;
@@ -568,7 +568,7 @@
   color: inherit;
   cursor: pointer;
   font-size: var(--text-sm);
-  font-weight: 600;
+  font-weight: 500;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -646,6 +646,12 @@
   background: var(--surface-2);
 }
 
+/* Weight is reserved for the selected row; a list where every title is
+   medium reads as a wall of semi-bold, especially in Inter on Windows. */
+.conversation-item.active .conversation-title {
+  font-weight: 500;
+}
+
 .conversation-item.active {
   background: color-mix(in srgb, var(--surface-4) 68%, transparent);
 }
@@ -710,7 +716,7 @@
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 400;
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;

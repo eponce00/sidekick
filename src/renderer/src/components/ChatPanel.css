@@ -1027,7 +1027,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   color: var(--text-muted);
   font: inherit;
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 400;
   cursor: pointer;
   transition: color var(--duration-fast) ease;
 }
