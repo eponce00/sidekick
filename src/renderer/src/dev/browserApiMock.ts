@@ -462,6 +462,47 @@ const previewMessages = [
           'I should inspect the current information hierarchy before changing visual density.'
       },
       {
+        type: 'interaction' as const,
+        interaction: {
+          id: 'preview-question-1',
+          kind: 'question' as const,
+          status: 'pending' as const,
+          request: {
+            questions: [
+              {
+                id: 'density',
+                header: 'Density',
+                question: 'How compact should the conversation feel on a large display?',
+                multiSelect: false,
+                options: [
+                  {
+                    label: 'Comfortable',
+                    description:
+                      'Roomier line height and spacing, easier for long reading sessions',
+                    recommended: true
+                  },
+                  {
+                    label: 'Compact',
+                    description: 'Fits more of the conversation on screen at once'
+                  }
+                ]
+              },
+              {
+                id: 'surfaces',
+                header: 'Surfaces',
+                question: 'Which secondary panels should stay visible while the agent works?',
+                multiSelect: true,
+                options: [
+                  { label: 'Files', description: 'The project tree and the file viewer' },
+                  { label: 'Browser', description: 'The live page the agent is driving' },
+                  { label: 'Recovery', description: 'Checkpoints and workspace history' }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
         type: 'tool' as const,
         tool: {
           id: 'preview-tool-search',

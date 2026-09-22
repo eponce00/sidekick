@@ -464,8 +464,14 @@ export default function AgentInteractionCard({
             <div className="agent-question-header">{currentQuestion.header}</div>
           )}
           <div className="agent-question-copy">{currentQuestion.question}</div>
+          {currentQuestion.multiSelect && (currentQuestion.options?.length ?? 0) > 0 && (
+            <div className="agent-question-hint">Choose any that apply</div>
+          )}
           {currentQuestion.options?.length ? (
-            <div className="agent-question-options">
+            <div
+              className={`agent-question-options${currentQuestion.multiSelect ? ' is-multi' : ''}`}
+              role={currentQuestion.multiSelect ? 'group' : 'radiogroup'}
+            >
               {currentQuestion.options.map((option) => {
                 const selected = currentAnswer.selected.includes(option.label)
                 return (
@@ -473,6 +479,8 @@ export default function AgentInteractionCard({
                     type="button"
                     key={option.label}
                     className={selected ? 'selected' : ''}
+                    role={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
+                    aria-checked={selected}
                     aria-pressed={selected}
                     onClick={() =>
                       setQuestionAnswer(currentQuestion.id, (answer) => ({
@@ -486,11 +494,16 @@ export default function AgentInteractionCard({
                       }))
                     }
                   >
-                    <span>
-                      {option.label}
-                      {option.recommended && <em>Recommended</em>}
+                    <span className="agent-question-mark" aria-hidden="true">
+                      {selected && <Check size={11} strokeWidth={3} />}
                     </span>
-                    {option.description && <small>{option.description}</small>}
+                    <span className="agent-question-option-body">
+                      <span className="agent-question-option-label">
+                        {option.label}
+                        {option.recommended && <em>Recommended</em>}
+                      </span>
+                      {option.description && <small>{option.description}</small>}
+                    </span>
                   </button>
                 )
               })}

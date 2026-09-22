@@ -40,6 +40,86 @@ describe('AgentInteractionCard question workflow', () => {
     container.remove()
   })
 
+  it('marks a chosen option so selection survives a pointer resting elsewhere', async () => {
+    // Selection used to share one rule with hover, so a chosen option looked
+    // identical to whichever option the pointer happened to be over.
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'question-mark',
+            kind: 'question',
+            status: 'pending',
+            request: {
+              questions: [
+                {
+                  id: 'density',
+                  question: 'How compact?',
+                  options: [{ label: 'Comfortable' }, { label: 'Compact' }]
+                }
+              ]
+            }
+          }}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    const option = (name: string): HTMLButtonElement =>
+      [...container.querySelectorAll('button')].find((button) =>
+        button.textContent?.includes(name)
+      )!
+
+    await act(async () => option('Comfortable').click())
+
+    const chosen = option('Comfortable')
+    const other = option('Compact')
+    expect(chosen.classList.contains('selected')).toBe(true)
+    expect(other.classList.contains('selected')).toBe(false)
+    // The mark carries a tick only on the chosen option, independent of hover.
+    expect(chosen.querySelector('.agent-question-mark svg')).not.toBeNull()
+    expect(other.querySelector('.agent-question-mark svg')).toBeNull()
+  })
+
+  it('says how many answers a question accepts', async () => {
+    const render = async (multiSelect: boolean): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <AgentInteractionCard
+            interaction={{
+              id: `question-${multiSelect}`,
+              kind: 'question',
+              status: 'pending',
+              request: {
+                questions: [
+                  {
+                    id: 'panels',
+                    question: 'Which panels?',
+                    multiSelect,
+                    options: [{ label: 'Files' }, { label: 'Browser' }]
+                  }
+                ]
+              }
+            }}
+            onResolve={vi.fn()}
+          />
+        )
+      )
+    }
+
+    await render(false)
+    expect(container.querySelector('.agent-question-options')?.getAttribute('role')).toBe(
+      'radiogroup'
+    )
+    expect(container.querySelector('.agent-question-hint')).toBeNull()
+
+    await render(true)
+    expect(container.querySelector('.agent-question-options')?.getAttribute('role')).toBe('group')
+    expect(container.querySelector('.agent-question-options')?.classList.contains('is-multi')).toBe(
+      true
+    )
+    expect(container.textContent).toContain('Choose any that apply')
+  })
+
   it('pages through multi-select questions and submits selected values', async () => {
     const resolve = vi.fn()
     await act(async () =>

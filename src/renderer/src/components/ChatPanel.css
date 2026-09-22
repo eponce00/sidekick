@@ -3970,20 +3970,22 @@ body[data-theme='light'] .tool-approval-command {
   margin-top: 9px;
 }
 
-.agent-interaction-actions button,
-.agent-question-options button {
+.agent-interaction-actions button {
   min-height: 28px;
   padding: 5px 10px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  font-size: var(--text-sm);
   cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast),
+    border-color var(--duration-fast);
 }
 
-.agent-interaction-actions button:hover,
-.agent-question-options button:hover,
-.agent-question-options button.selected {
+.agent-interaction-actions button:hover {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
@@ -4160,33 +4162,119 @@ body[data-theme='light'] .tool-approval-command {
   border-color: color-mix(in srgb, var(--accent) 52%, var(--border-color));
 }
 
+.agent-question-hint {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
 .agent-question-options {
   display: grid;
-  gap: 5px;
-  margin-top: 7px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
+/* An option is a choice, not an action: it gets an edge, a mark, and a
+   selected state that stays legible while the pointer is over it. */
 .agent-question-options button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  min-height: 34px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  background: var(--surface-1);
   text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
 }
 
-.agent-question-options button > span {
+.agent-question-options button:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+  background: var(--surface-2);
+}
+
+.agent-question-options button.selected {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* Circle for one answer, rounded square for several — the shape is the only
+   thing that tells the user how many they may pick. */
+.agent-question-mark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-full);
+  color: var(--on-accent);
+  background: var(--surface-0);
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.agent-question-options.is-multi .agent-question-mark {
+  border-radius: var(--radius-xs);
+}
+
+.agent-question-options button.selected .agent-question-mark {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.agent-question-option-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-question-option-label {
   display: flex;
   align-items: center;
   gap: 7px;
+  font-size: var(--content-text);
+  font-weight: 500;
 }
 
 .agent-question-options button em {
-  padding: 1px 5px;
+  padding: 1px 6px;
   border-radius: var(--radius-full);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   font-size: var(--text-xs);
   font-style: normal;
   font-weight: 600;
+}
+
+.agent-question-options small {
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* Escaping to a free-text answer is a different move from picking one of the
+   offered answers, so it does not wear the same clothes. */
+.agent-question-options .agent-question-other {
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 30px;
+  border-style: dashed;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--text-sm);
+}
+
+.agent-question-options .agent-question-other:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
 }
 
 .agent-question-navigation {
@@ -4199,14 +4287,19 @@ body[data-theme='light'] .tool-approval-command {
   gap: 4px;
 }
 
+/* Cancel abandons the question entirely. It is last in the markup so the
+   progression reads first for a screen reader, but it is moved to the far side
+   visually so it never sits against the primary action. */
 .agent-question-navigation .agent-question-cancel {
+  order: -1;
   margin-right: auto;
+  color: var(--text-muted);
   background: transparent;
 }
 
-.agent-question-options small {
-  margin-top: 2px;
-  color: var(--text-secondary);
+.agent-question-navigation .agent-question-cancel:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
 .agent-question input,
