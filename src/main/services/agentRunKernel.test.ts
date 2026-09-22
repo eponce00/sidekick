@@ -1957,6 +1957,114 @@ describe('AgentRunKernel', () => {
     expect(rejected).toHaveBeenCalledOnce()
   })
 
+  it('believes the window a provider reports over a larger configured one', async () => {
+    // The shape seen in the field: a profile swapped on the server left the app
+    // budgeting against 180k while the engine actually had 49,152.
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Fits now' })
+    const applied: Array<{ contextLength: number; maxOutputTokens: number }> = []
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      applyContextLength: vi.fn((contextLength: number, maxOutputTokens: number) => {
+        applied.push({ contextLength, maxOutputTokens })
+      }),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted' }],
+        compacted: true,
+        details: { strategy: 'test' }
+      })),
+      observeUsage: vi.fn()
+    }
+    const runInput = { ...input(), contextManager, id: 'run-ctx' }
+    runInput.model = 'swapped-profile-model'
+    runInput.request = {
+      target: { providerKind: 'ollama', model: 'swapped-profile-model', contextLength: 180_000 },
+      maxOutputTokens: 32_768,
+      purpose: 'conversation'
+    }
+
+    const result = await new AgentRunKernel(store, undefined, sequence(overflow, recovered)).start(
+      runInput
+    )
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Fits now' })
+    // The reported window is adopted, and the output reservation shrinks with
+    // it: 32k reserved inside a 49k window leaves almost nothing for the chat.
+    expect(applied).toEqual([{ contextLength: 49_152, maxOutputTokens: 12_288 }])
+    const retriedRequest = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(retriedRequest.target.contextLength).toBe(49_152)
+    expect(retriedRequest.maxOutputTokens).toBe(12_288)
+    expect(store.listEvents('run-ctx')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'context_length_corrected',
+            contextLength: 49_152,
+            configuredContextLength: 180_000,
+            maxOutputTokens: 12_288
+          })
+        })
+      ])
+    )
+  })
+
+  it('does not widen a window the provider reports as larger than configured', async () => {
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error: "This model's maximum context length is 262144 tokens. However, you requested more."
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      applyContextLength: vi.fn(),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted' }],
+        compacted: true
+      })),
+      observeUsage: vi.fn()
+    }
+    const runInput = { ...input(), contextManager, id: 'run-ctx-wide' }
+    runInput.model = 'conservatively-configured'
+    runInput.request = {
+      target: { providerKind: 'ollama', model: 'conservatively-configured', contextLength: 60_000 },
+      maxOutputTokens: 8_192,
+      purpose: 'conversation'
+    }
+
+    await new AgentRunKernel(
+      store,
+      undefined,
+      sequence(overflow, sampledTurn({ content: 'ok' }))
+    ).start(runInput)
+
+    // A deliberately conservative setting is the user's call, not a mistake.
+    expect(contextManager.applyContextLength).not.toHaveBeenCalled()
+  })
+
   it('does not loop when the compacted retry still exceeds provider context', async () => {
     const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
       result: { ok: false, error: 'context_window_exceeded: prompt is too long' },

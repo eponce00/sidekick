@@ -27,6 +27,7 @@ import type {
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
 import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
+import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import {
   countTranscriptImages,
   enforceImageBudget,
@@ -40,6 +41,13 @@ import {
  * request; every later run prunes before sending.
  */
 const learnedImageLimits = new Map<string, number>()
+
+/**
+ * Context windows a provider reported about itself, keyed by provider:model.
+ * A configured length that is too large is worse than none: compaction frees
+ * against the wrong budget and the retry trips the same limit.
+ */
+const learnedContextLengths = new Map<string, number>()
 
 function imageLimitKey(provider: string, model: string): string {
   return `${provider}:${model}`
@@ -104,6 +112,8 @@ export interface AgentKernelToolRouter {
 
 export interface AgentKernelContextManager {
   shouldCompact(messages: ProviderChatMessage[], tools: readonly unknown[]): boolean
+  /** Adopt a window the provider reported about itself. */
+  applyContextLength?(contextLength: number, maxOutputTokens: number): void
   observeUsage?(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
@@ -954,8 +964,35 @@ The user approved this exact plan revision. Act capabilities are now available a
     // later request, so one screenshot-heavy session does not fail the same way
     // turn after turn. Seeded from what earlier runs on this model learned.
     const imageLimitCacheKey = imageLimitKey(input.provider, input.model)
+    // A window an earlier run saw the provider report outranks configuration,
+    // so the very first request of a later run is already budgeted correctly.
+    const rememberedContextLength = learnedContextLengths.get(imageLimitCacheKey)
     let imageBudget: number | null = learnedImageLimits.get(imageLimitCacheKey) ?? null
     let activeRequest = input.request
+    /**
+     * Believe the provider over the configuration when it states its own
+     * window, and shrink the output reservation to match: a 32k reservation
+     * inside a 49k window leaves almost nothing for the conversation.
+     */
+    const applyReportedContextLength = (reported?: number): void => {
+      if (!reported || !Number.isFinite(reported) || reported <= 0) return
+      const configured = Number(activeRequest.target.contextLength) || reported
+      if (reported >= configured) return
+      learnedContextLengths.set(imageLimitCacheKey, reported)
+      const maxOutputTokens = resolveMaxOutputTokens(reported, activeRequest.maxOutputTokens)
+      activeRequest = {
+        ...activeRequest,
+        maxOutputTokens,
+        target: { ...activeRequest.target, contextLength: reported }
+      }
+      activeContextManager?.applyContextLength?.(reported, maxOutputTokens)
+      this.append(input.id, 'run.retrying', {
+        reason: 'context_length_corrected',
+        contextLength: reported,
+        configuredContextLength: configured,
+        maxOutputTokens
+      })
+    }
     let activeContextManager = input.contextManager
     let completionHooksRun = false
 
@@ -1054,6 +1091,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
       }
     }
+    if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
     try {
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
       this.transition(started.id, 'streaming')
@@ -1164,6 +1202,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               reason: 'context_window_exceeded',
               ...overflow
             })
+            applyReportedContextLength(overflow.contextLength)
             const prepared = await this.compactContext(
               input,
               activeContextManager,

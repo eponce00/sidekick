@@ -75,6 +75,8 @@ interface ChatPanelProps {
   commandPermissionMode?: PermissionMode
   userLocation?: { city?: string; country?: string; timezone?: string }
   onResponseComplete?: (message: string) => void
+  /** Changes when the user asked to see this conversation's newest reply. */
+  focusReplyAt?: number
   onBusyStateChange?: (conversationId: string | null, busy: boolean) => void
   fastModelName?: string
   ollamaThinkingEnabled?: boolean
@@ -108,6 +110,7 @@ function ChatPanel({
   onFocusChainUpdate,
   userLocation,
   onResponseComplete,
+  focusReplyAt,
   onBusyStateChange,
   fastModelName,
   ollamaThinkingEnabled = true,
@@ -384,6 +387,14 @@ function ChatPanel({
     'smooth',
     conversationId
   )
+
+  // Opening a conversation from its completion notification should land on the
+  // reply the notification was about, not wherever the view happened to be.
+  useEffect(() => {
+    if (!focusReplyAt) return
+    const timer = window.setTimeout(() => scrollToBottom(), 0)
+    return () => window.clearTimeout(timer)
+  }, [focusReplyAt, scrollToBottom])
 
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)

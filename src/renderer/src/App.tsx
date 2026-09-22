@@ -127,6 +127,12 @@ function App(): React.JSX.Element {
   const appCommandHandlerRef = useRef<(command: AppCommand) => void>(() => undefined)
   useEffect(() => window.api.app.onCommand((command) => appCommandHandlerRef.current(command)), [])
   const openConversationHandlerRef = useRef<(id: string) => void>(() => undefined)
+  // Bumped when a notification is clicked, so the panel scrolls the reply the
+  // user was told about into view instead of leaving them wherever they were.
+  const [focusReplyRequest, setFocusReplyRequest] = useState<{
+    conversationId: string
+    at: number
+  } | null>(null)
   useEffect(
     () => window.api.app.onOpenConversation((id) => openConversationHandlerRef.current(id)),
     []
@@ -771,9 +777,9 @@ function App(): React.JSX.Element {
 
   useEffect(() => {
     openConversationHandlerRef.current = (id): void => {
-      if (conversations.some((conversation) => conversation.id === id)) {
-        void handleSelectConversation(id)
-      }
+      if (!conversations.some((conversation) => conversation.id === id)) return
+      void handleSelectConversation(id)
+      setFocusReplyRequest({ conversationId: id, at: Date.now() })
     }
   })
 
@@ -1009,6 +1015,11 @@ function App(): React.JSX.Element {
           userLocation={userLocation}
           onResponseComplete={(message) =>
             handleConversationResponseComplete(panelConversationId, message)
+          }
+          focusReplyAt={
+            focusReplyRequest && focusReplyRequest.conversationId === panelConversationId
+              ? focusReplyRequest.at
+              : undefined
           }
           onBusyStateChange={handleConversationBusyStateChange}
           fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
