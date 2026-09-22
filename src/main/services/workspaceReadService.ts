@@ -10,15 +10,36 @@ const DEFAULT_READ_BYTES = 50 * 1024
 const MAX_LIST_RESULTS = 2_000
 const MAX_SEARCH_RESULTS = 300
 const MAX_SEARCH_FILE_BYTES = 2 * 1024 * 1024
+/**
+ * Directories that are generated, enormous, or both. Everything else is shown,
+ * including dot-directories: a project's `.github`, `.claude`, and `.vscode`
+ * are part of the work, and hiding every name beginning with a dot concealed
+ * them from the file tree and from the agent alike.
+ */
 const SKIPPED_DIRECTORIES = new Set([
   '.git',
+  '.svn',
+  '.hg',
   '.sidekick-history',
   'node_modules',
   'dist',
   'build',
   '.next',
-  'coverage'
+  'coverage',
+  '.venv',
+  'venv',
+  '.tox',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  '.turbo',
+  '.parcel-cache',
+  '.gradle'
 ])
+
+/** Per-file noise: operating-system metadata and tool caches. */
+const SKIPPED_FILES = new Set(['.DS_Store', 'Thumbs.db', 'desktop.ini', '.eslintcache'])
 
 export interface WorkspaceReadResult {
   content: string
@@ -250,7 +271,7 @@ export class WorkspaceReadService {
       for (const entry of entries) {
         abortIfNeeded(options.signal)
         if (entry.isSymbolicLink() || SKIPPED_DIRECTORIES.has(entry.name)) continue
-        if (entry.name.startsWith('.') && entry.name !== '.env.example') continue
+        if (!entry.isDirectory() && SKIPPED_FILES.has(entry.name)) continue
         const absolute = join(directory, entry.name)
         const path = normalizePath(relative(workspaceRoot, absolute))
         if (entry.isDirectory()) {
