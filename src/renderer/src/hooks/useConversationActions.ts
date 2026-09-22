@@ -117,6 +117,25 @@ export function useConversationActions(options: ConversationActionsOptions): {
     setEditingDraft('')
     setEditingGeometry(null)
 
+    // A failed rewind must not start a new run. The stored history still holds
+    // the messages this rewind meant to replace, so answering on top of them
+    // interleaves the stale and new turns the next time the chat is loaded.
+    // Leave the visible transcript in place and report the failure rather than
+    // letting the run silently diverge from what is stored.
+    const abortRewind = (summary: string, error: unknown): void => {
+      console.error('[Rewind]', summary, error)
+      options.setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: 'agent',
+          noticeTone: 'error',
+          content: `${summary} ${error instanceof Error ? error.message : String(error)}`,
+          timestamp: Date.now()
+        }
+      ])
+    }
+
     if (updatedContent !== undefined) {
       try {
         await window.api.conversations.updateMessage({
@@ -130,13 +149,15 @@ export function useConversationActions(options: ConversationActionsOptions): {
           timestamp: message.timestamp
         })
       } catch (error) {
-        console.error('Error updating message:', error)
+        abortRewind('Your edit could not be saved, so no new reply was started:', error)
+        return
       }
     }
     try {
       await window.api.conversations.deleteMessagesAfter(options.conversationId, message.timestamp)
     } catch (error) {
-      console.error('Error truncating messages:', error)
+      abortRewind('The replaced messages could not be cleared, so no new reply was started:', error)
+      return
     }
     await options.rerunStream(
       truncatedMessages,

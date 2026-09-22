@@ -32,15 +32,25 @@ import type { MessageContextAttachment } from '../../shared/messageContextAttach
 
 const workspaceReads = new WorkspaceReadService()
 
-export function startWorkspaceWatcher(folderPath: string | null): void {
-  if (appState.workspaceWatcher) {
-    appState.workspaceWatcher.close()
-    appState.workspaceWatcher = null
-  }
-  if (appState.watchDebounceTimer) {
-    clearTimeout(appState.watchDebounceTimer)
-    appState.watchDebounceTimer = null
-  }
+const WATCH_RETRY_BASE_DELAY_MS = 2_000
+const MAX_WATCH_RETRIES = 5
+let watchRetryTimer: ReturnType<typeof setTimeout> | null = null
+let watchRetries = 0
+
+/** A dropped watch is silent — the renderer simply stops hearing about file
+ * changes. Retry a bounded number of times so a transient failure (a network
+ * share blipping, a tool replacing the directory) does not cost the rest of the
+ * session, while a deleted folder still gives up instead of spinning forever. */
+function scheduleWatchRetry(folderPath: string): void {
+  if (watchRetryTimer || watchRetries >= MAX_WATCH_RETRIES) return
+  watchRetries += 1
+  watchRetryTimer = setTimeout(() => {
+    watchRetryTimer = null
+    attachWorkspaceWatcher(folderPath)
+  }, WATCH_RETRY_BASE_DELAY_MS * watchRetries)
+}
+
+function attachWorkspaceWatcher(folderPath: string | null): void {
   if (!folderPath || !appState.mainWindowRef || appState.mainWindowRef.isDestroyed()) return
   try {
     appState.workspaceWatcher = fsWatch(folderPath, { recursive: true }, (_eventType, filename) => {
@@ -58,10 +68,31 @@ export function startWorkspaceWatcher(folderPath: string | null): void {
       console.warn('[FileWatcher] Error:', err)
       appState.workspaceWatcher?.close()
       appState.workspaceWatcher = null
+      scheduleWatchRetry(folderPath)
     })
   } catch (err) {
     console.warn('[FileWatcher] Could not start watcher:', err)
+    scheduleWatchRetry(folderPath)
   }
+}
+
+export function startWorkspaceWatcher(folderPath: string | null): void {
+  if (appState.workspaceWatcher) {
+    appState.workspaceWatcher.close()
+    appState.workspaceWatcher = null
+  }
+  if (appState.watchDebounceTimer) {
+    clearTimeout(appState.watchDebounceTimer)
+    appState.watchDebounceTimer = null
+  }
+  // Every explicit start gets a fresh budget: a new workspace or a recreated
+  // window must not inherit a previous folder's exhausted retries.
+  if (watchRetryTimer) {
+    clearTimeout(watchRetryTimer)
+    watchRetryTimer = null
+  }
+  watchRetries = 0
+  attachWorkspaceWatcher(folderPath)
 }
 
 export function registerWorkspaceHandlers(): void {

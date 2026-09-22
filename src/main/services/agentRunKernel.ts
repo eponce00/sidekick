@@ -26,7 +26,20 @@ import type {
   ProviderToolCall
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
-import { providerContextWindowError } from '../../shared/providerErrors'
+import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
+import { enforceImageBudget, FALLBACK_IMAGE_BUDGET } from '../../shared/providerImageBudget'
+
+/**
+ * Image-count limits learned from a provider's rejection, keyed by
+ * provider:model. The limit is a property of the model, so remembering it for
+ * the rest of the session means only the first run that trips it pays a failed
+ * request; every later run prunes before sending.
+ */
+const learnedImageLimits = new Map<string, number>()
+
+function imageLimitKey(provider: string, model: string): string {
+  return `${provider}:${model}`
+}
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import {
   resolvePermissionPolicy,
@@ -932,6 +945,12 @@ The user approved this exact plan revision. Act capabilities are now available a
     let researchGuardInjected = false
     let goalContinuationTurn = false
     let contextOverflowRetryAttempted = false
+    let imageLimitRetryAttempted = false
+    // Learned from a provider's image-count rejection and enforced on every
+    // later request, so one screenshot-heavy session does not fail the same way
+    // turn after turn. Seeded from what earlier runs on this model learned.
+    const imageLimitCacheKey = imageLimitKey(input.provider, input.model)
+    let imageBudget: number | null = learnedImageLimits.get(imageLimitCacheKey) ?? null
     let activeRequest = input.request
     let activeContextManager = input.contextManager
     let completionHooksRun = false
@@ -1062,6 +1081,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           requestMessages = prepared.messages
           messages = requestMessages
         }
+        if (imageBudget !== null) {
+          const budgeted = enforceImageBudget(requestMessages, imageBudget)
+          if (budgeted.removed > 0) {
+            requestMessages = budgeted.messages
+            messages = requestMessages
+          }
+        }
 
         let pendingContent = goalContinuationTurn ? '\n\n' : ''
         let pendingThinking = ''
@@ -1147,9 +1173,26 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
+          const imageLimit = providerImageLimitError(providerError)
+          if (imageLimit && !imageLimitRetryAttempted) {
+            imageLimitRetryAttempted = true
+            imageBudget = imageLimit.maxImages ?? FALLBACK_IMAGE_BUDGET
+            learnedImageLimits.set(imageLimitCacheKey, imageBudget)
+            const budgeted = enforceImageBudget(requestMessages, imageBudget)
+            if (budgeted.removed > 0) {
+              this.append(input.id, 'run.retrying', {
+                reason: 'image_limit_exceeded',
+                maxImages: imageBudget,
+                removedImages: budgeted.removed
+              })
+              messages = budgeted.messages
+              continue
+            }
+          }
           throw new Error(providerError)
         }
         contextOverflowRetryAttempted = false
+        imageLimitRetryAttempted = false
         const turn = {
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
