@@ -44,6 +44,11 @@ import {
   clampActivityPanelWidth,
   storedActivityPanelWidth
 } from '../utils/activityPanelLayout'
+import { WorkspaceFileViewer } from './WorkspaceFileViewer'
+import {
+  subscribeWorkspaceFileView,
+  type WorkspaceFileViewRequest
+} from '../utils/workspaceFileViewer'
 import './ActivityPanel.css'
 
 type ActivityTab = 'checkpoints' | 'files' | 'browser'
@@ -234,6 +239,24 @@ function ActivityPanel({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
   const [fileRootName, setFileRootName] = useState<string>('')
   const [fileRefreshKey, setFileRefreshKey] = useState(0)
+  const [viewedFile, setViewedFile] = useState<WorkspaceFileViewRequest | null>(null)
+
+  // A file reference clicked anywhere in the app opens here, over the tree,
+  // and makes sure the panel is actually visible to show it.
+  useEffect(
+    () =>
+      subscribeWorkspaceFileView((request) => {
+        setViewedFile(request)
+        setActiveTab('files')
+        if (!isPinned) onTogglePin()
+      }),
+    [isPinned, onTogglePin]
+  )
+
+  // The viewer is per-workspace; a project switch closes it.
+  useEffect(() => {
+    setViewedFile(null)
+  }, [workspaceFolder])
   const [pendingFileDelete, setPendingFileDelete] = useState<string | null>(null)
   const [deletingFile, setDeletingFile] = useState<string | null>(null)
   const [fileActionError, setFileActionError] = useState<string | null>(null)
@@ -458,6 +481,8 @@ function ActivityPanel({
                     next.has(child) ? next.delete(child) : next.add(child)
                     return next
                   })
+                } else if (workspaceFolder) {
+                  setViewedFile({ workspaceRoot: workspaceFolder, filePath: withoutTrailing })
                 }
               }}
               onDoubleClick={() => {
@@ -465,7 +490,7 @@ function ActivityPanel({
                   void window.api.workspace.openFile(child, workspaceFolder)
                 }
               }}
-              title={`${child} — right-click for file actions`}
+              title={`${child} — double-click to open externally, right-click for file actions`}
             >
               <span className="file-node-chevron">
                 {isDir && (
@@ -587,7 +612,11 @@ function ActivityPanel({
 
         {isPinned ? (
           <div className="activity-content">
-            {activeTab === 'files' && (
+            {activeTab === 'files' && viewedFile && (
+              <WorkspaceFileViewer request={viewedFile} onBack={() => setViewedFile(null)} />
+            )}
+
+            {activeTab === 'files' && !viewedFile && (
               <div className="file-explorer-wrap">
                 <div className="file-explorer-header">
                   <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>

@@ -259,3 +259,46 @@ describe('workspace file IPC', () => {
     expect(openPath).not.toHaveBeenCalled()
   })
 })
+
+describe('workspace:resolveFileReference', () => {
+  beforeEach(async () => {
+    handlers.clear()
+    workspaceState.root = await mkdtemp(join(tmpdir(), 'sidekick-resolve-'))
+    await mkdir(join(workspaceState.root, 'src', 'components'), { recursive: true })
+    await writeFile(join(workspaceState.root, 'src', 'components', 'ChatPanel.tsx'), '', 'utf8')
+    await writeFile(join(workspaceState.root, 'README.md'), '', 'utf8')
+    registerWorkspaceHandlers()
+  })
+
+  afterEach(async () => {
+    await rm(workspaceState.root, { recursive: true, force: true })
+  })
+
+  it('resolves a project-relative path directly', async () => {
+    const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
+    const result = (await resolve({}, './src/components/ChatPanel.tsx', workspaceState.root)) as {
+      ok: boolean
+      matches: string[]
+    }
+    expect(result).toEqual({ ok: true, matches: ['src/components/ChatPanel.tsx'] })
+  })
+
+  it('finds a bare file name anywhere in the tree', async () => {
+    const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
+    const result = (await resolve({}, 'ChatPanel.tsx', workspaceState.root)) as {
+      ok: boolean
+      matches: string[]
+    }
+    expect(result.ok).toBe(true)
+    expect(result.matches).toEqual(['src/components/ChatPanel.tsx'])
+  })
+
+  it('reports a mention the model imagined as unresolved so it stays plain text', async () => {
+    const resolve = handlers.get('workspace:resolveFileReference') as RegisteredHandler
+    const result = (await resolve({}, 'src/Missing.tsx', workspaceState.root)) as {
+      ok: boolean
+      matches: string[]
+    }
+    expect(result).toEqual({ ok: false, matches: [] })
+  })
+})

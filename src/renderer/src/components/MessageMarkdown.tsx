@@ -24,6 +24,8 @@ import {
   Copy,
   ExternalLink,
   FileCode2,
+  FileText,
+  Image as ImageIcon,
   ImageOff,
   MapPin,
   Maximize2,
@@ -32,8 +34,10 @@ import {
 import { parseMessageWithArtifacts } from '../utils/artifactParser'
 import { parseMapLink, type MapLinkLocation } from '../utils/mapLinks'
 import { splitMarkdownRenderBlocks } from '../utils/markdownStreaming'
+import { requestWorkspaceFileView } from '../utils/workspaceFileViewer'
 import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
+import { SiteIcon } from './SiteIcon'
 import './MessageMarkdown.css'
 
 interface MarkdownNode {
@@ -69,7 +73,8 @@ const FILE_REFERENCE_PATTERN =
 function fileReferencePath(value: string): string | null {
   const trimmed = value.trim()
   const match = trimmed.match(new RegExp(`^(?:${FILE_REFERENCE_PATTERN.source})$`))
-  return match ? trimmed.replace(/:(\d+)$/, '') : null
+  // The :line suffix stays on; the open hook splits it off and scrolls to it.
+  return match ? trimmed : null
 }
 
 function remarkFileReferences(): (tree: MarkdownNode) => void {
@@ -96,7 +101,7 @@ function remarkFileReferences(): (tree: MarkdownNode) => void {
           const label = match[0]
           next.push({
             type: 'link',
-            url: `#sidekick-file=${encodeURIComponent(label.replace(/:(\d+)$/, ''))}`,
+            url: `#sidekick-file=${encodeURIComponent(label)}`,
             children: [{ type: 'text', value: label }]
           })
           cursor = index + label.length
@@ -501,12 +506,47 @@ function MarkdownImage({
   )
 }
 
+const resolvedReferenceCache = new Map<string, Promise<string[]>>()
+
+/** Which project files a mention refers to; cached per workspace + reference. */
+function resolveFileReference(fileReference: string, workspaceRoot: string): Promise<string[]> {
+  const key = `${workspaceRoot}\u0000${fileReference}`
+  let pending = resolvedReferenceCache.get(key)
+  if (!pending) {
+    pending = window.api.workspace
+      .resolveFileReference(fileReference, workspaceRoot)
+      .then((result) => (result.ok ? result.matches : []))
+      .catch(() => [])
+    resolvedReferenceCache.set(key, pending)
+  }
+  return pending
+}
+
+/**
+ * A file mention only becomes a chip once it is known to exist in the project,
+ * so a path the model merely imagined stays plain text instead of a dead link.
+ * Opening shows the file in the side panel; the external app is one right-click away.
+ */
 function useWorkspaceFileOpen(
   fileReference?: string | null,
   workspaceRoot?: string | null
-): { error: string; open: () => Promise<void> } {
+): { resolved: string[] | null; error: string; open: () => Promise<void> } {
+  const [resolved, setResolved] = useState<string[] | null>(null)
   const [error, setError] = useState('')
   const resetTimer = useRef<number | null>(null)
+  const line = fileReference?.match(/:(\d+)$/)?.[1]
+  const bareReference = fileReference?.replace(/:(\d+)$/, '') ?? null
+
+  useEffect(() => {
+    if (!bareReference || !workspaceRoot) return
+    let cancelled = false
+    void resolveFileReference(bareReference, workspaceRoot).then((matches) => {
+      if (!cancelled) setResolved(matches)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [bareReference, workspaceRoot])
 
   useEffect(
     () => () => {
@@ -516,8 +556,19 @@ function useWorkspaceFileOpen(
   )
 
   const open = useCallback(async (): Promise<void> => {
-    if (!fileReference || !workspaceRoot) return
-    const result = await window.api.workspace.openFileReference(fileReference, workspaceRoot)
+    if (!bareReference || !workspaceRoot) return
+    const matches = resolved ?? (await resolveFileReference(bareReference, workspaceRoot))
+    if (matches.length === 1) {
+      const shown = requestWorkspaceFileView({
+        workspaceRoot,
+        filePath: matches[0],
+        ...(line ? { line: Number(line) } : {})
+      })
+      if (shown) return
+    }
+    // Several candidates, or no viewer mounted: the main process offers a
+    // chooser menu / opens externally, exactly as before.
+    const result = await window.api.workspace.openFileReference(bareReference, workspaceRoot)
     if (result.ok) {
       setError('')
       return
@@ -525,9 +576,18 @@ function useWorkspaceFileOpen(
     setError(result.error || 'File not found in this project')
     if (resetTimer.current !== null) window.clearTimeout(resetTimer.current)
     resetTimer.current = window.setTimeout(() => setError(''), 3_000)
-  }, [fileReference, workspaceRoot])
+  }, [bareReference, line, resolved, workspaceRoot])
 
-  return { error, open }
+  return { resolved, error, open }
+}
+
+function FileChipIcon({ path }: { path: string }): React.JSX.Element {
+  const extension = path.split('.').pop()?.toLowerCase() ?? ''
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'].includes(extension))
+    return <ImageIcon size={12} aria-hidden="true" />
+  if (['md', 'markdown', 'mdx', 'txt', 'rst', 'pdf', 'doc', 'docx'].includes(extension))
+    return <FileText size={12} aria-hidden="true" />
+  return <FileCode2 size={12} aria-hidden="true" />
 }
 
 function InlineWorkspaceFile({
@@ -541,6 +601,13 @@ function InlineWorkspaceFile({
   workspaceRoot: string
 }): React.JSX.Element {
   const fileOpen = useWorkspaceFileOpen(fileReference, workspaceRoot)
+  if (!fileOpen.resolved?.length) {
+    return (
+      <code {...props} className={className}>
+        {children}
+      </code>
+    )
+  }
   return (
     <code
       {...props}
@@ -549,12 +616,15 @@ function InlineWorkspaceFile({
         .join(' ')}
       role="link"
       tabIndex={0}
-      title={fileOpen.error || `Open ${fileReference}`}
+      title={fileOpen.error || `Open ${fileOpen.resolved[0]}`}
       aria-label={fileOpen.error || `Open ${fileReference}`}
       onClick={() => void fileOpen.open()}
       onContextMenu={(event) => {
         event.preventDefault()
-        void window.api.workspace.showPathMenu(fileReference, workspaceRoot)
+        void window.api.workspace.showPathMenu(
+          fileOpen.resolved?.[0] ?? fileReference,
+          workspaceRoot
+        )
       }}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
@@ -563,6 +633,7 @@ function InlineWorkspaceFile({
         }
       }}
     >
+      <FileChipIcon path={fileOpen.resolved[0]} />
       {children}
     </code>
   )
@@ -584,6 +655,8 @@ function MarkdownLink({
     : null
   const fileOpen = useWorkspaceFileOpen(localPath, workspaceRoot)
   if (localPath && workspaceRoot) {
+    // Unresolved mentions stay as the plain text the model wrote.
+    if (!fileOpen.resolved?.length) return <>{children}</>
     return (
       <a
         {...props}
@@ -597,11 +670,11 @@ function MarkdownLink({
         }}
         onContextMenu={(event) => {
           event.preventDefault()
-          void window.api.workspace.showPathMenu(localPath, workspaceRoot)
+          void window.api.workspace.showPathMenu(fileOpen.resolved?.[0] ?? localPath, workspaceRoot)
         }}
-        title={fileOpen.error || `Open ${localPath}`}
+        title={fileOpen.error || `Open ${fileOpen.resolved[0]}`}
       >
-        <FileCode2 size={12} aria-hidden="true" />
+        <FileChipIcon path={fileOpen.resolved[0]} />
         <span>{children}</span>
       </a>
     )
@@ -619,6 +692,7 @@ function MarkdownLink({
         .join(' ')}
     >
       {mapLink && <MapPin size={13} aria-hidden="true" />}
+      {!mapLink && external && href && <SiteIcon url={href} size={14} />}
       <span>{children}</span>
       {!mapLink && <ExternalLink className="markdown-link-external" size={11} aria-hidden="true" />}
     </a>

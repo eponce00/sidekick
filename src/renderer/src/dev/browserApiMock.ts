@@ -454,7 +454,7 @@ const previewMessages = [
     conversation_id: 'preview-1',
     role: 'agent',
     content:
-      'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy.',
+      'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy. I started in `src/renderer/src/components/ChatPanel.tsx` and the guidelines in docs/development/UI.md.\n\nBackground reading: [Inclusive Components](https://inclusive-components.design/) and the [WCAG contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html).',
     segments: [
       {
         type: 'thinking' as const,
@@ -564,7 +564,7 @@ const previewMessages = [
       {
         type: 'text' as const,
         content:
-          'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy.'
+          'I reviewed the main shell and found three high-impact areas:\n\n- **Preserve the workspace:** collapse secondary panels before they squeeze the conversation.\n- **Clarify hierarchy:** strengthen the composer, active navigation, and dialog section boundaries.\n- **Improve first use:** offer useful starting points instead of leaving an empty canvas.\n\nThe result should feel focused without becoming visually busy. I started in `src/renderer/src/components/ChatPanel.tsx` and the guidelines in docs/development/UI.md.\n\nBackground reading: [Inclusive Components](https://inclusive-components.design/) and the [WCAG contrast guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html).'
       }
     ],
     tokenUsage: {
@@ -1011,6 +1011,7 @@ export function installBrowserApiMock(): void {
       onFullScreenChange: () => () => undefined
     },
     notification: { show: async () => ({ ok: true }) },
+    siteIcons: { get: async () => ({ dataUrl: null }) },
     app: {
       platform: 'windows',
       getIconPath: async () => '',
@@ -1064,7 +1065,37 @@ export function installBrowserApiMock(): void {
         ok: true,
         files: ['README.md', 'package.json', 'src/', 'src/main/', 'src/renderer/']
       }),
-      readFile: async () => ({ ok: true, content: '# Preview file', totalLines: 1 }),
+      readFile: async (_root: string, filePath: string) =>
+        filePath.endsWith('.md')
+          ? {
+              ok: true,
+              content: [
+                '# Preview file',
+                '',
+                'This is a **markdown** document rendered inside the workspace viewer.',
+                '',
+                '- One',
+                '- Two'
+              ].join(String.fromCharCode(10)),
+              totalLines: 6
+            }
+          : {
+              ok: true,
+              content: [
+                "import { useState } from 'react'",
+                '',
+                'export function Counter(): JSX.Element {',
+                '  const [count, setCount] = useState(0)',
+                '  return <button onClick={() => setCount(count + 1)}>{count}</button>',
+                '}'
+              ].join(String.fromCharCode(10)),
+              totalLines: 6
+            },
+      readImage: async () => ({ ok: false, dataUrl: null, error: 'Not available in preview' }),
+      resolveFileReference: async (reference: string) => ({
+        ok: true,
+        matches: [reference.replace(/^\.\//, '')]
+      }),
       searchFiles: async () => ({ ok: true, output: '', matchCount: 0, matchedFiles: [] }),
       trashFile: async () => ({ ok: true }),
       gitAvailable: async () => true,

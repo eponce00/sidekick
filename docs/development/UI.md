@@ -64,6 +64,24 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 - Use `ProviderIcon` everywhere a provider or provider-owned model is identified. Resolve from `providerKind` before transport so OpenAI-compatible connections, LM Studio, and llama.cpp remain visually distinct.
 - Custom SVG is reserved for official provider marks and genuine data visualizations such as the context ring or research progress—not ordinary buttons.
 
+## References in replies
+
+- A file path a reply mentions becomes a chip only once the main process confirms it exists in the
+  project. A path the model imagined stays plain text rather than becoming a dead link.
+- Clicking a file chip opens the file in the workspace panel, not in an external editor. The panel
+  renders markdown, highlighted code with line numbers, and images; anything else, and the
+  "open externally" action in its header, fall back to the OS. A `path:line` reference scrolls to
+  and marks that line.
+- Single-clicking a file in the tree opens the same viewer; double-click still opens it externally.
+- External links carry the linked site's own icon. Icons are fetched by the main process from that
+  site only, never from an icon service, and cached on disk for a week. A site with no usable icon
+  gets a globe. See PRIVACY.md.
+- A reply that links out gets one compact `Sources` row beneath it, one chip per site in order of
+  first mention, deduplicated by host. It appears only after the reply finishes streaming.
+- Syntax highlighting uses the tokens in `styles/codeTheme.css`, which define both themes. Do not
+  import a highlight.js theme stylesheet directly; those are single-theme and were unreadable on
+  the light theme.
+
 ## Welcome state
 
 - Keep the empty chat visually quiet: one short heading, no decorative product initial, and no explanatory paragraph that repeats the composer’s purpose.

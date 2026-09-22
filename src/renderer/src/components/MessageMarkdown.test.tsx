@@ -5,6 +5,10 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { splitMarkdownRenderBlocks } from '../utils/markdownStreaming'
 import { MessageMarkdown } from './MessageMarkdown'
+import {
+  subscribeWorkspaceFileView,
+  type WorkspaceFileViewRequest
+} from '../utils/workspaceFileViewer'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -192,26 +196,54 @@ describe('MessageMarkdown rich media', () => {
     expect(container.querySelector('[aria-label="Copy code"]')).not.toBeNull()
   })
 
-  it('resolves clickable inline filenames through the workspace reference API', async () => {
-    const openFileReference = vi.fn(async () => ({
-      ok: true,
-      status: 'opened' as const,
-      path: 'C:\\project\\src\\main.js'
-    }))
+  it('turns an inline filename into a chip only once it resolves, then opens it in the viewer', async () => {
+    const resolveFileReference = vi.fn(async () => ({ ok: true, matches: ['src/main.js'] }))
+    const openFileReference = vi.fn(async () => ({ ok: true, status: 'opened' as const, path: '' }))
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
         ...window.api,
-        workspace: { ...window.api?.workspace, openFileReference }
+        workspace: { ...window.api?.workspace, resolveFileReference, openFileReference }
       }
     })
-    await act(async () => {
-      root.render(<MessageMarkdown content="Open `main.js`." workspaceRoot={'C:\\project'} />)
-    })
+    const shown: WorkspaceFileViewRequest[] = []
+    const unsubscribe = subscribeWorkspaceFileView((request) => shown.push(request))
+    try {
+      await act(async () => {
+        root.render(<MessageMarkdown content="Open `main.js:12`." workspaceRoot={'C:\\project'} />)
+      })
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(resolveFileReference).toHaveBeenCalledWith('main.js', 'C:\\project')
+      const chip = container.querySelector('.markdown-inline-file') as HTMLElement
+      expect(chip).not.toBeNull()
+      expect(chip.querySelector('svg')).not.toBeNull()
 
-    await act(async () => {
-      ;(container.querySelector('.markdown-inline-file') as HTMLElement).click()
+      await act(async () => {
+        chip.click()
+      })
+      expect(shown).toEqual([{ workspaceRoot: 'C:\\project', filePath: 'src/main.js', line: 12 }])
+      // The viewer took it; the external opener is only a fallback.
+      expect(openFileReference).not.toHaveBeenCalled()
+    } finally {
+      unsubscribe()
+    }
+  })
+
+  it('leaves a filename the project does not contain as plain text', async () => {
+    const resolveFileReference = vi.fn(async () => ({ ok: false, matches: [] }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ...window.api, workspace: { ...window.api?.workspace, resolveFileReference } }
     })
-    expect(openFileReference).toHaveBeenCalledWith('main.js', 'C:\\project')
+    await act(async () => {
+      root.render(<MessageMarkdown content="See `ghost.ts`." workspaceRoot={'C:\\project'} />)
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(container.querySelector('.markdown-inline-file')).toBeNull()
+    expect(container.querySelector('code')?.textContent).toBe('ghost.ts')
   })
 })

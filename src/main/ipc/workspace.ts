@@ -276,6 +276,38 @@ export function registerWorkspaceHandlers(): void {
     }
   )
 
+  // Workspace: read an image for the in-app viewer. Text goes through readFile;
+  // this is the only path that hands raw bytes to the renderer, so it is capped
+  // and limited to image types by extension.
+  ipcMain.handle('workspace:readImage', async (_, passedRoot: string, filePath: string) => {
+    const IMAGE_MIME: Record<string, string> = {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      svg: 'image/svg+xml',
+      bmp: 'image/bmp',
+      ico: 'image/x-icon',
+      avif: 'image/avif'
+    }
+    const MAX_IMAGE_BYTES = 12 * 1024 * 1024
+    try {
+      if (typeof filePath !== 'string') throw new Error('Invalid file path')
+      const mime = IMAGE_MIME[filePath.split('.').pop()?.toLowerCase() ?? '']
+      if (!mime) throw new Error('Not an image file')
+      const workspaceRoot = resolveKnownWorkspace(passedRoot)
+      const fullPath = await resolveSecureWorkspacePath(workspaceRoot, filePath)
+      const stat = await fs.stat(fullPath)
+      if (!stat.isFile()) throw new Error('Not a file')
+      if (stat.size > MAX_IMAGE_BYTES) throw new Error('Image is larger than 12 MB')
+      const bytes = await fs.readFile(fullPath)
+      return { ok: true, dataUrl: `data:${mime};base64,${bytes.toString('base64')}` }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, dataUrl: null }
+    }
+  })
+
   // Workspace: read file contents
   ipcMain.handle(
     'workspace:readFile',
@@ -344,6 +376,53 @@ export function registerWorkspaceHandlers(): void {
     const error = await shell.openPath(await resolveShellTarget(filePath, passedRoot))
     if (error) throw new Error(error)
   })
+  // Workspace: resolve a file reference from a message to project-relative
+  // paths without opening anything. The renderer uses this to decide whether a
+  // mention is worth turning into a chip at all, and to open it in-app.
+  ipcMain.handle(
+    'workspace:resolveFileReference',
+    async (_event, fileReference: string, passedRoot?: string) => {
+      try {
+        if (typeof fileReference !== 'string' || fileReference.length > 4_096) {
+          return { ok: false, matches: [] }
+        }
+        const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
+        const normalizedReference = fileReference.replace(/\\/g, '/').replace(/^\.\//, '')
+        if (!isAbsolute(normalizedReference)) {
+          const direct = await resolveSecureWorkspacePath(workspaceRoot, normalizedReference).catch(
+            () => null
+          )
+          const directStat = direct
+            ? await fs.stat(direct).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') return null
+                throw error
+              })
+            : null
+          if (directStat?.isFile()) return { ok: true, matches: [normalizedReference] }
+        }
+        const fileName = basename(normalizedReference)
+        if (!fileName) return { ok: false, matches: [] }
+        const listed = await workspaceReads.listFiles(workspaceRoot, {
+          glob: `**/${fileName}`,
+          maxResults: 50
+        })
+        const comparable = (value: string): string =>
+          process.platform === 'win32' ? value.toLowerCase() : value
+        const wantedSuffix = comparable(normalizedReference)
+        const matches = listed.files
+          .map((candidate) => candidate.replace(/\\/g, '/'))
+          .filter((candidate) => {
+            const normalized = comparable(candidate)
+            return normalized === wantedSuffix || normalized.endsWith(`/${wantedSuffix}`)
+          })
+          .slice(0, 20)
+        return { ok: matches.length > 0, matches }
+      } catch {
+        return { ok: false, matches: [] }
+      }
+    }
+  )
+
   ipcMain.handle(
     'workspace:openFileReference',
     async (event, fileReference: string, passedRoot?: string) => {

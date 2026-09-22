@@ -30,6 +30,7 @@ import { TurnChangeReview } from './TurnChangeReview'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
+import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
@@ -996,6 +997,17 @@ function MessageItemInner({
           </div>
         )}
       </div>
+      {msg.role === 'agent' && !isLoading && !readOnly && (
+        <MessageSources
+          content={
+            msg.segments?.length
+              ? msg.segments
+                  .map((segment) => (segment.type === 'text' ? segment.content : ''))
+                  .join('\n')
+              : msg.content
+          }
+        />
+      )}
       {msg.role !== 'system' && (
         <div className="message-meta">
           <div className="message-info">

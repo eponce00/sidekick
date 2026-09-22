@@ -1,0 +1,130 @@
+/* ============================================
+   Syntax highlighting — theme-aware
+   ============================================
+   highlight.js ships one-theme stylesheets; the app used to import only the
+   dark one, which left code at 1.5:1 on the light theme. The palette below is
+   GitHub's light/dark syntax colours expressed as tokens so both themes read. */
+
+:root {
+  --code-fg: #c9d1d9;
+  --code-comment: #8b949e;
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-title: #d2a8ff;
+  --code-attr: #7ee787;
+  --code-builtin: #ffa657;
+  --code-meta: #79c0ff;
+  --code-addition-fg: #aff5b4;
+  --code-addition-bg: rgba(46, 160, 67, 0.15);
+  --code-deletion-fg: #ffdcd7;
+  --code-deletion-bg: rgba(248, 81, 73, 0.15);
+}
+
+body[data-theme='light'] {
+  --code-fg: #24292e;
+  --code-comment: #6a737d;
+  --code-keyword: #d73a49;
+  --code-string: #032f62;
+  --code-number: #005cc5;
+  --code-title: #6f42c1;
+  --code-attr: #22863a;
+  --code-builtin: #e36209;
+  --code-meta: #005cc5;
+  --code-addition-fg: #22863a;
+  --code-addition-bg: #f0fff4;
+  --code-deletion-fg: #b31d28;
+  --code-deletion-bg: #ffeef0;
+}
+
+.hljs {
+  color: var(--code-fg);
+  background: transparent;
+}
+
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: var(--code-keyword);
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: var(--code-title);
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--code-number);
+}
+
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: var(--code-string);
+}
+
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--code-builtin);
+}
+
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--code-comment);
+}
+
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--code-attr);
+}
+
+.hljs-subst {
+  color: var(--code-fg);
+}
+
+.hljs-section {
+  color: var(--code-number);
+  font-weight: 600;
+}
+
+.hljs-bullet {
+  color: var(--code-builtin);
+}
+
+.hljs-emphasis {
+  color: var(--code-fg);
+  font-style: italic;
+}
+
+.hljs-strong {
+  color: var(--code-fg);
+  font-weight: 600;
+}
+
+.hljs-addition {
+  color: var(--code-addition-fg);
+  background-color: var(--code-addition-bg);
+}
+
+.hljs-deletion {
+  color: var(--code-deletion-fg);
+  background-color: var(--code-deletion-bg);
+}

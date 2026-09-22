@@ -249,6 +249,9 @@ const api = {
     show: (request: import('../shared/desktopNotifications').DesktopNotificationRequest) =>
       ipcRenderer.invoke('notification:show', request)
   },
+  siteIcons: {
+    get: (url: string) => ipcRenderer.invoke('siteIcons:get', url)
+  },
   app: {
     platform: desktopPlatform(process.platform),
     getIconPath: () => ipcRenderer.invoke('app:getIconPath'),
@@ -316,6 +319,10 @@ const api = {
       ipcRenderer.invoke('workspace:listFiles', workspaceRoot, subPath, glob),
     readFile: (workspaceRoot: string, filePath: string, startLine?: number, endLine?: number) =>
       ipcRenderer.invoke('workspace:readFile', workspaceRoot, filePath, startLine, endLine),
+    readImage: (workspaceRoot: string, filePath: string) =>
+      ipcRenderer.invoke('workspace:readImage', workspaceRoot, filePath),
+    resolveFileReference: (fileReference: string, workspaceRoot?: string) =>
+      ipcRenderer.invoke('workspace:resolveFileReference', fileReference, workspaceRoot),
     searchFiles: (
       workspaceRoot: string,
       searchPath: string,

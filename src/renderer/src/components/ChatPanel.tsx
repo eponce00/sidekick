@@ -39,7 +39,7 @@ import {
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
-import 'highlight.js/styles/github-dark.css'
+import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
 
