@@ -779,14 +779,42 @@ body[data-theme='light'] .message-user .message-action:hover {
 }
 
 /* ---- Markdown Styling ---- */
-.message-agent .message-content h1,
-.message-agent .message-content h2,
-.message-agent .message-content h3,
-.message-agent .message-content h4,
-.message-agent .message-content h5,
-.message-agent .message-content h6 {
-  margin: 0.5em 0;
+/* Headings are sized relative to the body so they follow the user's text-size
+   setting, and kept close to it: a model that writes "## Summary" is labelling
+   a section of a reply, not titling a document. Without these the browser's
+   2em/1.5em defaults applied and an h1 rendered at twice the chat size. */
+.message-content h1,
+.message-content h2,
+.message-content h3,
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+  margin: 1.1em 0 0.4em;
   color: inherit;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.message-content h1 {
+  font-size: 1.3em;
+}
+
+.message-content h2 {
+  font-size: 1.18em;
+}
+
+.message-content h3 {
+  font-size: 1.08em;
+}
+
+.message-content h4,
+.message-content h5,
+.message-content h6 {
+  font-size: 1em;
+}
+
+.message-content > :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0.2em;
 }
 
 .message-agent .message-content hr {
