@@ -21,26 +21,29 @@ export interface AccentPalette {
   }
 }
 
+/* Light accents must read at 4.5:1 as text on --surface-2 and carry white on a
+ * fill; dark accents are bright and carry --on-accent. Palettes are applied
+ * inline at runtime, so they override App.css and have to meet the same bar. */
 export const ACCENT_PALETTES: AccentPalette[] = [
   {
     id: 'teal',
     name: 'Teal',
     swatch: '#2dd4bf',
     dark: {
-      accent: '#2dd4bf',
-      accentStrong: '#5eead4',
+      accent: '#3bd4bd',
+      accentStrong: '#64e3d0',
       accentPressed: '#14b8a6',
       accentSubtle: 'rgba(45, 212, 191, 0.10)',
       accentMuted: 'rgba(45, 212, 191, 0.20)',
-      focusRing: '0 0 0 2px rgba(45, 212, 191, 0.25)'
+      focusRing: '0 0 0 3px rgba(59, 212, 189, 0.28)'
     },
     light: {
-      accent: '#0d9488',
-      accentStrong: '#0f766e',
-      accentPressed: '#115e59',
-      accentSubtle: 'rgba(13, 148, 136, 0.08)',
-      accentMuted: 'rgba(13, 148, 136, 0.15)',
-      focusRing: '0 0 0 2px rgba(13, 148, 136, 0.25)'
+      accent: '#0f766e',
+      accentStrong: '#115e59',
+      accentPressed: '#0f4f4a',
+      accentSubtle: 'rgba(15, 118, 110, 0.09)',
+      accentMuted: 'rgba(15, 118, 110, 0.17)',
+      focusRing: '0 0 0 3px rgba(15, 118, 110, 0.32)'
     }
   },
   {
@@ -56,12 +59,12 @@ export const ACCENT_PALETTES: AccentPalette[] = [
       focusRing: '0 0 0 2px rgba(96, 165, 250, 0.25)'
     },
     light: {
-      accent: '#2563eb',
-      accentStrong: '#1d4ed8',
-      accentPressed: '#1e40af',
-      accentSubtle: 'rgba(37, 99, 235, 0.08)',
-      accentMuted: 'rgba(37, 99, 235, 0.15)',
-      focusRing: '0 0 0 2px rgba(37, 99, 235, 0.25)'
+      accent: '#1d4ed8',
+      accentStrong: '#1e40af',
+      accentPressed: '#1e3a8a',
+      accentSubtle: 'rgba(29, 78, 216, 0.09)',
+      accentMuted: 'rgba(29, 78, 216, 0.17)',
+      focusRing: '0 0 0 3px rgba(29, 78, 216, 0.32)'
     }
   },
   {
@@ -77,12 +80,12 @@ export const ACCENT_PALETTES: AccentPalette[] = [
       focusRing: '0 0 0 2px rgba(167, 139, 250, 0.25)'
     },
     light: {
-      accent: '#7c3aed',
-      accentStrong: '#6d28d9',
-      accentPressed: '#5b21b6',
-      accentSubtle: 'rgba(124, 58, 237, 0.08)',
-      accentMuted: 'rgba(124, 58, 237, 0.15)',
-      focusRing: '0 0 0 2px rgba(124, 58, 237, 0.25)'
+      accent: '#6d28d9',
+      accentStrong: '#5b21b6',
+      accentPressed: '#4c1d95',
+      accentSubtle: 'rgba(109, 40, 217, 0.09)',
+      accentMuted: 'rgba(109, 40, 217, 0.17)',
+      focusRing: '0 0 0 3px rgba(109, 40, 217, 0.32)'
     }
   },
   {
@@ -98,12 +101,12 @@ export const ACCENT_PALETTES: AccentPalette[] = [
       focusRing: '0 0 0 2px rgba(251, 113, 133, 0.25)'
     },
     light: {
-      accent: '#e11d48',
-      accentStrong: '#be123c',
-      accentPressed: '#9f1239',
-      accentSubtle: 'rgba(225, 29, 72, 0.08)',
-      accentMuted: 'rgba(225, 29, 72, 0.15)',
-      focusRing: '0 0 0 2px rgba(225, 29, 72, 0.25)'
+      accent: '#be123c',
+      accentStrong: '#9f1239',
+      accentPressed: '#881337',
+      accentSubtle: 'rgba(190, 18, 60, 0.09)',
+      accentMuted: 'rgba(190, 18, 60, 0.17)',
+      focusRing: '0 0 0 3px rgba(190, 18, 60, 0.32)'
     }
   },
   {
@@ -119,12 +122,12 @@ export const ACCENT_PALETTES: AccentPalette[] = [
       focusRing: '0 0 0 2px rgba(251, 191, 36, 0.25)'
     },
     light: {
-      accent: '#d97706',
-      accentStrong: '#b45309',
-      accentPressed: '#92400e',
-      accentSubtle: 'rgba(217, 119, 6, 0.08)',
-      accentMuted: 'rgba(217, 119, 6, 0.15)',
-      focusRing: '0 0 0 2px rgba(217, 119, 6, 0.25)'
+      accent: '#a35208',
+      accentStrong: '#8a4507',
+      accentPressed: '#713a05',
+      accentSubtle: 'rgba(163, 82, 8, 0.09)',
+      accentMuted: 'rgba(163, 82, 8, 0.17)',
+      focusRing: '0 0 0 3px rgba(163, 82, 8, 0.32)'
     }
   },
   {
@@ -140,12 +143,12 @@ export const ACCENT_PALETTES: AccentPalette[] = [
       focusRing: '0 0 0 2px rgba(52, 211, 153, 0.25)'
     },
     light: {
-      accent: '#059669',
-      accentStrong: '#047857',
-      accentPressed: '#065f46',
-      accentSubtle: 'rgba(5, 150, 105, 0.08)',
-      accentMuted: 'rgba(5, 150, 105, 0.15)',
-      focusRing: '0 0 0 2px rgba(5, 150, 105, 0.25)'
+      accent: '#047857',
+      accentStrong: '#065f46',
+      accentPressed: '#064e3b',
+      accentSubtle: 'rgba(4, 120, 87, 0.09)',
+      accentMuted: 'rgba(4, 120, 87, 0.17)',
+      focusRing: '0 0 0 3px rgba(4, 120, 87, 0.32)'
     }
   }
 ]

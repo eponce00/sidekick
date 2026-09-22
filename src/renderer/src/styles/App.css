@@ -106,8 +106,11 @@
   --text-xl: 18px;
   --text-2xl: 20px;
   --text-3xl: 24px;
-  --content-text: 14px;
-  --content-text-secondary: 13px;
+  /* Chat body sits one step above the 12px chrome, not two: 14px read as a
+     different scale next to the sidebar and menus. */
+  --content-text: 13px;
+  --content-text-secondary: 12px;
+  --content-leading: 1.55;
   --leading: 1.5;
 
   /* — Motion — */

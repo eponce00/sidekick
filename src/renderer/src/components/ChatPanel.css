@@ -425,6 +425,13 @@
   word-break: break-word;
   overflow: hidden;
   font-size: var(--content-text);
+  line-height: var(--content-leading);
+}
+
+/* 700 inside 13px running text reads as shouting; 600 still separates. */
+.message-content strong,
+.message-content b {
+  font-weight: 600;
 }
 
 .message-image-attachments {

@@ -60,7 +60,7 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
   commandPermissionMode: 'full-access',
-  contentFontSize: 14,
+  contentFontSize: 13,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -106,7 +106,7 @@ const previewGroupSessionId = getPreviewGroupSessionId()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
-    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14))),
+    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -376,7 +376,7 @@ function App(): React.JSX.Element {
   }, [theme, settings.accentPalette])
 
   useEffect(() => {
-    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14)))
+    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13)))
     document.documentElement.style.setProperty('--content-text', `${size}px`)
     document.documentElement.style.setProperty(
       '--content-text-secondary',
