@@ -258,6 +258,13 @@ const api = {
       }
       ipcRenderer.on('app:command', listener)
       return () => ipcRenderer.removeListener('app:command', listener)
+    },
+    onOpenConversation: (callback: (conversationId: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: unknown): void => {
+        if (typeof id === 'string' && id) callback(id)
+      }
+      ipcRenderer.on('app:openConversation', listener)
+      return () => ipcRenderer.removeListener('app:openConversation', listener)
     }
   },
   appUpdates: {

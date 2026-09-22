@@ -68,6 +68,8 @@ export interface ContentSegment {
     originalTokens: number
     newTokens: number
     messagesCompacted: number
+    contextLength?: number
+    contextReliable?: boolean
     /** The exact model-facing historical-context payload is stored in content. */
   }
   decision?: ToolLimitDecision

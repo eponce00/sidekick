@@ -61,11 +61,18 @@ export function registerWindowHandlers(): void {
       silent: request?.silent !== false,
       icon: process.platform === 'darwin' ? undefined : icon
     })
+    const conversationId =
+      typeof request?.conversationId === 'string' && request.conversationId.length <= 100
+        ? request.conversationId
+        : null
     notification.on('click', () => {
       if (!mainWindow || mainWindow.isDestroyed()) return
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.show()
       mainWindow.focus()
+      // Focusing alone lands the user wherever they last were; the reason
+      // they clicked is the conversation that just finished.
+      if (conversationId) mainWindow.webContents.send('app:openConversation', conversationId)
     })
     notification.on('failed', (_event, error) => {
       console.warn('[Notification] Native notification failed:', error)

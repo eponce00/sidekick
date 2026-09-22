@@ -99,6 +99,12 @@ function CompactionSummarySegment({
   const savedPercent = Math.round(
     Math.max(0, Math.min(1, 1 - summary.newTokens / Math.max(summary.originalTokens, 1))) * 100
   )
+  // An assumed window is the usual reason a compaction fires far earlier than
+  // expected; say so on the card instead of leaving it to look random.
+  const assumedWindow = summary.contextReliable === false
+  const windowLabel = summary.contextLength
+    ? `${Math.round(summary.contextLength / 1_000)}k window`
+    : null
 
   const copyContext = async (): Promise<void> => {
     if (!modelContext) return
@@ -115,6 +121,19 @@ function CompactionSummarySegment({
         <span className="summary-text">
           Context compacted · {summary.messagesCompacted.toLocaleString()} messages · {savedPercent}
           % saved
+          {windowLabel && (
+            <span
+              className={`summary-window${assumedWindow ? ' is-assumed' : ''}`}
+              title={
+                assumedWindow
+                  ? 'The provider did not report a context length, so SideKick assumed this one. Set the real value in Settings → Providers → Model details.'
+                  : undefined
+              }
+            >
+              {' '}
+              · {assumedWindow ? `assumed ${windowLabel}` : windowLabel}
+            </span>
+          )}
         </span>
         <ChevronDown className="summary-arrow" size={12} aria-hidden="true" />
       </summary>

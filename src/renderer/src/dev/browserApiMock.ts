@@ -1014,7 +1014,8 @@ export function installBrowserApiMock(): void {
     app: {
       platform: 'windows',
       getIconPath: async () => '',
-      onCommand: () => () => undefined
+      onCommand: () => () => undefined,
+      onOpenConversation: () => () => undefined
     },
     appUpdates: {
       install: async () => ({

@@ -163,8 +163,11 @@ function ContextIndicator({
           {!contextDisplay.reliable && (
             <div className="context-tooltip-unknown-copy">
               <strong>Context limit unavailable</strong>
-              <p>LiteLLM did not report a limit for this model.</p>
-              <small>Set it in Settings → Providers → Model details.</small>
+              <p>The provider did not report a limit for this model, so a 32k window is assumed.</p>
+              <small>
+                Compaction will run early until you set the real value in Settings → Providers →
+                Model details.
+              </small>
             </div>
           )}
           {contextDisplay.reliable && (

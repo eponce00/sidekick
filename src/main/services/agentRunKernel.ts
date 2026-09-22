@@ -890,11 +890,18 @@ The user approved this exact plan revision. Act capabilities are now available a
     })
     const prepared = await contextManager.compact(messages, tools, signal)
     const validated = validateProviderTranscript(prepared.messages).messages
+    // Record the window the budget was computed against. A compaction that
+    // fires early is almost always an unknown context length falling back to
+    // the default, and the transcript should say so rather than look random.
+    const contextLength = Number(input.promptContext?.contextLength)
+    const contextReliable = input.promptContext?.contextReliable !== false
     this.append(input.id, 'compaction.completed', {
       previousMessageCount: messages.length,
       messageCount: validated.length,
       compacted: prepared.compacted,
       reason,
+      ...(Number.isFinite(contextLength) && contextLength > 0 ? { contextLength } : {}),
+      contextReliable,
       ...prepared.details
     })
     this.transition(input.id, 'streaming')

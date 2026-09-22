@@ -126,6 +126,11 @@ function App(): React.JSX.Element {
 
   const appCommandHandlerRef = useRef<(command: AppCommand) => void>(() => undefined)
   useEffect(() => window.api.app.onCommand((command) => appCommandHandlerRef.current(command)), [])
+  const openConversationHandlerRef = useRef<(id: string) => void>(() => undefined)
+  useEffect(
+    () => window.api.app.onOpenConversation((id) => openConversationHandlerRef.current(id)),
+    []
+  )
   const [pinnedModels, setPinnedModels] = useState<PinnedModel[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -758,6 +763,14 @@ function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    openConversationHandlerRef.current = (id): void => {
+      if (conversations.some((conversation) => conversation.id === id)) {
+        void handleSelectConversation(id)
+      }
+    }
+  })
+
+  useEffect(() => {
     appCommandHandlerRef.current = (command): void => {
       if (command === 'open-settings') {
         setSettingsInitialSection('general')
@@ -828,7 +841,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const handleResponseComplete = useCallback(
-    (message: string): void => {
+    (message: string, conversationId: string | null): void => {
       const notificationsEnabled = settings.notificationsEnabled ?? true
 
       // Only notify when user is away from the app
@@ -836,7 +849,8 @@ function App(): React.JSX.Element {
 
       void window.api.notification.show({
         body: message,
-        silent: !(settings.notificationSoundEnabled ?? false)
+        silent: !(settings.notificationSoundEnabled ?? false),
+        ...(conversationId ? { conversationId } : {})
       })
     },
     [settings.notificationSoundEnabled, settings.notificationsEnabled]
@@ -844,7 +858,7 @@ function App(): React.JSX.Element {
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
-      handleResponseComplete(message)
+      handleResponseComplete(message, conversationId)
       if (!conversationId) return
       if (currentConversationIdRef.current === conversationId) {
         markConversationRead(conversationId)

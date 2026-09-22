@@ -3467,6 +3467,15 @@ body[data-theme='light'] .tool-approval-command {
   text-overflow: ellipsis;
 }
 
+.summary-segment-compact .summary-window {
+  color: var(--text-muted);
+}
+
+/* An assumed window is the thing to fix, so it gets the warning colour. */
+.summary-segment-compact .summary-window.is-assumed {
+  color: var(--color-warning);
+}
+
 .summary-segment-compact .summary-icon.spinning {
   animation: summary-spin 1s linear infinite;
   stroke: var(--accent);

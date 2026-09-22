@@ -198,16 +198,15 @@
   overflow-x: hidden;
   padding: 3px 7px 18px;
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
 }
 
-.conversation-list:hover {
-  scrollbar-color: color-mix(in srgb, var(--text-muted) 36%, transparent) transparent;
-}
-
+/* Chromium ignores the ::-webkit-scrollbar rules below whenever the standard
+   scrollbar-width / scrollbar-color properties are set on the same element,
+   so those are deliberately absent here. The thumb stays faintly visible at
+   rest — a scrollbar that only exists on hover gives no hint the list
+   continues — and the track runs the full height of the list. */
 .conversation-list::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
 }
 
 .conversation-list::-webkit-scrollbar-track {
@@ -215,14 +214,20 @@
 }
 
 .conversation-list::-webkit-scrollbar-thumb {
+  min-height: 32px;
   border: 2px solid transparent;
   border-radius: var(--radius-full);
-  background: transparent;
+  background: color-mix(in srgb, var(--text-muted) 28%, transparent);
   background-clip: padding-box;
 }
 
 .conversation-list:hover::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--text-muted) 36%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  background-clip: padding-box;
+}
+
+.conversation-list::-webkit-scrollbar-thumb:active {
+  background: color-mix(in srgb, var(--text-secondary) 70%, transparent);
   background-clip: padding-box;
 }
 
