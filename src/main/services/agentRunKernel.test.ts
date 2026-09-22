@@ -1737,6 +1737,99 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it('drops older images and retries once when the provider rejects the image count', async () => {
+    const shot = (name: string) =>
+      ({
+        type: 'image',
+        mimeType: 'image/png',
+        source: { type: 'data_url', dataUrl: `data:${name}` },
+        name
+      }) as const
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error: 'Invalid request: at most 2 image(s) may be provided in one request.'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Opened the page' })
+    const sampler = sequence(rejected, recovered)
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input()
+    runInput.messages = [
+      { role: 'user', content: 'Look at these', images: ['data:u1'] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'a', content: 'shot', media: [shot('s1')] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'b', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'b', content: 'shot', media: [shot('s2')] },
+      { role: 'user', content: 'open on the browser' }
+    ]
+
+    const result = await kernel.start(runInput)
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Opened the page' })
+    // The retried request fits the learned budget: the two newest images stay.
+    const retriedMessages = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].messages
+    const images = retriedMessages.flatMap(
+      (m: { images?: string[]; media?: Array<{ name?: string }> }) => [
+        ...(m.images ?? []),
+        ...(m.media ?? []).map((x) => x.name)
+      ]
+    )
+    expect(images).toEqual(['s1', 's2'])
+    expect(retriedMessages[0].content).toContain('1 earlier image omitted')
+    expect(store.listEvents('run-1')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'image_limit_exceeded',
+            maxImages: 2,
+            removedImages: 1
+          })
+        })
+      ])
+    )
+  })
+
+  it('surfaces the image-limit failure when nothing can be dropped', async () => {
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 400, error: 'too many images in request' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const kernel = new AgentRunKernel(store, undefined, rejected)
+
+    const result = await kernel.start(input())
+
+    expect(result.phase).toBe('failed')
+    expect(rejected).toHaveBeenCalledOnce()
+  })
+
   it('does not loop when the compacted retry still exceeds provider context', async () => {
     const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
       result: { ok: false, error: 'context_window_exceeded: prompt is too long' },

@@ -40,6 +40,7 @@ import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
   context_window_exceeded: 'Context limit reached; compacting and retrying',
+  image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
   truncated_tool_batch: 'Tool call stream was incomplete; retrying',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',

@@ -26,7 +26,8 @@ import type {
   ProviderToolCall
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
-import { providerContextWindowError } from '../../shared/providerErrors'
+import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
+import { enforceImageBudget, FALLBACK_IMAGE_BUDGET } from '../../shared/providerImageBudget'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import {
   resolvePermissionPolicy,
@@ -925,6 +926,11 @@ The user approved this exact plan revision. Act capabilities are now available a
     let researchGuardInjected = false
     let goalContinuationTurn = false
     let contextOverflowRetryAttempted = false
+    let imageLimitRetryAttempted = false
+    // Learned from the provider's first image-count rejection and enforced on
+    // every later request in this run, so one screenshot-heavy session does not
+    // fail the same way turn after turn.
+    let imageBudget: number | null = null
     let activeRequest = input.request
     let activeContextManager = input.contextManager
     let completionHooksRun = false
@@ -1055,6 +1061,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           requestMessages = prepared.messages
           messages = requestMessages
         }
+        if (imageBudget !== null) {
+          const budgeted = enforceImageBudget(requestMessages, imageBudget)
+          if (budgeted.removed > 0) {
+            requestMessages = budgeted.messages
+            messages = requestMessages
+          }
+        }
 
         let pendingContent = goalContinuationTurn ? '\n\n' : ''
         let pendingThinking = ''
@@ -1140,9 +1153,25 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
+          const imageLimit = providerImageLimitError(providerError)
+          if (imageLimit && !imageLimitRetryAttempted) {
+            imageLimitRetryAttempted = true
+            imageBudget = imageLimit.maxImages ?? FALLBACK_IMAGE_BUDGET
+            const budgeted = enforceImageBudget(requestMessages, imageBudget)
+            if (budgeted.removed > 0) {
+              this.append(input.id, 'run.retrying', {
+                reason: 'image_limit_exceeded',
+                maxImages: imageBudget,
+                removedImages: budgeted.removed
+              })
+              messages = budgeted.messages
+              continue
+            }
+          }
           throw new Error(providerError)
         }
         contextOverflowRetryAttempted = false
+        imageLimitRetryAttempted = false
         const turn = {
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
