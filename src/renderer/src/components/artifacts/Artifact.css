@@ -53,7 +53,7 @@
   width: 100%;
   height: 4px;
   background-color: var(--surface-3);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   overflow: hidden;
 }
 
@@ -61,7 +61,7 @@
   width: 30%;
   height: 100%;
   background-color: var(--accent);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   animation: artifactLoadingSlide 1.5s ease-in-out infinite;
 }
 
@@ -142,13 +142,13 @@
   background-color: var(--accent);
   color: var(--on-accent);
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
 }
 
 .artifact-error-badge {
-  background-color: rgba(204, 85, 85, 0.8);
+  background-color: color-mix(in srgb, var(--color-error) 80%, transparent);
 }
 
 .artifact-toggle-code {
@@ -238,7 +238,7 @@
 /* ---- Artifact Error ---- */
 .artifact-error {
   padding: var(--space-3);
-  background-color: rgba(204, 85, 85, 0.1);
+  background-color: color-mix(in srgb, var(--color-error) 10%, transparent);
   border-radius: var(--radius-sm);
   color: var(--color-error);
   font-size: var(--text-sm);
@@ -260,7 +260,7 @@
   margin: 0;
   border: none;
   border-radius: 0;
-  background-color: rgba(204, 85, 85, 0.08);
+  background-color: color-mix(in srgb, var(--color-error) 8%, transparent);
   font-size: var(--text-xs);
   display: block;
   max-width: 100%;
@@ -281,7 +281,7 @@
 }
 
 .artifact-broken .artifact-header {
-  background-color: rgba(204, 85, 85, 0.1);
+  background-color: color-mix(in srgb, var(--color-error) 10%, transparent);
 }
 
 .artifact-error-actions {
@@ -292,7 +292,7 @@
 
 .artifact-error-button {
   border: none;
-  background-color: rgba(204, 85, 85, 0.12);
+  background-color: color-mix(in srgb, var(--color-error) 12%, transparent);
   color: var(--color-error);
   font-size: var(--text-xs);
   padding: var(--space-2) var(--space-3);
@@ -302,7 +302,7 @@
 }
 
 .artifact-error-button:hover {
-  background-color: rgba(204, 85, 85, 0.2);
+  background-color: color-mix(in srgb, var(--color-error) 20%, transparent);
 }
 
 .artifact-error strong {

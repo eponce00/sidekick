@@ -18,10 +18,25 @@ Global tokens live in `src/renderer/src/styles/App.css`. Component styles should
 - Surfaces: `--app-bg`, `--surface-0` through `--surface-4`
 - Borders: `--border-subtle`, `--border-color`, `--border-strong`, `--panel-border`
 - Text: `--text-primary`, `--text-secondary`, `--text-muted`
-- Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`
-- Interaction: `--focus-ring`, `--shadow-panel`, motion duration and radius tokens
+- Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`, and `--on-accent`
+  for anything drawn on an accent fill (plain white is 1.85:1 on the dark theme's accent)
+- Semantic: `--color-success`, `--color-error`, `--color-warning` for text and icons; the
+  `-fill` variants for filled controls carrying `--on-semantic` text; the `-subtle` variants for
+  tinted backgrounds. `--error`, `--danger`, `--success`, and `--warning` are aliases of these.
+- Interaction: `--focus-ring`, `--shadow-panel`, `--shadow-md`, motion duration and radius tokens
 
-Both dark and light themes must define every shared alias. New motion must also behave correctly under `prefers-reduced-motion`.
+Type and shape stay on fixed scales rather than ad-hoc values:
+
+- Sizes: `--text-xs` (11px) through `--text-3xl`. 11px is the floor for text; `--text-2xs` (10px)
+  exists only for a numeral or initial inside a fixed circle of 21px or less.
+- Weights: 400, 500, 600, 700. Inter is loaded at exactly these four; any other value silently
+  rounds to one of them, so writing it only hides the real weight.
+- Radius: `--radius-xs` through `--radius-xl` and `--radius-full`.
+
+Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
+must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.
+Text and its background must reach 4.5:1 in both themes; interactive controls need a 24px minimum
+hit target. New motion must also behave correctly under `prefers-reduced-motion`.
 
 ## Layout behavior
 

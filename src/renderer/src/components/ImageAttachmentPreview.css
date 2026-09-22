@@ -32,7 +32,7 @@
   display: grid;
   place-items: center;
   border: 1px solid rgb(255 255 255 / 0.18);
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: rgb(255 255 255 / 0.96);
   background: rgb(9 14 21 / 0.66);
   box-shadow: 0 5px 18px rgb(0 0 0 / 0.24);

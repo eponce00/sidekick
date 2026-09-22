@@ -51,7 +51,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--on-accent);
   flex-shrink: 0;
 }
 
@@ -95,14 +95,19 @@
 
 .current-indicator {
   color: var(--accent);
-  font-size: 8px;
+  font-size: var(--text-xs);
   animation: fcPulse 2s ease-in-out infinite;
   flex-shrink: 0;
 }
 
 @keyframes fcPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .current-text {
@@ -128,7 +133,7 @@
   height: 100%;
   background: var(--accent);
   transition: width 0.4s ease-out;
-  border-radius: 0 3px 3px 0;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
 }
 
 /* ---- Content ---- */
@@ -198,7 +203,7 @@
 .todo-checkbox.checked {
   background: var(--accent);
   border-color: var(--accent);
-  color: white;
+  color: var(--on-accent);
 }
 
 .todo-checkbox.in-progress {
@@ -216,7 +221,9 @@
 }
 
 @keyframes fcSpin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---- Content ---- */
@@ -254,28 +261,28 @@
 }
 
 /* ---- Light Theme ---- */
-body[data-theme="light"] .focus-chain-icon {
+body[data-theme='light'] .focus-chain-icon {
   background: var(--accent);
 }
 
-body[data-theme="light"] .todo-checkbox.checked {
+body[data-theme='light'] .todo-checkbox.checked {
   background: var(--accent);
   border-color: var(--accent);
 }
 
-body[data-theme="light"] .todo-checkbox.in-progress {
+body[data-theme='light'] .todo-checkbox.in-progress {
   border-color: var(--accent);
 }
 
-body[data-theme="light"] .spinner {
+body[data-theme='light'] .spinner {
   border-color: var(--accent);
   border-top-color: transparent;
 }
 
-body[data-theme="light"] .current-indicator {
+body[data-theme='light'] .current-indicator {
   color: var(--accent);
 }
 
-body[data-theme="light"] .focus-chain-item.in-progress {
+body[data-theme='light'] .focus-chain-item.in-progress {
   box-shadow: inset 3px 0 0 var(--accent);
 }

@@ -72,7 +72,7 @@
 }
 
 .confirm-btn-confirm {
-  color: #fff;
+  color: var(--on-accent);
 }
 
 .confirm-btn-default {
@@ -88,7 +88,7 @@
 }
 
 .confirm-btn-danger:hover {
-  background-color: #b44;
+  background-color: var(--color-error-fill);
 }
 
 .confirm-btn-success {
@@ -96,7 +96,7 @@
 }
 
 .confirm-btn-success:hover {
-  background-color: #3a8;
+  background-color: var(--color-success-fill);
 }
 
 .confirm-btn:active {
@@ -104,8 +104,12 @@
 }
 
 @keyframes confirmFadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @keyframes confirmSlideUp {

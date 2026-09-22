@@ -398,6 +398,21 @@ function ChatPanel({
     isFeaturesMenuOpen || isModelMenuOpen
   )
 
+  // Escape must dismiss a popup menu the same way an outside click does, and
+  // hand focus back to the composer so keyboard users are not left stranded.
+  useEffect(() => {
+    if (!isFeaturesMenuOpen && !isModelMenuOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setIsFeaturesMenuOpen(false)
+      setIsModelMenuOpen(false)
+      inputRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [isFeaturesMenuOpen, isModelMenuOpen])
+
   const selectedProvider = selectedModel ? getProviderFromModel(selectedModel) : null
   const researchAvailable = Boolean(
     selectedPinnedModel && selectedPinnedModel.supportsTools !== false

@@ -15,7 +15,7 @@
   width: min(100% - 36px, 880px);
   margin: 0 auto 6px;
   color: var(--color-error);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 760px) {

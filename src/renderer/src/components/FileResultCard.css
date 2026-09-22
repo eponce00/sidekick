@@ -4,15 +4,15 @@
   gap: 8px;
   padding: 8px 12px;
   margin: 6px 0;
-  background: var(--surface-2, rgba(255, 255, 255, 0.05));
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   max-width: 420px;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .file-result-icon {
-  font-size: 18px;
+  font-size: var(--text-xl);
   flex-shrink: 0;
 }
 
@@ -22,7 +22,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-primary, #e0e0e0);
+  color: var(--text-primary);
   font-weight: 500;
 }
 
@@ -38,17 +38,20 @@
   gap: 4px;
   padding: 4px 8px;
   background: transparent;
-  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.15));
-  border-radius: 5px;
-  color: var(--text-secondary, #aaa);
-  font-size: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
   white-space: nowrap;
 }
 
 .file-result-btn:hover {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }

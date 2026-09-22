@@ -34,7 +34,7 @@
   display: grid;
   place-items: center;
   flex: 0 0 auto;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--accent);
   background: var(--accent-subtle);
 }
@@ -45,8 +45,8 @@
   margin: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 14px;
-  font-weight: 680;
+  font-size: var(--text-base);
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -55,7 +55,7 @@
   margin-top: 2px;
   overflow: hidden;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -66,11 +66,11 @@
   gap: 7px;
   padding: 0 9px;
   border: 0;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: transparent;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 .group-workspace-button:hover {
   color: var(--text-primary);
@@ -90,7 +90,7 @@
   border-radius: 50%;
   color: var(--text-primary);
   background: var(--surface-4);
-  font-size: 8px;
+  font-size: var(--text-2xs);
   font-weight: 700;
 }
 .group-mission-strip {
@@ -102,7 +102,7 @@
   border-bottom: 1px solid var(--panel-border);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--accent) 4%, var(--surface-1));
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .group-mission-dot {
   width: 7px;
@@ -120,7 +120,7 @@
   box-shadow: none;
 }
 .group-mission-label {
-  font-weight: 650;
+  font-weight: 600;
 }
 .group-mission-error {
   min-width: 0;
@@ -141,11 +141,11 @@
   gap: 5px;
   padding: 0 7px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
   background: transparent;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .group-mission-actions button:hover {
   color: var(--text-primary);
@@ -201,7 +201,7 @@
 .group-timeline::-webkit-scrollbar-thumb {
   min-height: 40px;
   border: 2px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: color-mix(in srgb, var(--text-muted) 32%, transparent);
   background-clip: padding-box;
 }
@@ -218,20 +218,20 @@
   height: 38px;
   display: grid;
   place-items: center;
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   color: var(--accent);
   background: var(--accent-subtle);
 }
 .group-intro h2 {
   margin: 12px 0 4px;
   color: var(--text-primary);
-  font-size: 20px;
+  font-size: var(--text-2xl);
 }
 .group-intro p {
   max-width: 600px;
   margin: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.55;
 }
 .group-timeline > .message {
@@ -258,7 +258,7 @@
   margin: 0 auto 7px;
   padding: 0 clamp(18px, 4vw, 40px);
   color: var(--color-error);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 .group-input-area {
   flex: 0 0 auto;
@@ -272,8 +272,8 @@
 .group-menu-heading {
   padding: 6px 8px 4px;
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 680;
+  font-size: var(--text-xs);
+  font-weight: 700;
   letter-spacing: 0.065em;
   text-transform: uppercase;
 }
@@ -298,8 +298,8 @@
   padding: 0 12px;
   border-bottom: 1px solid var(--panel-border);
   color: var(--text-muted);
-  font-size: 10px;
-  font-weight: 680;
+  font-size: var(--text-xs);
+  font-weight: 700;
   letter-spacing: 0.055em;
   text-transform: uppercase;
 }
@@ -311,7 +311,7 @@
 .group-mention-heading kbd {
   padding: 2px 5px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   color: var(--text-muted);
   background: var(--surface-3);
   font: inherit;
@@ -333,7 +333,7 @@
   gap: 9px;
   padding: 6px 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: transparent;
   text-align: left;
@@ -349,11 +349,11 @@
   height: 28px;
   display: grid;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   color: var(--accent);
   background: var(--accent-subtle);
-  font-size: 9px;
-  font-weight: 750;
+  font-size: var(--text-xs);
+  font-weight: 700;
 }
 .group-mention-copy {
   min-width: 0;
@@ -368,21 +368,21 @@
   white-space: nowrap;
 }
 .group-mention-copy strong {
-  font-size: 12px;
-  font-weight: 650;
+  font-size: var(--text-sm);
+  font-weight: 600;
 }
 .group-mention-copy small {
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--text-xs);
 }
 .group-mention-token {
   max-width: 24ch;
   overflow: hidden;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   background: var(--surface-2);
-  font-size: 10px;
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -391,7 +391,7 @@
   min-height: 64px;
   place-items: center;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 .group-working-status {
   white-space: nowrap;

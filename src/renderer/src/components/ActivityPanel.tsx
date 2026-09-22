@@ -514,364 +514,376 @@ function ActivityPanel({
   }
 
   return (
-    <aside
-      className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
-      style={isPinned ? { width: panelWidth, minWidth: panelWidth } : undefined}
-    >
+    <>
+      {/* Below the overlay breakpoint the pinned panel floats over the chat.
+          The scrim keeps the covered composer from looking broken and gives
+          the drawer a one-click dismissal; CSS hides it at full width. */}
       {isPinned && (
-        <div
-          className="activity-panel-resize-handle"
-          role="separator"
-          aria-label="Resize workspace inspector"
-          aria-orientation="vertical"
-          aria-valuemin={ACTIVITY_PANEL_MIN_WIDTH}
-          aria-valuemax={activityPanelMaximumWidth(window.innerWidth)}
-          aria-valuenow={panelWidth}
-          tabIndex={0}
-          onPointerDown={beginResize}
-          onKeyDown={resizeFromKeyboard}
-          title="Drag to resize · Arrow keys adjust width"
-        />
+        <div className="activity-panel-scrim" aria-hidden="true" onClick={onTogglePin} />
       )}
-      <div className="activity-header">
-        <div className="activity-tabs">
-          <button
-            className={`activity-tab-button ${activeTab === 'files' ? 'active' : ''}`}
-            onClick={() => setActiveTab('files')}
-            title="Files"
-          >
-            <FolderTree size={15} />
-            <span className="tab-label">Files</span>
-          </button>
-          <button
-            className={`activity-tab-button ${activeTab === 'checkpoints' ? 'active' : ''}`}
-            onClick={() => setActiveTab('checkpoints')}
-            title="Advanced recovery"
-            aria-label="Open advanced recovery"
-          >
-            <History size={15} />
-            <span className="tab-label">Recovery</span>
-          </button>
-          <button
-            className={`activity-tab-button ${activeTab === 'browser' ? 'active' : ''}`}
-            onClick={() => setActiveTab('browser')}
-            title="Browser activity"
-            aria-label="Open browser activity"
-          >
-            <span className="activity-tab-icon-wrap">
-              <MonitorUp size={15} />
-              {browserIsLive && (
-                <span className="browser-live-dot" aria-label="Browser is active" />
-              )}
-            </span>
-            <span className="tab-label">Browser</span>
-          </button>
+      <aside
+        className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
+        style={isPinned ? { width: panelWidth, minWidth: panelWidth } : undefined}
+      >
+        {isPinned && (
+          <div
+            className="activity-panel-resize-handle"
+            role="separator"
+            aria-label="Resize workspace inspector"
+            aria-orientation="vertical"
+            aria-valuemin={ACTIVITY_PANEL_MIN_WIDTH}
+            aria-valuemax={activityPanelMaximumWidth(window.innerWidth)}
+            aria-valuenow={panelWidth}
+            tabIndex={0}
+            onPointerDown={beginResize}
+            onKeyDown={resizeFromKeyboard}
+            title="Drag to resize · Arrow keys adjust width"
+          />
+        )}
+        <div className="activity-header">
+          <div className="activity-tabs">
+            <button
+              className={`activity-tab-button ${activeTab === 'files' ? 'active' : ''}`}
+              onClick={() => setActiveTab('files')}
+              title="Files"
+            >
+              <FolderTree size={15} />
+              <span className="tab-label">Files</span>
+            </button>
+            <button
+              className={`activity-tab-button ${activeTab === 'checkpoints' ? 'active' : ''}`}
+              onClick={() => setActiveTab('checkpoints')}
+              title="Advanced recovery"
+              aria-label="Open advanced recovery"
+            >
+              <History size={15} />
+              <span className="tab-label">Recovery</span>
+            </button>
+            <button
+              className={`activity-tab-button ${activeTab === 'browser' ? 'active' : ''}`}
+              onClick={() => setActiveTab('browser')}
+              title="Browser activity"
+              aria-label="Open browser activity"
+            >
+              <span className="activity-tab-icon-wrap">
+                <MonitorUp size={15} />
+                {browserIsLive && (
+                  <span className="browser-live-dot" aria-label="Browser is active" />
+                )}
+              </span>
+              <span className="tab-label">Browser</span>
+            </button>
+          </div>
+          <div className="activity-header-right">
+            <button
+              className="activity-panel-toggle"
+              onClick={onTogglePin}
+              title={isPinned ? 'Collapse panel' : 'Expand panel'}
+            >
+              <PanelRight size={16} />
+            </button>
+          </div>
         </div>
-        <div className="activity-header-right">
-          <button
-            className="activity-panel-toggle"
-            onClick={onTogglePin}
-            title={isPinned ? 'Collapse panel' : 'Expand panel'}
-          >
-            <PanelRight size={16} />
-          </button>
-        </div>
-      </div>
 
-      {isPinned ? (
-        <div className="activity-content">
-          {activeTab === 'files' && (
-            <div className="file-explorer-wrap">
-              <div className="file-explorer-header">
-                <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>
-                <button
-                  className="file-explorer-refresh"
-                  onClick={() => setFileRefreshKey((k) => k + 1)}
-                  title="Refresh file tree"
-                >
-                  <RefreshCw size={13} />
-                </button>
+        {isPinned ? (
+          <div className="activity-content">
+            {activeTab === 'files' && (
+              <div className="file-explorer-wrap">
+                <div className="file-explorer-header">
+                  <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>
+                  <button
+                    className="file-explorer-refresh"
+                    onClick={() => setFileRefreshKey((k) => k + 1)}
+                    title="Refresh file tree"
+                  >
+                    <RefreshCw size={13} />
+                  </button>
+                </div>
+                {fileActionError && (
+                  <div className="file-explorer-error" role="alert">
+                    <AlertTriangle size={12} />
+                    <span>{fileActionError}</span>
+                    <button
+                      onClick={() => setFileActionError(null)}
+                      title="Dismiss error"
+                      aria-label="Dismiss file error"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                )}
+                {fileTreeLoading ? (
+                  <div className="activity-empty">
+                    <Loader2 size={16} className="icon-spin" />
+                    <p>Loading files...</p>
+                  </div>
+                ) : fileMap.size === 0 ? (
+                  <div className="activity-empty">
+                    <p>No project folder</p>
+                    <p className="hint">Open a project or move this chat into one</p>
+                  </div>
+                ) : (
+                  <div className="file-tree">{renderFileTreeLevel('', 0)}</div>
+                )}
               </div>
-              {fileActionError && (
-                <div className="file-explorer-error" role="alert">
-                  <AlertTriangle size={12} />
-                  <span>{fileActionError}</span>
-                  <button
-                    onClick={() => setFileActionError(null)}
-                    title="Dismiss error"
-                    aria-label="Dismiss file error"
-                  >
-                    <X size={11} />
-                  </button>
-                </div>
-              )}
-              {fileTreeLoading ? (
-                <div className="activity-empty">
-                  <Loader2 size={16} className="icon-spin" />
-                  <p>Loading files...</p>
-                </div>
-              ) : fileMap.size === 0 ? (
-                <div className="activity-empty">
-                  <p>No project folder</p>
-                  <p className="hint">Open a project or move this chat into one</p>
-                </div>
-              ) : (
-                <div className="file-tree">{renderFileTreeLevel('', 0)}</div>
-              )}
-            </div>
-          )}
+            )}
 
-          {activeTab === 'checkpoints' && (
-            <div className="checkpoints-timeline-wrap">
-              {historyReadOnly && (
-                <div className="cp-readonly-banner">
-                  <History size={13} />
-                  <span>
-                    Detached from {historyWorkspaceFolder?.replace(/\\/g, '/').split('/').pop()} —
-                    history is read-only. Reattach this chat to restore files.
-                  </span>
-                </div>
-              )}
-              {historyActionError && (
-                <div className="cp-error-banner" role="alert">
-                  <AlertTriangle size={13} />
-                  <div>
-                    <span>{historyActionError.message}</span>
-                    {historyActionError.conflicts?.length ? (
-                      <ul>
-                        {historyActionError.conflicts.slice(0, 5).map((conflict) => (
-                          <li key={`${conflict.path}:${conflict.reason}`}>
-                            {conflict.path} —{' '}
-                            {conflict.reason === 'staged-in-git'
-                              ? 'saved for a commit in another Git tool'
-                              : conflict.reason === 'unsupported-file'
-                                ? 'is no longer a regular file'
-                                : 'was changed after this point was saved'}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
+            {activeTab === 'checkpoints' && (
+              <div className="checkpoints-timeline-wrap">
+                {historyReadOnly && (
+                  <div className="cp-readonly-banner">
+                    <History size={13} />
+                    <span>
+                      Detached from {historyWorkspaceFolder?.replace(/\\/g, '/').split('/').pop()} —
+                      history is read-only. Reattach this chat to restore files.
+                    </span>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryActionError(null)}
-                    aria-label="Dismiss history error"
-                  >
-                    <X size={11} />
-                  </button>
-                </div>
-              )}
-              {checkpointsLoading ? (
-                <div className="activity-empty">
-                  <Loader2 size={16} className="icon-spin" />
-                  <p>Loading history...</p>
-                </div>
-              ) : checkpoints.length === 0 ? (
-                <div className="activity-empty">
-                  <p>No checkpoints yet</p>
-                  <p className="hint">
-                    Checkpoints are created automatically when the agent changes project files.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  {/* Back-to-latest bar — shown when the applied state is not at tip */}
-                  {headHash && checkpoints.length > 0 && headHash !== checkpoints[0].hash && (
-                    <div className="cp-back-banner">
-                      <span>Viewing an older state</span>
-                      <button
-                        className="cp-back-btn"
-                        disabled={restoringHash !== null || historyReadOnly || isAgentBusy}
-                        title={
-                          historyReadOnly
-                            ? 'Reattach this chat to restore project files'
-                            : 'Restore the latest project state'
-                        }
-                        onClick={() =>
-                          setPendingAction({
-                            hash: checkpoints[0].hash,
-                            type: 'goto',
-                            message: checkpoints[0].message
-                          })
-                        }
-                      >
-                        {restoringHash ? (
-                          <Loader2 size={11} className="icon-spin" />
-                        ) : (
-                          <ArrowUp size={11} />
-                        )}
-                        Back to latest
-                      </button>
+                )}
+                {historyActionError && (
+                  <div className="cp-error-banner" role="alert">
+                    <AlertTriangle size={13} />
+                    <div>
+                      <span>{historyActionError.message}</span>
+                      {historyActionError.conflicts?.length ? (
+                        <ul>
+                          {historyActionError.conflicts.slice(0, 5).map((conflict) => (
+                            <li key={`${conflict.path}:${conflict.reason}`}>
+                              {conflict.path} —{' '}
+                              {conflict.reason === 'staged-in-git'
+                                ? 'saved for a commit in another Git tool'
+                                : conflict.reason === 'unsupported-file'
+                                  ? 'is no longer a regular file'
+                                  : 'was changed after this point was saved'}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </div>
-                  )}
-
-                  {/* Inline confirm banner */}
-                  {pendingAction && !historyReadOnly && (
-                    <div className={`cp-confirm-banner cp-confirm-${pendingAction.type}`}>
-                      <div className="cp-confirm-text">
-                        {pendingAction.type === 'goto' ? (
-                          <>
-                            Undo SideKick changes after <strong>{pendingAction.message}</strong>?
-                            Unrelated manual edits stay untouched. If an affected file changed
-                            later, SideKick stops instead of overwriting it.
-                          </>
-                        ) : (
-                          <>
-                            <AlertTriangle size={13} /> Remove all newer SideKick history after{' '}
-                            <strong>{pendingAction.message}</strong>? The removed timeline cannot be
-                            recovered.
-                          </>
-                        )}
-                      </div>
-                      <div className="cp-confirm-actions">
-                        <button className="cp-confirm-yes" onClick={() => void executeAction()}>
-                          {restoringHash ? <Loader2 size={11} className="icon-spin" /> : 'Confirm'}
-                        </button>
-                        <button className="cp-confirm-no" onClick={() => setPendingAction(null)}>
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="checkpoints-timeline">
-                    {checkpoints.map((cp, idx) => {
-                      const isHead = headHash ? cp.hash === headHash : idx === 0
-                      const isTip = idx === 0
-                      const isBusy = restoringHash !== null || isAgentBusy
-                      return (
-                        <div
-                          key={cp.hash}
-                          className={`cp-node ${isHead ? 'cp-node-head' : ''}`}
-                          ref={isHead ? headItemRef : undefined}
+                    <button
+                      type="button"
+                      onClick={() => setHistoryActionError(null)}
+                      aria-label="Dismiss history error"
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                )}
+                {checkpointsLoading ? (
+                  <div className="activity-empty">
+                    <Loader2 size={16} className="icon-spin" />
+                    <p>Loading history...</p>
+                  </div>
+                ) : checkpoints.length === 0 ? (
+                  <div className="activity-empty">
+                    <p>No checkpoints yet</p>
+                    <p className="hint">
+                      Checkpoints are created automatically when the agent changes project files.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Back-to-latest bar — shown when the applied state is not at tip */}
+                    {headHash && checkpoints.length > 0 && headHash !== checkpoints[0].hash && (
+                      <div className="cp-back-banner">
+                        <span>Viewing an older state</span>
+                        <button
+                          className="cp-back-btn"
+                          disabled={restoringHash !== null || historyReadOnly || isAgentBusy}
+                          title={
+                            historyReadOnly
+                              ? 'Reattach this chat to restore project files'
+                              : 'Restore the latest project state'
+                          }
+                          onClick={() =>
+                            setPendingAction({
+                              hash: checkpoints[0].hash,
+                              type: 'goto',
+                              message: checkpoints[0].message
+                            })
+                          }
                         >
-                          {/* Timeline spine */}
-                          <div className="cp-spine">
-                            <div className={`cp-dot ${isHead ? 'cp-dot-head' : ''}`} />
-                            {idx < checkpoints.length - 1 && <div className="cp-line" />}
-                          </div>
+                          {restoringHash ? (
+                            <Loader2 size={11} className="icon-spin" />
+                          ) : (
+                            <ArrowUp size={11} />
+                          )}
+                          Back to latest
+                        </button>
+                      </div>
+                    )}
 
-                          {/* Content */}
-                          <div className="cp-body">
-                            <div className="cp-labels">
-                              {isHead && <span className="cp-head-badge">Current</span>}
-                              {isTip && !isHead && <span className="cp-tip-badge">Latest</span>}
-                              <span className="cp-msg">{cp.message}</span>
+                    {/* Inline confirm banner */}
+                    {pendingAction && !historyReadOnly && (
+                      <div className={`cp-confirm-banner cp-confirm-${pendingAction.type}`}>
+                        <div className="cp-confirm-text">
+                          {pendingAction.type === 'goto' ? (
+                            <>
+                              Undo SideKick changes after <strong>{pendingAction.message}</strong>?
+                              Unrelated manual edits stay untouched. If an affected file changed
+                              later, SideKick stops instead of overwriting it.
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle size={13} /> Remove all newer SideKick history after{' '}
+                              <strong>{pendingAction.message}</strong>? The removed timeline cannot
+                              be recovered.
+                            </>
+                          )}
+                        </div>
+                        <div className="cp-confirm-actions">
+                          <button className="cp-confirm-yes" onClick={() => void executeAction()}>
+                            {restoringHash ? (
+                              <Loader2 size={11} className="icon-spin" />
+                            ) : (
+                              'Confirm'
+                            )}
+                          </button>
+                          <button className="cp-confirm-no" onClick={() => setPendingAction(null)}>
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="checkpoints-timeline">
+                      {checkpoints.map((cp, idx) => {
+                        const isHead = headHash ? cp.hash === headHash : idx === 0
+                        const isTip = idx === 0
+                        const isBusy = restoringHash !== null || isAgentBusy
+                        return (
+                          <div
+                            key={cp.hash}
+                            className={`cp-node ${isHead ? 'cp-node-head' : ''}`}
+                            ref={isHead ? headItemRef : undefined}
+                          >
+                            {/* Timeline spine */}
+                            <div className="cp-spine">
+                              <div className={`cp-dot ${isHead ? 'cp-dot-head' : ''}`} />
+                              {idx < checkpoints.length - 1 && <div className="cp-line" />}
                             </div>
-                            <span className="cp-time">
-                              {new Date(cp.timestamp).toLocaleString()}
-                              {cp.changeCount !== undefined
-                                ? ` · ${cp.changeCount} ${cp.changeCount === 1 ? 'file' : 'files'}`
-                                : ''}
-                            </span>
-                            <div className="cp-actions">
-                              <button
-                                className="cp-btn cp-btn-goto"
-                                disabled={isBusy || isHead || historyReadOnly}
-                                title={
-                                  historyReadOnly
-                                    ? 'Reattach this chat to restore project files'
-                                    : 'Restore files to this point (keep history)'
-                                }
-                                onClick={() =>
-                                  setPendingAction({
-                                    hash: cp.hash,
-                                    type: 'goto',
-                                    message: cp.message
-                                  })
-                                }
-                              >
-                                <RotateCcw size={11} /> Restore
-                              </button>
-                              <button
-                                className="cp-btn cp-btn-reset cp-btn-reset-hidden"
-                                disabled={isBusy || isHead || historyReadOnly}
-                                title={
-                                  historyReadOnly
-                                    ? 'Reattach this chat to change project history'
-                                    : 'Remove all newer SideKick history and restore this point'
-                                }
-                                onClick={() =>
-                                  setPendingAction({
-                                    hash: cp.hash,
-                                    type: 'reset',
-                                    message: cp.message
-                                  })
-                                }
-                              >
-                                <X size={11} /> Remove newer
-                              </button>
+
+                            {/* Content */}
+                            <div className="cp-body">
+                              <div className="cp-labels">
+                                {isHead && <span className="cp-head-badge">Current</span>}
+                                {isTip && !isHead && <span className="cp-tip-badge">Latest</span>}
+                                <span className="cp-msg">{cp.message}</span>
+                              </div>
+                              <span className="cp-time">
+                                {new Date(cp.timestamp).toLocaleString()}
+                                {cp.changeCount !== undefined
+                                  ? ` · ${cp.changeCount} ${cp.changeCount === 1 ? 'file' : 'files'}`
+                                  : ''}
+                              </span>
+                              <div className="cp-actions">
+                                <button
+                                  className="cp-btn cp-btn-goto"
+                                  disabled={isBusy || isHead || historyReadOnly}
+                                  title={
+                                    historyReadOnly
+                                      ? 'Reattach this chat to restore project files'
+                                      : 'Restore files to this point (keep history)'
+                                  }
+                                  onClick={() =>
+                                    setPendingAction({
+                                      hash: cp.hash,
+                                      type: 'goto',
+                                      message: cp.message
+                                    })
+                                  }
+                                >
+                                  <RotateCcw size={11} /> Restore
+                                </button>
+                                <button
+                                  className="cp-btn cp-btn-reset cp-btn-reset-hidden"
+                                  disabled={isBusy || isHead || historyReadOnly}
+                                  title={
+                                    historyReadOnly
+                                      ? 'Reattach this chat to change project history'
+                                      : 'Remove all newer SideKick history and restore this point'
+                                  }
+                                  onClick={() =>
+                                    setPendingAction({
+                                      hash: cp.hash,
+                                      type: 'reset',
+                                      message: cp.message
+                                    })
+                                  }
+                                >
+                                  <X size={11} /> Remove newer
+                                </button>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </>
-              )}
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            <div className="activity-browser-wrap" hidden={activeTab !== 'browser'}>
+              <BrowserActivityPanel
+                conversationId={conversationId}
+                onActivityChange={handleBrowserActivityChange}
+                isWide={panelWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
+                onToggleWidth={toggleWidePanel}
+              />
             </div>
-          )}
-          <div className="activity-browser-wrap" hidden={activeTab !== 'browser'}>
+          </div>
+        ) : (
+          <div className="activity-collapsed-tabs">
+            <button
+              className="activity-tab-vertical"
+              onClick={() => openCollapsedTab('files')}
+              title="Open Files"
+              aria-label="Open Files"
+            >
+              <FolderTree size={17} />
+            </button>
+            <button
+              className="activity-tab-vertical"
+              onClick={() => openCollapsedTab('checkpoints')}
+              title="Open Recovery"
+              aria-label="Open Recovery"
+            >
+              <History size={17} />
+            </button>
+            <button
+              className="activity-tab-vertical"
+              onClick={() => openCollapsedTab('browser')}
+              title="Open Browser activity"
+              aria-label="Open Browser activity"
+            >
+              <MonitorUp size={17} />
+              {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
+            </button>
+          </div>
+        )}
+        {!isPinned && (
+          <div hidden aria-hidden="true">
             <BrowserActivityPanel
               conversationId={conversationId}
               onActivityChange={handleBrowserActivityChange}
-              isWide={panelWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
-              onToggleWidth={toggleWidePanel}
             />
           </div>
-        </div>
-      ) : (
-        <div className="activity-collapsed-tabs">
-          <button
-            className="activity-tab-vertical"
-            onClick={() => openCollapsedTab('files')}
-            title="Open Files"
-            aria-label="Open Files"
-          >
-            <FolderTree size={17} />
-          </button>
-          <button
-            className="activity-tab-vertical"
-            onClick={() => openCollapsedTab('checkpoints')}
-            title="Open Recovery"
-            aria-label="Open Recovery"
-          >
-            <History size={17} />
-          </button>
-          <button
-            className="activity-tab-vertical"
-            onClick={() => openCollapsedTab('browser')}
-            title="Open Browser activity"
-            aria-label="Open Browser activity"
-          >
-            <MonitorUp size={17} />
-            {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
-          </button>
-        </div>
-      )}
-      {!isPinned && (
-        <div hidden aria-hidden="true">
-          <BrowserActivityPanel
-            conversationId={conversationId}
-            onActivityChange={handleBrowserActivityChange}
-          />
-        </div>
-      )}
-      <ConfirmDialog
-        isOpen={pendingFileDelete !== null}
-        title="Delete file?"
-        message={`Move “${pendingFileDelete || ''}” to the ${systemTrashName}? You can restore it from there.`}
-        confirmText={`Move to ${systemTrashName}`}
-        cancelText="Cancel"
-        variant="danger"
-        onConfirm={() => {
-          const filePath = pendingFileDelete
-          setPendingFileDelete(null)
-          if (filePath) void moveFileToTrash(filePath)
-        }}
-        onCancel={() => setPendingFileDelete(null)}
-      />
-    </aside>
+        )}
+        <ConfirmDialog
+          isOpen={pendingFileDelete !== null}
+          title="Delete file?"
+          message={`Move “${pendingFileDelete || ''}” to the ${systemTrashName}? You can restore it from there.`}
+          confirmText={`Move to ${systemTrashName}`}
+          cancelText="Cancel"
+          variant="danger"
+          onConfirm={() => {
+            const filePath = pendingFileDelete
+            setPendingFileDelete(null)
+            if (filePath) void moveFileToTrash(filePath)
+          }}
+          onCancel={() => setPendingFileDelete(null)}
+        />
+      </aside>
+    </>
   )
 }
 
