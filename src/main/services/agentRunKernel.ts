@@ -27,7 +27,11 @@ import type {
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
 import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
-import { enforceImageBudget, FALLBACK_IMAGE_BUDGET } from '../../shared/providerImageBudget'
+import {
+  countTranscriptImages,
+  enforceImageBudget,
+  FALLBACK_IMAGE_BUDGET
+} from '../../shared/providerImageBudget'
 
 /**
  * Image-count limits learned from a provider's rejection, keyed by
@@ -1176,14 +1180,21 @@ The user approved this exact plan revision. Act capabilities are now available a
           const imageLimit = providerImageLimitError(providerError)
           if (imageLimit && !imageLimitRetryAttempted) {
             imageLimitRetryAttempted = true
-            imageBudget = imageLimit.maxImages ?? FALLBACK_IMAGE_BUDGET
-            learnedImageLimits.set(imageLimitCacheKey, imageBudget)
+            // A provider that names no number tells us only that what we sent
+            // was too much, so try one fewer than we actually sent rather than
+            // a guess. When even one image is refused this reaches zero, which
+            // is the honest reading for a model that cannot accept images.
+            const sentImages = countTranscriptImages(requestMessages)
+            imageBudget =
+              imageLimit.maxImages ?? Math.max(0, Math.min(FALLBACK_IMAGE_BUDGET, sentImages - 1))
             const budgeted = enforceImageBudget(requestMessages, imageBudget)
             if (budgeted.removed > 0) {
+              learnedImageLimits.set(imageLimitCacheKey, imageBudget)
               this.append(input.id, 'run.retrying', {
                 reason: 'image_limit_exceeded',
                 maxImages: imageBudget,
-                removedImages: budgeted.removed
+                removedImages: budgeted.removed,
+                sentImages
               })
               messages = budgeted.messages
               continue

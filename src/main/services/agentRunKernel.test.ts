@@ -1873,6 +1873,71 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-2').some((event) => event.type === 'run.retrying')).toBe(false)
   })
 
+  it('drops the only screenshot when a provider refuses even one image', async () => {
+    // A provider that names no count and rejects a single screenshot is saying
+    // it takes no images at all; pruning "to one" would change nothing.
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 400, error: 'Bad request: too many images in this request' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Answered without the screenshot' })
+    const kernel = new AgentRunKernel(store, undefined, sequence(rejected, recovered))
+    const runInput = { ...input(), id: 'run-no-vision' }
+    runInput.model = 'text-only-model'
+    runInput.messages = [
+      { role: 'user', content: 'show me on a map' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'a',
+        content: 'opened maps',
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            source: { type: 'data_url', dataUrl: 'data:shot' },
+            name: 'shot'
+          }
+        ]
+      }
+    ]
+
+    const result = await kernel.start(runInput)
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Answered without the screenshot' })
+    const retried = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].messages
+    expect(retried.flatMap((m: { media?: unknown[] }) => m.media ?? [])).toEqual([])
+    // The tool's text survives, with a note so the model knows an image existed.
+    const toolMessage = retried.find((m: { role: string }) => m.role === 'tool')
+    expect(toolMessage.content).toContain('opened maps')
+    expect(toolMessage.content).toContain('omitted')
+    expect(store.listEvents('run-no-vision')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'image_limit_exceeded',
+            maxImages: 0,
+            removedImages: 1,
+            sentImages: 1
+          })
+        })
+      ])
+    )
+  })
+
   it('surfaces the image-limit failure when nothing can be dropped', async () => {
     const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
       result: { ok: false, status: 400, error: 'too many images in request' },
