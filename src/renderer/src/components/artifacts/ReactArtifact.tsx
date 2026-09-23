@@ -24,6 +24,8 @@ interface ReactArtifactProps {
   isStreaming?: boolean
   onResult?: (result: { success: boolean; error?: string; code?: string }) => void
   onCopy?: () => void
+  /** Taller frames than the chat allows, for inspection that must see all of it. */
+  maxFrameHeight?: number
 }
 
 function ReactArtifact({
@@ -31,7 +33,8 @@ function ReactArtifact({
   title,
   isStreaming,
   onResult,
-  onCopy
+  onCopy,
+  maxFrameHeight
 }: ReactArtifactProps): React.JSX.Element {
   const [showCode, setShowCode] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -114,7 +117,7 @@ function ReactArtifact({
 
         case 'resize':
           if (typeof data.height === 'number' && data.height > 0) {
-            setIframeHeight(boundedArtifactFrameHeight(data.height))
+            setIframeHeight(boundedArtifactFrameHeight(data.height, maxFrameHeight))
           }
           break
       }
@@ -122,7 +125,7 @@ function ReactArtifact({
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [code, title, onResult, sendCodeToSandbox])
+  }, [code, title, onResult, sendCodeToSandbox, maxFrameHeight])
 
   // Send code to sandbox when it changes and streaming is done.
   // The iframe's src is already set in JSX — don't set it again or it double-loads.

@@ -135,7 +135,7 @@ it.each(['migration', 'recovery'] as const)(
         }
       } else {
         expect(db.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-          count: 8
+          count: 9
         })
         expect(
           db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'conversation_runs'").get()

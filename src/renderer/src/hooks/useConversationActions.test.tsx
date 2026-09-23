@@ -82,7 +82,9 @@ describe('useConversationActions', () => {
     act(() => controller.retryMessage(researchResponse))
 
     await vi.waitFor(() => {
-      expect(rerunStream).toHaveBeenCalledWith([researchRequest], 'conversation-1', 'research')
+      expect(rerunStream).toHaveBeenCalledWith([researchRequest], 'conversation-1', 'research', {
+        discardsGoalStart: false
+      })
     })
     expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 1)
   })
@@ -138,5 +140,103 @@ describe('useConversationActions', () => {
       requestedAccess: 'auto',
       authorizationToken: 'undo-token'
     })
+  })
+})
+
+describe('useConversationActions with a persistent goal', () => {
+  // A goal is conversation state, not a mode stored on the message, so a retry
+  // used to replay the goal's first message as an ordinary one.
+  const greeting: Message = { id: 'user-0', role: 'user', content: 'Hi', timestamp: 1 }
+  const greetingReply: Message = { id: 'agent-0', role: 'agent', content: 'Hello', timestamp: 2 }
+  const goalStart: Message = {
+    id: 'user-1',
+    role: 'user',
+    content: 'Build a weather card for Reno',
+    timestamp: 3,
+    startsGoal: true
+  }
+  const goalReply: Message = { id: 'agent-1', role: 'agent', content: 'Done', timestamp: 4 }
+
+  let container: HTMLDivElement
+  let root: Root
+  let controller: ReturnType<typeof useConversationActions>
+  const rerunStream = vi.fn(async () => undefined)
+
+  function Harness(): null {
+    const [messages, setMessages] = useState<Message[]>([
+      greeting,
+      greetingReply,
+      goalStart,
+      goalReply
+    ])
+    const value = useConversationActions({
+      messages,
+      setMessages,
+      conversationId: 'conversation-1',
+      selectedModel: 'model-1',
+      workspaceFolder: null,
+      rerunStream
+    })
+    useEffect(() => {
+      controller = value
+    }, [value])
+    return null
+  }
+
+  beforeEach(async () => {
+    container = document.createElement('div')
+    root = createRoot(container)
+    rerunStream.mockClear()
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        conversations: {
+          deleteMessagesAfter: vi.fn(async () => ({ success: true })),
+          updateMessage: vi.fn(async () => ({ success: true }))
+        }
+      }
+    })
+    await act(async () => root.render(<Harness />))
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+  })
+
+  it('starts the goal again when its first message is retried', async () => {
+    act(() => controller.retryMessage(goalReply))
+
+    await vi.waitFor(() =>
+      expect(rerunStream).toHaveBeenCalledWith(
+        [greeting, greetingReply, goalStart],
+        'conversation-1',
+        'conversation',
+        { restartObjective: 'Build a weather card for Reno', discardsGoalStart: false }
+      )
+    )
+  })
+
+  it('starts the goal with the edited objective when its first message is edited', async () => {
+    act(() => controller.setEditingDraft('Build a weather card for Tahoe'))
+    act(() => controller.confirmEditMessage(goalStart))
+
+    await vi.waitFor(() =>
+      expect(rerunStream).toHaveBeenCalledWith(
+        expect.any(Array),
+        'conversation-1',
+        'conversation',
+        { restartObjective: 'Build a weather card for Tahoe', discardsGoalStart: false }
+      )
+    )
+  })
+
+  it('reports a goal whose first message a rewind discards', async () => {
+    act(() => controller.retryMessage(greetingReply))
+
+    await vi.waitFor(() =>
+      expect(rerunStream).toHaveBeenCalledWith([greeting], 'conversation-1', 'conversation', {
+        discardsGoalStart: true
+      })
+    )
   })
 })

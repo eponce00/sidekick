@@ -4,6 +4,7 @@ import {
   type ToolExecutionResult
 } from '../../shared/agentRuntime'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
+import { skillToolNames } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import type { AgentChildRunLauncher } from './agentToolRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -50,12 +51,15 @@ export function artifactToolResult(
   const look = media
     ? 'A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with create_artifact.'
     : 'No screenshot was attached because this model does not take images, so how it looks is unverified.'
+  const fold = inspection.chatFrameHeight
+    ? ` It is taller than the chat's ${inspection.chatFrameHeight}px artifact frame: the user first sees the top ${inspection.chatFrameHeight}px and scrolls inside the card for the rest.${media ? ' The screenshot shows all of it.' : ''}`
+    : ''
   if (inspection.status === 'rendered') {
     return toolExecutionSucceeded({
       title,
       data,
       media,
-      modelContent: `${name} rendered in the chat without errors. ${look}`
+      modelContent: `${name} rendered in the chat without errors. ${look}${fold}`
     })
   }
   const problem =
@@ -113,6 +117,11 @@ export function registerSkillToolHandlers(
         }
       },
       modelContent:
+        // Say what loading changed: the model otherwise treated a reload as
+        // instructions only and never looked for the tool it had just gained.
+        (skillToolNames(skill.id).length
+          ? `Loaded. ${skillToolNames(skill.id).join(', ')} is now available for the rest of this run; skills load per run, so load it again in a later turn that needs it.\n`
+          : '') +
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
         `${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n` +
         (options.officeHelpersAvailable?.() && ['docx', 'xlsx', 'pptx'].includes(skill.id)

@@ -227,8 +227,9 @@ An artifact made with `create_artifact` is observed the same way before its resu
 `ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
 that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with
 the chat's own components in the user's theme, waits for it to report success and then for its data
-requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
-width. The model receives the render status, errors, and, when it accepts images, the capture as a
+requests to settle, and reports runtime errors. The inspector captures the whole artifact at the
+chat's width, and says when it is taller than the chat's bounded frame, where the user first sees
+its top and scrolls inside the card for the rest. The model receives the render status, errors, and, when it accepts images, the capture as a
 small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
 unverified.

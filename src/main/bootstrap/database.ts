@@ -92,6 +92,13 @@ const REQUIRED_COLUMNS = [
     table: 'messages',
     column: 'notice_tone',
     definition: 'TEXT'
+  },
+  {
+    // Marks the message a persistent goal began from, so retrying or editing it
+    // starts the goal again instead of sending it as an ordinary message.
+    table: 'messages',
+    column: 'starts_goal',
+    definition: 'INTEGER NOT NULL DEFAULT 0'
   }
 ] as const
 
@@ -244,6 +251,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     id: '20260923_001_message_notice_tone',
     description: 'persist the presentation tone of app-authored conversation notices',
     contentId: 'v1|required-message-notice-tone-column',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+    }
+  },
+  {
+    id: '20260923_002_message_goal_origin',
+    description: 'mark the message a persistent goal began from',
+    contentId: 'v1|required-message-starts-goal-column',
     apply: (db) => {
       ensureRequiredColumns(db)
     }

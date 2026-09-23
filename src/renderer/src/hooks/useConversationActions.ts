@@ -15,8 +15,22 @@ interface ConversationActionsOptions {
   rerunStream: (
     messages: Message[],
     conversationId: string,
-    mode: ConversationRunMode
+    mode: ConversationRunMode,
+    goal: RewoundGoal
   ) => Promise<void>
+}
+
+/**
+ * What a rewind does to a persistent goal. A goal is conversation state rather
+ * than a property of the run, so replaying its first message would otherwise
+ * send it as an ordinary message, and discarding that message would leave the
+ * goal running without it.
+ */
+export interface RewoundGoal {
+  /** The replayed message began a goal; start it again with this objective. */
+  restartObjective?: string
+  /** The message a goal began from is among the discarded ones. */
+  discardsGoalStart: boolean
 }
 
 export function useConversationActions(options: ConversationActionsOptions): {
@@ -162,7 +176,13 @@ export function useConversationActions(options: ConversationActionsOptions): {
     await options.rerunStream(
       truncatedMessages,
       options.conversationId,
-      updatedMessage.runMode ?? 'conversation'
+      updatedMessage.runMode ?? 'conversation',
+      {
+        ...(updatedMessage.startsGoal ? { restartObjective: updatedMessage.content } : {}),
+        discardsGoalStart: options.messages
+          .slice(targetIndex + 1)
+          .some((candidate) => candidate.startsGoal === true)
+      }
     )
   }
 

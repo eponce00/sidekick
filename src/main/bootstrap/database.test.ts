@@ -69,7 +69,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 8
+        count: 9
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -189,7 +189,7 @@ describe('database schema migrations', () => {
     expect(groupColumns.map(({ name }) => name)).toContain('unread_completion_at')
     expect(agentSessionColumns.map(({ name }) => name)).toContain('unread_completion_at')
     expect(messageColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone'])
+      expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone', 'starts_goal'])
     )
     expect(
       db.prepare('SELECT id, length(checksum) AS checksum_length FROM schema_migrations').all()
@@ -201,7 +201,8 @@ describe('database schema migrations', () => {
       { id: '20260830_002_conversation_pins', checksum_length: 64 },
       { id: '20260830_003_title_backfill_attempt_versions', checksum_length: 64 },
       { id: '20260830_004_message_context_attachments', checksum_length: 64 },
-      { id: '20260923_001_message_notice_tone', checksum_length: 64 }
+      { id: '20260923_001_message_notice_tone', checksum_length: 64 },
+      { id: '20260923_002_message_goal_origin', checksum_length: 64 }
     ])
     expect(
       db

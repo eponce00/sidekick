@@ -103,6 +103,24 @@ describe('create_artifact', () => {
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })
 
+  it('says when the artifact is taller than the chat frame the user scrolls', async () => {
+    // Capturing only the frame hid the controls below it, and the model could
+    // not tell whether they were broken or merely out of view.
+    const { result } = await createArtifact({
+      inspection: {
+        status: 'rendered',
+        errors: [],
+        width: 720,
+        height: 1_100,
+        chatFrameHeight: 560,
+        image
+      }
+    })
+
+    expect(result.modelContent).toContain("taller than the chat's 560px artifact frame")
+    expect(result.modelContent).toContain('The screenshot shows all of it.')
+  })
+
   it('does not send a screenshot to a model that cannot see images', async () => {
     const { result } = await createArtifact({
       inspection: { status: 'rendered', errors: [], width: 720, height: 300, image },
@@ -122,4 +140,27 @@ describe('create_artifact', () => {
       expect(result.modelContent).toContain('do not describe them as checked')
     }
   })
+})
+
+it('says loading a skill adds its tool for the rest of the run, and only for that run', async () => {
+  // Treating a reload as "instructions only", the model never looked for the
+  // tool it would have regained.
+  const registry = new AgentToolHandlerRegistry()
+  registerSkillToolHandlers(registry, {
+    activeSkillIds: new Set<string>(),
+    readReceipts: new Map(),
+    childLauncher: () => undefined
+  })
+  const load = (skillId: string) =>
+    registry.execute({
+      name: 'use_skill',
+      title: 'Load skill',
+      arguments: { skill_id: skillId },
+      context: { runId: 'skill-test', signal: new AbortController().signal }
+    })
+
+  expect((await load('web-artifacts')).modelContent).toContain(
+    'create_artifact is now available for the rest of this run'
+  )
+  expect((await load('pdf')).modelContent).not.toContain('is now available')
 })

@@ -51,6 +51,8 @@ export interface SendConversationMessageOptions {
   mode?: ConversationRunMode
   images?: MessageImageAttachment[]
   attachments?: MessageContextAttachment[]
+  /** This message is the objective of a persistent goal starting with it. */
+  startsGoal?: boolean
 }
 
 export type StreamConversationResponse = (
@@ -586,7 +588,8 @@ export function useConversationRun({
         ...(attachments.length ? { attachments } : {}),
         timestamp: Date.now(),
         hidden: options?.hideUserMessage,
-        runMode: options?.mode ?? 'conversation'
+        runMode: options?.mode ?? 'conversation',
+        ...(options?.startsGoal ? { startsGoal: true } : {})
       }
       if (options?.clearInput ?? true) setInputValue('')
       if (!options?.skipSave) {
@@ -598,6 +601,7 @@ export function useConversationRun({
           images: userMessage.images,
           attachments: userMessage.attachments,
           runMode: userMessage.runMode,
+          startsGoal: userMessage.startsGoal,
           timestamp: userMessage.timestamp
         })
       }

@@ -281,4 +281,39 @@ describe('conversation fork IPC', () => {
       { id: 'odd', noticeTone: undefined }
     ])
   })
+
+  it('remembers which message a goal began from, so a retry can start it again', async () => {
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations (id, title, created_at, updated_at)
+         VALUES ('conversation', 'Goal origin', 1, 1)`
+      )
+      .run()
+    const save = mocks.handlers.get('conversations:saveMessage') as RegisteredHandler
+    await save(
+      {},
+      {
+        id: 'objective',
+        conversation_id: 'conversation',
+        role: 'user',
+        content: 'Build a card',
+        startsGoal: true,
+        timestamp: 2
+      }
+    )
+    await save(
+      {},
+      { id: 'ordinary', conversation_id: 'conversation', role: 'user', content: 'Hi', timestamp: 3 }
+    )
+
+    const getMessages = mocks.handlers.get('conversations:getMessages') as RegisteredHandler
+    const messages = (await getMessages({}, 'conversation')) as Array<{
+      id: string
+      startsGoal?: boolean
+    }>
+    expect(messages.map(({ id, startsGoal }) => ({ id, startsGoal }))).toEqual([
+      { id: 'objective', startsGoal: true },
+      { id: 'ordinary', startsGoal: undefined }
+    ])
+  })
 })

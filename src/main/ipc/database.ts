@@ -212,8 +212,8 @@ export function registerDatabaseHandlers(): void {
         const insert = db.prepare(
           `INSERT INTO messages
          (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-          checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, timestamp)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         const messageIdMap = new Map<string, string>()
         for (const row of rows) {
@@ -237,6 +237,7 @@ export function registerDatabaseHandlers(): void {
                 ? 'plan'
                 : 'conversation',
             row.notice_tone ?? null,
+            row.starts_goal === 1 ? 1 : 0,
             row.timestamp
           )
         }
@@ -408,6 +409,7 @@ export function registerDatabaseHandlers(): void {
         run_mode,
         run_id,
         notice_tone,
+        starts_goal,
         ...rest
       } = row as Record<string, unknown>
       return {
@@ -430,7 +432,8 @@ export function registerDatabaseHandlers(): void {
         runId: typeof run_id === 'string' ? run_id : undefined,
         runMode:
           run_mode === 'research' ? 'research' : run_mode === 'plan' ? 'plan' : 'conversation',
-        noticeTone: notice_tone === 'success' || notice_tone === 'error' ? notice_tone : undefined
+        noticeTone: notice_tone === 'success' || notice_tone === 'error' ? notice_tone : undefined,
+        startsGoal: starts_goal === 1 ? true : undefined
       }
     })
   })
@@ -482,8 +485,8 @@ export function registerDatabaseHandlers(): void {
     const stmt = db.prepare(
       `INSERT INTO messages
        (id, conversation_id, role, content, thinking, segments, images, attachments, token_usage,
-        checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, timestamp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        checkpoint_hash, checkpoint_workspace_root, run_mode, notice_tone, starts_goal, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
     const images = validateMessageImages(message.images)
@@ -511,6 +514,7 @@ export function registerDatabaseHandlers(): void {
       message.noticeTone === 'success' || message.noticeTone === 'error'
         ? message.noticeTone
         : null,
+      message.startsGoal === true ? 1 : 0,
       message.timestamp
     )
 
