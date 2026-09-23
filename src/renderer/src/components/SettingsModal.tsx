@@ -514,14 +514,14 @@ function SettingsModal({
           >
             <label className="modern-field">
               <span>
-                Text size <em>{settings.contentFontSize ?? 14}px</em>
+                Text size <em>{settings.contentFontSize ?? 13}px</em>
               </span>
               <input
                 type="range"
                 min={12}
                 max={17}
                 step={1}
-                value={settings.contentFontSize ?? 14}
+                value={settings.contentFontSize ?? 13}
                 onChange={(event) => {
                   const contentFontSize = Number(event.target.value)
                   setSettings({ ...settings, contentFontSize })

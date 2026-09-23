@@ -187,10 +187,16 @@ interface NotificationAPI {
   ) => Promise<{ ok: boolean; error?: string }>
 }
 
+interface SiteIconsAPI {
+  /** The linked site's own icon as a data URL, or null. Never a third-party service. */
+  get: (url: string) => Promise<{ dataUrl: string | null }>
+}
+
 interface AppAPI {
   platform: import('../shared/platform').DesktopPlatform
   getIconPath: () => Promise<string>
   onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => () => void
+  onOpenConversation: (callback: (conversationId: string) => void) => () => void
 }
 
 interface ClipboardAPI {
@@ -243,6 +249,14 @@ interface WorkspaceAPI {
     startLine?: number,
     endLine?: number
   ) => Promise<{ ok: boolean; content: string | null; totalLines?: number; error?: string }>
+  readImage: (
+    workspaceRoot: string,
+    filePath: string
+  ) => Promise<{ ok: boolean; dataUrl: string | null; error?: string }>
+  resolveFileReference: (
+    fileReference: string,
+    workspaceRoot?: string
+  ) => Promise<{ ok: boolean; matches: string[] }>
   searchFiles: (
     workspaceRoot: string,
     searchPath: string,
@@ -420,6 +434,7 @@ export interface DesktopApi {
   permissions: PermissionsAPI
   window: WindowAPI
   notification: NotificationAPI
+  siteIcons: SiteIconsAPI
   app: AppAPI
   appUpdates: import('../shared/appUpdates').AppUpdatesAPI
   support: import('../shared/supportDiagnostics').SupportDiagnosticsAPI

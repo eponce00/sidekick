@@ -55,7 +55,9 @@ export function classifyAgentKernelFailure(error: unknown, aborted: boolean) {
     recoveryAction: cancelled || loopDetected || imageLimit ? 'stop' : 'retry_later',
     ...(imageLimit
       ? {
-          recovery: 'Reduce the number of attached images or use a model with a higher image limit.'
+          // The provider's own words are the only way to tell an unfamiliar
+          // gateway's limit apart from a model that takes no images at all.
+          recovery: `Reduce the number of attached images, or turn off Vision for this model in Settings → Providers if it cannot accept any. The provider said: ${message}`
         }
       : loopDetected
         ? {

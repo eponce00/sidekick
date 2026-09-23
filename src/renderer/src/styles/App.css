@@ -26,7 +26,7 @@
   /* — Color: Text — */
   --text-primary: #f0f3f7;
   --text-secondary: #a6afbd;
-  --text-muted: #697585;
+  --text-muted: #8894a5;
 
   /* — Color: Accent (cool teal) — */
   --accent: #3bd4bd;
@@ -39,9 +39,25 @@
 
   /* — Color: Semantic — */
   --color-success: #4a9;
-  --color-error: #c55;
+  --color-error: #e06060;
   --color-warning: #d9a43e;
   --color-info: var(--accent);
+  /* Filled destructive/positive controls carry white text, which needs a
+     deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
+  --color-error-fill: #c94b4b;
+  --color-success-fill: #2f8a7a;
+  --on-semantic: #ffffff;
+  /* Short aliases used throughout component styles. Kept in sync here so a
+     theme change reaches every rule instead of falling through to a fallback. */
+  --error: var(--color-error);
+  --danger: var(--color-error);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --error-bg: var(--color-error-subtle);
+  --color-folder: #d4a82f;
 
   /* — Color: Messages — */
   --message-user-bg: var(--surface-3);
@@ -54,6 +70,7 @@
   --shadow: rgba(0, 0, 0, 0.4);
   --shadow-lg: rgba(0, 0, 0, 0.5);
   --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.38), 0 2px 12px rgba(0, 0, 0, 0.22);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.28);
 
   /* — Spacing Scale — */
   --space-1: 4px;
@@ -66,6 +83,7 @@
   --space-8: 48px;
 
   /* — Radius Scale — */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -77,13 +95,22 @@
     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
     sans-serif;
   --font-mono: 'SF Mono', 'Consolas', 'Monaco', 'Fira Code', monospace;
+  /* Every user-facing size lives on this scale. 11px is the floor for text;
+     --text-2xs exists only for a numeral or initial inside a fixed circle. */
+  --text-2xs: 10px;
   --text-xs: 11px;
   --text-sm: 12px;
+  --text-md: 13px;
   --text-base: 14px;
   --text-lg: 16px;
   --text-xl: 18px;
-  --content-text: 14px;
-  --content-text-secondary: 13px;
+  --text-2xl: 20px;
+  --text-3xl: 24px;
+  /* Chat body sits one step above the 12px chrome, not two: 14px read as a
+     different scale next to the sidebar and menus. */
+  --content-text: 13px;
+  --content-text-secondary: 12px;
+  --content-leading: 1.55;
   --leading: 1.5;
 
   /* — Motion — */
@@ -116,19 +143,23 @@ body[data-theme='light'] {
 
   --text-primary: #17202b;
   --text-secondary: #536070;
-  --text-muted: #7b8796;
+  --text-muted: #5d6978;
 
-  --accent: #0d9488;
+  /* Dark enough to carry white text (5.5:1) and to read as text on --surface-2 (4.9:1). */
+  --accent: #0f766e;
   --accent-color: var(--accent);
-  --accent-strong: #0f766e;
-  --accent-pressed: #115e59;
-  --accent-subtle: rgba(13, 148, 136, 0.08);
-  --accent-muted: rgba(13, 148, 136, 0.15);
+  --accent-strong: #115e59;
+  --accent-pressed: #0f4f4a;
+  --accent-subtle: rgba(15, 118, 110, 0.09);
+  --accent-muted: rgba(15, 118, 110, 0.17);
   --on-accent: #ffffff;
 
-  --color-success: #2d8a5e;
-  --color-error: #c44;
-  --color-warning: #b8862d;
+  --color-success: #217a50;
+  --color-error: #c23c3c;
+  --color-warning: #8a641a;
+  --color-error-fill: #b83a3a;
+  --color-success-fill: #1f6e48;
+  --color-folder: #b08a1f;
 
   --message-user-bg: var(--surface-3);
   --message-user-text: var(--text-primary);
@@ -136,9 +167,11 @@ body[data-theme='light'] {
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
+  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.32);
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-lg: rgba(0, 0, 0, 0.12);
-  --shadow-panel: 0 20px 60px rgba(25, 38, 52, 0.16), 0 2px 10px rgba(25, 38, 52, 0.08);
+  --shadow-panel: 0 24px 64px rgba(25, 38, 52, 0.24), 0 2px 10px rgba(25, 38, 52, 0.12);
+  --shadow-md: 0 8px 24px rgba(25, 38, 52, 0.12);
 }
 
 /* ============================================
@@ -445,7 +478,7 @@ select {
 }
 
 .app-loading-name {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 600;
   letter-spacing: 0.3px;
   color: var(--text-primary, #e8e8e8);
@@ -462,6 +495,12 @@ select {
   }
 }
 
+/* Only the compact-width overlay uses the scrim; at full width the panel is
+   part of the layout and the chat beside it stays fully interactive. */
+.activity-panel-scrim {
+  display: none;
+}
+
 @media (max-width: 1050px) {
   .activity-panel.is-pinned {
     position: absolute;
@@ -470,6 +509,22 @@ select {
     right: 0;
     bottom: 0;
     box-shadow: var(--shadow-panel);
+  }
+
+  .activity-panel-scrim {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 19;
+    background: var(--modal-overlay);
+    opacity: 0.55;
+    animation: scrim-fade-in var(--duration-normal) ease;
+  }
+}
+
+@keyframes scrim-fade-in {
+  from {
+    opacity: 0;
   }
 }
 

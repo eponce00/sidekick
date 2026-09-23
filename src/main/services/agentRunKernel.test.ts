@@ -1737,6 +1737,334 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it('drops older images and retries once when the provider rejects the image count', async () => {
+    const shot = (name: string) =>
+      ({
+        type: 'image',
+        mimeType: 'image/png',
+        source: { type: 'data_url', dataUrl: `data:${name}` },
+        name
+      }) as const
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error: 'Invalid request: at most 2 image(s) may be provided in one request.'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Opened the page' })
+    const sampler = sequence(rejected, recovered)
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input()
+    runInput.messages = [
+      { role: 'user', content: 'Look at these', images: ['data:u1'] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'a', content: 'shot', media: [shot('s1')] },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'b', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      { role: 'tool', tool_call_id: 'b', content: 'shot', media: [shot('s2')] },
+      { role: 'user', content: 'open on the browser' }
+    ]
+
+    const result = await kernel.start(runInput)
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Opened the page' })
+    // The retried request fits the learned budget: the two newest images stay.
+    const retriedMessages = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].messages
+    const images = retriedMessages.flatMap(
+      (m: { images?: string[]; media?: Array<{ name?: string }> }) => [
+        ...(m.images ?? []),
+        ...(m.media ?? []).map((x) => x.name)
+      ]
+    )
+    expect(images).toEqual(['s1', 's2'])
+    expect(retriedMessages[0].content).toContain('1 earlier image omitted')
+    expect(store.listEvents('run-1')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'image_limit_exceeded',
+            maxImages: 2,
+            removedImages: 1
+          })
+        })
+      ])
+    )
+  })
+
+  it('reuses a learned image limit so a later run prunes before sending', async () => {
+    const shot = (name: string) =>
+      ({
+        type: 'image',
+        mimeType: 'image/png',
+        source: { type: 'data_url', dataUrl: `data:${name}` },
+        name
+      }) as const
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error: 'Invalid request: at most 1 image(s) may be provided in one request.'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const withImages = (id: string): StartAgentKernelRunInput => {
+      const runInput = { ...input(), id }
+      runInput.messages = [
+        { role: 'user', content: 'one', images: ['data:u1'] },
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'a', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+          ]
+        },
+        { role: 'tool', tool_call_id: 'a', content: 'shot', media: [shot('s1')] },
+        { role: 'user', content: 'show me on a map' }
+      ]
+      return runInput
+    }
+
+    // First run learns the limit the hard way: one rejection, then a retry.
+    const first = sequence(rejected, sampledTurn({ content: 'Recovered' }))
+    expect(
+      (await new AgentRunKernel(store, undefined, first).start(withImages('run-1'))).phase
+    ).toBe('completed')
+    expect(rejected).toHaveBeenCalledOnce()
+
+    // A later run on the same model must not repeat that failed request.
+    const second = vi.fn(sampledTurn({ content: 'Straight through' }))
+    const result = await new AgentRunKernel(store, undefined, second).start(withImages('run-2'))
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Straight through' })
+    const sentMessages = (second as ReturnType<typeof vi.fn>).mock.calls[0][0].messages
+    const images = sentMessages.flatMap(
+      (m: { images?: string[]; media?: Array<{ name?: string }> }) => [
+        ...(m.images ?? []),
+        ...(m.media ?? []).map((x) => x.name)
+      ]
+    )
+    expect(images).toEqual(['s1'])
+    expect(store.listEvents('run-2').some((event) => event.type === 'run.retrying')).toBe(false)
+  })
+
+  it('drops the only screenshot when a provider refuses even one image', async () => {
+    // A provider that names no count and rejects a single screenshot is saying
+    // it takes no images at all; pruning "to one" would change nothing.
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 400, error: 'Bad request: too many images in this request' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Answered without the screenshot' })
+    const kernel = new AgentRunKernel(store, undefined, sequence(rejected, recovered))
+    const runInput = { ...input(), id: 'run-no-vision' }
+    runInput.model = 'text-only-model'
+    runInput.messages = [
+      { role: 'user', content: 'show me on a map' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'a', type: 'function', function: { name: 'browser_open', arguments: '{}' } }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'a',
+        content: 'opened maps',
+        media: [
+          {
+            type: 'image',
+            mimeType: 'image/png',
+            source: { type: 'data_url', dataUrl: 'data:shot' },
+            name: 'shot'
+          }
+        ]
+      }
+    ]
+
+    const result = await kernel.start(runInput)
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Answered without the screenshot' })
+    const retried = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].messages
+    expect(retried.flatMap((m: { media?: unknown[] }) => m.media ?? [])).toEqual([])
+    // The tool's text survives, with a note so the model knows an image existed.
+    const toolMessage = retried.find((m: { role: string }) => m.role === 'tool')
+    expect(toolMessage.content).toContain('opened maps')
+    expect(toolMessage.content).toContain('omitted')
+    expect(store.listEvents('run-no-vision')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'image_limit_exceeded',
+            maxImages: 0,
+            removedImages: 1,
+            sentImages: 1
+          })
+        })
+      ])
+    )
+  })
+
+  it('surfaces the image-limit failure when nothing can be dropped', async () => {
+    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 400, error: 'too many images in request' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const kernel = new AgentRunKernel(store, undefined, rejected)
+
+    const result = await kernel.start(input())
+
+    expect(result.phase).toBe('failed')
+    expect(rejected).toHaveBeenCalledOnce()
+  })
+
+  it('believes the window a provider reports over a larger configured one', async () => {
+    // The shape seen in the field: a profile swapped on the server left the app
+    // budgeting against 180k while the engine actually had 49,152.
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Fits now' })
+    const applied: Array<{ contextLength: number; maxOutputTokens: number }> = []
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      applyContextLength: vi.fn((contextLength: number, maxOutputTokens: number) => {
+        applied.push({ contextLength, maxOutputTokens })
+      }),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted' }],
+        compacted: true,
+        details: { strategy: 'test' }
+      })),
+      observeUsage: vi.fn()
+    }
+    const runInput = { ...input(), contextManager, id: 'run-ctx' }
+    runInput.model = 'swapped-profile-model'
+    runInput.request = {
+      target: { providerKind: 'ollama', model: 'swapped-profile-model', contextLength: 180_000 },
+      maxOutputTokens: 32_768,
+      purpose: 'conversation'
+    }
+
+    const result = await new AgentRunKernel(store, undefined, sequence(overflow, recovered)).start(
+      runInput
+    )
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Fits now' })
+    // The reported window is adopted, and the output reservation shrinks with
+    // it: 32k reserved inside a 49k window leaves almost nothing for the chat.
+    expect(applied).toEqual([{ contextLength: 49_152, maxOutputTokens: 12_288 }])
+    const retriedRequest = (recovered as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    expect(retriedRequest.target.contextLength).toBe(49_152)
+    expect(retriedRequest.maxOutputTokens).toBe(12_288)
+    expect(store.listEvents('run-ctx')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({
+            reason: 'context_length_corrected',
+            contextLength: 49_152,
+            configuredContextLength: 180_000,
+            maxOutputTokens: 12_288
+          })
+        })
+      ])
+    )
+  })
+
+  it('does not widen a window the provider reports as larger than configured', async () => {
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error: "This model's maximum context length is 262144 tokens. However, you requested more."
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      applyContextLength: vi.fn(),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user', content: 'Compacted' }],
+        compacted: true
+      })),
+      observeUsage: vi.fn()
+    }
+    const runInput = { ...input(), contextManager, id: 'run-ctx-wide' }
+    runInput.model = 'conservatively-configured'
+    runInput.request = {
+      target: { providerKind: 'ollama', model: 'conservatively-configured', contextLength: 60_000 },
+      maxOutputTokens: 8_192,
+      purpose: 'conversation'
+    }
+
+    await new AgentRunKernel(
+      store,
+      undefined,
+      sequence(overflow, sampledTurn({ content: 'ok' }))
+    ).start(runInput)
+
+    // A deliberately conservative setting is the user's call, not a mistake.
+    expect(contextManager.applyContextLength).not.toHaveBeenCalled()
+  })
+
   it('does not loop when the compacted retry still exceeds provider context', async () => {
     const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
       result: { ok: false, error: 'context_window_exceeded: prompt is too long' },

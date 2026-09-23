@@ -7,24 +7,37 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   mountBrowserView,
+  parkBrowserView,
   registerBrowserView
 } from './browserViewHost'
 
 let nextId = 900000
-function hosted() {
+function hosted(zoom?: number) {
+  let zoomFactor = 1
   const contents = Object.assign(new EventEmitter(), {
     id: nextId++,
     isDestroyed: vi.fn(() => false),
     cut: vi.fn(),
     copy: vi.fn(),
     paste: vi.fn(),
-    selectAll: vi.fn()
+    selectAll: vi.fn(),
+    getZoomFactor: vi.fn(() => zoomFactor),
+    setZoomFactor: vi.fn((value: number) => {
+      zoomFactor = value
+    })
   })
   const view = { webContents: contents, setBounds: vi.fn(), setVisible: vi.fn() }
-  const parking = { contentView: { removeChildView: vi.fn() }, hide: vi.fn() }
+  const parking = {
+    isDestroyed: () => false,
+    contentView: { removeChildView: vi.fn(), addChildView: vi.fn() },
+    getContentSize: () => [100, 100],
+    setOpacity: vi.fn(),
+    showInactive: vi.fn(),
+    hide: vi.fn()
+  }
   const host = Object.assign(new EventEmitter(), {
     isDestroyed: () => false,
-    contentView: { addChildView: vi.fn() }
+    contentView: { addChildView: vi.fn(), removeChildView: vi.fn() }
   })
   const allowInput = vi.fn(() => false)
   registerBrowserView(view as unknown as WebContentsView, parking as unknown as BrowserWindow)
@@ -32,7 +45,8 @@ function hosted() {
     contents.id,
     host as unknown as BrowserWindow,
     { x: 0, y: 0, width: 100, height: 100 },
-    allowInput
+    allowInput,
+    zoom
   )
   const input = () => {
     const event = { preventDefault: vi.fn() }
@@ -156,6 +170,37 @@ it('restores human input checks after an injected input command fails', async ()
       })
     ).rejects.toThrow('injection failed')
     expect(fixture.input().preventDefault).toHaveBeenCalledTimes(2)
+  } finally {
+    fixture.contents.emit('destroyed')
+  }
+})
+
+it('renders an embedded page at the host app zoom instead of natural scale', () => {
+  const fixture = hosted(0.8)
+  try {
+    expect(fixture.contents.setZoomFactor).toHaveBeenCalledWith(0.8)
+    expect(fixture.contents.getZoomFactor()).toBe(0.8)
+  } finally {
+    fixture.contents.emit('destroyed')
+  }
+})
+
+it('reapplies the host zoom after a cross-origin navigation resets it', () => {
+  const fixture = hosted(0.8)
+  try {
+    fixture.contents.setZoomFactor(1)
+    fixture.contents.emit('did-navigate')
+    expect(fixture.contents.getZoomFactor()).toBe(0.8)
+  } finally {
+    fixture.contents.emit('destroyed')
+  }
+})
+
+it('returns a parked view to natural scale so automation sizing is unaffected', () => {
+  const fixture = hosted(0.8)
+  try {
+    parkBrowserView(fixture.contents.id)
+    expect(fixture.contents.getZoomFactor()).toBe(1)
   } finally {
     fixture.contents.emit('destroyed')
   }

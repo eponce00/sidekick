@@ -10,12 +10,14 @@ import { registerProviderRuntimeHandlers } from './providerRuntime'
 import { registerCollaborationHandlers } from './collaboration'
 import { registerAgentRunHandlers } from './agentRuns'
 import { registerSupportHandlers } from './support'
+import { registerSiteIconHandlers } from './siteIcons'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
  */
 export function registerAllHandlers(): void {
   registerWindowHandlers()
+  registerSiteIconHandlers()
   registerProviderRuntimeHandlers()
   registerSettingsHandlers()
   registerDatabaseHandlers()

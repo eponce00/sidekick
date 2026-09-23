@@ -60,7 +60,7 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
   commandPermissionMode: 'full-access',
-  contentFontSize: 14,
+  contentFontSize: 13,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -106,7 +106,7 @@ const previewGroupSessionId = getPreviewGroupSessionId()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
-    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14))),
+    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -126,6 +126,17 @@ function App(): React.JSX.Element {
 
   const appCommandHandlerRef = useRef<(command: AppCommand) => void>(() => undefined)
   useEffect(() => window.api.app.onCommand((command) => appCommandHandlerRef.current(command)), [])
+  const openConversationHandlerRef = useRef<(id: string) => void>(() => undefined)
+  // Bumped when a notification is clicked, so the panel scrolls the reply the
+  // user was told about into view instead of leaving them wherever they were.
+  const [focusReplyRequest, setFocusReplyRequest] = useState<{
+    conversationId: string
+    at: number
+  } | null>(null)
+  useEffect(
+    () => window.api.app.onOpenConversation((id) => openConversationHandlerRef.current(id)),
+    []
+  )
   const [pinnedModels, setPinnedModels] = useState<PinnedModel[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -376,7 +387,7 @@ function App(): React.JSX.Element {
   }, [theme, settings.accentPalette])
 
   useEffect(() => {
-    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 14)))
+    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13)))
     document.documentElement.style.setProperty('--content-text', `${size}px`)
     document.documentElement.style.setProperty(
       '--content-text-secondary',
@@ -676,14 +687,21 @@ function App(): React.JSX.Element {
     )
   }
 
+  // Forking from a specific message only copies history already committed to the
+  // database, so it stays available while the conversation is still running.
+  // Forking from the tip would copy the in-flight message, so that still waits.
+  const forkBlockedByRun = (conversationId: string, messageId?: string): boolean =>
+    !messageId && busyConversationIds.has(conversationId)
+
   const handleForkConversation = (id: string, messageId?: string): void => {
-    if (busyConversationIds.has(id)) return
+    if (forkBlockedByRun(id, messageId)) return
     setForkError(null)
     setPendingFork({ conversationId: id, messageId })
   }
 
   const executeForkConversation = async (workspaceMode: 'current' | 'worktree'): Promise<void> => {
-    if (!pendingFork || forkBusy || busyConversationIds.has(pendingFork.conversationId)) return
+    if (!pendingFork || forkBusy) return
+    if (forkBlockedByRun(pendingFork.conversationId, pendingFork.messageId)) return
     setForkBusy(true)
     setForkError(null)
     try {
@@ -758,6 +776,14 @@ function App(): React.JSX.Element {
   }
 
   useEffect(() => {
+    openConversationHandlerRef.current = (id): void => {
+      if (!conversations.some((conversation) => conversation.id === id)) return
+      void handleSelectConversation(id)
+      setFocusReplyRequest({ conversationId: id, at: Date.now() })
+    }
+  })
+
+  useEffect(() => {
     appCommandHandlerRef.current = (command): void => {
       if (command === 'open-settings') {
         setSettingsInitialSection('general')
@@ -828,7 +854,7 @@ function App(): React.JSX.Element {
   }, [])
 
   const handleResponseComplete = useCallback(
-    (message: string): void => {
+    (message: string, conversationId: string | null): void => {
       const notificationsEnabled = settings.notificationsEnabled ?? true
 
       // Only notify when user is away from the app
@@ -836,7 +862,8 @@ function App(): React.JSX.Element {
 
       void window.api.notification.show({
         body: message,
-        silent: !(settings.notificationSoundEnabled ?? false)
+        silent: !(settings.notificationSoundEnabled ?? false),
+        ...(conversationId ? { conversationId } : {})
       })
     },
     [settings.notificationSoundEnabled, settings.notificationsEnabled]
@@ -844,7 +871,7 @@ function App(): React.JSX.Element {
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
-      handleResponseComplete(message)
+      handleResponseComplete(message, conversationId)
       if (!conversationId) return
       if (currentConversationIdRef.current === conversationId) {
         markConversationRead(conversationId)
@@ -988,6 +1015,11 @@ function App(): React.JSX.Element {
           userLocation={userLocation}
           onResponseComplete={(message) =>
             handleConversationResponseComplete(panelConversationId, message)
+          }
+          focusReplyAt={
+            focusReplyRequest && focusReplyRequest.conversationId === panelConversationId
+              ? focusReplyRequest.at
+              : undefined
           }
           onBusyStateChange={handleConversationBusyStateChange}
           fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}

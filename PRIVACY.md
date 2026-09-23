@@ -53,6 +53,11 @@ as your IP address and may apply their own cookies, logging, and privacy policie
 
 SideKick has no search relay and does not receive a copy of these requests.
 
+Links in replies are shown with the linked site's own icon. To fetch it, SideKick requests
+`/favicon.ico` (or the icon the site's home page declares) directly from that site, once per site,
+and keeps it in a local cache for a week. No icon service or other third party is involved, so a
+link's site learns no more than it would if you opened the link.
+
 ### MCP connectors and local processes
 
 An enabled MCP connector can receive tool arguments and other context required for a tool call, and

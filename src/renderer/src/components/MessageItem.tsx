@@ -30,6 +30,7 @@ import { TurnChangeReview } from './TurnChangeReview'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
+import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
@@ -40,6 +41,7 @@ import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
   context_window_exceeded: 'Context limit reached; compacting and retrying',
+  image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
   truncated_tool_batch: 'Tool call stream was incomplete; retrying',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
@@ -99,6 +101,12 @@ function CompactionSummarySegment({
   const savedPercent = Math.round(
     Math.max(0, Math.min(1, 1 - summary.newTokens / Math.max(summary.originalTokens, 1))) * 100
   )
+  // An assumed window is the usual reason a compaction fires far earlier than
+  // expected; say so on the card instead of leaving it to look random.
+  const assumedWindow = summary.contextReliable === false
+  const windowLabel = summary.contextLength
+    ? `${Math.round(summary.contextLength / 1_000)}k window`
+    : null
 
   const copyContext = async (): Promise<void> => {
     if (!modelContext) return
@@ -115,6 +123,19 @@ function CompactionSummarySegment({
         <span className="summary-text">
           Context compacted · {summary.messagesCompacted.toLocaleString()} messages · {savedPercent}
           % saved
+          {windowLabel && (
+            <span
+              className={`summary-window${assumedWindow ? ' is-assumed' : ''}`}
+              title={
+                assumedWindow
+                  ? 'The provider did not report a context length, so SideKick assumed this one. Set the real value in Settings → Providers → Model details.'
+                  : undefined
+              }
+            >
+              {' '}
+              · {assumedWindow ? `assumed ${windowLabel}` : windowLabel}
+            </span>
+          )}
         </span>
         <ChevronDown className="summary-arrow" size={12} aria-hidden="true" />
       </summary>
@@ -977,6 +998,17 @@ function MessageItemInner({
           </div>
         )}
       </div>
+      {msg.role === 'agent' && !isLoading && !readOnly && (
+        <MessageSources
+          content={
+            msg.segments?.length
+              ? msg.segments
+                  .map((segment) => (segment.type === 'text' ? segment.content : ''))
+                  .join('\n')
+              : msg.content
+          }
+        />
+      )}
       {msg.role !== 'system' && (
         <div className="message-meta">
           <div className="message-info">

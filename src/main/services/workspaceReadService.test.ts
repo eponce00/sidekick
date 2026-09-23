@@ -17,6 +17,34 @@ afterEach(async () => {
 })
 
 describe('WorkspaceReadService', () => {
+  it('lists project dot-entries while still skipping generated noise', async () => {
+    const root = await workspace()
+    await mkdir(join(root, '.github', 'workflows'), { recursive: true })
+    await writeFile(join(root, '.github', 'workflows', 'ci.yml'), 'name: ci')
+    await writeFile(join(root, '.gitignore'), 'node_modules')
+    await writeFile(join(root, '.prettierrc.yaml'), 'semi: false')
+    await writeFile(join(root, 'app.ts'), 'export {}')
+    // Generated or operating-system noise stays out of the way.
+    await mkdir(join(root, '.git'), { recursive: true })
+    await writeFile(join(root, '.git', 'HEAD'), 'ref: refs/heads/main')
+    await mkdir(join(root, '__pycache__'), { recursive: true })
+    await writeFile(join(root, '__pycache__', 'x.pyc'), '')
+    await mkdir(join(root, '.venv'), { recursive: true })
+    await writeFile(join(root, '.venv', 'pyvenv.cfg'), '')
+    await writeFile(join(root, '.DS_Store'), '')
+    await writeFile(join(root, '.eslintcache'), '')
+
+    const { files } = await new WorkspaceReadService().listFiles(root, {})
+
+    // A dot-directory that is part of the project is browsable, not hidden.
+    expect(files).toContain('.github/workflows/ci.yml')
+    expect(files).toEqual(expect.arrayContaining(['.gitignore', '.prettierrc.yaml', 'app.ts']))
+    for (const noise of ['.DS_Store', '.eslintcache']) expect(files).not.toContain(noise)
+    for (const prefix of ['.git/', '__pycache__/', '.venv/']) {
+      expect(files.some((file) => file.startsWith(prefix))).toBe(false)
+    }
+  })
+
   it('returns numbered bounded reads with a continuation and version receipt', async () => {
     const root = await workspace()
     await writeFile(

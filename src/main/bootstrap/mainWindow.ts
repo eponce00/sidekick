@@ -3,7 +3,8 @@ import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../../resources/icon.png?asset'
-import { appState } from '../ipc/state'
+import { appState, getStore } from '../ipc/state'
+import { startWorkspaceWatcher } from '../ipc/workspace'
 import { browserPermissionOperation } from '../../shared/permissions'
 import { permissionBroker } from '../services/permissionBroker'
 import { installNativeTextContextMenu } from './nativeTextContextMenu'
@@ -160,6 +161,10 @@ export function createMainWindow(): BrowserWindow {
   })
   mainWindow.on('close', persistWindowState)
   appState.mainWindowRef = mainWindow
+  // The watcher is torn down with the window it notifies, so every window we
+  // create has to re-establish it. Without this a recreated window (dock
+  // activate, menu command) never sees workspace file changes again.
+  startWorkspaceWatcher((getStore().get('workspacePath', null) as string | null) ?? null)
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     void mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])

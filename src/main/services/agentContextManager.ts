@@ -176,9 +176,23 @@ export class AgentContextManager implements AgentKernelContextManager {
   private previousSummary: string | null
   private estimationBiasTokens = 0
 
-  constructor(private readonly options: AgentContextManagerOptions) {
+  constructor(private options: AgentContextManagerOptions) {
     this.previousSummary = options.previousSummary ?? null
     this.estimationBiasTokens = Math.max(0, Math.ceil(options.initialEstimationBiasTokens ?? 0))
+  }
+
+  /**
+   * Adopt a window the provider reported about itself. A configured length can
+   * be wrong — a profile swapped on the server, a value typed by hand — and
+   * budgeting against a window larger than the real one means compaction never
+   * frees enough, so the retry fails again on the same limit.
+   */
+  applyContextLength(contextLength: number, maxOutputTokens: number): void {
+    this.options = { ...this.options, contextLength, maxOutputTokens }
+  }
+
+  get contextLength(): number {
+    return this.options.contextLength
   }
 
   shouldCompact(messages: ProviderChatMessage[], tools: readonly unknown[]): boolean {

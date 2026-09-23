@@ -38,7 +38,15 @@ export type ProjectedContentSegment =
     }
   | {
       type: 'summary'
-      summary: { originalTokens: number; newTokens: number; messagesCompacted: number }
+      summary: {
+        originalTokens: number
+        newTokens: number
+        messagesCompacted: number
+        /** Window the budget used; absent on older events. */
+        contextLength?: number
+        /** False when the provider never reported a limit and a default was assumed. */
+        contextReliable?: boolean
+      }
     }
   | {
       type: 'decision'
@@ -443,7 +451,13 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         summary: {
           originalTokens: Number(event.payload.originalTokens || 0),
           newTokens: Number(event.payload.summaryTokens || 0),
-          messagesCompacted: Number(event.payload.messagesCompacted || 0)
+          messagesCompacted: Number(event.payload.messagesCompacted || 0),
+          ...(Number(event.payload.contextLength) > 0
+            ? { contextLength: Number(event.payload.contextLength) }
+            : {}),
+          ...(typeof event.payload.contextReliable === 'boolean'
+            ? { contextReliable: event.payload.contextReliable }
+            : {})
         }
       })
       turnSegmentStart = segments.length

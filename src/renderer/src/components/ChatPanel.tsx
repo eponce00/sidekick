@@ -39,7 +39,7 @@ import {
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
-import 'highlight.js/styles/github-dark.css'
+import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
 
@@ -75,6 +75,8 @@ interface ChatPanelProps {
   commandPermissionMode?: PermissionMode
   userLocation?: { city?: string; country?: string; timezone?: string }
   onResponseComplete?: (message: string) => void
+  /** Changes when the user asked to see this conversation's newest reply. */
+  focusReplyAt?: number
   onBusyStateChange?: (conversationId: string | null, busy: boolean) => void
   fastModelName?: string
   ollamaThinkingEnabled?: boolean
@@ -108,6 +110,7 @@ function ChatPanel({
   onFocusChainUpdate,
   userLocation,
   onResponseComplete,
+  focusReplyAt,
   onBusyStateChange,
   fastModelName,
   ollamaThinkingEnabled = true,
@@ -385,6 +388,14 @@ function ChatPanel({
     conversationId
   )
 
+  // Opening a conversation from its completion notification should land on the
+  // reply the notification was about, not wherever the view happened to be.
+  useEffect(() => {
+    if (!focusReplyAt) return
+    const timer = window.setTimeout(() => scrollToBottom(), 0)
+    return () => window.clearTimeout(timer)
+  }, [focusReplyAt, scrollToBottom])
+
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)
 
@@ -397,6 +408,21 @@ function ChatPanel({
     },
     isFeaturesMenuOpen || isModelMenuOpen
   )
+
+  // Escape must dismiss a popup menu the same way an outside click does, and
+  // hand focus back to the composer so keyboard users are not left stranded.
+  useEffect(() => {
+    if (!isFeaturesMenuOpen && !isModelMenuOpen) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      setIsFeaturesMenuOpen(false)
+      setIsModelMenuOpen(false)
+      inputRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [isFeaturesMenuOpen, isModelMenuOpen])
 
   const selectedProvider = selectedModel ? getProviderFromModel(selectedModel) : null
   const researchAvailable = Boolean(

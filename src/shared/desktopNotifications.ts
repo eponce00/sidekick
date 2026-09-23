@@ -3,6 +3,8 @@ export const MAX_DESKTOP_NOTIFICATION_BODY_BYTES = 220
 export interface DesktopNotificationRequest {
   body: string
   silent: boolean
+  /** Conversation to open when the notification is clicked. */
+  conversationId?: string
 }
 
 export function normalizeDesktopNotificationBody(value: unknown): string {

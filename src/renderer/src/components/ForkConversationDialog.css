@@ -11,7 +11,7 @@
 .fork-dialog {
   width: min(520px, calc(100vw - 32px));
   padding: var(--space-4);
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
   box-shadow: var(--shadow-lg);
@@ -30,21 +30,21 @@
   width: 34px;
   height: 34px;
   border-radius: var(--radius-md);
-  color: var(--accent-primary);
-  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .fork-dialog-header h2 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 .fork-dialog-header p,
 .fork-dialog-note {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.45;
 }
 
@@ -76,7 +76,7 @@
   gap: var(--space-3);
   align-items: start;
   padding: 12px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: var(--surface-2);
@@ -85,9 +85,9 @@
 }
 
 .fork-dialog-options > button:hover:not(:disabled) {
-  border-color: var(--accent-primary);
+  border-color: var(--accent);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent-primary) 7%, var(--surface-2));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-2));
 }
 
 .fork-dialog-options > button:disabled {
@@ -102,13 +102,13 @@
 
 .fork-dialog-options strong {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .fork-dialog-options small {
   margin-top: 3px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
 }
 
@@ -122,5 +122,5 @@
   border-radius: var(--radius-sm);
   color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 10%, transparent);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }

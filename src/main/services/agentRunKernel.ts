@@ -26,7 +26,32 @@ import type {
   ProviderToolCall
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
-import { providerContextWindowError } from '../../shared/providerErrors'
+import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
+import { resolveMaxOutputTokens } from '../../shared/contextBudget'
+import {
+  countTranscriptImages,
+  enforceImageBudget,
+  FALLBACK_IMAGE_BUDGET
+} from '../../shared/providerImageBudget'
+
+/**
+ * Image-count limits learned from a provider's rejection, keyed by
+ * provider:model. The limit is a property of the model, so remembering it for
+ * the rest of the session means only the first run that trips it pays a failed
+ * request; every later run prunes before sending.
+ */
+const learnedImageLimits = new Map<string, number>()
+
+/**
+ * Context windows a provider reported about itself, keyed by provider:model.
+ * A configured length that is too large is worse than none: compaction frees
+ * against the wrong budget and the retry trips the same limit.
+ */
+const learnedContextLengths = new Map<string, number>()
+
+function imageLimitKey(provider: string, model: string): string {
+  return `${provider}:${model}`
+}
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import {
   resolvePermissionPolicy,
@@ -87,6 +112,8 @@ export interface AgentKernelToolRouter {
 
 export interface AgentKernelContextManager {
   shouldCompact(messages: ProviderChatMessage[], tools: readonly unknown[]): boolean
+  /** Adopt a window the provider reported about itself. */
+  applyContextLength?(contextLength: number, maxOutputTokens: number): void
   observeUsage?(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
@@ -890,11 +917,18 @@ The user approved this exact plan revision. Act capabilities are now available a
     })
     const prepared = await contextManager.compact(messages, tools, signal)
     const validated = validateProviderTranscript(prepared.messages).messages
+    // Record the window the budget was computed against. A compaction that
+    // fires early is almost always an unknown context length falling back to
+    // the default, and the transcript should say so rather than look random.
+    const contextLength = Number(input.promptContext?.contextLength)
+    const contextReliable = input.promptContext?.contextReliable !== false
     this.append(input.id, 'compaction.completed', {
       previousMessageCount: messages.length,
       messageCount: validated.length,
       compacted: prepared.compacted,
       reason,
+      ...(Number.isFinite(contextLength) && contextLength > 0 ? { contextLength } : {}),
+      contextReliable,
       ...prepared.details
     })
     this.transition(input.id, 'streaming')
@@ -925,7 +959,40 @@ The user approved this exact plan revision. Act capabilities are now available a
     let researchGuardInjected = false
     let goalContinuationTurn = false
     let contextOverflowRetryAttempted = false
+    let imageLimitRetryAttempted = false
+    // Learned from a provider's image-count rejection and enforced on every
+    // later request, so one screenshot-heavy session does not fail the same way
+    // turn after turn. Seeded from what earlier runs on this model learned.
+    const imageLimitCacheKey = imageLimitKey(input.provider, input.model)
+    // A window an earlier run saw the provider report outranks configuration,
+    // so the very first request of a later run is already budgeted correctly.
+    const rememberedContextLength = learnedContextLengths.get(imageLimitCacheKey)
+    let imageBudget: number | null = learnedImageLimits.get(imageLimitCacheKey) ?? null
     let activeRequest = input.request
+    /**
+     * Believe the provider over the configuration when it states its own
+     * window, and shrink the output reservation to match: a 32k reservation
+     * inside a 49k window leaves almost nothing for the conversation.
+     */
+    const applyReportedContextLength = (reported?: number): void => {
+      if (!reported || !Number.isFinite(reported) || reported <= 0) return
+      const configured = Number(activeRequest.target.contextLength) || reported
+      if (reported >= configured) return
+      learnedContextLengths.set(imageLimitCacheKey, reported)
+      const maxOutputTokens = resolveMaxOutputTokens(reported, activeRequest.maxOutputTokens)
+      activeRequest = {
+        ...activeRequest,
+        maxOutputTokens,
+        target: { ...activeRequest.target, contextLength: reported }
+      }
+      activeContextManager?.applyContextLength?.(reported, maxOutputTokens)
+      this.append(input.id, 'run.retrying', {
+        reason: 'context_length_corrected',
+        contextLength: reported,
+        configuredContextLength: configured,
+        maxOutputTokens
+      })
+    }
     let activeContextManager = input.contextManager
     let completionHooksRun = false
 
@@ -1024,6 +1091,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
       }
     }
+    if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
     try {
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
       this.transition(started.id, 'streaming')
@@ -1054,6 +1122,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           )
           requestMessages = prepared.messages
           messages = requestMessages
+        }
+        if (imageBudget !== null) {
+          const budgeted = enforceImageBudget(requestMessages, imageBudget)
+          if (budgeted.removed > 0) {
+            requestMessages = budgeted.messages
+            messages = requestMessages
+          }
         }
 
         let pendingContent = goalContinuationTurn ? '\n\n' : ''
@@ -1127,6 +1202,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               reason: 'context_window_exceeded',
               ...overflow
             })
+            applyReportedContextLength(overflow.contextLength)
             const prepared = await this.compactContext(
               input,
               activeContextManager,
@@ -1140,9 +1216,33 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
+          const imageLimit = providerImageLimitError(providerError)
+          if (imageLimit && !imageLimitRetryAttempted) {
+            imageLimitRetryAttempted = true
+            // A provider that names no number tells us only that what we sent
+            // was too much, so try one fewer than we actually sent rather than
+            // a guess. When even one image is refused this reaches zero, which
+            // is the honest reading for a model that cannot accept images.
+            const sentImages = countTranscriptImages(requestMessages)
+            imageBudget =
+              imageLimit.maxImages ?? Math.max(0, Math.min(FALLBACK_IMAGE_BUDGET, sentImages - 1))
+            const budgeted = enforceImageBudget(requestMessages, imageBudget)
+            if (budgeted.removed > 0) {
+              learnedImageLimits.set(imageLimitCacheKey, imageBudget)
+              this.append(input.id, 'run.retrying', {
+                reason: 'image_limit_exceeded',
+                maxImages: imageBudget,
+                removedImages: budgeted.removed,
+                sentImages
+              })
+              messages = budgeted.messages
+              continue
+            }
+          }
           throw new Error(providerError)
         }
         contextOverflowRetryAttempted = false
+        imageLimitRetryAttempted = false
         const turn = {
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)

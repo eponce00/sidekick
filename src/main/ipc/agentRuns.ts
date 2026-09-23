@@ -257,8 +257,12 @@ export function registerAgentRunHandlers(): void {
         // content inside the current host instead of rejecting valid stale layout.
         const clipped = clipBrowserPanelBounds(b, width, height)
         if (tab && clipped)
-          mountBrowserView(tab.webContentsId, host, clipped, () =>
-            manager.claimUserControl(input.conversationId)
+          mountBrowserView(
+            tab.webContentsId,
+            host,
+            clipped,
+            () => manager.claimUserControl(input.conversationId),
+            zoom
           )
         else unmountBrowserHost(host)
       }

@@ -7,6 +7,17 @@ interface HostedView {
   host?: BrowserWindow
   allowInput?: () => boolean
   agentInput: number
+  /** App zoom the embedded page is rendered at; 1 whenever the view is parked. */
+  zoom: number
+}
+
+/** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
+ * renders the page larger than the surrounding app UI. Matching the host zoom
+ * keeps page content on the same scale as everything around it. */
+function applyViewZoom(entry: HostedView): void {
+  const contents = entry.view.webContents
+  if (contents.isDestroyed()) return
+  if (Math.abs(contents.getZoomFactor() - entry.zoom) > 0.001) contents.setZoomFactor(entry.zoom)
 }
 
 // Only main-process-created isolated tabs can be embedded; renderer IDs are never accepted.
@@ -14,9 +25,12 @@ const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
 
 export function registerBrowserView(view: WebContentsView, parking: BrowserWindow): void {
-  const entry: HostedView = { view, parking, agentInput: 0 }
+  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1 }
   const id = view.webContents.id
   views.set(id, entry)
+  // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
+  // we applied on mount. Re-apply it once the new document is committed.
+  view.webContents.on('did-navigate', () => applyViewZoom(entry))
   view.webContents.on('before-input-event', (event) => {
     if (!entry.agentInput && entry.host && entry.allowInput && !entry.allowInput())
       event.preventDefault()
@@ -75,7 +89,8 @@ export function mountBrowserView(
   id: number,
   host: BrowserWindow,
   bounds: BrowserPanelBounds,
-  allowInput: () => boolean
+  allowInput: () => boolean,
+  zoom = 1
 ): void {
   const entry = views.get(id)
   if (!entry || host.isDestroyed()) throw new Error('Browser page is no longer available')
@@ -93,6 +108,8 @@ export function mountBrowserView(
     }
   }
   entry.allowInput = allowInput
+  entry.zoom = zoom
+  applyViewZoom(entry)
   entry.view.setBounds(bounds)
   entry.view.setVisible(true)
 }
@@ -103,6 +120,10 @@ export function parkBrowserView(id: number): void {
   if (!entry.host.isDestroyed()) entry.host.contentView.removeChildView(entry.view)
   entry.host = undefined
   entry.allowInput = undefined
+  // Parked views back automation and human takeover, which size the page from
+  // the parking window itself, so they belong at natural scale.
+  entry.zoom = 1
+  applyViewZoom(entry)
   if (!entry.parking.isDestroyed() && !entry.view.webContents.isDestroyed()) {
     entry.parking.contentView.addChildView(entry.view)
     const [width, height] = entry.parking.getContentSize()
