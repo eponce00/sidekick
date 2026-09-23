@@ -12,6 +12,11 @@ clears it, or the same real blocker is confirmed repeatedly.
 - A goal is started from the composer, not a dialog. Choosing **Ongoing goal** arms the next
   message: a row above the composer says so and can be dismissed, and the message the user then
   sends becomes the objective. Plan and research modes are mutually exclusive with arming.
+- The message a goal began from is marked as its origin. Retrying or editing that message starts
+  the goal again with its current text, replacing any unfinished goal; research and plan requests
+  keep their mode the same way through the mode stored on the message. A rewind that discards a
+  goal's origin message drops that goal if it is still unfinished, since its objective is no longer
+  in the conversation.
 - While a goal is unfinished, the row shows its status and objective with pause/resume and drop.
   It has no edit control: follow-up messages preempt a running continuation and steer the same
   conversation, so the chat is where a goal is changed.

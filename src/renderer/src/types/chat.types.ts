@@ -135,6 +135,8 @@ export interface Message {
   senderContext?: string
   /** Compact app-authored status presentation; never used for prompt/control instructions. */
   noticeTone?: 'info' | 'success' | 'error'
+  /** This user message is the objective a persistent goal began from. */
+  startsGoal?: boolean
   content: string
   images?: MessageImageAttachment[]
   attachments?: MessageContextAttachment[]

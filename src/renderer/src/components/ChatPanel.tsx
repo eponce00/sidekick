@@ -4,7 +4,10 @@ import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
-import { useConversationRun } from '../hooks/useConversationRun'
+import {
+  useConversationRun,
+  type SendConversationMessageOptions
+} from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
 import { useConversationActions } from '../hooks/useConversationActions'
 import { useConversationGoal } from '../hooks/useConversationGoal'
@@ -301,8 +304,29 @@ function ChatPanel({
     selectedModel,
     workspaceFolder,
     onCheckpointCreated,
-    rerunStream: (truncatedMessages, targetConversationId, mode) =>
-      streamAgentResponse(truncatedMessages, targetConversationId, false, undefined, mode)
+    rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
+      if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
+        // The goal being replaced belonged to history this rewind removes.
+        const current = await window.api.conversationGoals.current(targetConversationId)
+        if (current && ['active', 'paused', 'blocked'].includes(current.status)) {
+          await window.api.conversationGoals.clear(current.id)
+        }
+        // The goal being replaced no longer blocks a new one; only whether the
+        // model can run a goal at all does.
+        if (
+          rewoundGoal.restartObjective !== undefined &&
+          selectedPinnedModel &&
+          selectedPinnedModel.supportsTools !== false
+        ) {
+          pendingGoalStartRef.current = rewoundGoal.restartObjective
+        }
+      }
+      try {
+        await streamAgentResponse(truncatedMessages, targetConversationId, false, undefined, mode)
+      } finally {
+        pendingGoalStartRef.current = null
+      }
+    }
   })
 
   useEffect(() => {
@@ -704,15 +728,7 @@ function ChatPanel({
 
   const sendMessage = async (
     content: string,
-    options?: {
-      clearInput?: boolean
-      hideUserMessage?: boolean
-      skipSave?: boolean
-      conversationId?: string
-      mode?: ConversationRunMode
-      images?: MessageImageAttachment[]
-      attachments?: MessageContextAttachment[]
-    }
+    options?: SendConversationMessageOptions
   ): Promise<void> => {
     await sendConversationMessage(content, streamAgentResponse, options)
   }
@@ -727,7 +743,13 @@ function ChatPanel({
     setNextRunMode('conversation')
     setIsFeaturesMenuOpen(false)
     try {
-      await sendMessage(objective, { clearInput: true, mode: 'conversation', images, attachments })
+      await sendMessage(objective, {
+        clearInput: true,
+        mode: 'conversation',
+        images,
+        attachments,
+        startsGoal: true
+      })
     } finally {
       pendingGoalStartRef.current = null
     }
