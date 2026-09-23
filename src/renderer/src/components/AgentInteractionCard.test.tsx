@@ -221,7 +221,7 @@ describe('AgentInteractionCard question workflow', () => {
     expect(resolve).toHaveBeenCalledWith('question-2', {}, true)
   })
 
-  it('collects an other answer and exposes resolved state', async () => {
+  it('collects a written answer without hiding the field behind a button', async () => {
     const resolve = vi.fn()
     await act(async () =>
       root.render(
@@ -244,10 +244,11 @@ describe('AgentInteractionCard question workflow', () => {
         />
       )
     )
-    const other = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Something else')
-    )!
-    await act(async () => other.click())
+    expect(
+      [...container.querySelectorAll('button')].some((button) =>
+        button.textContent?.includes('Something else')
+      )
+    ).toBe(false)
     const input = container.querySelector('input') as HTMLInputElement
     await act(async () => setInputValue(input, 'Zed'))
     const send = container.querySelector('.agent-question-send') as HTMLButtonElement
@@ -261,7 +262,17 @@ describe('AgentInteractionCard question workflow', () => {
             id: 'question-3',
             kind: 'question',
             status: 'resolved',
-            request: { questions: [] },
+            request: {
+              questions: [
+                {
+                  id: 'editor',
+                  header: 'Editor',
+                  question: 'Which editor?',
+                  options: [{ label: 'VS Code' }, { label: 'Cursor' }]
+                },
+                { id: 'theme', header: 'Theme', question: 'Which theme?', options: [] }
+              ]
+            },
             response: { editor: 'Zed' }
           }}
           onResolve={resolve}
@@ -269,6 +280,11 @@ describe('AgentInteractionCard question workflow', () => {
       )
     )
     expect(container.textContent).toContain('Answered')
+    const summary = container.querySelector('.agent-question-summary') as HTMLElement
+    expect(summary.textContent).toContain('Editor')
+    expect(summary.textContent).toContain('Zed')
+    // A question that was passed over reads as passed over rather than blank.
+    expect(summary.textContent).toContain('Skipped')
   })
 
   it('opens the exact suspended browser session and resumes after verification clears', async () => {

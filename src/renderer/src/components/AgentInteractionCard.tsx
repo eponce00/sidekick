@@ -111,7 +111,6 @@ export default function AgentInteractionCard({
   const questions = useMemo(() => questionsFrom(interaction), [interaction])
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({})
   const [questionIndex, setQuestionIndex] = useState(0)
-  const [showOther, setShowOther] = useState<Record<string, boolean>>({})
   const [planFeedback, setPlanFeedback] = useState('')
   const [showPlanFeedback, setShowPlanFeedback] = useState(false)
   const [takeoverState, setTakeoverState] = useState<'idle' | 'opening' | 'active' | 'checking'>(
@@ -575,38 +574,27 @@ export default function AgentInteractionCard({
                   </button>
                 )
               })}
-              {currentQuestion.allowOther !== false &&
-                (showOther[currentQuestion.id] ? (
-                  <QuestionCompose
-                    value={currentAnswer.custom}
-                    placeholder="Type another answer"
-                    onChange={(value) =>
-                      setQuestionAnswer(currentQuestion.id, (answer) => ({
-                        ...answer,
-                        skipped: false,
-                        custom: value
-                      }))
-                    }
-                    onSend={(value) =>
-                      commitAnswer(currentQuestion.id, (answer) => ({
-                        ...answer,
-                        skipped: false,
-                        selected: [],
-                        custom: value
-                      }))
-                    }
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="agent-question-other"
-                    onClick={() =>
-                      setShowOther((current) => ({ ...current, [currentQuestion.id]: true }))
-                    }
-                  >
-                    <span>Something else…</span>
-                  </button>
-                ))}
+              {currentQuestion.allowOther !== false && (
+                <QuestionCompose
+                  value={currentAnswer.custom}
+                  placeholder="Or write your own answer"
+                  onChange={(value) =>
+                    setQuestionAnswer(currentQuestion.id, (answer) => ({
+                      ...answer,
+                      skipped: false,
+                      custom: value
+                    }))
+                  }
+                  onSend={(value) =>
+                    commitAnswer(currentQuestion.id, (answer) => ({
+                      ...answer,
+                      skipped: false,
+                      selected: [],
+                      custom: value
+                    }))
+                  }
+                />
+              )}
             </div>
           ) : (
             <QuestionCompose
@@ -673,10 +661,30 @@ export default function AgentInteractionCard({
           </button>
         </div>
       ) : (
-        <div className="agent-interaction-status">
-          {interaction.status === 'resolved' ? <Check size={12} /> : <X size={12} />}
-          {interaction.status === 'resolved' ? 'Answered' : 'Cancelled'}
-        </div>
+        <>
+          <div className="agent-interaction-status">
+            {interaction.status === 'resolved' ? <Check size={12} /> : <X size={12} />}
+            {interaction.status === 'resolved' ? 'Answered' : 'Cancelled'}
+          </div>
+          {interaction.status === 'resolved' && questions.length > 0 && (
+            <dl className="agent-question-summary">
+              {questions.map((question) => {
+                const given = interaction.response?.[question.id]
+                const answer = Array.isArray(given)
+                  ? given.join(', ')
+                  : typeof given === 'string' || typeof given === 'number'
+                    ? String(given)
+                    : null
+                return (
+                  <div key={question.id}>
+                    <dt>{question.header || question.question}</dt>
+                    <dd className={answer ? '' : 'is-skipped'}>{answer ?? 'Skipped'}</dd>
+                  </div>
+                )
+              })}
+            </dl>
+          )}
+        </>
       )}
     </div>
   )

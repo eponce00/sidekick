@@ -3744,11 +3744,10 @@ body[data-theme='light'] .tool-approval-command {
   box-sizing: border-box;
   margin: 6px 0;
   padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border-color));
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color));
   border-radius: var(--radius-md);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface-1));
+  background: color-mix(in srgb, var(--accent) 4%, var(--surface-1));
 }
 
 .sa-inline__lineage {
@@ -4001,8 +4000,41 @@ body[data-theme='light'] .tool-approval-command {
 }
 
 .agent-interaction-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--text-secondary);
   font-size: var(--text-sm);
+}
+
+.agent-question-summary {
+  display: grid;
+  gap: 7px;
+  margin: 9px 0 0;
+}
+
+.agent-question-summary > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-color);
+}
+
+.agent-question-summary dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.agent-question-summary dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.agent-question-summary dd.is-skipped {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 .agent-question + .agent-question {
@@ -4284,22 +4316,6 @@ body[data-theme='light'] .tool-approval-command {
   line-height: 1.45;
 }
 
-/* Escaping to a free-text answer is a different move from picking one of the
-   offered answers, so it does not wear the same clothes. */
-.agent-question-options .agent-question-other {
-  grid-template-columns: minmax(0, 1fr);
-  min-height: 30px;
-  border-style: dashed;
-  color: var(--text-secondary);
-  background: transparent;
-  font-size: var(--text-sm);
-}
-
-.agent-question-options .agent-question-other:hover {
-  color: var(--text-primary);
-  background: var(--surface-2);
-}
-
 .agent-question-navigation {
   justify-content: flex-end;
 }
@@ -4331,14 +4347,25 @@ body[data-theme='light'] .tool-approval-command {
   gap: 8px;
   margin-top: 8px;
   padding: 5px 5px 5px 12px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
-  transition: border-color var(--duration-fast);
+  background: var(--surface-0);
+  /* The card is tinted, so a border alone leaves the field almost level with
+     it. The composer reads as a field because it is lifted, and this is the
+     same field, so it is lifted the same way. */
+  box-shadow: 0 1px 3px var(--shadow);
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.agent-question-compose:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
 }
 
 .agent-question-compose:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  border-color: var(--accent);
+  background: var(--surface-1);
 }
 
 .agent-question-compose input {
