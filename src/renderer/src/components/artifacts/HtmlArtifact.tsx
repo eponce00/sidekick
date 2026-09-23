@@ -16,9 +16,17 @@ interface HtmlArtifactProps {
   title?: string
   onCopy?: () => void
   onResult?: (result: { success: boolean; error?: string; code?: string }) => void
+  /** Taller frames than the chat allows, for inspection that must see all of it. */
+  maxFrameHeight?: number
 }
 
-function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): React.JSX.Element {
+function HtmlArtifact({
+  code,
+  title,
+  onCopy,
+  onResult,
+  maxFrameHeight
+}: HtmlArtifactProps): React.JSX.Element {
   const [showCode, setShowCode] = useState(false)
   const [iframeHeight, setIframeHeight] = useState(DEFAULT_ARTIFACT_FRAME_HEIGHT)
   const hasReportedRef = useRef(false)
@@ -37,7 +45,7 @@ function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): Rea
 
       const data = event.data as { type?: string; height?: number; error?: string }
       if (data?.type === 'html-artifact-height' && typeof data.height === 'number') {
-        setIframeHeight(boundedArtifactFrameHeight(data.height))
+        setIframeHeight(boundedArtifactFrameHeight(data.height, maxFrameHeight))
       } else if (data?.type === 'html-artifact-error' && !hasReportedRef.current) {
         hasReportedRef.current = true
         const message = data.error || 'Unknown HTML artifact error'
@@ -48,7 +56,7 @@ function HtmlArtifact({ code, title, onCopy, onResult }: HtmlArtifactProps): Rea
 
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
-  }, [code, onResult, title])
+  }, [code, onResult, title, maxFrameHeight])
 
   useEffect(() => {
     return observeArtifactTheme((theme) => {

@@ -51,12 +51,15 @@ export function artifactToolResult(
   const look = media
     ? 'A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with create_artifact.'
     : 'No screenshot was attached because this model does not take images, so how it looks is unverified.'
+  const fold = inspection.chatFrameHeight
+    ? ` It is taller than the chat's ${inspection.chatFrameHeight}px artifact frame: the user first sees the top ${inspection.chatFrameHeight}px and scrolls inside the card for the rest.${media ? ' The screenshot shows all of it.' : ''}`
+    : ''
   if (inspection.status === 'rendered') {
     return toolExecutionSucceeded({
       title,
       data,
       media,
-      modelContent: `${name} rendered in the chat without errors. ${look}`
+      modelContent: `${name} rendered in the chat without errors. ${look}${fold}`
     })
   }
   const problem =

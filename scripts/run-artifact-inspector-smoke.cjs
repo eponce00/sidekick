@@ -61,7 +61,8 @@ child.on('exit', (code) => {
   for (const result of results) {
     console.log(
       `${result.pass ? 'PASS' : 'FAIL'} ${result.name}: ${result.status ?? result.thrown} ` +
-        `(${result.ms} ms${result.size ? `, ${result.size}, ${result.imageBytes} bytes` : ''})` +
+        `(${result.ms} ms${result.size ? `, ${result.size}, ${result.imageBytes} bytes` : ''}` +
+        `${result.chatFrameHeight ? `, taller than the ${result.chatFrameHeight}px chat frame` : ''})` +
         (result.errors?.length ? `\n      errors: ${result.errors.join(' | ')}` : '')
     )
   }

@@ -9,9 +9,15 @@ import './Artifact.css'
 interface ArtifactProps {
   artifact: ParsedArtifact
   onResult?: (result: { title: string; success: boolean; error?: string; code?: string }) => void
+  /** Taller frames than the chat allows, for inspection that must see all of it. */
+  maxFrameHeight?: number
 }
 
-function ArtifactInstance({ artifact, onResult }: ArtifactProps): React.JSX.Element {
+function ArtifactInstance({
+  artifact,
+  onResult,
+  maxFrameHeight
+}: ArtifactProps): React.JSX.Element {
   const [forceRender, setForceRender] = useState(false)
   const hasStartedStreaming = React.useRef(false)
 
@@ -92,6 +98,7 @@ function ArtifactInstance({ artifact, onResult }: ArtifactProps): React.JSX.Elem
           isStreaming={artifact.isStreaming || false}
           onResult={(result) => onResult?.({ title: artifact.title, ...result })}
           onCopy={handleCopy}
+          maxFrameHeight={maxFrameHeight}
         />
       )
     case 'html':
@@ -102,6 +109,7 @@ function ArtifactInstance({ artifact, onResult }: ArtifactProps): React.JSX.Elem
           title={artifact.title}
           onCopy={handleCopy}
           onResult={(result) => onResult?.({ title: artifact.title, ...result })}
+          maxFrameHeight={maxFrameHeight}
         />
       )
     case 'svg':

@@ -59,6 +59,21 @@ export default function App() {
 }`
   },
   {
+    name: 'react-tall',
+    type: 'react',
+    expect: 'rendered',
+    code: `export default function App() {
+  return (
+    <div className="p-6 space-y-4 text-artifact-primary">
+      {Array.from({ length: 12 }, (_, index) => (
+        <div key={index} className="h-16 rounded-xl bg-artifact-surface px-4 py-3">Row {index + 1}</div>
+      ))}
+      <button className="px-4 py-2 rounded-lg bg-artifact-accent text-white">Controls at the bottom</button>
+    </div>
+  )
+}`
+  },
+  {
     name: 'react-throws',
     type: 'react',
     expect: 'error',
@@ -114,6 +129,7 @@ app.whenReady().then(async () => {
         status: inspection.status,
         pass: inspection.status === item.expect && Boolean(inspection.image),
         errors: inspection.errors,
+        chatFrameHeight: inspection.chatFrameHeight,
         size: inspection.image ? `${inspection.image.width}x${inspection.image.height}` : null,
         imageBytes: inspection.image
           ? Buffer.from(inspection.image.base64, 'base64').byteLength

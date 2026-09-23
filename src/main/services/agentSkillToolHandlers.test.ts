@@ -103,6 +103,24 @@ describe('create_artifact', () => {
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })
 
+  it('says when the artifact is taller than the chat frame the user scrolls', async () => {
+    // Capturing only the frame hid the controls below it, and the model could
+    // not tell whether they were broken or merely out of view.
+    const { result } = await createArtifact({
+      inspection: {
+        status: 'rendered',
+        errors: [],
+        width: 720,
+        height: 1_100,
+        chatFrameHeight: 560,
+        image
+      }
+    })
+
+    expect(result.modelContent).toContain("taller than the chat's 560px artifact frame")
+    expect(result.modelContent).toContain('The screenshot shows all of it.')
+  })
+
   it('does not send a screenshot to a model that cannot see images', async () => {
     const { result } = await createArtifact({
       inspection: { status: 'rendered', errors: [], width: 720, height: 300, image },
