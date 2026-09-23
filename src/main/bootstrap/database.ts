@@ -239,6 +239,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
         db.exec('ALTER TABLE agent_prompt_admissions ADD COLUMN attachments_json TEXT')
       }
     }
+  },
+  {
+    id: '20260923_001_message_notice_tone',
+    description: 'persist the presentation tone of app-authored conversation notices',
+    contentId: 'v1|required-message-notice-tone-column',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+    }
   }
 ]
 
