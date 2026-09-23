@@ -27,7 +27,17 @@ clears it, or the same real blocker is confirmed repeatedly.
 - Pausing or clearing cancels the current run safely. A restart converts an active goal to paused
   rather than silently resuming filesystem or shell work.
 - Completion requires a non-empty summary, concrete verification, and no unfinished durable plan
-  items. A low token budget, one finished response, or difficult work is not completion.
+  items. A low token budget, one finished response, or difficult work is not completion. The
+  verification must describe only what was observed in the run; what could not be checked, such as
+  how an artifact looks once rendered, is stated rather than asserted.
+- Changed project files are verified before completion is accepted, not after. The first
+  `update_goal(status="complete")` with unverified, stale, or failed workspace evidence is refused
+  with the same one-time request the run end would make; the next request completes the goal and
+  its verification state stays honestly unverified. Because the request is shared, a completed goal
+  is never told afterwards that it cannot claim completion.
+- A completed goal is closed. The run takes the turn it needs to answer the completing call, but
+  further tool calls are refused without executing, and a second refused round ends the run on the
+  work already reported. A repeated completion is answered as already done, not as an error.
 - `blocked` is terminal only after the same normalized blocker is reported on three consecutive
   goal turns. A different blocker resets the streak. A specific user decision uses `ask_user`
   instead of abusing blocked status.

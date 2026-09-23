@@ -35,7 +35,10 @@ import { ToolOutputStore, type ToolOutputPolicy } from './toolOutputStore'
 import type { AgentKernelToolRouter } from './agentRunKernel'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 import { resolveWorkspaceInstructionsForPath } from './workspaceRules'
-import type { CodeIntelligenceInput, VerificationTerminalDecision } from '../../shared/verification'
+import type {
+  CodeIntelligenceInput,
+  WorkspaceVerificationTerminalController
+} from '../../shared/verification'
 import { LanguageIntelligenceService } from './languageIntelligence/languageIntelligenceService'
 import {
   WorkspaceVerificationService,
@@ -106,9 +109,7 @@ export interface AgentToolRuntimeSession {
   catalog: () => AgentToolCatalogOptions
   router: AgentKernelToolRouter
   persistentSkillIds: () => string[]
-  verificationController?: {
-    afterTerminalTurn: () => Promise<VerificationTerminalDecision>
-  }
+  verificationController?: WorkspaceVerificationTerminalController
 }
 
 interface AgentToolRuntimeSessionState {

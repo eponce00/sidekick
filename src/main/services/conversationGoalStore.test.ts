@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import { ConversationGoalStore } from './conversationGoalStore'
+import { ConversationGoalStore, executeGoalUpdate } from './conversationGoalStore'
 import type { ConversationGoal } from '../../shared/conversationGoals'
 
 describe('ConversationGoalStore', () => {
@@ -95,5 +95,42 @@ describe('ConversationGoalStore', () => {
     store.clear(second.id)
 
     expect(store.current('conversation-1')).toBeNull()
+  })
+
+  describe('update_goal', () => {
+    const completion = {
+      status: 'complete',
+      summary: 'Built the card.',
+      verification: 'The fetch returned 200 with current conditions.'
+    }
+
+    it('answers a second completion as already done rather than as a failure', () => {
+      // A second call used to throw, which reached the model as an internal
+      // error telling it to stop, without saying the goal was finished.
+      const goal = store.create({ conversationId: 'conversation-1', objective: 'Build a card' })
+      expect(executeGoalUpdate(store, goal.id, completion)).toMatchObject({ status: 'completed' })
+
+      const again = executeGoalUpdate(store, goal.id, completion)
+
+      expect(again).toMatchObject({ status: 'completed', alreadyComplete: true })
+      expect(String(again.message)).toContain('Do not call update_goal again')
+      expect(store.get(goal.id)?.completionVerification).toBe(completion.verification)
+    })
+
+    it('asks for verification before completing, then accepts the next request', () => {
+      const goal = store.create({ conversationId: 'conversation-1', objective: 'Fix the bug' })
+      const beforeCompletion = vi
+        .fn()
+        .mockReturnValueOnce({ continue: true, prompt: 'Verify the changed files first.' })
+        .mockReturnValueOnce({ continue: false })
+
+      const refused = executeGoalUpdate(store, goal.id, completion, beforeCompletion)
+      expect(refused).toMatchObject({ status: 'active', completed: false })
+      expect(store.get(goal.id)?.status).toBe('active')
+
+      const accepted = executeGoalUpdate(store, goal.id, completion, beforeCompletion)
+      expect(accepted).toMatchObject({ status: 'completed' })
+      expect(String(accepted.next)).toContain('call no more tools')
+    })
   })
 })

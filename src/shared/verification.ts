@@ -59,6 +59,12 @@ export interface VerificationTerminalDecision {
   summary: WorkspaceVerificationSummary
 }
 
+/** One verification request per run, asked at goal completion or at the run's end. */
+export interface WorkspaceVerificationTerminalController {
+  afterTerminalTurn: () => Promise<VerificationTerminalDecision>
+  beforeGoalCompletion?: () => VerificationTerminalDecision
+}
+
 export interface WorkspaceChangeRecord {
   runId: string
   workspaceRoot: string

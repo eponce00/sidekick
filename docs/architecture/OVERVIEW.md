@@ -154,8 +154,8 @@ one app-authored continuation requesting the smallest relevant check. The premat
 provisional and is not projected into chat. The second terminal turn is allowed even when no safe
 check exists, but its durable verification state remains honestly unverified. The renderer shows
 one flat, expandable verification line reconstructed from `verification.updated`; it does not infer
-success from assistant prose. Goal completion can be requested by a tool earlier in the loop, but
-the containing run still passes through this terminal verification boundary. See
+success from assistant prose. A goal consults the same one-time request before its completion is
+accepted, so the evidence is gathered before the goal closes rather than questioned after it. See
 [Workspace verification](VERIFICATION.md).
 
 ## Canonical agent runtime

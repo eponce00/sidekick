@@ -11,7 +11,8 @@ import type {
   VerificationScope,
   VerificationTerminalDecision,
   WorkspaceChangeRecord,
-  WorkspaceVerificationSummary
+  WorkspaceVerificationSummary,
+  WorkspaceVerificationTerminalController
 } from '../../shared/verification'
 
 interface EvidenceRow {
@@ -539,34 +540,42 @@ export class WorkspaceVerificationService {
     runId: string,
     workspaceRoot: string | undefined,
     baselineRevision: number
-  ): { afterTerminalTurn: () => Promise<VerificationTerminalDecision> } | undefined {
+  ): WorkspaceVerificationTerminalController | undefined {
     if (!workspaceRoot) return undefined
+    // One nudge per run, whichever boundary reaches it first. A goal that was
+    // refused completion for missing evidence has been asked already, and must
+    // not be told again after it completes that it cannot claim completion.
     let nudged = false
-    return {
-      afterTerminalTurn: async () => {
-        const summary = this.summary(runId, workspaceRoot, baselineRevision)
-        if (
-          !nudged &&
-          (summary.status === 'unverified' ||
-            summary.status === 'stale' ||
-            summary.status === 'failed')
-        ) {
-          nudged = true
-          const commands = summary.suggestedChecks.slice(0, 3).map((item) => `- ${item.command}`)
-          return {
-            continue: true,
-            summary,
-            prompt:
-              `<sidekick_verification_guard trust="app-policy">\n` +
-              `${summary.headline} Do not claim completion yet. Inspect the latest failure when present, ` +
-              `then run the smallest relevant verification for the files you changed. ` +
-              `If no safe or applicable check exists, explain that limitation honestly and finish without inventing success.` +
-              `${commands.length ? `\nSuggested project checks:\n${commands.join('\n')}` : ''}\n` +
-              `</sidekick_verification_guard>`
-          }
+    const decide = (instruction: string): VerificationTerminalDecision => {
+      const summary = this.summary(runId, workspaceRoot, baselineRevision)
+      if (
+        !nudged &&
+        (summary.status === 'unverified' ||
+          summary.status === 'stale' ||
+          summary.status === 'failed')
+      ) {
+        nudged = true
+        const commands = summary.suggestedChecks.slice(0, 3).map((item) => `- ${item.command}`)
+        return {
+          continue: true,
+          summary,
+          prompt:
+            `<sidekick_verification_guard trust="app-policy">\n` +
+            `${summary.headline} ${instruction} Inspect the latest failure when present, ` +
+            `then run the smallest relevant verification for the files you changed. ` +
+            `If no safe or applicable check exists, explain that limitation honestly and finish without inventing success.` +
+            `${commands.length ? `\nSuggested project checks:\n${commands.join('\n')}` : ''}\n` +
+            `</sidekick_verification_guard>`
         }
-        return { continue: false, summary }
       }
+      return { continue: false, summary }
+    }
+    return {
+      afterTerminalTurn: async () => decide('Do not claim completion yet.'),
+      beforeGoalCompletion: () =>
+        decide(
+          'The goal was not marked complete. Verify first, then call update_goal again; a second request completes it even when no check applies.'
+        )
     }
   }
 

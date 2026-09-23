@@ -25,7 +25,7 @@ serialized into tool-result text. Immediately before inference, SideKick applies
 of two images across user attachments, image searches, and browser screenshots, retaining the
 newest relevant tool visuals without rewriting the durable conversation history.
 
-`web_fetch` requests a page directly and extracts its main text with Mozilla Readability. If the initial HTML has no readable body or the site requires JavaScript, SideKick performs one isolated render in a hidden Electron window and runs Readability on the rendered document.
+`web_fetch` requests a page directly and extracts its main text with Mozilla Readability. JSON, plain-text, CSV, and Markdown responses, such as a public API's data, are returned as the data itself, with JSON pretty-printed and long bodies truncated. A page that cannot be read is reported as a failed call. If the initial HTML has no readable body or the site requires JavaScript, SideKick performs one isolated render in a hidden Electron window and runs Readability on the rendered document.
 
 ## Runtime and privacy boundaries
 

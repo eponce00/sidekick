@@ -56,8 +56,10 @@ When a run changed the workspace and attempts to finish:
 3. The initial completion text is provisional and never appears as a duplicate answer.
 4. A second terminal response is allowed. When verification is impossible, the UI retains an
    honest unverified state rather than looping forever.
-5. Persistent goals are evaluated after this guard, so a model cannot complete a goal first and
-   bypass workspace evidence.
+5. A persistent goal consults the same request when the model asks to complete it, before the goal
+   closes. The request is made once per run whichever boundary reaches it first, so a model cannot
+   complete a goal and bypass workspace evidence, and a goal it completed is not told afterwards
+   that completion cannot be claimed yet.
 
 The final message contains a quiet expandable verification segment reconstructed from the durable
 run event. Direct chats, collaboration participants, and child agents all use the same
