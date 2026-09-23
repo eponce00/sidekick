@@ -229,7 +229,7 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.querySelector('.message-notice-error')).not.toBeNull()
   })
 
-  it('leads a success notice with what finished and keeps its detail beneath', async () => {
+  it('shows a goal completion as one line, with the older long headline shortened and evidence folded', async () => {
     await act(async () => {
       root.render(
         <MessageItem
@@ -265,10 +265,11 @@ describe('MessageItem shared-channel presentation', () => {
     })
 
     const notice = container.querySelector('.message-notice-success [role="status"]')!
-    expect(notice.querySelector('strong')?.textContent).toBe(
-      'Goal complete — Ship the settings page'
-    )
-    expect(notice.textContent).toContain('All tests pass')
+    // The objective is the message above; the notice does not say it again.
+    expect(notice.querySelector('strong')?.textContent).toBe('Goal complete')
+    const details = notice.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('.system-notice-detail')?.textContent).toBe('All tests pass')
     expect(container.querySelector('[role="alert"]')).toBeNull()
   })
 

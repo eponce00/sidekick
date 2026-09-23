@@ -396,19 +396,27 @@ function SystemNoticeBody({
   content: string
   emphasizeHeadline: boolean
 }): React.JSX.Element {
+  if (!emphasizeHeadline) return <span className="system-notice-body">{content}</span>
   const breakAt = content.indexOf('\n\n')
-  if (!emphasizeHeadline || breakAt < 0) {
+  const headline = breakAt < 0 ? content : content.slice(0, breakAt)
+  const detail = breakAt < 0 ? '' : content.slice(breakAt + 2).trim()
+  // The reply above already says what was done, so the notice is one quiet
+  // line. Anything more is evidence, kept closed until it is asked for.
+  if (!detail) {
     return (
-      <span className="system-notice-body">
-        {emphasizeHeadline ? <strong>{content}</strong> : content}
+      <span className="system-notice-body is-single-line">
+        <strong>{headline}</strong>
       </span>
     )
   }
   return (
-    <span className="system-notice-body">
-      <strong>{content.slice(0, breakAt)}</strong>
-      {content.slice(breakAt + 2)}
-    </span>
+    <details className="system-notice-body system-notice-details">
+      <summary>
+        <strong>{headline}</strong>
+        <ChevronRight size={12} className="system-notice-chevron" aria-hidden="true" />
+      </summary>
+      <div className="system-notice-detail">{detail}</div>
+    </details>
   )
 }
 
@@ -700,7 +708,12 @@ function MessageItemInner({
               )}
             </span>
             <SystemNoticeBody
-              content={msg.content}
+              content={
+                // Earlier goal notices repeated the objective in their headline.
+                msg.id.startsWith('goal-complete:')
+                  ? msg.content.replace(/^Goal complete — [^\n]*/, 'Goal complete')
+                  : msg.content
+              }
               emphasizeHeadline={msg.noticeTone === 'success'}
             />
           </div>

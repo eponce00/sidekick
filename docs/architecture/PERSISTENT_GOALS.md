@@ -16,7 +16,9 @@ clears it, or the same real blocker is confirmed repeatedly.
   It has no edit control: follow-up messages preempt a running continuation and steer the same
   conversation, so the chat is where a goal is changed.
 - A completed goal leaves the composer, since the next message is not part of it. Completion is
-  reported in the conversation as a success notice carrying the goal's summary and verification.
+  reported in the conversation as a one-line success notice. It does not repeat the objective,
+  which is the message the goal began with, or the summary the closing reply already gave; the
+  verification is kept folded beneath it.
   The notice is stored with the conversation under an id derived from the goal, so reopening shows
   the stored notice rather than adding another. Notices are app-authored and never sent to the
   model.

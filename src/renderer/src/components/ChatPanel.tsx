@@ -235,11 +235,11 @@ function ChatPanel({
     if (isLoading) return
     const noticeId = `goal-complete:${goal.id}`
     if (messagesRef.current.some((message) => message.id === noticeId)) return
-    const detail = [goal.completionSummary, goal.completionVerification]
-      .map((part) => part?.trim())
-      .filter(Boolean)
-      .join('\n')
-    const headline = `Goal complete — ${goal.objective}`
+    // The objective is the message the goal began with and the summary is what
+    // the closing reply just said, so neither is repeated. Only the evidence is
+    // kept, and it stays folded away.
+    const detail = goal.completionVerification?.trim()
+    const headline = 'Goal complete'
     const notice: Message = {
       id: noticeId,
       role: 'system',
