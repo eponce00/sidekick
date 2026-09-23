@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.6 — 2026-09-22
+
+- Match the embedded browser to the application's own zoom instead of Chromium's per-origin scale,
+  and re-apply it on every navigation so a followed link cannot reset it.
+- Allow forking any earlier message while a run is active; only the message the run is currently
+  writing stays locked.
+- Recover from provider limits instead of failing the turn: learn a provider's image budget when it
+  refuses even one image and retry without them, and adopt a provider's reported context window over
+  a stale local setting that was triggering compaction a single token early.
+- Show dot-prefixed files and folders in the file tree and to the agent, skipping only genuinely
+  uninteresting paths, so projects no longer appear empty.
+- Open the conversation that raised a completion notification when that notification is clicked.
+- Put the renderer on its design tokens: type scale, spacing, focus rings, visible full-height
+  scrollbars, and accent palettes that meet the contrast bar in both themes.
+- Size markdown headings in messages from the application's scale rather than inheriting browser
+  defaults, and reserve font weight for hierarchy instead of every sidebar row.
+- Open a file the agent references in the workspace panel, with markdown rendered, code highlighted
+  with line numbers, and images shown.
+- Show a link with its own site's icon and domain. Icons are fetched only from the linked site
+  itself, never a third-party favicon service, and never for local or private hosts.
+- Answer an agent's question by choosing rather than by toggling and confirming. Several questions
+  ride in one card and advance as each is answered, a written answer is sent from the field it is
+  typed in, and the resolved card lists what was answered.
+- Update vitest to 4.1.11, which closes two moderate advisories in vitest and @vitest/mocker.
+
 ## 0.7.5 — 2026-09-17
 
 - Keep long visual and research runs responsive by batching renderer projections, compacting legacy
