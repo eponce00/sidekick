@@ -251,8 +251,8 @@ continuation count, todo projection, blocker streak, current run, and completion
 `AgentRunKernel` consults a goal controller at otherwise terminal model turns and injects the next
 app-authored continuation only while the store remains active. All ordinary compaction, tool,
 permission, question, cancellation, provider, and checkpoint behavior therefore remains canonical.
-The renderer can create, edit, pause, resume, and clear goals through a narrow preload API, but it
-cannot complete one. See [Persistent conversation goals](PERSISTENT_GOALS.md).
+The renderer can create, pause, resume, and clear goals through a narrow preload API, but it
+cannot complete one. It reports a completion in the conversation as an app-authored notice. See [Persistent conversation goals](PERSISTENT_GOALS.md).
 
 ### Plan mode
 

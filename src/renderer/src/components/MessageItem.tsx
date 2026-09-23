@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Info,
   CircleAlert,
+  CircleCheck,
   ListChecks,
   Microscope,
   GitBranch,
@@ -387,6 +388,30 @@ function formatWorkDuration(durationMs: number): string {
   return `${seconds}s`
 }
 
+/** A success notice leads with what finished; anything after a blank line is its detail. */
+function SystemNoticeBody({
+  content,
+  emphasizeHeadline
+}: {
+  content: string
+  emphasizeHeadline: boolean
+}): React.JSX.Element {
+  const breakAt = content.indexOf('\n\n')
+  if (!emphasizeHeadline || breakAt < 0) {
+    return (
+      <span className="system-notice-body">
+        {emphasizeHeadline ? <strong>{content}</strong> : content}
+      </span>
+    )
+  }
+  return (
+    <span className="system-notice-body">
+      <strong>{content.slice(0, breakAt)}</strong>
+      {content.slice(breakAt + 2)}
+    </span>
+  )
+}
+
 function thinkingPreview(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
   if (!normalized) return 'Thinking'
@@ -666,9 +691,18 @@ function MessageItemInner({
         {msg.role === 'system' ? (
           <div className="system-notice" role={msg.noticeTone === 'error' ? 'alert' : 'status'}>
             <span className="system-notice-icon" aria-hidden="true">
-              {msg.noticeTone === 'error' ? <CircleAlert size={14} /> : <Info size={14} />}
+              {msg.noticeTone === 'error' ? (
+                <CircleAlert size={14} />
+              ) : msg.noticeTone === 'success' ? (
+                <CircleCheck size={14} />
+              ) : (
+                <Info size={14} />
+              )}
             </span>
-            <span>{msg.content}</span>
+            <SystemNoticeBody
+              content={msg.content}
+              emphasizeHeadline={msg.noticeTone === 'success'}
+            />
           </div>
         ) : msg.segments && msg.segments.length > 0 ? (
           <div className="message-segments">

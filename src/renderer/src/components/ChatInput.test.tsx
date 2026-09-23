@@ -31,6 +31,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     planningModels: [],
     executorModelName: 'Qwen',
     goal: null,
+    goalArmed: false,
     goalAvailable: true,
     thinkingEnabled: false,
     thinkingAvailable: true,
@@ -54,8 +55,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     onToggleResearch: vi.fn(),
     onTogglePlan: vi.fn(),
     onPlanModelChange: vi.fn(),
-    onOpenGoal: vi.fn(),
-    onEditGoal: vi.fn(),
+    onToggleGoal: vi.fn(),
     onPauseGoal: vi.fn(),
     onResumeGoal: vi.fn(),
     onClearGoal: vi.fn(),
@@ -145,7 +145,7 @@ describe('ChatInput add menu', () => {
       ['Image from computer', 'image'],
       ['Change project folder', 'onOpenWorkspace'],
       ['Shared project notes', 'onOpenWorkspaceMemory'],
-      ['Ongoing goal', 'onOpenGoal'],
+      ['Ongoing goal', 'onToggleGoal'],
       ['Plan first', 'onTogglePlan'],
       ['Research report', 'onToggleResearch'],
       ['Model thinking', 'onToggleThinking']
@@ -204,5 +204,88 @@ describe('ChatInput add menu', () => {
     expect(notes.title).toBe('Loading shared project notes…')
     expect(notes.textContent?.trim()).toBe('Shared project notes')
     expect(notes.getAttribute('aria-label')).toContain('Loading shared project notes…')
+  })
+})
+
+describe('ChatInput goal banner', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+    vi.restoreAllMocks()
+  })
+
+  const goal = {
+    id: 'goal-1',
+    conversationId: 'conversation-1',
+    objective: 'Ship the settings page',
+    status: 'active' as const,
+    revision: 1,
+    continuationCount: 2,
+    promptTokens: 0,
+    completionTokens: 0,
+    blockedStreak: 0,
+    plan: [],
+    createdAt: 1,
+    updatedAt: 1
+  }
+
+  it('says the next message becomes the goal, and lets arming be undone', async () => {
+    const onToggleGoal = vi.fn()
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ goalArmed: true, onToggleGoal })} />)
+    )
+
+    const banner = container.querySelector('.goal-mode-bar.is-armed')
+    expect(banner?.textContent).toContain('next message becomes the objective')
+    // The objective is written in the composer, not in a separate dialog.
+    expect(container.querySelector('.goal-dialog')).toBeNull()
+    expect(container.querySelector('textarea')?.getAttribute('placeholder')).toContain(
+      'Describe the outcome'
+    )
+
+    await act(async () =>
+      (banner?.querySelector('button[aria-label="Cancel goal"]') as HTMLButtonElement).click()
+    )
+    expect(onToggleGoal).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers pause and drop on a running goal, and no longer edits or counts', async () => {
+    const onPauseGoal = vi.fn()
+    const onClearGoal = vi.fn()
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ goal, onPauseGoal, onClearGoal })} />)
+    )
+
+    const bar = container.querySelector('.goal-mode-bar')!
+    expect(bar.textContent).toContain('Ship the settings page')
+    const labels = [...bar.querySelectorAll('button')].map((button) =>
+      button.getAttribute('aria-label')
+    )
+    expect(labels).toEqual(['Pause goal', 'Drop goal'])
+    expect(bar.querySelector('.goal-mode-progress')).toBeNull()
+
+    await act(async () => (bar.querySelector('[aria-label="Pause goal"]') as HTMLElement).click())
+    await act(async () => (bar.querySelector('[aria-label="Drop goal"]') as HTMLElement).click())
+    expect(onPauseGoal).toHaveBeenCalledTimes(1)
+    expect(onClearGoal).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers resume, not pause, once a goal has stopped', async () => {
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ goal: { ...goal, status: 'paused' } })} />)
+    )
+    const labels = [...container.querySelectorAll('.goal-mode-bar button')].map((button) =>
+      button.getAttribute('aria-label')
+    )
+    expect(labels).toEqual(['Resume goal', 'Drop goal'])
   })
 })

@@ -4,6 +4,10 @@ import type {
   CollaborationGroupDetail
 } from '../../../shared/collaboration'
 import type { ProjectConversation } from '../../../shared/projects'
+import type {
+  ConversationGoal,
+  ConversationGoalChangedEvent
+} from '../../../shared/conversationGoals'
 
 const previewSettings = {
   openRouterApiKeyConfigured: false,
@@ -619,8 +623,49 @@ const previewMessages = [
   }
 ]
 
+// The preview keeps one goal and its listeners so the composer banner and the
+// completion notice can be exercised without a model. Nothing here is shipped.
+let previewGoal: ConversationGoal | null = null
+const previewGoalListeners = new Set<(change: ConversationGoalChangedEvent) => void>()
+
+function changePreviewGoal(update: Partial<ConversationGoal>): ConversationGoal {
+  if (!previewGoal) throw new Error('No preview goal')
+  previewGoal = {
+    ...previewGoal,
+    ...update,
+    revision: previewGoal.revision + 1,
+    updatedAt: Date.now()
+  }
+  const snapshot = previewGoal
+  for (const listener of previewGoalListeners) listener({ goal: snapshot })
+  if (snapshot.status === 'cleared') previewGoal = null
+  return snapshot
+}
+
+declare global {
+  interface Window {
+    /** Preview-only controls for states a model would normally drive. */
+    __sidekickPreview?: {
+      completeGoal: (summary?: string, verification?: string) => ConversationGoal
+    }
+  }
+}
+
 export function installBrowserApiMock(): void {
   if (window.api || !import.meta.env.DEV) return
+
+  window.__sidekickPreview = {
+    completeGoal: (
+      summary = 'Added the toggle and wired it to the theme store.',
+      verification = 'Settings tests pass: 14 of 14.'
+    ) =>
+      changePreviewGoal({
+        status: 'completed',
+        completionSummary: summary,
+        completionVerification: verification,
+        completedAt: Date.now()
+      })
+  }
 
   window.api = {
     providers: {
@@ -914,21 +959,25 @@ export function installBrowserApiMock(): void {
       onEvent: () => () => undefined
     },
     conversationGoals: {
-      current: async () => null,
-      create: async (input) => ({
-        id: crypto.randomUUID(),
-        conversationId: input.conversationId,
-        objective: input.objective,
-        status: 'active',
-        revision: 1,
-        continuationCount: 0,
-        promptTokens: 0,
-        completionTokens: 0,
-        blockedStreak: 0,
-        plan: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-      }),
+      current: async (conversationId) =>
+        previewGoal?.conversationId === conversationId ? previewGoal : null,
+      create: async (input) => {
+        previewGoal = {
+          id: crypto.randomUUID(),
+          conversationId: input.conversationId,
+          objective: input.objective,
+          status: 'active',
+          revision: 1,
+          continuationCount: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          blockedStreak: 0,
+          plan: [],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+        return previewGoal
+      },
       edit: async (input) => ({
         id: input.goalId,
         conversationId: 'preview-conversation',
@@ -943,16 +992,13 @@ export function installBrowserApiMock(): void {
         createdAt: Date.now(),
         updatedAt: Date.now()
       }),
-      pause: async () => {
-        throw new Error('No preview goal')
-      },
-      resume: async () => {
-        throw new Error('No preview goal')
-      },
-      clear: async () => {
-        throw new Error('No preview goal')
-      },
-      onChanged: () => () => undefined
+      pause: async () => changePreviewGoal({ status: 'paused' }),
+      resume: async () => changePreviewGoal({ status: 'active' }),
+      clear: async () => changePreviewGoal({ status: 'cleared' }),
+      onChanged: (callback) => {
+        previewGoalListeners.add(callback)
+        return () => previewGoalListeners.delete(callback)
+      }
     },
     collaboration: {
       listGroups: async () => [previewGroup],

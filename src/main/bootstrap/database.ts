@@ -85,6 +85,13 @@ const REQUIRED_COLUMNS = [
     table: 'conversation_goals',
     column: 'completion_tokens',
     definition: 'INTEGER NOT NULL DEFAULT 0'
+  },
+  {
+    // App-authored status presentation for a system notice, so a goal that
+    // finished still reads as finished after the conversation is reopened.
+    table: 'messages',
+    column: 'notice_tone',
+    definition: 'TEXT'
   }
 ] as const
 

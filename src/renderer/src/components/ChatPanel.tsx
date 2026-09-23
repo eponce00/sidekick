@@ -12,7 +12,6 @@ import { MessageItem } from './MessageItem'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
-import { GoalDialog } from './GoalDialog'
 import type { TodoItem } from '../../../shared/types'
 import type { PermissionMode } from '../../../shared/permissions'
 import type { ConversationTitleSource } from '../../../shared/conversationTitles'
@@ -167,7 +166,7 @@ function ChatPanel({
   const [workspaceMemoryLoadedFor, setWorkspaceMemoryLoadedFor] = useState<string | null>(null)
   const [workspaceMemoryError, setWorkspaceMemoryError] = useState<string | null>(null)
   const [isWorkspaceMemoryOpen, setIsWorkspaceMemoryOpen] = useState(false)
-  const [goalDialogMode, setGoalDialogMode] = useState<'create' | 'edit' | null>(null)
+  const [goalArmed, setGoalArmed] = useState(false)
   const [gitAvailableForWorkspace, setGitAvailableForWorkspace] = useState<boolean>(true) // git check result
   const [gitBannerDismissed, setGitBannerDismissed] = useState(false) // user dismissed git warning
   const messagesContainerRef = useRef<HTMLDivElement>(null)
@@ -216,12 +215,52 @@ function ChatPanel({
       )
     }
   })
-  const { goal, createGoal, editGoal, pauseGoal, resumeGoal, clearGoal } =
-    useConversationGoal(conversationId)
+  const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)
 
   useEffect(() => {
     if (conversationId) onFocusChainUpdate(conversationId, goal?.plan ?? [])
   }, [conversationId, goal?.plan, onFocusChainUpdate])
+
+  // A finished goal is reported where the work is, not on the composer the
+  // next message will be typed into. The notice carries the goal's own id so
+  // reopening the conversation shows the stored one instead of adding another.
+  //
+  // The goal is marked complete by a tool call inside the run, before the
+  // model's closing reply. Waiting for the run to end, and stamping the notice
+  // then, keeps it after that reply both now and when the history is reloaded.
+  useEffect(() => {
+    if (!conversationId || goal?.status !== 'completed' || goal.conversationId !== conversationId) {
+      return
+    }
+    if (isLoading) return
+    const noticeId = `goal-complete:${goal.id}`
+    if (messagesRef.current.some((message) => message.id === noticeId)) return
+    const detail = [goal.completionSummary, goal.completionVerification]
+      .map((part) => part?.trim())
+      .filter(Boolean)
+      .join('\n')
+    const headline = `Goal complete — ${goal.objective}`
+    const notice: Message = {
+      id: noticeId,
+      role: 'system',
+      noticeTone: 'success',
+      content: detail ? `${headline}\n\n${detail}` : headline,
+      timestamp: Date.now()
+    }
+    setMessages((previous) =>
+      previous.some((message) => message.id === noticeId) ? previous : [...previous, notice]
+    )
+    void window.api.conversations
+      .saveMessage({
+        id: notice.id,
+        conversation_id: conversationId,
+        role: notice.role,
+        content: notice.content,
+        noticeTone: notice.noticeTone,
+        timestamp: notice.timestamp
+      })
+      .catch((error) => console.error('[Goal] Could not store the completion notice', error))
+  }, [conversationId, goal, isLoading, messagesRef, setMessages])
 
   const busyConversationId = runConversationId ?? conversationId
   const busyConversationIdRef = useRef<string | null>(busyConversationId)
@@ -353,6 +392,8 @@ function ChatPanel({
     setAttachedContext([])
     setAttachmentError(null)
     setNextRunMode('conversation')
+    // Arming belongs to the conversation it was chosen in.
+    setGoalArmed(false)
   }, [conversationId])
 
   // Simple handler to track artifact render results (called by Artifact components)
@@ -474,7 +515,8 @@ function ChatPanel({
     if (nextRunMode === 'plan' && !planAvailable) {
       setNextRunMode('conversation')
     }
-  }, [nextRunMode, planAvailable, researchAvailable])
+    if (goalArmed && !goalAvailable) setGoalArmed(false)
+  }, [goalArmed, goalAvailable, nextRunMode, planAvailable, researchAvailable])
   const thinkingAvailable =
     selectedProvider === 'ollama' ||
     selectedProvider === 'ollama-cloud' ||
@@ -670,13 +712,17 @@ function ChatPanel({
     await sendConversationMessage(content, streamAgentResponse, options)
   }
 
-  const handleStartGoal = async (objective: string): Promise<void> => {
+  const handleStartGoal = async (
+    objective: string,
+    images?: MessageImageAttachment[],
+    attachments?: MessageContextAttachment[]
+  ): Promise<void> => {
     if (!goalAvailable) throw new Error(goalUnavailableReason || 'A goal cannot start right now')
     pendingGoalStartRef.current = objective
     setNextRunMode('conversation')
     setIsFeaturesMenuOpen(false)
     try {
-      await sendMessage(objective, { clearInput: true, mode: 'conversation' })
+      await sendMessage(objective, { clearInput: true, mode: 'conversation', images, attachments })
     } finally {
       pendingGoalStartRef.current = null
     }
@@ -728,6 +774,16 @@ function ChatPanel({
     const attachments = attachedContext
     if (isLoading) {
       void handleSendDuringLoading(inputValue, images, attachments)
+      return
+    }
+    if (goalArmed) {
+      // The objective is the message. Images alone cannot state one.
+      if (!inputValue.trim()) return
+      setGoalArmed(false)
+      setPlanModelOverrideId(null)
+      setAttachedImages([])
+      setAttachedContext([])
+      void handleStartGoal(inputValue.trim(), images, attachments)
       return
     }
     const mode = nextRunMode
@@ -947,7 +1003,8 @@ function ChatPanel({
         planningModelId={selectedPlanningModel?.id || ''}
         planningModels={pinnedModels.filter((model) => model.supportsTools !== false)}
         executorModelName={selectedPinnedModel?.name || ''}
-        goal={goal}
+        goal={goal?.status === 'completed' ? null : goal}
+        goalArmed={goalArmed}
         goalAvailable={goalAvailable}
         goalUnavailableReason={goalUnavailableReason}
         thinkingEnabled={thinkingEnabled}
@@ -980,19 +1037,25 @@ function ChatPanel({
         onToggleResearch={() => {
           if (!researchAvailable) return
           setNextRunMode((mode) => (mode === 'research' ? 'conversation' : 'research'))
+          setGoalArmed(false)
           setIsFeaturesMenuOpen(false)
         }}
         onTogglePlan={() => {
           if (!planAvailable) return
           setNextRunMode((mode) => (mode === 'plan' ? 'conversation' : 'plan'))
+          setGoalArmed(false)
           setIsFeaturesMenuOpen(false)
         }}
         onPlanModelChange={(modelId) => setPlanModelOverrideId(modelId || null)}
-        onOpenGoal={() => {
-          setGoalDialogMode('create')
+        onToggleGoal={() => {
+          setGoalArmed((armed) => {
+            if (armed) return false
+            if (!goalAvailable) return false
+            setNextRunMode('conversation')
+            return true
+          })
           setIsFeaturesMenuOpen(false)
         }}
-        onEditGoal={() => setGoalDialogMode('edit')}
         onPauseGoal={() => void pauseGoal()}
         onResumeGoal={() => void handleResumeGoal()}
         onClearGoal={() => void clearGoal()}
@@ -1037,20 +1100,6 @@ function ChatPanel({
         showScrollToBottom={showScrollToBottom}
         onScrollToBottom={scrollToBottom}
       />
-
-      {goalDialogMode && (
-        <GoalDialog
-          isOpen
-          mode={goalDialogMode}
-          initialObjective={goalDialogMode === 'edit' ? goal?.objective : ''}
-          onClose={() => setGoalDialogMode(null)}
-          onSubmit={(objective) =>
-            goalDialogMode === 'edit'
-              ? editGoal(objective).then(() => undefined)
-              : handleStartGoal(objective)
-          }
-        />
-      )}
 
       <WorkspaceMemoryModal
         isOpen={

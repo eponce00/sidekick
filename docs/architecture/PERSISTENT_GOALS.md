@@ -9,8 +9,17 @@ clears it, or the same real blocker is confirmed repeatedly.
 - One unfinished goal may be attached to a conversation. Parallel goals belong in parallel chats.
 - The goal text is both the first user request and the completion criterion. Strong goals state the
   outcome, constraints, and concrete verification.
-- A compact row above the composer exposes status, objective, plan progress, pause/resume, edit,
-  and clear. Follow-up messages preempt a running continuation and steer the same conversation.
+- A goal is started from the composer, not a dialog. Choosing **Ongoing goal** arms the next
+  message: a row above the composer says so and can be dismissed, and the message the user then
+  sends becomes the objective. Plan and research modes are mutually exclusive with arming.
+- While a goal is unfinished, the row shows its status and objective with pause/resume and drop.
+  It has no edit control: follow-up messages preempt a running continuation and steer the same
+  conversation, so the chat is where a goal is changed.
+- A completed goal leaves the composer, since the next message is not part of it. Completion is
+  reported in the conversation as a success notice carrying the goal's summary and verification.
+  The notice is stored with the conversation under an id derived from the goal, so reopening shows
+  the stored notice rather than adding another. Notices are app-authored and never sent to the
+  model.
 - Goals do not change the selected model's tools, project boundary, permission mode, or approval
   policy. A tool-incapable model cannot start a goal because it cannot report verified completion.
 - Pausing or clearing cancels the current run safely. A restart converts an active goal to paused
@@ -40,8 +49,8 @@ Goals are a control plane over the existing agent runtime, not another provider 
   is complete or execute the continuation loop.
 
 The goal plan reuses `manage_todo_list`: writes remain per-run for audit while the latest goal plan
-is also copied into durable goal state. The compact goal row above the composer exposes its current
-status and progress without introducing a separate Tasks navigation surface.
+is also copied into durable goal state, where the focus chain reads it, without introducing a
+separate Tasks navigation surface.
 
 ## Continuation and steering
 
