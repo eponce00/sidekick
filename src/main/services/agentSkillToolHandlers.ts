@@ -4,6 +4,7 @@ import {
   type ToolExecutionResult
 } from '../../shared/agentRuntime'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
+import { skillToolNames } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import type { AgentChildRunLauncher } from './agentToolRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -113,6 +114,11 @@ export function registerSkillToolHandlers(
         }
       },
       modelContent:
+        // Say what loading changed: the model otherwise treated a reload as
+        // instructions only and never looked for the tool it had just gained.
+        (skillToolNames(skill.id).length
+          ? `Loaded. ${skillToolNames(skill.id).join(', ')} is now available for the rest of this run; skills load per run, so load it again in a later turn that needs it.\n`
+          : '') +
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
         `${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n` +
         (options.officeHelpersAvailable?.() && ['docx', 'xlsx', 'pptx'].includes(skill.id)

@@ -123,3 +123,26 @@ describe('create_artifact', () => {
     }
   })
 })
+
+it('says loading a skill adds its tool for the rest of the run, and only for that run', async () => {
+  // Treating a reload as "instructions only", the model never looked for the
+  // tool it would have regained.
+  const registry = new AgentToolHandlerRegistry()
+  registerSkillToolHandlers(registry, {
+    activeSkillIds: new Set<string>(),
+    readReceipts: new Map(),
+    childLauncher: () => undefined
+  })
+  const load = (skillId: string) =>
+    registry.execute({
+      name: 'use_skill',
+      title: 'Load skill',
+      arguments: { skill_id: skillId },
+      context: { runId: 'skill-test', signal: new AbortController().signal }
+    })
+
+  expect((await load('web-artifacts')).modelContent).toContain(
+    'create_artifact is now available for the rest of this run'
+  )
+  expect((await load('pdf')).modelContent).not.toContain('is now available')
+})

@@ -2,6 +2,7 @@ import type { AgentToolDefinition } from '../../shared/agentToolDefinitions'
 import {
   getAgentToolCatalog,
   getAgentToolEntry,
+  skillProvidingTool,
   type AgentToolCatalogOptions
 } from '../../shared/agentToolCatalog'
 import {
@@ -453,12 +454,18 @@ export function validatePreparedAgentToolCall(
 ): ToolExecutionResult | null {
   const catalogEntry = getAgentToolEntry(catalog, call.name)
   if (!catalogEntry) {
+    // Skills load per run, so a tool used in an earlier turn can be missing
+    // from a follow-up. Saying which skill brings it back is the difference
+    // between one extra call and the model giving up.
+    const skillId = skillProvidingTool(call.name)
     return toolExecutionFailed({
       title,
       code: 'unknown_tool',
       message: `Tool is not available in this run: ${call.name}`,
       recoveryAction: 'change_strategy',
-      recovery: 'Choose a tool from the current tool catalog.',
+      recovery: skillId
+        ? `${call.name} comes from the ${skillId} skill, which is loaded per run. Call use_skill with skill_id "${skillId}" to load it again, then call ${call.name}.`
+        : 'Choose a tool from the current tool catalog.',
       startedAt
     })
   }

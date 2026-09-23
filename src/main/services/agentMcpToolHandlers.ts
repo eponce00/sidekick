@@ -1,4 +1,5 @@
 import { toolExecutionSucceeded } from '../../shared/agentRuntime'
+import { skillsWithTools, skillToolNames } from '../../shared/agentToolCatalog'
 import type { McpToolInfo } from '../../shared/types'
 import type { McpClientManager } from './mcpClientManager'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -38,12 +39,27 @@ export function registerMcpToolHandlers(
       server: tool.serverName,
       description: tool.description || tool.name
     }))
+    // A model looking for a skill's tool searches here too; answering only
+    // about MCP left it concluding the tool could not be reached.
+    const skillHints = matches.length
+      ? []
+      : skillsWithTools()
+          .filter((skillId) => {
+            const haystack = `${skillId} ${skillToolNames(skillId).join(' ')}`.toLowerCase()
+            return terms
+              .map((term) => term.replace(/[^a-z0-9_-]/g, ''))
+              .some((term) => term.length >= 3 && haystack.includes(term))
+          })
+          .map(
+            (skillId) =>
+              `${skillToolNames(skillId).join(', ')} comes from the ${skillId} skill; call use_skill with skill_id "${skillId}" to load it.`
+          )
     return toolExecutionSucceeded({
       title,
       data,
       modelContent: matches.length
         ? `Enabled ${matches.length} matching tool(s): ${matches.map(({ functionName }) => functionName).join(', ')}`
-        : 'No matching MCP tools found.'
+        : ['No matching MCP tools found.', ...skillHints].join(' ')
     })
   })
 

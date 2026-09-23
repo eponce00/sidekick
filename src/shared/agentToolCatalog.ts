@@ -1450,6 +1450,25 @@ export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEnt
   return skillId === WEB_ARTIFACTS_SKILL_ID ? [entry(createArtifact, 'artifacts', 'write')] : []
 }
 
+const SKILLS_WITH_TOOLS = [WEB_ARTIFACTS_SKILL_ID] as const
+
+/** The skill whose loading adds a tool to a run, when a tool comes from one. */
+export function skillProvidingTool(name: string): string | undefined {
+  return SKILLS_WITH_TOOLS.find((skillId) =>
+    getSkillToolCatalogEntries(skillId).some(({ definition }) => definition.function.name === name)
+  )
+}
+
+/** Skills that add tools to the run that loads them. */
+export function skillsWithTools(): readonly string[] {
+  return SKILLS_WITH_TOOLS
+}
+
+/** Names of the tools a skill adds to the run that loads it. */
+export function skillToolNames(skillId: string): string[] {
+  return getSkillToolCatalogEntries(skillId).map(({ definition }) => definition.function.name)
+}
+
 export function officeHelperWorkflows(skills: readonly string[]): string[] {
   const workflows = skills.flatMap((id) =>
     id === 'docx' ? ['docx-comment'] : id === 'xlsx' ? ['xlsx'] : id === 'pptx' ? ['pptx-read'] : []
