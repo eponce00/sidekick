@@ -4332,13 +4332,15 @@ body[data-theme='light'] .tool-approval-command {
 .agent-question-navigation .agent-question-cancel {
   order: -1;
   margin-right: auto;
-  color: var(--text-muted);
-  background: transparent;
+  border-color: color-mix(in srgb, var(--color-error) 24%, transparent);
+  color: color-mix(in srgb, var(--color-error) 78%, var(--text-secondary));
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
 }
 
 .agent-question-navigation .agent-question-cancel:hover {
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border-color: color-mix(in srgb, var(--color-error) 46%, transparent);
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
 }
 
 .agent-question-compose {
@@ -4346,9 +4348,9 @@ body[data-theme='light'] .tool-approval-command {
   align-items: center;
   gap: 8px;
   margin-top: 8px;
-  padding: 5px 5px 5px 12px;
+  padding: 6px 6px 6px 16px;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-full);
   background: var(--surface-0);
   /* The card is tinted, so a border alone leaves the field almost level with
      it. The composer reads as a field because it is lifted, and this is the
@@ -4366,6 +4368,15 @@ body[data-theme='light'] .tool-approval-command {
 .agent-question-compose:focus-within {
   border-color: var(--accent);
   background: var(--surface-1);
+  box-shadow:
+    var(--focus-ring),
+    0 1px 3px var(--shadow);
+}
+
+/* The focus ring belongs to the field. Left on the bare input inside it, the
+   global ring drew a second, square outline within the rounded one. */
+.agent-question-compose input:focus-visible {
+  box-shadow: none;
 }
 
 .agent-question-compose input {
