@@ -31,6 +31,11 @@ import {
 } from '../utils/chatPanelHelpers'
 import type { WelcomeSuggestion } from '../utils/welcomeSuggestions'
 import { selectPromptRefinementHistory } from '../utils/promptRefinementHistory'
+import {
+  isCompletionToAnnounce,
+  markCompletionAnnounced,
+  observeGoal
+} from '../utils/goalCompletionNotice'
 import { createConversationTitleMessages } from '../services/prompts'
 import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
 import {
@@ -229,10 +234,10 @@ function ChatPanel({
   // model's closing reply. Waiting for the run to end, and stamping the notice
   // then, keeps it after that reply both now and when the history is reloaded.
   useEffect(() => {
-    if (!conversationId || goal?.status !== 'completed' || goal.conversationId !== conversationId) {
-      return
-    }
-    if (isLoading) return
+    observeGoal(goal)
+    if (!conversationId || !goal || goal.conversationId !== conversationId) return
+    if (!isCompletionToAnnounce(goal) || isLoading) return
+    markCompletionAnnounced(goal.id)
     const noticeId = `goal-complete:${goal.id}`
     if (messagesRef.current.some((message) => message.id === noticeId)) return
     // The objective is the message the goal began with and the summary is what
