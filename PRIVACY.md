@@ -53,6 +53,10 @@ as your IP address and may apply their own cookies, logging, and privacy policie
 
 SideKick has no search relay and does not receive a copy of these requests.
 
+An interactive artifact the model creates is rendered once off screen so the model can check it,
+in addition to being shown in the chat. Any request the artifact's own code makes, such as loading
+weather data, is therefore made once more by that check, from your device, to the same service.
+
 Links in replies are shown with the linked site's own icon. To fetch it, SideKick requests
 `/favicon.ico` (or the icon the site's home page declares) directly from that site, once per site,
 and keeps it in a local cache for a week. No icon service or other third party is involved, so a

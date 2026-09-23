@@ -87,6 +87,16 @@ Use framer-motion for smooth transitions and animations when motion adds value.
 - A subtree may opt out of Sidekick's severe-contrast repair only when intentional (for example,
   text used as an image mask) by setting `data-sidekick-contrast="preserve"`.
 
+### Reviewing the result
+
+- `create_artifact` renders the artifact the way the chat shows it and reports back: whether it
+  rendered, any runtime errors, and, for models that accept images, a screenshot taken after its
+  data requests had time to load.
+- Look at that result before telling the user it works. If it failed, is blank, still shows a
+  loading state, or does not match the request, fix it and call `create_artifact` again.
+- Describe only what the result showed. If no screenshot was returned, say how it looks is
+  unverified rather than describing it.
+
 ### Component Patterns (React artifacts)
 
 - For complex UI with multiple views, use a simple tab/nav state pattern with `useState`.

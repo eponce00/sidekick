@@ -49,6 +49,7 @@ import { registerCoreToolHandlers } from './agentCoreToolHandlers'
 import { registerWebToolHandlers } from './agentWebToolHandlers'
 import { registerConversationToolHandlers } from './agentConversationToolHandlers'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
+import type { ArtifactInspectorLike } from './artifactInspector'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
 import { externalImageApprovalForMode } from './externalImageApproval'
@@ -287,6 +288,7 @@ export function collaborationCommandScopeError(
 
 export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
+  private artifactInspector?: ArtifactInspectorLike
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -311,6 +313,11 @@ export class AgentToolRuntime {
 
   setChildLauncher(launcher: AgentChildRunLauncher): void {
     this.childLauncher = launcher
+  }
+
+  /** Lets create_artifact render what it made and show the model the result. */
+  setArtifactInspector(inspector: ArtifactInspectorLike): void {
+    this.artifactInspector = inspector
   }
 
   async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
@@ -359,7 +366,10 @@ export class AgentToolRuntime {
       activeSkillIds,
       officeHelpersAvailable: () => officeSession?.available() ?? false,
       readReceipts,
-      childLauncher: () => this.childLauncher
+      childLauncher: () => this.childLauncher,
+      artifactInspector: () => this.artifactInspector,
+      // The visual browser is enabled exactly when the model accepts images.
+      visionEnabled: input.browserEnabled === true
     })
     handlers.register(
       ['office_preflight', 'office_validate'],

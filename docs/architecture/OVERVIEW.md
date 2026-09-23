@@ -223,6 +223,16 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+An artifact made with `create_artifact` is observed the same way before its result returns.
+`ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
+that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with
+the chat's own components in the user's theme, waits for it to report success and then for its data
+requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
+width. The model receives the render status, errors, and, when it accepts images, the capture as a
+small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
+failed tool call, and when inspection itself is unavailable the result says the artifact is
+unverified.
+
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the
 request boundary. OpenAI-compatible and Ollama requests preserve the required contiguous tool

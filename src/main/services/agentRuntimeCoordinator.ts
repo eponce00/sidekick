@@ -54,6 +54,7 @@ import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
+import { ArtifactInspector } from './artifactInspector'
 import type {
   ConversationGoal,
   CreateConversationGoalInput,
@@ -164,6 +165,7 @@ export class AgentRuntimeCoordinator {
     this.tools.setChildLauncher({
       launch: (task, context, parent) => this.launchChild(task, context, parent)
     })
+    this.tools.setArtifactInspector(new ArtifactInspector())
     this.recoverInterruptedRuns()
     this.goals.pauseActiveAfterRestart()
     void this.outputs

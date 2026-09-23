@@ -117,6 +117,12 @@ to turn an otherwise valid harness run into a harness defect by itself. The full
 a two-turn inline-SVG creation and revision scenario; the native-browser smoke separately proves
 real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup.
 
+`npm run test:artifact-inspector-smoke` renders React, HTML, and SVG artifacts, including one that
+fetches live data and one that throws, through the real artifact inspection window, and writes each
+capture to `artifact-smoke/` for review. By default it needs the renderer dev server from
+`npm run dev`, because outside a packaged build the artifact protocol serves the inspection page
+from it; after `npm run build`, pass `-- --production` to serve it from the built renderer instead.
+
 The configured comprehensive lane combines those boundaries in one real Electron-backed journey.
 It requires todo state, project reads, raster image inspection, new-file creation, localized
 existing-file edits, deletion, commands, verification evidence, desktop and compact browser
