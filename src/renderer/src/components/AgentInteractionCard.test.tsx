@@ -40,7 +40,7 @@ describe('AgentInteractionCard question workflow', () => {
     container.remove()
   })
 
-  it('marks a chosen option so selection survives a pointer resting elsewhere', async () => {
+  it('marks accumulated choices so selection survives a pointer resting elsewhere', async () => {
     // Selection used to share one rule with hover, so a chosen option looked
     // identical to whichever option the pointer happened to be over.
     await act(async () =>
@@ -55,6 +55,7 @@ describe('AgentInteractionCard question workflow', () => {
                 {
                   id: 'density',
                   question: 'How compact?',
+                  multiSelect: true,
                   options: [{ label: 'Comfortable' }, { label: 'Compact' }]
                 }
               ]
@@ -165,8 +166,12 @@ describe('AgentInteractionCard question workflow', () => {
     expect(option('Files').getAttribute('aria-pressed')).toBe('true')
     await act(async () => option('Next').click())
     expect(container.textContent).toContain('Question 2 of 2')
+    // The second question takes one answer, so choosing it is the answer and
+    // there is no separate confirmation to press.
+    expect(
+      [...container.querySelectorAll('button')].some((b) => b.textContent === 'Send answers')
+    ).toBe(false)
     await act(async () => option('Compact').click())
-    await act(async () => option('Send answers').click())
     expect(resolve).toHaveBeenCalledWith('question-1', {
       features: ['Files', 'Web'],
       format: 'Compact'
@@ -201,9 +206,13 @@ describe('AgentInteractionCard question workflow', () => {
     await act(async () => setInputValue(input, 'Sidekick'))
     const button = (label: string): HTMLButtonElement =>
       [...container.querySelectorAll('button')].find((item) => item.textContent?.includes(label))!
-    await act(async () => button('Next').click())
+    const send = (): HTMLButtonElement =>
+      container.querySelector('.agent-question-send') as HTMLButtonElement
+    await act(async () => send().click())
     await act(async () => button('Back').click())
-    await act(async () => button('Next').click())
+    // The typed answer is still there on the way back.
+    expect((container.querySelector('input') as HTMLInputElement).value).toBe('Sidekick')
+    await act(async () => send().click())
     await act(async () => button('Skip').click())
     expect(resolve).toHaveBeenCalledWith('question-2', { name: 'Sidekick' })
 
@@ -241,9 +250,7 @@ describe('AgentInteractionCard question workflow', () => {
     await act(async () => other.click())
     const input = container.querySelector('input') as HTMLInputElement
     await act(async () => setInputValue(input, 'Zed'))
-    const send = [...container.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Send answers')
-    )!
+    const send = container.querySelector('.agent-question-send') as HTMLButtonElement
     await act(async () => send.click())
     expect(resolve).toHaveBeenCalledWith('question-3', { editor: 'Zed' })
 

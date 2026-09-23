@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import {
   Check,
+  ArrowUp,
   ChevronLeft,
-  ChevronRight,
   ListChecks,
   Loader2,
   MonitorUp,
@@ -44,6 +44,53 @@ interface QuestionAnswer {
 }
 
 const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '', skipped: false }
+
+/**
+ * A typed answer behaves like the composer it sits above: the same field, the
+ * same round send button, Enter to send. Nothing else in the card needs a
+ * submit control, so this is the only place one appears.
+ */
+function QuestionCompose({
+  value,
+  placeholder,
+  onChange,
+  onSend
+}: {
+  value: string
+  placeholder: string
+  onChange: (value: string) => void
+  onSend: (value: string) => void
+}): React.JSX.Element {
+  const trimmed = value.trim()
+  const send = (): void => {
+    if (trimmed) onSend(trimmed)
+  }
+  return (
+    <div className="agent-question-compose">
+      <input
+        value={value}
+        autoFocus
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' || event.shiftKey) return
+          event.preventDefault()
+          send()
+        }}
+      />
+      <button
+        type="button"
+        className="send-button agent-question-send"
+        onClick={send}
+        disabled={!trimmed}
+        aria-label="Send answer"
+        title="Send answer"
+      >
+        <ArrowUp size={15} strokeWidth={2.3} />
+      </button>
+    </div>
+  )
+}
 
 function questionsFrom(interaction: Interaction): Question[] {
   if (!Array.isArray(interaction.request.questions)) return []
@@ -427,16 +474,30 @@ export default function AgentInteractionCard({
   ): void => {
     setAnswers((current) => ({ ...current, [id]: update(current[id] ?? EMPTY_ANSWER) }))
   }
-  const responseAnswers = (): Record<string, unknown> =>
+  const responseFrom = (source: Record<string, QuestionAnswer>): Record<string, unknown> =>
     Object.fromEntries(
       questions.flatMap((question) => {
-        const answer = answers[question.id] ?? EMPTY_ANSWER
+        const answer = source[question.id] ?? EMPTY_ANSWER
         if (answer.skipped) return []
         const values = [...answer.selected, ...(answer.custom.trim() ? [answer.custom.trim()] : [])]
         if (!values.length) return []
         return [[question.id, question.multiSelect || values.length > 1 ? values : values[0]]]
       })
     )
+  /**
+   * Record an answer and move on in the same gesture. A question that accepts
+   * one answer needs no separate confirmation: choosing is the answer. Only a
+   * question that accumulates several needs a button to say "that is all".
+   */
+  const commitAnswer = (id: string, update: (current: QuestionAnswer) => QuestionAnswer): void => {
+    const next = { ...answers, [id]: update(answers[id] ?? EMPTY_ANSWER) }
+    setAnswers(next)
+    if (!atLastQuestion) {
+      setQuestionIndex((current) => current + 1)
+      return
+    }
+    void onResolve(interaction.id, responseFrom(next))
+  }
   return (
     <div
       className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}
@@ -479,24 +540,31 @@ export default function AgentInteractionCard({
                     type="button"
                     key={option.label}
                     className={selected ? 'selected' : ''}
-                    role={currentQuestion.multiSelect ? 'checkbox' : 'radio'}
-                    aria-checked={selected}
-                    aria-pressed={selected}
+                    {...(currentQuestion.multiSelect
+                      ? { role: 'checkbox', 'aria-checked': selected, 'aria-pressed': selected }
+                      : {})}
                     onClick={() =>
-                      setQuestionAnswer(currentQuestion.id, (answer) => ({
-                        ...answer,
-                        skipped: false,
-                        selected: currentQuestion.multiSelect
-                          ? selected
-                            ? answer.selected.filter((value) => value !== option.label)
-                            : [...answer.selected, option.label]
-                          : [option.label]
-                      }))
+                      currentQuestion.multiSelect
+                        ? setQuestionAnswer(currentQuestion.id, (answer) => ({
+                            ...answer,
+                            skipped: false,
+                            selected: selected
+                              ? answer.selected.filter((value) => value !== option.label)
+                              : [...answer.selected, option.label]
+                          }))
+                        : commitAnswer(currentQuestion.id, (answer) => ({
+                            ...answer,
+                            skipped: false,
+                            custom: '',
+                            selected: [option.label]
+                          }))
                     }
                   >
-                    <span className="agent-question-mark" aria-hidden="true">
-                      {selected && <Check size={11} strokeWidth={3} />}
-                    </span>
+                    {currentQuestion.multiSelect && (
+                      <span className="agent-question-mark" aria-hidden="true">
+                        {selected && <Check size={11} strokeWidth={3} />}
+                      </span>
+                    )}
                     <span className="agent-question-option-body">
                       <span className="agent-question-option-label">
                         {option.label}
@@ -509,17 +577,24 @@ export default function AgentInteractionCard({
               })}
               {currentQuestion.allowOther !== false &&
                 (showOther[currentQuestion.id] ? (
-                  <input
+                  <QuestionCompose
                     value={currentAnswer.custom}
-                    autoFocus
-                    onChange={(event) =>
+                    placeholder="Type another answer"
+                    onChange={(value) =>
                       setQuestionAnswer(currentQuestion.id, (answer) => ({
                         ...answer,
                         skipped: false,
-                        custom: event.target.value
+                        custom: value
                       }))
                     }
-                    placeholder="Type another answer"
+                    onSend={(value) =>
+                      commitAnswer(currentQuestion.id, (answer) => ({
+                        ...answer,
+                        skipped: false,
+                        selected: [],
+                        custom: value
+                      }))
+                    }
                   />
                 ) : (
                   <button
@@ -534,17 +609,23 @@ export default function AgentInteractionCard({
                 ))}
             </div>
           ) : (
-            <input
+            <QuestionCompose
               value={currentAnswer.custom}
-              autoFocus
-              onChange={(event) =>
+              placeholder="Type your answer"
+              onChange={(value) =>
                 setQuestionAnswer(currentQuestion.id, (answer) => ({
                   ...answer,
                   skipped: false,
-                  custom: event.target.value
+                  custom: value
                 }))
               }
-              placeholder="Type your answer"
+              onSend={(value) =>
+                commitAnswer(currentQuestion.id, (answer) => ({
+                  ...answer,
+                  skipped: false,
+                  custom: value
+                }))
+              }
             />
           )}
         </div>
@@ -559,42 +640,30 @@ export default function AgentInteractionCard({
           {currentQuestion && (
             <button
               type="button"
-              onClick={() => {
-                setQuestionAnswer(currentQuestion.id, (answer) => ({
+              onClick={() =>
+                commitAnswer(currentQuestion.id, (answer) => ({
                   ...answer,
                   selected: [],
                   custom: '',
                   skipped: true
                 }))
-                if (!atLastQuestion) setQuestionIndex((current) => current + 1)
-                else {
-                  const response = responseAnswers()
-                  delete response[currentQuestion.id]
-                  void onResolve(interaction.id, response)
-                }
-              }}
+              }
             >
               Skip
             </button>
           )}
-          <button
-            type="button"
-            className="agent-interaction-primary"
-            disabled={!hasCurrentAnswer}
-            onClick={() =>
-              atLastQuestion
-                ? onResolve(interaction.id, responseAnswers())
-                : setQuestionIndex((current) => current + 1)
-            }
-          >
-            {atLastQuestion ? (
-              'Send answers'
-            ) : (
-              <>
-                Next <ChevronRight size={13} />
-              </>
-            )}
-          </button>
+          {currentQuestion?.multiSelect && (
+            <button
+              type="button"
+              className="agent-interaction-primary"
+              disabled={!hasCurrentAnswer}
+              onClick={() =>
+                commitAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false }))
+              }
+            >
+              {atLastQuestion ? 'Send answers' : 'Next'}
+            </button>
+          )}
           <button
             type="button"
             className="agent-question-cancel"

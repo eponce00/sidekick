@@ -4009,6 +4009,25 @@ body[data-theme='light'] .tool-approval-command {
   margin-top: 12px;
 }
 
+/* Answering advances within the same card, so the incoming question is given
+   a moment of movement to show that something was accepted. */
+@keyframes agent-question-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+}
+
+.agent-question {
+  animation: agent-question-in var(--duration-normal) ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-question {
+    animation: none;
+  }
+}
+
 .agent-question-progress {
   display: flex;
   align-items: center;
@@ -4178,15 +4197,15 @@ body[data-theme='light'] .tool-approval-command {
    selected state that stays legible while the pointer is over it. */
 .agent-question-options button {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 9px;
-  min-height: 34px;
-  padding: 8px 11px;
-  border: 1px solid var(--border-color);
+  min-height: 32px;
+  padding: 7px 11px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   color: var(--text-primary);
-  background: var(--surface-1);
+  background: var(--surface-2);
   text-align: left;
   cursor: pointer;
   transition:
@@ -4194,9 +4213,13 @@ body[data-theme='light'] .tool-approval-command {
     background var(--duration-fast);
 }
 
+.agent-question-options.is-multi button {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .agent-question-options button:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
-  background: var(--surface-2);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  background: var(--surface-3);
 }
 
 .agent-question-options button.selected {
@@ -4302,14 +4325,41 @@ body[data-theme='light'] .tool-approval-command {
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-.agent-question input,
-.agent-question-options input {
-  width: 100%;
-  margin-top: 7px;
-  padding: 7px 9px;
+.agent-question-compose {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 5px 5px 5px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  transition: border-color var(--duration-fast);
+}
+
+.agent-question-compose:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.agent-question-compose input {
+  flex: 1;
+  min-width: 0;
   border: 0;
-  border-radius: var(--radius-sm);
-  outline: 1px solid color-mix(in srgb, var(--text-primary) 12%, transparent);
+  outline: 0;
   color: var(--text-primary);
-  background: var(--app-bg);
+  background: transparent;
+  font-size: var(--content-text);
+}
+
+/* The escape hatch renders inside the options grid, so the option rule would
+   otherwise reshape this into a rectangle. It stays the composer's circle. */
+.agent-question-compose .agent-question-send.send-button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
 }
