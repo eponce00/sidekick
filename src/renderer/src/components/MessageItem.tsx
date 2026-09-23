@@ -721,6 +721,16 @@ function MessageItemInner({
           <div className="message-segments">
             {(() => {
               const groupedSegments = groupSegments(msg.segments)
+              // A model that fixes or revises an artifact makes it again under the
+              // same title. Only the latest one is the result; the attempts it
+              // replaced are work, and showing each one stacked the chat with
+              // broken and outdated copies.
+              const latestArtifactByTitle = new Map<string, unknown>()
+              for (const segment of msg.segments) {
+                if (segment.type === 'artifact' && segment.artifact) {
+                  latestArtifactByTitle.set(segment.artifact.title, segment)
+                }
+              }
               const lastWorkIndex = groupedSegments.findLastIndex(isWorkSegmentGroup)
               const finalAnswerIndex = groupedSegments.findIndex(
                 (group, groupIndex) =>
@@ -876,15 +886,18 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
-                    // Standalone artifact (not grouped with thinking)
-                    <div className="artifact-segment">
-                      <Artifact
-                        artifact={group.segment.artifact}
-                        onResult={(result) =>
-                          onHandleArtifactResult(group.segment.artifact!.title, result)
-                        }
-                      />
-                    </div>
+                    latestArtifactByTitle.get(group.segment.artifact.title) !==
+                    group.segment ? null : (
+                      // Standalone artifact (not grouped with thinking)
+                      <div className="artifact-segment">
+                        <Artifact
+                          artifact={group.segment.artifact}
+                          onResult={(result) =>
+                            onHandleArtifactResult(group.segment.artifact!.title, result)
+                          }
+                        />
+                      </div>
+                    )
                   ) : group.type === 'content' &&
                     group.segment.type === 'tool' &&
                     group.segment.tool ? (

@@ -110,7 +110,9 @@ function ReactArtifact({
             lastErrorRef.current = errMsg
             hasReportedRef.current = true
             setError(errMsg)
-            setIsErrorExpanded(true)
+            // A failure stays one compact line until asked for. Opened, it
+            // filled the chat with the whole component's code.
+            setIsErrorExpanded(false)
             onResult?.({ success: false, error: errMsg, code })
           }
           break
@@ -199,28 +201,28 @@ function ReactArtifact({
 
   // Error state
   if (error) {
+    const errorSummary = error.split('\n')[0]
     return (
-      <div className="artifact-container">
-        {title && (
-          <div className="artifact-header">
-            <div className="artifact-header-left">
-              <span className="artifact-icon">
-                <AlertTriangle size={16} />
-              </span>
-              <span className="artifact-title">{title}</span>
-              <span className="artifact-type-badge artifact-error-badge">Error</span>
-            </div>
-            <div className="artifact-header-right">
-              <button
-                className="artifact-toggle-code"
-                onClick={() => setIsErrorExpanded(!isErrorExpanded)}
-                title={isErrorExpanded ? 'Collapse error details' : 'Expand error details'}
-              >
-                {isErrorExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
-            </div>
-          </div>
-        )}
+      <div className="artifact-container artifact-failed">
+        <button
+          type="button"
+          className="artifact-header artifact-error-header"
+          onClick={() => setIsErrorExpanded(!isErrorExpanded)}
+          aria-expanded={isErrorExpanded}
+          title={isErrorExpanded ? 'Hide error details' : 'Show error details'}
+        >
+          <span className="artifact-header-left">
+            <span className="artifact-icon">
+              <AlertTriangle size={16} />
+            </span>
+            {title && <span className="artifact-title">{title}</span>}
+            <span className="artifact-type-badge artifact-error-badge">Error</span>
+            {!isErrorExpanded && <span className="artifact-error-summary">{errorSummary}</span>}
+          </span>
+          <span className="artifact-header-right">
+            {isErrorExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </span>
+        </button>
         {isErrorExpanded && (
           <>
             <div className="artifact-error">

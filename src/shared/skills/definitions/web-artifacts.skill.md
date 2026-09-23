@@ -94,6 +94,11 @@ Use framer-motion for smooth transitions and animations when motion adds value.
   data requests had time to load.
 - Look at that result before telling the user it works. If it failed, is blank, still shows a
   loading state, or does not match the request, fix it and call `create_artifact` again.
+- Treat anything the screenshot shows that disagrees with the request or with itself as a defect to
+  fix before replying: wrong or mixed units, `NaN` or placeholder values, clipped or overlapping
+  text, controls that do nothing. Do not call a visible defect minor and finish.
+- To change an existing artifact, start from its current code in the conversation and send the
+  complete updated code. Never send a shortened or partial version.
 - Describe only what the result showed. If no screenshot was returned, say how it looks is
   unverified rather than describing it.
 

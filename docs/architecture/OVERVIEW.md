@@ -232,7 +232,11 @@ chat's width, and says when it is taller than the chat's bounded frame, where th
 its top and scrolls inside the card for the rest. The model receives the render status, errors, and, when it accepts images, the capture as a
 small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
-unverified.
+unverified. The run ledger keeps tool arguments as a bounded preview, so replayed history restores
+the current version of each artifact whole from its result and names the versions it replaced
+instead of showing them cut; a turn that follows a reply which made an artifact starts with the
+web-artifacts skill loaded. The chat shows only the latest version of an artifact within a reply,
+and a failed one as a single line that expands to its error and code.
 
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the

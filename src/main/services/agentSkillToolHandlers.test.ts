@@ -99,6 +99,9 @@ describe('create_artifact', () => {
 
     expect(result.status).toBe('error')
     expect(result.error?.message).toContain("reading 'current'")
+    // The model gets the failure, not its own code back.
+    expect(result.modelContent).toContain("reading 'current'")
+    expect(result.modelContent).not.toContain('xxxx')
     expect(result.error?.recovery).toContain('call create_artifact again')
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })

@@ -228,7 +228,11 @@ export function safeToolArguments(
   return Object.fromEntries(
     Object.entries(args).map(([key, value]) => [
       key,
-      typeof value === 'string' && value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value
+      // The preview also reaches the model through replayed history, where a
+      // bare ellipsis read as part of the value and was copied into new calls.
+      typeof value === 'string' && value.length > 2_000
+        ? `${value.slice(0, 2_000)}… [${value.length - 2_000} more characters not kept]`
+        : value
     ])
   )
 }

@@ -69,16 +69,20 @@ export function artifactToolResult(
   const errors = inspection.errors.length
     ? `\nErrors:\n${inspection.errors.map((error) => `- ${error}`).join('\n')}`
     : ''
+  const recovery =
+    `Fix the code and call create_artifact again with the complete code. ${media ? 'A screenshot of the failure is attached.' : ''}`.trim()
   return toolExecutionFailed({
     title,
     code: 'command_failed',
     message: `${problem}${errors}`,
     retryable: true,
     recoveryAction: 'change_strategy',
-    recovery:
-      `Fix the code and call create_artifact again. ${media ? 'A screenshot of the failure is attached.' : ''}`.trim(),
+    recovery,
     data,
-    media
+    media,
+    // The failure is what the model needs; its own code echoed back only
+    // spent context, and arrived cut to the result's size limit.
+    modelContent: `${problem}${errors}\n${recovery}`
   })
 }
 

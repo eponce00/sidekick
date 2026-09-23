@@ -1,5 +1,9 @@
 import type Database from 'better-sqlite3'
-import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import {
+  agentRunProfile,
+  getAgentToolDefinitions,
+  WEB_ARTIFACTS_SKILL_ID
+} from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { projectStartCommands } from './projectHooks'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
@@ -230,6 +234,8 @@ export function durableProviderHistory(
     .all(conversationId) as ProviderHistoryEventRow[]
   const outputByRun = new Map<string, string>()
   const messagesByOutput = new Map<string, ProviderChatMessage[]>()
+  const artifactCalls: Array<{ call: ProviderToolCall; outputMessageId: string }> = []
+  const artifactResults = new Map<string, { title: string; code: string }>()
 
   for (const event of eventRows) {
     const payload = parseJson<Record<string, unknown>>(event.payload_json, {})
@@ -259,6 +265,9 @@ export function durableProviderHistory(
             })
           )
         : []
+      for (const call of calls) {
+        if (call.function.name === 'create_artifact') artifactCalls.push({ call, outputMessageId })
+      }
       const sameProviderGeneration =
         event.provider === currentTarget.providerKind && event.model === currentTarget.model
       const thinkingBlocks =
@@ -279,6 +288,15 @@ export function durableProviderHistory(
           ? (payload.result as Record<string, unknown>)
           : {}
       const name = String(payload.name || '')
+      const artifact = (
+        result.data as { artifact?: { title?: unknown; code?: unknown } } | undefined
+      )?.artifact
+      if (name === 'create_artifact' && typeof artifact?.code === 'string') {
+        artifactResults.set(String(payload.toolCallId || ''), {
+          title: typeof artifact.title === 'string' ? artifact.title : '',
+          code: artifact.code
+        })
+      }
       const rawContent =
         typeof result.modelContent === 'string'
           ? sanitizeHistoricalToolModelContent(result.modelContent)
@@ -294,11 +312,68 @@ export function durableProviderHistory(
     }
   }
 
+  const kept = new Set(rows.filter((row) => row.role === 'agent').map((row) => row.id))
+  restoreArtifactCode(
+    artifactCalls
+      .filter(({ outputMessageId }) => kept.has(outputMessageId))
+      .map(({ call }) => call),
+    artifactResults
+  )
+
   return rows.flatMap((row) => {
     if (row.role !== 'agent') return [providerMessage(row)]
     const durable = messagesByOutput.get(row.id)
     return durable?.length ? durable : [providerMessage(row)]
   })
+}
+
+/** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
+export function previousReplyMadeArtifact(db: Database.Database, conversationId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM agent_run_events
+       WHERE run_id = (
+         SELECT run_id FROM messages
+         WHERE conversation_id = ? AND role = 'agent' AND run_id IS NOT NULL
+         ORDER BY timestamp DESC LIMIT 1
+       )
+       AND type = 'tool.completed'
+       AND json_extract(payload_json, '$.name') = 'create_artifact'
+       LIMIT 1`
+    )
+    .get(conversationId)
+  return Boolean(row)
+}
+
+/**
+ * The ledger keeps tool arguments as a bounded preview, so an artifact's code
+ * came back to the model cut at 2,000 characters. Asked to change the artifact
+ * in a later turn, the model copied that cut code, preview marker included,
+ * and the render failed on it. The current version of each artifact is the
+ * document being edited, so it is restored whole from its result; versions it
+ * replaced are named and omitted rather than shown cut.
+ */
+function restoreArtifactCode(
+  calls: readonly ProviderToolCall[],
+  results: ReadonlyMap<string, { title: string; code: string }>
+): void {
+  const latestByTitle = new Map<string, string>()
+  for (const call of calls) {
+    const result = call.id ? results.get(call.id) : undefined
+    if (result && call.id) latestByTitle.set(result.title, call.id)
+  }
+  for (const call of calls) {
+    const result = call.id ? results.get(call.id) : undefined
+    if (!result) continue
+    const args = call.function.arguments as Record<string, unknown>
+    call.function.arguments = {
+      ...args,
+      code:
+        latestByTitle.get(result.title) === call.id
+          ? result.code
+          : `[Earlier version of "${result.title}" omitted (${result.code.length} characters). The current version appears later in full; change that one.]`
+    }
+  }
 }
 
 function storedPromptTokens(
@@ -424,7 +499,15 @@ export class ConversationRunPreparer {
       .prepare('SELECT active_skills FROM conversations WHERE id = ?')
       .get(input.conversationId) as { active_skills: string | null } | undefined
     if (!conversation) throw new Error('Conversation not found')
-    const activeSkillIds = parseJson<string[]>(conversation.active_skills, [])
+    const conversationSkillIds = parseJson<string[]>(conversation.active_skills, [])
+    // The web-artifacts skill loads per run, but "add a chart to it" right after
+    // an artifact is the same work. Without the skill the model wrote the whole
+    // artifact into a call to a tool it no longer had, then had to start over.
+    const activeSkillIds =
+      !conversationSkillIds.includes(WEB_ARTIFACTS_SKILL_ID) &&
+      previousReplyMadeArtifact(this.db, input.conversationId)
+        ? [...conversationSkillIds, WEB_ARTIFACTS_SKILL_ID]
+        : conversationSkillIds
     const executionTarget = refreshProviderTargetMetadata(
       modelTarget(input.model),
       currentSettings.providerInstances || []
