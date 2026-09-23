@@ -16,7 +16,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/renderer/index.html'),
-          sandbox: resolve('src/renderer/sandbox.html')
+          sandbox: resolve('src/renderer/sandbox.html'),
+          'artifact-inspect': resolve('src/renderer/artifact-inspect.html')
         }
       }
     }

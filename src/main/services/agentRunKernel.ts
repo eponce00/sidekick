@@ -171,6 +171,11 @@ export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** Keeps a durable objective alive after an otherwise terminal model turn. */
   goalController?: {
     onUsage?: (usage: { promptTokens: number; completionTokens: number }) => void
+    /**
+     * True once the durable goal has been completed. The run may still take the
+     * turn it needs to answer the completing tool call, but no further tool work.
+     */
+    isComplete?: () => boolean
     afterTerminalTurn: (input: {
       finalResponse: string
       messages: ProviderChatMessage[]
@@ -180,6 +185,7 @@ export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** Requires one bounded, evidence-based verification pass before workspace-changing runs finish. */
   verificationController?: {
     afterTerminalTurn: () => Promise<VerificationTerminalDecision>
+    beforeGoalCompletion?: () => VerificationTerminalDecision
   }
   /** Owns read-only planning, revisioned review, and the approved Plan-to-Act transition. */
   planController?: AgentKernelPlanController
@@ -958,6 +964,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     let researchSourceAttempted = false
     let researchGuardInjected = false
     let goalContinuationTurn = false
+    // Tool rounds the model attempted after its goal was already complete.
+    let toolRoundsAfterGoalComplete = 0
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1463,6 +1471,10 @@ The user approved this exact plan revision. Act capabilities are now available a
         let lastToolMessage: ProviderChatMessage | undefined
         let callStopReason: string | undefined
         let planKeepRequested = false
+        // Decided before the batch runs, so the call that completes the goal
+        // still executes and only work requested after completion is refused.
+        const goalAlreadyComplete = input.goalController?.isComplete?.() === true
+        if (goalAlreadyComplete) toolRoundsAfterGoalComplete++
         const preparedBatch = turn.toolCalls.map((providerCall) => {
           const parsed = truncatedToolBatch
             ? { arguments: safePreview(providerCall) }
@@ -1507,6 +1519,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           const entry = getAgentToolEntry(currentCatalog(input), call.name)
           if (
             !truncatedToolBatch &&
+            !goalAlreadyComplete &&
             entry?.concurrency === 'parallel' &&
             !preExecuted.has(call.id)
           ) {
@@ -1583,6 +1596,17 @@ The user approved this exact plan revision. Act capabilities are now available a
               recoveryAction: 'change_strategy',
               recovery:
                 'Re-issue a smaller, focused tool call in a new response. Do not assume any call from this batch ran.',
+              startedAt
+            })
+          } else if (goalAlreadyComplete) {
+            result = toolExecutionFailed({
+              title,
+              code: 'conflict',
+              message: 'The goal is already complete, so this tool was not run.',
+              retryable: false,
+              recoveryAction: 'stop',
+              recovery:
+                'Do not redo or extend the work and do not call tools. Reply to the user with one brief closing message.',
               startedAt
             })
           } else if (callStopReason) {
@@ -1745,6 +1769,20 @@ The user approved this exact plan revision. Act capabilities are now available a
           messages.push(lastToolMessage)
         }
         if (callStopReason) throw new AgentToolLoopError(callStopReason)
+        if (toolRoundsAfterGoalComplete >= 2) {
+          // Refused once and asked for tools again: the goal's outcome is
+          // already in the transcript, so end on it rather than loop.
+          this.transition(input.id, 'completed')
+          return {
+            runId: input.id,
+            phase: 'completed',
+            content: finalContent,
+            finalResponse: finalContent,
+            thinking: finalThinking,
+            messages,
+            toolRounds
+          }
+        }
         if (planKeepRequested) {
           const keptMessage = 'Plan saved for later. No project changes were made.'
           this.append(input.id, 'assistant.completed', {

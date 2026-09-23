@@ -154,8 +154,8 @@ one app-authored continuation requesting the smallest relevant check. The premat
 provisional and is not projected into chat. The second terminal turn is allowed even when no safe
 check exists, but its durable verification state remains honestly unverified. The renderer shows
 one flat, expandable verification line reconstructed from `verification.updated`; it does not infer
-success from assistant prose. Goal completion can be requested by a tool earlier in the loop, but
-the containing run still passes through this terminal verification boundary. See
+success from assistant prose. A goal consults the same one-time request before its completion is
+accepted, so the evidence is gathered before the goal closes rather than questioned after it. See
 [Workspace verification](VERIFICATION.md).
 
 ## Canonical agent runtime
@@ -223,6 +223,16 @@ event.
 tablet, and mobile criteria can be checked explicitly. `view_image` applies the same native
 multimodal result path to raster files inside the active project.
 
+An artifact made with `create_artifact` is observed the same way before its result returns.
+`ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
+that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with
+the chat's own components in the user's theme, waits for it to report success and then for its data
+requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
+width. The model receives the render status, errors, and, when it accepts images, the capture as a
+small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
+failed tool call, and when inspection itself is unavailable the result says the artifact is
+unverified.
+
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the
 request boundary. OpenAI-compatible and Ollama requests preserve the required contiguous tool
@@ -251,8 +261,8 @@ continuation count, todo projection, blocker streak, current run, and completion
 `AgentRunKernel` consults a goal controller at otherwise terminal model turns and injects the next
 app-authored continuation only while the store remains active. All ordinary compaction, tool,
 permission, question, cancellation, provider, and checkpoint behavior therefore remains canonical.
-The renderer can create, edit, pause, resume, and clear goals through a narrow preload API, but it
-cannot complete one. See [Persistent conversation goals](PERSISTENT_GOALS.md).
+The renderer can create, pause, resume, and clear goals through a narrow preload API, but it
+cannot complete one. It reports a completion in the conversation as an app-authored notice. See [Persistent conversation goals](PERSISTENT_GOALS.md).
 
 ### Plan mode
 

@@ -103,7 +103,10 @@ describe('conversation fork IPC', () => {
 
     const updateMessage = mocks.handlers.get('conversations:updateMessage') as RegisteredHandler
     await expect(
-      updateMessage({}, { id: 'target', conversation_id: 'mine', content: 'Hijacked', timestamp: 5 })
+      updateMessage(
+        {},
+        { id: 'target', conversation_id: 'mine', content: 'Hijacked', timestamp: 5 }
+      )
     ).rejects.toThrow('Message not found in conversation')
 
     expect(mocks.db!.prepare('SELECT content FROM messages WHERE id = ?').get('target')).toEqual({
@@ -233,5 +236,49 @@ describe('conversation fork IPC', () => {
       content: 'Review this folder',
       attachments: [attachment]
     })
+  })
+
+  it('keeps a notice tone across reopening, and ignores tones it does not know', async () => {
+    // A finished goal is reported as a success notice. Without its tone the
+    // reopened conversation showed it as an ordinary info row.
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations (id, title, created_at, updated_at)
+         VALUES ('conversation', 'Notices', 1, 1)`
+      )
+      .run()
+    const save = mocks.handlers.get('conversations:saveMessage') as RegisteredHandler
+    await save(
+      {},
+      {
+        id: 'goal-complete:goal-1',
+        conversation_id: 'conversation',
+        role: 'system',
+        noticeTone: 'success',
+        content: 'Goal complete',
+        timestamp: 2
+      }
+    )
+    await save(
+      {},
+      {
+        id: 'odd',
+        conversation_id: 'conversation',
+        role: 'system',
+        noticeTone: 'celebration',
+        content: 'Unknown tone',
+        timestamp: 3
+      }
+    )
+
+    const getMessages = mocks.handlers.get('conversations:getMessages') as RegisteredHandler
+    const messages = (await getMessages({}, 'conversation')) as Array<{
+      id: string
+      noticeTone?: string
+    }>
+    expect(messages.map(({ id, noticeTone }) => ({ id, noticeTone }))).toEqual([
+      { id: 'goal-complete:goal-1', noticeTone: 'success' },
+      { id: 'odd', noticeTone: undefined }
+    ])
   })
 })

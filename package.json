@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.7.6",
+  "version": "0.7.7",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
@@ -57,6 +57,7 @@
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
     "test:native-browser-smoke": "node scripts/run-native-browser-smoke.cjs",
     "test:native-browser-fixtures": "node scripts/run-native-browser-smoke.cjs --fixture-only",
+    "test:artifact-inspector-smoke": "node scripts/run-artifact-inspector-smoke.cjs",
     "benchmark:agent-evals": "node scripts/compare-agent-evals.cjs",
     "test:search-smoke": "node scripts/run-search-smoke.cjs",
     "test:release": "node --test scripts/brand-assets.test.cjs scripts/product-identity.test.cjs scripts/runtime-toolchain.test.cjs scripts/packaged-smoke-lifecycle.test.cjs scripts/qualify-packaged-upgrade.test.cjs scripts/validate-linux-appimage.test.cjs scripts/validate-packaged-app.test.cjs scripts/validate-qualification-manifest.test.cjs scripts/validate-release-artifacts.test.cjs",

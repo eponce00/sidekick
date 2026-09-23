@@ -131,6 +131,23 @@ describe('WorkspaceVerificationService', () => {
     expect(second).toMatchObject({ continue: false, summary: { status: 'unverified' } })
   })
 
+  it('asks for verification before a goal completes, and not again once it has', async () => {
+    // Asking only at the end of the run told a model whose goal was already
+    // complete that it could not claim completion, which sent it back to work.
+    await writeFile(join(root, 'main.py'), 'print("hello")\n')
+    service.recordChanges('run-3', root, 'workspace_tool', [{ path: 'main.py', kind: 'create' }])
+    const controller = service.createTerminalController('run-3', root, 0)!
+
+    const firstRequest = controller.beforeGoalCompletion!()
+    const secondRequest = controller.beforeGoalCompletion!()
+    const runEnd = await controller.afterTerminalTurn()
+
+    expect(firstRequest.continue).toBe(true)
+    expect(firstRequest.prompt).toContain('The goal was not marked complete')
+    expect(secondRequest).toMatchObject({ continue: false, summary: { status: 'unverified' } })
+    expect(runEnd.continue).toBe(false)
+  })
+
   it.each([
     ['cargo test', 'test'],
     ['go vet ./...', 'check'],

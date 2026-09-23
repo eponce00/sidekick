@@ -22,6 +22,43 @@ function emptyPage(url: string, error: string): PageContent {
   }
 }
 
+const STRUCTURED_TEXT_TYPES = ['json', 'text/plain', 'text/csv', 'text/markdown']
+
+/**
+ * An API response or a plain-text file has no article for Readability to
+ * extract, but it is exactly what was asked for. Refusing it pushed models to
+ * fetch the data some other way and then claim they had read it.
+ */
+export function structuredTextPage(
+  url: URL,
+  contentType: string,
+  body: unknown,
+  maxContentLength: number
+): PageContent | null {
+  const mediaType = contentType.split(';')[0].trim()
+  if (!STRUCTURED_TEXT_TYPES.some((type) => mediaType.includes(type))) return null
+  let text = typeof body === 'string' ? body : JSON.stringify(body)
+  if (mediaType.includes('json')) {
+    try {
+      text = JSON.stringify(JSON.parse(text), null, 2)
+    } catch {
+      // Malformed JSON is still the server's answer; pass it through as text.
+    }
+  }
+  const truncated = text.length > maxContentLength
+  const content = truncated ? `${text.slice(0, maxContentLength)}\n… [truncated]` : text
+  if (!content.trim()) return emptyPage(url.href, 'The response was empty')
+  return {
+    url: url.href,
+    title: `${url.hostname}${url.pathname}`,
+    content,
+    excerpt: content.slice(0, 200),
+    byline: '',
+    siteName: url.hostname,
+    success: true
+  }
+}
+
 function validatedPageUrl(value: string): URL {
   const url = new URL(value)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
@@ -137,7 +174,8 @@ export async function readPage(
       maxRedirects: 5,
       headers: {
         'User-Agent': browserIdentity(),
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept:
+          'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         DNT: '1',
         Referer: url.origin
@@ -145,6 +183,8 @@ export async function readPage(
       validateStatus: (status) => status < 400
     })
     const contentType = String(response.headers['content-type'] || '').toLowerCase()
+    const structured = structuredTextPage(url, contentType, response.data, contentLimit)
+    if (structured) return structured
     if (contentType && !contentType.includes('html') && !contentType.includes('xml')) {
       return emptyPage(url.href, `Unsupported page content type: ${contentType.split(';')[0]}`)
     }

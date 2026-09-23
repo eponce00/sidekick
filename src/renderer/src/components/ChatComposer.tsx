@@ -76,7 +76,7 @@ export function ChatComposer({
     <div className={`input-area ${className}`.trim()}>
       {queueTray}
       <div
-        className={`input-container ${showPromptRefiner ? 'has-prompt-sharpen' : ''} ${promptRefiner.status === 'success' || promptRefiner.status === 'error' ? 'has-prompt-sharpen-feedback' : ''}`.trim()}
+        className={`input-container ${showPromptRefiner ? 'has-prompt-sharpen' : ''}`.trim()}
         onClick={() => !disabled && inputRef.current?.focus()}
       >
         {floatingAccessory && (
@@ -85,32 +85,64 @@ export function ChatComposer({
         {popover && <div className="composer-popover">{popover}</div>}
         {contextBar && <div className="composer-context-bar">{contextBar}</div>}
         {attachmentTray}
-        <TextareaAutosize
-          className="message-input"
-          placeholder={placeholder}
-          value={value}
-          onChange={(event) => promptRefiner.handleChange(event.target.value)}
-          onKeyDown={onKeyDown}
-          onPaste={onPaste}
-          minRows={minRows}
-          maxRows={maxRows}
-          disabled={disabled}
-          spellCheck
-          ref={inputRef}
-          tabIndex={0}
-          autoFocus={autoFocus}
-          aria-autocomplete={popover ? 'list' : undefined}
-          aria-controls={inputAriaControls}
-          aria-expanded={inputAriaExpanded}
-          aria-activedescendant={inputAriaActiveDescendant}
-        />
+        <div className="composer-input-row">
+          <TextareaAutosize
+            className="message-input"
+            placeholder={placeholder}
+            value={value}
+            onChange={(event) => promptRefiner.handleChange(event.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            minRows={minRows}
+            maxRows={maxRows}
+            disabled={disabled}
+            spellCheck
+            ref={inputRef}
+            tabIndex={0}
+            autoFocus={autoFocus}
+            aria-autocomplete={popover ? 'list' : undefined}
+            aria-controls={inputAriaControls}
+            aria-expanded={inputAriaExpanded}
+            aria-activedescendant={inputAriaActiveDescendant}
+          />
 
-        {showPromptRefiner && (
-          <div
-            className={`prompt-sharpen-control is-${promptRefiner.status}`}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="prompt-sharpen-feedback" aria-live="polite">
+          {showPromptRefiner && (
+            <div
+              className={`prompt-sharpen-control is-${promptRefiner.status}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="prompt-sharpen-button"
+                onClick={() => void promptRefiner.sharpen()}
+                disabled={!promptRefiner.canRefine || promptRefiner.status === 'refining'}
+                title={
+                  promptRefiner.status === 'refining'
+                    ? 'Sharpening prompt…'
+                    : promptRefiner.status === 'error'
+                      ? `${promptRefiner.error} Try again.`
+                      : 'Sharpen prompt'
+                }
+                aria-label={
+                  promptRefiner.status === 'refining' ? 'Sharpening prompt' : 'Sharpen prompt'
+                }
+              >
+                <PromptSharpenIcon active={promptRefiner.status === 'refining'} />
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="input-toolbar">
+          <div className="input-toolbar-left">{toolbarLeft}</div>
+          <div className="input-toolbar-right">
+            {/* The outcome of a sharpen is a status line, not something to wrap
+                the prompt around, so it sits with the other composer status. */}
+            <div
+              className={`prompt-sharpen-feedback is-${promptRefiner.status}`}
+              aria-live="polite"
+              onClick={(event) => event.stopPropagation()}
+            >
               {promptRefiner.status === 'success' && (
                 <>
                   <span>Prompt sharpened</span>
@@ -124,30 +156,6 @@ export function ChatComposer({
                 <span title={promptRefiner.error}>Couldn’t sharpen</span>
               )}
             </div>
-            <button
-              type="button"
-              className="prompt-sharpen-button"
-              onClick={() => void promptRefiner.sharpen()}
-              disabled={!promptRefiner.canRefine || promptRefiner.status === 'refining'}
-              title={
-                promptRefiner.status === 'refining'
-                  ? 'Sharpening prompt…'
-                  : promptRefiner.status === 'error'
-                    ? `${promptRefiner.error} Try again.`
-                    : 'Sharpen prompt'
-              }
-              aria-label={
-                promptRefiner.status === 'refining' ? 'Sharpening prompt' : 'Sharpen prompt'
-              }
-            >
-              <PromptSharpenIcon active={promptRefiner.status === 'refining'} />
-            </button>
-          </div>
-        )}
-
-        <div className="input-toolbar">
-          <div className="input-toolbar-left">{toolbarLeft}</div>
-          <div className="input-toolbar-right">
             {toolbarRight}
             <div className="input-buttons">
               <button

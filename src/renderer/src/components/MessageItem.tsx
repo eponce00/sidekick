@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Info,
   CircleAlert,
+  CircleCheck,
   ListChecks,
   Microscope,
   GitBranch,
@@ -387,6 +388,38 @@ function formatWorkDuration(durationMs: number): string {
   return `${seconds}s`
 }
 
+/** A success notice leads with what finished; anything after a blank line is its detail. */
+function SystemNoticeBody({
+  content,
+  emphasizeHeadline
+}: {
+  content: string
+  emphasizeHeadline: boolean
+}): React.JSX.Element {
+  if (!emphasizeHeadline) return <span className="system-notice-body">{content}</span>
+  const breakAt = content.indexOf('\n\n')
+  const headline = breakAt < 0 ? content : content.slice(0, breakAt)
+  const detail = breakAt < 0 ? '' : content.slice(breakAt + 2).trim()
+  // The reply above already says what was done, so the notice is one quiet
+  // line. Anything more is evidence, kept closed until it is asked for.
+  if (!detail) {
+    return (
+      <span className="system-notice-body is-single-line">
+        <strong>{headline}</strong>
+      </span>
+    )
+  }
+  return (
+    <details className="system-notice-body system-notice-details">
+      <summary>
+        <strong>{headline}</strong>
+        <ChevronRight size={12} className="system-notice-chevron" aria-hidden="true" />
+      </summary>
+      <div className="system-notice-detail">{detail}</div>
+    </details>
+  )
+}
+
 function thinkingPreview(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
   if (!normalized) return 'Thinking'
@@ -666,9 +699,23 @@ function MessageItemInner({
         {msg.role === 'system' ? (
           <div className="system-notice" role={msg.noticeTone === 'error' ? 'alert' : 'status'}>
             <span className="system-notice-icon" aria-hidden="true">
-              {msg.noticeTone === 'error' ? <CircleAlert size={14} /> : <Info size={14} />}
+              {msg.noticeTone === 'error' ? (
+                <CircleAlert size={14} />
+              ) : msg.noticeTone === 'success' ? (
+                <CircleCheck size={14} />
+              ) : (
+                <Info size={14} />
+              )}
             </span>
-            <span>{msg.content}</span>
+            <SystemNoticeBody
+              content={
+                // Earlier goal notices repeated the objective in their headline.
+                msg.id.startsWith('goal-complete:')
+                  ? msg.content.replace(/^Goal complete — [^\n]*/, 'Goal complete')
+                  : msg.content
+              }
+              emphasizeHeadline={msg.noticeTone === 'success'}
+            />
           </div>
         ) : msg.segments && msg.segments.length > 0 ? (
           <div className="message-segments">

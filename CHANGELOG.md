@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.7 — 2026-09-23
+
+- Let the model see the artifact it made. `create_artifact` now renders the artifact the way the
+  chat shows it, in an offscreen window that is never shown, and reports whether it rendered, any
+  runtime errors, and, for models that accept images, a screenshot taken after its data loads. A
+  broken or unfinished render is a failed call, and the model's own code is no longer echoed back.
+- Start a goal from the composer instead of a dialog. **Ongoing goal** arms the next message, which
+  becomes the objective; a dismissible row says so. A running goal shows pause or resume and drop.
+- Report a finished goal in the conversation as one quiet line with its verification folded
+  beneath, and clear it from the composer, since the next message is not part of it.
+- Close a goal cleanly. Changed project files are verified before completion is accepted rather than
+  after it, tool calls after completion are refused without running, and a repeated completion is
+  answered as already done instead of as an internal error.
+- Require goal verification to describe only what was observed in the run, and say plainly what
+  could not be checked.
+- Read JSON, plain-text, CSV, and Markdown responses with `web_fetch` as the data itself, and report
+  a page that cannot be read as a failed call rather than a success.
+- Keep the prompt-sharpen button beside the text instead of over a mode banner, and show its result
+  in the toolbar so the prompt keeps its full width.
+
 ## 0.7.6 — 2026-09-22
 
 - Match the embedded browser to the application's own zoom instead of Chromium's per-origin scale,

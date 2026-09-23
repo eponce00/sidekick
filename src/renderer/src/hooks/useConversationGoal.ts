@@ -4,7 +4,6 @@ import type { ConversationGoal } from '../../../shared/conversationGoals'
 export function useConversationGoal(conversationId: string | null): {
   goal: ConversationGoal | null
   createGoal: (targetConversationId: string, objective: string) => Promise<ConversationGoal>
-  editGoal: (objective: string) => Promise<ConversationGoal>
   pauseGoal: () => Promise<ConversationGoal>
   resumeGoal: () => Promise<ConversationGoal>
   clearGoal: () => Promise<ConversationGoal>
@@ -49,18 +48,6 @@ export function useConversationGoal(conversationId: string | null): {
     return visibleGoal
   }, [visibleGoal])
 
-  const editGoal = useCallback(
-    async (objective: string) => {
-      const updated = await window.api.conversationGoals.edit({
-        goalId: requireGoal().id,
-        objective
-      })
-      setGoal(updated)
-      return updated
-    },
-    [requireGoal]
-  )
-
   const pauseGoal = useCallback(async () => {
     const updated = await window.api.conversationGoals.pause(requireGoal().id)
     setGoal(updated)
@@ -79,5 +66,5 @@ export function useConversationGoal(conversationId: string | null): {
     return updated
   }, [requireGoal])
 
-  return { goal: visibleGoal, createGoal, editGoal, pauseGoal, resumeGoal, clearGoal }
+  return { goal: visibleGoal, createGoal, pauseGoal, resumeGoal, clearGoal }
 }

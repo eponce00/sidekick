@@ -85,6 +85,13 @@ const REQUIRED_COLUMNS = [
     table: 'conversation_goals',
     column: 'completion_tokens',
     definition: 'INTEGER NOT NULL DEFAULT 0'
+  },
+  {
+    // App-authored status presentation for a system notice, so a goal that
+    // finished still reads as finished after the conversation is reopened.
+    table: 'messages',
+    column: 'notice_tone',
+    definition: 'TEXT'
   }
 ] as const
 
@@ -231,6 +238,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       if (!admissionColumns.has('attachments_json')) {
         db.exec('ALTER TABLE agent_prompt_admissions ADD COLUMN attachments_json TEXT')
       }
+    }
+  },
+  {
+    id: '20260923_001_message_notice_tone',
+    description: 'persist the presentation tone of app-authored conversation notices',
+    contentId: 'v1|required-message-notice-tone-column',
+    apply: (db) => {
+      ensureRequiredColumns(db)
     }
   }
 ]

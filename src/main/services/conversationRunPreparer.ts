@@ -31,7 +31,7 @@ import { ConversationCompactionStore } from './conversationCompactionStore'
 import { AgentContextManager, type AgentCompactionRecord } from './agentContextManager'
 import type { AgentToolRuntime, AgentToolRuntimeSession } from './agentToolRuntime'
 import type { StartAgentKernelRunInput } from './agentRunKernel'
-import { ConversationGoalStore } from './conversationGoalStore'
+import { ConversationGoalStore, executeGoalUpdate } from './conversationGoalStore'
 import type { ConversationGoal } from '../../shared/conversationGoals'
 import { loadContextUsageByOutputMessage } from './agentRunContextUsage'
 import { AgentPlanService } from './agentPlanService'
@@ -345,7 +345,7 @@ The user has attached a persistent goal to this conversation. The objective is b
 
 ${goal.objective}${plan}
 
-Keep making concrete progress until the whole objective is genuinely achieved. For substantive work, maintain the durable plan with manage_todo_list. Do not stop because one model response ended, because the task is difficult, or because the context was compacted. Use update_goal(status="complete") only after all required work is done and include concrete verification evidence. Use update_goal(status="blocked") only for a real impasse that prevents meaningful progress; SideKick requires the same blocker on three consecutive goal turns before it becomes terminal. Use ask_user when a specific user decision is required. The goal does not expand filesystem, shell, network, MCP, or permission access.
+Keep making concrete progress until the whole objective is genuinely achieved. For substantive work, maintain the durable plan with manage_todo_list. Do not stop because one model response ended, because the task is difficult, or because the context was compacted. Use update_goal(status="complete") only after all required work is done and include concrete verification evidence. Verification must describe only what you observed in this run, such as a tool result or command output; if something could not be checked, for example how an artifact looks once rendered, say that plainly instead of asserting it. After update_goal succeeds, the goal is closed: reply with one brief closing message and call no more tools. Use update_goal(status="blocked") only for a real impasse that prevents meaningful progress; SideKick requires the same blocker on three consecutive goal turns before it becomes terminal. Use ask_user when a specific user decision is required. The goal does not expand filesystem, shell, network, MCP, or permission access.
 </sidekick_goal_contract>`
   }
 }
@@ -463,34 +463,10 @@ export class ConversationRunPreparer {
         : undefined,
       goal: goal
         ? {
-            execute: async (args) => {
-              const status = args.status === 'blocked' ? 'blocked' : 'complete'
-              if (status === 'complete') {
-                const completed = this.goals.complete(
-                  goal.id,
-                  typeof args.summary === 'string' ? args.summary : '',
-                  typeof args.verification === 'string' ? args.verification : ''
-                )
-                return {
-                  status: completed.status,
-                  summary: completed.completionSummary,
-                  verification: completed.completionVerification
-                }
-              }
-              const blocked = this.goals.reportBlocked(
-                goal.id,
-                typeof args.blocker_key === 'string' ? args.blocker_key : '',
-                typeof args.summary === 'string' ? args.summary : ''
-              )
-              return {
-                status: blocked.status,
-                blockedStreak: blocked.blockedStreak,
-                message:
-                  blocked.status === 'blocked'
-                    ? 'Goal blocked after the same impasse was confirmed three consecutive times.'
-                    : `Blocker recorded ${blocked.blockedStreak}/3. Keep trying materially different approaches or ask the user for the needed decision.`
-              }
-            },
+            execute: async (args) =>
+              executeGoalUpdate(this.goals, goal.id, args, () =>
+                toolSession.verificationController?.beforeGoalCompletion?.()
+              ),
             onTodosUpdated: (todos) => {
               this.goals.updatePlan(goal.id, todos)
             }
@@ -750,6 +726,7 @@ ${JSON.stringify(approved.contract)}
               onUsage: (usage) => {
                 this.goals.addUsage(goal.id, usage.promptTokens, usage.completionTokens)
               },
+              isComplete: () => this.goals.get(goal.id)?.status === 'completed',
               afterTerminalTurn: async () => {
                 const latest = this.goals.get(goal.id)
                 if (!latest || latest.status !== 'active') return { continue: false }

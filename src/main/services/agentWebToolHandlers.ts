@@ -1,4 +1,5 @@
 import {
+  toolExecutionFailed,
   toolExecutionSucceeded,
   type ToolExecutionResult,
   type ToolResultImageMimeType,
@@ -7,9 +8,28 @@ import {
 import { searchImages } from './sidekickSearch/imageSearch'
 import { readPage } from './sidekickSearch/pageReader'
 import { searchWeb } from './sidekickSearch/searchCoordinator'
-import type { ImageSearchResult } from './sidekickSearch/types'
+import type { ImageSearchResult, PageContent } from './sidekickSearch/types'
 import type { ToolOutputStore } from './toolOutputStore'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+
+/**
+ * A page that could not be read is a failed call. Reporting it as a success
+ * with the failure buried in the payload let the UI show a green check and let
+ * the model later describe the fetch as confirmed.
+ */
+export function pageFetchFailure(title: string, page: PageContent): ToolExecutionResult | null {
+  if (page.success) return null
+  const reason = page.error || 'The page could not be read'
+  const unsupported = /^Unsupported page content type/i.test(reason)
+  const invalid = /^(?:Invalid (?:page )?URL|Only HTTP and HTTPS)/i.test(reason)
+  return toolExecutionFailed({
+    title,
+    code: unsupported ? 'unsupported' : invalid ? 'invalid_arguments' : 'transient',
+    message: reason,
+    retryable: !unsupported && !invalid,
+    data: page
+  })
+}
 
 type ImageSearchPresentationResult = Omit<ImageSearchResult, 'imageBase64'>
 
@@ -82,6 +102,8 @@ export function registerWebToolHandlers(
   })
   registry.register('web_fetch', async ({ title, arguments: args }) => {
     const data = await readPage(String(args.url || ''))
+    const failure = pageFetchFailure(title, data)
+    if (failure) return failure
     const boundedOutput = await outputs.apply(JSON.stringify(data), { preview: 'head-tail' })
     return toolExecutionSucceeded({
       title,

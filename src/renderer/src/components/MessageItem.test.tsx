@@ -229,6 +229,50 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.querySelector('.message-notice-error')).not.toBeNull()
   })
 
+  it('shows a goal completion as one line, with the older long headline shortened and evidence folded', async () => {
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'goal-complete:goal-1',
+            role: 'system',
+            noticeTone: 'success',
+            content:
+              'Goal complete — Ship the settings page' +
+              String.fromCharCode(10, 10) +
+              'All tests pass',
+            timestamp: Date.now()
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const notice = container.querySelector('.message-notice-success [role="status"]')!
+    // The objective is the message above; the notice does not say it again.
+    expect(notice.querySelector('strong')?.textContent).toBe('Goal complete')
+    const details = notice.querySelector('details')!
+    expect(details.open).toBe(false)
+    expect(details.querySelector('.system-notice-detail')?.textContent).toBe('All tests pass')
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+  })
+
   it('expands a compaction marker to show and copy the model-facing context', async () => {
     const writeText = vi.fn(async () => ({ success: true }))
     Object.defineProperty(window, 'api', {

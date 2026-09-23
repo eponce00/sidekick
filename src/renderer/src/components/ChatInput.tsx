@@ -24,7 +24,7 @@ import { ScrollToBottomButton } from './ScrollToBottomButton'
 import { promptRefinementModelForPinnedModel } from '../services/providers/promptRefinement'
 import type { ConversationGoal } from '../../../shared/conversationGoals'
 import type { PromptRefinementHistorySelection } from '../utils/promptRefinementHistory'
-import { ConversationGoalBar } from './ConversationGoalBar'
+import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
@@ -129,6 +129,7 @@ interface ChatInputProps {
   planningModels: PinnedModel[]
   executorModelName: string
   goal: ConversationGoal | null
+  goalArmed: boolean
   goalAvailable: boolean
   goalUnavailableReason?: string
   thinkingEnabled: boolean
@@ -153,8 +154,7 @@ interface ChatInputProps {
   onToggleResearch: () => void
   onTogglePlan: () => void
   onPlanModelChange: (modelId: string) => void
-  onOpenGoal: () => void
-  onEditGoal: () => void
+  onToggleGoal: () => void
   onPauseGoal: () => void
   onResumeGoal: () => void
   onClearGoal: () => void
@@ -204,6 +204,7 @@ export function ChatInput({
   planningModels,
   executorModelName,
   goal,
+  goalArmed,
   goalAvailable,
   goalUnavailableReason,
   thinkingEnabled,
@@ -228,8 +229,7 @@ export function ChatInput({
   onToggleResearch,
   onTogglePlan,
   onPlanModelChange,
-  onOpenGoal,
-  onEditGoal,
+  onToggleGoal,
   onPauseGoal,
   onResumeGoal,
   onClearGoal,
@@ -298,11 +298,11 @@ export function ChatInput({
       },
       {
         id: 'goal',
-        label: 'Ongoing goal',
+        label: goalArmed ? 'Turn off Goal' : 'Ongoing goal',
         hint: 'Keep working toward an objective across messages',
         keywords: 'goal task objective',
-        disabled: !goalAvailable,
-        run: onOpenGoal
+        disabled: !goalAvailable && !goalArmed,
+        run: onToggleGoal
       },
       {
         id: 'project',
@@ -338,8 +338,9 @@ export function ChatInput({
         : [])
     ],
     [
+      goalArmed,
       goalAvailable,
-      onOpenGoal,
+      onToggleGoal,
       onOpenWorkspace,
       onOpenWorkspaceMemory,
       onToggleModelMenu,
@@ -427,28 +428,31 @@ export function ChatInput({
       inputRef={inputRef}
       disabled={Boolean(editingMessageId)}
       placeholder={
-        goal?.status === 'active'
-          ? 'Steer the goal or add a constraint…'
-          : planActive
-            ? 'Add guidance while the plan is running…'
-            : planSelected
-              ? 'What should SideKick plan?'
-              : researchActive
-                ? 'Add a follow-up or steer the research…'
-                : researchSelected
-                  ? 'What should SideKick research?'
-                  : 'Type a message...'
+        goalArmed
+          ? 'Describe the outcome and how SideKick should prove it works…'
+          : goal?.status === 'active'
+            ? 'Steer the goal or add a constraint…'
+            : planActive
+              ? 'Add guidance while the plan is running…'
+              : planSelected
+                ? 'What should SideKick plan?'
+                : researchActive
+                  ? 'Add a follow-up or steer the research…'
+                  : researchSelected
+                    ? 'What should SideKick research?'
+                    : 'Type a message...'
       }
       contextBar={
         goal ? (
           <ConversationGoalBar
             goal={goal}
             isRunning={isLoading}
-            onEdit={onEditGoal}
             onPause={onPauseGoal}
             onResume={onResumeGoal}
             onClear={onClearGoal}
           />
+        ) : goalArmed ? (
+          <GoalArmedBar onCancel={onToggleGoal} />
         ) : planSelected || planActive ? (
           <div className={`plan-mode-bar ${planActive ? 'is-running' : 'is-selected'}`}>
             <span className="plan-mode-icon" aria-hidden="true">
@@ -777,9 +781,10 @@ export function ChatInput({
                     label="Ongoing goal"
                     description="Keep SideKick working toward an objective across messages"
                     icon={<Target size={16} />}
-                    onClick={() => runFeatureAction(onOpenGoal)}
-                    disabled={!goalAvailable}
+                    onClick={() => runFeatureAction(onToggleGoal)}
+                    disabled={!goalAvailable && !goalArmed}
                     unavailableReason={goalUnavailableReason}
+                    selected={goalArmed}
                   />
                   <FeatureMenuAction
                     label="Plan first"

@@ -304,3 +304,50 @@ export class ConversationGoalStore {
     return goal
   }
 }
+
+/**
+ * Applies one `update_goal` call from the model.
+ *
+ * Completion is checked before it is accepted. `beforeCompletion` lets changed
+ * project files be verified first, because asking only at the end of the run
+ * told a model whose goal was already complete that it could not claim
+ * completion. Completing twice is answered as already done, not as a failure.
+ */
+export function executeGoalUpdate(
+  goals: ConversationGoalStore,
+  goalId: string,
+  args: Record<string, unknown>,
+  beforeCompletion?: () => { continue: boolean; prompt?: string } | undefined
+): Record<string, unknown> {
+  const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+  if (args.status !== 'blocked') {
+    if (goals.get(goalId)?.status === 'completed') {
+      return {
+        status: 'completed',
+        alreadyComplete: true,
+        message:
+          'This goal was already completed earlier in this run. Do not call update_goal again or redo the work; reply to the user with one brief closing message.'
+      }
+    }
+    const verification = beforeCompletion?.()
+    if (verification?.continue) {
+      return { status: 'active', completed: false, message: verification.prompt }
+    }
+    const completed = goals.complete(goalId, text(args.summary), text(args.verification))
+    return {
+      status: completed.status,
+      summary: completed.completionSummary,
+      verification: completed.completionVerification,
+      next: 'The goal is closed. Reply to the user with one brief closing message and call no more tools. Do not repeat the summary above.'
+    }
+  }
+  const blocked = goals.reportBlocked(goalId, text(args.blocker_key), text(args.summary))
+  return {
+    status: blocked.status,
+    blockedStreak: blocked.blockedStreak,
+    message:
+      blocked.status === 'blocked'
+        ? 'Goal blocked after the same impasse was confirmed three consecutive times.'
+        : `Blocker recorded ${blocked.blockedStreak}/3. Keep trying materially different approaches or ask the user for the needed decision.`
+  }
+}

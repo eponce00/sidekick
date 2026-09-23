@@ -347,6 +347,87 @@ describe('AgentRunKernel', () => {
     expect(published).toContain('assistant.delta')
   })
 
+  function waitCall(id: string): AgentKernelModelTurn['toolCalls'][number] {
+    return { id, function: { name: 'wait', arguments: { seconds: 1, reason: 'test' } } }
+  }
+
+  it('runs the call that completes a goal, then refuses tool work after it', async () => {
+    // A goal completed by a tool call left the model free to keep acting. A
+    // local model then invented a user complaint and rebuilt the finished work.
+    let complete = false
+    const router = {
+      execute: vi.fn(async () => {
+        complete = true
+        return { waitedSeconds: 1 }
+      })
+    }
+    const sampler = sequence(
+      sampledTurn({
+        content: 'Done. ',
+        toolCalls: [waitCall('completes-goal')],
+        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({
+        toolCalls: [waitCall('after-goal')],
+        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'Enjoy the card.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start({
+      ...input(router),
+      goalController: {
+        isComplete: () => complete,
+        afterTerminalTurn: vi.fn().mockResolvedValue({ continue: false })
+      }
+    })
+
+    expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Enjoy the card.' })
+    expect(router.execute).toHaveBeenCalledTimes(1)
+    const refused = result.messages.find(
+      (message) => message.role === 'tool' && message.tool_call_id === 'after-goal'
+    )
+    expect(refused?.content).toContain('The goal is already complete')
+    expect(
+      store
+        .listEvents('run-1')
+        .filter(({ type }) => type === 'tool.running')
+        .map(({ payload }) => payload.toolCallId)
+    ).toEqual(['completes-goal'])
+  })
+
+  it('ends on the finished goal when the model asks for tools again after being refused', async () => {
+    const router = { execute: vi.fn() }
+    const sampler = sequence(
+      sampledTurn({
+        content: 'Here is the card. ',
+        toolCalls: [waitCall('again-1')],
+        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({
+        toolCalls: [waitCall('again-2')],
+        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'This turn must never be requested.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start({
+      ...input(router),
+      goalController: {
+        isComplete: () => true,
+        afterTerminalTurn: vi.fn().mockResolvedValue({ continue: false })
+      }
+    })
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Here is the card. ' })
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(
+      store.listEvents('run-1').filter(({ type }) => type === 'assistant.completed')
+    ).toHaveLength(2)
+  })
+
   it('continues an active goal after a terminal text turn', async () => {
     const sampler = sequence(
       sampledTurn({ content: 'I finished the first step.' }),

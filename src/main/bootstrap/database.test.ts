@@ -17,6 +17,32 @@ describe('database schema migrations', () => {
     expect(db.prepare('SELECT * FROM sqlite_master ORDER BY name').all()).toEqual(before)
   })
 
+  it('adds a new message column to a database that already applied every earlier migration', async () => {
+    // Required columns are only reconciled inside a migration. A column listed
+    // without one of its own never reached an installed database, which then
+    // refused to store a goal's completion notice.
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-upgrade-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk
+        .prepare("DELETE FROM schema_migrations WHERE id = '20260923_001_message_notice_tone'")
+        .run()
+      disk.exec('ALTER TABLE messages DROP COLUMN notice_tone')
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      const columns = (
+        disk.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).toContain('notice_tone')
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rolls back the entire schema upgrade when a later migration fails, then retries cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-fault-'))
     let disk: Database.Database | undefined
@@ -43,7 +69,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 7
+        count: 8
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -163,7 +189,7 @@ describe('database schema migrations', () => {
     expect(groupColumns.map(({ name }) => name)).toContain('unread_completion_at')
     expect(agentSessionColumns.map(({ name }) => name)).toContain('unread_completion_at')
     expect(messageColumns.map(({ name }) => name)).toEqual(
-      expect.arrayContaining(['run_mode', 'images', 'attachments'])
+      expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone'])
     )
     expect(
       db.prepare('SELECT id, length(checksum) AS checksum_length FROM schema_migrations').all()
@@ -174,7 +200,8 @@ describe('database schema migrations', () => {
       { id: '20260830_001_managed_worktrees', checksum_length: 64 },
       { id: '20260830_002_conversation_pins', checksum_length: 64 },
       { id: '20260830_003_title_backfill_attempt_versions', checksum_length: 64 },
-      { id: '20260830_004_message_context_attachments', checksum_length: 64 }
+      { id: '20260830_004_message_context_attachments', checksum_length: 64 },
+      { id: '20260923_001_message_notice_tone', checksum_length: 64 }
     ])
     expect(
       db
