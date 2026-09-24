@@ -111,22 +111,6 @@ describe('AgentToolRegistry', () => {
     expect(executor).not.toHaveBeenCalled()
   })
 
-  it('says which skill brings back a tool missing from a follow-up turn', async () => {
-    // Skills load per run. Told only to choose another tool, a model asked to
-    // add charts to an existing artifact gave up instead of reloading the skill.
-    const executor = vi.fn()
-    const missing = await registry.execute(
-      input('create_artifact', { type: 'react', title: 'Card', code: 'x' }),
-      executor
-    )
-    expect(missing.error?.code).toBe('unknown_tool')
-    expect(missing.error?.recovery).toContain('use_skill with skill_id "web-artifacts"')
-    expect(executor).not.toHaveBeenCalled()
-
-    const unknown = await registry.execute(input('not_a_tool', {}), executor)
-    expect(unknown.error?.recovery).toBe('Choose a tool from the current tool catalog.')
-  })
-
   it('validates required arguments before side effects', async () => {
     const executor = vi.fn()
     const missing = await registry.execute(input('shell', {}), executor)

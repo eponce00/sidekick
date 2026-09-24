@@ -367,8 +367,14 @@ describe('conversation provider history', () => {
         ?.function.arguments as { code: string }
 
     expect(codeOf('second').code).toBe(version('second'))
-    expect(codeOf('first').code).toContain('Earlier version of "Weather" omitted')
+    // "Omitted" read as "the code was removed"; superseded versions point to the current one.
+    expect(codeOf('first').code).toContain('Superseded version of "Weather"')
     expect(codeOf('first').code).not.toContain('…')
+    const resultOf = (callId: string) =>
+      history.find((message) => message.role === 'tool' && message.tool_call_id === callId)
+        ?.content as string
+    expect(resultOf('second')).toContain('This is the current version of "Weather"')
+    expect(resultOf('first')).not.toContain('This is the current version')
     db.close()
   })
 
@@ -390,6 +396,60 @@ describe('conversation provider history', () => {
     // Only the latest reply counts: once the conversation moved on, the skill loads on demand.
     expect(previousReplyMadeArtifact(db, 'moved-on')).toBe(false)
     expect(previousReplyMadeArtifact(db, 'empty')).toBe(false)
+    db.close()
+  })
+
+  it('shows no code for an artifact call that never ran, and no code echoed by an old failure', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
+    `)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    add.run(
+      'run-1',
+      2,
+      'assistant.completed',
+      JSON.stringify({
+        toolCalls: [
+          {
+            id: 'refused',
+            name: 'create_artifact',
+            arguments: { type: 'react', title: 'Card', code: `${'y'.repeat(2_000)}…` }
+          }
+        ]
+      })
+    )
+    add.run(
+      'run-1',
+      3,
+      'tool.completed',
+      JSON.stringify({
+        toolCallId: 'refused',
+        name: 'create_artifact',
+        result: {
+          modelContent: JSON.stringify({
+            ok: false,
+            error: 'Tool is not available in this run: create_artifact',
+            artifact: { code: 'y'.repeat(500) }
+          })
+        }
+      })
+    )
+
+    const history = durableProviderHistory(db, 'conversation-1', [row({ id: 'assistant-1' })], {
+      providerKind: 'openai-compatible',
+      model: 'qwen'
+    })
+    const call = history.flatMap((message) => message.tool_calls ?? [])[0]
+    expect((call.function.arguments as { code: string }).code).toBe(
+      '[This call did not run, so its code was not kept.]'
+    )
+    const result = history.find((message) => message.role === 'tool')?.content as string
+    expect(result).toContain('Tool is not available')
+    expect(result).not.toContain('yyyy')
     db.close()
   })
 })

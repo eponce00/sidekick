@@ -1166,7 +1166,7 @@ const searchTools = definition(
 
 const createArtifact = definition(
   'create_artifact',
-  'Render one live interactive result inside SideKick chat. This is not a project file. Use only after loading the web-artifacts skill for a user-requested inline chart, calculator, visualization, simulation, map, diagram, or interactive tool. Do not use it for a website or project deliverable.',
+  'Render one live interactive result inside SideKick chat. This is not a project file. Load the web-artifacts skill first when making a new artifact; changing one made in the previous reply needs no reload. For a user-requested inline chart, calculator, visualization, simulation, map, diagram, or interactive tool. Do not use it for a website or project deliverable.',
   {
     type: 'object',
     required: ['type', 'title', 'code'],
@@ -1452,18 +1452,6 @@ export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEnt
 
 const SKILLS_WITH_TOOLS = [WEB_ARTIFACTS_SKILL_ID] as const
 
-/** The skill whose loading adds a tool to a run, when a tool comes from one. */
-export function skillProvidingTool(name: string): string | undefined {
-  return SKILLS_WITH_TOOLS.find((skillId) =>
-    getSkillToolCatalogEntries(skillId).some(({ definition }) => definition.function.name === name)
-  )
-}
-
-/** Skills that add tools to the run that loads them. */
-export function skillsWithTools(): readonly string[] {
-  return SKILLS_WITH_TOOLS
-}
-
 /** Names of the tools a skill adds to the run that loads it. */
 export function skillToolNames(skillId: string): string[] {
   return getSkillToolCatalogEntries(skillId).map(({ definition }) => definition.function.name)
@@ -1533,7 +1521,11 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
         ]
       : []),
     ...(options.surface === 'collaboration' ? collaborationEntries : []),
-    ...(options.activeSkillIds ?? []).flatMap(getSkillToolCatalogEntries),
+    // Skill tools are offered whether or not their skill is loaded yet. A tool
+    // list that changes when a skill loads invalidates the provider's prompt
+    // cache from that point, and a tool missing from a follow-up turn was a
+    // dead end; the handler brings in the skill's guidance instead.
+    ...SKILLS_WITH_TOOLS.flatMap(getSkillToolCatalogEntries),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )

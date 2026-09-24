@@ -77,11 +77,14 @@ describe('canonical agent tool catalog', () => {
     })
   })
 
-  it('exposes skill-owned tools only after activation', () => {
-    expect(names({ surface: 'conversation' })).not.toContain('create_artifact')
-    expect(names({ surface: 'conversation', activeSkillIds: ['web-artifacts'] })).toContain(
-      'create_artifact'
+  it('offers skill-owned tools before their skill loads, so the tool list stays the same', () => {
+    // A tool list that grew when a skill loaded invalidated the provider's
+    // prompt cache mid-run, and a follow-up turn without the skill had no tool.
+    expect(names({ surface: 'conversation' })).toContain('create_artifact')
+    expect(names({ surface: 'conversation' })).toEqual(
+      names({ surface: 'conversation', activeSkillIds: ['web-artifacts'] })
     )
+    expect(names({ surface: 'research' })).not.toContain('create_artifact')
   })
 
   it('exposes the complete first-party visual browser only for compatible runs', () => {

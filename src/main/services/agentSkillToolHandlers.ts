@@ -4,7 +4,7 @@ import {
   type ToolExecutionResult
 } from '../../shared/agentRuntime'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
-import { skillToolNames } from '../../shared/agentToolCatalog'
+import { skillToolNames, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import type { AgentChildRunLauncher } from './agentToolRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -96,6 +96,8 @@ export function registerSkillToolHandlers(
     artifactInspector?: () => ArtifactInspectorLike | undefined
     /** Whether the run's model accepts images, so a screenshot is worth sending. */
     visionEnabled?: boolean
+    /** The previous reply made an artifact, so its guidance is already in the conversation. */
+    artifactContinuation?: boolean
   }
 ): void {
   registry.register('use_skill', async ({ title, arguments: args }) => {
@@ -124,7 +126,7 @@ export function registerSkillToolHandlers(
         // Say what loading changed: the model otherwise treated a reload as
         // instructions only and never looked for the tool it had just gained.
         (skillToolNames(skill.id).length
-          ? `Loaded. ${skillToolNames(skill.id).join(', ')} is now available for the rest of this run; skills load per run, so load it again in a later turn that needs it.\n`
+          ? `Loaded. ${skillToolNames(skill.id).join(', ')} is ready to use in this run.\n`
           : '') +
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
         `${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n` +
@@ -136,13 +138,12 @@ export function registerSkillToolHandlers(
   })
 
   registry.register('create_artifact', async ({ title, arguments: args, context }) => {
-    if (!options.activeSkillIds.has('web-artifacts')) {
-      return toolExecutionFailed({
-        title,
-        code: 'permission_denied',
-        message: 'Load the web-artifacts skill before creating an inline artifact'
-      })
-    }
+    // Refusing an artifact made before its skill loaded threw away the code the
+    // model had just written. Render it, and when the skill's guidance is not
+    // already in the conversation, return that guidance to check it against.
+    const guidanceMissing =
+      !options.activeSkillIds.has(WEB_ARTIFACTS_SKILL_ID) && !options.artifactContinuation
+    options.activeSkillIds.add(WEB_ARTIFACTS_SKILL_ID)
     const type = args.type === 'html' || args.type === 'svg' ? args.type : 'react'
     const artifact = {
       type: type as InspectedArtifactType,
@@ -157,7 +158,15 @@ export function registerSkillToolHandlers(
           return undefined
         })
       : undefined
-    return artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
+    const result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
+    const skill = getSkillById(WEB_ARTIFACTS_SKILL_ID)
+    if (!guidanceMissing || !skill) return result
+    return {
+      ...result,
+      modelContent:
+        `${result.modelContent}\n\nThis artifact was made before the web-artifacts guidance was loaded. Check it against the guidance below and revise it with create_artifact if it does not follow it.\n` +
+        `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n</skill_instructions>`
+    }
   })
 
   registry.register('spawn_subagent', async ({ title, arguments: args, context }) => {

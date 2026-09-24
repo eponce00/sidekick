@@ -17,9 +17,9 @@ const model = createPromptModelProfile({
 })
 
 describe('PromptComposer', () => {
-  it('keeps inline artifact rendering unavailable until its run-scoped skill is loaded', () => {
+  it('offers inline artifact rendering once, whether or not its skill has loaded', () => {
     const tools = getToolDefinitions(true, '/workspace')
-    expect(tools.some((tool) => tool.function.name === 'create_artifact')).toBe(false)
+    expect(tools.filter((tool) => tool.function.name === 'create_artifact')).toHaveLength(1)
 
     enableSkillToolDefinitions(tools, 'web-artifacts')
     enableSkillToolDefinitions(tools, 'web-artifacts')

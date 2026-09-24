@@ -233,10 +233,14 @@ its top and scrolls inside the card for the rest. The model receives the render 
 small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
 unverified. The run ledger keeps tool arguments as a bounded preview, so replayed history restores
-the current version of each artifact whole from its result and names the versions it replaced
-instead of showing them cut; a turn that follows a reply which made an artifact starts with the
-web-artifacts skill loaded. The chat shows only the latest version of an artifact within a reply,
-and a failed one as a single line that expands to its error and code.
+the current version of each artifact whole from its result, marks that result as the current
+version, and points the versions it replaced to it instead of showing them cut. `create_artifact`
+is offered whenever the run allows artifacts, whether or not the web-artifacts skill has loaded,
+so the tool list does not change mid-conversation and invalidate the provider's prompt cache. An
+artifact made before the skill loaded is still rendered, and its result carries the skill's
+guidance unless the previous reply made an artifact and the guidance is already in history. The
+chat shows only the latest version of an artifact within a reply, and a failed one as a single
+line that expands to its error and code.
 
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the

@@ -1,9 +1,5 @@
 import type Database from 'better-sqlite3'
-import {
-  agentRunProfile,
-  getAgentToolDefinitions,
-  WEB_ARTIFACTS_SKILL_ID
-} from '../../shared/agentToolCatalog'
+import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { projectStartCommands } from './projectHooks'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
@@ -236,6 +232,7 @@ export function durableProviderHistory(
   const messagesByOutput = new Map<string, ProviderChatMessage[]>()
   const artifactCalls: Array<{ call: ProviderToolCall; outputMessageId: string }> = []
   const artifactResults = new Map<string, { title: string; code: string }>()
+  const artifactResultMessages = new Map<string, ProviderChatMessage>()
 
   for (const event of eventRows) {
     const payload = parseJson<Record<string, unknown>>(event.payload_json, {})
@@ -303,12 +300,17 @@ export function durableProviderHistory(
           : ''
       const receipt = compactLegacyBrowserReceipt(name, rawContent)
       const media = receipt.compacted ? [] : durableToolMedia(result.media)
-      history.push({
+      const toolMessage: ProviderChatMessage = {
         role: 'tool',
         tool_call_id: String(payload.toolCallId || ''),
-        content: receipt.content,
+        content:
+          name === 'create_artifact' ? withoutEchoedArtifact(receipt.content) : receipt.content,
         ...(media.length ? { media } : {})
-      })
+      }
+      history.push(toolMessage)
+      if (name === 'create_artifact') {
+        artifactResultMessages.set(String(payload.toolCallId || ''), toolMessage)
+      }
     }
   }
 
@@ -317,7 +319,8 @@ export function durableProviderHistory(
     artifactCalls
       .filter(({ outputMessageId }) => kept.has(outputMessageId))
       .map(({ call }) => call),
-    artifactResults
+    artifactResults,
+    artifactResultMessages
   )
 
   return rows.flatMap((row) => {
@@ -349,13 +352,18 @@ export function previousReplyMadeArtifact(db: Database.Database, conversationId:
  * The ledger keeps tool arguments as a bounded preview, so an artifact's code
  * came back to the model cut at 2,000 characters. Asked to change the artifact
  * in a later turn, the model copied that cut code, preview marker included,
- * and the render failed on it. The current version of each artifact is the
- * document being edited, so it is restored whole from its result; versions it
- * replaced are named and omitted rather than shown cut.
+ * and the render failed on it.
+ *
+ * The current version of each artifact is the document being edited, so it is
+ * restored whole from its result and its result says so. Versions it replaced
+ * point to it instead of repeating their code; a note that merely called them
+ * omitted led a model to conclude the artifact's code had been removed. A call
+ * that never ran has no code worth showing.
  */
 function restoreArtifactCode(
   calls: readonly ProviderToolCall[],
-  results: ReadonlyMap<string, { title: string; code: string }>
+  results: ReadonlyMap<string, { title: string; code: string }>,
+  resultMessages: ReadonlyMap<string, ProviderChatMessage>
 ): void {
   const latestByTitle = new Map<string, string>()
   for (const call of calls) {
@@ -364,15 +372,38 @@ function restoreArtifactCode(
   }
   for (const call of calls) {
     const result = call.id ? results.get(call.id) : undefined
-    if (!result) continue
     const args = call.function.arguments as Record<string, unknown>
+    if (!result) {
+      call.function.arguments = {
+        ...args,
+        code: '[This call did not run, so its code was not kept.]'
+      }
+      continue
+    }
+    const current = latestByTitle.get(result.title) === call.id
     call.function.arguments = {
       ...args,
-      code:
-        latestByTitle.get(result.title) === call.id
-          ? result.code
-          : `[Earlier version of "${result.title}" omitted (${result.code.length} characters). The current version appears later in full; change that one.]`
+      code: current
+        ? result.code
+        : `[Superseded version of "${result.title}", not repeated here. The complete current code of "${result.title}" is in its latest create_artifact call.]`
     }
+    const message = call.id ? resultMessages.get(call.id) : undefined
+    if (current && message && typeof message.content === 'string') {
+      message.content = `${message.content}\nThis is the current version of "${result.title}". The create_artifact call above holds its complete code; start from it to change the artifact.`
+    }
+  }
+}
+
+/** Earlier failed results repeated the artifact's code; keep only the failure. */
+function withoutEchoedArtifact(content: string): string {
+  if (!content.startsWith('{')) return content
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object' || !('artifact' in parsed)) return content
+    const { artifact: _artifact, ...rest } = parsed
+    return JSON.stringify(rest)
+  } catch {
+    return content
   }
 }
 
@@ -499,15 +530,7 @@ export class ConversationRunPreparer {
       .prepare('SELECT active_skills FROM conversations WHERE id = ?')
       .get(input.conversationId) as { active_skills: string | null } | undefined
     if (!conversation) throw new Error('Conversation not found')
-    const conversationSkillIds = parseJson<string[]>(conversation.active_skills, [])
-    // The web-artifacts skill loads per run, but "add a chart to it" right after
-    // an artifact is the same work. Without the skill the model wrote the whole
-    // artifact into a call to a tool it no longer had, then had to start over.
-    const activeSkillIds =
-      !conversationSkillIds.includes(WEB_ARTIFACTS_SKILL_ID) &&
-      previousReplyMadeArtifact(this.db, input.conversationId)
-        ? [...conversationSkillIds, WEB_ARTIFACTS_SKILL_ID]
-        : conversationSkillIds
+    const activeSkillIds = parseJson<string[]>(conversation.active_skills, [])
     const executionTarget = refreshProviderTargetMetadata(
       modelTarget(input.model),
       currentSettings.providerInstances || []
@@ -533,6 +556,9 @@ export class ConversationRunPreparer {
       workspaceRoot: workspaceRoot ?? undefined,
       webSearchEnabled: true,
       browserEnabled: input.model.supportsVision !== false,
+      // "Add a chart to it" right after an artifact is the same work: the
+      // web-artifacts guidance is already in history and need not be reloaded.
+      artifactContinuation: previousReplyMadeArtifact(this.db, input.conversationId),
       capabilities: input.model.supportsTools === false ? [] : undefined,
       persistentSkillIds: activeSkillIds,
       mcpConfigs: currentSettings.mcpServers,

@@ -39,8 +39,8 @@ the machine or in the project. SideKick does not download language servers or to
 - Installed skills may add `create_artifact` and trusted bundled helpers. `create_artifact` renders
   the artifact the way the chat shows it and reports whether it rendered, any runtime errors, and,
   for models that accept images, a screenshot, so the model can check its own result.
-  Skills such as web-artifacts load per run; when a later turn calls a tool its skill has not
-  loaded, the error names the skill to load again, and `search_tools` points to it as well.
+  The tool is offered even before its skill loads, so the tool list stays the same across turns;
+  an artifact made without the skill's guidance is rendered and the guidance comes back with it.
 - User-configured MCP servers add their advertised tools after schema normalization.
 - A group-agent run adds `collaboration_read`, `collaboration_send`,
   `collaboration_share_file`, `collaboration_list_artifacts`,
