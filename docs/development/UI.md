@@ -106,10 +106,15 @@ The chat stays responsive by keeping per-keystroke and per-update work independe
   agent worked.
 - Live run projection is coalesced to 50 ms, and to 250 ms once a run passes 4,000 events, because
   each projection rebuilds the whole run.
+- Effects that call the main process depend only on values that change with the conversation.
+  `useConversationRun` reads its `onProjection` callback through a ref: when the callback was a
+  dependency, every keystroke re-ran the effect that asks for the latest run, and the main process
+  read and sent up to 10,000 events per key.
 
-To measure, start the dev app with `npm run dev -- --remoteDebuggingPort 9222` and profile the
-renderer over the Chrome DevTools Protocol: per-keystroke latency, long tasks, and heap growth
-while typing in the longest conversation available.
+To measure, start the dev app with `npm run dev -- --remoteDebuggingPort 9222 --inspect 9229` and
+profile both processes: the renderer over the Chrome DevTools Protocol (per-keystroke latency, long
+tasks, and heap growth while typing in the longest conversation available), and the main process
+through its V8 inspector, where IPC work caused by typing shows up. Compare against a new chat.
 
 ## UI preview and visual QA
 

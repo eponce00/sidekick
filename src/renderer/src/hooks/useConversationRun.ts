@@ -164,6 +164,14 @@ export function useConversationRun({
   const queuedRef = useRef<PendingRunMessageItem[]>([])
   const pivotRef = useRef<PendingRunMessageItem | null>(null)
   const admissionWriteRef = useRef<Promise<unknown>>(Promise.resolve())
+  // Callers usually pass a fresh callback on every render. Reading it through a
+  // ref keeps `project` and everything built on it stable, so typing in the
+  // composer does not re-run the effect that asks the main process for the
+  // latest run (a full event read, slow in a long conversation).
+  const onProjectionRef = useRef(onProjection)
+  useEffect(() => {
+    onProjectionRef.current = onProjection
+  }, [onProjection])
 
   const project = useCallback(
     (active: ActiveRun): void => {
@@ -188,10 +196,10 @@ export function useConversationRun({
             : message
         )
       )
-      onProjection?.(projection)
+      onProjectionRef.current?.(projection)
       if (finalized) active.resolve()
     },
-    [onProjection, setMessages]
+    [setMessages]
   )
 
   const scheduleProject = useCallback(

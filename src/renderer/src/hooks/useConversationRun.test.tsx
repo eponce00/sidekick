@@ -187,6 +187,34 @@ describe('useConversationRun', () => {
     expect(controller.isLoading).toBe(false)
   })
 
+  it('asks for the latest run once per conversation, not on every render', async () => {
+    let typeDraft!: (value: string) => void
+    function ComposerHarness(): null {
+      const [, setMessages] = useState<Message[]>([])
+      const [draft, setDraft] = useState('')
+      const messagesRef = useRef<Message[]>([])
+      useEffect(() => {
+        typeDraft = setDraft
+      }, [])
+      // A fresh callback on every render, as ChatPanel passes one.
+      useConversationRun({
+        conversationId: 'conversation-1',
+        messagesRef,
+        skipNextLoadRef: { current: false },
+        setMessages,
+        setInputValue: vi.fn(),
+        onConversationCreated: vi.fn(),
+        onProjection: () => draft.length
+      })
+      return null
+    }
+    await act(async () => root.render(<ComposerHarness />))
+    for (const draft of ['h', 'ho', 'hol', 'hola']) {
+      await act(async () => typeDraft(draft))
+    }
+    expect(window.api.agentRuns.latest).toHaveBeenCalledTimes(1)
+  })
+
   it('preserves live events that arrive while the durable snapshot is loading', async () => {
     const snapshotEvent = runEvent(1, 'assistant.delta', { content: 'Hello ' })
     vi.mocked(window.api.agentRuns.events).mockImplementationOnce(async () => {
