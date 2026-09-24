@@ -110,6 +110,9 @@ export interface ConversationRunController {
 }
 
 const TERMINAL_PHASES = new Set<AgentRunPhase>(['completed', 'failed', 'cancelled', 'interrupted'])
+const STREAM_PROJECTION_MS = 50
+const LONG_RUN_EVENTS = 4_000
+const LONG_RUN_PROJECTION_MS = 250
 
 async function completeJournalWindow(initial: AgentRunEventsResult): Promise<AgentRunEventsResult> {
   if (!initial.run || !initial.journal?.hasMore) return initial
@@ -161,6 +164,14 @@ export function useConversationRun({
   const queuedRef = useRef<PendingRunMessageItem[]>([])
   const pivotRef = useRef<PendingRunMessageItem | null>(null)
   const admissionWriteRef = useRef<Promise<unknown>>(Promise.resolve())
+  // Callers usually pass a fresh callback on every render. Reading it through a
+  // ref keeps `project` and everything built on it stable, so typing in the
+  // composer does not re-run the effect that asks the main process for the
+  // latest run (a full event read, slow in a long conversation).
+  const onProjectionRef = useRef(onProjection)
+  useEffect(() => {
+    onProjectionRef.current = onProjection
+  }, [onProjection])
 
   const project = useCallback(
     (active: ActiveRun): void => {
@@ -185,10 +196,10 @@ export function useConversationRun({
             : message
         )
       )
-      onProjection?.(projection)
+      onProjectionRef.current?.(projection)
       if (finalized) active.resolve()
     },
-    [onProjection, setMessages]
+    [setMessages]
   )
 
   const scheduleProject = useCallback(
@@ -204,10 +215,17 @@ export function useConversationRun({
       }
       // Provider token streams can emit hundreds of durable deltas per second.
       // Coalesce them into one projection/frame while preserving their sequence in the event log.
-      active.projectionTimer = setTimeout(() => {
-        active.projectionTimer = undefined
-        if (activeRef.current?.runId === active.runId) project(active)
-      }, 50)
+      // Projection rebuilds the whole run, so its cost grows with the run: about
+      // 15 ms at 20,000 events. A long run is projected less often rather than
+      // spending most of every frame on it.
+      const eventCount = active.model.getSnapshot().events.length
+      active.projectionTimer = setTimeout(
+        () => {
+          active.projectionTimer = undefined
+          if (activeRef.current?.runId === active.runId) project(active)
+        },
+        eventCount > LONG_RUN_EVENTS ? LONG_RUN_PROJECTION_MS : STREAM_PROJECTION_MS
+      )
     },
     [project]
   )

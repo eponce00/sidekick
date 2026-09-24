@@ -741,6 +741,15 @@ function withoutStreamingImages(content: string): string {
   return content.replace(/!\[[^\]]*\]\((?:https?:\/\/|data:image\/)[^)\n]+\)/giu, '')
 }
 
+// rehype-highlight builds a highlighter and registers every common language
+// each time a markdown processor is created, and react-markdown creates one per
+// render. Built once here, the same stateless transform serves every render;
+// per render it was the largest source of work and garbage in long chats.
+const highlightTransform = rehypeHighlight()
+function rehypeSharedHighlight(): typeof highlightTransform {
+  return highlightTransform
+}
+
 interface MarkdownFragmentProps extends MessageMarkdownProps {
   allowRichMedia: boolean
 }
@@ -805,7 +814,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath, remarkFileReferences]}
-      rehypePlugins={[rehypeHighlight, rehypeKatex, rehypeTwemoji]}
+      rehypePlugins={[rehypeSharedHighlight, rehypeKatex, rehypeTwemoji]}
       components={{
         code: renderCode,
         pre: ({ children }) => {

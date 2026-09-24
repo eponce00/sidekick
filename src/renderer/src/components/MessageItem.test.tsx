@@ -937,3 +937,117 @@ describe('MessageItem shared-channel presentation', () => {
     }
   })
 })
+
+describe('MessageItem in long conversations', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { siteIcons: { get: vi.fn(async () => ({ dataUrl: null })) } }
+    })
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  const handlers = {
+    onToggleThinking: vi.fn(),
+    onHandleArtifactResult: vi.fn(),
+    onEditMessage: vi.fn(),
+    onCancelEditMessage: vi.fn(),
+    onConfirmEditMessage: vi.fn(),
+    onCopyMessage: vi.fn(),
+    onRetryMessage: vi.fn(),
+    onForkMessage: vi.fn(),
+    onSetEditingContent: vi.fn(),
+    onApproveToolLimitDecision: vi.fn(),
+    onDenyToolLimitDecision: vi.fn()
+  }
+  const expandedThinking = new Set<string>()
+
+  function renderReply(message: Parameters<typeof MessageItem>[0]['message'], isLoading: boolean) {
+    return (
+      <MessageItem
+        message={message}
+        index={0}
+        isLoading={isLoading}
+        expandedThinking={expandedThinking}
+        editingMessageId={null}
+        editingGeometry={null}
+        editingContent=""
+        copiedMessageId={null}
+        {...handlers}
+      />
+    )
+  }
+
+  it('does not re-render when the chat re-renders around it, as it does on every keystroke', async () => {
+    // A new fork callback per render defeated the memo, so typing re-rendered
+    // every message: markdown re-parsed and links flickered.
+    let contentReads = 0
+    const message = {
+      id: 'reply',
+      role: 'agent' as const,
+      timestamp: 1,
+      get content() {
+        contentReads++
+        return 'See [the docs](https://example.com)'
+      }
+    }
+    const Chat = ({ draft }: { draft: string }) => (
+      <>
+        <span data-draft={draft} />
+        {renderReply(message, false)}
+      </>
+    )
+    await act(async () => root.render(<Chat draft="a" />))
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 0)))
+    const readsAfterMount = contentReads
+    expect(readsAfterMount).toBeGreaterThan(0)
+
+    await act(async () => root.render(<Chat draft="ab" />))
+    await act(async () => root.render(<Chat draft="abc" />))
+
+    expect(container.querySelectorAll('[data-draft="abc"]')).toHaveLength(1)
+    expect(contentReads).toBe(readsAfterMount)
+  })
+
+  it('mounts only the latest steps of a long work block, with the rest one click away', async () => {
+    // Hundreds of steps mounted and re-rendered on every update made a
+    // long-running agent slower to watch the longer it worked.
+    const segments = Array.from({ length: 45 }, (_, index) => [
+      { type: 'thinking' as const, content: `Step ${index} reasoning` },
+      { type: 'text' as const, content: `Progress ${index}` }
+    ]).flat()
+    const message = {
+      id: 'long-run',
+      role: 'agent' as const,
+      content: '',
+      timestamp: 1,
+      segments: [...segments, { type: 'text' as const, content: 'Done' }]
+    }
+    await act(async () => root.render(renderReply(message, true)))
+
+    const visibleSteps = () =>
+      container.querySelectorAll('.agent-work-content > .segment-group').length
+    const earlier = container.querySelector('.agent-work-earlier') as HTMLButtonElement
+    expect(visibleSteps()).toBe(30)
+    const hidden = Number(/Show (\d+) earlier steps/.exec(earlier.textContent ?? '')?.[1])
+    expect(hidden).toBeGreaterThan(50)
+    // The newest step is among those shown, the oldest is not.
+    const shown = container.querySelector('.agent-work-content')?.textContent ?? ''
+    expect(shown).toContain('Step 44 reasoning')
+    expect(shown).not.toContain('Step 0 reasoning')
+
+    await act(async () => earlier.click())
+    expect(container.querySelector('.agent-work-earlier')).toBeNull()
+    expect(visibleSteps()).toBe(30 + hidden)
+  })
+})

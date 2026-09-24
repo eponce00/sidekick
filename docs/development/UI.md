@@ -89,6 +89,33 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 - Derive welcome suggestions locally from already-visible history. Rendering the welcome screen must not spend model tokens or send conversation metadata to a provider.
 - Clicking a suggestion should populate the composer for review rather than immediately sending a message.
 
+## Responsiveness in long conversations
+
+A conversation can hold replies with hundreds of steps and runs with tens of thousands of events.
+The chat stays responsive by keeping per-keystroke and per-update work independent of that size:
+
+- `MessageItem` is memoized, and its comparator checks callback identity. Every callback the chat
+  passes to it must be stable (`useCallback`, or one handler taking the message id). A closure
+  created per render re-renders every message on every keystroke: markdown re-parses and links
+  remount, which shows as flicker while typing.
+- Markdown shares one syntax highlighter. `rehype-highlight` registers every common language each
+  time it is instantiated, and `react-markdown` creates a processor per render, so the plugin must
+  not be passed directly.
+- A work block mounts its latest 30 steps; earlier ones load on request. The live block is open and
+  re-rendered on each update, so mounting all of a long run made the app slower the longer the
+  agent worked.
+- Live run projection is coalesced to 50 ms, and to 250 ms once a run passes 4,000 events, because
+  each projection rebuilds the whole run.
+- Effects that call the main process depend only on values that change with the conversation.
+  `useConversationRun` reads its `onProjection` callback through a ref: when the callback was a
+  dependency, every keystroke re-ran the effect that asks for the latest run, and the main process
+  read and sent up to 10,000 events per key.
+
+To measure, start the dev app with `npm run dev -- --remoteDebuggingPort 9222 --inspect 9229` and
+profile both processes: the renderer over the Chrome DevTools Protocol (per-keystroke latency, long
+tasks, and heap growth while typing in the longest conversation available), and the main process
+through its V8 inspector, where IPC work caused by typing shows up. Compare against a new chat.
+
 ## UI preview and visual QA
 
 Development builds expose a deterministic renderer preview when Electron's preload API is unavailable:

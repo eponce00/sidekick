@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect, memo } from 'react'
+import { Children, useState, useRef, useEffect, useLayoutEffect, memo } from 'react'
 import {
   Loader2,
   Check,
@@ -421,7 +421,9 @@ function SystemNoticeBody({
 }
 
 function thinkingPreview(content: string): string {
-  const normalized = content.replace(/\s+/g, ' ').trim()
+  // Only the opening is shown; normalizing whole reasoning blocks on every
+  // render was measurable across the hundreds in a long run.
+  const normalized = content.slice(0, 400).replace(/\s+/g, ' ').trim()
   if (!normalized) return 'Thinking'
   const preview = normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
   return `Think · ${preview}`
@@ -449,6 +451,14 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
   )
 }
 
+/**
+ * How many of a work block's most recent steps are mounted. A run that works
+ * for hours accumulates hundreds of steps, and the live block is open and
+ * re-rendered on every update; mounting all of them made the app slower the
+ * longer the agent worked. Earlier steps are one click away.
+ */
+const WORK_STEPS_SHOWN = 30
+
 function AgentWorkDisclosure({
   messageId,
   isLoading,
@@ -469,6 +479,7 @@ function AgentWorkDisclosure({
   runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(isLoading)
+  const [showEarlier, setShowEarlier] = useState(false)
   const [now, setNow] = useState(Date.now)
 
   useEffect(() => {
@@ -506,7 +517,23 @@ function AgentWorkDisclosure({
       </button>
       {expanded && children && (
         <div id={contentId} className="agent-work-content">
-          {children}
+          {(() => {
+            const steps = Children.toArray(children)
+            const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
+            if (!earlier) return steps
+            return (
+              <>
+                <button
+                  type="button"
+                  className="agent-work-earlier"
+                  onClick={() => setShowEarlier(true)}
+                >
+                  Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
+                </button>
+                {steps.slice(earlier)}
+              </>
+            )
+          })()}
         </div>
       )}
     </div>
@@ -532,7 +559,7 @@ interface MessageItemProps {
   onConfirmEditMessage: (msg: Message) => void
   onCopyMessage: (msg: Message) => void
   onRetryMessage: (msg: Message) => void
-  onForkMessage?: () => void
+  onForkMessage?: (messageId: string) => void
   onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
@@ -1227,7 +1254,7 @@ function MessageItemInner({
                         <button
                           type="button"
                           className="message-action icon"
-                          onClick={onForkMessage}
+                          onClick={() => onForkMessage(msg.id)}
                           title="Fork from this message"
                           aria-label="Fork from this message"
                           disabled={isLoading}
@@ -1256,7 +1283,7 @@ function MessageItemInner({
                 <button
                   type="button"
                   className="message-action icon"
-                  onClick={onForkMessage}
+                  onClick={() => onForkMessage(msg.id)}
                   title="Fork from this message"
                   aria-label="Fork from this message"
                   disabled={isLoading}
