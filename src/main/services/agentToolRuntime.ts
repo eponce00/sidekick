@@ -95,6 +95,8 @@ export interface AgentToolRuntimeSessionInput {
   webSearchEnabled: boolean
   /** Enable SideKick's built-in visual browser for this model/run. */
   browserEnabled?: boolean
+  /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
+  artifactContinuation?: boolean
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -228,7 +230,11 @@ export function safeToolArguments(
   return Object.fromEntries(
     Object.entries(args).map(([key, value]) => [
       key,
-      typeof value === 'string' && value.length > 2_000 ? `${value.slice(0, 2_000)}…` : value
+      // The preview also reaches the model through replayed history, where a
+      // bare ellipsis read as part of the value and was copied into new calls.
+      typeof value === 'string' && value.length > 2_000
+        ? `${value.slice(0, 2_000)}… [${value.length - 2_000} more characters not kept]`
+        : value
     ])
   )
 }
@@ -369,7 +375,8 @@ export class AgentToolRuntime {
       childLauncher: () => this.childLauncher,
       artifactInspector: () => this.artifactInspector,
       // The visual browser is enabled exactly when the model accepts images.
-      visionEnabled: input.browserEnabled === true
+      visionEnabled: input.browserEnabled === true,
+      artifactContinuation: input.artifactContinuation === true
     })
     handlers.register(
       ['office_preflight', 'office_validate'],

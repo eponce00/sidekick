@@ -151,6 +151,32 @@
   background-color: color-mix(in srgb, var(--color-error) 80%, transparent);
 }
 
+/* A failed artifact is one line, opened on request. The header is the button. */
+.artifact-error-header {
+  width: 100%;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-error-header:hover {
+  background-color: var(--surface-2);
+}
+
+.artifact-error-header .artifact-header-left {
+  min-width: 0;
+  flex: 1;
+}
+
+.artifact-error-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .artifact-toggle-code {
   display: inline-flex;
   align-items: center;

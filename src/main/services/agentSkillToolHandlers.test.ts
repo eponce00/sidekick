@@ -99,6 +99,9 @@ describe('create_artifact', () => {
 
     expect(result.status).toBe('error')
     expect(result.error?.message).toContain("reading 'current'")
+    // The model gets the failure, not its own code back.
+    expect(result.modelContent).toContain("reading 'current'")
+    expect(result.modelContent).not.toContain('xxxx')
     expect(result.error?.recovery).toContain('call create_artifact again')
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })
@@ -142,9 +145,7 @@ describe('create_artifact', () => {
   })
 })
 
-it('says loading a skill adds its tool for the rest of the run, and only for that run', async () => {
-  // Treating a reload as "instructions only", the model never looked for the
-  // tool it would have regained.
+it('says loading a skill makes its tool ready, without telling the model to reload it later', async () => {
   const registry = new AgentToolHandlerRegistry()
   registerSkillToolHandlers(registry, {
     activeSkillIds: new Set<string>(),
@@ -159,8 +160,55 @@ it('says loading a skill adds its tool for the rest of the run, and only for tha
       context: { runId: 'skill-test', signal: new AbortController().signal }
     })
 
-  expect((await load('web-artifacts')).modelContent).toContain(
-    'create_artifact is now available for the rest of this run'
-  )
-  expect((await load('pdf')).modelContent).not.toContain('is now available')
+  const artifacts = (await load('web-artifacts')).modelContent
+  expect(artifacts).toContain('create_artifact is ready to use in this run')
+  expect(artifacts).not.toContain('load it again')
+  expect((await load('pdf')).modelContent).not.toContain('is ready to use')
+})
+
+describe('create_artifact before its skill is loaded', () => {
+  const inspection: ArtifactInspection = {
+    status: 'rendered',
+    errors: [],
+    width: 720,
+    height: 300
+  }
+
+  async function create(artifactContinuation: boolean) {
+    const registry = new AgentToolHandlerRegistry()
+    const activeSkillIds = new Set<string>()
+    const inspect = vi.fn(async () => inspection)
+    registerSkillToolHandlers(registry, {
+      activeSkillIds,
+      readReceipts: new Map(),
+      childLauncher: () => undefined,
+      artifactInspector: () => ({ inspect }),
+      artifactContinuation
+    })
+    const result = await registry.execute({
+      name: 'create_artifact',
+      title: 'Create artifact',
+      arguments: { type: 'react', title: 'Card', code: 'export default function App() {}' },
+      context: { runId: 'artifact-test', signal: new AbortController().signal }
+    })
+    return { result, inspect, activeSkillIds }
+  }
+
+  it('renders it and returns the guidance it was written without', async () => {
+    // Refusing it threw away the code the model had just written.
+    const { result, inspect, activeSkillIds } = await create(false)
+
+    expect(inspect).toHaveBeenCalled()
+    expect(result.status).toBe('success')
+    expect(result.modelContent).toContain('made before the web-artifacts guidance was loaded')
+    expect(result.modelContent).toContain('Web Artifacts Builder')
+    expect(activeSkillIds.has('web-artifacts')).toBe(true)
+  })
+
+  it("does not repeat the guidance when changing the previous reply's artifact", async () => {
+    const { result } = await create(true)
+
+    expect(result.status).toBe('success')
+    expect(result.modelContent).not.toContain('Web Artifacts Builder')
+  })
 })

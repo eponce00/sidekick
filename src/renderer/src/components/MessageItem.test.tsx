@@ -192,6 +192,56 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.querySelector('[aria-label="Retry message"]')).toBeNull()
   })
 
+  it('shows only the latest version of an artifact the reply revised', async () => {
+    // Each fix made the artifact again under the same title, and every attempt,
+    // broken ones included, stayed in the chat as its own card.
+    const artifact = (code: string, title = 'Clima en Reno') => ({
+      type: 'artifact' as const,
+      artifact: { type: 'svg' as const, title, code, isStreaming: false }
+    })
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'reply',
+            role: 'agent',
+            content: 'Listo',
+            timestamp: Date.now(),
+            segments: [
+              artifact('<svg data-version="1"></svg>'),
+              artifact('<svg data-version="2"></svg>'),
+              artifact('<svg data-version="other"></svg>', 'Otra card'),
+              { type: 'text', content: 'Listo' }
+            ]
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const cards = [...container.querySelectorAll('.artifact-segment')]
+    expect(cards).toHaveLength(2)
+    expect(container.innerHTML).toContain('data-version="2"')
+    expect(container.innerHTML).not.toContain('data-version="1"')
+    expect(container.innerHTML).toContain('data-version="other"')
+  })
+
   it('renders app notices as compact status rows without chat hover metadata', async () => {
     await act(async () => {
       root.render(

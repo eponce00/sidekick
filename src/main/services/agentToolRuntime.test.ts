@@ -20,6 +20,13 @@ import { WorkspaceVerificationService } from './workspaceVerificationService'
 const roots: string[] = []
 
 describe('safe tool arguments', () => {
+  it('says how much of a long value the preview left out', () => {
+    // A bare ellipsis read as part of the value when the preview came back
+    // through history, and the model copied it into a new call.
+    const safe = safeToolArguments('create_artifact', { code: 'a'.repeat(2_500) })
+    expect(safe.code).toBe(`${'a'.repeat(2_000)}… [500 more characters not kept]`)
+  })
+
   it('never persists text typed into a browser field', () => {
     expect(
       safeToolArguments('browser_type', {
