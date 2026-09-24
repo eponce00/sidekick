@@ -1198,6 +1198,23 @@ body[data-theme='light'] .message-user .message-action:hover {
   border-left: 1px solid var(--border-subtle);
 }
 
+.agent-work-earlier {
+  align-self: flex-start;
+  margin: 2px 0 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  background: transparent;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.agent-work-earlier:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
 .actions-group {
   margin: 2px 0;
   width: 100%;

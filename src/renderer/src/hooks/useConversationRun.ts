@@ -110,6 +110,9 @@ export interface ConversationRunController {
 }
 
 const TERMINAL_PHASES = new Set<AgentRunPhase>(['completed', 'failed', 'cancelled', 'interrupted'])
+const STREAM_PROJECTION_MS = 50
+const LONG_RUN_EVENTS = 4_000
+const LONG_RUN_PROJECTION_MS = 250
 
 async function completeJournalWindow(initial: AgentRunEventsResult): Promise<AgentRunEventsResult> {
   if (!initial.run || !initial.journal?.hasMore) return initial
@@ -204,10 +207,17 @@ export function useConversationRun({
       }
       // Provider token streams can emit hundreds of durable deltas per second.
       // Coalesce them into one projection/frame while preserving their sequence in the event log.
-      active.projectionTimer = setTimeout(() => {
-        active.projectionTimer = undefined
-        if (activeRef.current?.runId === active.runId) project(active)
-      }, 50)
+      // Projection rebuilds the whole run, so its cost grows with the run: about
+      // 15 ms at 20,000 events. A long run is projected less often rather than
+      // spending most of every frame on it.
+      const eventCount = active.model.getSnapshot().events.length
+      active.projectionTimer = setTimeout(
+        () => {
+          active.projectionTimer = undefined
+          if (activeRef.current?.runId === active.runId) project(active)
+        },
+        eventCount > LONG_RUN_EVENTS ? LONG_RUN_PROJECTION_MS : STREAM_PROJECTION_MS
+      )
     },
     [project]
   )

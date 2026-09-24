@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
@@ -138,6 +138,12 @@ function ChatPanel({
   const selectedContextLength = selectedPinnedModel?.contextLength ?? 32_768
   const tokenCountUpdateRef = useRef(onTokenCountUpdate)
   tokenCountUpdateRef.current = onTokenCountUpdate
+  // One handler for every message. A fresh closure per message defeated the
+  // message list's memoization, so each keystroke re-rendered the whole
+  // conversation: markdown re-parsed and links remounted as the user typed.
+  const forkConversationRef = useRef(onForkConversation)
+  forkConversationRef.current = onForkConversation
+  const forkMessage = useCallback((messageId: string) => forkConversationRef.current(messageId), [])
 
   // Rehydrate context telemetry with the persisted conversation. Without this,
   // a reopened chat displays zero until another provider response arrives.
@@ -425,29 +431,31 @@ function ChatPanel({
     setGoalArmed(false)
   }, [conversationId])
 
-  // Simple handler to track artifact render results (called by Artifact components)
-  const handleArtifactResult = (
-    title: string,
-    result: { success: boolean; error?: string; code?: string }
-  ): void => {
-    const existingResult = artifactResultsRef.current.get(title)
-    if (existingResult && existingResult.success === false && result.success === true) {
+  // Simple handler to track artifact render results (called by Artifact components).
+  // Stable, so markdown fragments that receive it are not re-rendered on every
+  // update of the streaming reply.
+  const handleArtifactResult = useCallback(
+    (title: string, result: { success: boolean; error?: string; code?: string }): void => {
+      const existingResult = artifactResultsRef.current.get(title)
+      if (existingResult && existingResult.success === false && result.success === true) {
+        console.log(
+          `[ChatPanel] Ignoring late success for "${title}" because a failure was already recorded`
+        )
+        return
+      }
+      if (existingResult?.success === true && result.success === false) {
+        console.warn(
+          `[ChatPanel] Artifact "${title}" reported a late runtime failure after initial success`
+        )
+      }
       console.log(
-        `[ChatPanel] Ignoring late success for "${title}" because a failure was already recorded`
+        `[ChatPanel] Artifact "${title}" result:`,
+        result.success ? 'success' : `error: ${result.error}`
       )
-      return
-    }
-    if (existingResult?.success === true && result.success === false) {
-      console.warn(
-        `[ChatPanel] Artifact "${title}" reported a late runtime failure after initial success`
-      )
-    }
-    console.log(
-      `[ChatPanel] Artifact "${title}" result:`,
-      result.success ? 'success' : `error: ${result.error}`
-    )
-    artifactResultsRef.current.set(title, result)
-  }
+      artifactResultsRef.current.set(title, result)
+    },
+    []
+  )
 
   // Auto-scroll to bottom when messages change
   const { showScrollToBottom, scrollToBottom } = useAutoScroll(
@@ -936,7 +944,7 @@ function ChatPanel({
       onConfirmEditMessage={handleConfirmEditMessage}
       onCopyMessage={handleCopyMessage}
       onRetryMessage={handleRetryMessage}
-      onForkMessage={() => onForkConversation(msg.id)}
+      onForkMessage={forkMessage}
       copiedMessageId={copiedMessageId}
       onSetEditingContent={setEditingDraft}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
