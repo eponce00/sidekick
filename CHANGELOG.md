@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.7.8 — 2026-09-24
+
+- Keep typing fast in long conversations. Each keystroke used to re-render every message, rebuild
+  the syntax highlighter, and ask the main process to re-read the conversation's latest run, up to
+  10,000 events per key. A key now reaches the screen as quickly as in a new chat, and links in
+  earlier replies no longer flicker while typing.
+- Mount a long run's latest 30 steps and load earlier ones on request, and refresh a very long live
+  run less often, so the app stays responsive the longer the agent works.
+- Let the model iterate on an artifact from its real code. Replayed history restores the current
+  version of each artifact whole and marks it as current, instead of a cut preview that broke the
+  next edit, and superseded versions point to it.
+- Offer `create_artifact` in every run that allows artifacts, so a follow-up turn can change an
+  artifact without reloading its skill and the tool list stays stable for the provider's cache.
+- Show one version of each artifact per reply, and a failed artifact as a single line with its error
+  instead of its full code.
+- Keep a goal when its first message is retried, and drop an unfinished goal when the conversation is
+  rewound past it.
+- Announce a goal's completion once, so a retry or rewind no longer brings back an old
+  "Goal complete" under an unrelated reply.
+- Capture whole artifacts during inspection and report when one is taller than the chat's frame.
+
 ## 0.7.7 — 2026-09-23
 
 - Let the model see the artifact it made. `create_artifact` now renders the artifact the way the
