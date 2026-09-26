@@ -487,6 +487,7 @@
   margin-bottom: 8px;
 }
 
+.message-pasted-texts,
 .message-context-attachments {
   display: flex;
   flex-wrap: wrap;

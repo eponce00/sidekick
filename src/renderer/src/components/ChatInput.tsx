@@ -28,9 +28,14 @@ import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
-import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
+import {
+  isPastedTextAttachment,
+  shouldAttachPastedText,
+  type MessageContextAttachment
+} from '../../../shared/messageContextAttachments'
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import './ChatInput.css'
 
 interface FeatureMenuActionProps {
@@ -146,6 +151,8 @@ interface ChatInputProps {
   onInputChange: (value: string) => void
   onAddImageFiles: (files: File[]) => void
   onAddContextAttachments: () => void
+  onAddPastedText: (text: string) => void
+  onInsertPastedText: (id: string) => void
   onRemoveImage: (id: string) => void
   onRemoveContextAttachment: (id: string) => void
   onKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void
@@ -221,6 +228,8 @@ export function ChatInput({
   onInputChange,
   onAddImageFiles,
   onAddContextAttachments,
+  onAddPastedText,
+  onInsertPastedText,
   onRemoveImage,
   onRemoveContextAttachment,
   onKeyDown,
@@ -255,6 +264,8 @@ export function ChatInput({
   onScrollToBottom = () => undefined
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
+  // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
+  const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
   const selectedPinnedModel = selectedModel
     ? pinnedModels.find((m) => m.id === selectedModel)
@@ -376,6 +387,8 @@ export function ChatInput({
   }
 
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    plainPasteRef.current =
+      (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v'
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault()
       onInputChange('/')
@@ -559,10 +572,20 @@ export function ChatInput({
       onChange={onInputChange}
       onKeyDown={handleComposerKeyDown}
       onPaste={(event) => {
+        const plainPaste = plainPasteRef.current
+        plainPasteRef.current = false
         const files = clipboardImageFiles(event.clipboardData.items)
-        if (!files.length) return
+        if (files.length) {
+          event.preventDefault()
+          onAddImageFiles(files)
+          return
+        }
+        // An edited message keeps its attachments, so a long paste goes into its text.
+        if (plainPaste || editingMessageId) return
+        const text = event.clipboardData.getData('text/plain')
+        if (!shouldAttachPastedText(text)) return
         event.preventDefault()
-        onAddImageFiles(files)
+        onAddPastedText(text)
       }}
       onSend={onSendMessage}
       popover={
@@ -607,28 +630,37 @@ export function ChatInput({
       attachmentTray={
         attachedImages.length || attachedContext.length || attachmentError ? (
           <div className="composer-attachments" aria-label="Message attachments">
-            {attachedContext.map((attachment) => (
-              <div
-                className="composer-context-attachment"
-                key={attachment.id}
-                title={attachment.relativePath}
-              >
-                {attachment.kind === 'folder' ? (
-                  <FolderOpen size={15} aria-hidden="true" />
-                ) : (
-                  <FileText size={15} aria-hidden="true" />
-                )}
-                <span>{attachment.name}</span>
-                <button
-                  type="button"
-                  onClick={() => onRemoveContextAttachment(attachment.id)}
-                  title={`Remove ${attachment.name}`}
-                  aria-label={`Remove ${attachment.name}`}
+            {attachedContext.map((attachment) =>
+              isPastedTextAttachment(attachment) ? (
+                <PastedTextAttachmentCard
+                  key={attachment.id}
+                  attachment={attachment}
+                  onRemove={() => onRemoveContextAttachment(attachment.id)}
+                  onInsert={editingMessageId ? undefined : () => onInsertPastedText(attachment.id)}
+                />
+              ) : (
+                <div
+                  className="composer-context-attachment"
+                  key={attachment.id}
+                  title={attachment.relativePath}
                 >
-                  <X size={11} />
-                </button>
-              </div>
-            ))}
+                  {attachment.kind === 'folder' ? (
+                    <FolderOpen size={15} aria-hidden="true" />
+                  ) : (
+                    <FileText size={15} aria-hidden="true" />
+                  )}
+                  <span>{attachment.name}</span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveContextAttachment(attachment.id)}
+                    title={`Remove ${attachment.name}`}
+                    aria-label={`Remove ${attachment.name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              )
+            )}
             {attachedImages.map((image) => (
               <div className="composer-attachment" key={image.id}>
                 <ImageAttachmentPreview image={image} className="composer-image-preview" />

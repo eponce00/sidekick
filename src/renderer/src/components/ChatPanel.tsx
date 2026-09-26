@@ -43,6 +43,11 @@ import { createConversationTitleMessages } from '../services/prompts'
 import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
 import {
   MAX_MESSAGE_CONTEXT_ATTACHMENTS,
+  MAX_MESSAGE_PASTED_TEXT_CHARACTERS,
+  MAX_PASTED_TEXT_CHARACTERS,
+  createPastedTextAttachment,
+  isPastedTextAttachment,
+  isProjectContextAttachment,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
@@ -94,6 +99,17 @@ interface ChatPanelProps {
   /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
   chatRollbackHash?: string | null
   onChatRollbackConsumed?: () => void
+}
+
+/** What a new conversation is named from: the typed text, else what was pasted or attached. */
+function conversationTitlePrompt(message: Message): string {
+  const pasted = message.attachments?.find(isPastedTextAttachment)
+  return (
+    message.content ||
+    pasted?.content.slice(0, 1_000) ||
+    message.images?.[0]?.name ||
+    'Image conversation'
+  )
 }
 
 function ChatPanel({
@@ -625,8 +641,7 @@ function ChatPanel({
       titleBaseMessage && (isNewConversation || isPlaceholderConversationTitle(conversationTitle))
     )
     if (shouldGenerateTitle && titleBaseMessage) {
-      const titlePrompt =
-        titleBaseMessage.content || titleBaseMessage.images?.[0]?.name || 'Image conversation'
+      const titlePrompt = conversationTitlePrompt(titleBaseMessage)
       await onUpdateConversationTitle(
         activeConversationId,
         createFallbackConversationTitle(titlePrompt),
@@ -663,8 +678,7 @@ function ChatPanel({
         const persisted = await window.api.conversations.getMessages(activeConversationId)
         const assistant = persisted.find((message) => message.id === assistantMessageId)
         if (assistant?.content?.trim()) {
-          const titlePrompt =
-            titleBaseMessage.content || titleBaseMessage.images?.[0]?.name || 'Image conversation'
+          const titlePrompt = conversationTitlePrompt(titleBaseMessage)
           const modelName = model.providerModelId || stripModelPrefix(model.name)
           const titleModel = fastModelName || modelName
           const identity = {
@@ -869,15 +883,61 @@ function ChatPanel({
     }
     if (result.canceled) return
     setAttachedContext((previous) => {
-      const byPath = new Map(previous.map((attachment) => [attachment.relativePath, attachment]))
+      const pasted = previous.filter(isPastedTextAttachment)
+      const byPath = new Map(
+        previous
+          .filter(isProjectContextAttachment)
+          .map((attachment) => [attachment.relativePath, attachment])
+      )
       for (const attachment of result.attachments) byPath.set(attachment.relativePath, attachment)
-      return [...byPath.values()].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
+      return [...byPath.values(), ...pasted].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
     })
     setAttachmentError(
       attachedContext.length + result.attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
-        ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} file or folder references`
+        ? `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
         : null
     )
+  }
+
+  const addPastedText = (text: string): void => {
+    if (text.length > MAX_PASTED_TEXT_CHARACTERS) {
+      setAttachmentError(
+        `Pasted text can be up to ${MAX_PASTED_TEXT_CHARACTERS.toLocaleString()} characters. Save it as a project file and attach that instead.`
+      )
+      return
+    }
+    if (attachedContext.length >= MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+      setAttachmentError(
+        `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+      )
+      return
+    }
+    const pastedCharacters = attachedContext
+      .filter(isPastedTextAttachment)
+      .reduce((total, attachment) => total + attachment.content.length, text.length)
+    if (pastedCharacters > MAX_MESSAGE_PASTED_TEXT_CHARACTERS) {
+      setAttachmentError(
+        `Pasted text in one message can be up to ${MAX_MESSAGE_PASTED_TEXT_CHARACTERS.toLocaleString()} characters`
+      )
+      return
+    }
+    setAttachedContext((previous) => [
+      ...previous,
+      createPastedTextAttachment(text, crypto.randomUUID())
+    ])
+    setAttachmentError(null)
+  }
+
+  // Turns a pasted attachment back into typed text, after whatever is already written.
+  const insertPastedText = (id: string): void => {
+    const attachment = attachedContext.find((candidate) => candidate.id === id)
+    if (!attachment || !isPastedTextAttachment(attachment)) return
+    setAttachedContext((previous) => previous.filter((candidate) => candidate.id !== id))
+    setInputValue((previous) =>
+      previous.trim() ? `${previous.trimEnd()}\n\n${attachment.content}` : attachment.content
+    )
+    setAttachmentError(null)
+    inputRef.current?.focus()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
@@ -1056,6 +1116,8 @@ function ChatPanel({
         onInputChange={setInputValue}
         onAddImageFiles={(files) => void addImageFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
+        onAddPastedText={addPastedText}
+        onInsertPastedText={insertPastedText}
         onRemoveImage={(id) => {
           setAttachedImages((previous) => previous.filter((image) => image.id !== id))
           setAttachmentError(null)

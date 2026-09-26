@@ -208,7 +208,7 @@ interface WorkspaceAPI {
   selectContextAttachments: (workspaceRoot: string) => Promise<{
     ok: boolean
     canceled: boolean
-    attachments: import('../shared/messageContextAttachments').MessageContextAttachment[]
+    attachments: import('../shared/messageContextAttachments').ProjectContextAttachment[]
     error?: string
   }>
   getPath: () => Promise<string | null>

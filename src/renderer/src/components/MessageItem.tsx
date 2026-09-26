@@ -33,6 +33,11 @@ import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
 import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { PastedTextAttachmentCard } from './PastedTextAttachment'
+import {
+  isPastedTextAttachment,
+  isProjectContextAttachment
+} from '../../../shared/messageContextAttachments'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import type { SubAgentStep } from '../types/subagent.types'
@@ -671,9 +676,16 @@ function MessageItemInner({
             <span>Plan → Act</span>
           </div>
         )}
-        {Boolean(msg.attachments?.length) && (
+        {Boolean(msg.attachments?.some(isPastedTextAttachment)) && (
+          <div className="message-pasted-texts" aria-label="Pasted text">
+            {msg.attachments!.filter(isPastedTextAttachment).map((attachment) => (
+              <PastedTextAttachmentCard key={attachment.id} attachment={attachment} />
+            ))}
+          </div>
+        )}
+        {Boolean(msg.attachments?.some(isProjectContextAttachment)) && (
           <div className="message-context-attachments" aria-label="Attached files and folders">
-            {msg.attachments!.map((attachment) => (
+            {msg.attachments!.filter(isProjectContextAttachment).map((attachment) => (
               <button
                 type="button"
                 key={attachment.id}
