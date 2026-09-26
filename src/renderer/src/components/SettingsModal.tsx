@@ -18,7 +18,7 @@ import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
 import { ProjectHooksPanel } from './ProjectHooksPanel'
-import { AppUpdateSettings } from './AppUpdateControls'
+import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
@@ -50,16 +50,18 @@ const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
 }))
 
 function SettingCard({
+  id,
   title,
   description,
   children
 }: {
+  id?: string
   title: string
   description?: string
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <section className="settings-card">
+    <section className="settings-card" id={id}>
       <div className="settings-card-heading">
         <h3>{title}</h3>
         {description && <p>{description}</p>}
@@ -110,6 +112,8 @@ function SettingsModal({
   const [settings, setSettings] = useState<ProviderSettings>(initialSettings)
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
   const [navigationQuery, setNavigationQuery] = useState('')
+  // Set by the version button; the Updates card only exists once General renders.
+  const [revealUpdates, setRevealUpdates] = useState(false)
   const [mcpValidationError, setMcpValidationError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
@@ -131,6 +135,17 @@ function SettingsModal({
       ),
     [navigationQuery]
   )
+
+  useEffect(() => {
+    if (!revealUpdates || activeSection !== 'general') return
+    // Instant, after the frame: the section switch is instant too, and the
+    // card grows once its release status loads, which cut a smooth scroll short.
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById('settings-updates')?.scrollIntoView({ block: 'center' })
+      setRevealUpdates(false)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeSection, revealUpdates])
 
   useEffect(() => {
     if (!navigationQuery.trim() || !visibleNavigationItems.length) return
@@ -250,6 +265,7 @@ function SettingsModal({
             </label>
           </SettingCard>
           <SettingCard
+            id="settings-updates"
             title="Updates"
             description="Check the public project releases. Installation stays under your control."
           >
@@ -613,9 +629,18 @@ function SettingsModal({
               <div className="settings-search-empty">No matching section</div>
             )}
           </nav>
-          <div className="settings-sidebar-note">
-            <Bell size={14} />
-            <span>Changes apply after you save.</span>
+          <div className="settings-sidebar-footer">
+            <div className="settings-sidebar-note">
+              <Bell size={14} />
+              <span>Changes apply after you save.</span>
+            </div>
+            <AppVersionButton
+              onSelect={() => {
+                setNavigationQuery('')
+                setActiveSection('general')
+                setRevealUpdates(true)
+              }}
+            />
           </div>
         </aside>
         <div className="settings-main">
