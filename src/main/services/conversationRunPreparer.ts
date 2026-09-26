@@ -39,6 +39,7 @@ import type { AgentKernelRuntimeTransition } from './agentRunKernel'
 import { parseMessageImages } from '../../shared/messageImages'
 import {
   formatMessageContextAttachments,
+  formatPastedTextAttachments,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
 import { normalizeToolResultMedia, type ToolResultMediaAttachment } from '../../shared/agentRuntime'
@@ -76,10 +77,14 @@ function parseJson<T>(value: string | null, fallback: T): T {
 
 export function providerMessage(row: MessageRow): ProviderChatMessage {
   const images = parseMessageImages(row.images).map((image) => image.dataUrl)
-  const attachmentContext = formatMessageContextAttachments(
-    parseMessageContextAttachments(row.attachments)
-  )
-  const content = [row.content.trim(), attachmentContext].filter(Boolean).join('\n\n')
+  const attachments = parseMessageContextAttachments(row.attachments)
+  const content = [
+    formatPastedTextAttachments(attachments),
+    row.content.trim(),
+    formatMessageContextAttachments(attachments)
+  ]
+    .filter(Boolean)
+    .join('\n\n')
   return {
     role: row.role === 'agent' ? 'assistant' : row.role,
     // Renderer segments are a projection for people, never provider input. Re-serializing

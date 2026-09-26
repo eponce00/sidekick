@@ -3,6 +3,21 @@ import type { DragEvent, KeyboardEvent } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowUpToLine, Check, GripVertical, Pencil, Trash2, X } from 'lucide-react'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
+import {
+  isPastedTextAttachment,
+  type MessageContextAttachment
+} from '../../../shared/messageContextAttachments'
+
+function attachmentCountLabel(attachments: readonly MessageContextAttachment[]): string {
+  const pasted = attachments.filter(isPastedTextAttachment).length
+  const project = attachments.length - pasted
+  return [
+    project ? `${project} file${project === 1 ? '' : 's'}` : '',
+    pasted ? `${pasted} paste${pasted === 1 ? '' : 's'}` : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
+}
 
 interface QueuedMessageTrayProps {
   pivotMessage: PendingRunMessageItem | null
@@ -137,7 +152,9 @@ export function QueuedMessageTray({
                 (message.images?.length
                   ? 'Image attachment'
                   : message.attachments?.length
-                    ? 'Project attachment'
+                    ? message.attachments.some(isPastedTextAttachment)
+                      ? 'Pasted text'
+                      : 'Project attachment'
                     : '')}
               {Boolean(message.images?.length) && (
                 <span className="queued-message-image-count">
@@ -146,7 +163,7 @@ export function QueuedMessageTray({
               )}
               {Boolean(message.attachments?.length) && (
                 <span className="queued-message-image-count">
-                  {message.attachments!.length} file{message.attachments!.length === 1 ? '' : 's'}
+                  {attachmentCountLabel(message.attachments!)}
                 </span>
               )}
             </div>
