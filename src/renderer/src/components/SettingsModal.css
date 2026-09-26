@@ -187,8 +187,13 @@ body[data-theme='light'] .settings-overlay {
   white-space: nowrap;
 }
 
-.settings-sidebar-note {
+.settings-sidebar-footer {
   margin-top: auto;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-sidebar-note {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1597,7 +1602,7 @@ body[data-theme='light'] .settings-overlay {
   }
 
   .settings-navigation-title,
-  .settings-sidebar-note {
+  .settings-sidebar-footer {
     display: none;
   }
 

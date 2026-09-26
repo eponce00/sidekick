@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, ExternalLink, RefreshCw } from 'lucide-react'
+import { AlertCircle, ExternalLink, Info, RefreshCw } from 'lucide-react'
 import type { AppUpdateState } from '../../../shared/appUpdates'
 import './AppUpdateControls.css'
 
@@ -146,5 +146,28 @@ export function AppUpdateSettings(): React.JSX.Element {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * The installed version, always visible at the foot of Settings. It leads to
+ * the Updates card, and says so when a newer release is waiting.
+ */
+export function AppVersionButton({ onSelect }: { onSelect: () => void }): React.JSX.Element | null {
+  const state = useAppUpdateState()
+  if (!state) return null
+  const updateWaiting = ['available', 'downloading', 'ready'].includes(state.status)
+  return (
+    <button
+      type="button"
+      className="app-version-button"
+      onClick={onSelect}
+      title={updateStatus(state)}
+      aria-label={`SideKick ${state.currentVersion}${updateWaiting ? ', update available' : ''}. Show updates.`}
+    >
+      <Info size={14} aria-hidden="true" />
+      <span>SideKick {state.currentVersion}</span>
+      {updateWaiting && <span className="app-version-update">Update</span>}
+    </button>
   )
 }
