@@ -3433,6 +3433,26 @@ body[data-theme='light'] .tool-approval-command {
   white-space: nowrap;
   opacity: 0.76;
 }
+/* The closing reply of a verification pass, kept in sight under its result. */
+.verification-note {
+  margin: 0 0 6px 18px;
+  max-width: 680px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+.verification-steps {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 6px;
+}
+.verification-steps p {
+  margin: 0;
+  color: var(--text-muted);
+}
+.verification-step-thinking {
+  font-style: italic;
+}
 .verification-dot {
   width: 5px;
   height: 5px;
@@ -3469,7 +3489,8 @@ body[data-theme='light'] .tool-approval-command {
   color: var(--color-warning);
 }
 
-.summary-segment-compact .summary-icon.spinning {
+.summary-segment-compact .summary-icon.spinning,
+.verification-segment .spinning {
   animation: summary-spin 1s linear infinite;
   stroke: var(--accent);
 }

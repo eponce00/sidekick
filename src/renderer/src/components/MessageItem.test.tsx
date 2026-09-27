@@ -883,6 +883,68 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.querySelector('.verification-history')?.getAttribute('open')).toBeNull()
   })
 
+  it('keeps the answer last to read, with a folded verification pass beneath it', async () => {
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'folded-verification',
+            role: 'agent',
+            content: 'Here is the full answer.',
+            timestamp: 1_000,
+            segments: [
+              { type: 'thinking', content: 'Planning the edit' },
+              { type: 'text', content: 'Here is the full answer.' },
+              {
+                type: 'verification',
+                content: 'All tests pass.',
+                steps: [{ type: 'text', content: 'Running the tests.' }],
+                verification: {
+                  status: 'passed',
+                  workspaceRoot: 'C:\\project',
+                  baselineRevision: 0,
+                  currentRevision: 1,
+                  changedPaths: ['src/app.ts'],
+                  evidence: [],
+                  suggestedChecks: [],
+                  headline: 'Verified with test.'
+                }
+              }
+            ]
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const answer = container.querySelector('[data-final-answer]')
+    expect(answer?.textContent).toContain('Here is the full answer.')
+    expect(answer?.closest('.agent-work-disclosure')).toBeNull()
+    // The note reads without opening the result; the pass's steps sit inside it.
+    const note = container.querySelector('.verification-note')
+    expect(note?.textContent).toBe('All tests pass.')
+    expect(note?.closest('details')).toBeNull()
+    expect(container.querySelector('.verification-steps')?.textContent).toContain(
+      'Running the tests.'
+    )
+  })
+
   it('updates the elapsed time while work is active', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(233_000)

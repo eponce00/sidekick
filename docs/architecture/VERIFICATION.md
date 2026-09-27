@@ -48,6 +48,10 @@ without changing SideKick.
 
 ## Completion policy
 
+After the first tool round that changes the workspace, the model is reminded once, in that
+round's results, to run the smallest relevant check before writing its final answer. Verifying
+before answering is the path that reads best, so the request below is a backstop.
+
 When a run changed the workspace and attempts to finish:
 
 1. Fresh passing evidence allows completion.
@@ -56,6 +60,10 @@ When a run changed the workspace and attempts to finish:
 3. The initial completion text is provisional and never appears as a duplicate answer.
 4. A second terminal response is allowed. When verification is impossible, the UI retains an
    honest unverified state rather than looping forever.
+5. If that pass left the workspace revision unchanged, the provisional text stays the answer and
+   the closing reply is marked `verificationNote`. The message shows the answer last, followed by
+   the verification result with the note in sight and the pass's steps inside it. A pass that
+   changed files is ordinary work, and its closing reply is the answer.
 5. A persistent goal consults the same request when the model asks to complete it, before the goal
    closes. The request is made once per run whichever boundary reaches it first, so a model cannot
    complete a goal and bypass workspace evidence, and a goal it completed is not told afterwards

@@ -87,7 +87,18 @@ export type ProjectedContentSegment =
         recoveryAction?: string
       }
     }
-  | { type: 'verification'; verification: WorkspaceVerificationSummary }
+  | {
+      type: 'verification'
+      verification: WorkspaceVerificationSummary
+      /** Work of a verification pass that ran after the answer and changed nothing. */
+      steps?: ProjectedContentSegment[]
+      /** The model's closing reply to that pass, shown as a note on the result. */
+      content?: string
+      /** The pass is still running. */
+      pending?: boolean
+    }
+
+const VERIFICATION_PASS_REASON = 'workspace_verification_required'
 
 export interface ProjectedAgentRunMessage {
   content: string
@@ -145,6 +156,10 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let pendingContent = ''
   let pendingThinking = ''
   let latestVerification: WorkspaceVerificationSummary | null = null
+  // A verification request holds back the answer it followed. A pass that ends
+  // in a note restores that answer as the response.
+  let lastProvisionalContent = ''
+  let deferredAnswer: { contentBefore: string; content: string } | null = null
   let runStartedAt: number | undefined
   let runCompletedAt: number | undefined
 
@@ -159,14 +174,26 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       pendingThinking += typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
     }
     if (event.type === 'assistant.completed') {
-      if (event.payload.provisional !== true) {
-        committedContent +=
-          typeof event.payload.content === 'string' ? event.payload.content : pendingContent
+      const content =
+        typeof event.payload.content === 'string' ? event.payload.content : pendingContent
+      if (event.payload.provisional === true) {
+        lastProvisionalContent = content
+      } else {
+        committedContent =
+          event.payload.verificationNote === true && deferredAnswer
+            ? deferredAnswer.contentBefore + deferredAnswer.content
+            : committedContent + content
         committedThinking +=
           typeof event.payload.thinking === 'string' ? event.payload.thinking : pendingThinking
+        if (!Array.isArray(event.payload.toolCalls) || !event.payload.toolCalls.length) {
+          deferredAnswer = null
+        }
       }
       pendingContent = ''
       pendingThinking = ''
+    }
+    if (event.type === 'run.retrying' && event.payload.reason === VERIFICATION_PASS_REASON) {
+      deferredAnswer = { contentBefore: committedContent, content: lastProvisionalContent }
     }
     if (event.type === 'usage.updated') {
       const turnCompletionTokens = Number(event.payload.completionTokens || 0)
@@ -379,11 +406,34 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
 
   const fullContent = committedContent + pendingContent
   const fullThinking = committedThinking + pendingThinking
-  const segments: ProjectedContentSegment[] = []
-  const emittedTools = new Set<string>()
+  const mainSegments: ProjectedContentSegment[] = []
+  // While a verification pass that followed the answer runs, its work collects
+  // apart from the message. If it ends in a note, having changed nothing, it
+  // folds into the verification result below the answer, which stays the last
+  // thing to read. Otherwise it returns to the timeline where it happened.
+  let segments = mainSegments
+  let verificationPass: {
+    marker: ProjectedContentSegment
+    steps: ProjectedContentSegment[]
+  } | null = null
+  let foldedVerification: { steps: ProjectedContentSegment[]; note: string } | null = null
   let streamedTurnContent = ''
   let streamedTurnThinking = ''
   let turnSegmentStart = 0
+  let lastProvisional: { content: string; streamed: boolean } | null = null
+  const closeVerificationPass = (fold?: { note: string }): void => {
+    if (!verificationPass) return
+    if (fold) foldedVerification = { steps: verificationPass.steps, note: fold.note }
+    else mainSegments.push(verificationPass.marker, ...verificationPass.steps)
+    verificationPass = null
+    segments = mainSegments
+    turnSegmentStart = segments.length
+  }
+  // A pending question must stay in sight, not inside a collapsed result.
+  const pushInteraction = (segment: ProjectedContentSegment, pending: boolean): void => {
+    ;(pending ? mainSegments : segments).push(segment)
+  }
+  const emittedTools = new Set<string>()
   const pendingTurnTools: string[] = []
   const appendTextualSegment = (type: 'text' | 'thinking', content: string): void => {
     if (!content) return
@@ -414,9 +464,13 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       if (!pendingTurnTools.includes(id)) pendingTurnTools.push(id)
     }
     if (event.type === 'assistant.completed') {
-      if (event.payload.provisional === true) continue
-      const thinking = typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
       const content = typeof event.payload.content === 'string' ? event.payload.content : ''
+      if (event.payload.provisional === true) {
+        lastProvisional = { content, streamed: Boolean(streamedTurnContent) }
+        continue
+      }
+      const thinking = typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
+      const turnStart = turnSegmentStart
       // Some providers only reveal final thinking at turn completion. Its semantic
       // position is the start of that turn, before streamed answer text and tools.
       if (thinking && !streamedTurnThinking) {
@@ -434,6 +488,21 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       streamedTurnContent = ''
       streamedTurnThinking = ''
       turnSegmentStart = segments.length
+      if (verificationPass && !calls.length) {
+        if (event.payload.verificationNote === true) {
+          const steps = verificationPass.steps
+          let streamedNote = ''
+          for (let index = steps.length - 1; index >= turnStart; index--) {
+            const step = steps[index]
+            if (step?.type !== 'text') continue
+            streamedNote = step.content + streamedNote
+            steps.splice(index, 1)
+          }
+          closeVerificationPass({ note: (content || streamedNote).trim() })
+        } else {
+          closeVerificationPass()
+        }
+      }
     }
     if (event.type === 'compaction.completed') {
       // Compaction is a hard turn boundary. Flush calls announced before it even
@@ -470,16 +539,30 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           : typeof event.payload.message === 'string'
             ? event.payload.message
             : undefined
-      // Tool-guard hints are model-facing recovery policy, not useful user-facing
-      // timeline events. Keep durable events for diagnosis while avoiding noisy
-      // banners in both live and historical message projections.
-      if (!reason.startsWith('tool_guard_')) {
-        segments.push({
-          type: 'run_status',
-          status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
-        })
+      const marker: ProjectedContentSegment = {
+        type: 'run_status',
+        status: { kind: 'retrying', reason, detail, timestamp: event.timestamp }
+      }
+      if (reason === VERIFICATION_PASS_REASON && !verificationPass) {
+        // The answer the pass followed is the response to read. A provider that
+        // did not stream it has not shown it yet.
+        if (lastProvisional?.content && !lastProvisional.streamed) {
+          appendTextualSegment('text', lastProvisional.content)
+        }
+        verificationPass = { marker, steps: [] }
+        segments = verificationPass.steps
+        streamedTurnContent = ''
+        streamedTurnThinking = ''
+        turnSegmentStart = 0
+      } else if (!reason.startsWith('tool_guard_')) {
+        // Tool-guard hints are model-facing recovery policy, not useful user-facing
+        // timeline events. Keep durable events for diagnosis while avoiding noisy
+        // banners in both live and historical message projections.
+        segments.push(marker)
       }
     }
+    // A run that ends inside the pass never reached a note; show its work as it happened.
+    if (event.type === 'run.completed') closeVerificationPass()
     if (event.type === 'run.completed' && event.payload.phase === 'failed') {
       const rawError = event.payload.error
       const error =
@@ -503,27 +586,40 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     if (event.type === 'question.requested' && event.payload.kind === 'tool_limit') {
       const decision = decisions.get(String(event.payload.interactionId))
-      if (decision) segments.push(decision)
+      if (decision) pushInteraction(decision, decision.decision.status === 'pending')
     }
-    if (event.type === 'permission.requested') {
+    if (
+      event.type === 'permission.requested' ||
+      (event.type === 'question.requested' && event.payload.kind !== 'tool_limit')
+    ) {
       const interaction = interactions.get(String(event.payload.interactionId || ''))
-      if (interaction) segments.push(interaction)
-    }
-    if (event.type === 'question.requested' && event.payload.kind !== 'tool_limit') {
-      const interaction = interactions.get(String(event.payload.interactionId || ''))
-      if (interaction) segments.push(interaction)
+      if (interaction) pushInteraction(interaction, interaction.interaction.status === 'pending')
     }
   }
   for (const id of pendingTurnTools) emitTool(id)
   for (const id of tools.keys()) emitTool(id)
+  // Both are set inside closures, which control-flow narrowing does not follow.
+  const openPass = verificationPass as { steps: ProjectedContentSegment[] } | null
+  const folded = foldedVerification as { steps: ProjectedContentSegment[]; note: string } | null
+  const passSteps = openPass?.steps ?? folded?.steps ?? []
+  const note = folded?.note ?? ''
   if (latestVerification && latestVerification.status !== 'not_applicable') {
-    segments.push({ type: 'verification', verification: latestVerification })
+    mainSegments.push({
+      type: 'verification',
+      verification: latestVerification,
+      ...(passSteps.length ? { steps: passSteps } : {}),
+      ...(note ? { content: note } : {}),
+      ...(openPass ? { pending: true } : {})
+    })
+  } else {
+    mainSegments.push(...passSteps)
+    if (note) mainSegments.push({ type: 'text', content: note })
   }
 
   return {
     content: fullContent,
     thinking: fullThinking,
-    segments,
+    segments: mainSegments,
     tokenUsage: {
       promptTokens,
       ...(cachedPromptTokens === undefined ? {} : { cachedPromptTokens }),

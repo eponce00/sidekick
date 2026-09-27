@@ -63,6 +63,12 @@ export interface VerificationTerminalDecision {
 export interface WorkspaceVerificationTerminalController {
   afterTerminalTurn: () => Promise<VerificationTerminalDecision>
   beforeGoalCompletion?: () => VerificationTerminalDecision
+  /**
+   * A reminder to attach to a tool round's results, once, when the run first
+   * changes the workspace. Asking before the answer is written spares the user
+   * a verification pass after it.
+   */
+  afterToolRound?: () => string | undefined
 }
 
 export interface WorkspaceChangeRecord {

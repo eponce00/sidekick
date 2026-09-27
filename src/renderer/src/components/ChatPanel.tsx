@@ -458,21 +458,45 @@ function ChatPanel({
   )
 
   // Auto-scroll to bottom when messages change
-  const { showScrollToBottom, scrollToBottom } = useAutoScroll(
+  const { showScrollToBottom, scrollToBottom, revealStart } = useAutoScroll(
     messagesEndRef,
     messagesContainerRef,
     messages,
     'smooth',
     conversationId
   )
+  const latestAnswer = useCallback((): HTMLElement | null => {
+    const agentMessages =
+      messagesContainerRef.current?.querySelectorAll<HTMLElement>('.message-agent')
+    const last = agentMessages?.[agentMessages.length - 1]
+    return last?.querySelector<HTMLElement>('[data-final-answer]') ?? last ?? null
+  }, [])
 
   // Opening a conversation from its completion notification should land on the
   // reply the notification was about, not wherever the view happened to be.
   useEffect(() => {
     if (!focusReplyAt) return
-    const timer = window.setTimeout(() => scrollToBottom(), 0)
+    const timer = window.setTimeout(() => {
+      const answer = latestAnswer()
+      if (answer) revealStart(answer)
+      else scrollToBottom()
+    }, 0)
     return () => window.clearTimeout(timer)
-  }, [focusReplyAt, scrollToBottom])
+  }, [focusReplyAt, latestAnswer, revealStart, scrollToBottom])
+
+  // A long answer followed to its end is read from its start. Wait for the
+  // finished message, whose work has collapsed, to lay out first.
+  const followedRunRef = useRef({ conversationId, isLoading })
+  useEffect(() => {
+    const previous = followedRunRef.current
+    followedRunRef.current = { conversationId, isLoading }
+    if (previous.conversationId !== conversationId || !previous.isLoading || isLoading) return
+    const timer = window.setTimeout(() => {
+      const answer = latestAnswer()
+      if (answer) revealStart(answer, { onlyIfFollowing: true })
+    }, 150)
+    return () => window.clearTimeout(timer)
+  }, [conversationId, isLoading, latestAnswer, revealStart])
 
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)

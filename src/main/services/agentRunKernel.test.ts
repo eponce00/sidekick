@@ -485,11 +485,16 @@ describe('AgentRunKernel', () => {
     const result = await kernel.start({ ...input(), verificationController })
     const projection = projectAgentRunEvents(store.listEvents('run-1'))
 
-    expect(result.content).toBe('The change is now verified.')
-    expect(projection.content).toBe('The change is now verified.')
+    // The pass changed nothing, so the answer it followed stays the response
+    // and its reply becomes a note on the verification result.
+    expect(result.content).toBe('The change is done.')
+    expect(result.finalResponse).toBe('The change is done.')
+    expect(projection.content).toBe('The change is done.')
+    expect(projection.segments.map((segment) => segment.type)).toEqual(['text', 'verification'])
     expect(projection.segments.at(-1)).toMatchObject({
       type: 'verification',
-      verification: { status: 'passed', headline: 'Typecheck passed.' }
+      verification: { status: 'passed', headline: 'Typecheck passed.' },
+      content: 'The change is now verified.'
     })
     expect(store.listEvents('run-1')).toContainEqual(
       expect.objectContaining({
@@ -497,6 +502,142 @@ describe('AgentRunKernel', () => {
         payload: expect.objectContaining({ reason: 'workspace_verification_required' })
       })
     )
+  })
+
+  it('folds a verification pass that changed nothing under the streamed answer', async () => {
+    const router = { execute: vi.fn(async () => ({ content: 'tests passed' })) }
+    const sampler = sequence(
+      sampledTurn({ content: 'Here is the answer.' }, [
+        { message: { content: 'Here is the answer.' } }
+      ]),
+      sampledTurn(
+        {
+          content: 'Running the tests. ',
+          toolCalls: [{ id: 'check-1', function: { name: 'wait', arguments: { seconds: 1 } } }],
+          usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+        },
+        [{ message: { content: 'Running the tests. ' } }]
+      ),
+      sampledTurn({ content: 'All tests pass.' }, [{ message: { content: 'All tests pass.' } }])
+    )
+    const summary = {
+      status: 'unverified' as const,
+      workspaceRoot: '/project',
+      baselineRevision: 0,
+      currentRevision: 1,
+      changedPaths: ['app.ts'],
+      evidence: [],
+      suggestedChecks: [],
+      headline: 'Workspace changes have not been verified.'
+    }
+    const verificationController = {
+      afterTerminalTurn: vi
+        .fn()
+        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
+        .mockResolvedValueOnce({
+          continue: false,
+          summary: { ...summary, status: 'passed', headline: 'Verified with test.' }
+        })
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const result = await kernel.start({ ...input(router), verificationController })
+    const projection = projectAgentRunEvents(store.listEvents('run-1'))
+
+    expect(result.finalResponse).toBe('Here is the answer.')
+    expect(projection.content).toBe('Here is the answer.')
+    expect(projection.segments).toHaveLength(2)
+    expect(projection.segments[0]).toEqual({ type: 'text', content: 'Here is the answer.' })
+    const verification = projection.segments[1]
+    expect(verification).toMatchObject({
+      type: 'verification',
+      content: 'All tests pass.'
+    })
+    expect(verification.type === 'verification' && verification.pending).toBeFalsy()
+    expect(
+      verification.type === 'verification' && verification.steps?.map((step) => step.type)
+    ).toEqual(['text', 'tool'])
+  })
+
+  it('keeps the pass in the timeline when it changed the workspace', async () => {
+    const sampler = sequence(
+      sampledTurn({ content: 'Draft answer.' }, [{ message: { content: 'Draft answer.' } }]),
+      sampledTurn({ content: 'Fixed the failing test; all pass.' }, [
+        { message: { content: 'Fixed the failing test; all pass.' } }
+      ])
+    )
+    const summary = {
+      status: 'failed' as const,
+      workspaceRoot: '/project',
+      baselineRevision: 0,
+      currentRevision: 1,
+      changedPaths: ['app.ts'],
+      evidence: [],
+      suggestedChecks: [],
+      headline: 'Tests failed.'
+    }
+    const verificationController = {
+      afterTerminalTurn: vi
+        .fn()
+        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
+        .mockResolvedValueOnce({
+          continue: false,
+          summary: { ...summary, currentRevision: 2, status: 'passed', headline: 'Verified.' }
+        })
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const result = await kernel.start({ ...input(), verificationController })
+    const projection = projectAgentRunEvents(store.listEvents('run-1'))
+
+    expect(result.finalResponse).toBe('Fixed the failing test; all pass.')
+    expect(projection.content).toBe('Fixed the failing test; all pass.')
+    expect(projection.segments.map((segment) => segment.type)).toEqual([
+      'text',
+      'run_status',
+      'text',
+      'verification'
+    ])
+    expect(projection.segments.at(-1)).not.toHaveProperty('content')
+  })
+
+  it('reminds the model to verify once, after the first round that changed the workspace', async () => {
+    const router = { execute: vi.fn(async () => ({ content: 'edited' })) }
+    const call = (id: string): Partial<AgentKernelModelTurn> => ({
+      toolCalls: [{ id, function: { name: 'wait', arguments: { seconds: 1 } } }],
+      usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+    })
+    const last = sampledTurn({ content: 'Done.' })
+    const sampler = sequence(sampledTurn(call('a')), sampledTurn(call('b')), last)
+    const afterToolRound = vi
+      .fn()
+      .mockReturnValueOnce('<reminder>verify</reminder>')
+      .mockReturnValue(undefined)
+    const verificationController = {
+      afterToolRound,
+      afterTerminalTurn: vi.fn(async () => ({
+        continue: false,
+        summary: {
+          status: 'passed' as const,
+          workspaceRoot: '/project',
+          baselineRevision: 0,
+          currentRevision: 1,
+          changedPaths: ['app.ts'],
+          evidence: [],
+          suggestedChecks: [],
+          headline: 'Verified.'
+        }
+      }))
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    await kernel.start({ ...input(router), verificationController })
+
+    expect(afterToolRound).toHaveBeenCalledTimes(2)
+    const toolMessages = vi
+      .mocked(last)
+      .mock.calls[0][0].messages.filter((message) => message.role === 'tool')
+    expect(toolMessages.map((message) => String(message.content).includes('<reminder>'))).toEqual([
+      true,
+      false
+    ])
   })
 
   it('owns the complete model-tool-continuation loop', async () => {
