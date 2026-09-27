@@ -11,8 +11,29 @@ import {
   type NativeBrowserSurface,
   type NativeBrowserSurfaceCapture,
   type NativeBrowserSurfaceConsoleMessage,
-  type NativeBrowserSurfaceLoadFailure
+  type NativeBrowserSurfaceLoadFailure,
+  toViewInputEvent
 } from './nativeBrowserSessionService'
+
+describe('toViewInputEvent', () => {
+  it('scales pointer targets from CSS pixels into the zoomed view', () => {
+    // At the app's default 0.9 zoom, an unscaled click at CSS (400, 300)
+    // reached the page at (444, 333).
+    expect(
+      toViewInputEvent({ type: 'mouseDown', x: 400, y: 300, button: 'left', clickCount: 1 }, 0.9)
+    ).toEqual({ type: 'mouseDown', x: 360, y: 270, button: 'left', clickCount: 1 })
+    expect(
+      toViewInputEvent({ type: 'mouseWheel', x: 100, y: 50, deltaX: 0, deltaY: -120 }, 1.25)
+    ).toEqual({ type: 'mouseWheel', x: 125, y: 62.5, deltaX: 0, deltaY: -120 })
+  })
+
+  it('leaves keys and an unzoomed page untouched', () => {
+    const key = { type: 'keyDown' as const, keyCode: 'Enter' }
+    expect(toViewInputEvent(key, 0.9)).toBe(key)
+    const move = { type: 'mouseMove' as const, x: 10, y: 20 }
+    expect(toViewInputEvent(move, 1)).toBe(move)
+  })
+})
 
 class FakeSurface implements NativeBrowserSurface {
   readonly attached: boolean

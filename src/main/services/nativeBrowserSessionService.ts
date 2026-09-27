@@ -19,7 +19,8 @@ import {
   parkBrowserView,
   browserAgentInput,
   browserDebuggerCommand,
-  browserNavigationState
+  browserNavigationState,
+  showBrowserPointer
 } from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -462,6 +463,8 @@ export interface NativeBrowserSurface {
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
+  /** Shows the agent's cursor at a CSS viewport point to whoever watches the page. */
+  showPointer?(x: number, y: number): void
   resizeViewport(viewport: BrowserViewport): void
   executeJavaScript<T>(source: string): Promise<T>
   captureViewport(): Promise<NativeBrowserSurfaceCapture>
@@ -695,6 +698,20 @@ function detectTextualHumanVerification(
     }
   }
   return null
+}
+
+/**
+ * Browser targets are CSS viewport pixels, while sendInputEvent() takes view
+ * pixels. They differ by the page zoom, which follows the app's zoom (0.9 by
+ * default) while the browser is shown inside the app; unscaled, every click
+ * landed past its target.
+ */
+export function toViewInputEvent<
+  T extends MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent
+>(event: T, zoomFactor: number): T {
+  if (!('x' in event) || !Number.isFinite(zoomFactor) || zoomFactor <= 0 || zoomFactor === 1)
+    return event
+  return { ...event, x: event.x * zoomFactor, y: event.y * zoomFactor }
 }
 
 function abortError(message: string): Error {
@@ -1194,7 +1211,13 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
-    void browserAgentInput(this.webContentsId, () => this.contents.sendInputEvent(event))
+    void browserAgentInput(this.webContentsId, () =>
+      this.contents.sendInputEvent(toViewInputEvent(event, this.contents.getZoomFactor()))
+    )
+  }
+
+  showPointer(x: number, y: number): void {
+    void showBrowserPointer(this.webContentsId, x, y).catch(() => undefined)
   }
 
   resizeViewport(viewport: BrowserViewport): void {
@@ -4529,6 +4552,7 @@ export class NativeBrowserSessionService {
       targetMode: target.mode,
       updatedAt
     }
+    tab.surface.showPointer?.(target.x, target.y)
   }
 
   private async waitForQuiescence(

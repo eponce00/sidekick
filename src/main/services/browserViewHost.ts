@@ -117,6 +117,7 @@ export function mountBrowserView(
 export function parkBrowserView(id: number): void {
   const entry = views.get(id)
   if (!entry?.host) return
+  hidePointer(entry.host)
   if (!entry.host.isDestroyed()) entry.host.contentView.removeChildView(entry.view)
   entry.host = undefined
   entry.allowInput = undefined
@@ -151,6 +152,103 @@ export function browserNavigationState(id: number): { canGoBack: boolean; canGoF
       contents && !contents.isDestroyed() && contents.navigationHistory.canGoForward()
     )
   }
+}
+
+// The agent's cursor. A live page is a native view the app UI cannot draw on,
+// so the cursor is its own small transparent view floated above the page at the
+// point of each gesture. It never enters the page, so the page's DOM and the
+// model's screenshots stay untouched. A native view takes the mouse, so it is
+// only as large as the cursor and hides again once its pulse has played.
+const POINTER_SIZE = 96
+const POINTER_TIP = 40
+const POINTER_VISIBLE_MS = 2_400
+const POINTER_PAGE = `<!doctype html><html><head><style>
+html,body{margin:0;background:transparent;overflow:hidden;user-select:none}
+#p{position:absolute;left:${POINTER_TIP}px;top:${POINTER_TIP}px;width:0;height:0;color:#62a9ff;
+animation:fade ${POINTER_VISIBLE_MS}ms linear both}
+#p svg{position:absolute;z-index:2;top:-4px;left:-4px;overflow:visible;
+filter:drop-shadow(0 0 1px rgba(255,255,255,.98)) drop-shadow(0 2px 3px rgba(0,0,0,.9)) drop-shadow(0 0 6px rgba(56,146,255,.9))}
+#p:before{position:absolute;top:-21px;left:-21px;width:42px;height:42px;content:'';
+background:rgba(55,144,255,.34);border-radius:50%;filter:blur(8px)}
+#p:after{position:absolute;top:-16px;left:-16px;width:30px;height:30px;content:'';
+border:2px solid rgba(104,177,255,.88);border-radius:50%;opacity:0;animation:pulse 1.2s ease-out 1 both}
+@keyframes pulse{from{opacity:.9;transform:scale(.35)}to{opacity:0;transform:scale(1.25)}}
+@keyframes fade{0%,80%{opacity:1}to{opacity:0}}
+@media (prefers-reduced-motion:reduce){#p:after{animation:none}}
+</style></head><body><script>
+window.showPointer=()=>{document.getElementById('p')?.remove();const p=document.createElement('span');p.id='p';
+p.innerHTML='<svg width="27" height="27" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"><path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z"/></svg>';
+document.body.append(p)}
+</script></body></html>`
+
+interface PointerOverlay {
+  view: WebContentsView
+  ready: Promise<unknown>
+  hideTimer?: ReturnType<typeof setTimeout>
+}
+
+const pointerOverlays = new WeakMap<BrowserWindow, PointerOverlay>()
+
+async function pointerOverlay(host: BrowserWindow): Promise<PointerOverlay> {
+  const existing = pointerOverlays.get(host)
+  if (existing && !existing.view.webContents.isDestroyed()) return existing
+  const { WebContentsView: View } = await import('electron')
+  const view = new View({
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+  })
+  view.setBackgroundColor('#00000000')
+  view.setVisible(false)
+  const overlay: PointerOverlay = {
+    view,
+    ready: view.webContents
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(POINTER_PAGE)}`)
+      .catch(() => undefined)
+  }
+  pointerOverlays.set(host, overlay)
+  host.once('closed', () => {
+    if (overlay.hideTimer) clearTimeout(overlay.hideTimer)
+    if (!view.webContents.isDestroyed()) view.webContents.close()
+  })
+  return overlay
+}
+
+function hidePointer(host: BrowserWindow | undefined): void {
+  const overlay = host && pointerOverlays.get(host)
+  if (!overlay) return
+  if (overlay.hideTimer) clearTimeout(overlay.hideTimer)
+  overlay.hideTimer = undefined
+  if (!overlay.view.webContents.isDestroyed()) overlay.view.setVisible(false)
+}
+
+/**
+ * Shows the agent's cursor at a point in the page's CSS viewport pixels, while
+ * the page is shown inside the app. A parked page has no one watching it.
+ */
+export async function showBrowserPointer(id: number, x: number, y: number): Promise<void> {
+  const entry = views.get(id)
+  const host = entry?.host
+  if (!entry || !host || host.isDestroyed() || !Number.isFinite(x) || !Number.isFinite(y)) return
+  const bounds = entry.view.getBounds()
+  const left = bounds.x + x * entry.zoom
+  const top = bounds.y + y * entry.zoom
+  if (left < bounds.x || top < bounds.y || left > bounds.x + bounds.width) return
+  if (top > bounds.y + bounds.height) return
+  const overlay = await pointerOverlay(host)
+  await overlay.ready
+  // The page may have been parked or moved to another window meanwhile.
+  if (entry.host !== host || host.isDestroyed() || overlay.view.webContents.isDestroyed()) return
+  // Adding a view it already holds raises it above the page.
+  host.contentView.addChildView(overlay.view)
+  overlay.view.setBounds({
+    x: Math.round(left - POINTER_TIP),
+    y: Math.round(top - POINTER_TIP),
+    width: POINTER_SIZE,
+    height: POINTER_SIZE
+  })
+  overlay.view.setVisible(true)
+  await overlay.view.webContents.executeJavaScript('window.showPointer()').catch(() => undefined)
+  if (overlay.hideTimer) clearTimeout(overlay.hideTimer)
+  overlay.hideTimer = setTimeout(() => hidePointer(host), POINTER_VISIBLE_MS)
 }
 
 /** Marks a main-process tool gesture so its synthetic input is not treated as user takeover. */
