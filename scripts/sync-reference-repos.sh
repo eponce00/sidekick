@@ -30,3 +30,4 @@ sync_repo claude-code-official https://github.com/anthropics/claude-code.git
 sync_repo android-agent https://github.com/ghost-in-the-droid/android-agent.git v1.3.0
 sync_repo hermes-agent https://github.com/NousResearch/hermes-agent.git
 sync_repo pi https://github.com/earendil-works/pi.git
+sync_repo t3code https://github.com/pingdotgg/t3code.git
