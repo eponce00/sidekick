@@ -29,8 +29,13 @@ import { PRODUCT_IDENTITY } from '../shared/productIdentity'
 import { AppUpdateService } from './services/appUpdateService'
 import { isolatedE2EUserDataPath } from './bootstrap/applicationData'
 import { revealWindow } from './bootstrap/windowActivation'
+import { registerVoiceHandlers } from './ipc/voice'
+import { onSettingsSaved } from './ipc/settings'
+import { VoiceService } from './services/voice/voiceService'
+import { VoiceModelStore } from './services/voice/voiceModels'
 
 let appUpdateService: AppUpdateService | null = null
+let voiceService: VoiceService | null = null
 let applicationShutdown: Promise<void> | null = null
 let shutdownReady = false
 let quitAfterShutdownRequested = false
@@ -43,6 +48,7 @@ function closeApplicationDatabase(): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (applicationShutdown) return applicationShutdown
   appUpdateService?.stop()
+  voiceService?.dispose()
   shutdownCollaboration()
   applicationShutdown = Promise.allSettled([
     shutdownAgentRuntime(),
@@ -134,6 +140,19 @@ async function bootstrapApplication(): Promise<void> {
       : undefined
   })
   registerAppUpdateHandlers(appUpdateService)
+  // Smoke and end-to-end runs must not start a large background download.
+  const voiceDownloadsAllowed =
+    !process.argv.includes('--sidekick-packaged-smoke-test') && !e2eUserDataPath
+  const voiceEnabled = (): boolean =>
+    voiceDownloadsAllowed &&
+    (appState.store?.get('settings') as { voiceEnabled?: boolean } | undefined)?.voiceEnabled !==
+      false
+  voiceService = new VoiceService({
+    store: new VoiceModelStore(join(app.getPath('userData'), 'voice-models')),
+    enabled: voiceEnabled()
+  })
+  registerVoiceHandlers(voiceService)
+  onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
   createMainWindow()
   const dispatchAppCommand = (command: AppCommand): void => {
     const target = BrowserWindow.getFocusedWindow() ?? appState.mainWindowRef

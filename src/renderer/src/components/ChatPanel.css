@@ -773,7 +773,8 @@
 
 .message:hover .message-meta,
 .message:focus-within .message-meta,
-.message-editing .message-meta {
+.message-editing .message-meta,
+.message-meta:has(.read-aloud.is-reading) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -824,9 +825,20 @@
   opacity: 1;
 }
 
-.message-action.active {
+.message-action.active,
+.message-action.read-aloud.is-reading {
   color: var(--text-primary);
   opacity: 1;
+}
+
+.read-aloud-spinner {
+  animation: read-aloud-spin 0.9s linear infinite;
+}
+
+@keyframes read-aloud-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .message-action.secondary {

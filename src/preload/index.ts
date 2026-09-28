@@ -2,6 +2,33 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { desktopPlatform } from '../shared/platform'
 import { isAppCommand } from '../shared/appCommands'
 import type { DesktopApi } from './api'
+import type { VoiceAPI } from '../shared/voice'
+
+function voiceEvent<T>(channel: string) {
+  return (callback: (event: T) => void): (() => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: T): void => callback(payload)
+    ipcRenderer.on(channel, listener)
+    return () => ipcRenderer.removeListener(channel, listener)
+  }
+}
+
+function voiceApi(): VoiceAPI {
+  return {
+    getState: () => ipcRenderer.invoke('voice:getState'),
+    onState: voiceEvent('voice:state'),
+    prioritize: (id) => ipcRenderer.invoke('voice:prioritize', id),
+    startDictation: (sessionId) => ipcRenderer.invoke('voice:dictation:start', sessionId),
+    pushDictationAudio: (sessionId, samples) =>
+      ipcRenderer.send('voice:dictation:audio', sessionId, samples),
+    stopDictation: (sessionId) => ipcRenderer.invoke('voice:dictation:stop', sessionId),
+    cancelDictation: (sessionId) => ipcRenderer.invoke('voice:dictation:cancel', sessionId),
+    onDictationText: voiceEvent('voice:dictation:text'),
+    speak: (speechId, text, options) => ipcRenderer.invoke('voice:speak', speechId, text, options),
+    stopSpeech: (speechId) => ipcRenderer.invoke('voice:speech:stop', speechId),
+    onSpeechAudio: voiceEvent('voice:speech:audio'),
+    onSpeechEnd: voiceEvent('voice:speech:end')
+  }
+}
 
 // Custom APIs for renderer
 const api = {
@@ -284,6 +311,7 @@ const api = {
       return () => ipcRenderer.removeListener('appUpdates:state', listener)
     }
   },
+  voice: voiceApi(),
   support: {
     export: () => ipcRenderer.invoke('support:exportDiagnostics')
   },

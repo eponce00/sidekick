@@ -101,6 +101,39 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
   return groups
 }
 
+/** Groups that are the agent's working, folded under "Worked for" once a reply is done. */
+export function isWorkSegmentGroup(group: GroupedSegment): boolean {
+  if (group.type === 'actions') return true
+  return [
+    'tool',
+    'summary',
+    'summarizing',
+    'decision',
+    'interaction',
+    'run_status',
+    'run_error'
+  ].includes(group.segment.type)
+}
+
+/**
+ * The reply's answer: its text after the last step of work. Narration written
+ * between tool calls is work, not the answer, and is left out. A reply with no
+ * segments is all answer.
+ */
+export function finalAnswerText(message: { content: string; segments?: ContentSegment[] }): string {
+  if (!message.segments?.length) return message.content
+  const groups = groupSegments(message.segments)
+  const lastWork = groups.findLastIndex(isWorkSegmentGroup)
+  return groups
+    .slice(lastWork + 1)
+    .flatMap((group) =>
+      group.type === 'content' && group.segment.type === 'text' && group.segment.content
+        ? [group.segment.content]
+        : []
+    )
+    .join('\n\n')
+}
+
 /**
  * Collapses only consecutive work groups. Visible history markers and durable
  * outputs remain at their original array positions and split the disclosure.

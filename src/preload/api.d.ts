@@ -437,6 +437,7 @@ export interface DesktopApi {
   siteIcons: SiteIconsAPI
   app: AppAPI
   appUpdates: import('../shared/appUpdates').AppUpdatesAPI
+  voice: import('../shared/voice').VoiceAPI
   support: import('../shared/supportDiagnostics').SupportDiagnosticsAPI
   clipboard: ClipboardAPI
   workspace: WorkspaceAPI

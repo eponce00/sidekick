@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen, shell } from 'electron'
+import { app, BrowserWindow, screen, shell, systemPreferences } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
@@ -82,9 +82,33 @@ export function createMainWindow(): BrowserWindow {
     }
   }
 
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => {
-    callback(false)
-  })
+  // The app's own page may use the microphone, audio only, for local dictation.
+  // Everything else stays refused.
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (contents, permission, callback, details) => {
+      const audioOnly =
+        permission === 'media' &&
+        'mediaTypes' in details &&
+        Boolean(details.mediaTypes?.length) &&
+        details.mediaTypes!.every((type) => type === 'audio')
+      if (
+        !audioOnly ||
+        contents !== mainWindow.webContents ||
+        !isTrustedRendererNavigation(details.requestingUrl)
+      ) {
+        callback(false)
+        return
+      }
+      if (process.platform !== 'darwin') {
+        callback(true)
+        return
+      }
+      void systemPreferences
+        .askForMediaAccess('microphone')
+        .then(callback)
+        .catch(() => callback(false))
+    }
+  )
   const openExternalWithPermission = async (url: string): Promise<void> => {
     if (!isSafeExternalUrl(url)) return
     const operation = browserPermissionOperation('navigate', url, 'auto')

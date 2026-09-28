@@ -1831,3 +1831,97 @@ body[data-theme='light'] .settings-overlay {
     animation: none;
   }
 }
+
+.voice-settings {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.voice-settings-status {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.voice-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+@media (max-width: 640px) {
+  .voice-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.voice-settings-row {
+  display: flex;
+  gap: 8px;
+}
+
+.voice-settings-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.voice-settings-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.voice-settings-button:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.voice-settings-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.voice-settings-meter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.voice-settings-meter {
+  position: relative;
+  width: 120px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.voice-settings-meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  transition: width 60ms linear;
+}
+
+.voice-settings-hint,
+.voice-settings-error {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.voice-settings-error {
+  color: var(--error);
+}

@@ -23,7 +23,12 @@ import {
   FolderOpen
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
-import { chunkGroupsChronologically, groupSegments } from '../utils/segmentGrouping'
+import {
+  chunkGroupsChronologically,
+  finalAnswerText,
+  groupSegments,
+  isWorkSegmentGroup
+} from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
@@ -33,6 +38,7 @@ import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
 import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { ReadAloudButton } from './ReadAloudButton'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import type { SubAgentStep } from '../types/subagent.types'
@@ -466,19 +472,6 @@ function thinkingPreview(content: string): string {
   if (!normalized) return 'Thinking'
   const preview = normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
   return `Think · ${preview}`
-}
-
-function isWorkSegmentGroup(group: GroupedSegment): boolean {
-  if (group.type === 'actions') return true
-  return [
-    'tool',
-    'summary',
-    'summarizing',
-    'decision',
-    'interaction',
-    'run_status',
-    'run_error'
-  ].includes(group.segment.type)
 }
 
 function isDurableOutputGroup(group: GroupedSegment): boolean {
@@ -1276,6 +1269,7 @@ function MessageItemInner({
                   >
                     {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
                   </button>
+                  <ReadAloudButton messageId={msg.id} text={msg.content} />
                   {!readOnly && (
                     <>
                       <button
@@ -1327,6 +1321,7 @@ function MessageItemInner({
               >
                 {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
               </button>
+              {!isLoading && <ReadAloudButton messageId={msg.id} text={finalAnswerText(msg)} />}
               {!readOnly && onForkMessage && (
                 <button
                   type="button"

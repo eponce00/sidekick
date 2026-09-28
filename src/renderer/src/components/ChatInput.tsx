@@ -31,6 +31,7 @@ import type { MessageImageAttachment } from '../../../shared/messageImages'
 import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { DictationButton } from './DictationButton'
 import './ChatInput.css'
 
 interface FeatureMenuActionProps {
@@ -828,6 +829,7 @@ export function ChatInput({
       }
       toolbarRight={
         <>
+          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}

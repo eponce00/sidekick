@@ -19,6 +19,7 @@ import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
 import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { AppUpdateSettings } from './AppUpdateControls'
+import { VoiceSettings } from './VoiceSettings'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
@@ -233,6 +234,18 @@ function SettingsModal({
                 setSettings({ ...settings, notificationSoundEnabled })
               }
             />
+          </SettingCard>
+          <SettingCard
+            title="Voice"
+            description="Dictate messages and have replies read aloud. Speech never leaves this device."
+          >
+            <ToggleField
+              label="Dictation and read-aloud"
+              hint="Downloads about 820 MB of speech models in the background: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) and Supertone Supertonic 3."
+              checked={settings.voiceEnabled ?? true}
+              onChange={(voiceEnabled) => setSettings({ ...settings, voiceEnabled })}
+            />
+            {(settings.voiceEnabled ?? true) && <VoiceSettings />}
           </SettingCard>
           <SettingCard
             title="Location"
