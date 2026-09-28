@@ -25,6 +25,26 @@
 - Attach long pastes (2,000 characters or 30 lines) to the message as a card instead of filling
   the composer. **Ctrl+Shift+V** pastes inline.
 - Show the installed version at the foot of Settings.
+- Steer a reply while it is being written. A steered message now joins the running reply before its
+  next step instead of stopping it and starting over, so tool calls in progress are not cut off.
+- Answer an approval with **Allow once**, **Allow for this chat**, **Deny**, or **Deny and stop**. A
+  chat-wide grant covers only the exact command, files, or arguments it named, for this
+  conversation, until SideKick restarts.
+- **Continue** a reply that was interrupted when SideKick closed. It picks up from the work already
+  done and checks any step whose outcome is unknown before repeating it.
+- See which conversations are waiting on you. An approval or question marks the conversation in the
+  sidebar, counts on the taskbar or dock icon, and sends a notification when SideKick is not in
+  front. A failed reply is announced the same way.
+- Ask before quitting while conversations are still working.
+- Keep an unsent message, and its attachments, with its conversation when switching chats or
+  restarting.
+- Bring back earlier messages with **↑** in the message box, and return to the draft with **↓**.
+- Comment on changed lines in a reply's file changes. Each comment is attached to the next message
+  with its file, lines, and the quoted change, for the agent to act on.
+- Open the command palette with **Ctrl+K** (**⌘K**) to jump to conversations, projects, and
+  actions. **Ctrl+1…9** and **Ctrl+Shift+[ / ]** move between conversations. The message box's
+  commands now open by typing **/**.
+- Commit `AGENTS.md` as the shared instructions for contributors, human or AI.
 
 ## 0.7.8 — 2026-09-24
 
