@@ -1930,3 +1930,23 @@ body[data-theme='light'] .settings-overlay {
 .voice-settings-error {
   color: var(--error);
 }
+.voice-settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.voice-settings-check input {
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+
+.voice-settings-check strong {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 600;
+}

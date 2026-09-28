@@ -43,13 +43,13 @@
   opacity: 0.7;
 }
 
-.dictation-button.is-recording {
+.dictation-button.is-listening {
   background: color-mix(in srgb, var(--error) 16%, transparent);
   color: var(--error);
 }
 
 /* The halo follows the live input level, so the user can see they are heard. */
-.dictation-button.is-recording::after {
+.dictation-button.is-listening::after {
   position: absolute;
   inset: 0;
   content: '';
@@ -91,7 +91,38 @@
   .dictation-spinner {
     animation: none;
   }
-  .dictation-button.is-recording::after {
+  .dictation-button.is-listening::after {
     transition: none;
+  }
+}
+
+/* Paused while the reply is written: the mic is on but not taking words. */
+.dictation-button.is-waiting {
+  color: var(--error);
+  opacity: 0.6;
+  animation: dictation-breathe 1.8s ease-in-out infinite;
+}
+
+/* Reading the reply aloud; a click or Esc skips to listening again. */
+.dictation-button.is-speaking {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  animation: dictation-breathe 1.2s ease-in-out infinite;
+}
+
+@keyframes dictation-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dictation-button.is-waiting,
+  .dictation-button.is-speaking {
+    animation: none;
   }
 }

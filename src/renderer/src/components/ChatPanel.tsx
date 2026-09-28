@@ -3,6 +3,13 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { endDictation } from '../services/voice/dictationControl'
+import {
+  stopVoiceLoop,
+  voiceLoopReplyFinished,
+  voiceLoopReplyStarted,
+  voiceLoopSent
+} from '../services/voice/voiceLoop'
+import { finalAnswerText } from '../utils/segmentGrouping'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
@@ -515,6 +522,26 @@ function ChatPanel({
     return () => window.clearTimeout(timer)
   }, [conversationId, isLoading, latestAnswer, revealStart])
 
+  // Voice conversation: hand each finished reply's answer over to be read
+  // aloud. Another chat ends it, so the mic never follows the user elsewhere.
+  const voiceRunRef = useRef({ conversationId, isLoading })
+  useEffect(() => {
+    const previous = voiceRunRef.current
+    voiceRunRef.current = { conversationId, isLoading }
+    if (previous.conversationId !== conversationId) {
+      stopVoiceLoop()
+      return undefined
+    }
+    if (isLoading && !previous.isLoading) voiceLoopReplyStarted()
+    if (isLoading || !previous.isLoading) return undefined
+    // The finished message replaces the streamed one a moment after the run ends.
+    const timer = window.setTimeout(() => {
+      const reply = messagesRef.current.findLast((message) => message.role === 'agent')
+      voiceLoopReplyFinished(reply ? finalAnswerText(reply) : '')
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [conversationId, isLoading, messagesRef])
+
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)
 
@@ -840,8 +867,10 @@ function ChatPanel({
 
   const handleSubmit = (): void => {
     if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
-    // What was dictated so far is in the box and goes with the message.
+    // What was dictated so far is in the box and goes with the message; with
+    // voice on, the mic pauses until the reply has been read aloud.
     endDictation()
+    voiceLoopSent()
     if (attachedImages.length && !visionAvailable) {
       setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
       return

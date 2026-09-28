@@ -15,6 +15,7 @@ import {
 } from '../services/voice/microphone'
 import { speechPlayer } from '../services/voice/speechPlayer'
 import { updateVoicePreferences, useVoicePreferences } from '../services/voice/voicePreferences'
+import { voiceShortcutLabel } from '../services/voice/voiceShortcut'
 
 type Device = { deviceId: string; label: string }
 
@@ -243,9 +244,20 @@ export function VoiceSettings(): React.JSX.Element {
           </select>
         </label>
       </div>
+      <label className="voice-settings-check">
+        <input
+          type="checkbox"
+          checked={preferences.readRepliesAloud}
+          onChange={(event) => updateVoicePreferences({ readRepliesAloud: event.target.checked })}
+        />
+        <span>
+          <strong>Talk back and forth</strong>
+          With the mic on, read each reply aloud, then listen again.
+        </span>
+      </label>
       <p className="voice-settings-hint">
-        Dictation detects the language you speak, among 25 European languages. These choices apply
-        right away.
+        Turn the mic on and off with {voiceShortcutLabel()}. Dictation detects the language you
+        speak, among 25 European languages. These choices apply right away.
       </p>
       {notice && <p className="voice-settings-error">{notice}</p>}
     </div>
