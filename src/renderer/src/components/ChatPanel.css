@@ -529,6 +529,15 @@
   white-space: nowrap;
 }
 
+.message-context-attachments > .message-review-comment {
+  max-width: 360px;
+}
+
+.message-review-comment > span > strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .message-image-preview {
   display: block;
   width: 100%;
@@ -3784,6 +3793,68 @@ body[data-theme='light'] .tool-approval-command {
   cursor: pointer;
 }
 
+.steer-segment {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 8px 11px;
+  border-radius: var(--radius-md);
+  color: var(--message-user-text);
+  background: var(--message-user-bg);
+}
+
+.steer-segment-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.steer-segment-content {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.steer-segment-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.steer-segment-attachments span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.run-error-segment-interrupted {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-color));
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-1));
+}
+
+.run-error-segment-interrupted > svg {
+  color: var(--warning);
+}
+
+.run-error-segment .run-error-continue {
+  color: var(--on-accent);
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.run-error-segment button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.run-error-segment button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .agent-interaction-heading {
   display: flex;
   align-items: center;
@@ -3918,6 +3989,10 @@ body[data-theme='light'] .tool-approval-command {
   margin-top: 9px;
 }
 
+.agent-interaction-actions {
+  flex-wrap: wrap;
+}
+
 .agent-interaction-actions button {
   min-height: 28px;
   padding: 5px 10px;
@@ -3941,6 +4016,20 @@ body[data-theme='light'] .tool-approval-command {
 .agent-interaction-actions .agent-interaction-primary {
   color: var(--on-accent);
   background: var(--accent);
+}
+
+.agent-interaction-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-interaction-actions .agent-interaction-stop {
+  color: var(--error);
+}
+
+.agent-interaction-actions .agent-interaction-stop:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
 
 .agent-interaction-actions button:disabled {

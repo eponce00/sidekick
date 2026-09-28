@@ -67,4 +67,19 @@ describe('PromptAdmissionStore', () => {
 
     expect(store.takeNext('conversation-1')?.attachments).toEqual([attachment])
   })
+
+  it('reads and drops one admission once a running reply has taken it in', () => {
+    store.replace({
+      conversationId: 'conversation-1',
+      pivot: { id: 'pivot', content: 'steer', mode: 'conversation' },
+      queued: [{ id: 'later', content: 'later', mode: 'conversation' }]
+    })
+
+    expect(store.get('conversation-1', 'pivot')).toMatchObject({ content: 'steer' })
+    expect(store.get('conversation-2', 'pivot')).toBeNull()
+    store.remove('conversation-1', 'pivot')
+
+    expect(store.get('conversation-1', 'pivot')).toBeNull()
+    expect(store.takeNext('conversation-1')).toMatchObject({ id: 'later' })
+  })
 })

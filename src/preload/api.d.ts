@@ -144,6 +144,9 @@ interface AgentRunsAPI {
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>
+  steer: (
+    input: import('../shared/agentRunApi').SteerConversationRunInput
+  ) => Promise<import('../shared/agentRunApi').SteerConversationRunResult>
   admissionsList: (
     conversationId: string
   ) => Promise<import('../shared/agentRunApi').PromptAdmissionsResult>
@@ -155,6 +158,11 @@ interface AgentRunsAPI {
   ) => Promise<import('../shared/agentRunApi').PromptAdmissionItem | null>
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
+  ) => () => void
+  /** Conversations paused on the user's approval or answer. */
+  attention: () => Promise<import('../shared/conversationAttention').ConversationAttentionState>
+  onAttention: (
+    callback: (state: import('../shared/conversationAttention').ConversationAttentionState) => void
   ) => () => void
 }
 

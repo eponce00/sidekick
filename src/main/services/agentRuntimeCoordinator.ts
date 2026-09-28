@@ -4,12 +4,14 @@ import { join } from 'path'
 import type {
   AgentRunEventsResult,
   ResolveAgentInteractionInput,
-  StartConversationAgentRunInput
+  StartConversationAgentRunInput,
+  SteerConversationRunInput,
+  SteerConversationRunResult
 } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { normalizePermissionMode } from '../../shared/permissions'
+import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import type { ProviderInstance } from '../../shared/settings'
@@ -34,8 +36,10 @@ import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
   ConversationRunPreparer,
+  steeredProviderMessage,
   type PreparedConversationAgentRun
 } from './conversationRunPreparer'
+import { PromptAdmissionStore } from './promptAdmissionStore'
 import { AgentRunKernel, type AgentKernelRunResult } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
@@ -107,6 +111,7 @@ export class AgentRuntimeCoordinator {
   readonly browser: NativeBrowserSessionService
   readonly goals: ConversationGoalStore
   private readonly messages: AgentMessageMaterializer
+  private readonly admissions: PromptAdmissionStore
   private readonly mcp = new McpClientManager()
   private readonly commands: CommandService
   private readonly outputs: ToolOutputStore
@@ -134,6 +139,7 @@ export class AgentRuntimeCoordinator {
     this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
     this.messages = new AgentMessageMaterializer(db, this.store)
+    this.admissions = new PromptAdmissionStore(db)
     this.goals = new ConversationGoalStore(db, publishGoal)
     this.outputs = new ToolOutputStore(join(userDataRoot, 'tool-outputs'))
     this.commands = new CommandService(
@@ -451,6 +457,14 @@ export class AgentRuntimeCoordinator {
     const active = this.store.latest(input.conversationId)
     if (active && !['completed', 'failed', 'cancelled', 'interrupted'].includes(active.phase)) {
       throw new Error('This conversation already has an active run')
+    }
+    // Continuing is only honest from the end of the conversation: once another
+    // run exists, including an earlier continuation, the journal has moved on.
+    if (
+      input.continuesRunId &&
+      !this.store.canContinue(input.continuesRunId, input.conversationId)
+    ) {
+      throw new Error('This interrupted reply can no longer be continued')
     }
     const preparation = this.beginPreparation({
       id: input.id,
@@ -791,8 +805,52 @@ export class AgentRuntimeCoordinator {
     return this.goals.clear(goalId)
   }
 
+  /**
+   * Hand a pending message to the running conversation run. The admission stays
+   * stored until the run takes it in, so a run that ends first leaves it to be
+   * sent as the next message, as before.
+   */
+  steer(input: SteerConversationRunInput): SteerConversationRunResult {
+    const active = this.activeConversations.get(input.runId)
+    if (!active) return { accepted: false }
+    const conversationId = active.input.conversationId
+    const admission = this.admissions.get(conversationId, input.admissionId)
+    // A research question cannot join a conversation run or the reverse; a
+    // Plan request needs its own planning run.
+    const runMode = active.input.mode === 'research' ? 'research' : 'conversation'
+    if (!admission || admission.mode !== runMode) return { accepted: false }
+    const payload = {
+      messageId: admission.id,
+      content: admission.content,
+      mode: admission.mode,
+      ...(admission.images?.length ? { images: admission.images } : {}),
+      ...(admission.attachments?.length ? { attachments: admission.attachments } : {})
+    }
+    return {
+      accepted: this.kernel.steer(input.runId, {
+        id: admission.id,
+        message: steeredProviderMessage(payload),
+        payload,
+        onApplied: () => this.admissions.remove(conversationId, admission.id)
+      })
+    }
+  }
+
   resolveInteraction(input: ResolveAgentInteractionInput): void {
-    this.kernel.resolveInteraction(input.interactionId, input.response, input.cancelled === true)
+    const interaction = this.kernel.resolveInteraction(
+      input.interactionId,
+      input.response,
+      input.cancelled === true
+    )
+    // The kernel ends the run after recording the refusal; background commands
+    // the run started end with it, as they do when the user presses Stop.
+    if (
+      interaction.kind === 'permission' &&
+      !input.cancelled &&
+      agentPermissionDecision(input.response) === 'deny_stop'
+    ) {
+      this.tools.cancelRun(interaction.runId)
+    }
   }
 
   events(runId: string, afterSequence = 0): AgentRunEventsResult {
@@ -831,6 +889,18 @@ export class AgentRuntimeCoordinator {
 
   hasActiveRuns(): boolean {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
+  }
+
+  /** Conversations (or group sessions) with a run being prepared or executing.
+   * A sub-agent shares its parent's thread, so it is not counted twice. */
+  activeThreadIds(): string[] {
+    const threads = new Set<string>()
+    for (const { identity } of this.preparations.values()) threads.add(identity.threadId)
+    for (const runId of this.kernel.activeRunIds()) {
+      const threadId = this.store.get(runId)?.threadId
+      if (threadId) threads.add(threadId)
+    }
+    return [...threads]
   }
 
   async close(): Promise<void> {

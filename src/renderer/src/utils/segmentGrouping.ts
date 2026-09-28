@@ -111,7 +111,9 @@ export function isWorkSegmentGroup(group: GroupedSegment): boolean {
     'decision',
     'interaction',
     'run_status',
-    'run_error'
+    'run_error',
+    // What the agent wrote before a steered message answered the earlier request.
+    'steer'
   ].includes(group.segment.type)
 }
 

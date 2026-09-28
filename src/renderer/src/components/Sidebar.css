@@ -753,6 +753,15 @@
   animation: none;
 }
 
+/* Waiting on the user: steady and in the warning color, so it reads apart from
+   the pulsing "working" dot. */
+.conversation-run-indicator.waiting {
+  width: 8px;
+  height: 8px;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
 @keyframes conversation-run-pulse {
   50% {
     opacity: 0.38;

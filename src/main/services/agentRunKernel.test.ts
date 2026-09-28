@@ -1842,6 +1842,152 @@ describe('AgentRunKernel', () => {
     })
   })
 
+  it('takes a steered message in after a running tool, without interrupting it', async () => {
+    const requests: ProviderChatRequest[] = []
+    const record =
+      (sampler: AgentKernelProviderSampler): AgentKernelProviderSampler =>
+      (request, signal, onChunk) => {
+        requests.push(request)
+        return sampler(request, signal, onChunk)
+      }
+    const sampler = sequence(
+      record(
+        sampledTurn({
+          toolCalls: [{ id: 'wait-1', function: { name: 'wait', arguments: { seconds: 1 } } }]
+        })
+      ),
+      record(sampledTurn({ content: 'Using tabs now.' }))
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    let toolSignal: AbortSignal | undefined
+    const applied = vi.fn()
+    const router = {
+      execute: vi.fn(async (_name: string, _args: Record<string, unknown>, context) => {
+        toolSignal = context.signal
+        expect(
+          kernel.steer('run-1', {
+            id: 'steer-1',
+            message: { role: 'user', content: 'Use tabs.' },
+            payload: { messageId: 'steer-1', content: 'Use tabs.' },
+            onApplied: applied
+          })
+        ).toBe(true)
+        return { ok: true }
+      })
+    }
+
+    const result = await kernel.start(input(router))
+
+    expect(result.phase).toBe('completed')
+    expect(toolSignal?.aborted).toBe(false)
+    expect(applied).toHaveBeenCalledOnce()
+    expect(requests[0].messages.at(-1)).toEqual({ role: 'user', content: 'Hello' })
+    expect(requests[1].messages.at(-1)).toEqual({ role: 'user', content: 'Use tabs.' })
+    const types = store.listEvents('run-1').map(({ type }) => type)
+    expect(types.indexOf('run.steered')).toBeGreaterThan(types.indexOf('tool.completed'))
+    expect(store.listEvents('run-1').find(({ type }) => type === 'run.steered')?.payload).toEqual({
+      messageId: 'steer-1',
+      content: 'Use tabs.',
+      steerId: 'steer-1'
+    })
+    const segments = projectAgentRunEvents(store.listEvents('run-1')).segments
+    expect(segments.map(({ type }) => type)).toEqual(['tool', 'steer', 'text'])
+  })
+
+  it('answers a message steered during what would have been the final turn', async () => {
+    const kernel: AgentRunKernel = new AgentRunKernel(store, undefined, (...args) =>
+      sampler(...args)
+    )
+    const sampler = sequence(
+      async (request, signal, onChunk) => {
+        kernel.steer('run-1', {
+          id: 'steer-1',
+          message: { role: 'user', content: 'Also add a test.' },
+          payload: { messageId: 'steer-1', content: 'Also add a test.' }
+        })
+        return sampledTurn({ content: 'Done.' })(request, signal, onChunk)
+      },
+      sampledTurn({ content: 'Added the test.' })
+    )
+
+    const result = await kernel.start(input())
+
+    expect(result.phase).toBe('completed')
+    expect(result.finalResponse).toBe('Added the test.')
+    expect(result.messages.map(({ role, content }) => [role, content])).toEqual([
+      ['user', 'Hello'],
+      ['assistant', 'Done.'],
+      ['user', 'Also add a test.'],
+      ['assistant', 'Added the test.']
+    ])
+  })
+
+  it('opens with its initial steers, recorded before the first model request', async () => {
+    const requests: ProviderChatRequest[] = []
+    const kernel = new AgentRunKernel(store, undefined, async (request, signal, onChunk) => {
+      requests.push(request)
+      return sampledTurn({ content: 'Picking up where it stopped.' })(request, signal, onChunk)
+    })
+
+    await kernel.start({
+      ...input(),
+      initialSteers: [
+        {
+          id: 'run-1:continuation',
+          message: { role: 'user', content: 'Continue the interrupted work.' },
+          payload: { kind: 'continuation', content: 'Continue the interrupted work.' }
+        }
+      ]
+    })
+
+    expect(requests[0].messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'Continue the interrupted work.'
+    })
+    const types = store.listEvents('run-1').map(({ type }) => type)
+    expect(types.indexOf('run.steered')).toBeLessThan(types.indexOf('assistant.completed'))
+    const segments = projectAgentRunEvents(store.listEvents('run-1')).segments
+    expect(segments[0]).toMatchObject({
+      type: 'run_status',
+      status: { reason: 'run_continued' }
+    })
+    expect(segments.some(({ type }) => type === 'steer')).toBe(false)
+  })
+
+  it('refuses a steer while the run waits for an approval or has ended', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'write-1',
+            function: {
+              name: 'apply_patch',
+              arguments: { patch: '*** Begin Patch\n*** Add File: a.txt\n+hi\n*** End Patch' }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Written' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input({ execute: vi.fn(async () => ({ ok: true })) })
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+    const steer = {
+      id: 'steer-1',
+      message: { role: 'user' as const, content: 'Wait' },
+      payload: { messageId: 'steer-1' }
+    }
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    expect(kernel.steer('run-1', steer)).toBe(false)
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(kernel.steer('run-1', steer)).toBe(false)
+    expect(store.listEvents('run-1').some(({ type }) => type === 'run.steered')).toBe(false)
+  })
+
   it('uses one durable permission interaction for sensitive tools', async () => {
     catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
     const sampler = sequence(
@@ -1877,6 +2023,111 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
       expect.arrayContaining(['permission.requested', 'permission.resolved'])
     )
+  })
+
+  it('stops asking for the same command in the same chat after "Allow for this chat"', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const shell = (id: string, command: string): AgentKernelProviderSampler =>
+      sampledTurn({ toolCalls: [{ id, function: { name: 'shell', arguments: { command } } }] })
+    const sampler = sequence(
+      shell('build-1', 'npm run build'),
+      shell('build-2', 'npm run build'),
+      shell('clean-1', 'npm run clean'),
+      sampledTurn({ content: 'Built' })
+    )
+    const router = { execute: vi.fn(async () => ({ content: 'ok' })) }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const first = store.listPendingInteractions('run-1')[0]
+    expect(first.request.chatScope).toBe('this exact command')
+    kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
+
+    // The repeat runs without a prompt; a different command still asks.
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const second = store.listPendingInteractions('run-1')[0]
+    expect(second.request.toolCallId).toBe('clean-1')
+    kernel.resolveInteraction(second.id, { approved: true, decision: 'allow_once' })
+
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(3)
+    const resolutions = store
+      .listEvents('run-1')
+      .filter(({ type }) => type === 'permission.resolved')
+      .map(({ payload }) => payload)
+    expect(resolutions.find((payload) => payload.toolCallId === 'build-2')).toMatchObject({
+      approved: true,
+      source: 'chat_grant',
+      decision: 'chat_grant'
+    })
+  })
+
+  it('does not let a chat grant reach another conversation', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [{ id: 'a', function: { name: 'shell', arguments: { command: 'make' } } }]
+      }),
+      sampledTurn({ content: 'Done' }),
+      sampledTurn({
+        toolCalls: [{ id: 'b', function: { name: 'shell', arguments: { command: 'make' } } }]
+      }),
+      sampledTurn({ content: 'Done again' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const first = input({ execute: vi.fn(async () => ({ content: 'ok' })) })
+    first.permissionMode = 'always-ask'
+    const running = kernel.start(first)
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
+      approved: true,
+      decision: 'allow_chat'
+    })
+    await running
+
+    const other = { ...first, id: 'run-2', threadId: 'thread-2' }
+    const second = kernel.start(other)
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-2')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-2')[0].id, {
+      approved: false,
+      decision: 'deny'
+    })
+    expect((await second).phase).toBe('completed')
+  })
+
+  it('denies the action and ends the run on "Deny and stop"', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = vi.fn(
+      sampledTurn({
+        toolCalls: [
+          { id: 'rm-1', function: { name: 'shell', arguments: { command: 'rm -rf dist' } } },
+          { id: 'rm-2', function: { name: 'shell', arguments: { command: 'rm -rf out' } } }
+        ]
+      })
+    )
+    const router = { execute: vi.fn(async () => ({ content: 'ok' })) }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
+      approved: false,
+      decision: 'deny_stop'
+    })
+
+    expect((await running).phase).toBe('cancelled')
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(sampler).toHaveBeenCalledTimes(1)
+    expect(store.listPendingInteractions('run-1')).toEqual([])
+    const denied = store
+      .listEvents('run-1')
+      .find(({ type, payload }) => type === 'tool.completed' && payload.toolCallId === 'rm-1')
+    expect(denied?.payload.result).toMatchObject({ status: 'denied' })
   })
 
   it('runs proven inspection commands without prompting in sensitive-only mode', async () => {
@@ -2405,9 +2656,11 @@ describe('AgentRunKernel', () => {
     const second = kernel.start({ ...input(), id: 'run-2', threadId: 'thread-2' })
 
     await vi.waitFor(() => expect(kernel.hasActiveRuns()).toBe(true))
+    expect(kernel.activeRunIds().sort()).toEqual(['run-1', 'run-2'])
     await kernel.stopAll()
 
     expect(kernel.hasActiveRuns()).toBe(false)
+    expect(kernel.activeRunIds()).toEqual([])
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
   })

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor } from 'electron'
 import { join } from 'path'
 import { electronApp, is, optimizer } from '@electron-toolkit/utils'
 import {
@@ -13,7 +13,7 @@ import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { shutdownCollaboration } from './ipc/collaboration'
-import { shutdownAgentRuntime } from './ipc/agentRuns'
+import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import { startWorkspaceWatcher } from './ipc/workspace'
@@ -33,12 +33,18 @@ import { registerVoiceHandlers } from './ipc/voice'
 import { onSettingsSaved } from './ipc/settings'
 import { VoiceService } from './services/voice/voiceService'
 import { VoiceModelStore } from './services/voice/voiceModels'
+import { confirmQuitWithActiveRuns, QuitGuard } from './bootstrap/quitConfirmation'
+import { refreshAttentionBadge } from './services/attentionBadge'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
 let applicationShutdown: Promise<void> | null = null
 let shutdownReady = false
 let quitAfterShutdownRequested = false
+const quitGuard = new QuitGuard({
+  activeConversationCount: activeAgentConversationCount,
+  confirm: (count) => confirmQuitWithActiveRuns(count, appState.mainWindowRef)
+})
 
 function closeApplicationDatabase(): void {
   if (appState.db?.open) appState.db.close()
@@ -75,6 +81,30 @@ if (is.dev || e2eUserDataPath) {
   if (process.platform === 'darwin') app.commandLine.appendSwitch('use-mock-keychain')
   app.setName(PRODUCT_IDENTITY.productName)
   app.setPath('userData', e2eUserDataPath ?? join(app.getPath('appData'), 'sidekick-dev'))
+}
+
+// Automated runs quit on their own schedule and cannot answer a dialog.
+if (e2eUserDataPath || process.argv.includes('--sidekick-packaged-smoke-test')) quitGuard.allow()
+
+/** On Windows and Linux closing the last window quits, so it asks first too. */
+function openMainWindow(): BrowserWindow {
+  const window = createMainWindow()
+  if (process.platform !== 'darwin') {
+    window.on('close', (event) => {
+      const othersVisible = BrowserWindow.getAllWindows().some(
+        (other) => other !== window && !other.isDestroyed() && other.isVisible()
+      )
+      if (othersVisible) return
+      if (quitGuard.intercept(() => (window.isDestroyed() ? app.quit() : window.close()))) {
+        event.preventDefault()
+      }
+    })
+  }
+  // Windows is logging off or shutting down; it will not wait for a dialog.
+  window.on('query-session-end', () => quitGuard.allow())
+  window.on('session-end', () => quitGuard.allow())
+  refreshAttentionBadge()
+  return window
 }
 
 const ownsSingleInstance = e2eUserDataPath ? true : app.requestSingleInstanceLock()
@@ -132,6 +162,8 @@ async function bootstrapApplication(): Promise<void> {
   registerAllHandlers()
   appUpdateService = new AppUpdateService({
     beforeQuit: async () => {
+      // The user already agreed to restart when installing the update.
+      quitGuard.allow()
       await prepareApplicationShutdown()
       closeApplicationDatabase()
     },
@@ -153,11 +185,12 @@ async function bootstrapApplication(): Promise<void> {
   })
   registerVoiceHandlers(voiceService)
   onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
-  createMainWindow()
+  openMainWindow()
+  powerMonitor.on('shutdown', () => quitGuard.allow())
   const dispatchAppCommand = (command: AppCommand): void => {
     const target = BrowserWindow.getFocusedWindow() ?? appState.mainWindowRef
     if (!target || !revealWindow(target)) {
-      const created = createMainWindow()
+      const created = openMainWindow()
       created.webContents.once('did-finish-load', () => {
         setTimeout(() => {
           if (!created.isDestroyed()) created.webContents.send('app:command', command)
@@ -178,7 +211,7 @@ async function bootstrapApplication(): Promise<void> {
 
   app.on('activate', () => {
     const target = appState.mainWindowRef ?? BrowserWindow.getAllWindows()[0]
-    if (!revealWindow(target)) createMainWindow()
+    if (!revealWindow(target)) openMainWindow()
   })
 }
 
@@ -206,6 +239,7 @@ if (ownsSingleInstance) {
     }
     event.preventDefault()
     if (quitAfterShutdownRequested) return
+    if (quitGuard.intercept(() => app.quit())) return
     quitAfterShutdownRequested = true
     void prepareApplicationShutdown()
       .catch((error) => console.error('[Shutdown] Cleanup failed:', error))

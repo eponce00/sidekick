@@ -75,6 +75,9 @@ interface ActivityPanelProps {
   titleModel?: PinnedModel
   fastModelName?: string
   isAgentBusy?: boolean
+  /** Shows a tab when `at` changes, as when the command palette asks for the browser. */
+  tabRequest?: { tab: ActivityTab; at: number } | null
+  onActiveTabChange?: (tab: ActivityTab) => void
 }
 
 function ActivityPanel({
@@ -89,10 +92,17 @@ function ActivityPanel({
   onGoToCheckpoint,
   titleModel,
   fastModelName,
-  isAgentBusy = false
+  isAgentBusy = false,
+  tabRequest = null,
+  onActiveTabChange
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
   const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
+  const [handledTabRequestAt, setHandledTabRequestAt] = useState(tabRequest?.at)
+  if (tabRequest && tabRequest.at !== handledTabRequestAt) {
+    setHandledTabRequestAt(tabRequest.at)
+    setActiveTab(tabRequest.tab)
+  }
   const [browserActivity, setBrowserActivity] =
     useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const autoOpenedBrowserRunRef = useRef<string | null>(null)
@@ -120,7 +130,8 @@ function ActivityPanel({
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelTab', activeTab)
-  }, [activeTab])
+    onActiveTabChange?.(activeTab)
+  }, [activeTab, onActiveTabChange])
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelWidth', String(panelWidth))

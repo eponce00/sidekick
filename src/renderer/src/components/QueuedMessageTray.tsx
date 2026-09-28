@@ -5,15 +5,18 @@ import { ArrowUpToLine, Check, GripVertical, Pencil, Trash2, X } from 'lucide-re
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import {
   isPastedTextAttachment,
+  isReviewCommentAttachment,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 
 function attachmentCountLabel(attachments: readonly MessageContextAttachment[]): string {
   const pasted = attachments.filter(isPastedTextAttachment).length
-  const project = attachments.length - pasted
+  const comments = attachments.filter(isReviewCommentAttachment).length
+  const project = attachments.length - pasted - comments
   return [
     project ? `${project} file${project === 1 ? '' : 's'}` : '',
-    pasted ? `${pasted} paste${pasted === 1 ? '' : 's'}` : ''
+    pasted ? `${pasted} paste${pasted === 1 ? '' : 's'}` : '',
+    comments ? `${comments} comment${comments === 1 ? '' : 's'}` : ''
   ]
     .filter(Boolean)
     .join(' · ')
@@ -154,7 +157,9 @@ export function QueuedMessageTray({
                   : message.attachments?.length
                     ? message.attachments.some(isPastedTextAttachment)
                       ? 'Pasted text'
-                      : 'Project attachment'
+                      : message.attachments.some(isReviewCommentAttachment)
+                        ? 'Comment on changes'
+                        : 'Project attachment'
                     : '')}
               {Boolean(message.images?.length) && (
                 <span className="queued-message-image-count">
