@@ -159,6 +159,11 @@ interface AgentRunsAPI {
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
   ) => () => void
+  /** Conversations paused on the user's approval or answer. */
+  attention: () => Promise<import('../shared/conversationAttention').ConversationAttentionState>
+  onAttention: (
+    callback: (state: import('../shared/conversationAttention').ConversationAttentionState) => void
+  ) => () => void
 }
 
 interface McpAPI {

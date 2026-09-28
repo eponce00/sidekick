@@ -741,8 +741,9 @@ function ChatPanel({
     ])
 
     let completed = false
+    let failed = false
     try {
-      await startRun({
+      const finalPhase = await startRun({
         id: crypto.randomUUID(),
         conversationId: activeConversationId,
         assistantMessageId,
@@ -753,6 +754,7 @@ function ChatPanel({
         userLocation
       })
       completed = true
+      failed = finalPhase === 'failed'
 
       if (shouldGenerateTitle && titleBaseMessage) {
         const persisted = await window.api.conversations.getMessages(activeConversationId)
@@ -822,7 +824,8 @@ function ChatPanel({
             attachments: pendingMessage.attachments
           })
         }, 50)
-      } else if (completed) {
+      } else if (completed && !failed) {
+        // A failed run is announced by the attention alert, which says what went wrong.
         onResponseComplete?.('Response complete. Ready for your next message.')
       }
     }

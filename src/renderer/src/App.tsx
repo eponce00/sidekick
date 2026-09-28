@@ -11,6 +11,7 @@ import GroupChatPanel from './components/GroupChatPanel'
 import GroupSetupDialog from './components/GroupSetupDialog'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
+import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
 import { normalizePermissionMode } from '../../shared/permissions'
@@ -42,6 +43,14 @@ import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
 import { deleteComposerDraft } from './services/composerDrafts'
+import { useConversationAttention } from './hooks/useConversationAttention'
+import { attentionNotificationBody, shouldNotifyAttention } from './utils/conversationAttention'
+import type { ConversationAttentionAlert } from '../../shared/conversationAttention'
+import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardShortcuts'
+import { buildCommandPaletteItems, latestProjectConversationId } from './utils/commandPaletteItems'
+import { adjacentConversationId } from './utils/sidebarConversationOrder'
+import { useVoiceState } from './hooks/useVoice'
+import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -179,6 +188,17 @@ function App(): React.JSX.Element {
     () => window.matchMedia('(max-width: 760px)').matches
   )
   const [isCompactActivityOpen, setIsCompactActivityOpen] = useState(false)
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false)
+  // Kept by the sidebar and the activity panel for keyboard navigation; reading
+  // them never needs a render.
+  const sidebarOrderRef = useRef<string[]>([])
+  const activityTabRef = useRef<string | null>(null)
+  const [activityTabRequest, setActivityTabRequest] = useState<{
+    tab: 'browser'
+    at: number
+  } | null>(null)
+  const voiceState = useVoiceState()
+  const voiceLoop = useVoiceLoop()
   useEffect(() => {
     const media = window.matchMedia('(max-width: 760px)')
     const update = (): void => setIsCompactLayout(media.matches)
@@ -189,6 +209,33 @@ function App(): React.JSX.Element {
     ? isCompactActivityOpen
     : isActivityPanelPinned
   const effectiveSidebarCollapsed = isSidebarCollapsed || (isCompactLayout && isCompactActivityOpen)
+  const toggleSidebar = (): void => {
+    if (isCompactLayout && effectiveSidebarCollapsed) {
+      setIsCompactActivityOpen(false)
+      setIsSidebarCollapsed(false)
+      return
+    }
+    setIsSidebarCollapsed((prev) => !prev)
+  }
+  const toggleActivityPanel = (): void => {
+    if (isCompactLayout) {
+      setIsCompactActivityOpen((prev) => {
+        const next = !prev
+        if (next) setIsSidebarCollapsed(true)
+        return next
+      })
+      return
+    }
+    setIsActivityPanelPinned((prev) => !prev)
+  }
+  const toggleBrowserPanel = (): void => {
+    if (effectiveActivityPanelPinned && activityTabRef.current === 'browser') {
+      toggleActivityPanel()
+      return
+    }
+    setActivityTabRequest({ tab: 'browser', at: Date.now() })
+    if (!effectiveActivityPanelPinned) toggleActivityPanel()
+  }
   const [isWindowMaximized, setIsWindowMaximized] = useState(false)
   const [isWindowFullScreen, setIsWindowFullScreen] = useState(false)
   useEffect(() => {
@@ -789,8 +836,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     appCommandHandlerRef.current = (command): void => {
       if (command === 'open-settings') {
-        setSettingsInitialSection('general')
-        setIsSettingsOpen(true)
+        openSettings()
       } else if (command === 'new-chat') {
         void handleNewConversation(null)
       } else if (command === 'open-project') {
@@ -798,6 +844,95 @@ function App(): React.JSX.Element {
       }
     }
   })
+
+  const handleSidebarOrderChange = useCallback((conversationIds: string[]): void => {
+    sidebarOrderRef.current = conversationIds
+  }, [])
+  const handleActivityTabChange = useCallback((tab: string): void => {
+    activityTabRef.current = tab
+  }, [])
+
+  const openSettings = (): void => {
+    setSettingsInitialSection('general')
+    setIsSettingsOpen(true)
+  }
+  const showAdjacentConversation = (direction: 1 | -1): void => {
+    const shown = currentGroupId ? null : currentConversationId
+    const target = adjacentConversationId(sidebarOrderRef.current, shown, direction)
+    if (target && target !== shown) void handleSelectConversation(target)
+  }
+  const voiceAvailable = Boolean(voiceState?.enabled && window.api.voice)
+
+  const keyboardShortcutRef = useRef<(event: KeyboardEvent) => void>(() => undefined)
+  useEffect(() => {
+    keyboardShortcutRef.current = (event): void => {
+      if (event.defaultPrevented) return
+      const dialogOpen = document.querySelector('[aria-modal="true"]') !== null
+      if (matchesShortcut(event, 'command-palette', platform)) {
+        // Another dialog owns the keyboard (and Esc) while it is open.
+        if (!isCommandPaletteOpen && dialogOpen) return
+        event.preventDefault()
+        setIsCommandPaletteOpen((open) => !open)
+        return
+      }
+      if (dialogOpen) return
+      const jump = conversationJumpIndex(event, platform)
+      if (jump !== null) {
+        const target = sidebarOrderRef.current[jump - 1]
+        if (!target) return
+        event.preventDefault()
+        void handleSelectConversation(target)
+        return
+      }
+      if (matchesShortcut(event, 'previous-conversation', platform)) {
+        event.preventDefault()
+        showAdjacentConversation(-1)
+      } else if (matchesShortcut(event, 'next-conversation', platform)) {
+        event.preventDefault()
+        showAdjacentConversation(1)
+      }
+    }
+  })
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => keyboardShortcutRef.current(event)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  const commandPaletteItems = isCommandPaletteOpen
+    ? buildCommandPaletteItems({
+        platform,
+        conversations,
+        projects,
+        sidebarOrder: sidebarOrderRef.current,
+        currentConversationId: currentGroupId ? null : currentConversationId,
+        sidebarCollapsed: effectiveSidebarCollapsed,
+        browserPanelOpen: currentGroupId
+          ? null
+          : effectiveActivityPanelPinned && activityTabRef.current === 'browser',
+        voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
+        theme,
+        actions: {
+          newChat: () => void handleNewConversation(null),
+          newGroupChat: () => setIsGroupSetupOpen(true),
+          openProject: () => void handleOpenProject(false),
+          openSettings,
+          toggleSidebar,
+          toggleBrowserPanel,
+          toggleVoice: toggleVoiceLoop,
+          toggleTheme: () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark')),
+          checkForUpdates: () => void window.api.appUpdates.check(),
+          previousConversation: () => showAdjacentConversation(-1),
+          nextConversation: () => showAdjacentConversation(1),
+          openConversation: (id) => void handleSelectConversation(id),
+          openProjectConversations: (projectId) => {
+            const latest = latestProjectConversationId(conversations, projectId)
+            if (latest) void handleSelectConversation(latest)
+            else void handleNewConversation(projectId)
+          }
+        }
+      })
+    : []
 
   const handleMoveConversation = async (input: MoveConversationInput): Promise<void> => {
     if (busyConversationIds.has(input.conversationId)) return
@@ -871,6 +1006,33 @@ function App(): React.JSX.Element {
     },
     [settings.notificationSoundEnabled, settings.notificationsEnabled]
   )
+
+  // A background run paused on an approval or question, or one that failed,
+  // is announced unless the user is already looking at it.
+  const handleAttentionAlert = useCallback(
+    (alert: ConversationAttentionAlert): void => {
+      const notify = shouldNotifyAttention({
+        notificationsEnabled: settings.notificationsEnabled ?? true,
+        appFocused: document.hasFocus(),
+        shownConversationId: currentGroupIdRef.current ? null : currentConversationIdRef.current,
+        conversationId: alert.conversationId
+      })
+      if (!notify) return
+      const title = conversations.find(({ id }) => id === alert.conversationId)?.title
+      void window.api.notification.show({
+        body: attentionNotificationBody(alert.reason, title),
+        silent: !(settings.notificationSoundEnabled ?? false),
+        conversationId: alert.conversationId
+      })
+    },
+    [
+      conversations,
+      currentConversationIdRef,
+      settings.notificationSoundEnabled,
+      settings.notificationsEnabled
+    ]
+  )
+  const waitingConversationIds = useConversationAttention(handleAttentionAlert)
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
@@ -1170,19 +1332,13 @@ function App(): React.JSX.Element {
           isCollapsed={effectiveSidebarCollapsed}
           busyConversationIds={busyConversationIds}
           unreadConversationIds={unreadConversationIds}
+          waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}
           onSelectGroup={(id) => void handleSelectGroup(id)}
           onSelectGroupSession={(groupId, sessionId) =>
             void handleSelectGroupSession(groupId, sessionId)
           }
-          onToggleCollapsed={() => {
-            if (isCompactLayout && effectiveSidebarCollapsed) {
-              setIsCompactActivityOpen(false)
-              setIsSidebarCollapsed(false)
-              return
-            }
-            setIsSidebarCollapsed((prev) => !prev)
-          }}
+          onToggleCollapsed={toggleSidebar}
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
           onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
@@ -1198,6 +1354,7 @@ function App(): React.JSX.Element {
           onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
+          onVisibleConversationOrderChange={handleSidebarOrderChange}
         />
         <div className="conversation-panel-stack">
           {currentGroupId && (
@@ -1236,19 +1393,9 @@ function App(): React.JSX.Element {
           <ActivityPanel
             isPinned={effectiveActivityPanelPinned}
             conversationId={currentConversationId}
-            onTogglePin={() => {
-              if (isCompactLayout) {
-                setIsCompactActivityOpen((prev) => {
-                  const next = !prev
-                  if (next) setIsSidebarCollapsed(true)
-                  return next
-                })
-                return
-              }
-              setIsActivityPanelPinned((prev) => {
-                return !prev
-              })
-            }}
+            onTogglePin={toggleActivityPanel}
+            tabRequest={activityTabRequest}
+            onActiveTabChange={handleActivityTabChange}
             focusChainTodos={
               currentConversationId
                 ? focusChainTodosByConversation[currentConversationId] || []
@@ -1298,6 +1445,12 @@ function App(): React.JSX.Element {
       />
 
       <AppUpdateToast />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        items={commandPaletteItems}
+        onClose={() => setIsCommandPaletteOpen(false)}
+      />
 
       {isSettingsOpen && (
         <SettingsModal

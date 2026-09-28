@@ -2656,9 +2656,11 @@ describe('AgentRunKernel', () => {
     const second = kernel.start({ ...input(), id: 'run-2', threadId: 'thread-2' })
 
     await vi.waitFor(() => expect(kernel.hasActiveRuns()).toBe(true))
+    expect(kernel.activeRunIds().sort()).toEqual(['run-1', 'run-2'])
     await kernel.stopAll()
 
     expect(kernel.hasActiveRuns()).toBe(false)
+    expect(kernel.activeRunIds()).toEqual([])
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
   })

@@ -69,7 +69,7 @@ interface ActiveRun {
   assistantMessageId: string
   mode: ConversationRunMode
   model: AgentRunClientModel
-  resolve: () => void
+  resolve: (phase: AgentRunPhase) => void
   attached?: boolean
   projectionTimer?: ReturnType<typeof setTimeout>
   repairPromise?: Promise<void>
@@ -89,7 +89,8 @@ export interface ConversationRunController {
   queuedMessages: PendingRunMessageItem[]
   pivotMessage: PendingRunMessageItem | null
   runConversationId: string | null
-  startRun: (input: StartConversationAgentRunInput) => Promise<void>
+  /** Resolves with the phase the run ended in once it is finalized. */
+  startRun: (input: StartConversationAgentRunInput) => Promise<AgentRunPhase>
   finishRun: () => Promise<PendingRunMessage | null>
   requestStop: () => Promise<void>
   submitDuringRun: (
@@ -203,7 +204,7 @@ export function useConversationRun({
         )
       )
       onProjectionRef.current?.(projection)
-      if (finalized) active.resolve()
+      if (finalized) active.resolve(projectedPhase)
     },
     [setMessages]
   )
@@ -380,15 +381,15 @@ export function useConversationRun({
   }, [conversationId, scheduleProject, setMessages])
 
   const startRun = useCallback(
-    async (input: StartConversationAgentRunInput): Promise<void> => {
+    async (input: StartConversationAgentRunInput): Promise<AgentRunPhase> => {
       if (activeRef.current) throw new Error('A conversation run is already active')
       setPhase('queued')
       setRunConversationId(input.conversationId)
       const mode =
         input.mode === 'research' ? 'research' : input.mode === 'plan' ? 'plan' : 'conversation'
       setActiveMode(mode)
-      let resolveCompletion!: () => void
-      const completion = new Promise<void>((resolve) => {
+      let resolveCompletion!: (phase: AgentRunPhase) => void
+      const completion = new Promise<AgentRunPhase>((resolve) => {
         resolveCompletion = resolve
       })
       const active: ActiveRun = {
@@ -410,7 +411,7 @@ export function useConversationRun({
           current.model.merge(snapshot.run, snapshot.events, { deferProjection: true })
           scheduleProject(current, true)
         }
-        await completion
+        return await completion
       } catch (error) {
         if (activeRef.current?.runId === input.id) {
           activeRef.current = null

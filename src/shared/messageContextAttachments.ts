@@ -274,7 +274,8 @@ const REVIEW_COMMENTS_TAG = 'sidekick_review_comments'
 
 /** Closing tags inside user text are broken up so a comment cannot end its block early. */
 function escapeReviewText(value: string): string {
-  return value.replace(/<\/(sidekick_review_comments|comment|quoted_lines)/g, '<\\/$1')
+  // Case-insensitive: a model reading `</COMMENT>` would still take it as the end.
+  return value.replace(/<\/(sidekick_review_comments|comment|quoted_lines)/gi, '<\\/$1')
 }
 
 /**

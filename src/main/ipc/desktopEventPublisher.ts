@@ -1,9 +1,11 @@
 import type { AgentRunEvent } from '../../shared/agentRuntime'
 import type { ConversationGoal } from '../../shared/conversationGoals'
+import type { ConversationAttentionState } from '../../shared/conversationAttention'
 
 interface DesktopEventPayloads {
   'agentRuns:event': { event: AgentRunEvent }
   'conversationGoals:changed': { goal: ConversationGoal }
+  'agentRuns:attention': ConversationAttentionState
 }
 
 export interface DesktopEventWindow {

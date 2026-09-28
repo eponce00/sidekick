@@ -891,6 +891,18 @@ export class AgentRuntimeCoordinator {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
   }
 
+  /** Conversations (or group sessions) with a run being prepared or executing.
+   * A sub-agent shares its parent's thread, so it is not counted twice. */
+  activeThreadIds(): string[] {
+    const threads = new Set<string>()
+    for (const { identity } of this.preparations.values()) threads.add(identity.threadId)
+    for (const runId of this.kernel.activeRunIds()) {
+      const threadId = this.store.get(runId)?.threadId
+      if (threadId) threads.add(threadId)
+    }
+    return [...threads]
+  }
+
   async close(): Promise<void> {
     this.closing = true
     const preparing = [...this.preparations.values()]

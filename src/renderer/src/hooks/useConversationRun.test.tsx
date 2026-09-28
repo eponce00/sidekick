@@ -161,7 +161,7 @@ describe('useConversationRun', () => {
       assistantMessageId: 'assistant-1',
       model
     }
-    let completion!: Promise<void>
+    let completion!: Promise<string>
     await act(async () => {
       completion = controller.startRun(input)
       await Promise.resolve()
@@ -178,7 +178,8 @@ describe('useConversationRun', () => {
 
     await act(async () => {
       listener?.({ event: runEvent(4, 'run.finalized', { persisted: true }) })
-      await completion
+      // The caller learns how the run ended, so a failure is not announced as a reply.
+      await expect(completion).resolves.toBe('completed')
     })
     let pending: Awaited<ReturnType<Controller['finishRun']>> = null
     await act(async () => {
@@ -248,7 +249,7 @@ describe('useConversationRun', () => {
       assistantMessageId: 'assistant-1',
       model
     }
-    let completion!: Promise<void>
+    let completion!: Promise<unknown>
 
     await act(async () => {
       completion = controller.startRun(input)
@@ -272,7 +273,7 @@ describe('useConversationRun', () => {
       assistantMessageId: 'assistant-1',
       model
     }
-    let completion!: Promise<void>
+    let completion!: Promise<unknown>
     const images = [
       {
         id: 'image-1',
