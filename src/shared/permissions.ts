@@ -17,6 +17,25 @@ export interface PermissionAuthorization {
   auditId?: string
 }
 
+/** How the user answered an agent's approval request. */
+export const AGENT_PERMISSION_DECISIONS = ['allow_once', 'allow_chat', 'deny', 'deny_stop'] as const
+
+export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number]
+
+/**
+ * The decision an approval response carries. Responses from before decisions
+ * existed only said whether the action was approved.
+ */
+export function agentPermissionDecision(
+  response: Record<string, unknown> | undefined
+): AgentPermissionDecision {
+  const decision = response?.decision
+  if (AGENT_PERMISSION_DECISIONS.includes(decision as AgentPermissionDecision)) {
+    return decision as AgentPermissionDecision
+  }
+  return response?.approved === true ? 'allow_once' : 'deny'
+}
+
 export interface PermissionAuditRecord {
   id: string
   timestamp: number
@@ -28,6 +47,8 @@ export interface PermissionAuditRecord {
   mode: PermissionMode
   fingerprint: string
   outcome: 'auto-approved' | 'user-approved' | 'denied' | 'consumed' | 'rejected'
+  /** The user's answer to an agent request, or `chat_grant` when an earlier "for this chat" covered it. */
+  decision?: AgentPermissionDecision | 'chat_grant'
   reason?: string
 }
 

@@ -3,7 +3,9 @@ import type {
   BrowserHumanTakeoverSnapshot,
   ResolveAgentInteractionInput,
   ReplacePromptAdmissionsInput,
-  StartConversationAgentRunInput
+  StartConversationAgentRunInput,
+  SteerConversationRunInput,
+  SteerConversationRunResult
 } from '../../shared/agentRunApi'
 import type { BrowserHumanTakeoverResult } from '../services/nativeBrowserSessionService'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
@@ -157,7 +159,8 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
     typeof input.model.id !== 'string' ||
     typeof input.model.name !== 'string' ||
     typeof input.model.provider !== 'string' ||
-    (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode))
+    (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode)) ||
+    (input.continuesRunId !== undefined && !validId(input.continuesRunId))
   ) {
     throw new Error('Invalid conversation agent run request')
   }
@@ -370,6 +373,15 @@ export function registerAgentRunHandlers(): void {
       return engine.request<{ success: true }>({ type: 'run.resolveInteraction', input })
     }
   )
+  ipcMain.handle('agentRuns:steer', (_event, input: SteerConversationRunInput) => {
+    if (!input || !validId(input.runId) || !validId(input.admissionId)) {
+      throw new Error('Invalid steer request')
+    }
+    return engine.request<SteerConversationRunResult>({
+      type: 'run.steer',
+      input: { runId: input.runId, admissionId: input.admissionId }
+    })
+  })
   ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
     return admissions.list(conversationId)

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3'
 import {
+  agentPermissionDecision,
   normalizePermissionMode,
   type PermissionAuditRecord,
   type PermissionOperationKind,
@@ -89,6 +90,13 @@ export function listAgentPermissionAudit(
       )
       const mode = normalizePermissionMode(request.mode ?? resolved.mode)
       const approved = response.approved === true && resolved.status !== 'cancelled'
+      const chatGrant = resolved.decision === 'chat_grant'
+      // Only answered requests and chat grants carry a decision; policy approvals do not.
+      const decision = chatGrant
+        ? ('chat_grant' as const)
+        : interactionId && resolved.status !== 'cancelled'
+          ? agentPermissionDecision(response)
+          : undefined
       const kind = operationKind(name)
       const title = String(request.title || resolved.title || displayTitle(name)).slice(0, 500)
       const details =
@@ -117,10 +125,12 @@ export function listAgentPermissionAudit(
           }
         }),
         outcome: approved
-          ? effectiveAccess === 'confirm'
+          ? effectiveAccess === 'confirm' && !chatGrant
             ? 'user-approved'
             : 'auto-approved'
           : 'denied',
+        ...(decision ? { decision } : {}),
+        ...(chatGrant ? { reason: 'Allowed for this chat earlier' } : {}),
         ...(!approved
           ? {
               reason:

@@ -21,7 +21,9 @@ import {
   GitBranch,
   FileText,
   FolderOpen,
-  MessageSquareText
+  MessageSquareText,
+  CornerDownRight,
+  Play
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
 import {
@@ -61,6 +63,7 @@ const RETRY_LABELS: Record<string, string> = {
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',
+  run_continued: 'Continuing the interrupted reply',
   provider_retry: 'Provider request failed; retrying'
 }
 
@@ -84,22 +87,97 @@ function RunStatusSegment({
 
 function RunErrorSegment({
   error,
-  onRetry
+  onRetry,
+  onContinue
 }: {
   error: NonNullable<import('../types/chat.types').ContentSegment['runError']>
   onRetry: () => void
+  /** Offered only on an interrupted reply that is still the end of its conversation. */
+  onContinue?: () => void | Promise<void>
 }): React.JSX.Element {
+  const [continuing, setContinuing] = useState(false)
+  const interrupted = error.code === 'interrupted'
+  if (interrupted && onContinue) {
+    return (
+      <div className="run-error-segment run-error-segment-interrupted" role="status">
+        <CircleAlert size={15} aria-hidden="true" />
+        <div>
+          <strong>Interrupted</strong>
+          <span>
+            {error.message} Continue picks up from the saved progress and checks anything that was
+            cut off mid-step before repeating it.
+          </span>
+        </div>
+        <button
+          type="button"
+          className="run-error-continue"
+          disabled={continuing}
+          onClick={() => {
+            // One interruption, one continuation: the button stays off after a click.
+            setContinuing(true)
+            void Promise.resolve(onContinue()).catch(() => setContinuing(false))
+          }}
+        >
+          {continuing ? <Loader2 size={11} className="icon-spin" /> : <Play size={11} />} Continue
+        </button>
+      </div>
+    )
+  }
   return (
-    <div className="run-error-segment" role="alert">
+    <div className="run-error-segment" role={interrupted ? 'status' : 'alert'}>
       <CircleAlert size={15} aria-hidden="true" />
       <div>
-        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
+        <strong>
+          {interrupted
+            ? 'Interrupted'
+            : error.code
+              ? error.code.replaceAll('_', ' ')
+              : 'Run failed'}
+        </strong>
         <span>{error.message}</span>
       </div>
       {error.retryable && (
         <button type="button" onClick={onRetry}>
           <RotateCcw size={11} /> Retry
         </button>
+      )}
+    </div>
+  )
+}
+
+/** A message the user sent while the agent worked, shown where the run took it in. */
+function SteerSegment({
+  steer
+}: {
+  steer: NonNullable<import('../types/chat.types').ContentSegment['steer']>
+}): React.JSX.Element {
+  return (
+    <div className="steer-segment" role="group" aria-label="Your message, sent while working">
+      <div className="steer-segment-label">
+        <CornerDownRight size={11} aria-hidden="true" />
+        <span>You, while it worked</span>
+      </div>
+      {steer.content && <div className="steer-segment-content">{steer.content}</div>}
+      {Boolean(steer.images?.length) && (
+        <div className="message-image-attachments" aria-label="Attached images">
+          {steer.images!.map((image) => (
+            <ImageAttachmentPreview
+              key={image.id}
+              image={image}
+              className="message-image-preview"
+            />
+          ))}
+        </div>
+      )}
+      {Boolean(steer.attachments?.length) && (
+        <div className="steer-segment-attachments">
+          {steer.attachments!.map((attachment) => (
+            <span key={attachment.id}>
+              <FileText size={11} aria-hidden="true" />
+              {attachment.name}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -487,7 +565,10 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
     group.type === 'content' &&
     (group.segment.type === 'artifact' ||
       group.segment.type === 'verification' ||
-      group.segment.type === 'summary')
+      group.segment.type === 'summary' ||
+      group.segment.type === 'steer' ||
+      // An interruption is what the reader needs to act on, not work to fold away.
+      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted'))
   )
 }
 
@@ -599,6 +680,8 @@ interface MessageItemProps {
   onConfirmEditMessage: (msg: Message) => void
   onCopyMessage: (msg: Message) => void
   onRetryMessage: (msg: Message) => void
+  /** Continues this interrupted reply; passed only while it can still be continued. */
+  onContinueRun?: (msg: Message) => void | Promise<void>
   onForkMessage?: (messageId: string) => void
   onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
@@ -632,6 +715,7 @@ function MessageItemInner({
   onConfirmEditMessage,
   onCopyMessage,
   onRetryMessage,
+  onContinueRun,
   onForkMessage,
   onSetEditingContent,
   onApproveToolLimitDecision,
@@ -977,7 +1061,12 @@ function MessageItemInner({
                     <RunErrorSegment
                       error={group.segment.runError}
                       onRetry={() => onRetryMessage(msg)}
+                      onContinue={onContinueRun ? () => onContinueRun(msg) : undefined}
                     />
+                  ) : group.type === 'content' &&
+                    group.segment.type === 'steer' &&
+                    group.segment.steer ? (
+                    <SteerSegment steer={group.segment.steer} />
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
@@ -1411,6 +1500,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   if (prev.isLoading !== next.isLoading) return false
   if (prev.readOnly !== next.readOnly) return false
   if (prev.onForkMessage !== next.onForkMessage) return false
+  if (prev.onContinueRun !== next.onContinueRun) return false
   // Re-render if this message is being edited or stopped being edited
   if (
     prev.editingMessageId !== next.editingMessageId &&

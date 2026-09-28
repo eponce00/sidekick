@@ -144,6 +144,9 @@ interface AgentRunsAPI {
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>
+  steer: (
+    input: import('../shared/agentRunApi').SteerConversationRunInput
+  ) => Promise<import('../shared/agentRunApi').SteerConversationRunResult>
   admissionsList: (
     conversationId: string
   ) => Promise<import('../shared/agentRunApi').PromptAdmissionsResult>

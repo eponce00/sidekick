@@ -371,4 +371,67 @@ describe('AgentInteractionCard question workflow', () => {
     expect(container.textContent).toContain('Take control')
     expect(resolve).not.toHaveBeenCalled()
   })
+
+  it('offers the most common approval first and a chat-wide one only for a scoped request', async () => {
+    const onResolve = vi.fn(async () => undefined)
+    const permission = (id: string, chatScope?: string) => ({
+      id,
+      kind: 'permission' as const,
+      status: 'pending' as const,
+      request: { title: 'Run npm test?', ...(chatScope ? { chatScope } : {}) }
+    })
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={permission('scoped', 'this exact command')}
+          onResolve={onResolve}
+        />
+      )
+    )
+    const labels = [...container.querySelectorAll('button')].map((button) => button.textContent)
+    expect(labels).toEqual(['Allow once', 'Allow for this chat', 'Deny', 'Deny and stop'])
+    const chat = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Allow for this chat'
+    )!
+    expect(chat.title).toContain('this exact command')
+    await act(async () => chat.click())
+    expect(onResolve).toHaveBeenCalledWith('scoped', { approved: true, decision: 'allow_chat' })
+    expect(container.textContent).toContain('Allowed for this chat')
+
+    await act(async () =>
+      root.render(<AgentInteractionCard interaction={permission('plain')} onResolve={onResolve} />)
+    )
+    expect([...container.querySelectorAll('button')].map((button) => button.textContent)).toEqual([
+      'Allow once',
+      'Deny',
+      'Deny and stop'
+    ])
+    const stop = [...container.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Deny and stop'
+    )!
+    await act(async () => stop.click())
+    expect(onResolve).toHaveBeenLastCalledWith('plain', { approved: false, decision: 'deny_stop' })
+    expect(container.textContent).toContain('Denied and stopped')
+  })
+
+  it('shows the recorded decision, reading older responses as allow once or deny', async () => {
+    const resolved = (response: Record<string, unknown>) => ({
+      id: `permission-${JSON.stringify(response)}`,
+      kind: 'permission' as const,
+      status: 'resolved' as const,
+      request: { title: 'Edit file?' },
+      response
+    })
+    for (const [response, label] of [
+      [{ approved: true }, 'Allowed once'],
+      [{ approved: false }, 'Denied'],
+      [{ approved: true, decision: 'allow_chat' }, 'Allowed for this chat'],
+      [{ approved: false, decision: 'deny_stop' }, 'Denied and stopped']
+    ] as const) {
+      await act(async () =>
+        root.render(<AgentInteractionCard interaction={resolved(response)} onResolve={vi.fn()} />)
+      )
+      expect(container.querySelector('.agent-interaction-status')?.textContent).toBe(label)
+    }
+  })
 })

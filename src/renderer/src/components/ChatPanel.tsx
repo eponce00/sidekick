@@ -14,6 +14,7 @@ import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
   useConversationRun,
+  type DuringRunSubmission,
   type SendConversationMessageOptions
 } from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
@@ -690,7 +691,8 @@ function ChatPanel({
     activeConversationId: string,
     isNewConversation: boolean,
     titleBaseMessage: Message | undefined,
-    runMode: ConversationRunMode
+    runMode: ConversationRunMode,
+    continuesRunId?: string
   ): Promise<void> => {
     if (!selectedModel) {
       alert('Please select a model first')
@@ -747,6 +749,7 @@ function ChatPanel({
         model,
         plannerModel: selectedPlanningModel,
         mode: runMode,
+        ...(continuesRunId ? { continuesRunId } : {}),
         userLocation
       })
       completed = true
@@ -860,9 +863,32 @@ function ChatPanel({
     await streamAgentResponse(messagesRef.current, conversationId, false, undefined, 'conversation')
   }
 
+  // Continues an interrupted reply in a new run that starts from its journal.
+  // The main process refuses a second continuation of the same interruption.
+  const continueInterruptedRun = async (message: Message): Promise<void> => {
+    if (isLoading || !conversationId || !message.runId) return
+    await streamAgentResponse(
+      messagesRef.current,
+      conversationId,
+      false,
+      undefined,
+      message.runMode ?? 'conversation',
+      message.runId
+    )
+  }
+  const continueRunRef = useRef(continueInterruptedRun)
+  continueRunRef.current = continueInterruptedRun
+  const continueRun = useCallback((message: Message) => continueRunRef.current(message), [])
+
   const handleStop = async (): Promise<void> => {
     if (goal?.status === 'active') await pauseGoal()
     else await handleStopGeneration()
+  }
+
+  // A goal run that took the message in is still active; there is nothing to
+  // resume when the next run starts.
+  const settleGoalSteer = (submission: DuringRunSubmission | false): void => {
+    if (submission === 'steered') pendingGoalSteerRef.current = false
   }
 
   // Handle sending a message while the LLM is already responding
@@ -872,15 +898,15 @@ function ChatPanel({
     attachments: MessageContextAttachment[]
   ): Promise<void> => {
     if (goal?.status === 'active') pendingGoalSteerRef.current = true
-    if (
-      await submitDuringRun(
-        content,
-        nextRunMode,
-        goal?.status === 'active' ? 'pivot' : undefined,
-        images,
-        attachments
-      )
-    ) {
+    const submission = await submitDuringRun(
+      content,
+      nextRunMode,
+      goal?.status === 'active' ? 'pivot' : undefined,
+      images,
+      attachments
+    )
+    settleGoalSteer(submission)
+    if (submission) {
       setInputValue('')
       setAttachedImages([])
       setAttachedContext([])
@@ -1054,7 +1080,7 @@ function ChatPanel({
       )
       if (queuedMessageId) {
         if (goal?.status === 'active') pendingGoalSteerRef.current = true
-        void steerQueuedMessage(queuedMessageId)
+        void steerQueuedMessage(queuedMessageId).then(settleGoalSteer)
         return
       }
 
@@ -1110,6 +1136,11 @@ function ChatPanel({
       onConfirmEditMessage={handleConfirmEditMessage}
       onCopyMessage={handleCopyMessage}
       onRetryMessage={handleRetryMessage}
+      onContinueRun={
+        !isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'
+          ? continueRun
+          : undefined
+      }
       onForkMessage={forkMessage}
       copiedMessageId={copiedMessageId}
       onSetEditingContent={setEditingDraft}
@@ -1294,7 +1325,7 @@ function ChatPanel({
         onMoveQueuedMessage={moveQueuedMessage}
         onSteerQueuedMessage={(id) => {
           if (goal?.status === 'active') pendingGoalSteerRef.current = true
-          void steerQueuedMessage(id)
+          void steerQueuedMessage(id).then(settleGoalSteer)
         }}
         instructionSources={workspaceRules.sources}
         instructionsTruncated={workspaceRules.truncated}

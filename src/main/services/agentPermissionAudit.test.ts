@@ -75,4 +75,54 @@ describe('agent permission audit projection', () => {
       outcome: 'denied'
     })
   })
+
+  it('records which answer the user gave and when a chat grant covered a request', () => {
+    for (const [id, decision] of [
+      ['permission-once', 'allow_once'],
+      ['permission-chat', 'allow_chat'],
+      ['permission-stop', 'deny_stop']
+    ] as const) {
+      store.createInteraction({
+        id,
+        runId: 'run-1',
+        kind: 'permission',
+        request: { toolCallId: id, name: 'shell', title: id, requestedAccess: 'confirm' }
+      })
+      store.resolveInteraction(id, { approved: decision !== 'deny_stop', decision })
+    }
+    store.appendEvent({
+      id: 'permission-granted',
+      runId: 'run-1',
+      type: 'permission.resolved',
+      payload: {
+        toolCallId: 'command-4',
+        name: 'shell',
+        title: 'Run tests again',
+        requestedAccess: 'confirm',
+        effectiveAccess: 'confirm',
+        approved: true,
+        source: 'chat_grant',
+        decision: 'chat_grant'
+      }
+    })
+
+    const records = new Map(listAgentPermissionAudit(db).map((record) => [record.title, record]))
+    expect(records.get('permission-once')).toMatchObject({
+      outcome: 'user-approved',
+      decision: 'allow_once'
+    })
+    expect(records.get('permission-chat')).toMatchObject({
+      outcome: 'user-approved',
+      decision: 'allow_chat'
+    })
+    expect(records.get('permission-stop')).toMatchObject({
+      outcome: 'denied',
+      decision: 'deny_stop'
+    })
+    expect(records.get('Run tests again')).toMatchObject({
+      outcome: 'auto-approved',
+      decision: 'chat_grant',
+      reason: 'Allowed for this chat earlier'
+    })
+  })
 })

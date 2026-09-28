@@ -27,7 +27,7 @@ function terminalContent(
   if (phase === 'interrupted') {
     return projected.trim()
       ? `${projected}\n\n_Run interrupted before completion._`
-      : 'Run interrupted before completion. You can retry the last message.'
+      : 'Run interrupted before completion. You can continue it or retry the last message.'
   }
   if (projected) return projected
   if (fallback) return fallback

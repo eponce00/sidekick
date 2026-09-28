@@ -87,6 +87,7 @@ describe('useConversationRun', () => {
           events: vi.fn(async () => ({ run: null, events: [], pendingInteractions: [] })),
           latest: vi.fn(async () => ({ run: null, events: [], pendingInteractions: [] })),
           stop: vi.fn(async () => ({ stopped: true })),
+          steer: vi.fn(async () => ({ accepted: false })),
           resolveInteraction: vi.fn(async () => ({ success: true })),
           admissionsList: vi.fn(async (conversationId: string) => ({
             pivot:
@@ -333,11 +334,59 @@ describe('useConversationRun', () => {
     ])
 
     await act(async () => {
-      expect(await controller.steerQueuedMessage(second.id)).toBe(true)
+      expect(await controller.steerQueuedMessage(second.id)).toBe('restarting')
     })
 
+    // The run could not take it, so it is stopped and the pivot starts the next one.
+    expect(window.api.agentRuns.steer).toHaveBeenCalledWith({
+      runId: 'run-1',
+      admissionId: second.id
+    })
     expect(controller.pivotMessage).toMatchObject({ id: second.id, content: 'second, revised' })
     expect(controller.queuedMessages.map(({ id }) => id)).toEqual([third.id])
     expect(window.api.agentRuns.stop).toHaveBeenCalledWith('run-1')
+  })
+
+  it('steers a message into the running reply without stopping it', async () => {
+    vi.mocked(window.api.agentRuns.steer).mockResolvedValue({ accepted: true })
+    const input: StartConversationAgentRunInput = {
+      id: 'run-1',
+      conversationId: 'conversation-1',
+      assistantMessageId: 'assistant-1',
+      model
+    }
+    let submission: Awaited<ReturnType<Controller['submitDuringRun']>> = false
+    await act(async () => {
+      void controller.startRun(input)
+      await Promise.resolve()
+      await controller.submitDuringRun('queued for later')
+      submission = await controller.submitDuringRun('use tabs', 'conversation', 'pivot')
+    })
+
+    expect(submission).toBe('steered')
+    expect(window.api.agentRuns.stop).not.toHaveBeenCalled()
+    const pivot = controller.pivotMessage!
+    expect(pivot.content).toBe('use tabs')
+    // Stored until the run takes it, so a run that ends first still sends it next.
+    expect(durableAdmissions.map(({ id }) => id)).toContain(pivot.id)
+
+    await act(async () => {
+      listener?.({
+        event: runEvent(1, 'run.steered', { messageId: pivot.id, content: 'use tabs' })
+      })
+      await Promise.resolve()
+    })
+
+    expect(controller.pivotMessage).toBeNull()
+    expect(controller.queuedMessages.map(({ content }) => content)).toEqual(['queued for later'])
+    await vi.waitFor(() =>
+      expect(durableAdmissions.map(({ content }) => content)).toEqual(['queued for later'])
+    )
+    expect(renderedMessages[0].segments).toEqual([
+      {
+        type: 'steer',
+        steer: { id: pivot.id, content: 'use tabs', timestamp: 1 }
+      }
+    ])
   })
 })

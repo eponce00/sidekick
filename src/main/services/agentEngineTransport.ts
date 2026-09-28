@@ -53,6 +53,8 @@ export class LocalAgentEngineTransport implements AgentEngineTransport {
       case 'run.resolveInteraction':
         this.runtime.resolveInteraction(command.input)
         return { success: true }
+      case 'run.steer':
+        return this.runtime.steer(command.input)
       case 'goal.current':
         return this.runtime.currentGoal(command.conversationId)
       case 'goal.create':

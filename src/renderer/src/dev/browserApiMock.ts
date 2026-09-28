@@ -846,6 +846,7 @@ export function installBrowserApiMock(): void {
         }
       }),
       stop: async () => ({ stopped: true }),
+      steer: async () => ({ accepted: false }),
       events: async (runId, afterSequence = 0) => {
         if (runId !== 'preview-run-1') {
           return { run: null, events: [], pendingInteractions: [] }

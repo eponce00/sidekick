@@ -3,8 +3,16 @@ import { RefreshCw, ShieldCheck } from 'lucide-react'
 import type { PermissionAuditRecord } from '../../../shared/permissions'
 import './PermissionAuditPanel.css'
 
-function outcomeLabel(outcome: PermissionAuditRecord['outcome']): string {
-  return outcome.replace('-', ' ')
+const DECISION_LABELS: Record<NonNullable<PermissionAuditRecord['decision']>, string> = {
+  allow_once: 'allowed once',
+  allow_chat: 'allowed for chat',
+  deny: 'denied',
+  deny_stop: 'denied and stopped',
+  chat_grant: 'allowed by chat grant'
+}
+
+function outcomeLabel(record: PermissionAuditRecord): string {
+  return record.decision ? DECISION_LABELS[record.decision] : record.outcome.replace('-', ' ')
 }
 
 export function PermissionAuditPanel(): React.JSX.Element {
@@ -64,7 +72,7 @@ export function PermissionAuditPanel(): React.JSX.Element {
             <div className="permission-audit-record" key={record.id}>
               <div className="permission-audit-record-main">
                 <span className={`permission-audit-outcome outcome-${record.outcome}`}>
-                  {outcomeLabel(record.outcome)}
+                  {outcomeLabel(record)}
                 </span>
                 <span className="permission-audit-title">{record.title}</span>
               </div>
