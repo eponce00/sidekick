@@ -4,7 +4,9 @@ import { join } from 'path'
 import type {
   AgentRunEventsResult,
   ResolveAgentInteractionInput,
-  StartConversationAgentRunInput
+  StartConversationAgentRunInput,
+  SteerConversationRunInput,
+  SteerConversationRunResult
 } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
@@ -34,8 +36,10 @@ import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
   ConversationRunPreparer,
+  steeredProviderMessage,
   type PreparedConversationAgentRun
 } from './conversationRunPreparer'
+import { PromptAdmissionStore } from './promptAdmissionStore'
 import { AgentRunKernel, type AgentKernelRunResult } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
@@ -107,6 +111,7 @@ export class AgentRuntimeCoordinator {
   readonly browser: NativeBrowserSessionService
   readonly goals: ConversationGoalStore
   private readonly messages: AgentMessageMaterializer
+  private readonly admissions: PromptAdmissionStore
   private readonly mcp = new McpClientManager()
   private readonly commands: CommandService
   private readonly outputs: ToolOutputStore
@@ -134,6 +139,7 @@ export class AgentRuntimeCoordinator {
     this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
     this.messages = new AgentMessageMaterializer(db, this.store)
+    this.admissions = new PromptAdmissionStore(db)
     this.goals = new ConversationGoalStore(db, publishGoal)
     this.outputs = new ToolOutputStore(join(userDataRoot, 'tool-outputs'))
     this.commands = new CommandService(
@@ -789,6 +795,37 @@ export class AgentRuntimeCoordinator {
       if (active.prepared.goalId === goalId) this.stop(runId)
     }
     return this.goals.clear(goalId)
+  }
+
+  /**
+   * Hand a pending message to the running conversation run. The admission stays
+   * stored until the run takes it in, so a run that ends first leaves it to be
+   * sent as the next message, as before.
+   */
+  steer(input: SteerConversationRunInput): SteerConversationRunResult {
+    const active = this.activeConversations.get(input.runId)
+    if (!active) return { accepted: false }
+    const conversationId = active.input.conversationId
+    const admission = this.admissions.get(conversationId, input.admissionId)
+    // A research question cannot join a conversation run or the reverse; a
+    // Plan request needs its own planning run.
+    const runMode = active.input.mode === 'research' ? 'research' : 'conversation'
+    if (!admission || admission.mode !== runMode) return { accepted: false }
+    const payload = {
+      messageId: admission.id,
+      content: admission.content,
+      mode: admission.mode,
+      ...(admission.images?.length ? { images: admission.images } : {}),
+      ...(admission.attachments?.length ? { attachments: admission.attachments } : {})
+    }
+    return {
+      accepted: this.kernel.steer(input.runId, {
+        id: admission.id,
+        message: steeredProviderMessage(payload),
+        payload,
+        onApplied: () => this.admissions.remove(conversationId, admission.id)
+      })
+    }
   }
 
   resolveInteraction(input: ResolveAgentInteractionInput): void {

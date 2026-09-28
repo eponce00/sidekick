@@ -20,7 +20,8 @@ import {
   Microscope,
   GitBranch,
   FileText,
-  FolderOpen
+  FolderOpen,
+  CornerDownRight
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
 import {
@@ -97,6 +98,44 @@ function RunErrorSegment({
         <button type="button" onClick={onRetry}>
           <RotateCcw size={11} /> Retry
         </button>
+      )}
+    </div>
+  )
+}
+
+/** A message the user sent while the agent worked, shown where the run took it in. */
+function SteerSegment({
+  steer
+}: {
+  steer: NonNullable<import('../types/chat.types').ContentSegment['steer']>
+}): React.JSX.Element {
+  return (
+    <div className="steer-segment" role="group" aria-label="Your message, sent while working">
+      <div className="steer-segment-label">
+        <CornerDownRight size={11} aria-hidden="true" />
+        <span>You, while it worked</span>
+      </div>
+      {steer.content && <div className="steer-segment-content">{steer.content}</div>}
+      {Boolean(steer.images?.length) && (
+        <div className="message-image-attachments" aria-label="Attached images">
+          {steer.images!.map((image) => (
+            <ImageAttachmentPreview
+              key={image.id}
+              image={image}
+              className="message-image-preview"
+            />
+          ))}
+        </div>
+      )}
+      {Boolean(steer.attachments?.length) && (
+        <div className="steer-segment-attachments">
+          {steer.attachments!.map((attachment) => (
+            <span key={attachment.id}>
+              <FileText size={11} aria-hidden="true" />
+              {attachment.name}
+            </span>
+          ))}
+        </div>
       )}
     </div>
   )
@@ -484,7 +523,8 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
     group.type === 'content' &&
     (group.segment.type === 'artifact' ||
       group.segment.type === 'verification' ||
-      group.segment.type === 'summary')
+      group.segment.type === 'summary' ||
+      group.segment.type === 'steer')
   )
 }
 
@@ -954,6 +994,10 @@ function MessageItemInner({
                       error={group.segment.runError}
                       onRetry={() => onRetryMessage(msg)}
                     />
+                  ) : group.type === 'content' &&
+                    group.segment.type === 'steer' &&
+                    group.segment.steer ? (
+                    <SteerSegment steer={group.segment.steer} />
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (

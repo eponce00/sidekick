@@ -588,6 +588,58 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.textContent).toContain('I will inspect it.')
   })
 
+  it('shows a steered message where it was sent, outside the folded work', async () => {
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'steered-reply',
+            role: 'agent',
+            content: 'Formatting with spaces. Switched to tabs.',
+            timestamp: 1_000,
+            segments: [
+              { type: 'text', content: 'Formatting with spaces.' },
+              {
+                type: 'tool',
+                tool: { id: 'format', title: 'Format files', command: 'shell', status: 'success' }
+              },
+              {
+                type: 'steer',
+                steer: { id: 'steer-1', content: 'Use tabs instead.', timestamp: 2_000 }
+              },
+              { type: 'text', content: 'Switched to tabs.' }
+            ]
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const steer = container.querySelector('.steer-segment')
+    expect(steer?.textContent).toContain('Use tabs instead.')
+    expect(steer?.closest('.agent-work-disclosure')).toBeNull()
+    expect(container.querySelector('[data-final-answer]')?.textContent).toContain(
+      'Switched to tabs.'
+    )
+    expect(container.textContent).not.toContain('Format files')
+  })
+
   it('renders thinking and tool activity in the order it happened', async () => {
     await act(async () => {
       root.render(

@@ -30,6 +30,18 @@ export interface ResolveAgentInteractionInput {
   cancelled?: boolean
 }
 
+/** Asks a running conversation run to take a pending message at its next model step. */
+export interface SteerConversationRunInput {
+  runId: string
+  /** The pending message, already stored as a prompt admission. */
+  admissionId: string
+}
+
+export interface SteerConversationRunResult {
+  /** False when the run cannot take it; the message then waits for the run to end. */
+  accepted: boolean
+}
+
 export interface AgentRunEventsResult {
   run: AgentRunSnapshot | null
   events: AgentRunEvent[]

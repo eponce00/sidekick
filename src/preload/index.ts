@@ -150,6 +150,8 @@ const api = {
       ipcRenderer.invoke('agentRuns:browserTakeoverComplete', interactionId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
+    steer: (input: import('../shared/agentRunApi').SteerConversationRunInput) =>
+      ipcRenderer.invoke('agentRuns:steer', input),
     admissionsList: (conversationId: string) =>
       ipcRenderer.invoke('agentRuns:admissionsList', conversationId),
     admissionsReplace: (input: import('../shared/agentRunApi').ReplacePromptAdmissionsInput) =>

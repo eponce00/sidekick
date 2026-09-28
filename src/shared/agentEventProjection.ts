@@ -5,6 +5,8 @@ import type {
   ToolPresentationIntent
 } from './agentRuntime'
 import { formatCompactionContext } from './compactionPrompt'
+import type { MessageImageAttachment } from './messageImages'
+import type { MessageContextAttachment } from './messageContextAttachments'
 import type { WorkspaceVerificationSummary } from './verification'
 
 export interface ProjectedToolExecution {
@@ -85,6 +87,17 @@ export type ProjectedContentSegment =
         message: string
         retryable: boolean
         recoveryAction?: string
+      }
+    }
+  | {
+      /** A message the user sent while the run worked, at the point the run took it in. */
+      type: 'steer'
+      steer: {
+        id: string
+        content: string
+        images?: MessageImageAttachment[]
+        attachments?: MessageContextAttachment[]
+        timestamp: number
       }
     }
   | {
@@ -527,6 +540,32 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
           ...(typeof event.payload.contextReliable === 'boolean'
             ? { contextReliable: event.payload.contextReliable }
             : {})
+        }
+      })
+      turnSegmentStart = segments.length
+    }
+    if (event.type === 'run.steered') {
+      // Like compaction, the user's message is a hard turn boundary. It belongs
+      // to the conversation, so it never folds into a verification pass.
+      for (const id of pendingTurnTools) emitTool(id)
+      pendingTurnTools.length = 0
+      closeVerificationPass()
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+      const images = event.payload.images
+      const attachments = event.payload.attachments
+      segments.push({
+        type: 'steer',
+        steer: {
+          id: String(event.payload.messageId || event.id),
+          content: typeof event.payload.content === 'string' ? event.payload.content : '',
+          ...(Array.isArray(images) && images.length
+            ? { images: images as MessageImageAttachment[] }
+            : {}),
+          ...(Array.isArray(attachments) && attachments.length
+            ? { attachments: attachments as MessageContextAttachment[] }
+            : {}),
+          timestamp: event.timestamp
         }
       })
       turnSegmentStart = segments.length

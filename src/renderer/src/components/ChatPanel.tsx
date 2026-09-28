@@ -14,6 +14,7 @@ import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
   useConversationRun,
+  type DuringRunSubmission,
   type SendConversationMessageOptions
 } from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
@@ -840,6 +841,12 @@ function ChatPanel({
     else await handleStopGeneration()
   }
 
+  // A goal run that took the message in is still active; there is nothing to
+  // resume when the next run starts.
+  const settleGoalSteer = (submission: DuringRunSubmission | false): void => {
+    if (submission === 'steered') pendingGoalSteerRef.current = false
+  }
+
   // Handle sending a message while the LLM is already responding
   const handleSendDuringLoading = async (
     content: string,
@@ -847,15 +854,15 @@ function ChatPanel({
     attachments: MessageContextAttachment[]
   ): Promise<void> => {
     if (goal?.status === 'active') pendingGoalSteerRef.current = true
-    if (
-      await submitDuringRun(
-        content,
-        nextRunMode,
-        goal?.status === 'active' ? 'pivot' : undefined,
-        images,
-        attachments
-      )
-    ) {
+    const submission = await submitDuringRun(
+      content,
+      nextRunMode,
+      goal?.status === 'active' ? 'pivot' : undefined,
+      images,
+      attachments
+    )
+    settleGoalSteer(submission)
+    if (submission) {
       setInputValue('')
       setAttachedImages([])
       setAttachedContext([])
@@ -1008,7 +1015,7 @@ function ChatPanel({
       )
       if (queuedMessageId) {
         if (goal?.status === 'active') pendingGoalSteerRef.current = true
-        void steerQueuedMessage(queuedMessageId)
+        void steerQueuedMessage(queuedMessageId).then(settleGoalSteer)
         return
       }
 
@@ -1244,7 +1251,7 @@ function ChatPanel({
         onMoveQueuedMessage={moveQueuedMessage}
         onSteerQueuedMessage={(id) => {
           if (goal?.status === 'active') pendingGoalSteerRef.current = true
-          void steerQueuedMessage(id)
+          void steerQueuedMessage(id).then(settleGoalSteer)
         }}
         instructionSources={workspaceRules.sources}
         instructionsTruncated={workspaceRules.truncated}

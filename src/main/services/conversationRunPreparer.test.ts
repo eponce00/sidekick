@@ -223,6 +223,63 @@ describe('conversation provider history', () => {
     db.close()
   })
 
+  it('keeps a steered message where the run took it in', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'ollama', 'model', 1);
+    `)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    add.run(
+      'run-1',
+      2,
+      'assistant.completed',
+      JSON.stringify({ content: '', toolCalls: [{ id: 'call-1', name: 'read', arguments: {} }] })
+    )
+    add.run(
+      'run-1',
+      3,
+      'tool.completed',
+      JSON.stringify({ toolCallId: 'call-1', result: { modelContent: 'file text' } })
+    )
+    add.run(
+      'run-1',
+      4,
+      'run.steered',
+      JSON.stringify({
+        messageId: 'steer-1',
+        content: 'Use tabs, not spaces.',
+        images: [
+          {
+            id: 'image-1',
+            name: 'shot.png',
+            mimeType: 'image/png',
+            dataUrl: 'data:image/png;base64,AAAA'
+          }
+        ]
+      })
+    )
+    add.run('run-1', 5, 'assistant.completed', JSON.stringify({ content: 'Switched to tabs.' }))
+
+    const history = durableProviderHistory(
+      db,
+      'conversation-1',
+      [row({ id: 'user-1', role: 'user', content: 'Format it.' }), row({ id: 'assistant-1' })],
+      { providerKind: 'ollama', model: 'model' }
+    )
+    expect(history.map(({ role, content }) => ({ role, content }))).toEqual([
+      { role: 'user', content: 'Format it.' },
+      { role: 'assistant', content: null },
+      { role: 'tool', content: 'file text' },
+      { role: 'user', content: 'Use tabs, not spaces.' },
+      { role: 'assistant', content: 'Switched to tabs.' }
+    ])
+    expect(history[3]).toHaveProperty('images', ['data:image/png;base64,AAAA'])
+    db.close()
+  })
+
   it('compacts legacy verbose browser receipts before rebuilding model history', () => {
     const db = new Database(':memory:')
     db.exec(`

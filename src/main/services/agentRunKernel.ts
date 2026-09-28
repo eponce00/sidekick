@@ -215,6 +215,25 @@ interface PendingResolver {
   resolve: (interaction: PendingAgentInteraction) => void
 }
 
+/** A user message sent while a run works, taken in at its next model step. */
+export interface AgentRunSteer {
+  id: string
+  message: ProviderChatMessage
+  /** What the user sent, recorded on `run.steered` for display and later history. */
+  payload: Record<string, unknown>
+  /** Runs once the message is durably part of the run. */
+  onApplied?: () => void
+}
+
+// A run waiting on the user has no model step coming; the message would sit
+// unseen behind the question, so it waits for the run to end instead.
+const STEERABLE_PHASES = new Set<AgentRunPhase>([
+  'queued',
+  'streaming',
+  'executing_tool',
+  'compacting'
+])
+
 const RESEARCH_SOURCE_TOOLS = new Set(['web_search', 'web_fetch'])
 const RESEARCH_SOURCE_GUARD = `<sidekick_research_guard trust="app-policy">
 This research report cannot finish without attempting source retrieval. Use web_search to discover relevant sources and web_fetch to verify the material claims. If retrieval fails, report that limitation explicitly. Do not repeat the unverified answer from the previous turn.
@@ -446,6 +465,7 @@ export async function sampleProviderTurn(
 export class AgentRunKernel {
   private readonly active = new Map<string, ActiveKernelRun>()
   private readonly pendingResolvers = new Map<string, PendingResolver>()
+  private readonly steers = new Map<string, AgentRunSteer[]>()
 
   constructor(
     private readonly store: AgentRunStore,
@@ -459,6 +479,8 @@ export class AgentRunKernel {
     const controller = new AbortController()
     const promise = this.execute(input, controller.signal).finally(() => {
       if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
+      // A message the run ended before taking stays with the caller, who sends it next.
+      this.steers.delete(input.id)
       for (const [id, pending] of this.pendingResolvers) {
         if (pending.runId === input.id) this.pendingResolvers.delete(id)
       }
@@ -472,6 +494,41 @@ export class AgentRunKernel {
     if (!active) return false
     active.controller.abort()
     return true
+  }
+
+  /**
+   * Queue a user message for a running run. It joins the transcript before the
+   * next model request, so a stream or tool call already under way finishes
+   * undisturbed. False when the run cannot take it at a safe boundary.
+   */
+  steer(runId: string, steer: AgentRunSteer): boolean {
+    const active = this.active.get(runId)
+    const phase = this.store.get(runId)?.phase
+    if (!active || active.controller.signal.aborted || !phase || !STEERABLE_PHASES.has(phase)) {
+      return false
+    }
+    const queue = this.steers.get(runId) ?? []
+    if (!queue.some(({ id }) => id === steer.id)) this.steers.set(runId, [...queue, steer])
+    return true
+  }
+
+  private applySteers(runId: string): ProviderChatMessage[] {
+    const queue = this.steers.get(runId)
+    if (!queue?.length) return []
+    this.steers.delete(runId)
+    return queue.map((steer) => {
+      this.append(runId, 'run.steered', { ...steer.payload, steerId: steer.id })
+      try {
+        steer.onApplied?.()
+      } catch (error) {
+        console.warn('[AgentRun] Could not settle a steered message:', error)
+      }
+      return steer.message
+    })
+  }
+
+  private hasPendingSteer(runId: string): boolean {
+    return Boolean(this.steers.get(runId)?.length)
   }
 
   isActive(runId: string): boolean {
@@ -964,7 +1021,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     const toolRecovery = new AgentToolRecoveryController()
     let researchSourceAttempted = false
     let researchGuardInjected = false
-    let goalContinuationTurn = false
+    // A turn that follows a goal continuation or a steered message starts a new paragraph.
+    let separateNextTurn = false
     // Tool rounds the model attempted after its goal was already complete.
     let toolRoundsAfterGoalComplete = 0
     let contextOverflowRetryAttempted = false
@@ -1109,6 +1167,11 @@ The user approved this exact plan revision. Act capabilities are now available a
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
+        const steered = this.applySteers(input.id)
+        if (steered.length) {
+          messages = [...messages, ...steered]
+          if (finalContent) separateNextTurn = true
+        }
         if (input.beforeModelStep) {
           const injected = await input.beforeModelStep(messages, signal, toolRounds)
           if (injected.length) messages = [...messages, ...injected]
@@ -1144,7 +1207,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
         }
 
-        let pendingContent = goalContinuationTurn ? '\n\n' : ''
+        let pendingContent = separateNextTurn ? '\n\n' : ''
         let pendingThinking = ''
         let lastDeltaAt = Date.now()
         const previewSignatures = new Map<string, string>()
@@ -1275,8 +1338,8 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
         messages = [...requestMessages, assistantMessage]
         const projectedTurnContent =
-          goalContinuationTurn && turn.content ? `\n\n${turn.content}` : turn.content
-        goalContinuationTurn = false
+          separateNextTurn && turn.content ? `\n\n${turn.content}` : turn.content
+        separateNextTurn = false
         const needsResearchSource =
           input.profile.surface === 'research' &&
           !researchSourceAttempted &&
@@ -1439,7 +1502,7 @@ The user approved this exact plan revision. Act capabilities are now available a
                     'Continue making concrete progress toward the active goal. Do not stop merely because one response ended.'
                 }
               ]
-              goalContinuationTurn = true
+              separateNextTurn = true
               continue
             }
           }
@@ -1454,6 +1517,8 @@ The user approved this exact plan revision. Act capabilities are now available a
             this.transition(input.id, 'streaming')
             continue
           }
+          // A message the user sent during this last turn deserves a reply of its own.
+          if (this.hasPendingSteer(input.id)) continue
           this.transition(input.id, 'completed')
           return {
             runId: input.id,

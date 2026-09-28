@@ -94,6 +94,24 @@ export function providerMessage(row: MessageRow): ProviderChatMessage {
   }
 }
 
+/**
+ * The model-facing form of a message the user steered into a running run, rebuilt
+ * from its `run.steered` payload so later runs see it where it was sent.
+ */
+export function steeredProviderMessage(payload: Record<string, unknown>): ProviderChatMessage {
+  return providerMessage({
+    id: String(payload.messageId || ''),
+    role: 'user',
+    content: typeof payload.content === 'string' ? payload.content : '',
+    thinking: null,
+    segments: null,
+    images: Array.isArray(payload.images) ? JSON.stringify(payload.images) : null,
+    attachments: Array.isArray(payload.attachments) ? JSON.stringify(payload.attachments) : null,
+    token_usage: null,
+    timestamp: 0
+  })
+}
+
 interface ProviderHistoryEventRow {
   run_id: string
   provider: string
@@ -252,6 +270,10 @@ export function durableProviderHistory(
     const outputMessageId = outputByRun.get(event.run_id)
     if (!outputMessageId) continue
     const history = messagesByOutput.get(outputMessageId)!
+    if (event.type === 'run.steered') {
+      history.push(steeredProviderMessage(payload))
+      continue
+    }
     if (event.type === 'assistant.completed') {
       const calls = Array.isArray(payload.toolCalls)
         ? (payload.toolCalls as Array<Record<string, unknown>>).map(
