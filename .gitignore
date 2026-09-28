@@ -10,7 +10,8 @@ reference/
 /playwright-report/
 /.nyc_output/
 
-# Local AI-agent instructions, memory, and session state
+# Local AI-agent instructions, memory, and session state.
+# AGENTS.md and CLAUDE.md are the shared project instructions and are committed.
 .claude/
 .codex/
 .cursor/
@@ -23,10 +24,8 @@ reference/
 .windsurf/
 /.memory/
 /memory/
-AGENTS.md
 AGENTS.local.md
 AGENTS.override.md
-CLAUDE.md
 CLAUDE.local.md
 GEMINI.md
 GEMINI.local.md

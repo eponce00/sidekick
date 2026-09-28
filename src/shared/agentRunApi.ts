@@ -13,6 +13,11 @@ export interface StartConversationAgentRunInput {
   /** Optional planner; execution always returns to model after plan approval. */
   plannerModel?: PinnedModel
   mode?: ConversationRunMode
+  /**
+   * An interrupted run this one picks up from its durable journal. Only the
+   * latest run of the conversation can be continued, and only once.
+   */
+  continuesRunId?: string
   userLocation?: {
     city?: string
     country?: string
@@ -28,6 +33,18 @@ export interface ResolveAgentInteractionInput {
   interactionId: string
   response: Record<string, unknown>
   cancelled?: boolean
+}
+
+/** Asks a running conversation run to take a pending message at its next model step. */
+export interface SteerConversationRunInput {
+  runId: string
+  /** The pending message, already stored as a prompt admission. */
+  admissionId: string
+}
+
+export interface SteerConversationRunResult {
+  /** False when the run cannot take it; the message then waits for the run to end. */
+  accepted: boolean
 }
 
 export interface AgentRunEventsResult {

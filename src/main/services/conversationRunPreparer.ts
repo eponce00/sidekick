@@ -40,6 +40,7 @@ import { parseMessageImages } from '../../shared/messageImages'
 import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
+  formatReviewCommentAttachments,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
 import { normalizeToolResultMedia, type ToolResultMediaAttachment } from '../../shared/agentRuntime'
@@ -81,6 +82,7 @@ export function providerMessage(row: MessageRow): ProviderChatMessage {
   const content = [
     formatPastedTextAttachments(attachments),
     row.content.trim(),
+    formatReviewCommentAttachments(attachments),
     formatMessageContextAttachments(attachments)
   ]
     .filter(Boolean)
@@ -93,6 +95,32 @@ export function providerMessage(row: MessageRow): ProviderChatMessage {
     ...(images.length ? { images } : {})
   }
 }
+
+/**
+ * The model-facing form of a message the user steered into a running run, rebuilt
+ * from its `run.steered` payload so later runs see it where it was sent.
+ */
+export function steeredProviderMessage(payload: Record<string, unknown>): ProviderChatMessage {
+  return providerMessage({
+    id: String(payload.messageId || ''),
+    role: 'user',
+    content: typeof payload.content === 'string' ? payload.content : '',
+    thinking: null,
+    segments: null,
+    images: Array.isArray(payload.images) ? JSON.stringify(payload.images) : null,
+    attachments: Array.isArray(payload.attachments) ? JSON.stringify(payload.attachments) : null,
+    token_usage: null,
+    timestamp: 0
+  })
+}
+
+/**
+ * Opens a run that continues an interrupted one. Recorded in the new run's
+ * journal like a steered message, so later runs replay it in the same place.
+ */
+export const RUN_CONTINUATION_PROMPT = `<sidekick_run_continuation trust="app-policy">
+SideKick stopped before your previous reply finished, and the user asked you to continue it. Pick up the interrupted work from where the transcript above ends. A tool result marked as interrupted or OUTCOME UNKNOWN may or may not have taken effect: inspect the actual files, processes, browser or service first, and repeat that operation only if it did not happen. Never repeat a side effect blindly, and do not redo work whose result is recorded. Finish the original request, then reply as you would have.
+</sidekick_run_continuation>`
 
 interface ProviderHistoryEventRow {
   run_id: string
@@ -252,6 +280,10 @@ export function durableProviderHistory(
     const outputMessageId = outputByRun.get(event.run_id)
     if (!outputMessageId) continue
     const history = messagesByOutput.get(outputMessageId)!
+    if (event.type === 'run.steered') {
+      history.push(steeredProviderMessage(payload))
+      continue
+    }
     if (event.type === 'assistant.completed') {
       const calls = Array.isArray(payload.toolCalls)
         ? (payload.toolCalls as Array<Record<string, unknown>>).map(
@@ -799,13 +831,29 @@ export class ConversationRunPreparer {
           projectId: project.projectId,
           projectContextVersion: project.contextVersion,
           researchProfileVersion:
-            surface === 'research' ? RESEARCH_PROFILE_PROMPT_VERSION : undefined
+            surface === 'research' ? RESEARCH_PROFILE_PROMPT_VERSION : undefined,
+          ...(input.continuesRunId ? { continuesRunId: input.continuesRunId } : {})
         },
         catalog: toolSession.catalog,
         messages,
         request: initialRuntime.request,
         maxToolRounds: normalizeToolCallLimit(currentSettings.toolCallLimit),
         permissionMode,
+        ...(input.continuesRunId
+          ? {
+              initialSteers: [
+                {
+                  id: `${input.id}:continuation`,
+                  message: { role: 'user', content: RUN_CONTINUATION_PROMPT },
+                  payload: {
+                    kind: 'continuation',
+                    continuesRunId: input.continuesRunId,
+                    content: RUN_CONTINUATION_PROMPT
+                  }
+                }
+              ]
+            }
+          : {}),
         toolRouter: toolSession.router,
         verificationController: toolSession.verificationController,
         contextManager: initialRuntime.contextManager,

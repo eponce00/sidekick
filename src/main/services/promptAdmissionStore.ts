@@ -117,6 +117,19 @@ export class PromptAdmissionStore {
     return this.list(input.conversationId)
   }
 
+  get(conversationId: string, id: string): PromptAdmissionItem | null {
+    const row = this.db
+      .prepare('SELECT * FROM agent_prompt_admissions WHERE conversation_id = ? AND id = ?')
+      .get(conversationId, id) as AdmissionRow | undefined
+    return row ? toItem(row) : null
+  }
+
+  remove(conversationId: string, id: string): void {
+    this.db
+      .prepare('DELETE FROM agent_prompt_admissions WHERE conversation_id = ? AND id = ?')
+      .run(conversationId, id)
+  }
+
   takeNext(conversationId: string): PromptAdmissionItem | null {
     return this.db.transaction(() => {
       const row = this.db

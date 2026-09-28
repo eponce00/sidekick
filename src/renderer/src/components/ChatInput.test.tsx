@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, createRef } from 'react'
+import { act, createRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatInput } from './ChatInput'
@@ -385,5 +385,123 @@ describe('ChatInput long pastes', () => {
       card.querySelector<HTMLButtonElement>('.pasted-text-card-remove')!.click()
     })
     expect(onRemoveContextAttachment).toHaveBeenCalledWith('paste-1')
+  })
+})
+
+describe('ChatInput prompt history', () => {
+  let container: HTMLDivElement
+  let root: Root
+  const history = [
+    { id: 'm1', prompt: 'first prompt' },
+    { id: 'm2', prompt: 'second prompt' }
+  ]
+
+  function Harness({ initial = '' }: { initial?: string }): React.JSX.Element {
+    const [value, setValue] = useState(initial)
+    return (
+      <ChatInput
+        {...baseProps({
+          inputValue: value,
+          onInputChange: setValue,
+          isFeaturesMenuOpen: false,
+          getPromptHistory: () => history
+        })}
+      />
+    )
+  }
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  const input = (): HTMLTextAreaElement => container.querySelector('textarea.message-input')!
+
+  async function press(key: string, init: KeyboardEventInit = {}): Promise<KeyboardEvent> {
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
+    await act(async () => {
+      input().dispatchEvent(event)
+    })
+    return event
+  }
+
+  it('recalls earlier prompts with ArrowUp and restores the draft with ArrowDown', async () => {
+    await act(async () => root.render(<Harness initial="draft" />))
+    input().setSelectionRange(0, 0)
+
+    expect((await press('ArrowUp')).defaultPrevented).toBe(true)
+    expect(input().value).toBe('second prompt')
+    await press('ArrowUp')
+    expect(input().value).toBe('first prompt')
+    await press('ArrowDown')
+    expect(input().value).toBe('second prompt')
+    await press('ArrowDown')
+    expect(input().value).toBe('draft')
+    expect((await press('ArrowDown')).defaultPrevented).toBe(false)
+  })
+
+  it('leaves the caret alone mid-text, with modifiers, and while composing', async () => {
+    await act(async () => root.render(<Harness initial={'line one\nline two'} />))
+    input().setSelectionRange(12, 12)
+    expect((await press('ArrowUp')).defaultPrevented).toBe(false)
+    input().setSelectionRange(0, 0)
+    expect((await press('ArrowUp', { shiftKey: true })).defaultPrevented).toBe(false)
+    expect((await press('ArrowUp', { altKey: true })).defaultPrevented).toBe(false)
+    expect((await press('ArrowUp', { isComposing: true })).defaultPrevented).toBe(false)
+    expect(input().value).toBe('line one\nline two')
+  })
+
+  it('lets the command menu keep its arrow keys', async () => {
+    await act(async () => root.render(<Harness initial="/" />))
+    input().setSelectionRange(0, 0)
+    await press('ArrowUp')
+    expect(input().value).toBe('/')
+  })
+})
+
+describe('ChatInput review comments', () => {
+  it('shows a comment on changed lines as a removable chip', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onRemoveContextAttachment = vi.fn()
+    await act(async () =>
+      root.render(
+        <ChatInput
+          {...baseProps({
+            isFeaturesMenuOpen: false,
+            onRemoveContextAttachment,
+            attachedContext: [
+              {
+                id: 'review-1',
+                kind: 'review',
+                name: 'App.tsx:3-4',
+                path: 'src/App.tsx',
+                side: 'new',
+                startLine: 3,
+                endLine: 4,
+                excerpt: '+a\n+b',
+                comment: 'Rename this'
+              }
+            ]
+          })}
+        />
+      )
+    )
+    const chip = container.querySelector<HTMLDivElement>('.composer-review-comment')!
+    expect(chip.textContent).toContain('App.tsx:3-4 Rename this')
+    expect(chip.title).toBe('src/App.tsx:3-4\nRename this')
+    await act(async () =>
+      chip.querySelector<HTMLButtonElement>('[aria-label="Remove comment on App.tsx:3-4"]')!.click()
+    )
+    expect(onRemoveContextAttachment).toHaveBeenCalledWith('review-1')
+    await act(async () => root.unmount())
+    container.remove()
   })
 })

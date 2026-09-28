@@ -10,8 +10,12 @@ export const PASTED_TEXT_MIN_LINES = 30
 export const MAX_PASTED_TEXT_CHARACTERS = 100_000
 export const MAX_MESSAGE_PASTED_TEXT_CHARACTERS = 200_000
 
+/** A comment on changed lines: the comment itself and the quoted diff lines stay small. */
+export const MAX_REVIEW_COMMENT_CHARACTERS = 4_000
+export const MAX_REVIEW_EXCERPT_CHARACTERS = 20_000
+
 export type ProjectContextAttachmentKind = 'file' | 'folder'
-export type MessageContextAttachmentKind = ProjectContextAttachmentKind | 'text'
+export type MessageContextAttachmentKind = ProjectContextAttachmentKind | 'text' | 'review'
 
 /** A durable reference to context inside the conversation's project workspace. */
 export interface ProjectContextAttachment {
@@ -31,7 +35,27 @@ export interface PastedTextAttachment {
   size?: number
 }
 
-export type MessageContextAttachment = ProjectContextAttachment | PastedTextAttachment
+/**
+ * A comment the user wrote on lines of a change the agent made. `side` says
+ * which numbering the lines use: the changed file, or the previous version
+ * for lines that were only removed.
+ */
+export interface ReviewCommentAttachment {
+  id: string
+  kind: 'review'
+  name: string
+  path: string
+  side: 'new' | 'old'
+  startLine: number
+  endLine: number
+  excerpt: string
+  comment: string
+}
+
+export type MessageContextAttachment =
+  | ProjectContextAttachment
+  | PastedTextAttachment
+  | ReviewCommentAttachment
 
 export function isPastedTextAttachment(
   attachment: MessageContextAttachment
@@ -42,7 +66,13 @@ export function isPastedTextAttachment(
 export function isProjectContextAttachment(
   attachment: MessageContextAttachment
 ): attachment is ProjectContextAttachment {
-  return attachment.kind !== 'text'
+  return attachment.kind === 'file' || attachment.kind === 'folder'
+}
+
+export function isReviewCommentAttachment(
+  attachment: MessageContextAttachment
+): attachment is ReviewCommentAttachment {
+  return attachment.kind === 'review'
 }
 
 export function pastedTextLineCount(content: string): number {
@@ -69,6 +99,43 @@ function pastedTextName(content: string): string {
 export function createPastedTextAttachment(text: string, id: string): PastedTextAttachment {
   const content = text.replace(/\r\n?/g, '\n')
   return { id, kind: 'text', name: pastedTextName(content), content, size: content.length }
+}
+
+export interface ReviewCommentInput {
+  path: string
+  side: 'new' | 'old'
+  startLine: number
+  endLine: number
+  excerpt: string
+  comment: string
+}
+
+export function reviewCommentLineLabel(startLine: number, endLine: number): string {
+  return startLine === endLine ? `${startLine}` : `${startLine}-${endLine}`
+}
+
+export function createReviewCommentAttachment(
+  input: ReviewCommentInput,
+  id: string
+): ReviewCommentAttachment {
+  const startLine = Math.min(input.startLine, input.endLine)
+  const endLine = Math.max(input.startLine, input.endLine)
+  const fileName = input.path.split('/').filter(Boolean).at(-1) || input.path
+  return {
+    id,
+    kind: 'review',
+    name: `${fileName}:${reviewCommentLineLabel(startLine, endLine)}`.slice(0, 500),
+    path: input.path,
+    side: input.side,
+    startLine,
+    endLine,
+    excerpt: input.excerpt.replace(/\r\n?/g, '\n').slice(0, MAX_REVIEW_EXCERPT_CHARACTERS),
+    comment: input.comment.trim().slice(0, MAX_REVIEW_COMMENT_CHARACTERS)
+  }
+}
+
+function isLineNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
 function normalizeRelativePath(value: string): string | null {
@@ -110,6 +177,28 @@ export function parseMessageContextAttachments(
           const content = typeof attachment.content === 'string' ? attachment.content : ''
           if (!content.trim() || content.length > MAX_PASTED_TEXT_CHARACTERS) return []
           return [{ id, kind: 'text', name, content, ...(size !== undefined ? { size } : {}) }]
+        }
+        if (attachment.kind === 'review') {
+          const path = typeof attachment.path === 'string' ? attachment.path : ''
+          const excerpt = typeof attachment.excerpt === 'string' ? attachment.excerpt : ''
+          const comment = typeof attachment.comment === 'string' ? attachment.comment : ''
+          const side = attachment.side === 'old' ? 'old' : attachment.side === 'new' ? 'new' : null
+          const { startLine, endLine } = attachment
+          if (
+            !path ||
+            path.length > 2000 ||
+            /[\0\r\n]/.test(path) ||
+            !side ||
+            !isLineNumber(startLine) ||
+            !isLineNumber(endLine) ||
+            startLine > endLine ||
+            excerpt.length > MAX_REVIEW_EXCERPT_CHARACTERS ||
+            !comment.trim() ||
+            comment.length > MAX_REVIEW_COMMENT_CHARACTERS
+          ) {
+            return []
+          }
+          return [{ id, kind: 'review', name, path, side, startLine, endLine, excerpt, comment }]
         }
         const kind: ProjectContextAttachmentKind | null =
           attachment.kind === 'file' || attachment.kind === 'folder' ? attachment.kind : null
@@ -179,4 +268,38 @@ export function formatPastedTextAttachments(
       ].join('\n')
     )
     .join('\n\n')
+}
+
+const REVIEW_COMMENTS_TAG = 'sidekick_review_comments'
+
+/** Closing tags inside user text are broken up so a comment cannot end its block early. */
+function escapeReviewText(value: string): string {
+  // Case-insensitive: a model reading `</COMMENT>` would still take it as the end.
+  return value.replace(/<\/(sidekick_review_comments|comment|quoted_lines)/gi, '<\\/$1')
+}
+
+/**
+ * Comments on changed lines reach the model after what the user typed, each
+ * with its file, line range and the quoted diff lines it refers to.
+ */
+export function formatReviewCommentAttachments(
+  attachments: readonly MessageContextAttachment[]
+): string {
+  const comments = attachments.filter(isReviewCommentAttachment)
+  if (!comments.length) return ''
+  return [
+    `<${REVIEW_COMMENTS_TAG}>`,
+    'The user commented on specific lines of file changes made in this conversation. Address each comment. Quoted lines come from the diff ("+" added, "-" removed); side="new" numbers lines in the current file, side="old" in the previous version.',
+    ...comments.map((comment) =>
+      [
+        `<comment path=${JSON.stringify(comment.path)} lines="${reviewCommentLineLabel(comment.startLine, comment.endLine)}" side="${comment.side}">`,
+        ...(comment.excerpt
+          ? ['<quoted_lines>', escapeReviewText(comment.excerpt), '</quoted_lines>']
+          : []),
+        escapeReviewText(comment.comment),
+        '</comment>'
+      ].join('\n')
+    ),
+    `</${REVIEW_COMMENTS_TAG}>`
+  ].join('\n')
 }

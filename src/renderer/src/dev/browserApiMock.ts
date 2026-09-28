@@ -846,6 +846,7 @@ export function installBrowserApiMock(): void {
         }
       }),
       stop: async () => ({ stopped: true }),
+      steer: async () => ({ accepted: false }),
       events: async (runId, afterSequence = 0) => {
         if (runId !== 'preview-run-1') {
           return { run: null, events: [], pendingInteractions: [] }
@@ -956,7 +957,9 @@ export function installBrowserApiMock(): void {
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
-      onEvent: () => () => undefined
+      onEvent: () => () => undefined,
+      attention: async () => ({ waitingConversationIds: [] }),
+      onAttention: () => () => undefined
     },
     conversationGoals: {
       current: async (conversationId) =>

@@ -17,6 +17,7 @@ behavior, and the development guide when testing or publishing it.
 - [Visual browser](user-guide/BROWSER.md) — inspect, interact with, and verify pages in the native browser.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
+- [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
 
 ## Architecture
 
