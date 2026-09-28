@@ -42,6 +42,7 @@ import {
 } from '../utils/chatPanelHelpers'
 import type { WelcomeSuggestion } from '../utils/welcomeSuggestions'
 import { selectPromptRefinementHistory } from '../utils/promptRefinementHistory'
+import { buildPromptHistoryEntries } from '../utils/composerPromptHistory'
 import {
   isCompletionToAnnounce,
   markCompletionAnnounced,
@@ -1051,6 +1052,10 @@ function ChatPanel({
 
   const visibleMessages = messages.filter((msg) => !msg.hidden)
   const promptRefinementHistory = useMemo(() => selectPromptRefinementHistory(messages), [messages])
+  const getPromptHistory = useCallback(
+    () => buildPromptHistoryEntries(messagesRef.current),
+    [messagesRef]
+  )
   const virtualizeMessages = visibleMessages.length >= 40
   const messageVirtualizer = useVirtualizer({
     count: visibleMessages.length,
@@ -1268,6 +1273,7 @@ function ChatPanel({
         instructionsTruncated={workspaceRules.truncated}
         instructionError={workspaceRules.error}
         promptRefinementHistory={promptRefinementHistory}
+        getPromptHistory={getPromptHistory}
         showScrollToBottom={showScrollToBottom}
         onScrollToBottom={scrollToBottom}
       />

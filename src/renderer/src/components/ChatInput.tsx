@@ -38,6 +38,13 @@ import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
 import { useVoiceLoop } from '../services/voice/voiceLoop'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
+import {
+  caretAllowsPromptHistoryStep,
+  isBrowsingPromptHistory,
+  stepPromptHistory,
+  type PromptHistoryEntry,
+  type PromptHistoryPosition
+} from '../utils/composerPromptHistory'
 import './ChatInput.css'
 
 interface FeatureMenuActionProps {
@@ -185,6 +192,8 @@ interface ChatInputProps {
   instructionsTruncated?: boolean
   instructionError?: string
   promptRefinementHistory?: PromptRefinementHistorySelection
+  /** This conversation's earlier prompts, oldest first, read when ArrowUp recalls one. */
+  getPromptHistory?: () => readonly PromptHistoryEntry[]
   showScrollToBottom?: boolean
   onScrollToBottom?: () => void
 }
@@ -262,6 +271,7 @@ export function ChatInput({
   instructionsTruncated = false,
   instructionError,
   promptRefinementHistory,
+  getPromptHistory,
   showScrollToBottom = false,
   onScrollToBottom = () => undefined
 }: ChatInputProps) {
@@ -271,6 +281,7 @@ export function ChatInput({
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
+  const promptHistoryRef = React.useRef<PromptHistoryPosition | null>(null)
   const selectedPinnedModel = selectedModel
     ? pinnedModels.find((m) => m.id === selectedModel)
     : undefined
@@ -390,6 +401,45 @@ export function ChatInput({
     command.run()
   }
 
+  // Returns whether the key recalled an earlier prompt instead of moving the caret.
+  const recallPrompt = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return false
+    if (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return false
+    if (event.nativeEvent.isComposing || event.keyCode === 229 || !getPromptHistory) return false
+    const textarea = event.currentTarget
+    const direction = event.key === 'ArrowUp' ? 'backward' : 'forward'
+    const position = promptHistoryRef.current
+    if (
+      !caretAllowsPromptHistoryStep({
+        direction,
+        value: textarea.value,
+        selectionStart: textarea.selectionStart,
+        selectionEnd: textarea.selectionEnd,
+        browsing: isBrowsingPromptHistory(position, textarea.value)
+      })
+    ) {
+      return false
+    }
+    const step = stepPromptHistory({
+      direction,
+      entries: getPromptHistory(),
+      position,
+      currentPrompt: textarea.value
+    })
+    if (!step) return false
+    event.preventDefault()
+    promptHistoryRef.current = step.position
+    onInputChange(step.prompt)
+    // The caret goes to the end, so another press keeps stepping through
+    // single-line prompts and moves through the lines of a longer one first.
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (input?.value === step.prompt)
+        input.setSelectionRange(step.prompt.length, step.prompt.length)
+    })
+    return true
+  }
+
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     plainPasteRef.current =
       (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v'
@@ -423,6 +473,7 @@ export function ChatInput({
       onInputChange('')
       return
     }
+    if (recallPrompt(event)) return
     onKeyDown(event)
   }
   const runFeatureAction = (action: () => void): void => {
