@@ -588,6 +588,126 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.textContent).toContain('I will inspect it.')
   })
 
+  it('shows a steered message where it was sent, outside the folded work', async () => {
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={{
+            id: 'steered-reply',
+            role: 'agent',
+            content: 'Formatting with spaces. Switched to tabs.',
+            timestamp: 1_000,
+            segments: [
+              { type: 'text', content: 'Formatting with spaces.' },
+              {
+                type: 'tool',
+                tool: { id: 'format', title: 'Format files', command: 'shell', status: 'success' }
+              },
+              {
+                type: 'steer',
+                steer: { id: 'steer-1', content: 'Use tabs instead.', timestamp: 2_000 }
+              },
+              { type: 'text', content: 'Switched to tabs.' }
+            ]
+          }}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const steer = container.querySelector('.steer-segment')
+    expect(steer?.textContent).toContain('Use tabs instead.')
+    expect(steer?.closest('.agent-work-disclosure')).toBeNull()
+    expect(container.querySelector('[data-final-answer]')?.textContent).toContain(
+      'Switched to tabs.'
+    )
+    expect(container.textContent).not.toContain('Format files')
+  })
+
+  it('offers one Continue on an interrupted reply that can still be continued', async () => {
+    const onContinueRun = vi.fn(() => new Promise<void>(() => undefined))
+    const message = {
+      id: 'interrupted-reply',
+      runId: 'run-1',
+      role: 'agent' as const,
+      content: 'Deploying.',
+      timestamp: 1_000,
+      segments: [
+        { type: 'text' as const, content: 'Deploying.' },
+        {
+          type: 'tool' as const,
+          tool: { id: 'deploy', title: 'Deploy', command: 'shell', status: 'error' as const }
+        },
+        {
+          type: 'run_error' as const,
+          runError: {
+            code: 'interrupted',
+            message: 'SideKick closed before this reply finished.',
+            retryable: true
+          }
+        }
+      ]
+    }
+    const props = {
+      index: 0,
+      isLoading: false,
+      expandedThinking: new Set<string>(),
+      editingMessageId: null,
+      editingGeometry: null,
+      editingContent: '',
+      copiedMessageId: null,
+      onToggleThinking: vi.fn(),
+      onHandleArtifactResult: vi.fn(),
+      onEditMessage: vi.fn(),
+      onCancelEditMessage: vi.fn(),
+      onConfirmEditMessage: vi.fn(),
+      onCopyMessage: vi.fn(),
+      onRetryMessage: vi.fn(),
+      onSetEditingContent: vi.fn(),
+      onApproveToolLimitDecision: vi.fn(),
+      onDenyToolLimitDecision: vi.fn()
+    }
+    await act(async () => {
+      root.render(<MessageItem {...props} message={message} onContinueRun={onContinueRun} />)
+    })
+
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent?.trim() === 'Continue'
+    ) as HTMLButtonElement
+    expect(button).toBeDefined()
+    expect(button.closest('.agent-work-disclosure')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => button.click())
+    expect(onContinueRun).toHaveBeenCalledOnce()
+    expect(onContinueRun).toHaveBeenCalledWith(message)
+    expect(button.disabled).toBe(true)
+
+    // Once something else follows it, the interruption can only be retried.
+    await act(async () => {
+      root.render(<MessageItem {...props} message={{ ...message }} />)
+    })
+    const labels = [...container.querySelectorAll('.run-error-segment button')].map((candidate) =>
+      candidate.textContent?.trim()
+    )
+    expect(labels).toEqual(['Retry'])
+  })
+
   it('renders thinking and tool activity in the order it happened', async () => {
     await act(async () => {
       root.render(
@@ -739,7 +859,7 @@ describe('MessageItem shared-channel presentation', () => {
 
     expect(container.textContent).toContain('Denying…')
     expect(container.querySelector('.agent-interaction-detail-disclosure')).toBeNull()
-    expect(onResolve).toHaveBeenCalledWith('permission-1', { approved: false })
+    expect(onResolve).toHaveBeenCalledWith('permission-1', { approved: false, decision: 'deny' })
     await act(async () => finish())
     expect(container.textContent).toContain('Denied')
     expect(container.textContent).not.toContain('Denying…')

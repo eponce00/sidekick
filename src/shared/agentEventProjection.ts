@@ -5,6 +5,8 @@ import type {
   ToolPresentationIntent
 } from './agentRuntime'
 import { formatCompactionContext } from './compactionPrompt'
+import type { MessageImageAttachment } from './messageImages'
+import type { MessageContextAttachment } from './messageContextAttachments'
 import type { WorkspaceVerificationSummary } from './verification'
 
 export interface ProjectedToolExecution {
@@ -85,6 +87,17 @@ export type ProjectedContentSegment =
         message: string
         retryable: boolean
         recoveryAction?: string
+      }
+    }
+  | {
+      /** A message the user sent while the run worked, at the point the run took it in. */
+      type: 'steer'
+      steer: {
+        id: string
+        content: string
+        images?: MessageImageAttachment[]
+        attachments?: MessageContextAttachment[]
+        timestamp: number
       }
     }
   | {
@@ -531,6 +544,38 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       })
       turnSegmentStart = segments.length
     }
+    if (event.type === 'run.steered' && event.payload.kind === 'continuation') {
+      // The app's instruction to continue is for the model; people see a marker.
+      segments.push({
+        type: 'run_status',
+        status: { kind: 'retrying', reason: 'run_continued', timestamp: event.timestamp }
+      })
+    } else if (event.type === 'run.steered') {
+      // Like compaction, the user's message is a hard turn boundary. It belongs
+      // to the conversation, so it never folds into a verification pass.
+      for (const id of pendingTurnTools) emitTool(id)
+      pendingTurnTools.length = 0
+      closeVerificationPass()
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+      const images = event.payload.images
+      const attachments = event.payload.attachments
+      segments.push({
+        type: 'steer',
+        steer: {
+          id: String(event.payload.messageId || event.id),
+          content: typeof event.payload.content === 'string' ? event.payload.content : '',
+          ...(Array.isArray(images) && images.length
+            ? { images: images as MessageImageAttachment[] }
+            : {}),
+          ...(Array.isArray(attachments) && attachments.length
+            ? { attachments: attachments as MessageContextAttachment[] }
+            : {}),
+          timestamp: event.timestamp
+        }
+      })
+      turnSegmentStart = segments.length
+    }
     if (event.type === 'run.retrying') {
       const reason = String(event.payload.reason || 'provider_retry')
       const detail =
@@ -563,6 +608,17 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     // A run that ends inside the pass never reached a note; show its work as it happened.
     if (event.type === 'run.completed') closeVerificationPass()
+    if (event.type === 'run.completed' && event.payload.phase === 'interrupted') {
+      segments.push({
+        type: 'run_error',
+        runError: {
+          code: 'interrupted',
+          message: 'SideKick closed before this reply finished.',
+          retryable: true,
+          recoveryAction: 'refresh_state'
+        }
+      })
+    }
     if (event.type === 'run.completed' && event.payload.phase === 'failed') {
       const rawError = event.payload.error
       const error =

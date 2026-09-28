@@ -69,11 +69,17 @@ interface ActiveRun {
   assistantMessageId: string
   mode: ConversationRunMode
   model: AgentRunClientModel
-  resolve: () => void
+  resolve: (phase: AgentRunPhase) => void
   attached?: boolean
   projectionTimer?: ReturnType<typeof setTimeout>
   repairPromise?: Promise<void>
 }
+
+/**
+ * What became of a message sent while a run works: waiting in the queue, taken
+ * into the running reply, or set to start once the run has stopped.
+ */
+export type DuringRunSubmission = 'queued' | 'steered' | 'restarting'
 
 export interface ConversationRunController {
   phase: AgentRunPhase | 'idle'
@@ -83,7 +89,8 @@ export interface ConversationRunController {
   queuedMessages: PendingRunMessageItem[]
   pivotMessage: PendingRunMessageItem | null
   runConversationId: string | null
-  startRun: (input: StartConversationAgentRunInput) => Promise<void>
+  /** Resolves with the phase the run ended in once it is finalized. */
+  startRun: (input: StartConversationAgentRunInput) => Promise<AgentRunPhase>
   finishRun: () => Promise<PendingRunMessage | null>
   requestStop: () => Promise<void>
   submitDuringRun: (
@@ -92,11 +99,11 @@ export interface ConversationRunController {
     behaviorOverride?: 'pivot' | 'queue',
     images?: MessageImageAttachment[],
     attachments?: MessageContextAttachment[]
-  ) => Promise<boolean>
+  ) => Promise<DuringRunSubmission | false>
   updatePendingMessage: (id: string, content: string) => boolean
   removePendingMessage: (id: string) => void
   moveQueuedMessage: (id: string, toIndex: number) => void
-  steerQueuedMessage: (id: string) => Promise<boolean>
+  steerQueuedMessage: (id: string) => Promise<Exclude<DuringRunSubmission, 'queued'> | false>
   resolveInteraction: (
     interactionId: string,
     response: Record<string, unknown>,
@@ -197,7 +204,7 @@ export function useConversationRun({
         )
       )
       onProjectionRef.current?.(projection)
-      if (finalized) active.resolve()
+      if (finalized) active.resolve(projectedPhase)
     },
     [setMessages]
   )
@@ -230,6 +237,35 @@ export function useConversationRun({
     [project]
   )
 
+  const replaceQueue = useCallback((next: PendingRunMessageItem[]) => {
+    queuedRef.current = next
+    setQueuedMessages(next)
+  }, [])
+
+  const replacePivot = useCallback((next: PendingRunMessageItem | null) => {
+    pivotRef.current = next
+    setPivotMessage(next)
+  }, [])
+
+  const persistAdmissions = useCallback(
+    async (
+      targetConversationId: string,
+      queued: PendingRunMessageItem[],
+      pivot: PendingRunMessageItem | null
+    ): Promise<unknown> => {
+      const write = admissionWriteRef.current.then(() =>
+        window.api.agentRuns.admissionsReplace({
+          conversationId: targetConversationId,
+          queued,
+          pivot
+        })
+      )
+      admissionWriteRef.current = write.catch(() => undefined)
+      return write
+    },
+    []
+  )
+
   useEffect(() => {
     return window.api.agentRuns.onEvent(({ event }) => {
       const active = activeRef.current
@@ -260,6 +296,18 @@ export function useConversationRun({
             active.repairPromise = undefined
           })
       }
+      if (event.type === 'run.steered') {
+        // The run took the message in. The main process has already dropped its
+        // admission; keep the local queue in step so it is not sent again.
+        const id = String(event.payload.messageId || '')
+        const nextPivot = pivotRef.current?.id === id ? null : pivotRef.current
+        const nextQueue = queuedRef.current.filter((item) => item.id !== id)
+        if (nextPivot !== pivotRef.current || nextQueue.length !== queuedRef.current.length) {
+          replacePivot(nextPivot)
+          replaceQueue(nextQueue)
+          void persistAdmissions(active.conversationId, nextQueue, nextPivot)
+        }
+      }
       if (event.type === 'plan.mode_changed' && event.payload.to === 'plan') {
         active.mode = 'plan'
         setActiveMode('plan')
@@ -271,7 +319,7 @@ export function useConversationRun({
         setActiveMode(null)
       }
     })
-  }, [scheduleProject])
+  }, [persistAdmissions, replacePivot, replaceQueue, scheduleProject])
 
   useEffect(() => {
     if (!conversationId || activeRef.current) return
@@ -333,15 +381,15 @@ export function useConversationRun({
   }, [conversationId, scheduleProject, setMessages])
 
   const startRun = useCallback(
-    async (input: StartConversationAgentRunInput): Promise<void> => {
+    async (input: StartConversationAgentRunInput): Promise<AgentRunPhase> => {
       if (activeRef.current) throw new Error('A conversation run is already active')
       setPhase('queued')
       setRunConversationId(input.conversationId)
       const mode =
         input.mode === 'research' ? 'research' : input.mode === 'plan' ? 'plan' : 'conversation'
       setActiveMode(mode)
-      let resolveCompletion!: () => void
-      const completion = new Promise<void>((resolve) => {
+      let resolveCompletion!: (phase: AgentRunPhase) => void
+      const completion = new Promise<AgentRunPhase>((resolve) => {
         resolveCompletion = resolve
       })
       const active: ActiveRun = {
@@ -363,7 +411,7 @@ export function useConversationRun({
           current.model.merge(snapshot.run, snapshot.events, { deferProjection: true })
           scheduleProject(current, true)
         }
-        await completion
+        return await completion
       } catch (error) {
         if (activeRef.current?.runId === input.id) {
           activeRef.current = null
@@ -375,35 +423,6 @@ export function useConversationRun({
       }
     },
     [scheduleProject]
-  )
-
-  const replaceQueue = useCallback((next: PendingRunMessageItem[]) => {
-    queuedRef.current = next
-    setQueuedMessages(next)
-  }, [])
-
-  const replacePivot = useCallback((next: PendingRunMessageItem | null) => {
-    pivotRef.current = next
-    setPivotMessage(next)
-  }, [])
-
-  const persistAdmissions = useCallback(
-    async (
-      targetConversationId: string,
-      queued: PendingRunMessageItem[],
-      pivot: PendingRunMessageItem | null
-    ): Promise<unknown> => {
-      const write = admissionWriteRef.current.then(() =>
-        window.api.agentRuns.admissionsReplace({
-          conversationId: targetConversationId,
-          queued,
-          pivot
-        })
-      )
-      admissionWriteRef.current = write.catch(() => undefined)
-      return write
-    },
-    []
   )
 
   useEffect(() => {
@@ -516,8 +535,29 @@ export function useConversationRun({
     [conversationId, persistAdmissions, replaceQueue]
   )
 
+  /**
+   * Hand the pivot to the running run, which takes it in before its next model
+   * request. A run that cannot (it is waiting on the user, or finishing) is
+   * stopped instead, and the pivot starts the next run as before. Either way the
+   * pivot stays stored until something takes it.
+   */
+  const steerPivot = useCallback(
+    async (pivot: PendingRunMessageItem): Promise<'steered' | 'restarting'> => {
+      const active = activeRef.current
+      if (active) {
+        const result = await window.api.agentRuns
+          .steer({ runId: active.runId, admissionId: pivot.id })
+          .catch(() => ({ accepted: false }))
+        if (result.accepted) return 'steered'
+      }
+      await requestStop()
+      return 'restarting'
+    },
+    [requestStop]
+  )
+
   const steerQueuedMessage = useCallback(
-    async (id: string): Promise<boolean> => {
+    async (id: string): Promise<'steered' | 'restarting' | false> => {
       const index = queuedRef.current.findIndex((message) => message.id === id)
       if (index < 0) return false
       const nextQueue = [...queuedRef.current]
@@ -527,10 +567,9 @@ export function useConversationRun({
       replacePivot(message)
       const targetConversationId = activeRef.current?.conversationId ?? conversationId
       if (targetConversationId) await persistAdmissions(targetConversationId, nextQueue, message)
-      await requestStop()
-      return true
+      return steerPivot(message)
     },
-    [conversationId, persistAdmissions, replacePivot, replaceQueue, requestStop]
+    [conversationId, persistAdmissions, replacePivot, replaceQueue, steerPivot]
   )
 
   const submitDuringRun = useCallback(
@@ -540,7 +579,7 @@ export function useConversationRun({
       behaviorOverride?: 'pivot' | 'queue',
       images: MessageImageAttachment[] = [],
       attachments: MessageContextAttachment[] = []
-    ): Promise<boolean> => {
+    ): Promise<DuringRunSubmission | false> => {
       if (!content.trim() && !images.length && !attachments.length) return false
       const pending = createPendingRunMessage(content.trim(), mode, images, attachments)
       if (behaviorOverride === 'pivot') {
@@ -551,17 +590,16 @@ export function useConversationRun({
         replacePivot(pending)
         const targetConversationId = activeRef.current?.conversationId ?? conversationId
         if (targetConversationId) await persistAdmissions(targetConversationId, nextQueue, pending)
-        await requestStop()
-      } else {
-        const nextQueue = [...queuedRef.current, pending]
-        replaceQueue(nextQueue)
-        const targetConversationId = activeRef.current?.conversationId ?? conversationId
-        if (targetConversationId)
-          await persistAdmissions(targetConversationId, nextQueue, pivotRef.current)
+        return steerPivot(pending)
       }
-      return true
+      const nextQueue = [...queuedRef.current, pending]
+      replaceQueue(nextQueue)
+      const targetConversationId = activeRef.current?.conversationId ?? conversationId
+      if (targetConversationId)
+        await persistAdmissions(targetConversationId, nextQueue, pivotRef.current)
+      return 'queued'
     },
-    [conversationId, persistAdmissions, replacePivot, replaceQueue, requestStop]
+    [conversationId, persistAdmissions, replacePivot, replaceQueue, steerPivot]
   )
 
   const resolveInteraction = useCallback(

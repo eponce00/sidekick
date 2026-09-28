@@ -121,6 +121,22 @@ describe('AgentRunStore', () => {
     expect(store.listEvents(run.id).at(-1)?.payload).toMatchObject({ phase: 'interrupted' })
   })
 
+  it('lets only the latest interrupted run of a conversation be continued', () => {
+    const interrupted = start('run-1')
+    store.transition(interrupted.id, 'streaming', 'stream-1')
+    store.recoverInterrupted('thread-1')
+    expect(store.canContinue('run-1', 'thread-1')).toBe(true)
+    expect(store.canContinue('run-1', 'thread-2')).toBe(false)
+
+    // The continuation is now the latest run, so a second one is refused.
+    start('run-2')
+    db.prepare('UPDATE agent_runs SET started_at = started_at + 1 WHERE id = ?').run('run-2')
+    expect(store.canContinue('run-1', 'thread-1')).toBe(false)
+
+    store.transition('run-2', 'completed', 'complete-2')
+    expect(store.canContinue('run-2', 'thread-1')).toBe(false)
+  })
+
   it('rejects transitions after a terminal state', () => {
     const run = start()
     store.transition(run.id, 'completed', 'complete')

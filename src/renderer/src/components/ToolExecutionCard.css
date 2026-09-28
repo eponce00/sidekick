@@ -424,6 +424,124 @@
   background: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 
+/* Commentable diffs: line numbers select lines, and a form opens under the selection. */
+.rich-diff-comment-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.rich-diff-lines.is-commentable .rich-diff-line {
+  display: flex;
+  padding-left: 0;
+}
+
+.rich-diff-gutter {
+  position: sticky;
+  left: 0;
+  flex: 0 0 44px;
+  margin-right: 8px;
+  background: var(--surface-1);
+}
+
+.rich-diff-line-number {
+  width: 100%;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 0;
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.rich-diff-split-cell > .rich-diff-line-number {
+  padding: 1px 5px;
+}
+
+.rich-diff-line-number:hover,
+.rich-diff-line-number:focus-visible {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.rich-diff-line-number[aria-pressed='true'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rich-diff-line.is-selected,
+.rich-diff-split-cell.is-selected {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.rich-diff-comment-form {
+  display: grid;
+  gap: 6px;
+  margin: 4px 8px 6px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-family: inherit;
+  white-space: normal;
+}
+
+.rich-diff-comment-range {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.rich-diff-comment-form textarea {
+  min-height: 48px;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--surface-1);
+  font: inherit;
+  font-size: var(--text-sm);
+  resize: vertical;
+}
+
+.rich-diff-comment-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.rich-diff-comment-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.rich-diff-comment-actions button {
+  padding: 3px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.rich-diff-comment-actions button.is-primary {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.rich-diff-comment-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .rich-diff-footer {
   display: flex;
   align-items: center;

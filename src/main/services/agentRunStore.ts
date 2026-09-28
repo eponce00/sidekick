@@ -311,6 +311,21 @@ export class AgentRunStore {
     return row ? mapRun(row) : null
   }
 
+  /**
+   * Whether a new run may continue this one: it was interrupted, and it is still
+   * the latest run of its conversation. A continuation, or any later message,
+   * becomes the latest run, so one interruption is continued at most once.
+   */
+  canContinue(runId: string, threadId: string): boolean {
+    const run = this.get(runId)
+    return Boolean(
+      run &&
+      run.threadId === threadId &&
+      run.phase === 'interrupted' &&
+      this.latest(threadId)?.id === run.id
+    )
+  }
+
   listEvents(runId: string, afterSequence = 0, limit = 1_000): AgentRunEvent[] {
     const rows = this.db
       .prepare(

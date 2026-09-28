@@ -28,6 +28,24 @@ The stricter modes are available per conversation from the composer and in Setti
 | User file deletion              | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin          |
 | External browser navigation     | Auto                     | Main-window policy before opening                                      |
 
+## Answering an approval
+
+| Choice                  | Effect                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------- |
+| **Allow once**          | Runs this operation.                                                                      |
+| **Allow for this chat** | Runs it, and later requests in this conversation that it fully covers run without asking. |
+| **Deny**                | Refuses this operation; the agent is told and carries on.                                 |
+| **Deny and stop**       | Refuses it and ends the reply.                                                            |
+
+A chat-wide grant covers only what it named: the exact command in the same folder and mode, the same
+files (deleting is separate from editing), or the exact same arguments for other tools. A later
+request that reaches anything more still asks. Grants last until SideKick restarts, never apply to
+other conversations, and are recorded in the audit, including the requests they covered. A
+conversation waiting on an approval is marked in the sidebar, counted on the taskbar or dock icon,
+and announced by a notification when SideKick is not in front.
+
+## Binding
+
 Agent approvals are bound to a durable run/interaction/tool call and resume only that suspended
 kernel operation. Broker approvals are bound to a SHA-256 fingerprint of the normalized UI
 operation, expire after one minute, and are single-use. Replays, missing tokens, expired tokens, and

@@ -56,6 +56,7 @@ export interface ContentSegment {
     | 'run_error'
     | 'verification'
     | 'file_result'
+    | 'steer'
   content?: string
   tool?: ToolExecution
   artifact?: {
@@ -97,6 +98,14 @@ export interface ContentSegment {
   steps?: ContentSegment[]
   /** The verification pass is still running. */
   pending?: boolean
+  /** A message the user steered into the run while it worked. */
+  steer?: {
+    id: string
+    content: string
+    images?: MessageImageAttachment[]
+    attachments?: MessageContextAttachment[]
+    timestamp: number
+  }
   fileResult?: {
     filePath: string
     fileName: string

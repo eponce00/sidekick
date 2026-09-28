@@ -150,6 +150,8 @@ const api = {
       ipcRenderer.invoke('agentRuns:browserTakeoverComplete', interactionId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
+    steer: (input: import('../shared/agentRunApi').SteerConversationRunInput) =>
+      ipcRenderer.invoke('agentRuns:steer', input),
     admissionsList: (conversationId: string) =>
       ipcRenderer.invoke('agentRuns:admissionsList', conversationId),
     admissionsReplace: (input: import('../shared/agentRunApi').ReplacePromptAdmissionsInput) =>
@@ -163,6 +165,19 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('agentRuns:event', listener)
       return () => ipcRenderer.removeListener('agentRuns:event', listener)
+    },
+    attention: () => ipcRenderer.invoke('agentRuns:attention'),
+    onAttention: (
+      callback: (
+        state: import('../shared/conversationAttention').ConversationAttentionState
+      ) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        state: import('../shared/conversationAttention').ConversationAttentionState
+      ): void => callback(state)
+      ipcRenderer.on('agentRuns:attention', listener)
+      return () => ipcRenderer.removeListener('agentRuns:attention', listener)
     }
   },
   conversationGoals: {

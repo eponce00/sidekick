@@ -1,7 +1,9 @@
 import type {
   AgentRunEventsResult,
   ResolveAgentInteractionInput,
-  StartConversationAgentRunInput
+  StartConversationAgentRunInput,
+  SteerConversationRunInput,
+  SteerConversationRunResult
 } from './agentRunApi'
 import type { AgentRunSnapshot } from './agentRuntime'
 import type {
@@ -18,6 +20,7 @@ export type AgentEngineCommand =
   | { type: 'run.events'; runId: string; afterSequence?: number }
   | { type: 'run.latest'; threadId: string }
   | { type: 'run.resolveInteraction'; input: ResolveAgentInteractionInput }
+  | { type: 'run.steer'; input: SteerConversationRunInput }
   | { type: 'goal.current'; conversationId: string }
   | { type: 'goal.create'; input: CreateConversationGoalInput }
   | { type: 'goal.edit'; input: UpdateConversationGoalInput }
@@ -40,6 +43,7 @@ export type AgentEngineResult =
   | null
   | boolean
   | { success: true }
+  | SteerConversationRunResult
 
 export type AgentEngineResponse =
   | {
@@ -73,6 +77,7 @@ export function assertAgentEngineRequest(value: unknown): asserts value is Agent
     'run.events',
     'run.latest',
     'run.resolveInteraction',
+    'run.steer',
     'goal.current',
     'goal.create',
     'goal.edit',
