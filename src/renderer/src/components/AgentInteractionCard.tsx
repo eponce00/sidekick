@@ -10,6 +10,7 @@ import {
   X
 } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
+import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
 
@@ -44,6 +45,13 @@ interface QuestionAnswer {
 }
 
 const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '', skipped: false }
+
+const PERMISSION_DECISION_LABELS: Record<AgentPermissionDecision, string> = {
+  allow_once: 'Allowed once',
+  allow_chat: 'Allowed for this chat',
+  deny: 'Denied',
+  deny_stop: 'Denied and stopped'
+}
 
 /**
  * A typed answer behaves like the composer it sits above: the same field, the
@@ -121,7 +129,7 @@ export default function AgentInteractionCard({
   const pending = interaction.status === 'pending'
   const [permissionSubmission, setPermissionSubmission] = useState<{
     interactionId: string
-    approved: boolean
+    decision: AgentPermissionDecision
     settled: boolean
   } | null>(null)
 
@@ -130,22 +138,31 @@ export default function AgentInteractionCard({
     const detail = interaction.request.arguments
       ? JSON.stringify(interaction.request.arguments, null, 2).slice(0, 3_000)
       : ''
+    // Only requests the runtime could scope offer a chat-wide approval.
+    const chatScope =
+      typeof interaction.request.chatScope === 'string' ? interaction.request.chatScope : ''
     const localSubmission =
       permissionSubmission?.interactionId === interaction.id ? permissionSubmission : null
-    const displayedDecision = pending
-      ? localSubmission?.approved
-      : interaction.response?.approved === true
+    const displayedDecision: AgentPermissionDecision | null = pending
+      ? (localSubmission?.decision ?? null)
+      : interaction.status === 'resolved'
+        ? agentPermissionDecision(interaction.response)
+        : 'deny'
+    const approved = displayedDecision === 'allow_once' || displayedDecision === 'allow_chat'
     const resolving = pending && Boolean(localSubmission && !localSubmission.settled)
     const locallySettled = pending && localSubmission?.settled === true
-    const resolvePermission = async (approved: boolean): Promise<void> => {
+    const resolvePermission = async (decision: AgentPermissionDecision): Promise<void> => {
       if (localSubmission) return
-      setPermissionSubmission({ interactionId: interaction.id, approved, settled: false })
+      setPermissionSubmission({ interactionId: interaction.id, decision, settled: false })
       try {
         // A denial is a resolved policy decision, not a cancelled interaction.
-        await onResolve(interaction.id, { approved })
+        await onResolve(interaction.id, {
+          approved: decision === 'allow_once' || decision === 'allow_chat',
+          decision
+        })
         // The durable event remains authoritative for replay, but a successful IPC response means
         // the engine accepted the decision. Do not leave the card spinning while projection catches up.
-        setPermissionSubmission({ interactionId: interaction.id, approved, settled: true })
+        setPermissionSubmission({ interactionId: interaction.id, decision, settled: true })
       } catch {
         setPermissionSubmission(null)
       }
@@ -165,34 +182,49 @@ export default function AgentInteractionCard({
           </details>
         )}
         {pending && !localSubmission ? (
-          <div className="agent-interaction-actions">
+          <div className="agent-interaction-actions" role="group" aria-label="Approval">
             <button
               type="button"
               className="agent-interaction-primary"
-              onClick={() => void resolvePermission(true)}
+              onClick={() => void resolvePermission('allow_once')}
             >
-              Approve
+              Allow once
             </button>
-            <button type="button" onClick={() => void resolvePermission(false)}>
+            {chatScope && (
+              <button
+                type="button"
+                title={`Allow ${chatScope} without asking again in this chat until SideKick restarts`}
+                onClick={() => void resolvePermission('allow_chat')}
+              >
+                Allow for this chat
+              </button>
+            )}
+            <button type="button" onClick={() => void resolvePermission('deny')}>
               Deny
+            </button>
+            <button
+              type="button"
+              className="agent-interaction-stop"
+              title="Deny this action and stop the run"
+              onClick={() => void resolvePermission('deny_stop')}
+            >
+              Deny and stop
             </button>
           </div>
         ) : (
           <div className="agent-interaction-status">
             {resolving ? (
               <Loader2 size={12} className="icon-spin" />
-            ) : displayedDecision ? (
+            ) : approved ? (
               <Check size={12} />
             ) : (
               <X size={12} />
             )}
             {resolving
-              ? displayedDecision
-                ? 'Approving…'
+              ? approved
+                ? 'Allowing…'
                 : 'Denying…'
-              : displayedDecision
-                ? 'Approved'
-                : 'Denied'}
+              : PERMISSION_DECISION_LABELS[displayedDecision ?? 'deny']}
           </div>
         )}
       </div>

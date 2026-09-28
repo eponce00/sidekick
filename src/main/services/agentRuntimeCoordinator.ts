@@ -11,7 +11,7 @@ import type {
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { normalizePermissionMode } from '../../shared/permissions'
+import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import type { ProviderInstance } from '../../shared/settings'
@@ -829,7 +829,20 @@ export class AgentRuntimeCoordinator {
   }
 
   resolveInteraction(input: ResolveAgentInteractionInput): void {
-    this.kernel.resolveInteraction(input.interactionId, input.response, input.cancelled === true)
+    const interaction = this.kernel.resolveInteraction(
+      input.interactionId,
+      input.response,
+      input.cancelled === true
+    )
+    // The kernel ends the run after recording the refusal; background commands
+    // the run started end with it, as they do when the user presses Stop.
+    if (
+      interaction.kind === 'permission' &&
+      !input.cancelled &&
+      agentPermissionDecision(input.response) === 'deny_stop'
+    ) {
+      this.tools.cancelRun(interaction.runId)
+    }
   }
 
   events(runId: string, afterSequence = 0): AgentRunEventsResult {

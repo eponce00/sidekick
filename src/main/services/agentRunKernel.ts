@@ -54,10 +54,12 @@ function imageLimitKey(provider: string, model: string): string {
 }
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import {
+  agentPermissionDecision,
   resolvePermissionPolicy,
   type PermissionMode,
   type RequestedAccess
 } from '../../shared/permissions'
+import { agentPermissionScope } from './agentPermissionScope'
 import { commandCanRunWithoutApproval } from './commandPermissionClassifier'
 import { streamProviderChat } from '../providers/providerRuntime'
 import { previewToolCallArguments } from '../providers/toolCallPreview'
@@ -466,6 +468,9 @@ export class AgentRunKernel {
   private readonly active = new Map<string, ActiveKernelRun>()
   private readonly pendingResolvers = new Map<string, PendingResolver>()
   private readonly steers = new Map<string, AgentRunSteer[]>()
+  // Scopes the user allowed "for this chat", by conversation. Kept in memory on
+  // purpose: they last for this app session and never become standing rules.
+  private readonly chatGrants = new Map<string, Set<string>>()
 
   constructor(
     private readonly store: AgentRunStore,
@@ -930,11 +935,13 @@ The user approved this exact plan revision. Act capabilities are now available a
     call: AgentToolCall,
     title: string,
     signal: AbortSignal
-  ): Promise<boolean> {
+  ): Promise<'approved' | 'denied' | 'denied_stop'> {
     const catalog = currentCatalog(input)
-    if (!toolNeedsPolicyDecision(catalog, call.name)) return true
+    if (!toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
     const requestedAccess = toolRequestedAccess(catalog, call.name, call.arguments)
     const decision = resolvePermissionPolicy(input.permissionMode, requestedAccess)
+    const safeArguments =
+      input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
     if (decision.effectiveAccess === 'auto') {
       this.append(input.id, 'permission.resolved', {
         toolCallId: call.id,
@@ -945,9 +952,27 @@ The user approved this exact plan revision. Act capabilities are now available a
         mode: input.permissionMode,
         approved: true,
         source: 'policy',
-        arguments: input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
+        arguments: safeArguments
       })
-      return true
+      return 'approved'
+    }
+    const scope = agentPermissionScope(call.name, call.arguments)
+    const grants = this.chatGrants.get(input.threadId)
+    if (scope && grants && scope.keys.every((key) => grants.has(key))) {
+      this.append(input.id, 'permission.resolved', {
+        toolCallId: call.id,
+        name: call.name,
+        title,
+        requestedAccess,
+        effectiveAccess: 'confirm',
+        mode: input.permissionMode,
+        approved: true,
+        source: 'chat_grant',
+        decision: 'chat_grant',
+        chatScope: scope.label,
+        arguments: safeArguments
+      })
+      return 'approved'
     }
     const interaction = await this.suspendForInteraction(
       input.id,
@@ -958,11 +983,21 @@ The user approved this exact plan revision. Act capabilities are now available a
         title,
         requestedAccess,
         mode: input.permissionMode,
-        arguments: input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
+        arguments: safeArguments,
+        ...(scope ? { chatScope: scope.label } : {})
       },
       signal
     )
-    return interaction.status === 'resolved' && interaction.response?.approved === true
+    if (interaction.status !== 'resolved') return 'denied'
+    const answer = agentPermissionDecision(interaction.response)
+    if (answer === 'allow_chat' && scope) {
+      // Only the scope computed here is granted; the response cannot name its own.
+      const granted = this.chatGrants.get(input.threadId) ?? new Set<string>()
+      for (const key of scope.keys) granted.add(key)
+      this.chatGrants.set(input.threadId, granted)
+    }
+    if (answer === 'allow_once' || answer === 'allow_chat') return 'approved'
+    return answer === 'deny_stop' ? 'denied_stop' : 'denied'
   }
 
   private async compactContext(
@@ -1666,6 +1701,8 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
           const startedAt = Date.now()
           let result: ToolExecutionResult
+          let authorization: Awaited<ReturnType<AgentRunKernel['authorizeTool']>> | undefined
+          let stopAfterDenial = false
           const parallelResult = preExecuted.get(call.id)
           if (parallelResult) {
             result = parallelResult
@@ -1755,11 +1792,16 @@ The user approved this exact plan revision. Act capabilities are now available a
                   messages = replaceSystemPrompt(messages, outcome.transition.systemPrompt)
                 }
               }
-            } else if (!(await this.authorizeTool(input, call, title, signal))) {
+            } else if (
+              (authorization = await this.authorizeTool(input, call, title, signal)) !== 'approved'
+            ) {
+              stopAfterDenial = authorization === 'denied_stop'
               result = toolExecutionFailed({
                 title,
                 code: 'permission_denied',
-                message: 'Operation denied by the user',
+                message: stopAfterDenial
+                  ? 'Operation denied by the user, who also stopped the run'
+                  : 'Operation denied by the user',
                 status: 'denied',
                 startedAt
               })
@@ -1849,6 +1891,8 @@ The user approved this exact plan revision. Act capabilities are now available a
             ...(result.media?.length ? { media: result.media } : {})
           }
           messages.push(lastToolMessage)
+          // "Deny and stop" ends the run once the refusal is on record.
+          if (stopAfterDenial) this.stop(input.id)
         }
         if (callStopReason) throw new AgentToolLoopError(callStopReason)
         if (toolRoundsAfterGoalComplete >= 2) {

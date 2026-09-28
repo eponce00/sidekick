@@ -3955,6 +3955,10 @@ body[data-theme='light'] .tool-approval-command {
   margin-top: 9px;
 }
 
+.agent-interaction-actions {
+  flex-wrap: wrap;
+}
+
 .agent-interaction-actions button {
   min-height: 28px;
   padding: 5px 10px;
@@ -3978,6 +3982,20 @@ body[data-theme='light'] .tool-approval-command {
 .agent-interaction-actions .agent-interaction-primary {
   color: var(--on-accent);
   background: var(--accent);
+}
+
+.agent-interaction-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.agent-interaction-actions .agent-interaction-stop {
+  color: var(--error);
+}
+
+.agent-interaction-actions .agent-interaction-stop:hover {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
 
 .agent-interaction-actions button:disabled {

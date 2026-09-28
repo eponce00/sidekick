@@ -791,7 +791,7 @@ describe('MessageItem shared-channel presentation', () => {
 
     expect(container.textContent).toContain('Denying…')
     expect(container.querySelector('.agent-interaction-detail-disclosure')).toBeNull()
-    expect(onResolve).toHaveBeenCalledWith('permission-1', { approved: false })
+    expect(onResolve).toHaveBeenCalledWith('permission-1', { approved: false, decision: 'deny' })
     await act(async () => finish())
     expect(container.textContent).toContain('Denied')
     expect(container.textContent).not.toContain('Denying…')

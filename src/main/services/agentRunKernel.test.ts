@@ -1993,6 +1993,111 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it('stops asking for the same command in the same chat after "Allow for this chat"', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const shell = (id: string, command: string): AgentKernelProviderSampler =>
+      sampledTurn({ toolCalls: [{ id, function: { name: 'shell', arguments: { command } } }] })
+    const sampler = sequence(
+      shell('build-1', 'npm run build'),
+      shell('build-2', 'npm run build'),
+      shell('clean-1', 'npm run clean'),
+      sampledTurn({ content: 'Built' })
+    )
+    const router = { execute: vi.fn(async () => ({ content: 'ok' })) }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const first = store.listPendingInteractions('run-1')[0]
+    expect(first.request.chatScope).toBe('this exact command')
+    kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
+
+    // The repeat runs without a prompt; a different command still asks.
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const second = store.listPendingInteractions('run-1')[0]
+    expect(second.request.toolCallId).toBe('clean-1')
+    kernel.resolveInteraction(second.id, { approved: true, decision: 'allow_once' })
+
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(3)
+    const resolutions = store
+      .listEvents('run-1')
+      .filter(({ type }) => type === 'permission.resolved')
+      .map(({ payload }) => payload)
+    expect(resolutions.find((payload) => payload.toolCallId === 'build-2')).toMatchObject({
+      approved: true,
+      source: 'chat_grant',
+      decision: 'chat_grant'
+    })
+  })
+
+  it('does not let a chat grant reach another conversation', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [{ id: 'a', function: { name: 'shell', arguments: { command: 'make' } } }]
+      }),
+      sampledTurn({ content: 'Done' }),
+      sampledTurn({
+        toolCalls: [{ id: 'b', function: { name: 'shell', arguments: { command: 'make' } } }]
+      }),
+      sampledTurn({ content: 'Done again' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const first = input({ execute: vi.fn(async () => ({ content: 'ok' })) })
+    first.permissionMode = 'always-ask'
+    const running = kernel.start(first)
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
+      approved: true,
+      decision: 'allow_chat'
+    })
+    await running
+
+    const other = { ...first, id: 'run-2', threadId: 'thread-2' }
+    const second = kernel.start(other)
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-2')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-2')[0].id, {
+      approved: false,
+      decision: 'deny'
+    })
+    expect((await second).phase).toBe('completed')
+  })
+
+  it('denies the action and ends the run on "Deny and stop"', async () => {
+    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+    const sampler = vi.fn(
+      sampledTurn({
+        toolCalls: [
+          { id: 'rm-1', function: { name: 'shell', arguments: { command: 'rm -rf dist' } } },
+          { id: 'rm-2', function: { name: 'shell', arguments: { command: 'rm -rf out' } } }
+        ]
+      })
+    )
+    const router = { execute: vi.fn(async () => ({ content: 'ok' })) }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, {
+      approved: false,
+      decision: 'deny_stop'
+    })
+
+    expect((await running).phase).toBe('cancelled')
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(sampler).toHaveBeenCalledTimes(1)
+    expect(store.listPendingInteractions('run-1')).toEqual([])
+    const denied = store
+      .listEvents('run-1')
+      .find(({ type, payload }) => type === 'tool.completed' && payload.toolCallId === 'rm-1')
+    expect(denied?.payload.result).toMatchObject({ status: 'denied' })
+  })
+
   it('runs proven inspection commands without prompting in sensitive-only mode', async () => {
     catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
     const sampler = sequence(
