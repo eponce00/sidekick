@@ -41,6 +41,9 @@ import type { GroupAgentContextSnapshot } from './utils/groupAgentContext'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
+import { useConversationAttention } from './hooks/useConversationAttention'
+import { attentionNotificationBody, shouldNotifyAttention } from './utils/conversationAttention'
+import type { ConversationAttentionAlert } from '../../shared/conversationAttention'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -869,6 +872,33 @@ function App(): React.JSX.Element {
     [settings.notificationSoundEnabled, settings.notificationsEnabled]
   )
 
+  // A background run paused on an approval or question, or one that failed,
+  // is announced unless the user is already looking at it.
+  const handleAttentionAlert = useCallback(
+    (alert: ConversationAttentionAlert): void => {
+      const notify = shouldNotifyAttention({
+        notificationsEnabled: settings.notificationsEnabled ?? true,
+        appFocused: document.hasFocus(),
+        shownConversationId: currentGroupIdRef.current ? null : currentConversationIdRef.current,
+        conversationId: alert.conversationId
+      })
+      if (!notify) return
+      const title = conversations.find(({ id }) => id === alert.conversationId)?.title
+      void window.api.notification.show({
+        body: attentionNotificationBody(alert.reason, title),
+        silent: !(settings.notificationSoundEnabled ?? false),
+        conversationId: alert.conversationId
+      })
+    },
+    [
+      conversations,
+      currentConversationIdRef,
+      settings.notificationSoundEnabled,
+      settings.notificationsEnabled
+    ]
+  )
+  const waitingConversationIds = useConversationAttention(handleAttentionAlert)
+
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
       handleResponseComplete(message, conversationId)
@@ -1167,6 +1197,7 @@ function App(): React.JSX.Element {
           isCollapsed={effectiveSidebarCollapsed}
           busyConversationIds={busyConversationIds}
           unreadConversationIds={unreadConversationIds}
+          waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}
           onSelectGroup={(id) => void handleSelectGroup(id)}
           onSelectGroupSession={(groupId, sessionId) =>

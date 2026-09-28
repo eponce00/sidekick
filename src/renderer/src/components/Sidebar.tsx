@@ -22,6 +22,10 @@ import type { Conversation, Project } from '../types/app.types'
 import type { MoveConversationInput } from '../../../shared/projects'
 import type { CollaborationGroup } from '../../../shared/collaboration'
 import { groupAgentSessionsByProject } from '../utils/projectAgentSessions'
+import {
+  CONVERSATION_RUN_STATUS_LABELS,
+  conversationRunStatus
+} from '../utils/conversationAttention'
 import ConfirmDialog from './ConfirmDialog'
 import './Sidebar.css'
 
@@ -35,6 +39,8 @@ interface SidebarProps {
   isCollapsed: boolean
   busyConversationIds: ReadonlySet<string>
   unreadConversationIds: ReadonlySet<string>
+  /** Conversations paused on the user's approval or answer. */
+  waitingConversationIds?: ReadonlySet<string>
   onSelectConversation: (id: string) => void
   onSelectGroup: (id: string) => void
   onSelectGroupSession: (groupId: string, sessionId: string) => void
@@ -56,6 +62,8 @@ interface SidebarProps {
   onRemoveProject: (id: string) => void
 }
 
+const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
+
 function Sidebar({
   conversations,
   projects,
@@ -66,6 +74,7 @@ function Sidebar({
   isCollapsed,
   busyConversationIds,
   unreadConversationIds,
+  waitingConversationIds = NO_CONVERSATIONS,
   onSelectConversation,
   onSelectGroup,
   onSelectGroupSession,
@@ -308,7 +317,11 @@ function Sidebar({
     options: { nested?: boolean; showProject?: boolean } = {}
   ): React.JSX.Element => {
     const isConversationBusy = busyConversationIds.has(conversation.id)
-    const hasUnreadCompletion = unreadConversationIds.has(conversation.id)
+    const runStatus = conversationRunStatus(conversation.id, {
+      waiting: waitingConversationIds,
+      busy: busyConversationIds,
+      unread: unreadConversationIds
+    })
     const actionsMenuKey = `conversation:${conversation.id}`
     return (
       <div
@@ -390,15 +403,11 @@ function Sidebar({
               )}
             </button>
           )}
-          {(isConversationBusy || hasUnreadCompletion) && (
+          {runStatus && (
             <span
-              className={`conversation-run-indicator ${isConversationBusy ? 'working' : 'unread'}`}
-              title={
-                isConversationBusy ? 'Agent working in background' : 'Completed response unread'
-              }
-              aria-label={
-                isConversationBusy ? 'Agent working in background' : 'Completed response unread'
-              }
+              className={`conversation-run-indicator ${runStatus}`}
+              title={CONVERSATION_RUN_STATUS_LABELS[runStatus]}
+              aria-label={CONVERSATION_RUN_STATUS_LABELS[runStatus]}
             />
           )}
           <span className="conversation-actions">

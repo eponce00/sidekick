@@ -956,7 +956,9 @@ export function installBrowserApiMock(): void {
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
-      onEvent: () => () => undefined
+      onEvent: () => () => undefined,
+      attention: async () => ({ waitingConversationIds: [] }),
+      onAttention: () => () => undefined
     },
     conversationGoals: {
       current: async (conversationId) =>

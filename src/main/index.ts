@@ -34,6 +34,7 @@ import { onSettingsSaved } from './ipc/settings'
 import { VoiceService } from './services/voice/voiceService'
 import { VoiceModelStore } from './services/voice/voiceModels'
 import { confirmQuitWithActiveRuns, QuitGuard } from './bootstrap/quitConfirmation'
+import { refreshAttentionBadge } from './services/attentionBadge'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
@@ -102,6 +103,7 @@ function openMainWindow(): BrowserWindow {
   // Windows is logging off or shutting down; it will not wait for a dialog.
   window.on('query-session-end', () => quitGuard.allow())
   window.on('session-end', () => quitGuard.allow())
+  refreshAttentionBadge()
   return window
 }
 

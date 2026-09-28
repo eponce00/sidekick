@@ -15,6 +15,8 @@ import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
+import { ConversationAttentionTracker } from '../services/conversationAttention'
+import { applyAttentionBadge } from '../services/attentionBadge'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -25,7 +27,21 @@ let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
 
+const attention = new ConversationAttentionTracker(
+  (runId) => coordinator?.store.get(runId) ?? null,
+  (state) => {
+    applyAttentionBadge(state.waitingConversationIds.length)
+    publishDesktopEvent('agentRuns:attention', state)
+  }
+)
+
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
+  try {
+    attention.observe(event)
+  } catch (error) {
+    // Attention is a convenience; it must never interrupt the durable event stream.
+    console.warn('[Attention] Could not follow a run event:', error)
+  }
   publishDesktopEvent('agentRuns:event', { event })
 }
 
@@ -370,6 +386,7 @@ export function registerAgentRunHandlers(): void {
       return engine.request<{ success: true }>({ type: 'run.resolveInteraction', input })
     }
   )
+  ipcMain.handle('agentRuns:attention', () => attention.state())
   ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
     return admissions.list(conversationId)

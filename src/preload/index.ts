@@ -163,6 +163,19 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('agentRuns:event', listener)
       return () => ipcRenderer.removeListener('agentRuns:event', listener)
+    },
+    attention: () => ipcRenderer.invoke('agentRuns:attention'),
+    onAttention: (
+      callback: (
+        state: import('../shared/conversationAttention').ConversationAttentionState
+      ) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        state: import('../shared/conversationAttention').ConversationAttentionState
+      ): void => callback(state)
+      ipcRenderer.on('agentRuns:attention', listener)
+      return () => ipcRenderer.removeListener('agentRuns:attention', listener)
     }
   },
   conversationGoals: {
