@@ -41,6 +41,7 @@ import type { GroupAgentContextSnapshot } from './utils/groupAgentContext'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
+import { deleteComposerDraft } from './services/composerDrafts'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -621,6 +622,7 @@ function App(): React.JSX.Element {
   const handleDeleteConversation = async (id: string): Promise<void> => {
     if (busyConversationIds.has(id)) return
     await window.api.conversations.delete(id)
+    deleteComposerDraft(id)
     setConversations((prev) => prev.filter((c) => c.id !== id))
     forgetPanel(id)
     if (currentConversationId === id) {
@@ -635,6 +637,7 @@ function App(): React.JSX.Element {
     try {
       for (const conv of conversations) {
         await window.api.conversations.delete(conv.id)
+        deleteComposerDraft(conv.id)
       }
       setConversations([])
       resetPanels()

@@ -59,6 +59,8 @@ import {
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
+import { loadComposerDraft } from '../services/composerDrafts'
+import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -184,9 +186,20 @@ function ChatPanel({
       selectedContextLength
     )
   }, [messages, selectedContextLength])
-  const [inputValue, setInputValue] = useState('')
-  const [attachedImages, setAttachedImages] = useState<MessageImageAttachment[]>([])
-  const [attachedContext, setAttachedContext] = useState<MessageContextAttachment[]>([])
+  // A chat's panel mounts when it is opened, so what was left unsent there is restored once.
+  const [initialDraft] = useState(() => loadComposerDraft(composerDraftKey(conversationId)))
+  const [inputValue, setInputValue] = useState(initialDraft.text)
+  const [attachedImages, setAttachedImages] = useState<MessageImageAttachment[]>(
+    initialDraft.images
+  )
+  const [attachedContext, setAttachedContext] = useState<MessageContextAttachment[]>(
+    initialDraft.attachments
+  )
+  useComposerDraft(conversationId, {
+    text: inputValue,
+    images: attachedImages,
+    attachments: attachedContext
+  })
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
@@ -444,7 +457,12 @@ function ChatPanel({
       })
   }, [])
 
+  const attachmentsConversationIdRef = useRef(conversationId)
   useEffect(() => {
+    // The restored draft's attachments belong to this conversation; only a
+    // later switch clears them.
+    if (attachmentsConversationIdRef.current === conversationId) return
+    attachmentsConversationIdRef.current = conversationId
     // Clear conversation-local presentation state. Prompt admissions reload from durable storage.
     artifactResultsRef.current.clear()
     setAttachedImages([])
