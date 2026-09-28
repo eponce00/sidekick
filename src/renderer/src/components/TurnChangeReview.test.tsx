@@ -5,40 +5,43 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import type { ContentSegment } from '../types/chat.types'
 import { changedFilesFromSegments } from '../utils/turnChanges'
+import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { TurnChangeReview } from './TurnChangeReview'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 describe('changedFilesFromSegments', () => {
   it('consolidates repeated changes and assigns each unified diff to its file', () => {
-    const segments: ContentSegment[] = [{
-      type: 'tool',
-      tool: {
-        id: 'edit-1',
-        title: 'Edit files',
-        command: 'apply_patch',
-        status: 'success',
-        changes: [
-          { path: 'src/a.ts', kind: 'update' },
-          { path: 'src/b.ts', kind: 'create' }
-        ],
-        data: {
-          diff: [
-            'diff --git a/src/a.ts b/src/a.ts',
-            '--- a/src/a.ts',
-            '+++ b/src/a.ts',
-            '@@ -1 +1 @@',
-            '-old',
-            '+new',
-            'diff --git a/src/b.ts b/src/b.ts',
-            '--- /dev/null',
-            '+++ b/src/b.ts',
-            '@@ -0,0 +1 @@',
-            '+created'
-          ].join('\n')
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit-1',
+          title: 'Edit files',
+          command: 'apply_patch',
+          status: 'success',
+          changes: [
+            { path: 'src/a.ts', kind: 'update' },
+            { path: 'src/b.ts', kind: 'create' }
+          ],
+          data: {
+            diff: [
+              'diff --git a/src/a.ts b/src/a.ts',
+              '--- a/src/a.ts',
+              '+++ b/src/a.ts',
+              '@@ -1 +1 @@',
+              '-old',
+              '+new',
+              'diff --git a/src/b.ts b/src/b.ts',
+              '--- /dev/null',
+              '+++ b/src/b.ts',
+              '@@ -0,0 +1 @@',
+              '+created'
+            ].join('\n')
+          }
         }
       }
-    }]
+    ]
 
     expect(changedFilesFromSegments(segments)).toMatchObject([
       { path: 'src/a.ts', kind: 'update', additions: 1, deletions: 1 },
@@ -62,15 +65,22 @@ describe('TurnChangeReview interactions', () => {
       configurable: true,
       value: { writeText: vi.fn(async () => undefined) }
     })
-    const segments: ContentSegment[] = [{
-      type: 'tool',
-      tool: {
-        id: 'edit', title: 'Edit', command: 'apply_patch', status: 'success',
-        changes: [{ path: 'src/App.tsx', kind: 'update' }],
-        data: { diff: '@@ -1 +1 @@\n-old\n+new' }
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit',
+          title: 'Edit',
+          command: 'apply_patch',
+          status: 'success',
+          changes: [{ path: 'src/App.tsx', kind: 'update' }],
+          data: { diff: '@@ -1 +1 @@\n-old\n+new' }
+        }
       }
-    }]
-    await act(async () => root.render(<TurnChangeReview segments={segments} workspaceRoot="C:/repo" />))
+    ]
+    await act(async () =>
+      root.render(<TurnChangeReview segments={segments} workspaceRoot="C:/repo" />)
+    )
     const row = container.querySelector('.turn-change-file-row') as HTMLDivElement
     const toggle = container.querySelector('.turn-change-file-toggle') as HTMLButtonElement
     await act(async () => toggle.click())
@@ -82,6 +92,96 @@ describe('TurnChangeReview interactions', () => {
     expect(showPathMenu).toHaveBeenCalledWith('src/App.tsx', 'C:/repo')
     await act(async () => (container.querySelector('.rich-tool-copy') as HTMLButtonElement).click())
     expect(navigator.clipboard.writeText).toHaveBeenCalled()
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  it('turns a comment on selected diff lines into a message attachment', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const sink = vi.fn(() => true)
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit',
+          title: 'Edit',
+          command: 'apply_patch',
+          status: 'success',
+          changes: [{ path: 'src/App.tsx', kind: 'update' }],
+          data: { diff: '@@ -1,2 +1,2 @@\n context\n-old\n+new' }
+        }
+      }
+    ]
+    await act(async () =>
+      root.render(
+        <ReviewCommentSinkContext.Provider value={sink}>
+          <TurnChangeReview segments={segments} workspaceRoot="C:/repo" />
+        </ReviewCommentSinkContext.Provider>
+      )
+    )
+    await act(async () =>
+      (container.querySelector('.turn-change-file-toggle') as HTMLButtonElement).click()
+    )
+    const lineButtons = (): HTMLButtonElement[] => [
+      ...container.querySelectorAll<HTMLButtonElement>('.rich-diff-line-number')
+    ]
+    expect(lineButtons().map((button) => button.textContent)).toEqual(['1', '2', '2'])
+
+    await act(async () => lineButtons()[0].click())
+    await act(async () =>
+      lineButtons()[2].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    )
+    expect(container.querySelectorAll('.rich-diff-line.is-selected')).toHaveLength(3)
+    const form = container.querySelector('.rich-diff-comment-form')!
+    expect(form.textContent).toContain('Lines 1–2')
+    const textarea = form.querySelector('textarea')!
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!
+      setValue.call(textarea, 'Keep the old name')
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    const add = [...form.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Add to message'
+    )!
+    await act(async () => add.click())
+
+    expect(sink).toHaveBeenCalledWith({
+      path: 'src/App.tsx',
+      side: 'new',
+      startLine: 1,
+      endLine: 2,
+      excerpt: ' context\n-old\n+new',
+      comment: 'Keep the old name'
+    })
+    expect(container.querySelector('.rich-diff-comment-form')).toBeNull()
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  it('stays view-only outside a chat that can take comments', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit',
+          title: 'Edit',
+          command: 'apply_patch',
+          status: 'success',
+          changes: [{ path: 'src/App.tsx', kind: 'update' }],
+          data: { diff: '@@ -1 +1 @@\n-old\n+new' }
+        }
+      }
+    ]
+    await act(async () => root.render(<TurnChangeReview segments={segments} />))
+    await act(async () =>
+      (container.querySelector('.turn-change-file-toggle') as HTMLButtonElement).click()
+    )
+    expect(container.querySelector('.rich-diff-line-number')).toBeNull()
     await act(async () => root.unmount())
     container.remove()
   })

@@ -529,6 +529,15 @@
   white-space: nowrap;
 }
 
+.message-context-attachments > .message-review-comment {
+  max-width: 360px;
+}
+
+.message-review-comment > span > strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .message-image-preview {
   display: block;
   width: 100%;

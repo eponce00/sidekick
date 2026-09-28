@@ -42,6 +42,7 @@ import {
 } from '../utils/chatPanelHelpers'
 import type { WelcomeSuggestion } from '../utils/welcomeSuggestions'
 import { selectPromptRefinementHistory } from '../utils/promptRefinementHistory'
+import { buildPromptHistoryEntries } from '../utils/composerPromptHistory'
 import {
   isCompletionToAnnounce,
   markCompletionAnnounced,
@@ -54,11 +55,17 @@ import {
   MAX_MESSAGE_PASTED_TEXT_CHARACTERS,
   MAX_PASTED_TEXT_CHARACTERS,
   createPastedTextAttachment,
+  createReviewCommentAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
-  type MessageContextAttachment
+  isReviewCommentAttachment,
+  type MessageContextAttachment,
+  type ReviewCommentInput
 } from '../../../shared/messageContextAttachments'
 import { fileToMessageImage } from '../utils/messageImageAttachments'
+import { loadComposerDraft } from '../services/composerDrafts'
+import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
+import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -112,9 +119,11 @@ interface ChatPanelProps {
 /** What a new conversation is named from: the typed text, else what was pasted or attached. */
 function conversationTitlePrompt(message: Message): string {
   const pasted = message.attachments?.find(isPastedTextAttachment)
+  const review = message.attachments?.find(isReviewCommentAttachment)
   return (
     message.content ||
     pasted?.content.slice(0, 1_000) ||
+    review?.comment ||
     message.images?.[0]?.name ||
     'Image conversation'
   )
@@ -184,9 +193,20 @@ function ChatPanel({
       selectedContextLength
     )
   }, [messages, selectedContextLength])
-  const [inputValue, setInputValue] = useState('')
-  const [attachedImages, setAttachedImages] = useState<MessageImageAttachment[]>([])
-  const [attachedContext, setAttachedContext] = useState<MessageContextAttachment[]>([])
+  // A chat's panel mounts when it is opened, so what was left unsent there is restored once.
+  const [initialDraft] = useState(() => loadComposerDraft(composerDraftKey(conversationId)))
+  const [inputValue, setInputValue] = useState(initialDraft.text)
+  const [attachedImages, setAttachedImages] = useState<MessageImageAttachment[]>(
+    initialDraft.images
+  )
+  const [attachedContext, setAttachedContext] = useState<MessageContextAttachment[]>(
+    initialDraft.attachments
+  )
+  useComposerDraft(conversationId, {
+    text: inputValue,
+    images: attachedImages,
+    attachments: attachedContext
+  })
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
   const [isCompacting, setIsCompacting] = useState(false)
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
@@ -444,7 +464,12 @@ function ChatPanel({
       })
   }, [])
 
+  const attachmentsConversationIdRef = useRef(conversationId)
   useEffect(() => {
+    // The restored draft's attachments belong to this conversation; only a
+    // later switch clears them.
+    if (attachmentsConversationIdRef.current === conversationId) return
+    attachmentsConversationIdRef.current = conversationId
     // Clear conversation-local presentation state. Prompt admissions reload from durable storage.
     artifactResultsRef.current.clear()
     setAttachedImages([])
@@ -939,14 +964,16 @@ function ChatPanel({
     }
     if (result.canceled) return
     setAttachedContext((previous) => {
-      const pasted = previous.filter(isPastedTextAttachment)
+      const pastedAndComments = previous.filter(
+        (attachment) => !isProjectContextAttachment(attachment)
+      )
       const byPath = new Map(
         previous
           .filter(isProjectContextAttachment)
           .map((attachment) => [attachment.relativePath, attachment])
       )
       for (const attachment of result.attachments) byPath.set(attachment.relativePath, attachment)
-      return [...byPath.values(), ...pasted].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
+      return [...byPath.values(), ...pastedAndComments].slice(0, MAX_MESSAGE_CONTEXT_ATTACHMENTS)
     })
     setAttachmentError(
       attachedContext.length + result.attachments.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS
@@ -983,6 +1010,25 @@ function ChatPanel({
     ])
     setAttachmentError(null)
   }
+
+  // Comments written on diff lines in this chat's change reviews become composer chips.
+  // Stable, so the memoized messages that show those diffs are not re-rendered.
+  const attachedContextRef = useRef(attachedContext)
+  attachedContextRef.current = attachedContext
+  const addReviewComment = useCallback((comment: ReviewCommentInput): boolean => {
+    if (attachedContextRef.current.length >= MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+      setAttachmentError(
+        `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+      )
+      return false
+    }
+    const attachment = createReviewCommentAttachment(comment, crypto.randomUUID())
+    attachedContextRef.current = [...attachedContextRef.current, attachment]
+    setAttachedContext((previous) => [...previous, attachment])
+    setAttachmentError(null)
+    inputRef.current?.focus()
+    return true
+  }, [])
 
   // Turns a pasted attachment back into typed text, after whatever is already written.
   const insertPastedText = (id: string): void => {
@@ -1033,6 +1079,10 @@ function ChatPanel({
 
   const visibleMessages = messages.filter((msg) => !msg.hidden)
   const promptRefinementHistory = useMemo(() => selectPromptRefinementHistory(messages), [messages])
+  const getPromptHistory = useCallback(
+    () => buildPromptHistoryEntries(messagesRef.current),
+    [messagesRef]
+  )
   const virtualizeMessages = visibleMessages.length >= 40
   const messageVirtualizer = useVirtualizer({
     count: visibleMessages.length,
@@ -1073,7 +1123,7 @@ function ChatPanel({
     />
   )
 
-  return (
+  const panel = (
     <div className="chat-panel">
       {/* Messages Area */}
       <div className="messages-container" ref={messagesContainerRef}>
@@ -1250,6 +1300,7 @@ function ChatPanel({
         instructionsTruncated={workspaceRules.truncated}
         instructionError={workspaceRules.error}
         promptRefinementHistory={promptRefinementHistory}
+        getPromptHistory={getPromptHistory}
         showScrollToBottom={showScrollToBottom}
         onScrollToBottom={scrollToBottom}
       />
@@ -1300,6 +1351,12 @@ function ChatPanel({
         onCancel={cancelCheckpointRestore}
       />
     </div>
+  )
+
+  return (
+    <ReviewCommentSinkContext.Provider value={addReviewComment}>
+      {panel}
+    </ReviewCommentSinkContext.Provider>
   )
 }
 

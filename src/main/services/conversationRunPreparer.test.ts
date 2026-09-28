@@ -92,6 +92,38 @@ describe('conversation provider history', () => {
     )
   })
 
+  it('sends comments on changed lines after the typed message', () => {
+    const message = providerMessage(
+      row({
+        role: 'user',
+        content: 'Please address these.',
+        attachments: JSON.stringify([
+          { id: 'file-1', kind: 'file', name: 'build.ts', relativePath: 'src/build.ts' },
+          {
+            id: 'review-1',
+            kind: 'review',
+            name: 'build.ts:4',
+            path: 'src/build.ts',
+            side: 'new',
+            startLine: 4,
+            endLine: 4,
+            excerpt: '+retry()',
+            comment: 'Cap the retries.'
+          }
+        ])
+      })
+    )
+
+    const content = message.content as string
+    expect(content.startsWith('Please address these.\n\n<sidekick_review_comments>')).toBe(true)
+    expect(content).toContain(
+      '<comment path="src/build.ts" lines="4" side="new">\n<quoted_lines>\n+retry()\n</quoted_lines>\nCap the retries.\n</comment>'
+    )
+    expect(content.indexOf('<sidekick_review_comments>')).toBeLessThan(
+      content.indexOf('<sidekick_project_attachments>')
+    )
+  })
+
   it('passes durable user image attachments to multimodal providers', () => {
     const message = providerMessage(
       row({
