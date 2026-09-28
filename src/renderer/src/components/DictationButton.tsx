@@ -5,6 +5,7 @@ import { useVoiceState } from '../hooks/useVoice'
 import { captureMicrophone, type MicrophoneCapture } from '../services/voice/microphone'
 import { voicePreferences } from '../services/voice/voicePreferences'
 import { applyDictation, type DictationRange } from '../services/voice/dictationText'
+import { registerDictation } from '../services/voice/dictationControl'
 import './DictationButton.css'
 
 type Phase = 'idle' | 'starting' | 'recording' | 'finishing'
@@ -18,11 +19,6 @@ interface DictationButtonProps {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   onInputChange: (value: string) => void
   disabled?: boolean
-}
-
-function formatElapsed(ms: number): string {
-  const seconds = Math.floor(ms / 1000)
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
 }
 
 /**
@@ -39,7 +35,6 @@ export function DictationButton({
   const [phase, setPhase] = useState<Phase>('idle')
   const [notice, setNotice] = useState('')
   const [level, setLevel] = useState(0)
-  const [elapsed, setElapsed] = useState(0)
   const session = useRef<
     | { id: string; capture?: MicrophoneCapture; stopText?: () => void; startedAt: number }
     | undefined
@@ -128,7 +123,6 @@ export function DictationButton({
       }
       session.current.capture = capture
       session.current.startedAt = Date.now()
-      setElapsed(0)
       setPhase('recording')
     } catch (error) {
       stopText()
@@ -157,7 +151,6 @@ export function DictationButton({
       setLevel(current)
       if (active) {
         const ms = Date.now() - active.startedAt
-        setElapsed(ms)
         if (!warned && ms > SILENT_DEVICE_MS && loudest < SILENT_LEVEL) {
           warned = true
           showNotice(
@@ -171,17 +164,26 @@ export function DictationButton({
     return () => window.cancelAnimationFrame(frame)
   }, [phase, showNotice])
 
+  /** Ends listening at once, keeping what is in the box and dropping the rest. */
+  const cancel = useCallback((): void => {
+    const active = session.current
+    if (!active) return
+    session.current = undefined
+    active.stopText?.()
+    void active.capture?.stop()
+    void window.api.voice.cancelDictation(active.id)
+    range.current = null
+    written.current = null
+    replaced.current = null
+    setLevel(0)
+    setPhase('idle')
+  }, [])
+
+  // Sending the message ends the dictation, so later words do not refill the box.
+  useEffect(() => registerDictation(cancel), [cancel])
+
   // Leaving the chat ends the recording rather than leaving the microphone on.
-  useEffect(
-    () => () => {
-      const active = session.current
-      if (!active) return
-      active.stopText?.()
-      void active.capture?.stop()
-      void window.api.voice.cancelDictation(active.id)
-    },
-    []
-  )
+  useEffect(() => () => cancel(), [cancel])
 
   if (!voice?.enabled || !window.api?.voice) return null
   const model = voice.models.dictation
@@ -198,18 +200,6 @@ export function DictationButton({
 
   return (
     <div className="dictation">
-      {(phase === 'recording' || phase === 'finishing') && (
-        <span className={`dictation-status is-${phase}`} role="status">
-          {phase === 'recording' ? (
-            <>
-              <span className="dictation-status-dot" aria-hidden="true" />
-              Listening {formatElapsed(elapsed)}
-            </>
-          ) : (
-            'Finishing…'
-          )}
-        </span>
-      )}
       <button
         type="button"
         className={`dictation-button is-${phase}${settingUp && phase === 'idle' ? ' is-setting-up' : ''}`}
