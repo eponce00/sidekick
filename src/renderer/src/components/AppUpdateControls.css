@@ -130,3 +130,50 @@
     justify-content: flex-end;
   }
 }
+
+.app-version-button {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-version-button:hover {
+  color: var(--text-secondary);
+  background: var(--surface-hover);
+}
+
+.app-version-button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.app-version-button > svg {
+  flex: 0 0 auto;
+}
+
+.app-version-button > span:first-of-type {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-version-update {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  color: var(--on-accent);
+  background: var(--accent);
+  font-weight: 600;
+}

@@ -201,7 +201,7 @@ describe('conversation fork IPC', () => {
     }
   })
 
-  it('persists typed file and folder references separately from visible message text', async () => {
+  it('persists typed file and folder references and pasted text separately from visible message text', async () => {
     mocks
       .db!.prepare(
         `INSERT INTO conversations (id, title, created_at, updated_at)
@@ -214,6 +214,13 @@ describe('conversation fork IPC', () => {
       name: 'src',
       relativePath: 'src'
     }
+    const pasted = {
+      id: 'paste-1',
+      kind: 'text',
+      name: 'Error: build failed',
+      content: 'Error: build failed\n  at compile (build.ts:12)',
+      size: 45
+    }
     const save = mocks.handlers.get('conversations:saveMessage') as RegisteredHandler
     await save(
       {},
@@ -222,7 +229,7 @@ describe('conversation fork IPC', () => {
         conversation_id: 'conversation',
         role: 'user',
         content: 'Review this folder',
-        attachments: [attachment],
+        attachments: [attachment, pasted],
         timestamp: 2
       }
     )
@@ -234,7 +241,7 @@ describe('conversation fork IPC', () => {
     }>
     expect(messages[0]).toMatchObject({
       content: 'Review this folder',
-      attachments: [attachment]
+      attachments: [attachment, pasted]
     })
   })
 

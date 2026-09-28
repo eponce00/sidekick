@@ -89,7 +89,12 @@ export const settingsSectionContributions =
 
 const BUILTIN_SETTINGS_SECTIONS = [
   { id: 'providers', label: 'Providers', description: 'Connections and models', icon: 'server' },
-  { id: 'general', label: 'General', description: 'Messages and notifications', icon: 'settings' },
+  {
+    id: 'general',
+    label: 'General',
+    description: 'Notifications, updates, and version',
+    icon: 'settings'
+  },
   { id: 'agent', label: 'Agent', description: 'Behavior and permissions', icon: 'bot' },
   { id: 'appearance', label: 'Appearance', description: 'Theme and color', icon: 'palette' },
   { id: 'integrations', label: 'Integrations', description: 'MCP servers', icon: 'boxes' }

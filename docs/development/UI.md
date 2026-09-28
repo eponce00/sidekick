@@ -57,6 +57,13 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
   by purpose, and explain unfamiliar behavior with short secondary text or hover help.
 - Images, files, and folders are first-class message context. Clipboard images and attached images
   use the same preview path and open in a focused lightbox from both composer and history.
+- A long paste (2,000 characters or 30 lines) becomes a pasted-text attachment instead of filling
+  the composer. Its card shows the opening lines and line count and opens the whole text, where it
+  can be copied, turned back into typed text, or removed. Ctrl+Shift+V pastes inline, as does any
+  paste while editing a sent message. The text is stored with the message's attachments, so queued,
+  retried, and forked messages keep it, and the model receives it whole ahead of the typed message
+  in a `<sidekick_pasted_text>` block. One paste holds up to 100,000 characters, one message
+  200,000, since the text is sent again with every later turn.
 - When a run is active, Enter queues a follow-up. Pressing Enter again with an empty composer sends
   the oldest queued message immediately as steering.
 - Do not render permanent pills for capabilities the agent manages automatically. Built-in web search and auto-discovered skills remain invisible unless their execution appears in the conversation.

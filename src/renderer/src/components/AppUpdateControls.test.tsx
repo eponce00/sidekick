@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppUpdateState } from '../../../shared/appUpdates'
-import { AppUpdateToast } from './AppUpdateControls'
+import { AppUpdateToast, AppVersionButton } from './AppUpdateControls'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -97,5 +97,19 @@ describe('AppUpdateToast', () => {
     expect(container.textContent).toContain('Only the app will restart')
     await act(async () => container.querySelector('button')?.click())
     expect(install).toHaveBeenCalledOnce()
+  })
+
+  it('shows the installed version and leads to the updates card', async () => {
+    const onSelect = vi.fn()
+    await act(async () => root.render(<AppVersionButton onSelect={onSelect} />))
+    const button = container.querySelector('button')!
+    expect(button.textContent).toBe('SideKick 1.0.0Update')
+    expect(button.title).toBe('SideKick 2.0.0 is available.')
+    await act(async () => button.click())
+    expect(onSelect).toHaveBeenCalledOnce()
+
+    await act(async () => publish({ status: 'up-to-date', currentVersion: '1.0.0', checkedAt: 1 }))
+    expect(button.textContent).toBe('SideKick 1.0.0')
+    expect(button.getAttribute('aria-label')).toBe('SideKick 1.0.0. Show updates.')
   })
 })

@@ -28,7 +28,7 @@ import { permissionBroker } from '../services/permissionBroker'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
 import { discoverExternalOpeners } from '../services/externalOpeners'
-import type { MessageContextAttachment } from '../../shared/messageContextAttachments'
+import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
 
 const workspaceReads = new WorkspaceReadService()
 
@@ -146,7 +146,7 @@ export function registerWorkspaceHandlers(): void {
         return { ok: true, canceled: true, attachments: [] }
       }
 
-      const attachments: MessageContextAttachment[] = []
+      const attachments: ProjectContextAttachment[] = []
       for (const selectedPath of selection.filePaths.slice(0, 12)) {
         const canonicalPath = await fs.realpath(selectedPath)
         const relativePath = relative(canonicalRoot, canonicalPath)

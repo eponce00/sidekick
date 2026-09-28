@@ -47,6 +47,8 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     onInputChange: vi.fn(),
     onAddImageFiles: vi.fn(),
     onAddContextAttachments: vi.fn(),
+    onAddPastedText: vi.fn(),
+    onInsertPastedText: vi.fn(),
     onRemoveImage: vi.fn(),
     onRemoveContextAttachment: vi.fn(),
     onKeyDown: vi.fn(),
@@ -287,5 +289,101 @@ describe('ChatInput goal banner', () => {
       button.getAttribute('aria-label')
     )
     expect(labels).toEqual(['Resume goal', 'Drop goal'])
+  })
+})
+
+describe('ChatInput long pastes', () => {
+  let container: HTMLDivElement
+  let root: Root
+  const longText = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`).join('\n')
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  function paste(text: string): Event {
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', {
+      value: { items: [], getData: (type: string) => (type === 'text/plain' ? text : '') }
+    })
+    container.querySelector('textarea.message-input')!.dispatchEvent(event)
+    return event
+  }
+
+  it('attaches a long paste instead of inserting it', async () => {
+    const onAddPastedText = vi.fn()
+    await act(async () => root.render(<ChatInput {...baseProps({ onAddPastedText })} />))
+
+    const shortPaste = paste('a short sentence')
+    expect(shortPaste.defaultPrevented).toBe(false)
+    expect(onAddPastedText).not.toHaveBeenCalled()
+
+    const longPaste = paste(longText)
+    expect(longPaste.defaultPrevented).toBe(true)
+    expect(onAddPastedText).toHaveBeenCalledWith(longText)
+  })
+
+  it('pastes long text inline with Ctrl+Shift+V or while editing a message', async () => {
+    const onAddPastedText = vi.fn()
+    await act(async () => root.render(<ChatInput {...baseProps({ onAddPastedText })} />))
+    const input = container.querySelector('textarea.message-input')!
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'V', ctrlKey: true, shiftKey: true, bubbles: true })
+    )
+    expect(paste(longText).defaultPrevented).toBe(false)
+    // The bypass covers one paste only.
+    expect(paste(longText).defaultPrevented).toBe(true)
+
+    onAddPastedText.mockClear()
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ onAddPastedText, editingMessageId: 'message-1' })} />)
+    )
+    expect(paste(longText).defaultPrevented).toBe(false)
+    expect(onAddPastedText).not.toHaveBeenCalled()
+  })
+
+  it('shows a pasted attachment as a card that can be viewed, inserted, or removed', async () => {
+    const onRemoveContextAttachment = vi.fn()
+    const onInsertPastedText = vi.fn()
+    await act(async () =>
+      root.render(
+        <ChatInput
+          {...baseProps({
+            isFeaturesMenuOpen: false,
+            onRemoveContextAttachment,
+            onInsertPastedText,
+            attachedContext: [
+              { id: 'paste-1', kind: 'text', name: 'line 1', content: longText, size: 400 }
+            ]
+          })}
+        />
+      )
+    )
+    const card = container.querySelector('.pasted-text-card')!
+    expect(card.textContent).toContain('Pasted · 40 lines')
+
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>('.pasted-text-card-open')!.click()
+    })
+    const dialog = document.querySelector('[role="dialog"]')!
+    expect(dialog.querySelector('pre')?.textContent).toBe(longText)
+    const insert = [...dialog.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Insert as text'
+    )!
+    await act(async () => insert.click())
+    expect(onInsertPastedText).toHaveBeenCalledWith('paste-1')
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+    await act(async () => {
+      card.querySelector<HTMLButtonElement>('.pasted-text-card-remove')!.click()
+    })
+    expect(onRemoveContextAttachment).toHaveBeenCalledWith('paste-1')
   })
 })
