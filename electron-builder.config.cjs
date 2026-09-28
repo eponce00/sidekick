@@ -39,7 +39,8 @@ module.exports = {
     '!{.env,.env.*,.npmrc,pnpm-lock.yaml}',
     '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   ],
-  asarUnpack: ['resources/**'],
+  // sherpa-onnx loads native libraries that the OS cannot read from inside app.asar.
+  asarUnpack: ['resources/**', '**/node_modules/sherpa-onnx-*/**'],
   win: {
     executableName: identity.productName,
     icon: 'build/icon.ico',

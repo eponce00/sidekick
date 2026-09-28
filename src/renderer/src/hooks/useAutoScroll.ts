@@ -8,7 +8,15 @@ const SHOW_JUMP_THRESHOLD = 240
 export interface AutoScrollController {
   showScrollToBottom: boolean
   scrollToBottom: () => void
+  /**
+   * Brings the start of `element` to the top of the view, as far as the end of
+   * the timeline allows. With `onlyIfFollowing`, it acts only for a reader
+   * following the bottom who can no longer see where the element starts.
+   */
+  revealStart: (element: HTMLElement, options?: { onlyIfFollowing?: boolean }) => void
 }
+
+const REVEAL_MARGIN = 12
 
 export function scrollDistanceFromBottom(
   container: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>
@@ -74,6 +82,25 @@ export function useAutoScroll<T>(
     setShowScrollToBottom(false)
     moveToBottom('smooth')
   }, [moveToBottom])
+
+  const revealStart = useCallback(
+    (element: HTMLElement, options: { onlyIfFollowing?: boolean } = {}): void => {
+      const container = scrollContainerRef.current
+      if (!container || typeof container.scrollTo !== 'function') return
+      const offset =
+        element.getBoundingClientRect().top - container.getBoundingClientRect().top - REVEAL_MARGIN
+      // A follower who can already see where the answer starts stays at the end.
+      if (options.onlyIfFollowing && (!shouldStickToBottomRef.current || offset >= 0)) return
+      const bottom = Math.max(0, container.scrollHeight - container.clientHeight)
+      const target = Math.max(0, Math.min(container.scrollTop + offset, bottom))
+      shouldStickToBottomRef.current = bottom - target <= FOLLOW_BOTTOM_THRESHOLD
+      setShowScrollToBottom(shouldShowScrollToBottom(bottom - target))
+      // Instant: the scroll events of a smooth scroll start near the bottom and
+      // would resume following it.
+      container.scrollTo({ top: target, behavior: 'auto' })
+    },
+    [scrollContainerRef]
+  )
 
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -149,5 +176,5 @@ export function useAutoScroll<T>(
     }
   }, [moveToBottom, resetKey, scrollContainerRef, updatePosition])
 
-  return { showScrollToBottom, scrollToBottom }
+  return { showScrollToBottom, scrollToBottom, revealStart }
 }

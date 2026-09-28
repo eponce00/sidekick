@@ -103,6 +103,8 @@ export interface ProviderSettings {
   autoCompactThreshold?: number
   notificationsEnabled?: boolean
   notificationSoundEnabled?: boolean
+  /** Local dictation and read-aloud, and the background download of their models. On unless false. */
+  voiceEnabled?: boolean
   manualLocation?: string
   fastModelOllama?: string
   fastModelOllamaCloud?: string

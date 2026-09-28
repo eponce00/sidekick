@@ -93,6 +93,10 @@ export interface ContentSegment {
     recoveryAction?: string
   }
   verification?: WorkspaceVerificationSummary
+  /** Work of a verification pass folded into its result; `content` holds its note. */
+  steps?: ContentSegment[]
+  /** The verification pass is still running. */
+  pending?: boolean
   fileResult?: {
     filePath: string
     fileName: string

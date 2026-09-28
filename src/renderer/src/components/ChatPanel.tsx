@@ -2,6 +2,14 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
+import { endDictation } from '../services/voice/dictationControl'
+import {
+  stopVoiceLoop,
+  voiceLoopReplyFinished,
+  voiceLoopReplyStarted,
+  voiceLoopSent
+} from '../services/voice/voiceLoop'
+import { finalAnswerText } from '../utils/segmentGrouping'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
@@ -474,21 +482,65 @@ function ChatPanel({
   )
 
   // Auto-scroll to bottom when messages change
-  const { showScrollToBottom, scrollToBottom } = useAutoScroll(
+  const { showScrollToBottom, scrollToBottom, revealStart } = useAutoScroll(
     messagesEndRef,
     messagesContainerRef,
     messages,
     'smooth',
     conversationId
   )
+  const latestAnswer = useCallback((): HTMLElement | null => {
+    const agentMessages =
+      messagesContainerRef.current?.querySelectorAll<HTMLElement>('.message-agent')
+    const last = agentMessages?.[agentMessages.length - 1]
+    return last?.querySelector<HTMLElement>('[data-final-answer]') ?? last ?? null
+  }, [])
 
   // Opening a conversation from its completion notification should land on the
   // reply the notification was about, not wherever the view happened to be.
   useEffect(() => {
     if (!focusReplyAt) return
-    const timer = window.setTimeout(() => scrollToBottom(), 0)
+    const timer = window.setTimeout(() => {
+      const answer = latestAnswer()
+      if (answer) revealStart(answer)
+      else scrollToBottom()
+    }, 0)
     return () => window.clearTimeout(timer)
-  }, [focusReplyAt, scrollToBottom])
+  }, [focusReplyAt, latestAnswer, revealStart, scrollToBottom])
+
+  // A long answer followed to its end is read from its start. Wait for the
+  // finished message, whose work has collapsed, to lay out first.
+  const followedRunRef = useRef({ conversationId, isLoading })
+  useEffect(() => {
+    const previous = followedRunRef.current
+    followedRunRef.current = { conversationId, isLoading }
+    if (previous.conversationId !== conversationId || !previous.isLoading || isLoading) return
+    const timer = window.setTimeout(() => {
+      const answer = latestAnswer()
+      if (answer) revealStart(answer, { onlyIfFollowing: true })
+    }, 150)
+    return () => window.clearTimeout(timer)
+  }, [conversationId, isLoading, latestAnswer, revealStart])
+
+  // Voice conversation: hand each finished reply's answer over to be read
+  // aloud. Another chat ends it, so the mic never follows the user elsewhere.
+  const voiceRunRef = useRef({ conversationId, isLoading })
+  useEffect(() => {
+    const previous = voiceRunRef.current
+    voiceRunRef.current = { conversationId, isLoading }
+    if (previous.conversationId !== conversationId) {
+      stopVoiceLoop()
+      return undefined
+    }
+    if (isLoading && !previous.isLoading) voiceLoopReplyStarted()
+    if (isLoading || !previous.isLoading) return undefined
+    // The finished message replaces the streamed one a moment after the run ends.
+    const timer = window.setTimeout(() => {
+      const reply = messagesRef.current.findLast((message) => message.role === 'agent')
+      voiceLoopReplyFinished(reply ? finalAnswerText(reply) : '')
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [conversationId, isLoading, messagesRef])
 
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)
@@ -815,6 +867,10 @@ function ChatPanel({
 
   const handleSubmit = (): void => {
     if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    // What was dictated so far is in the box and goes with the message; with
+    // voice on, the mic pauses until the reply has been read aloud.
+    endDictation()
+    voiceLoopSent()
     if (attachedImages.length && !visionAvailable) {
       setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
       return

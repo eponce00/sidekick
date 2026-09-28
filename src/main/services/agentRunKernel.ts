@@ -186,6 +186,7 @@ export interface StartAgentKernelRunInput extends StartAgentRunInput {
   verificationController?: {
     afterTerminalTurn: () => Promise<VerificationTerminalDecision>
     beforeGoalCompletion?: () => VerificationTerminalDecision
+    afterToolRound?: () => string | undefined
   }
   /** Owns read-only planning, revisioned review, and the approved Plan-to-Act transition. */
   planController?: AgentKernelPlanController
@@ -1003,6 +1004,10 @@ The user approved this exact plan revision. Act capabilities are now available a
     }
     let activeContextManager = input.contextManager
     let completionHooksRun = false
+    // The answer a verification request held back. When the pass that follows
+    // leaves the workspace as it was, that answer stays the response and the
+    // pass's closing reply is only a note on the verification.
+    let deferredAnswer: { content: string; contentBefore: string; revision: number } | undefined
 
     const runProjectHooks = async (
       commands: string[] | undefined,
@@ -1311,6 +1316,16 @@ The user approved this exact plan revision. Act capabilities are now available a
             summary: verificationDecision.summary
           })
         }
+        const provisional =
+          completionHooksPending ||
+          needsResearchSource ||
+          verificationDecision?.continue === true ||
+          planDecision?.continue === true ||
+          Boolean(planDecision?.error)
+        const closesVerification = Boolean(deferredAnswer && !turn.toolCalls.length && !provisional)
+        const verificationNote =
+          closesVerification &&
+          verificationDecision?.summary.currentRevision === deferredAnswer?.revision
         this.append(input.id, 'assistant.completed', {
           content: projectedTurnContent,
           thinking: turn.thinking,
@@ -1327,12 +1342,8 @@ The user approved this exact plan revision. Act capabilities are now available a
           })),
           usage: turn.usage,
           generationId: turn.generationId,
-          provisional:
-            completionHooksPending ||
-            needsResearchSource ||
-            verificationDecision?.continue === true ||
-            planDecision?.continue === true ||
-            Boolean(planDecision?.error)
+          provisional,
+          ...(verificationNote ? { verificationNote: true } : {})
         })
         this.append(input.id, 'usage.updated', turn.usage)
         input.goalController?.onUsage?.(turn.usage)
@@ -1364,15 +1375,16 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
         }
 
-        if (
-          !completionHooksPending &&
-          verificationDecision?.continue !== true &&
-          planDecision?.continue !== true &&
-          !planDecision?.error
-        ) {
+        if (verificationNote && deferredAnswer) {
+          finalContent = deferredAnswer.contentBefore + deferredAnswer.content
+          finalThinking += turn.thinking
+        } else if (!provisional) {
           finalContent += projectedTurnContent
           finalThinking += turn.thinking
         }
+        const finalResponse =
+          verificationNote && deferredAnswer ? deferredAnswer.content : turn.content
+        if (closesVerification) deferredAnswer = undefined
 
         if (!turn.toolCalls.length) {
           if (planDecision?.error) throw new AgentToolLoopError(planDecision.error)
@@ -1393,6 +1405,11 @@ The user approved this exact plan revision. Act capabilities are now available a
             continue
           }
           if (verificationDecision?.continue) {
+            deferredAnswer = {
+              content: projectedTurnContent,
+              contentBefore: finalContent,
+              revision: verificationDecision.summary.currentRevision
+            }
             this.append(input.id, 'run.retrying', { reason: 'workspace_verification_required' })
             messages = [
               ...messages,
@@ -1407,7 +1424,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
           if (input.goalController) {
             const decision = await input.goalController.afterTerminalTurn({
-              finalResponse: turn.content,
+              finalResponse,
               messages,
               toolRounds
             })
@@ -1442,7 +1459,7 @@ The user approved this exact plan revision. Act capabilities are now available a
             runId: input.id,
             phase: 'completed',
             content: finalContent,
-            finalResponse: turn.content,
+            finalResponse,
             thinking: finalThinking,
             messages,
             toolRounds
@@ -1810,6 +1827,12 @@ The user approved this exact plan revision. Act capabilities are now available a
           lastToolMessage.content = `${lastToolMessage.content || ''}\n${turnGuard.warning}`
         }
         if (turnGuard.stopReason) throw new AgentToolLoopError(turnGuard.stopReason)
+        const verificationReminder = lastToolMessage
+          ? input.verificationController?.afterToolRound?.()
+          : undefined
+        if (verificationReminder && lastToolMessage) {
+          lastToolMessage.content = `${lastToolMessage.content || ''}\n${verificationReminder}`
+        }
         if (!signal.aborted) this.transition(input.id, 'streaming')
       }
       throw new DOMException('Agent run cancelled', 'AbortError')

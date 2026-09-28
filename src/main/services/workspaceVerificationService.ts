@@ -546,6 +546,7 @@ export class WorkspaceVerificationService {
     // refused completion for missing evidence has been asked already, and must
     // not be told again after it completes that it cannot claim completion.
     let nudged = false
+    let reminded = false
     const decide = (instruction: string): VerificationTerminalDecision => {
       const summary = this.summary(runId, workspaceRoot, baselineRevision)
       if (
@@ -561,9 +562,9 @@ export class WorkspaceVerificationService {
           summary,
           prompt:
             `<sidekick_verification_guard trust="app-policy">\n` +
-            `${summary.headline} ${instruction} Inspect the latest failure when present, ` +
+            `${summary.headline} Inspect the latest failure when present, ` +
             `then run the smallest relevant verification for the files you changed. ` +
-            `If no safe or applicable check exists, explain that limitation honestly and finish without inventing success.` +
+            `If no safe or applicable check exists, say so honestly without inventing success. ${instruction}` +
             `${commands.length ? `\nSuggested project checks:\n${commands.join('\n')}` : ''}\n` +
             `</sidekick_verification_guard>`
         }
@@ -571,11 +572,28 @@ export class WorkspaceVerificationService {
       return { continue: false, summary }
     }
     return {
-      afterTerminalTurn: async () => decide('Do not claim completion yet.'),
+      afterTerminalTurn: async () =>
+        decide(
+          'Your previous reply stays the answer the user reads. After verifying, reply with one short sentence stating the result; do not repeat or summarize that answer. ' +
+            'If you had to change files, end instead with a complete answer, because it replaces the previous one.'
+        ),
       beforeGoalCompletion: () =>
         decide(
           'The goal was not marked complete. Verify first, then call update_goal again; a second request completes it even when no check applies.'
+        ),
+      afterToolRound: () => {
+        if (reminded || nudged) return undefined
+        if (!this.changedPaths(runId, workspaceRoot, baselineRevision).length) return undefined
+        reminded = true
+        const command = this.suggestChecks(workspaceRoot)[0]?.command
+        return (
+          `<sidekick_verification_reminder trust="app-policy">\n` +
+          `The workspace changed. When your edits are done, run the smallest relevant check ` +
+          `${command ? `(for example \`${command}\`) ` : ''}before writing your final answer, ` +
+          `so the answer can report the real result.\n` +
+          `</sidekick_verification_reminder>`
         )
+      }
     }
   }
 

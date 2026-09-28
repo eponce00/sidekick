@@ -2,13 +2,32 @@ import { EventEmitter } from 'node:events'
 import type { BrowserWindow, WebContentsView } from 'electron'
 import { expect, it, vi } from 'vitest'
 const menu = vi.hoisted(() => ({ buildFromTemplate: vi.fn() }))
-vi.mock('electron', () => ({ Menu: menu }))
+const overlays = vi.hoisted(() => [] as Array<Record<string, ReturnType<typeof vi.fn>>>)
+vi.mock('electron', () => ({
+  Menu: menu,
+  WebContentsView: vi.fn(function () {
+    const overlay = {
+      setBackgroundColor: vi.fn(),
+      setVisible: vi.fn(),
+      setBounds: vi.fn(),
+      webContents: {
+        isDestroyed: () => false,
+        loadURL: vi.fn(async () => undefined),
+        executeJavaScript: vi.fn(async () => undefined),
+        close: vi.fn()
+      }
+    }
+    overlays.push(overlay as never)
+    return overlay
+  })
+}))
 import {
   browserAgentInput,
   browserDebuggerCommand,
   mountBrowserView,
   parkBrowserView,
-  registerBrowserView
+  registerBrowserView,
+  showBrowserPointer
 } from './browserViewHost'
 
 let nextId = 900000
@@ -26,7 +45,12 @@ function hosted(zoom?: number) {
       zoomFactor = value
     })
   })
-  const view = { webContents: contents, setBounds: vi.fn(), setVisible: vi.fn() }
+  const view = {
+    webContents: contents,
+    setBounds: vi.fn(),
+    setVisible: vi.fn(),
+    getBounds: () => ({ x: 200, y: 50, width: 100, height: 100 })
+  }
   const parking = {
     isDestroyed: () => false,
     contentView: { removeChildView: vi.fn(), addChildView: vi.fn() },
@@ -56,6 +80,27 @@ function hosted(zoom?: number) {
   }
   return { contents, allowInput, input, host }
 }
+
+it('floats the agent cursor above the shown page at the zoomed point, and hides it on park', async () => {
+  const { contents, host } = hosted(0.5)
+  overlays.length = 0
+  // CSS (40, 60) at half zoom is 20, 30 into a page placed at (200, 50).
+  await showBrowserPointer(contents.id, 40, 60)
+  const [overlay] = overlays
+  expect(host.contentView.addChildView).toHaveBeenLastCalledWith(overlay)
+  expect(overlay.setBounds).toHaveBeenLastCalledWith({ x: 180, y: 40, width: 96, height: 96 })
+  expect(overlay.setVisible).toHaveBeenLastCalledWith(true)
+
+  // A point beyond the page is not drawn over the app around it.
+  overlay.setBounds.mockClear()
+  await showBrowserPointer(contents.id, 400, 60)
+  expect(overlay.setBounds).not.toHaveBeenCalled()
+
+  parkBrowserView(contents.id)
+  expect(overlay.setVisible).toHaveBeenLastCalledWith(false)
+  await showBrowserPointer(contents.id, 40, 60)
+  expect(overlay.setVisible).toHaveBeenLastCalledWith(false)
+})
 
 it.each(['cut', 'copy', 'paste', 'selectAll'] as const)(
   'rechecks current ownership before a previously opened menu can %s',

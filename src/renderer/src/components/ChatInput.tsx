@@ -35,6 +35,8 @@ import {
 } from '../../../shared/messageContextAttachments'
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { DictationButton } from './DictationButton'
+import { useVoiceLoop } from '../services/voice/voiceLoop'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import './ChatInput.css'
 
@@ -264,6 +266,8 @@ export function ChatInput({
   onScrollToBottom = () => undefined
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
+  // With voice on, the empty box says what the conversation is doing.
+  const voiceLoop = useVoiceLoop()
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
@@ -441,19 +445,25 @@ export function ChatInput({
       inputRef={inputRef}
       disabled={Boolean(editingMessageId)}
       placeholder={
-        goalArmed
-          ? 'Describe the outcome and how SideKick should prove it works…'
-          : goal?.status === 'active'
-            ? 'Steer the goal or add a constraint…'
-            : planActive
-              ? 'Add guidance while the plan is running…'
-              : planSelected
-                ? 'What should SideKick plan?'
-                : researchActive
-                  ? 'Add a follow-up or steer the research…'
-                  : researchSelected
-                    ? 'What should SideKick research?'
-                    : 'Type a message...'
+        voiceLoop === 'listening'
+          ? 'Listening… press Enter to send'
+          : voiceLoop === 'waiting'
+            ? 'Waiting for the reply…'
+            : voiceLoop === 'speaking'
+              ? 'Reading the reply aloud · Esc to skip'
+              : goalArmed
+                ? 'Describe the outcome and how SideKick should prove it works…'
+                : goal?.status === 'active'
+                  ? 'Steer the goal or add a constraint…'
+                  : planActive
+                    ? 'Add guidance while the plan is running…'
+                    : planSelected
+                      ? 'What should SideKick plan?'
+                      : researchActive
+                        ? 'Add a follow-up or steer the research…'
+                        : researchSelected
+                          ? 'What should SideKick research?'
+                          : 'Type a message...'
       }
       contextBar={
         goal ? (
@@ -860,6 +870,7 @@ export function ChatInput({
       }
       toolbarRight={
         <>
+          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}

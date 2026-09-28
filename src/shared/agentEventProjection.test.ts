@@ -399,6 +399,80 @@ Keep building the app.
     })
   })
 
+  describe('a verification pass after the answer', () => {
+    const summary = {
+      status: 'unverified',
+      workspaceRoot: '/project',
+      baselineRevision: 0,
+      currentRevision: 1,
+      changedPaths: ['app.ts'],
+      evidence: [],
+      suggestedChecks: [],
+      headline: 'Workspace changes have not been verified.'
+    }
+    const answered = [
+      event(1, 'assistant.delta', { content: 'The answer.' }),
+      event(2, 'verification.updated', { summary }),
+      event(3, 'assistant.completed', { content: 'The answer.', provisional: true }),
+      event(4, 'run.retrying', { reason: 'workspace_verification_required' }),
+      event(5, 'tool.pending', { toolCallId: 'check-1', name: 'shell' }),
+      event(6, 'assistant.completed', { content: '', toolCalls: [{ id: 'check-1' }] })
+    ]
+
+    it('shows its live work inside the pending result, under the answer', () => {
+      const projection = projectAgentRunEvents(answered)
+      expect(projection.segments.map((segment) => segment.type)).toEqual(['text', 'verification'])
+      expect(projection.segments[1]).toMatchObject({
+        pending: true,
+        steps: [{ type: 'tool', tool: { id: 'check-1' } }]
+      })
+    })
+
+    it('returns its work to the timeline when the run fails inside it', () => {
+      const projection = projectAgentRunEvents([
+        ...answered,
+        event(7, 'run.completed', { phase: 'failed', error: { message: 'Provider went away' } })
+      ])
+      expect(projection.segments.map((segment) => segment.type)).toEqual([
+        'text',
+        'run_status',
+        'tool',
+        'run_error',
+        'verification'
+      ])
+      expect(projection.segments.at(-1)).not.toHaveProperty('pending')
+    })
+
+    it('keeps an approval it waits on in sight', () => {
+      const projection = projectAgentRunEvents([
+        ...answered,
+        event(7, 'permission.requested', {
+          interactionId: 'permission-1',
+          request: { toolCallId: 'check-1', title: 'Run npm test' }
+        })
+      ])
+      expect(projection.segments.map((segment) => segment.type)).toEqual([
+        'text',
+        'interaction',
+        'verification'
+      ])
+    })
+
+    it('shows an answer the provider did not stream', () => {
+      const projection = projectAgentRunEvents([
+        event(2, 'verification.updated', { summary }),
+        event(3, 'assistant.completed', { content: 'Unstreamed answer.', provisional: true }),
+        event(4, 'run.retrying', { reason: 'workspace_verification_required' }),
+        event(5, 'assistant.completed', { content: 'No check applies.', verificationNote: true })
+      ])
+      expect(projection.content).toBe('Unstreamed answer.')
+      expect(projection.segments).toEqual([
+        { type: 'text', content: 'Unstreamed answer.' },
+        { type: 'verification', verification: summary, content: 'No check applies.' }
+      ])
+    })
+  })
+
   it('keeps permission interactions durable through resolution', () => {
     const projection = projectAgentRunEvents([
       event(1, 'permission.requested', {

@@ -23,7 +23,12 @@ import {
   FolderOpen
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
-import { chunkGroupsChronologically, groupSegments } from '../utils/segmentGrouping'
+import {
+  chunkGroupsChronologically,
+  finalAnswerText,
+  groupSegments,
+  isWorkSegmentGroup
+} from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
@@ -33,6 +38,7 @@ import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
 import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
+import { ReadAloudButton } from './ReadAloudButton'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
   isPastedTextAttachment,
@@ -180,9 +186,17 @@ function CompactionSummarySegment({
 }
 
 function VerificationSegment({
-  verification
+  verification,
+  note,
+  steps,
+  pending = false,
+  workspaceRoot
 }: {
   verification: WorkspaceVerificationSummary
+  note?: string
+  steps?: readonly import('../types/chat.types').ContentSegment[]
+  pending?: boolean
+  workspaceRoot?: string | null
 }): React.JSX.Element {
   const currentEvidence = verification.evidence.filter(
     (evidence) => evidence.revision === verification.currentRevision
@@ -191,39 +205,63 @@ function VerificationSegment({
   const history = verification.evidence.filter((evidence) => evidence.id !== authoritative?.id)
 
   return (
-    <details className={`verification-segment verification-${verification.status}`}>
-      <summary>
-        {verification.status === 'passed' ? <Check size={12} /> : <CircleAlert size={12} />}
-        <span>{verification.headline}</span>
-        <ChevronDown size={10} className="verification-arrow" />
-      </summary>
-      <div className="verification-detail">
-        {verification.detail && <p>{verification.detail}</p>}
-        {authoritative && (
-          <ul className="verification-current-evidence">
-            <li>
-              <span className={`verification-dot ${authoritative.status}`} />
-              <span>{authoritative.summary}</span>
-              {authoritative.command && <code>{authoritative.command}</code>}
-            </li>
-          </ul>
-        )}
-        {history.length > 0 && (
-          <details className="verification-history">
-            <summary>Earlier attempts ({history.length})</summary>
-            <ul>
-              {history.slice(-4).map((evidence) => (
-                <li key={evidence.id}>
-                  <span className={`verification-dot ${evidence.status}`} />
-                  <span>{evidence.summary}</span>
-                  {evidence.command && <code>{evidence.command}</code>}
-                </li>
-              ))}
+    <div className="verification-result">
+      <details
+        className={`verification-segment verification-${pending ? 'pending' : verification.status}`}
+      >
+        <summary>
+          {pending ? (
+            <Loader2 size={12} className="spinning" />
+          ) : verification.status === 'passed' ? (
+            <Check size={12} />
+          ) : (
+            <CircleAlert size={12} />
+          )}
+          <span>{pending ? 'Verifying changes…' : verification.headline}</span>
+          <ChevronDown size={10} className="verification-arrow" />
+        </summary>
+        <div className="verification-detail">
+          {!pending && verification.detail && <p>{verification.detail}</p>}
+          {Boolean(steps?.length) && (
+            <div className="verification-steps">
+              {steps!.map((step, index) =>
+                step.type === 'tool' && step.tool ? (
+                  <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
+                ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
+                  <p key={index} className={`verification-step-${step.type}`}>
+                    {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
+                  </p>
+                ) : null
+              )}
+            </div>
+          )}
+          {authoritative && (
+            <ul className="verification-current-evidence">
+              <li>
+                <span className={`verification-dot ${authoritative.status}`} />
+                <span>{authoritative.summary}</span>
+                {authoritative.command && <code>{authoritative.command}</code>}
+              </li>
             </ul>
-          </details>
-        )}
-      </div>
-    </details>
+          )}
+          {history.length > 0 && (
+            <details className="verification-history">
+              <summary>Earlier attempts ({history.length})</summary>
+              <ul>
+                {history.slice(-4).map((evidence) => (
+                  <li key={evidence.id}>
+                    <span className={`verification-dot ${evidence.status}`} />
+                    <span>{evidence.summary}</span>
+                    {evidence.command && <code>{evidence.command}</code>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      </details>
+      {note && <p className="verification-note">{note}</p>}
+    </div>
   )
 }
 
@@ -274,7 +312,13 @@ function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Eleme
 function subAgentStepsFromProjection(
   projection: ReturnType<typeof projectAgentRunEvents>
 ): SubAgentStep[] {
-  return projection.segments.flatMap((segment): SubAgentStep[] => {
+  const steps = (
+    segment: ReturnType<typeof projectAgentRunEvents>['segments'][number]
+  ): SubAgentStep[] => {
+    if (segment.type === 'verification') {
+      const folded = (segment.steps ?? []).flatMap(steps)
+      return segment.content ? [...folded, { type: 'response', content: segment.content }] : folded
+    }
     if (segment.type === 'thinking') return [{ type: 'thinking', content: segment.content }]
     if (segment.type === 'text') return [{ type: 'response', content: segment.content }]
     if (segment.type === 'tool') {
@@ -296,7 +340,8 @@ function subAgentStepsFromProjection(
       ]
     }
     return []
-  })
+  }
+  return projection.segments.flatMap(steps)
 }
 
 function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
@@ -432,19 +477,6 @@ function thinkingPreview(content: string): string {
   if (!normalized) return 'Thinking'
   const preview = normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
   return `Think · ${preview}`
-}
-
-function isWorkSegmentGroup(group: GroupedSegment): boolean {
-  if (group.type === 'actions') return true
-  return [
-    'tool',
-    'summary',
-    'summarizing',
-    'decision',
-    'interaction',
-    'run_status',
-    'run_error'
-  ].includes(group.segment.type)
 }
 
 function isDurableOutputGroup(group: GroupedSegment): boolean {
@@ -950,7 +982,10 @@ function MessageItemInner({
                     group.segment.type === 'text' &&
                     group.segment.content ? (
                     // Standalone text content
-                    <div className="message-content">
+                    <div
+                      className="message-content"
+                      data-final-answer={groupIdx === finalAnswerIndex ? '' : undefined}
+                    >
                       <MessageMarkdown
                         content={group.segment.content}
                         isStreaming={isLoading}
@@ -967,7 +1002,13 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'verification' &&
                     group.segment.verification ? (
-                    <VerificationSegment verification={group.segment.verification} />
+                    <VerificationSegment
+                      verification={group.segment.verification}
+                      note={group.segment.content}
+                      steps={group.segment.steps}
+                      pending={group.segment.pending && isLoading}
+                      workspaceRoot={workspaceFolder}
+                    />
                   ) : group.type === 'content' &&
                     group.segment.type === 'summary' &&
                     group.segment.summary ? (
@@ -1240,6 +1281,7 @@ function MessageItemInner({
                   >
                     {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
                   </button>
+                  <ReadAloudButton messageId={msg.id} text={msg.content} />
                   {!readOnly && (
                     <>
                       <button
@@ -1291,6 +1333,7 @@ function MessageItemInner({
               >
                 {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
               </button>
+              {!isLoading && <ReadAloudButton messageId={msg.id} text={finalAnswerText(msg)} />}
               {!readOnly && onForkMessage && (
                 <button
                   type="button"

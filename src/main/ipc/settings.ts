@@ -333,6 +333,14 @@ export async function confirmSensitiveSettingsChange(
   return result.response === 1
 }
 
+const settingsSavedListeners = new Set<(settings: SettingsRecord) => void>()
+
+/** Lets main-process services follow settings the user saves. */
+export function onSettingsSaved(listener: (settings: SettingsRecord) => void): () => void {
+  settingsSavedListeners.add(listener)
+  return () => settingsSavedListeners.delete(listener)
+}
+
 export function registerSettingsHandlers(): void {
   const store = getStore()
   ipcMain.handle('settings:selectOfficeInterpreter', async (event) => {
@@ -367,6 +375,7 @@ export function registerSettingsHandlers(): void {
         return { success: false, error: 'Settings change cancelled' }
       }
       store.set('settings', protectSettings(next, store.get('settings', {})))
+      for (const listener of settingsSavedListeners) listener(next)
       return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }

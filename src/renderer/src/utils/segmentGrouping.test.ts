@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ContentSegment } from '../types/chat.types'
-import { chunkGroupsChronologically, groupSegments } from './segmentGrouping'
+import { chunkGroupsChronologically, finalAnswerText, groupSegments } from './segmentGrouping'
 
 describe('groupSegments', () => {
   it('preserves the chronological order of interleaved thinking and tools', () => {
@@ -45,5 +45,27 @@ describe('groupSegments', () => {
       group: { type: 'content', segment: { type: 'summary' } },
       groupIndex: 1
     })
+  })
+})
+
+describe('finalAnswerText', () => {
+  it('is the text after the last step of work, not the narration between steps', () => {
+    const segments: ContentSegment[] = [
+      { type: 'thinking', content: 'Plan the change.' },
+      { type: 'text', content: 'Scrolling works; trying the click again.' },
+      { type: 'tool', tool: { id: 't1', title: 'Click', command: '', status: 'success' } },
+      { type: 'text', content: 'The button now works.' },
+      { type: 'text', content: 'Tests pass.' }
+    ]
+    expect(finalAnswerText({ content: 'everything', segments })).toBe(
+      'The button now works.\n\nTests pass.'
+    )
+  })
+
+  it('is the whole reply when there was no work', () => {
+    expect(finalAnswerText({ content: 'Hello.' })).toBe('Hello.')
+    expect(finalAnswerText({ content: 'Hi', segments: [{ type: 'text', content: 'Hi' }] })).toBe(
+      'Hi'
+    )
   })
 })

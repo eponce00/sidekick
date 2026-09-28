@@ -1124,6 +1124,34 @@ export function installBrowserApiMock(): void {
       openRelease: async () => ({ opened: false }),
       onState: () => () => undefined
     },
+    voice: {
+      getState: async () => ({
+        enabled: true,
+        models: {
+          dictation: { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 },
+          speech: { status: 'ready' as const, receivedBytes: 145e6, totalBytes: 145e6 }
+        }
+      }),
+      onState: () => () => undefined,
+      prioritize: async () => undefined,
+      startDictation: async () => ({
+        ok: false as const,
+        reason: 'downloading' as const,
+        message: 'Dictation is still being set up (41%).'
+      }),
+      pushDictationAudio: () => undefined,
+      stopDictation: async () => undefined,
+      cancelDictation: async () => undefined,
+      onDictationText: () => () => undefined,
+      speak: async () => ({
+        ok: false as const,
+        reason: 'unavailable' as const,
+        message: 'Read aloud needs the desktop app.'
+      }),
+      stopSpeech: async () => undefined,
+      onSpeechAudio: () => () => undefined,
+      onSpeechEnd: () => () => undefined
+    },
     support: { export: async () => ({ success: true }) },
     clipboard: { writeText: async () => ({ success: true }) },
     workspace: {

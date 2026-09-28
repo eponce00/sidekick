@@ -131,6 +131,16 @@ describe('WorkspaceVerificationService', () => {
     expect(second).toMatchObject({ continue: false, summary: { status: 'unverified' } })
   })
 
+  it('asks the model once to verify before its answer, starting from its first change', async () => {
+    const controller = service.createTerminalController('run-4', root, 0)!
+    expect(controller.afterToolRound!()).toBeUndefined()
+
+    await writeFile(join(root, 'main.py'), 'print("hello")\n')
+    service.recordChanges('run-4', root, 'workspace_tool', [{ path: 'main.py', kind: 'create' }])
+    expect(controller.afterToolRound!()).toContain('before writing your final answer')
+    expect(controller.afterToolRound!()).toBeUndefined()
+  })
+
   it('asks for verification before a goal completes, and not again once it has', async () => {
     // Asking only at the end of the run told a model whose goal was already
     // complete that it could not claim completion, which sent it back to work.
