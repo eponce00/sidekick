@@ -458,6 +458,14 @@ export class AgentRuntimeCoordinator {
     if (active && !['completed', 'failed', 'cancelled', 'interrupted'].includes(active.phase)) {
       throw new Error('This conversation already has an active run')
     }
+    // Continuing is only honest from the end of the conversation: once another
+    // run exists, including an earlier continuation, the journal has moved on.
+    if (
+      input.continuesRunId &&
+      !this.store.canContinue(input.continuesRunId, input.conversationId)
+    ) {
+      throw new Error('This interrupted reply can no longer be continued')
+    }
     const preparation = this.beginPreparation({
       id: input.id,
       threadId: input.conversationId,

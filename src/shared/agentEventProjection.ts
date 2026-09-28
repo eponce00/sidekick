@@ -544,7 +544,13 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       })
       turnSegmentStart = segments.length
     }
-    if (event.type === 'run.steered') {
+    if (event.type === 'run.steered' && event.payload.kind === 'continuation') {
+      // The app's instruction to continue is for the model; people see a marker.
+      segments.push({
+        type: 'run_status',
+        status: { kind: 'retrying', reason: 'run_continued', timestamp: event.timestamp }
+      })
+    } else if (event.type === 'run.steered') {
       // Like compaction, the user's message is a hard turn boundary. It belongs
       // to the conversation, so it never folds into a verification pass.
       for (const id of pendingTurnTools) emitTool(id)
@@ -602,6 +608,17 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     // A run that ends inside the pass never reached a note; show its work as it happened.
     if (event.type === 'run.completed') closeVerificationPass()
+    if (event.type === 'run.completed' && event.payload.phase === 'interrupted') {
+      segments.push({
+        type: 'run_error',
+        runError: {
+          code: 'interrupted',
+          message: 'SideKick closed before this reply finished.',
+          retryable: true,
+          recoveryAction: 'refresh_state'
+        }
+      })
+    }
     if (event.type === 'run.completed' && event.payload.phase === 'failed') {
       const rawError = event.payload.error
       const error =

@@ -3821,6 +3821,31 @@ body[data-theme='light'] .tool-approval-command {
   gap: 4px;
 }
 
+.run-error-segment-interrupted {
+  border-color: color-mix(in srgb, var(--warning) 30%, var(--border-color));
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-1));
+}
+
+.run-error-segment-interrupted > svg {
+  color: var(--warning);
+}
+
+.run-error-segment .run-error-continue {
+  color: var(--on-accent);
+  border-color: transparent;
+  background: var(--accent);
+}
+
+.run-error-segment button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.run-error-segment button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .agent-interaction-heading {
   display: flex;
   align-items: center;

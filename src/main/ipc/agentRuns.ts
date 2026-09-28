@@ -159,7 +159,8 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
     typeof input.model.id !== 'string' ||
     typeof input.model.name !== 'string' ||
     typeof input.model.provider !== 'string' ||
-    (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode))
+    (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode)) ||
+    (input.continuesRunId !== undefined && !validId(input.continuesRunId))
   ) {
     throw new Error('Invalid conversation agent run request')
   }

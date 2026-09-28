@@ -164,6 +164,8 @@ export interface StartAgentKernelRunInput extends StartAgentRunInput {
   permissionMode: PermissionMode
   toolRouter: AgentKernelToolRouter
   contextManager?: AgentKernelContextManager
+  /** Messages the run takes in before its first model request, recorded like a steer. */
+  initialSteers?: AgentRunSteer[]
   /** Injects newly arrived external events at safe provider boundaries. */
   beforeModelStep?: (
     messages: ProviderChatMessage[],
@@ -1039,6 +1041,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     signal: AbortSignal
   ): Promise<AgentKernelRunResult> {
     const started = this.store.start(input)
+    if (input.initialSteers?.length) this.steers.set(input.id, [...input.initialSteers])
     const startedEvent = this.store.listEvents(input.id, 0, 1)[0]
     if (startedEvent) this.publish(startedEvent)
     let messages = validateProviderTranscript(input.messages).messages

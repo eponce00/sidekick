@@ -13,6 +13,11 @@ export interface StartConversationAgentRunInput {
   /** Optional planner; execution always returns to model after plan approval. */
   plannerModel?: PinnedModel
   mode?: ConversationRunMode
+  /**
+   * An interrupted run this one picks up from its durable journal. Only the
+   * latest run of the conversation can be continued, and only once.
+   */
+  continuesRunId?: string
   userLocation?: {
     city?: string
     country?: string

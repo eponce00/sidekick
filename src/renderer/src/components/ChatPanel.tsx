@@ -666,7 +666,8 @@ function ChatPanel({
     activeConversationId: string,
     isNewConversation: boolean,
     titleBaseMessage: Message | undefined,
-    runMode: ConversationRunMode
+    runMode: ConversationRunMode,
+    continuesRunId?: string
   ): Promise<void> => {
     if (!selectedModel) {
       alert('Please select a model first')
@@ -723,6 +724,7 @@ function ChatPanel({
         model,
         plannerModel: selectedPlanningModel,
         mode: runMode,
+        ...(continuesRunId ? { continuesRunId } : {}),
         userLocation
       })
       completed = true
@@ -835,6 +837,23 @@ function ChatPanel({
     await resumeGoal()
     await streamAgentResponse(messagesRef.current, conversationId, false, undefined, 'conversation')
   }
+
+  // Continues an interrupted reply in a new run that starts from its journal.
+  // The main process refuses a second continuation of the same interruption.
+  const continueInterruptedRun = async (message: Message): Promise<void> => {
+    if (isLoading || !conversationId || !message.runId) return
+    await streamAgentResponse(
+      messagesRef.current,
+      conversationId,
+      false,
+      undefined,
+      message.runMode ?? 'conversation',
+      message.runId
+    )
+  }
+  const continueRunRef = useRef(continueInterruptedRun)
+  continueRunRef.current = continueInterruptedRun
+  const continueRun = useCallback((message: Message) => continueRunRef.current(message), [])
 
   const handleStop = async (): Promise<void> => {
     if (goal?.status === 'active') await pauseGoal()
@@ -1067,6 +1086,11 @@ function ChatPanel({
       onConfirmEditMessage={handleConfirmEditMessage}
       onCopyMessage={handleCopyMessage}
       onRetryMessage={handleRetryMessage}
+      onContinueRun={
+        !isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'
+          ? continueRun
+          : undefined
+      }
       onForkMessage={forkMessage}
       copiedMessageId={copiedMessageId}
       onSetEditingContent={setEditingDraft}

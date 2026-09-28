@@ -1922,6 +1922,38 @@ describe('AgentRunKernel', () => {
     ])
   })
 
+  it('opens with its initial steers, recorded before the first model request', async () => {
+    const requests: ProviderChatRequest[] = []
+    const kernel = new AgentRunKernel(store, undefined, async (request, signal, onChunk) => {
+      requests.push(request)
+      return sampledTurn({ content: 'Picking up where it stopped.' })(request, signal, onChunk)
+    })
+
+    await kernel.start({
+      ...input(),
+      initialSteers: [
+        {
+          id: 'run-1:continuation',
+          message: { role: 'user', content: 'Continue the interrupted work.' },
+          payload: { kind: 'continuation', content: 'Continue the interrupted work.' }
+        }
+      ]
+    })
+
+    expect(requests[0].messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'Continue the interrupted work.'
+    })
+    const types = store.listEvents('run-1').map(({ type }) => type)
+    expect(types.indexOf('run.steered')).toBeLessThan(types.indexOf('assistant.completed'))
+    const segments = projectAgentRunEvents(store.listEvents('run-1')).segments
+    expect(segments[0]).toMatchObject({
+      type: 'run_status',
+      status: { reason: 'run_continued' }
+    })
+    expect(segments.some(({ type }) => type === 'steer')).toBe(false)
+  })
+
   it('refuses a steer while the run waits for an approval or has ended', async () => {
     catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
     const sampler = sequence(

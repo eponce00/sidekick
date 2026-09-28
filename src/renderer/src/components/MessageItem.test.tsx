@@ -640,6 +640,74 @@ describe('MessageItem shared-channel presentation', () => {
     expect(container.textContent).not.toContain('Format files')
   })
 
+  it('offers one Continue on an interrupted reply that can still be continued', async () => {
+    const onContinueRun = vi.fn(() => new Promise<void>(() => undefined))
+    const message = {
+      id: 'interrupted-reply',
+      runId: 'run-1',
+      role: 'agent' as const,
+      content: 'Deploying.',
+      timestamp: 1_000,
+      segments: [
+        { type: 'text' as const, content: 'Deploying.' },
+        {
+          type: 'tool' as const,
+          tool: { id: 'deploy', title: 'Deploy', command: 'shell', status: 'error' as const }
+        },
+        {
+          type: 'run_error' as const,
+          runError: {
+            code: 'interrupted',
+            message: 'SideKick closed before this reply finished.',
+            retryable: true
+          }
+        }
+      ]
+    }
+    const props = {
+      index: 0,
+      isLoading: false,
+      expandedThinking: new Set<string>(),
+      editingMessageId: null,
+      editingGeometry: null,
+      editingContent: '',
+      copiedMessageId: null,
+      onToggleThinking: vi.fn(),
+      onHandleArtifactResult: vi.fn(),
+      onEditMessage: vi.fn(),
+      onCancelEditMessage: vi.fn(),
+      onConfirmEditMessage: vi.fn(),
+      onCopyMessage: vi.fn(),
+      onRetryMessage: vi.fn(),
+      onSetEditingContent: vi.fn(),
+      onApproveToolLimitDecision: vi.fn(),
+      onDenyToolLimitDecision: vi.fn()
+    }
+    await act(async () => {
+      root.render(<MessageItem {...props} message={message} onContinueRun={onContinueRun} />)
+    })
+
+    const button = [...container.querySelectorAll('button')].find(
+      (candidate) => candidate.textContent?.trim() === 'Continue'
+    ) as HTMLButtonElement
+    expect(button).toBeDefined()
+    expect(button.closest('.agent-work-disclosure')).toBeNull()
+    await act(async () => button.click())
+    await act(async () => button.click())
+    expect(onContinueRun).toHaveBeenCalledOnce()
+    expect(onContinueRun).toHaveBeenCalledWith(message)
+    expect(button.disabled).toBe(true)
+
+    // Once something else follows it, the interruption can only be retried.
+    await act(async () => {
+      root.render(<MessageItem {...props} message={{ ...message }} />)
+    })
+    const labels = [...container.querySelectorAll('.run-error-segment button')].map((candidate) =>
+      candidate.textContent?.trim()
+    )
+    expect(labels).toEqual(['Retry'])
+  })
+
   it('renders thinking and tool activity in the order it happened', async () => {
     await act(async () => {
       root.render(

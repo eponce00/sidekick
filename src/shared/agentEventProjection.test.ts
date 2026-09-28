@@ -183,6 +183,16 @@ describe('projectAgentRunEvents', () => {
     expect(projection.segments.find(({ type }) => type === 'tool')).toMatchObject({
       tool: { status: 'error', error: 'Run interrupted' }
     })
+    // The reply ends on the interruption, where it can be continued.
+    expect(projection.segments.at(-1)).toEqual({
+      type: 'run_error',
+      runError: {
+        code: 'interrupted',
+        message: 'SideKick closed before this reply finished.',
+        retryable: true,
+        recoveryAction: 'refresh_state'
+      }
+    })
   })
 
   it('keeps provider retries in chronological rendering order', () => {
