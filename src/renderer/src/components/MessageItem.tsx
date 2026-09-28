@@ -20,7 +20,8 @@ import {
   Microscope,
   GitBranch,
   FileText,
-  FolderOpen
+  FolderOpen,
+  MessageSquareText
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
 import {
@@ -42,7 +43,9 @@ import { ReadAloudButton } from './ReadAloudButton'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
   isPastedTextAttachment,
-  isProjectContextAttachment
+  isProjectContextAttachment,
+  isReviewCommentAttachment,
+  reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
 import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
@@ -737,6 +740,27 @@ function MessageItemInner({
                   <FileText size={14} aria-hidden="true" />
                 )}
                 <span>{attachment.name}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {Boolean(msg.attachments?.some(isReviewCommentAttachment)) && (
+          <div className="message-context-attachments" aria-label="Comments on changed lines">
+            {msg.attachments!.filter(isReviewCommentAttachment).map((attachment) => (
+              <button
+                type="button"
+                key={attachment.id}
+                className="message-review-comment"
+                title={`${attachment.path}:${reviewCommentLineLabel(attachment.startLine, attachment.endLine)}\n${attachment.comment}`}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  void window.api.workspace.openFile(attachment.path, workspaceFolder || undefined)
+                }}
+              >
+                <MessageSquareText size={14} aria-hidden="true" />
+                <span>
+                  <strong>{attachment.name}</strong> {attachment.comment}
+                </span>
               </button>
             ))}
           </div>

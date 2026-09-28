@@ -7,6 +7,7 @@ import {
   FolderOpen,
   ListChecks,
   Loader2,
+  MessageSquareText,
   Microscope,
   ImagePlus,
   Paperclip,
@@ -30,6 +31,8 @@ import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
 import {
   isPastedTextAttachment,
+  isReviewCommentAttachment,
+  reviewCommentLineLabel,
   shouldAttachPastedText,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
@@ -699,6 +702,25 @@ export function ChatInput({
                   onRemove={() => onRemoveContextAttachment(attachment.id)}
                   onInsert={editingMessageId ? undefined : () => onInsertPastedText(attachment.id)}
                 />
+              ) : isReviewCommentAttachment(attachment) ? (
+                <div
+                  className="composer-context-attachment composer-review-comment"
+                  key={attachment.id}
+                  title={`${attachment.path}:${reviewCommentLineLabel(attachment.startLine, attachment.endLine)}\n${attachment.comment}`}
+                >
+                  <MessageSquareText size={15} aria-hidden="true" />
+                  <span>
+                    <strong>{attachment.name}</strong> {attachment.comment}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveContextAttachment(attachment.id)}
+                    title={`Remove comment on ${attachment.name}`}
+                    aria-label={`Remove comment on ${attachment.name}`}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
               ) : (
                 <div
                   className="composer-context-attachment"

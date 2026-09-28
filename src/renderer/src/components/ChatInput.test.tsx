@@ -464,3 +464,44 @@ describe('ChatInput prompt history', () => {
     expect(input().value).toBe('/')
   })
 })
+
+describe('ChatInput review comments', () => {
+  it('shows a comment on changed lines as a removable chip', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onRemoveContextAttachment = vi.fn()
+    await act(async () =>
+      root.render(
+        <ChatInput
+          {...baseProps({
+            isFeaturesMenuOpen: false,
+            onRemoveContextAttachment,
+            attachedContext: [
+              {
+                id: 'review-1',
+                kind: 'review',
+                name: 'App.tsx:3-4',
+                path: 'src/App.tsx',
+                side: 'new',
+                startLine: 3,
+                endLine: 4,
+                excerpt: '+a\n+b',
+                comment: 'Rename this'
+              }
+            ]
+          })}
+        />
+      )
+    )
+    const chip = container.querySelector<HTMLDivElement>('.composer-review-comment')!
+    expect(chip.textContent).toContain('App.tsx:3-4 Rename this')
+    expect(chip.title).toBe('src/App.tsx:3-4\nRename this')
+    await act(async () =>
+      chip.querySelector<HTMLButtonElement>('[aria-label="Remove comment on App.tsx:3-4"]')!.click()
+    )
+    expect(onRemoveContextAttachment).toHaveBeenCalledWith('review-1')
+    await act(async () => root.unmount())
+    container.remove()
+  })
+})

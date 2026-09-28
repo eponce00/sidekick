@@ -40,6 +40,7 @@ import { parseMessageImages } from '../../shared/messageImages'
 import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
+  formatReviewCommentAttachments,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
 import { normalizeToolResultMedia, type ToolResultMediaAttachment } from '../../shared/agentRuntime'
@@ -81,6 +82,7 @@ export function providerMessage(row: MessageRow): ProviderChatMessage {
   const content = [
     formatPastedTextAttachments(attachments),
     row.content.trim(),
+    formatReviewCommentAttachments(attachments),
     formatMessageContextAttachments(attachments)
   ]
     .filter(Boolean)

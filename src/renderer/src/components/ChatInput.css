@@ -50,6 +50,15 @@
   background: var(--surface-hover);
 }
 
+.composer-review-comment {
+  max-width: 320px;
+}
+
+.composer-review-comment > span > strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
 .features-menu.features-menu-organized {
   right: -1px;
   bottom: calc(100% + 10px);
