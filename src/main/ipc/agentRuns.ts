@@ -427,3 +427,7 @@ export async function shutdownAgentRuntime(): Promise<void> {
 export function hasActiveAgentWork(): boolean {
   return coordinator?.hasActiveRuns() ?? false
 }
+
+export function activeAgentConversationCount(): number {
+  return coordinator?.activeThreadIds().length ?? 0
+}

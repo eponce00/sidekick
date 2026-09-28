@@ -482,6 +482,10 @@ export class AgentRunKernel {
     return this.active.size > 0
   }
 
+  activeRunIds(): string[] {
+    return [...this.active.keys()]
+  }
+
   async stopAll(): Promise<void> {
     const activeRuns = [...this.active.values()]
     for (const { controller } of activeRuns) controller.abort()
