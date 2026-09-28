@@ -16,6 +16,7 @@ research inputs, not runtime dependencies or vendored source.
 | Hermes Agent | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)       | skills, memory, tool orchestration                         |
 | Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |
 | Grok Build   | [xai-org/grok-build](https://github.com/xai-org/grok-build)                     | planning transitions and review interaction                |
+| T3 Code      | [pingdotgg/t3code](https://github.com/pingdotgg/t3code)                         | multi-agent control surface, Electron desktop, remote UX   |
 
 The catalog must contain only public sources with licenses compatible with the intended use. A
 useful idea does not by itself authorize copying its implementation.
