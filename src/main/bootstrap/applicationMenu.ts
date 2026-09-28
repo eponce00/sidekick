@@ -1,5 +1,6 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
 import type { AppCommand } from '../../shared/appCommands'
+import { shortcutAccelerator } from '../../shared/keyboardShortcuts'
 
 export type ApplicationMenuActions = Record<AppCommand | 'check-for-updates', () => void>
 
@@ -11,15 +12,23 @@ export function applicationMenuTemplate(
   const fileMenu: MenuItemConstructorOptions = {
     label: 'File',
     submenu: [
-      { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: actions['new-chat'] },
-      { label: 'Open Project…', accelerator: 'CmdOrCtrl+O', click: actions['open-project'] },
+      {
+        label: 'New Chat',
+        accelerator: shortcutAccelerator('new-chat'),
+        click: actions['new-chat']
+      },
+      {
+        label: 'Open Project…',
+        accelerator: shortcutAccelerator('open-project'),
+        click: actions['open-project']
+      },
       ...(platform === 'darwin'
         ? [{ type: 'separator' as const }, { role: 'close' as const }]
         : [
             { type: 'separator' as const },
             {
               label: 'Settings…',
-              accelerator: 'Ctrl+,',
+              accelerator: shortcutAccelerator('open-settings', 'windows'),
               click: actions['open-settings']
             },
             { type: 'separator' as const },
@@ -67,7 +76,11 @@ export function applicationMenuTemplate(
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        { label: 'Settings…', accelerator: 'Command+,', click: actions['open-settings'] },
+        {
+          label: 'Settings…',
+          accelerator: shortcutAccelerator('open-settings', 'macos'),
+          click: actions['open-settings']
+        },
         { type: 'separator' },
         { label: 'Check for Updates…', click: actions['check-for-updates'] },
         { type: 'separator' },

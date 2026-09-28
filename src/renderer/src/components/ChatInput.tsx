@@ -393,12 +393,6 @@ export function ChatInput({
   const handleComposerKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     plainPasteRef.current =
       (event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'v'
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
-      event.preventDefault()
-      onInputChange('/')
-      setCommandIndex(0)
-      return
-    }
     if (commandMatch && visibleCommands.length) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()

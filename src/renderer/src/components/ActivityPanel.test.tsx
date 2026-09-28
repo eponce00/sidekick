@@ -145,4 +145,37 @@ describe('ActivityPanel inspector', () => {
     expect(toggle).toHaveBeenCalledTimes(1)
     expect(window.localStorage.getItem('activityPanelTab')).toBe('browser')
   })
+
+  it('shows a requested tab and reports the tab it shows', async () => {
+    const onActiveTabChange = vi.fn()
+    const render = (tabRequest: { tab: 'browser' | 'files'; at: number } | null) =>
+      act(async () =>
+        root.render(
+          <ActivityPanel
+            isPinned
+            onTogglePin={vi.fn()}
+            conversationId="chat-1"
+            focusChainTodos={[]}
+            workspaceFolder={null}
+            tabRequest={tabRequest}
+            onActiveTabChange={onActiveTabChange}
+          />
+        )
+      )
+    await render(null)
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('files')
+
+    await render({ tab: 'browser', at: 1 })
+    const browserTab = container.querySelector(
+      'button[aria-label="Open browser activity"]'
+    ) as HTMLButtonElement
+    expect(browserTab.classList.contains('active')).toBe(true)
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('browser')
+
+    // The same request again changes nothing; the user's own choice stands.
+    const filesTab = container.querySelector('.activity-tab-button') as HTMLButtonElement
+    await act(async () => filesTab.click())
+    await render({ tab: 'browser', at: 1 })
+    expect(browserTab.classList.contains('active')).toBe(false)
+  })
 })

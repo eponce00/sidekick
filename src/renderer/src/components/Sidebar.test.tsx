@@ -261,4 +261,70 @@ describe('Sidebar chat section', () => {
     ])
     expect(indicators[0].getAttribute('aria-label')).toBe('Waiting for your approval or answer')
   })
+
+  it('reports the conversations in the order it lists them, skipping collapsed projects', async () => {
+    const chat = (id: string, projectId: string | null) => ({
+      id,
+      title: id,
+      created_at: 1,
+      updated_at: 1,
+      project_id: projectId,
+      sidebar_order: 0,
+      project_context_version: 0,
+      home_workspace_root: null,
+      home_project_name: null
+    })
+    const onOrder = vi.fn()
+    vi.mocked(window.localStorage.getItem).mockImplementation((key: string) =>
+      key === 'collapsedProjectIds' ? JSON.stringify(['hidden']) : null
+    )
+    await act(async () => {
+      root.render(
+        <Sidebar
+          conversations={[
+            chat('loose', null),
+            chat('in-hidden', 'hidden'),
+            chat('in-open', 'open')
+          ]}
+          projects={['open', 'hidden'].map((id) => ({
+            id,
+            name: id,
+            folder_path: `/${id}`,
+            is_pinned: 0,
+            created_at: 1,
+            updated_at: 1
+          }))}
+          groups={[]}
+          currentConversationId={null}
+          currentGroupId={null}
+          currentGroupSessionId={null}
+          isCollapsed={false}
+          busyConversationIds={new Set()}
+          unreadConversationIds={new Set()}
+          onSelectConversation={vi.fn()}
+          onSelectGroup={vi.fn()}
+          onSelectGroupSession={vi.fn()}
+          onToggleCollapsed={vi.fn()}
+          onNewConversation={vi.fn()}
+          onNewGroup={vi.fn()}
+          onOpenProject={vi.fn()}
+          onDeleteConversation={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          onDeleteAllConversations={vi.fn()}
+          onForkConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onRenameGroup={vi.fn()}
+          onRenameGroupSession={vi.fn()}
+          onMoveConversation={vi.fn()}
+          onRenameProject={vi.fn()}
+          onToggleConversationPin={vi.fn()}
+          onToggleProjectPin={vi.fn()}
+          onRemoveProject={vi.fn()}
+          onVisibleConversationOrderChange={onOrder}
+        />
+      )
+    })
+
+    expect(onOrder).toHaveBeenLastCalledWith(['in-open', 'loose'])
+  })
 })

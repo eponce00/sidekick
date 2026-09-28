@@ -22,6 +22,7 @@ import type { Conversation, Project } from '../types/app.types'
 import type { MoveConversationInput } from '../../../shared/projects'
 import type { CollaborationGroup } from '../../../shared/collaboration'
 import { groupAgentSessionsByProject } from '../utils/projectAgentSessions'
+import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
 import {
   CONVERSATION_RUN_STATUS_LABELS,
   conversationRunStatus
@@ -60,6 +61,8 @@ interface SidebarProps {
   onToggleConversationPin: (id: string, pinned: boolean) => void
   onToggleProjectPin: (id: string, pinned: boolean) => void
   onRemoveProject: (id: string) => void
+  /** The conversations as listed, top to bottom, for keyboard navigation. */
+  onVisibleConversationOrderChange?: (conversationIds: string[]) => void
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
@@ -93,7 +96,8 @@ function Sidebar({
   onRenameProject,
   onToggleConversationPin,
   onToggleProjectPin,
-  onRemoveProject
+  onRemoveProject,
+  onVisibleConversationOrderChange
 }: SidebarProps): React.JSX.Element {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<string | null>(null)
@@ -192,6 +196,22 @@ function Sidebar({
   )
 
   const activeGroups = useMemo(() => groups.filter(({ status }) => status === 'active'), [groups])
+
+  const searching = !isCollapsed && query.trim().length > 0
+  const visibleConversationOrder = useMemo(
+    () =>
+      searching
+        ? searchResults.map(({ id }) => id)
+        : sidebarConversationOrder(
+            conversations,
+            projects,
+            isCollapsed ? undefined : collapsedProjectIds
+          ),
+    [collapsedProjectIds, conversations, isCollapsed, projects, searchResults, searching]
+  )
+  useEffect(() => {
+    onVisibleConversationOrderChange?.(visibleConversationOrder)
+  }, [onVisibleConversationOrderChange, visibleConversationOrder])
 
   const agentSessionsByProject = useMemo(() => groupAgentSessionsByProject(groups), [groups])
 
