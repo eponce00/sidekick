@@ -256,6 +256,8 @@ export const AGENT_RUN_EVENT_TYPES = [
   'plan.mode_changed',
   'run.retrying',
   'run.steered',
+  // On the parent run, when a spawn_subagent call starts its child run.
+  'subagent.started',
   'run.completed',
   'run.finalized'
 ] as const

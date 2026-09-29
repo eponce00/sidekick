@@ -6,10 +6,6 @@ import {
   AlignLeft,
   ChevronDown,
   ChevronRight,
-  Search,
-  Globe,
-  Terminal,
-  MessageSquare,
   Copy,
   Pencil,
   RotateCcw,
@@ -49,11 +45,10 @@ import {
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
-import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
+import type { Message, MessageEditGeometry } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
-import type { SubAgentStep } from '../types/subagent.types'
 import type { WorkspaceVerificationSummary } from '../../../shared/verification'
-import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
+import { SubAgentCard } from './SubAgentCard'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -342,169 +337,6 @@ function VerificationSegment({
         </div>
       </details>
       {note && <p className="verification-note">{note}</p>}
-    </div>
-  )
-}
-
-/** Renders the sub-agent mini-chat showing step-by-step execution */
-function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  // Auto-scroll to bottom when new steps arrive
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [steps.length])
-
-  return (
-    <div className="sa-steps" ref={scrollRef}>
-      {steps.map((step, i) => (
-        <div key={i} className={`sa-step sa-step--${step.type}`}>
-          <span className={`sa-step__icon ${step.status ? `sa-step__icon--${step.status}` : ''}`}>
-            {step.type === 'tool_call' ? (
-              step.name === 'web_search' ? (
-                <Search size={11} />
-              ) : step.name === 'web_fetch' ? (
-                <Globe size={11} />
-              ) : step.name === 'shell' ? (
-                <Terminal size={11} />
-              ) : (
-                <Loader2 size={11} />
-              )
-            ) : step.type === 'tool_result' ? (
-              step.status === 'error' ? (
-                <X size={11} />
-              ) : (
-                <Check size={11} />
-              )
-            ) : step.type === 'response' ? (
-              <MessageSquare size={11} />
-            ) : null}
-          </span>
-          <span className="sa-step__body">{step.content}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/** Renders sub-agent progress as a compact tool row with optional inline detail. */
-function subAgentStepsFromProjection(
-  projection: ReturnType<typeof projectAgentRunEvents>
-): SubAgentStep[] {
-  const steps = (
-    segment: ReturnType<typeof projectAgentRunEvents>['segments'][number]
-  ): SubAgentStep[] => {
-    if (segment.type === 'verification') {
-      const folded = (segment.steps ?? []).flatMap(steps)
-      return segment.content ? [...folded, { type: 'response', content: segment.content }] : folded
-    }
-    if (segment.type === 'thinking') return [{ type: 'thinking', content: segment.content }]
-    if (segment.type === 'text') return [{ type: 'response', content: segment.content }]
-    if (segment.type === 'tool') {
-      return [
-        {
-          type:
-            segment.tool.status === 'running' || segment.tool.status === 'pending'
-              ? 'tool_call'
-              : 'tool_result',
-          name: segment.tool.name,
-          content: segment.tool.output || segment.tool.error || segment.tool.title,
-          status:
-            segment.tool.status === 'error' || segment.tool.status === 'denied'
-              ? 'error'
-              : segment.tool.status === 'success' || segment.tool.status === 'partial'
-                ? 'success'
-                : 'running'
-        }
-      ]
-    }
-    return []
-  }
-  return projection.segments.flatMap(steps)
-}
-
-function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(tool.status === 'running')
-  const data =
-    tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
-  const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
-  const [childSteps, setChildSteps] = useState<SubAgentStep[] | null>(null)
-  const [childError, setChildError] = useState('')
-  const requestedChildRuns = useRef(new Set<string>())
-  const embeddedSteps =
-    tool.subAgentSteps && tool.subAgentSteps.length > 0 ? tool.subAgentSteps : null
-  const displayedSteps = embeddedSteps ?? childSteps
-  const hasSteps = Boolean(displayedSteps?.length)
-  const isRunning = tool.status === 'running'
-  const childLoading = Boolean(
-    expanded && childRunId && !embeddedSteps && !childSteps && !childError
-  )
-  const canExpand = hasSteps || isRunning || Boolean(childRunId)
-
-  // Auto-expand while running, auto-collapse when done (if user hasn't manually toggled)
-  const wasRunning = useRef(false)
-  useEffect(() => {
-    if (isRunning && !wasRunning.current) {
-      wasRunning.current = true
-      const timer = window.setTimeout(() => setExpanded(true), 0)
-      return () => window.clearTimeout(timer)
-    }
-    return undefined
-  }, [isRunning])
-
-  useEffect(() => {
-    if (
-      !expanded ||
-      !childRunId ||
-      embeddedSteps ||
-      childSteps ||
-      requestedChildRuns.current.has(childRunId)
-    )
-      return
-    requestedChildRuns.current.add(childRunId)
-    void window.api.agentRuns
-      .events(childRunId, 0)
-      .then((result) => {
-        setChildSteps(subAgentStepsFromProjection(projectAgentRunEvents(result.events)))
-        setChildError('')
-      })
-      .catch((error: unknown) => {
-        setChildError(error instanceof Error ? error.message : 'Could not load child run')
-      })
-  }, [childRunId, childSteps, embeddedSteps, expanded])
-
-  return (
-    <div className={`sa-inline sa-inline-${tool.status}`}>
-      <ToolCallRow
-        tool={tool}
-        onSelect={canExpand ? () => setExpanded(!expanded) : undefined}
-        expandable={canExpand}
-        expanded={expanded}
-      />
-
-      {!expanded && tool.output && <div className="sa-inline__summary">{tool.output}</div>}
-
-      {expanded && (
-        <div className="sa-inline__body">
-          {hasSteps ? (
-            <SubAgentMiniChat steps={displayedSteps!} />
-          ) : isRunning || childLoading ? (
-            <div className="sa-inline__waiting">
-              <Loader2 size={12} className="icon-spin" />
-              <span>{childLoading ? 'Loading child run…' : 'Working…'}</span>
-            </div>
-          ) : null}
-          {childRunId && (
-            <div className="sa-inline__lineage">
-              <GitBranch size={11} /> Child run <code>{childRunId.slice(0, 8)}</code>
-            </div>
-          )}
-          {childError && <div className="sa-inline__error">{childError}</div>}
-          {tool.error && <div className="sa-inline__error">{tool.error}</div>}
-        </div>
-      )}
     </div>
   )
 }

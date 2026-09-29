@@ -640,6 +640,60 @@ describe('AgentRunKernel', () => {
     ])
   })
 
+  describe('tool budget', () => {
+    const waitCall = (id: string): Partial<AgentKernelModelTurn> => ({
+      toolCalls: [{ id, function: { name: 'wait', arguments: { seconds: 1 } } }],
+      usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+    })
+
+    it('has a sub-agent past its budget report back instead of asking a question no one sees', async () => {
+      // The parent run must exist for the child's lineage.
+      await new AgentRunKernel(store, undefined, sampledTurn({ content: 'Ready' })).start({
+        ...input(),
+        id: 'parent-1'
+      })
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
+      const last = sampledTurn(waitCall('wait-3'))
+      const sampler = sequence(
+        sampledTurn({ content: 'Looking. ', ...waitCall('wait-1') }),
+        sampledTurn(waitCall('wait-2')),
+        last
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const result = await kernel.start({
+        ...input(router),
+        id: 'child-1',
+        parentRunId: 'parent-1',
+        maxToolRounds: 1
+      })
+
+      expect(result.phase).toBe('completed')
+      expect(router.execute).toHaveBeenCalledTimes(1)
+      expect(store.listPendingInteractions('child-1')).toEqual([])
+      expect(store.listEvents('child-1').some(({ type }) => type === 'question.requested')).toBe(
+        false
+      )
+      const refused = vi
+        .mocked(last)
+        .mock.calls[0][0].messages.find(
+          (message) => message.role === 'tool' && message.tool_call_id === 'wait-2'
+        )
+      expect(refused?.content).toContain('used its tool budget')
+      expect(refused?.content).toContain('Reply now with what you found')
+    })
+
+    it('still asks the user before a top-level run goes past its budget', async () => {
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
+      const sampler = sequence(sampledTurn(waitCall('wait-1')), sampledTurn(waitCall('wait-2')))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const running = kernel.start({ ...input(router), maxToolRounds: 1 })
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      expect(store.listPendingInteractions('run-1')[0]).toMatchObject({ kind: 'tool_limit' })
+      kernel.stop('run-1')
+      expect((await running).phase).toBe('cancelled')
+    })
+  })
+
   it('owns the complete model-tool-continuation loop', async () => {
     const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
     const sampler = sequence(

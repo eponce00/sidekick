@@ -184,6 +184,7 @@ export function registerSkillToolHandlers(
       typeof args.context === 'string' && args.context ? args.context : undefined,
       context
     )
-    return toolExecutionSucceeded({ title, data })
+    // The card keeps the title it showed while the sub-agent worked.
+    return toolExecutionSucceeded({ title: 'Delegate task', data })
   })
 }

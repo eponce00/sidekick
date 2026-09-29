@@ -1067,6 +1067,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     let separateNextTurn = false
     // Tool rounds the model attempted after its goal was already complete.
     let toolRoundsAfterGoalComplete = 0
+    // Tool rounds a sub-agent attempted after its tool budget was spent.
+    let toolRoundsAfterBudgetSpent = 0
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1574,7 +1576,13 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
 
         toolRounds++
-        if (toolRounds > Math.max(1, input.maxToolRounds)) {
+        // A sub-agent never asks to go on: nobody sees its questions while the
+        // agent that delegated to it waits, so asking deadlocked both. Past its
+        // budget its tools are refused and it reports what it has.
+        const toolBudgetSpent =
+          Boolean(input.parentRunId) && toolRounds > Math.max(1, input.maxToolRounds)
+        if (toolBudgetSpent) toolRoundsAfterBudgetSpent++
+        else if (toolRounds > Math.max(1, input.maxToolRounds)) {
           const decision = await this.suspendForInteraction(
             input.id,
             'tool_limit',
@@ -1644,6 +1652,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           if (
             !truncatedToolBatch &&
             !goalAlreadyComplete &&
+            !toolBudgetSpent &&
             entry?.concurrency === 'parallel' &&
             !preExecuted.has(call.id)
           ) {
@@ -1733,6 +1742,17 @@ The user approved this exact plan revision. Act capabilities are now available a
               recoveryAction: 'stop',
               recovery:
                 'Do not redo or extend the work and do not call tools. Reply to the user with one brief closing message.',
+              startedAt
+            })
+          } else if (toolBudgetSpent) {
+            result = toolExecutionFailed({
+              title,
+              code: 'conflict',
+              message: 'This task has used its tool budget, so this tool was not run.',
+              retryable: false,
+              recoveryAction: 'stop',
+              recovery:
+                'Do not call tools. Reply now with what you found, and say what is left unchecked, for the agent that delegated this task.',
               startedAt
             })
           } else if (callStopReason) {
@@ -1902,9 +1922,9 @@ The user approved this exact plan revision. Act capabilities are now available a
           if (stopAfterDenial) this.stop(input.id)
         }
         if (callStopReason) throw new AgentToolLoopError(callStopReason)
-        if (toolRoundsAfterGoalComplete >= 2) {
-          // Refused once and asked for tools again: the goal's outcome is
-          // already in the transcript, so end on it rather than loop.
+        if (toolRoundsAfterGoalComplete >= 2 || toolRoundsAfterBudgetSpent >= 2) {
+          // Refused once and asked for tools again: the outcome is already in
+          // the transcript, so end on it rather than loop.
           this.transition(input.id, 'completed')
           return {
             runId: input.id,

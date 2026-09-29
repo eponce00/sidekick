@@ -277,6 +277,15 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         tool.startedAt ??= event.timestamp
       }
     }
+    // A running sub-agent is followed live by its run id; the result carries it again.
+    if (event.type === 'subagent.started') {
+      const tool = tools.get(String(event.payload.toolCallId || ''))
+      const childRunId = event.payload.childRunId
+      if (tool && typeof childRunId === 'string') {
+        const data = tool.data && typeof tool.data === 'object' ? tool.data : {}
+        tool.data = { ...data, childRunId }
+      }
+    }
     if (event.type === 'tool.output.delta') {
       const tool = tools.get(toolCallId(event))
       if (tool) {

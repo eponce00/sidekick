@@ -690,6 +690,7 @@ export class AgentRuntimeCoordinator {
     context: string | undefined,
     parentContext: {
       runId: string
+      toolCallId?: string
       conversationId?: string
       workspaceRoot?: string
       signal: AbortSignal
@@ -697,6 +698,7 @@ export class AgentRuntimeCoordinator {
   ): Promise<unknown> {
     const parent = this.activeConversations.get(parentContext.runId)
     if (!parent) throw new Error('Parent run is no longer active')
+    parentContext.signal.throwIfAborted()
     const id = randomUUID()
     const parentInput = parent.prepared.kernelInput
     const target = parentInput.request.target
@@ -718,7 +720,13 @@ export class AgentRuntimeCoordinator {
       }
     ]
     const contextLength = target.contextLength ?? 32_768
-    const result = await this.kernel.start({
+    // Stopping the parent stops the child, and with it any question the child
+    // is waiting on. Without this a stopped chat left its sub-agent running.
+    const stopChild = (): void => {
+      this.stop(id)
+    }
+    parentContext.signal.addEventListener('abort', stopChild, { once: true })
+    const running = this.kernel.start({
       id,
       threadId: parentContext.conversationId || parentContext.runId,
       parentRunId: parentContext.runId,
@@ -741,7 +749,29 @@ export class AgentRuntimeCoordinator {
         enabled: true
       })
     })
-    clearWorkspaceInstructionScope(id)
+    // The chat learns which run its sub-agent is as soon as it starts, so it
+    // can follow the work live rather than only see the result.
+    if (parentContext.toolCallId) {
+      try {
+        this.publishEvent(
+          this.store.appendEvent({
+            id: `${parentContext.runId}:subagent:${id}`,
+            runId: parentContext.runId,
+            type: 'subagent.started',
+            payload: { toolCallId: parentContext.toolCallId, childRunId: id }
+          })
+        )
+      } catch (error) {
+        console.warn('[AgentRuntime] Could not record a sub-agent start:', error)
+      }
+    }
+    let result: Awaited<typeof running>
+    try {
+      result = await running
+    } finally {
+      parentContext.signal.removeEventListener('abort', stopChild)
+      clearWorkspaceInstructionScope(id)
+    }
     return {
       childRunId: id,
       status: result.phase,

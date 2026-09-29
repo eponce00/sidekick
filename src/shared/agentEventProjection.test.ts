@@ -483,6 +483,20 @@ Keep building the app.
     })
   })
 
+  it('knows a running sub-agent by its run as soon as it starts', () => {
+    const running = projectAgentRunEvents([
+      event(1, 'tool.pending', { toolCallId: 'spawn-1', name: 'spawn_subagent' }),
+      event(2, 'tool.running', {
+        toolCallId: 'spawn-1',
+        name: 'spawn_subagent',
+        title: 'Delegate'
+      }),
+      event(3, 'subagent.started', { toolCallId: 'spawn-1', childRunId: 'child-1' })
+    ])
+    const tool = running.segments.find((segment) => segment.type === 'tool')
+    expect(tool).toMatchObject({ tool: { status: 'running', data: { childRunId: 'child-1' } } })
+  })
+
   it('keeps permission interactions durable through resolution', () => {
     const projection = projectAgentRunEvents([
       event(1, 'permission.requested', {

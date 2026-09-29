@@ -12,6 +12,20 @@
   counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
   front. A failed reply is announced the same way.
 
+## Sub-agents
+
+When the agent delegates part of the work, the reply shows a **Delegate task** card that follows
+the sub-agent live: whether it is working or waiting on you, for how long, how many tools it has
+used, and what it is doing now. It says so when the sub-agent has produced nothing for a few
+minutes. Open the card to see its steps as they happen.
+
+- **Its questions and approvals** appear in the card, and count as the conversation waiting on
+  you.
+- **Stop** in the card stops only the sub-agent; the reply carries on with what it found. Stopping
+  the reply also stops its sub-agents.
+- **Its tool budget** is the same as the reply's. When it runs out, the sub-agent reports what it
+  found and what it left unchecked, instead of asking to continue; the agent can delegate again.
+
 ## The message box
 
 - **Drafts:** what you have not sent stays with its conversation, including attachments, when you
