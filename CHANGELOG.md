@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.8.0 — 2026-09-27
+
+- Talk with SideKick. **Ctrl+Space** (**⌥Space** on macOS) or the new microphone turns voice on:
+  what you say appears in the message box as you speak, **Enter** sends, the reply's answer is
+  read aloud, and SideKick listens again. You decide when a message is done, so nothing cuts you
+  off mid-thought. **Esc** skips a reading; the shortcut turns voice off.
+- Read any message aloud, yours or SideKick's, from the speaker beside **Copy**. Replies are read
+  from their answer only, never the work before it or reasoning written inline.
+- Voice runs entirely on this device. Dictation uses NVIDIA Parakeet TDT 0.6B v3 and detects
+  English, Spanish, and 23 other European languages; read-aloud uses Supertone Supertonic 3, with
+  ten voices and 31 languages. The models (about 820 MB) download quietly in the background after
+  startup, pinned to exact hashes, and resume if interrupted.
+- Choose the microphone, speaker, voice, and read-aloud language in **Settings → General → Voice**,
+  with a microphone level test and a spoken sample. Defaults follow the system and detect the
+  language. SideKick warns when the chosen microphone sends only silence.
+- Keep a reply's answer last when SideKick checks its work after answering. The checks and their
+  one-line result fold into the verification line under the answer, instead of pushing the answer
+  out of sight behind an "all good". SideKick is also asked to verify before it answers.
+- Show a long answer from its start when it finishes, or when opened from its notification.
+- Land browser clicks on their target. With the browser panel shown inside the app, every click was
+  about 10% off, so small buttons were missed.
+- Show the agent's cursor over the live browser page again.
+- Attach long pastes (2,000 characters or 30 lines) to the message as a card instead of filling
+  the composer. **Ctrl+Shift+V** pastes inline.
+- Show the installed version at the foot of Settings.
+- Steer a reply while it is being written. A steered message now joins the running reply before its
+  next step instead of stopping it and starting over, so tool calls in progress are not cut off.
+- Answer an approval with **Allow once**, **Allow for this chat**, **Deny**, or **Deny and stop**. A
+  chat-wide grant covers only the exact command, files, or arguments it named, for this
+  conversation, until SideKick restarts.
+- **Continue** a reply that was interrupted when SideKick closed. It picks up from the work already
+  done and checks any step whose outcome is unknown before repeating it.
+- See which conversations are waiting on you. An approval or question marks the conversation in the
+  sidebar, counts on the taskbar or dock icon, and sends a notification when SideKick is not in
+  front. A failed reply is announced the same way.
+- Ask before quitting while conversations are still working.
+- Keep an unsent message, and its attachments, with its conversation when switching chats or
+  restarting.
+- Bring back earlier messages with **↑** in the message box, and return to the draft with **↓**.
+- Comment on changed lines in a reply's file changes. Each comment is attached to the next message
+  with its file, lines, and the quoted change, for the agent to act on.
+- Open the command palette with **Ctrl+K** (**⌘K**) to jump to conversations, projects, and
+  actions. **Ctrl+1…9** and **Ctrl+Shift+[ / ]** move between conversations. The message box's
+  commands now open by typing **/**.
+- Commit `AGENTS.md` as the shared instructions for contributors, human or AI.
+
 ## 0.7.8 — 2026-09-24
 
 - Keep typing fast in long conversations. Each keystroke used to re-render every message, rebuild
