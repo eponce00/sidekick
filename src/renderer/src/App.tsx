@@ -1330,6 +1330,7 @@ function App(): React.JSX.Element {
           currentGroupId={currentGroupId}
           currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
+          platform={platform}
           busyConversationIds={busyConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
@@ -1342,6 +1343,7 @@ function App(): React.JSX.Element {
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
           onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onDeleteConversation={handleDeleteConversation}
           onDeleteGroup={(id) => void handleDeleteGroup(id)}
           onDeleteAllConversations={handleDeleteAllConversations}

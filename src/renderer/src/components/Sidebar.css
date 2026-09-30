@@ -45,7 +45,7 @@
   gap: 2px;
 }
 
-.sidebar-new-menu-wrap {
+.sidebar-menu-wrap {
   position: relative;
 }
 
@@ -75,18 +75,17 @@
   opacity: 0.42;
 }
 
-.sidebar-new-btn:hover,
-.sidebar-new-btn.active {
-  color: var(--accent);
-  background: var(--accent-subtle);
+.sidebar-menu-btn.active {
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
-.sidebar-new-menu {
+.sidebar-menu {
   position: absolute;
   z-index: 80;
   top: calc(100% + 6px);
   right: 0;
-  width: 178px;
+  width: 232px;
   padding: 5px;
   border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
@@ -94,17 +93,17 @@
   box-shadow: var(--shadow-panel);
 }
 
-.sidebar.collapsed .sidebar-new-menu {
+.sidebar.collapsed .sidebar-menu {
   top: 0;
   right: auto;
   left: calc(100% + 7px);
 }
 
-.sidebar-new-menu > button {
+.sidebar-menu > button {
   width: 100%;
   min-height: 34px;
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 5px 7px;
@@ -116,16 +115,16 @@
   text-align: left;
 }
 
-.sidebar-new-menu > button:hover {
+.sidebar-menu > button:hover {
   color: var(--text-primary);
   background: var(--surface-3);
 }
 
-.sidebar-new-menu > button > svg {
+.sidebar-menu > button > svg {
   justify-self: center;
 }
 
-.sidebar-new-menu > button span {
+.sidebar-menu > button span {
   min-width: 0;
   display: block;
   overflow: hidden;
@@ -135,14 +134,21 @@
   white-space: nowrap;
 }
 
-.sidebar-new-menu > button.danger {
+.sidebar-menu > button kbd {
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-menu > button.danger {
   margin-top: 4px;
   border-top: 1px solid var(--panel-border);
   border-radius: 0 0 var(--radius-sm) var(--radius-sm);
   color: var(--text-muted);
 }
 
-.sidebar-new-menu > button.danger:hover {
+.sidebar-menu > button.danger:hover {
   color: var(--color-error);
   background: color-mix(in srgb, var(--color-error) 9%, transparent);
 }

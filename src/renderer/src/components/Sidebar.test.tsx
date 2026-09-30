@@ -3,6 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Project } from '../types/app.types'
 import Sidebar from './Sidebar'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -52,6 +53,8 @@ describe('Sidebar chat section', () => {
           onNewConversation={onNewConversation}
           onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
+          onOpenCommandPalette={vi.fn()}
+          platform="windows"
           onDeleteConversation={vi.fn()}
           onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
@@ -75,6 +78,76 @@ describe('Sidebar chat section', () => {
     await act(async () => button.click())
     expect(onNewConversation).toHaveBeenCalledOnce()
     expect(onNewConversation).toHaveBeenCalledWith(null)
+  })
+
+  it('creates from each section heading, and keeps the rest in the header menu', async () => {
+    const onNewGroup = vi.fn()
+    const onOpenProject = vi.fn()
+    const onOpenCommandPalette = vi.fn()
+    const project = (id: string, name: string): Project => ({
+      id,
+      name,
+      folder_path: `C:\\${name}`,
+      is_pinned: 0,
+      created_at: 1,
+      updated_at: 1
+    })
+    await act(async () => {
+      root.render(
+        <Sidebar
+          conversations={[]}
+          projects={[project('p1', 'alpha'), project('p2', 'beta')]}
+          groups={[]}
+          currentConversationId={null}
+          currentGroupId={null}
+          currentGroupSessionId={null}
+          isCollapsed={false}
+          busyConversationIds={new Set()}
+          unreadConversationIds={new Set()}
+          onSelectConversation={vi.fn()}
+          onSelectGroup={vi.fn()}
+          onSelectGroupSession={vi.fn()}
+          onToggleCollapsed={vi.fn()}
+          onNewConversation={vi.fn()}
+          onNewGroup={onNewGroup}
+          onOpenProject={onOpenProject}
+          onOpenCommandPalette={onOpenCommandPalette}
+          platform="windows"
+          onDeleteConversation={vi.fn()}
+          onDeleteGroup={vi.fn()}
+          onDeleteAllConversations={vi.fn()}
+          onForkConversation={vi.fn()}
+          onRenameConversation={vi.fn()}
+          onRenameGroup={vi.fn()}
+          onRenameGroupSession={vi.fn()}
+          onMoveConversation={vi.fn()}
+          onRenameProject={vi.fn()}
+          onToggleConversationPin={vi.fn()}
+          onToggleProjectPin={vi.fn()}
+          onRemoveProject={vi.fn()}
+        />
+      )
+    })
+    const click = async (selector: string): Promise<void> => {
+      const element = container.querySelector<HTMLButtonElement>(selector)
+      expect(element, selector).not.toBeNull()
+      await act(async () => element!.click())
+    }
+
+    await click('button[aria-label="New group chat"]')
+    expect(onNewGroup).toHaveBeenCalledOnce()
+    await click('button[aria-label="Open a folder as a project"]')
+    expect(onOpenProject).toHaveBeenCalledOnce()
+
+    await click('button[aria-label="More"]')
+    const items = [...container.querySelectorAll('.sidebar-menu [role="menuitem"]')]
+    expect(items.map((item) => item.textContent)).toEqual([
+      'New chatCtrl+N',
+      'Command paletteCtrl+K',
+      'Collapse all projects'
+    ])
+    await act(async () => (items[1] as HTMLButtonElement).click())
+    expect(onOpenCommandPalette).toHaveBeenCalledOnce()
   })
 
   it('keeps chat deletion beside the overflow menu', async () => {
@@ -110,6 +183,8 @@ describe('Sidebar chat section', () => {
           onNewConversation={vi.fn()}
           onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
+          onOpenCommandPalette={vi.fn()}
+          platform="windows"
           onDeleteConversation={onDeleteConversation}
           onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
@@ -182,6 +257,8 @@ describe('Sidebar chat section', () => {
           onNewConversation={vi.fn()}
           onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
+          onOpenCommandPalette={vi.fn()}
+          platform="windows"
           onDeleteConversation={vi.fn()}
           onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
@@ -238,6 +315,8 @@ describe('Sidebar chat section', () => {
           onNewConversation={vi.fn()}
           onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
+          onOpenCommandPalette={vi.fn()}
+          platform="windows"
           onDeleteConversation={vi.fn()}
           onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
@@ -308,6 +387,8 @@ describe('Sidebar chat section', () => {
           onNewConversation={vi.fn()}
           onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
+          onOpenCommandPalette={vi.fn()}
+          platform="windows"
           onDeleteConversation={vi.fn()}
           onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}

@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Command,
   Folder,
   FolderInput,
   FolderOpen,
@@ -13,6 +16,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  Plus,
   Search,
   SquarePen,
   Trash2,
@@ -27,6 +31,8 @@ import {
   CONVERSATION_RUN_STATUS_LABELS,
   conversationRunStatus
 } from '../utils/conversationAttention'
+import { shortcutLabel } from '../../../shared/keyboardShortcuts'
+import type { DesktopPlatform } from '../../../shared/platform'
 import ConfirmDialog from './ConfirmDialog'
 import './Sidebar.css'
 
@@ -38,6 +44,8 @@ interface SidebarProps {
   currentGroupId: string | null
   currentGroupSessionId: string | null
   isCollapsed: boolean
+  /** For the shortcut shown beside each menu item. */
+  platform: DesktopPlatform
   busyConversationIds: ReadonlySet<string>
   unreadConversationIds: ReadonlySet<string>
   /** Conversations paused on the user's approval or answer. */
@@ -49,6 +57,7 @@ interface SidebarProps {
   onNewConversation: (projectId?: string | null) => void
   onNewGroup: () => void
   onOpenProject: () => void
+  onOpenCommandPalette: () => void
   onDeleteConversation: (id: string) => void
   onDeleteGroup: (id: string) => void
   onDeleteAllConversations: () => void
@@ -75,6 +84,7 @@ function Sidebar({
   currentGroupId,
   currentGroupSessionId,
   isCollapsed,
+  platform,
   busyConversationIds,
   unreadConversationIds,
   waitingConversationIds = NO_CONVERSATIONS,
@@ -85,6 +95,7 @@ function Sidebar({
   onNewConversation,
   onNewGroup,
   onOpenProject,
+  onOpenCommandPalette,
   onDeleteConversation,
   onDeleteGroup,
   onDeleteAllConversations,
@@ -103,9 +114,9 @@ function Sidebar({
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<string | null>(null)
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
-  const [isNewMenuOpen, setIsNewMenuOpen] = useState(false)
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [openActionsMenu, setOpenActionsMenu] = useState<string | null>(null)
-  const newMenuRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Conversation[]>([])
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null)
@@ -131,14 +142,16 @@ function Sidebar({
   useEffect(() => {
     window.localStorage.setItem('collapsedProjectIds', JSON.stringify([...collapsedProjectIds]))
   }, [collapsedProjectIds])
+  const allProjectsCollapsed =
+    projects.length > 0 && projects.every(({ id }) => collapsedProjectIds.has(id))
 
   useEffect(() => {
-    if (!isNewMenuOpen) return
+    if (!isMenuOpen) return
     const closeOnOutsideClick = (event: MouseEvent): void => {
-      if (!newMenuRef.current?.contains(event.target as Node)) setIsNewMenuOpen(false)
+      if (!menuRef.current?.contains(event.target as Node)) setIsMenuOpen(false)
     }
     const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setIsNewMenuOpen(false)
+      if (event.key === 'Escape') setIsMenuOpen(false)
     }
     document.addEventListener('mousedown', closeOnOutsideClick)
     window.addEventListener('keydown', closeOnEscape)
@@ -146,7 +159,7 @@ function Sidebar({
       document.removeEventListener('mousedown', closeOnOutsideClick)
       window.removeEventListener('keydown', closeOnEscape)
     }
-  }, [isNewMenuOpen])
+  }, [isMenuOpen])
 
   useEffect(() => {
     if (!openActionsMenu) return
@@ -573,52 +586,92 @@ function Sidebar({
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
-            <div className="sidebar-new-menu-wrap" ref={newMenuRef}>
+            <div className="sidebar-menu-wrap" ref={menuRef}>
               <button
-                className={`sidebar-icon-btn sidebar-new-btn ${isNewMenuOpen ? 'active' : ''}`}
-                onClick={() => setIsNewMenuOpen((current) => !current)}
-                title="Create new"
-                aria-label="Create new"
+                className={`sidebar-icon-btn sidebar-menu-btn ${isMenuOpen ? 'active' : ''}`}
+                onClick={() => setIsMenuOpen((current) => !current)}
+                title="More"
+                aria-label="More"
                 aria-haspopup="menu"
-                aria-expanded={isNewMenuOpen}
+                aria-expanded={isMenuOpen}
               >
-                <SquarePen size={16} />
+                <MoreHorizontal size={16} />
               </button>
-              {isNewMenuOpen && (
-                <div className="sidebar-new-menu" role="menu">
+              {isMenuOpen && (
+                <div className="sidebar-menu" role="menu">
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      setIsNewMenuOpen(false)
+                      setIsMenuOpen(false)
                       onNewConversation(null)
                     }}
                   >
                     <SquarePen size={15} />
                     <span>New chat</span>
+                    <kbd>{shortcutLabel('new-chat', platform)}</kbd>
                   </button>
                   <button
                     type="button"
                     role="menuitem"
                     onClick={() => {
-                      setIsNewMenuOpen(false)
-                      onNewGroup()
+                      setIsMenuOpen(false)
+                      onOpenCommandPalette()
                     }}
                   >
-                    <Users size={15} />
-                    <span>New group chat</span>
+                    <Command size={15} />
+                    <span>Command palette</span>
+                    <kbd>{shortcutLabel('command-palette', platform)}</kbd>
                   </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsNewMenuOpen(false)
-                      onOpenProject()
-                    }}
-                  >
-                    <FolderPlus size={15} />
-                    <span>Open project</span>
-                  </button>
+                  {/* Expanded, these live on their section's heading. */}
+                  {isCollapsed && (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMenuOpen(false)
+                          onNewGroup()
+                        }}
+                      >
+                        <Users size={15} />
+                        <span>New group chat</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={() => {
+                          setIsMenuOpen(false)
+                          onOpenProject()
+                        }}
+                      >
+                        <FolderPlus size={15} />
+                        <span>Open project</span>
+                        <kbd>{shortcutLabel('open-project', platform)}</kbd>
+                      </button>
+                    </>
+                  )}
+                  {projects.length > 1 && !isCollapsed && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        setCollapsedProjectIds(
+                          allProjectsCollapsed ? new Set() : new Set(projects.map(({ id }) => id))
+                        )
+                      }}
+                    >
+                      {allProjectsCollapsed ? (
+                        <ChevronsUpDown size={15} />
+                      ) : (
+                        <ChevronsDownUp size={15} />
+                      )}
+                      <span>
+                        {allProjectsCollapsed ? 'Expand all projects' : 'Collapse all projects'}
+                      </span>
+                    </button>
+                  )}
                   {conversations.length > 0 && !isCollapsed && (
                     <button
                       type="button"
@@ -631,7 +684,7 @@ function Sidebar({
                           : 'Delete all conversation history'
                       }
                       onClick={() => {
-                        setIsNewMenuOpen(false)
+                        setIsMenuOpen(false)
                         setDeleteAllConfirm(true)
                       }}
                     >
@@ -711,7 +764,18 @@ function Sidebar({
           ) : (
             <>
               <section className="sidebar-section groups-section">
-                <div className="sidebar-section-label">Groups</div>
+                <div className="sidebar-section-label sidebar-section-label-with-action">
+                  <span>Groups</span>
+                  <button
+                    type="button"
+                    className="sidebar-section-create"
+                    onClick={onNewGroup}
+                    title="New group chat"
+                    aria-label="New group chat"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
                 {activeGroups.length ? (
                   activeGroups.map((group) => (
                     <div key={group.id} className="group-sidebar-item">
@@ -830,7 +894,18 @@ function Sidebar({
               </section>
 
               <section className="sidebar-section project-section">
-                <div className="sidebar-section-label">Projects</div>
+                <div className="sidebar-section-label sidebar-section-label-with-action">
+                  <span>Projects</span>
+                  <button
+                    type="button"
+                    className="sidebar-section-create"
+                    onClick={onOpenProject}
+                    title={`Open a folder as a project (${shortcutLabel('open-project', platform)})`}
+                    aria-label="Open a folder as a project"
+                  >
+                    <Plus size={14} />
+                  </button>
+                </div>
                 {projects.length === 0 ? (
                   <button type="button" className="project-empty-action" onClick={onOpenProject}>
                     <FolderPlus size={15} />
