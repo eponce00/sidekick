@@ -31,6 +31,7 @@ import {
 import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { loadStoredSettings } from '../ipc/settings'
+import { SubAgentSlots } from './subAgentSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
@@ -99,6 +100,11 @@ export interface CollaborationKernelRunInput {
   onWorkspaceWillMutate?: () => Promise<void>
 }
 
+// A sub-agent answers one bounded question; 80 rounds let one run for an hour.
+const SUB_AGENT_TOOL_ROUNDS = 25
+// Beyond this a provider's KV cache cannot hold every sub-agent's prompt anyway.
+const MAX_SUB_AGENTS_AT_ONCE = 4
+
 function checkpointLabel(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
   return normalized.length > 72 ? `${normalized.slice(0, 71)}…` : normalized || 'Agent changes'
@@ -122,6 +128,7 @@ export class AgentRuntimeCoordinator {
   private readonly publishExternal: (event: AgentRunEvent) => void
   private readonly settings: () => ProviderSettings
   private readonly skillAssetsPath: () => string
+  private readonly subAgentSlots = new SubAgentSlots()
 
   constructor(
     private readonly db: Database.Database,
@@ -699,9 +706,65 @@ export class AgentRuntimeCoordinator {
     const parent = this.activeConversations.get(parentContext.runId)
     if (!parent) throw new Error('Parent run is no longer active')
     parentContext.signal.throwIfAborted()
+    const parentInput = parent.prepared.kernelInput
+    const target = parentInput.request.target
+    const instance = this.settings().providerInstances?.find(
+      ({ id }) => id === target.providerInstanceId
+    )
+    const release = await this.subAgentSlots.acquire(
+      target.providerInstanceId ?? `${target.providerKind}:${target.model}`,
+      Math.min(MAX_SUB_AGENTS_AT_ONCE, Math.max(1, Math.floor(instance?.subAgentsAtOnce ?? 1))),
+      parentContext.signal,
+      () =>
+        this.recordSubAgentEvent(parentContext, 'subagent.queued', 'queued', {
+          toolCallId: parentContext.toolCallId
+        })
+    )
+    try {
+      return await this.runChild(task, context, parentContext, parent)
+    } finally {
+      release()
+    }
+  }
+
+  private recordSubAgentEvent(
+    parentContext: { runId: string; toolCallId?: string },
+    type: 'subagent.queued' | 'subagent.started',
+    suffix: string,
+    payload: Record<string, unknown>
+  ): void {
+    if (!parentContext.toolCallId) return
+    try {
+      this.publishEvent(
+        this.store.appendEvent({
+          id: `${parentContext.runId}:subagent:${parentContext.toolCallId}:${suffix}`,
+          runId: parentContext.runId,
+          type,
+          payload
+        })
+      )
+    } catch (error) {
+      console.warn(`[AgentRuntime] Could not record ${type}:`, error)
+    }
+  }
+
+  private async runChild(
+    task: string,
+    context: string | undefined,
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    },
+    parent: ActiveConversationRun
+  ): Promise<unknown> {
     const id = randomUUID()
     const parentInput = parent.prepared.kernelInput
     const target = parentInput.request.target
+    // A sub-agent answers one bounded question, so it gets a smaller budget than its parent.
+    const toolRounds = Math.min(parentInput.maxToolRounds, SUB_AGENT_TOOL_ROUNDS)
     const session = await this.tools.createSession({
       permissionMode: parentInput.permissionMode,
       runId: id,
@@ -716,7 +779,7 @@ export class AgentRuntimeCoordinator {
       ...(system ? [system] : []),
       {
         role: 'user',
-        content: `${task}${context ? `\n\nRelevant context:\n${context}` : ''}\n\nComplete this bounded task and return a concise result to the parent agent.`
+        content: `${task}${context ? `\n\nRelevant context:\n${context}` : ''}\n\nComplete this bounded task and return a concise result to the parent agent. Stop as soon as you have what the task asks for; do not keep checking beyond it. You have at most ${toolRounds} rounds of tool calls.`
       }
     ]
     const contextLength = target.contextLength ?? 32_768
@@ -738,7 +801,7 @@ export class AgentRuntimeCoordinator {
       catalog: session.catalog,
       messages: childMessages,
       request: { ...parentInput.request, purpose: 'sub-agent' },
-      maxToolRounds: parentInput.maxToolRounds,
+      maxToolRounds: toolRounds,
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
       verificationController: session.verificationController,
@@ -752,20 +815,10 @@ export class AgentRuntimeCoordinator {
     })
     // The chat learns which run its sub-agent is as soon as it starts, so it
     // can follow the work live rather than only see the result.
-    if (parentContext.toolCallId) {
-      try {
-        this.publishEvent(
-          this.store.appendEvent({
-            id: `${parentContext.runId}:subagent:${id}`,
-            runId: parentContext.runId,
-            type: 'subagent.started',
-            payload: { toolCallId: parentContext.toolCallId, childRunId: id }
-          })
-        )
-      } catch (error) {
-        console.warn('[AgentRuntime] Could not record a sub-agent start:', error)
-      }
-    }
+    this.recordSubAgentEvent(parentContext, 'subagent.started', id, {
+      toolCallId: parentContext.toolCallId,
+      childRunId: id
+    })
     let result: Awaited<typeof running>
     try {
       result = await running

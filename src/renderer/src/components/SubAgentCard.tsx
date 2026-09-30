@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Bot, Check, ChevronRight, CircleAlert, Loader2, Square, X } from 'lucide-react'
+import { Bot, Check, ChevronRight, CircleAlert, Clock, Loader2, Square, X } from 'lucide-react'
 import type { ToolExecution } from '../types/chat.types'
 import { useSubAgentRun } from '../hooks/useSubAgentRun'
 import {
@@ -87,9 +87,14 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   const quietFor =
     state === 'working' && activity.lastActivityAt ? now - activity.lastActivityAt : 0
 
+  // Waiting for another sub-agent on the same provider to finish before it starts.
+  const queued = isRunning && !childRunId && data?.queued === true
+
   let detail: React.ReactNode
   let stats = ''
-  if (isRunning) {
+  if (queued) {
+    detail = 'Queued until another sub-agent finishes'
+  } else if (isRunning) {
     detail =
       state === 'waiting' ? (
         'Needs your answer below'
@@ -134,7 +139,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   }
 
   return (
-    <div className={`sa-card is-${state}`}>
+    <div className={`sa-card is-${state}${queued ? ' is-queued' : ''}`}>
       <div className="sa-card__row">
         <button
           type="button"
@@ -146,7 +151,11 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
           <span className="sa-card__icon">
             <Bot size={15} aria-hidden="true" />
             <span className="sa-card__badge">
-              <SubAgentStateIcon state={state} />
+              {queued ? (
+                <Clock size={14} aria-hidden="true" />
+              ) : (
+                <SubAgentStateIcon state={state} />
+              )}
             </span>
           </span>
           <span className="sa-card__text">

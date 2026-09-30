@@ -497,6 +497,25 @@ Keep building the app.
     expect(tool).toMatchObject({ tool: { status: 'running', data: { childRunId: 'child-1' } } })
   })
 
+  it('shows a sub-agent as queued until its slot frees and it starts', () => {
+    const spawn = [
+      event(1, 'tool.pending', { toolCallId: 'spawn-2', name: 'spawn_subagent' }),
+      event(2, 'tool.running', { toolCallId: 'spawn-2', name: 'spawn_subagent' }),
+      event(3, 'subagent.queued', { toolCallId: 'spawn-2' })
+    ]
+    const toolData = (events: typeof spawn): unknown =>
+      projectAgentRunEvents(events).segments.flatMap((segment) =>
+        segment.type === 'tool' ? [segment.tool.data] : []
+      )[0]
+    expect(toolData(spawn)).toEqual({ queued: true })
+    expect(
+      toolData([
+        ...spawn,
+        event(4, 'subagent.started', { toolCallId: 'spawn-2', childRunId: 'c2' })
+      ])
+    ).toEqual({ childRunId: 'c2' })
+  })
+
   it('keeps permission interactions durable through resolution', () => {
     const projection = projectAgentRunEvents([
       event(1, 'permission.requested', {

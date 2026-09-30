@@ -894,6 +894,57 @@ describe('AgentRunKernel', () => {
     ).toEqual(['read-1', 'read-2'])
   })
 
+  it('asks about each delegated task in turn, then runs the approved ones together', async () => {
+    const started: string[] = []
+    const releases: Array<() => void> = []
+    const router = {
+      execute: vi.fn(async (_name: string, args: Record<string, unknown>) => {
+        started.push(String(args.task))
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { content: `${String(args.task)} done` }
+      })
+    }
+    const spawn = (id: string, task: string) => ({
+      id,
+      function: { name: 'spawn_subagent', arguments: { task } }
+    })
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          spawn('spawn-1', 'first'),
+          spawn('spawn-2', 'second'),
+          spawn('spawn-3', 'third')
+        ],
+        usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'Both reports are in.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    // Every task is asked about before any starts, and a refused one never runs.
+    for (const approved of [true, false, true]) {
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      expect(started).toEqual([])
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved })
+    }
+    await vi.waitFor(() => expect(started).toEqual(['first', 'third']))
+    releases.splice(0).forEach((release) => release())
+
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(2)
+    const tools = projectAgentRunEvents(store.listEvents('run-1')).segments.flatMap((segment) =>
+      segment.type === 'tool' ? [[segment.tool.id, segment.tool.status]] : []
+    )
+    expect(tools).toEqual([
+      ['spawn-1', 'success'],
+      ['spawn-2', 'denied'],
+      ['spawn-3', 'success']
+    ])
+  })
+
   it('requires a research profile to attempt source retrieval before completing', async () => {
     catalog = { surface: 'research', webSearchEnabled: true }
     const router = {

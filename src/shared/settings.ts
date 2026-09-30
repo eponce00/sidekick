@@ -71,6 +71,12 @@ export interface ProviderInstance {
   modelSource: 'discover' | 'manual'
   models: ProviderInstanceModel[]
   fastModelId?: string
+  /**
+   * How many sub-agents may run at once on this provider; one when unset.
+   * More pays off on a server that keeps several prompts cached or runs
+   * several requests together.
+   */
+  subAgentsAtOnce?: number
   health?: ProviderInstanceHealth
 }
 

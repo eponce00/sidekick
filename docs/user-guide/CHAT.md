@@ -26,8 +26,13 @@ of its report.
   you.
 - **Stop** on the row stops only the sub-agent; the reply carries on with what it found. Stopping
   the reply also stops its sub-agents.
-- **Its tool budget** is the same as the reply's. When it runs out, the sub-agent reports what it
-  found and what it left unchecked, instead of asking to continue; the agent can delegate again.
+- **Its tool budget** is 25 rounds, or the reply's own if that is smaller. It is told to stop once
+  it has what the task asks for. When the budget runs out, it reports what it found and what it left
+  unchecked, instead of asking to continue; the agent can delegate again.
+- **Several at once:** tasks the agent delegates together are each approved in turn, then start
+  together. How many run at once is set per provider in Settings, under **Sub-agents at once** (one
+  by default); the rest show as queued until one finishes. More than one helps a server that keeps
+  several prompts cached or serves several requests at once.
 
 ## The message box
 

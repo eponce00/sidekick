@@ -113,6 +113,13 @@ describe('SubAgentCard', () => {
     })
   })
 
+  it('says a sub-agent is queued while it waits for another to finish', async () => {
+    await mount([], { ...runningTool, data: { queued: true } })
+    expect(container.querySelector('.sa-card')?.classList.contains('is-queued')).toBe(true)
+    expect(text('.sa-card__detail')).toBe('Queued until another sub-agent finishes')
+    expect(container.querySelector('.sa-card__stop')).toBeNull()
+  })
+
   it('shows what the sub-agent needs from the user under its row', async () => {
     await mount([
       event(1, 'run.started', {}),

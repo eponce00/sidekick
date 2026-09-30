@@ -1632,6 +1632,10 @@ body[data-theme='light'] .message-user .message-action:hover {
   color: var(--accent);
 }
 
+.sa-card.is-queued .sa-card__badge {
+  color: var(--text-muted);
+}
+
 .sa-card.is-waiting .sa-card__badge {
   background: var(--color-warning);
   color: var(--app-bg);

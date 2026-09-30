@@ -57,7 +57,7 @@ function executionSection(input: PromptComposerInput): string {
   }
   if (input.capabilities.subagents) {
     lines.push(
-      'Use sub-agents only for independent, bounded work where parallel execution is useful; give them complete context.'
+      'Use sub-agents only for independent, bounded work where parallel execution is useful; give them complete context. Delegate the task as the user asked it, without adding requirements, and start independent tasks in the same response so they can run side by side.'
     )
   }
   if (input.model.instructionStyle === 'compact-structured') {

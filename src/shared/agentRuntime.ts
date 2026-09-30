@@ -35,7 +35,11 @@ export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
 
 export type AgentExecutionHost = 'main' | 'subprocess'
 
-export type AgentToolConcurrency = 'parallel' | 'exclusive'
+/**
+ * `parallel` calls run together without asking; `approved-parallel` calls are
+ * each authorized in turn, then the approved ones run together.
+ */
+export type AgentToolConcurrency = 'parallel' | 'approved-parallel' | 'exclusive'
 
 export const TOOL_PRESENTATION_KINDS = [
   'generic',
@@ -256,6 +260,8 @@ export const AGENT_RUN_EVENT_TYPES = [
   'plan.mode_changed',
   'run.retrying',
   'run.steered',
+  // On the parent run, when a spawn_subagent call waits for a free sub-agent slot.
+  'subagent.queued',
   // On the parent run, when a spawn_subagent call starts its child run.
   'subagent.started',
   'run.completed',

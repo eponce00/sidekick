@@ -458,7 +458,7 @@ const codeIntelligence = definition(
 
 const spawnSubagent = definition(
   'spawn_subagent',
-  'Start an independent child agent for a bounded task. Provide all essential task context. The child uses the same trusted runtime and a capability subset selected by SideKick.',
+  'Start an independent child agent for a bounded task. Provide all essential task context. The child uses the same trusted runtime and a capability subset selected by SideKick, has a small tool budget, and returns its report. Several tasks delegated in the same response can run side by side.',
   {
     type: 'object',
     required: ['task'],
@@ -467,7 +467,11 @@ const spawnSubagent = definition(
         type: 'string',
         description: 'A short label for the task, 3 to 6 words, shown to the user.'
       },
-      task: { type: 'string', description: 'Complete delegated task and expected result.' },
+      task: {
+        type: 'string',
+        description:
+          'The task and the result expected, as the user asked for it. Do not add requirements the user did not ask for, such as extra sources or verification steps.'
+      },
       context: {
         type: 'string',
         description: 'Optional relevant facts and constraints from the current run.'
@@ -1281,7 +1285,8 @@ const coreEntries: AgentToolCatalogEntry[] = [
   entry(listBackgroundTasks, 'command.background', 'read'),
   entry(cancelBackgroundTask, 'command.background', 'execute'),
   entry(wait, 'wait', 'read'),
-  entry(spawnSubagent, 'subagents', 'execute'),
+  // Tasks delegated in one step start together; the provider's limit decides how many run at once.
+  entry(spawnSubagent, 'subagents', 'execute', { host: 'main', concurrency: 'approved-parallel' }),
   entry(useSkill, 'skills', 'read'),
   entry(askUser, 'wait', 'read'),
   entry(toolOutput, 'tool.output', 'read', {
