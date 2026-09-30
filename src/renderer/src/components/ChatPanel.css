@@ -1195,6 +1195,14 @@ body[data-theme='light'] .message-user .message-action:hover {
   transform: rotate(90deg);
 }
 
+.agent-work-tail .agent-work-toggle {
+  cursor: default;
+}
+
+.agent-work-tail .agent-work-toggle:hover {
+  color: var(--text-muted);
+}
+
 .agent-work-disclosure.is-working .agent-work-toggle::before {
   width: 5px;
   height: 5px;

@@ -493,6 +493,29 @@ function AgentWorkDisclosure({
   )
 }
 
+/**
+ * Shown below a working reply whose latest output is text. The model may be
+ * writing its next tool call, which some servers send only once complete, so
+ * minutes can pass with nothing new on screen; this keeps the reply from
+ * looking finished.
+ */
+function AgentWorkingTail({ startedAt }: { startedAt?: number }): React.JSX.Element {
+  const [now, setNow] = useState(Date.now)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="agent-work-disclosure is-working agent-work-tail" role="status">
+      <span className="agent-work-toggle">
+        {startedAt ? `Working for ${formatWorkDuration(now - startedAt)}` : 'Working'}
+      </span>
+    </div>
+  )
+}
+
 interface MessageItemProps {
   message: Message
   index: number // Reserved for future features (message navigation)
@@ -1020,6 +1043,9 @@ function MessageItemInner({
               appendChangeReview()
               return output
             })()}
+            {isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text' && (
+              <AgentWorkingTail startedAt={workStartedAt} />
+            )}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
           // Legacy format: separate thinking and content
@@ -1094,7 +1120,8 @@ function MessageItemInner({
           }
         />
       )}
-      {msg.role !== 'system' && (
+      {/* A working reply has no totals or finish time yet; showing them made it look done. */}
+      {msg.role !== 'system' && !(msg.role === 'agent' && isLoading) && (
         <div className="message-meta">
           <div className="message-info">
             {msg.role === 'agent' && msg.tokenUsage && (
