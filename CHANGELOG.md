@@ -28,6 +28,9 @@
 - Give the Files panel's project folder the same **⋯** menu as the folders inside it.
 - Draw a search field's focus ring around the rounded field, not as a square inside it.
 - Show a reply's duration once when a sub-agent or artifact splits its work into several groups.
+- Update Electron to 43.7.7, with Node.js 24.21.0, for four Electron security fixes to sandboxing,
+  protocol handlers, and preload caching, and update undici, fast-uri, and ip-address for their
+  published advisories.
 
 ## 0.8.0 — 2026-09-27
 
