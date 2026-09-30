@@ -41,6 +41,12 @@ the machine or in the project. SideKick does not download language servers or to
   for models that accept images, a screenshot, so the model can check its own result.
   The tool is offered even before its skill loads, so the tool list stays the same across turns;
   an artifact made without the skill's guidance is rendered and the guidance comes back with it.
+- In a chat, an artifact is checked before it appears. A builder reviews how the agent's version
+  rendered and fixes what is wrong with it, up to three times, while the reply shows one
+  **Building** row with the version it is on. The chat then shows only the finished artifact;
+  open the row while it works to see each version. When there is nothing to review, because the
+  artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
+  appears as the agent made it.
 - User-configured MCP servers add their advertised tools after schema normalization.
 - A group-agent run adds `collaboration_read`, `collaboration_send`,
   `collaboration_share_file`, `collaboration_list_artifacts`,

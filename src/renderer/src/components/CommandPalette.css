@@ -45,6 +45,11 @@
   outline: none;
 }
 
+/* The palette is the field; its search line needs no ring of its own. */
+.command-palette-search input:focus-visible {
+  box-shadow: none;
+}
+
 .command-palette-list {
   flex: 1;
   overflow-y: auto;

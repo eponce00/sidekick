@@ -175,7 +175,7 @@ test(
     try {
       application = await launchSideKick(profile)
       const page = await application.firstWindow()
-      await page.getByRole('button', { name: 'Create new' }).click()
+      await page.getByRole('button', { name: 'More', exact: true }).click()
       await page.getByRole('menuitem', { name: 'New chat' }).click()
       const expand = page.getByRole('button', { name: 'Open Browser activity', exact: true })
       if (await expand.isVisible()) await expand.click()
@@ -274,7 +274,7 @@ test(
         'Electron must use only the E2E profile'
       )
 
-      await page.getByRole('button', { name: 'Create new' }).click()
+      await page.getByRole('button', { name: 'More', exact: true }).click()
       await waitForVisible(page.getByRole('menuitem', { name: 'New chat' }), 'new-chat menu item')
       await page.getByRole('menuitem', { name: 'New chat' }).click()
       await waitForVisible(page.getByText('New Conversation', { exact: true }).first(), 'new chat')

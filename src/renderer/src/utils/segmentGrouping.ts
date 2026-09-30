@@ -1,6 +1,7 @@
 // Utility functions for grouping and organizing content segments
 
 import type { ContentSegment, GroupedSegment } from '../types/chat.types'
+import { resolveToolView } from '../services/uiContributions'
 
 export type ChronologicalGroupBlock =
   | {
@@ -44,8 +45,11 @@ export function groupSegments(segments: ContentSegment[]): GroupedSegment[] {
       segment.type === 'tool' &&
       segment.tool?.accessLevel === 'confirm' &&
       segment.tool?.approvalStatus === 'pending'
+    // A delegated task is its own row in the reply, never a step among the tools.
+    const isSubAgent =
+      segment.type === 'tool' && !!segment.tool && resolveToolView(segment.tool) === 'subagent'
 
-    if (isPendingApproval) {
+    if (isPendingApproval || isSubAgent) {
       // Close current action group first
       if (currentActionGroup.length > 0) {
         groups.push({

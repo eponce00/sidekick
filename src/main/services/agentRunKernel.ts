@@ -1067,6 +1067,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     let separateNextTurn = false
     // Tool rounds the model attempted after its goal was already complete.
     let toolRoundsAfterGoalComplete = 0
+    // Tool rounds a sub-agent attempted after its tool budget was spent.
+    let toolRoundsAfterBudgetSpent = 0
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1574,7 +1576,13 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
 
         toolRounds++
-        if (toolRounds > Math.max(1, input.maxToolRounds)) {
+        // A sub-agent never asks to go on: nobody sees its questions while the
+        // agent that delegated to it waits, so asking deadlocked both. Past its
+        // budget its tools are refused and it reports what it has.
+        const toolBudgetSpent =
+          Boolean(input.parentRunId) && toolRounds > Math.max(1, input.maxToolRounds)
+        if (toolBudgetSpent) toolRoundsAfterBudgetSpent++
+        else if (toolRounds > Math.max(1, input.maxToolRounds)) {
           const decision = await this.suspendForInteraction(
             input.id,
             'tool_limit',
@@ -1636,75 +1644,102 @@ The user approved this exact plan revision. Act capabilities are now available a
           })
         }
         const preExecuted = new Map<string, ToolExecutionResult>()
+        // Decisions already taken for calls that were authorized ahead of running together.
+        const preAuthorized = new Map<
+          string,
+          Awaited<ReturnType<AgentRunKernel['authorizeTool']>>
+        >()
+        const runPrepared = async (
+          prepared: (typeof preparedBatch)[number]
+        ): Promise<ToolExecutionResult> => {
+          this.transition(input.id, 'executing_tool')
+          this.append(input.id, 'tool.running', {
+            toolCallId: prepared.call.id,
+            name: prepared.call.name,
+            title: prepared.presentation.title || prepared.title,
+            arguments: prepared.safeArguments,
+            presentation: prepared.presentation
+          })
+          return this.tools.execute(
+            {
+              catalog: currentCatalog(input),
+              call: prepared.call,
+              title: prepared.title,
+              context: {
+                runId: input.id,
+                conversationId: input.threadId,
+                workspaceRoot: input.workspaceRoot,
+                signal,
+                onOutput: ({ chunk, stream }) =>
+                  this.append(input.id, 'tool.output.delta', {
+                    toolCallId: prepared.call.id,
+                    stream,
+                    chunk
+                  })
+              }
+            },
+            ((args, context) =>
+              input.toolRouter.execute(prepared.call.name, args, context)) as AgentToolExecutor
+          )
+        }
+        const invalidPrepared = (
+          prepared: (typeof preparedBatch)[number]
+        ): ToolExecutionResult | undefined =>
+          validatePreparedAgentToolCall(
+            currentCatalog(input),
+            prepared.call,
+            prepared.title,
+            Date.now(),
+            prepared.prepared.repairs,
+            prepared.prepared.argumentSnapshotFailed
+          ) ?? undefined
         for (let callIndex = 0; callIndex < preparedBatch.length; callIndex++) {
           if (signal.aborted) break
           const item = preparedBatch[callIndex]
-          const { prepared, call, title, safeArguments, presentation: callPresentation } = item
+          const { prepared, call, title, safeArguments } = item
           const entry = getAgentToolEntry(currentCatalog(input), call.name)
+          const concurrency = entry?.concurrency
           if (
             !truncatedToolBatch &&
             !goalAlreadyComplete &&
-            entry?.concurrency === 'parallel' &&
-            !preExecuted.has(call.id)
+            !toolBudgetSpent &&
+            (concurrency === 'parallel' || concurrency === 'approved-parallel') &&
+            !preExecuted.has(call.id) &&
+            !preAuthorized.has(call.id)
           ) {
             const group = [item]
             while (callIndex + group.length < preparedBatch.length) {
               const sibling = preparedBatch[callIndex + group.length]
               const siblingEntry = getAgentToolEntry(currentCatalog(input), sibling.call.name)
-              if (siblingEntry?.concurrency !== 'parallel') break
+              if (siblingEntry?.concurrency !== concurrency) break
               group.push(sibling)
             }
-            await Promise.all(
-              group.map(async (parallelItem) => {
-                const parallelStartedAt = Date.now()
-                const invalid = validatePreparedAgentToolCall(
-                  currentCatalog(input),
-                  parallelItem.call,
-                  parallelItem.title,
-                  parallelStartedAt,
-                  parallelItem.prepared.repairs,
-                  parallelItem.prepared.argumentSnapshotFailed
-                )
-                if (invalid) {
-                  preExecuted.set(parallelItem.call.id, invalid)
-                  return
-                }
-                this.transition(input.id, 'executing_tool')
-                this.append(input.id, 'tool.running', {
-                  toolCallId: parallelItem.call.id,
-                  name: parallelItem.call.name,
-                  title: parallelItem.presentation.title || parallelItem.title,
-                  arguments: parallelItem.safeArguments,
-                  presentation: parallelItem.presentation
+            // Each call that needs the user's approval is asked about in turn,
+            // before any runs; only the approved ones then run together.
+            const runnable: typeof group = []
+            for (const member of group) {
+              if (signal.aborted) break
+              const invalid = invalidPrepared(member)
+              if (invalid) {
+                preExecuted.set(member.call.id, invalid)
+                continue
+              }
+              if (concurrency === 'approved-parallel') {
+                if (group.length === 1) break
+                const decision = await this.authorizeTool(input, member.call, member.title, signal)
+                preAuthorized.set(member.call.id, decision)
+                if (decision === 'denied_stop') break
+                if (decision !== 'approved') continue
+              }
+              runnable.push(member)
+            }
+            if (concurrency === 'parallel' || runnable.length > 1) {
+              await Promise.all(
+                runnable.map(async (member) => {
+                  preExecuted.set(member.call.id, await runPrepared(member))
                 })
-                const result = await this.tools.execute(
-                  {
-                    catalog: currentCatalog(input),
-                    call: parallelItem.call,
-                    title: parallelItem.title,
-                    context: {
-                      runId: input.id,
-                      conversationId: input.threadId,
-                      workspaceRoot: input.workspaceRoot,
-                      signal,
-                      onOutput: ({ chunk, stream }) =>
-                        this.append(input.id, 'tool.output.delta', {
-                          toolCallId: parallelItem.call.id,
-                          stream,
-                          chunk
-                        })
-                    }
-                  },
-                  ((args, context) =>
-                    input.toolRouter.execute(
-                      parallelItem.call.name,
-                      args,
-                      context
-                    )) as AgentToolExecutor
-                )
-                preExecuted.set(parallelItem.call.id, result)
-              })
-            )
+              )
+            }
           }
           const startedAt = Date.now()
           let result: ToolExecutionResult
@@ -1733,6 +1768,17 @@ The user approved this exact plan revision. Act capabilities are now available a
               recoveryAction: 'stop',
               recovery:
                 'Do not redo or extend the work and do not call tools. Reply to the user with one brief closing message.',
+              startedAt
+            })
+          } else if (toolBudgetSpent) {
+            result = toolExecutionFailed({
+              title,
+              code: 'conflict',
+              message: 'This task has used its tool budget, so this tool was not run.',
+              retryable: false,
+              recoveryAction: 'stop',
+              recovery:
+                'Do not call tools. Reply now with what you found, and say what is left unchecked, for the agent that delegated this task.',
               startedAt
             })
           } else if (callStopReason) {
@@ -1800,7 +1846,9 @@ The user approved this exact plan revision. Act capabilities are now available a
                 }
               }
             } else if (
-              (authorization = await this.authorizeTool(input, call, title, signal)) !== 'approved'
+              (authorization =
+                preAuthorized.get(call.id) ??
+                (await this.authorizeTool(input, call, title, signal))) !== 'approved'
             ) {
               stopAfterDenial = authorization === 'denied_stop'
               result = toolExecutionFailed({
@@ -1813,35 +1861,7 @@ The user approved this exact plan revision. Act capabilities are now available a
                 startedAt
               })
             } else {
-              this.transition(input.id, 'executing_tool')
-              this.append(input.id, 'tool.running', {
-                toolCallId: call.id,
-                name: call.name,
-                title: callPresentation.title || title,
-                arguments: safeArguments,
-                presentation: callPresentation
-              })
-              result = await this.tools.execute(
-                {
-                  catalog: currentCatalog(input),
-                  call,
-                  title,
-                  context: {
-                    runId: input.id,
-                    conversationId: input.threadId,
-                    workspaceRoot: input.workspaceRoot,
-                    signal,
-                    onOutput: ({ chunk, stream }) =>
-                      this.append(input.id, 'tool.output.delta', {
-                        toolCallId: call.id,
-                        stream,
-                        chunk
-                      })
-                  }
-                },
-                ((args, context) =>
-                  input.toolRouter.execute(call.name, args, context)) as AgentToolExecutor
-              )
+              result = await runPrepared(item)
             }
           }
           const guard = callStopReason
@@ -1902,9 +1922,9 @@ The user approved this exact plan revision. Act capabilities are now available a
           if (stopAfterDenial) this.stop(input.id)
         }
         if (callStopReason) throw new AgentToolLoopError(callStopReason)
-        if (toolRoundsAfterGoalComplete >= 2) {
-          // Refused once and asked for tools again: the goal's outcome is
-          // already in the transcript, so end on it rather than loop.
+        if (toolRoundsAfterGoalComplete >= 2 || toolRoundsAfterBudgetSpent >= 2) {
+          // Refused once and asked for tools again: the outcome is already in
+          // the transcript, so end on it rather than loop.
           this.transition(input.id, 'completed')
           return {
             runId: input.id,

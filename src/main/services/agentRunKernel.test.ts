@@ -640,6 +640,60 @@ describe('AgentRunKernel', () => {
     ])
   })
 
+  describe('tool budget', () => {
+    const waitCall = (id: string): Partial<AgentKernelModelTurn> => ({
+      toolCalls: [{ id, function: { name: 'wait', arguments: { seconds: 1 } } }],
+      usage: { promptTokens: 10, completionTokens: 2, doneReason: 'tool_calls' }
+    })
+
+    it('has a sub-agent past its budget report back instead of asking a question no one sees', async () => {
+      // The parent run must exist for the child's lineage.
+      await new AgentRunKernel(store, undefined, sampledTurn({ content: 'Ready' })).start({
+        ...input(),
+        id: 'parent-1'
+      })
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
+      const last = sampledTurn(waitCall('wait-3'))
+      const sampler = sequence(
+        sampledTurn({ content: 'Looking. ', ...waitCall('wait-1') }),
+        sampledTurn(waitCall('wait-2')),
+        last
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const result = await kernel.start({
+        ...input(router),
+        id: 'child-1',
+        parentRunId: 'parent-1',
+        maxToolRounds: 1
+      })
+
+      expect(result.phase).toBe('completed')
+      expect(router.execute).toHaveBeenCalledTimes(1)
+      expect(store.listPendingInteractions('child-1')).toEqual([])
+      expect(store.listEvents('child-1').some(({ type }) => type === 'question.requested')).toBe(
+        false
+      )
+      const refused = vi
+        .mocked(last)
+        .mock.calls[0][0].messages.find(
+          (message) => message.role === 'tool' && message.tool_call_id === 'wait-2'
+        )
+      expect(refused?.content).toContain('used its tool budget')
+      expect(refused?.content).toContain('Reply now with what you found')
+    })
+
+    it('still asks the user before a top-level run goes past its budget', async () => {
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
+      const sampler = sequence(sampledTurn(waitCall('wait-1')), sampledTurn(waitCall('wait-2')))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const running = kernel.start({ ...input(router), maxToolRounds: 1 })
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      expect(store.listPendingInteractions('run-1')[0]).toMatchObject({ kind: 'tool_limit' })
+      kernel.stop('run-1')
+      expect((await running).phase).toBe('cancelled')
+    })
+  })
+
   it('owns the complete model-tool-continuation loop', async () => {
     const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
     const sampler = sequence(
@@ -838,6 +892,57 @@ describe('AgentRunKernel', () => {
         .filter(({ type }) => type === 'tool.completed')
         .map(({ payload }) => payload.toolCallId)
     ).toEqual(['read-1', 'read-2'])
+  })
+
+  it('asks about each delegated task in turn, then runs the approved ones together', async () => {
+    const started: string[] = []
+    const releases: Array<() => void> = []
+    const router = {
+      execute: vi.fn(async (_name: string, args: Record<string, unknown>) => {
+        started.push(String(args.task))
+        await new Promise<void>((resolve) => releases.push(resolve))
+        return { content: `${String(args.task)} done` }
+      })
+    }
+    const spawn = (id: string, task: string) => ({
+      id,
+      function: { name: 'spawn_subagent', arguments: { task } }
+    })
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          spawn('spawn-1', 'first'),
+          spawn('spawn-2', 'second'),
+          spawn('spawn-3', 'third')
+        ],
+        usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'Both reports are in.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+    const running = kernel.start(runInput)
+
+    // Every task is asked about before any starts, and a refused one never runs.
+    for (const approved of [true, false, true]) {
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      expect(started).toEqual([])
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved })
+    }
+    await vi.waitFor(() => expect(started).toEqual(['first', 'third']))
+    releases.splice(0).forEach((release) => release())
+
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(2)
+    const tools = projectAgentRunEvents(store.listEvents('run-1')).segments.flatMap((segment) =>
+      segment.type === 'tool' ? [[segment.tool.id, segment.tool.status]] : []
+    )
+    expect(tools).toEqual([
+      ['spawn-1', 'success'],
+      ['spawn-2', 'denied'],
+      ['spawn-3', 'success']
+    ])
   })
 
   it('requires a research profile to attempt source retrieval before completing', async () => {

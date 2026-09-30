@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
@@ -138,7 +138,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/coverage-v8": "^4.1.10",
-    "electron": "43.2.0",
+    "electron": "43.7.7",
     "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",

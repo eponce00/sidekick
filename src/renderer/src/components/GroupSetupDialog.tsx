@@ -364,7 +364,7 @@ function ModelPicker({
         menuPosition &&
         createPortal(
           <div className="group-model-menu" ref={menuRef} style={menuPosition}>
-            <label className="group-model-search">
+            <label className="group-model-search field-shell">
               <Search size={13} />
               <input
                 ref={searchRef}

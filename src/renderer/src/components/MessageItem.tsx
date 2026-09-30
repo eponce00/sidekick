@@ -6,10 +6,6 @@ import {
   AlignLeft,
   ChevronDown,
   ChevronRight,
-  Search,
-  Globe,
-  Terminal,
-  MessageSquare,
   Copy,
   Pencil,
   RotateCcw,
@@ -49,11 +45,10 @@ import {
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
-import type { Message, MessageEditGeometry, ToolExecution } from '../types/chat.types'
+import type { Message, MessageEditGeometry } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
-import type { SubAgentStep } from '../types/subagent.types'
 import type { WorkspaceVerificationSummary } from '../../../shared/verification'
-import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
+import { SubAgentCard } from './SubAgentCard'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -346,169 +341,6 @@ function VerificationSegment({
   )
 }
 
-/** Renders the sub-agent mini-chat showing step-by-step execution */
-function SubAgentMiniChat({ steps }: { steps: SubAgentStep[] }): React.JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-
-  // Auto-scroll to bottom when new steps arrive
-  useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-    }
-  }, [steps.length])
-
-  return (
-    <div className="sa-steps" ref={scrollRef}>
-      {steps.map((step, i) => (
-        <div key={i} className={`sa-step sa-step--${step.type}`}>
-          <span className={`sa-step__icon ${step.status ? `sa-step__icon--${step.status}` : ''}`}>
-            {step.type === 'tool_call' ? (
-              step.name === 'web_search' ? (
-                <Search size={11} />
-              ) : step.name === 'web_fetch' ? (
-                <Globe size={11} />
-              ) : step.name === 'shell' ? (
-                <Terminal size={11} />
-              ) : (
-                <Loader2 size={11} />
-              )
-            ) : step.type === 'tool_result' ? (
-              step.status === 'error' ? (
-                <X size={11} />
-              ) : (
-                <Check size={11} />
-              )
-            ) : step.type === 'response' ? (
-              <MessageSquare size={11} />
-            ) : null}
-          </span>
-          <span className="sa-step__body">{step.content}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
-/** Renders sub-agent progress as a compact tool row with optional inline detail. */
-function subAgentStepsFromProjection(
-  projection: ReturnType<typeof projectAgentRunEvents>
-): SubAgentStep[] {
-  const steps = (
-    segment: ReturnType<typeof projectAgentRunEvents>['segments'][number]
-  ): SubAgentStep[] => {
-    if (segment.type === 'verification') {
-      const folded = (segment.steps ?? []).flatMap(steps)
-      return segment.content ? [...folded, { type: 'response', content: segment.content }] : folded
-    }
-    if (segment.type === 'thinking') return [{ type: 'thinking', content: segment.content }]
-    if (segment.type === 'text') return [{ type: 'response', content: segment.content }]
-    if (segment.type === 'tool') {
-      return [
-        {
-          type:
-            segment.tool.status === 'running' || segment.tool.status === 'pending'
-              ? 'tool_call'
-              : 'tool_result',
-          name: segment.tool.name,
-          content: segment.tool.output || segment.tool.error || segment.tool.title,
-          status:
-            segment.tool.status === 'error' || segment.tool.status === 'denied'
-              ? 'error'
-              : segment.tool.status === 'success' || segment.tool.status === 'partial'
-                ? 'success'
-                : 'running'
-        }
-      ]
-    }
-    return []
-  }
-  return projection.segments.flatMap(steps)
-}
-
-function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(tool.status === 'running')
-  const data =
-    tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
-  const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
-  const [childSteps, setChildSteps] = useState<SubAgentStep[] | null>(null)
-  const [childError, setChildError] = useState('')
-  const requestedChildRuns = useRef(new Set<string>())
-  const embeddedSteps =
-    tool.subAgentSteps && tool.subAgentSteps.length > 0 ? tool.subAgentSteps : null
-  const displayedSteps = embeddedSteps ?? childSteps
-  const hasSteps = Boolean(displayedSteps?.length)
-  const isRunning = tool.status === 'running'
-  const childLoading = Boolean(
-    expanded && childRunId && !embeddedSteps && !childSteps && !childError
-  )
-  const canExpand = hasSteps || isRunning || Boolean(childRunId)
-
-  // Auto-expand while running, auto-collapse when done (if user hasn't manually toggled)
-  const wasRunning = useRef(false)
-  useEffect(() => {
-    if (isRunning && !wasRunning.current) {
-      wasRunning.current = true
-      const timer = window.setTimeout(() => setExpanded(true), 0)
-      return () => window.clearTimeout(timer)
-    }
-    return undefined
-  }, [isRunning])
-
-  useEffect(() => {
-    if (
-      !expanded ||
-      !childRunId ||
-      embeddedSteps ||
-      childSteps ||
-      requestedChildRuns.current.has(childRunId)
-    )
-      return
-    requestedChildRuns.current.add(childRunId)
-    void window.api.agentRuns
-      .events(childRunId, 0)
-      .then((result) => {
-        setChildSteps(subAgentStepsFromProjection(projectAgentRunEvents(result.events)))
-        setChildError('')
-      })
-      .catch((error: unknown) => {
-        setChildError(error instanceof Error ? error.message : 'Could not load child run')
-      })
-  }, [childRunId, childSteps, embeddedSteps, expanded])
-
-  return (
-    <div className={`sa-inline sa-inline-${tool.status}`}>
-      <ToolCallRow
-        tool={tool}
-        onSelect={canExpand ? () => setExpanded(!expanded) : undefined}
-        expandable={canExpand}
-        expanded={expanded}
-      />
-
-      {!expanded && tool.output && <div className="sa-inline__summary">{tool.output}</div>}
-
-      {expanded && (
-        <div className="sa-inline__body">
-          {hasSteps ? (
-            <SubAgentMiniChat steps={displayedSteps!} />
-          ) : isRunning || childLoading ? (
-            <div className="sa-inline__waiting">
-              <Loader2 size={12} className="icon-spin" />
-              <span>{childLoading ? 'Loading child run…' : 'Working…'}</span>
-            </div>
-          ) : null}
-          {childRunId && (
-            <div className="sa-inline__lineage">
-              <GitBranch size={11} /> Child run <code>{childRunId.slice(0, 8)}</code>
-            </div>
-          )}
-          {childError && <div className="sa-inline__error">{childError}</div>}
-          {tool.error && <div className="sa-inline__error">{tool.error}</div>}
-        </div>
-      )}
-    </div>
-  )
-}
-
 function formatWorkDuration(durationMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1_000))
   const hours = Math.floor(totalSeconds / 3_600)
@@ -567,6 +399,10 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
       group.segment.type === 'verification' ||
       group.segment.type === 'summary' ||
       group.segment.type === 'steer' ||
+      // Delegated work is part of the reply, not a step to fold away.
+      (group.segment.type === 'tool' &&
+        !!group.segment.tool &&
+        resolveToolView(group.segment.tool) === 'subagent') ||
       // An interruption is what the reader needs to act on, not work to fold away.
       (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted'))
   )
@@ -588,6 +424,7 @@ function AgentWorkDisclosure({
   children,
   segments,
   awaitingFirstOutput = false,
+  showDuration = true,
   runId: _runId
 }: {
   messageId: string
@@ -597,6 +434,8 @@ function AgentWorkDisclosure({
   children?: React.ReactNode
   segments?: readonly import('../types/chat.types').ContentSegment[]
   awaitingFirstOutput?: boolean
+  /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
+  showDuration?: boolean
   runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(isLoading)
@@ -621,7 +460,11 @@ function AgentWorkDisclosure({
   const durationLabel = startedAt
     ? `${isLoading ? (awaitingFirstOutput ? 'Waiting for model' : 'Working') : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
     : 'Worked'
-  const label = activityLabel ? `${durationLabel} · ${activityLabel}` : durationLabel
+  const label = !showDuration
+    ? activityLabel || 'Steps'
+    : activityLabel
+      ? `${durationLabel} · ${activityLabel}`
+      : durationLabel
   const contentId = `${messageId}-agent-work`
 
   return (
@@ -657,6 +500,29 @@ function AgentWorkDisclosure({
           })()}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Shown below a working reply whose latest output is text. The model may be
+ * writing its next tool call, which some servers send only once complete, so
+ * minutes can pass with nothing new on screen; this keeps the reply from
+ * looking finished.
+ */
+function AgentWorkingTail({ startedAt }: { startedAt?: number }): React.JSX.Element {
+  const [now, setNow] = useState(Date.now)
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return (
+    <div className="agent-work-disclosure is-working agent-work-tail" role="status">
+      <span className="agent-work-toggle">
+        {startedAt ? `Working for ${formatWorkDuration(now - startedAt)}` : 'Working'}
+      </span>
     </div>
   )
 }
@@ -734,6 +600,7 @@ function MessageItemInner({
   const workStartedAt =
     msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
+  const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
 
   useLayoutEffect(() => {
     if (!isEditing) return
@@ -933,15 +800,12 @@ function MessageItemInner({
                         if (segment.type === 'tool') {
                           return (
                             <div key={`tool-${segIdx}`} className="action-item">
-                              {segment.tool &&
-                                (resolveToolView(segment.tool) === 'subagent' ? (
-                                  <SubAgentCard tool={segment.tool} />
-                                ) : (
-                                  <ToolExecutionCard
-                                    tool={segment.tool}
-                                    workspaceRoot={workspaceFolder}
-                                  />
-                                ))}
+                              {segment.tool && (
+                                <ToolExecutionCard
+                                  tool={segment.tool}
+                                  workspaceRoot={workspaceFolder}
+                                />
+                              )}
                               {!segment.tool && segment.content && (
                                 <ToolCallRow
                                   tool={{
@@ -1085,7 +949,7 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'tool' &&
                     group.segment.tool ? (
-                    // Standalone tool (pending approval or sub-agent card)
+                    // Standalone tool (pending approval or sub-agent row)
                     resolveToolView(group.segment.tool) === 'subagent' ? (
                       <SubAgentCard tool={group.segment.tool} />
                     ) : (
@@ -1158,7 +1022,11 @@ function MessageItemInner({
                 changeReviewRendered = true
               }
 
-              blocks.forEach((block) => {
+              // The time goes on the work nearest the answer, or on the live line below it.
+              const timedBlock = showWorkingTail
+                ? -1
+                : blocks.findLastIndex((block) => block.type === 'work')
+              blocks.forEach((block, blockIndex) => {
                 const firstGroupIndex =
                   block.type === 'work' ? block.groups[0]!.groupIndex : block.groupIndex
                 if (firstGroupIndex >= workEnd) appendChangeReview()
@@ -1179,6 +1047,7 @@ function MessageItemInner({
                     startedAt={workStartedAt}
                     completedAt={workCompletedAt}
                     segments={blockSegments}
+                    showDuration={blockIndex === timedBlock}
                     runId={msg.runId}
                   >
                     {block.groups.map(({ groupIndex }) => renderedGroups[groupIndex])}
@@ -1188,6 +1057,7 @@ function MessageItemInner({
               appendChangeReview()
               return output
             })()}
+            {showWorkingTail && <AgentWorkingTail startedAt={workStartedAt} />}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
           // Legacy format: separate thinking and content
@@ -1262,7 +1132,8 @@ function MessageItemInner({
           }
         />
       )}
-      {msg.role !== 'system' && (
+      {/* A working reply has no totals or finish time yet; showing them made it look done. */}
+      {msg.role !== 'system' && !(msg.role === 'agent' && isLoading) && (
         <div className="message-meta">
           <div className="message-info">
             {msg.role === 'agent' && msg.tokenUsage && (

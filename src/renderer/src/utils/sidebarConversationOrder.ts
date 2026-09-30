@@ -8,7 +8,8 @@ import type { Conversation, Project } from '../types/app.types'
 export function sidebarConversationOrder(
   conversations: readonly Conversation[],
   projects: readonly Project[],
-  hiddenProjectIds: ReadonlySet<string> = new Set()
+  hiddenProjectIds: ReadonlySet<string> = new Set(),
+  hideStandalone = false
 ): string[] {
   const byProject = new Map<string, string[]>()
   const standalone: string[] = []
@@ -26,7 +27,7 @@ export function sidebarConversationOrder(
     if (hiddenProjectIds.has(project.id)) continue
     order.push(...(byProject.get(project.id) ?? []))
   }
-  return [...order, ...standalone]
+  return hideStandalone ? order : [...order, ...standalone]
 }
 
 /** The conversation before or after the current one, wrapping at the ends. */

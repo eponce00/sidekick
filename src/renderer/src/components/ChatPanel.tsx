@@ -67,6 +67,8 @@ import { fileToMessageImage } from '../utils/messageImageAttachments'
 import { loadComposerDraft } from '../services/composerDrafts'
 import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
+import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
+import { SubAgentView } from './SubAgentView'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -179,9 +181,25 @@ function ChatPanel({
   forkConversationRef.current = onForkConversation
   const forkMessage = useCallback((messageId: string) => forkConversationRef.current(messageId), [])
 
+  // A sub-agent opened from its row covers the chat until Back or Esc.
+  const [openSubAgent, setOpenSubAgent] = useState<SubAgentTarget | null>(null)
+  const closeSubAgent = useCallback(() => setOpenSubAgent(null), [])
+  const [subAgentConversationId, setSubAgentConversationId] = useState(conversationId)
+  if (subAgentConversationId !== conversationId) {
+    // Another chat has no view of this one's sub-agent.
+    setSubAgentConversationId(conversationId)
+    setOpenSubAgent(null)
+  }
+  // The context meter follows what is on screen: an open sub-agent reports its own.
+  const reportSubAgentContext = useCallback(
+    (tokens: number) => tokenCountUpdateRef.current?.(tokens, selectedContextLength),
+    [selectedContextLength]
+  )
+
   // Rehydrate context telemetry with the persisted conversation. Without this,
   // a reopened chat displays zero until another provider response arrives.
   useEffect(() => {
+    if (openSubAgent) return
     let latestUsage: Message['tokenUsage']
     for (let index = messages.length - 1; index >= 0; index--) {
       if (messages[index].role === 'agent' && messages[index].tokenUsage) {
@@ -193,7 +211,7 @@ function ChatPanel({
       latestUsage ? latestUsage.promptTokens + latestUsage.completionTokens : 0,
       selectedContextLength
     )
-  }, [messages, selectedContextLength])
+  }, [messages, openSubAgent, selectedContextLength])
   // A chat's panel mounts when it is opened, so what was left unsent there is restored once.
   const [initialDraft] = useState(() => loadComposerDraft(composerDraftKey(conversationId)))
   const [inputValue, setInputValue] = useState(initialDraft.text)
@@ -268,10 +286,11 @@ function ChatPanel({
     onConversationCreated,
     onProjection: (projection) => {
       setIsCompacting(projection.phase === 'compacting')
-      onTokenCountUpdate?.(
-        projection.tokenUsage.promptTokens + projection.tokenUsage.completionTokens,
-        selectedContextLength
-      )
+      if (!openSubAgent)
+        onTokenCountUpdate?.(
+          projection.tokenUsage.promptTokens + projection.tokenUsage.completionTokens,
+          selectedContextLength
+        )
     }
   })
   const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)
@@ -1384,12 +1403,22 @@ function ChatPanel({
         onConfirm={() => void handleConfirmCheckpointRestore()}
         onCancel={cancelCheckpointRestore}
       />
+
+      {openSubAgent && (
+        <SubAgentView
+          key={openSubAgent.runId}
+          target={openSubAgent}
+          workspaceFolder={workspaceFolder}
+          onBack={closeSubAgent}
+          onContextUpdate={reportSubAgentContext}
+        />
+      )}
     </div>
   )
 
   return (
     <ReviewCommentSinkContext.Provider value={addReviewComment}>
-      {panel}
+      <SubAgentNavigation.Provider value={setOpenSubAgent}>{panel}</SubAgentNavigation.Provider>
     </ReviewCommentSinkContext.Provider>
   )
 }

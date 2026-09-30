@@ -609,7 +609,7 @@ function SettingsModal({
             <ArrowLeft size={16} aria-hidden="true" />
             <span>Back to app</span>
           </button>
-          <label className="settings-search">
+          <label className="settings-search field-shell">
             <Search size={14} aria-hidden="true" />
             <input
               value={navigationQuery}

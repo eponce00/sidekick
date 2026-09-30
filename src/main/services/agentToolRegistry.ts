@@ -8,6 +8,7 @@ import {
   normalizeToolExecutionResult,
   toolExecutionFailed,
   type AgentToolCall,
+  type AgentToolConcurrency,
   type ToolErrorCode,
   type ToolExecutionResult,
   type ToolRecoveryAction
@@ -594,7 +595,7 @@ export class AgentToolRegistry {
 
   private schedule<T>(
     runId: string,
-    concurrency: 'parallel' | 'exclusive',
+    concurrency: AgentToolConcurrency,
     body: () => Promise<T>
   ): Promise<T> {
     let state = this.scheduler.get(runId)
@@ -602,7 +603,8 @@ export class AgentToolRegistry {
       state = { exclusive: Promise.resolve(), readers: new Set() }
       this.scheduler.set(runId, state)
     }
-    if (concurrency === 'parallel') {
+    // An approved call was authorized before it ran, so it runs beside its siblings.
+    if (concurrency === 'parallel' || concurrency === 'approved-parallel') {
       const work = state.exclusive.then(body)
       state.readers.add(work)
       void work.then(

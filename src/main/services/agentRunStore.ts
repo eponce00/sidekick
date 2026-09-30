@@ -304,9 +304,17 @@ export class AgentRunStore {
     })()
   }
 
+  /**
+   * The thread's latest run of its own. A sub-agent shares its parent's thread
+   * and starts after it, so counting it made the chat follow the sub-agent and
+   * lose its own reply.
+   */
   latest(threadId: string): AgentRunSnapshot | null {
     const row = this.db
-      .prepare('SELECT * FROM agent_runs WHERE thread_id = ? ORDER BY started_at DESC LIMIT 1')
+      .prepare(
+        `SELECT * FROM agent_runs WHERE thread_id = ? AND parent_run_id IS NULL
+         ORDER BY started_at DESC LIMIT 1`
+      )
       .get(threadId) as AgentRunRow | undefined
     return row ? mapRun(row) : null
   }
@@ -339,6 +347,13 @@ export class AgentRunStore {
         Math.max(1, Math.min(10_000, limit))
       ) as AgentRunEventRow[]
     return rows.map(mapEvent)
+  }
+
+  countEvents(runId: string, type: AgentRunEvent['type']): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS count FROM agent_run_events WHERE run_id = ? AND type = ?`)
+      .get(runId, type) as { count: number }
+    return row.count
   }
 
   listAllEvents(runId: string): AgentRunEvent[] {

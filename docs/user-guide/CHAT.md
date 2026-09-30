@@ -12,6 +12,28 @@
   counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
   front. A failed reply is announced the same way.
 
+## Sub-agents
+
+When the agent delegates part of the work, the reply shows a row for the task. While the
+sub-agent works, the row shows what it is doing now, how many tools it has used, and for how long,
+and says so when it has produced nothing for a few minutes. Once it is done, the row shows the start
+of its report.
+
+- **Open the row** to see the sub-agent's own transcript in place of the chat: the task it was
+  given, then everything it did, live while it works. **Back** or **Esc** returns to the chat where
+  you left it.
+- **Its questions and approvals** appear under the row, and count as the conversation waiting on
+  you.
+- **Stop** on the row stops only the sub-agent; the reply carries on with what it found. Stopping
+  the reply also stops its sub-agents.
+- **Its tool budget** is 25 rounds, or the reply's own if that is smaller. It is told to stop once
+  it has what the task asks for. When the budget runs out, it reports what it found and what it left
+  unchecked, instead of asking to continue; the agent can delegate again.
+- **Several at once:** tasks the agent delegates together are each approved in turn, then start
+  together. How many run at once is set per provider in Settings, under **Sub-agents at once** (one
+  by default); the rest show as queued until one finishes. More than one helps a server that keeps
+  several prompts cached or serves several requests at once.
+
 ## The message box
 
 - **Drafts:** what you have not sent stays with its conversation, including attachments, when you

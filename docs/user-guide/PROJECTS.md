@@ -112,11 +112,17 @@ filters or manually executed commands.
 
 ### Sidebar
 
-The sidebar has two explicit sections:
+The sidebar has three sections. Each heading folds its section away with its arrow, showing how many
+items it holds while closed, and offers its own create action when you point at it:
 
+- **Groups:** group chats; **+** starts one.
 - **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename, and
-  remove actions.
-- **Chats:** standalone conversations only.
+  remove actions; **+** opens a folder as a project.
+- **Chats:** standalone conversations only; the pen starts one.
 
-Search spans both sections and labels project-backed results. The title bar and composer project pill
+The **⋯** menu beside the SideKick name holds the rest: a new chat, the command palette, collapsing
+or expanding every project at once, and clearing all chats. When the sidebar is collapsed, it also
+starts a group chat or opens a project.
+
+Search spans the sections and labels project-backed results. The title bar and composer project pill
 show the active project so folder context is never implicit.

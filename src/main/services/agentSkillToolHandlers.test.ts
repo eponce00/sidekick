@@ -145,6 +145,113 @@ describe('create_artifact', () => {
   })
 })
 
+describe('create_artifact in a chat', () => {
+  const image = { mimeType: 'image/jpeg' as const, base64: 'SU1BR0U=', width: 720, height: 300 }
+  const first = 'export default function App() { return <div>NaN ft</div> }'
+  const fixed = 'export default function App() { return <div>4,505 ft</div> }'
+
+  async function build(options: {
+    builder: () => Promise<unknown>
+    visionEnabled?: boolean
+    firstStatus?: 'rendered' | 'error'
+  }) {
+    const registry = new AgentToolHandlerRegistry()
+    const inspect = vi.fn(async (artifact: { code: string }) => ({
+      status: artifact.code === first ? (options.firstStatus ?? 'rendered') : ('rendered' as const),
+      errors: [],
+      width: 720,
+      height: 300,
+      image
+    }))
+    const buildArtifact = vi.fn(options.builder)
+    registerSkillToolHandlers(registry, {
+      activeSkillIds: new Set(['web-artifacts']),
+      readReceipts: new Map(),
+      childLauncher: () => ({ launch: vi.fn(), buildArtifact }) as never,
+      artifactInspector: () => ({ inspect }) as never,
+      visionEnabled: options.visionEnabled ?? true,
+      buildArtifacts: true
+    })
+    const result = await registry.execute({
+      name: 'create_artifact',
+      title: 'Create artifact',
+      arguments: { type: 'react', title: 'Elevations', code: first },
+      context: { runId: 'chat-run', signal: new AbortController().signal }
+    })
+    return { result, inspect, buildArtifact }
+  }
+
+  it('returns the builder’s final version, checked, and the code later changes start from', async () => {
+    const { result, inspect, buildArtifact } = await build({
+      builder: async () => ({
+        childRunId: 'builder-1',
+        artifact: { type: 'react', title: 'Elevations', code: fixed },
+        versions: 2,
+        status: 'completed'
+      })
+    })
+
+    // The builder starts from the agent's version and how it rendered.
+    expect(buildArtifact).toHaveBeenCalledWith(
+      {
+        artifact: { type: 'react', title: 'Elevations', code: first },
+        review: expect.objectContaining({ status: 'success' })
+      },
+      expect.objectContaining({ runId: 'chat-run' })
+    )
+    // The final version is rendered again, so what the agent is told is true of it.
+    expect(inspect).toHaveBeenLastCalledWith(
+      { type: 'react', title: 'Elevations', code: fixed },
+      expect.any(AbortSignal)
+    )
+    expect(result.data).toMatchObject({
+      artifact: { code: fixed },
+      childRunId: 'builder-1',
+      versions: 2
+    })
+    expect(result.modelContent).toContain('made 1 fix before showing it')
+    // Reviewed already, so the result does not also ask the agent to fix it.
+    expect(result.modelContent).not.toContain('fix it with create_artifact')
+    expect(result.modelContent).toContain('do not rebuild it to polish it')
+    expect(result.modelContent).toContain(fixed)
+  })
+
+  it('keeps the agent’s version when the builder fails', async () => {
+    const { result } = await build({
+      builder: async () => {
+        throw new Error('model offline')
+      }
+    })
+
+    expect(result.status).toBe('success')
+    expect(result.data).toMatchObject({ artifact: { code: first } })
+    expect(result.data).not.toHaveProperty('childRunId')
+  })
+
+  it('skips the builder when there is nothing it could judge', async () => {
+    // Rendered cleanly, and no screenshot for a model that cannot see images.
+    const { buildArtifact } = await build({
+      builder: async () => ({}),
+      visionEnabled: false
+    })
+    expect(buildArtifact).not.toHaveBeenCalled()
+
+    // A failure is worth fixing even without a screenshot.
+    const failing = await build({
+      builder: async () => ({
+        childRunId: 'builder-2',
+        artifact: { type: 'react', title: 'Elevations', code: fixed },
+        versions: 2,
+        status: 'completed'
+      }),
+      visionEnabled: false,
+      firstStatus: 'error'
+    })
+    expect(failing.buildArtifact).toHaveBeenCalledOnce()
+    expect(failing.result.status).toBe('success')
+  })
+})
+
 it('says loading a skill makes its tool ready, without telling the model to reload it later', async () => {
   const registry = new AgentToolHandlerRegistry()
   registerSkillToolHandlers(registry, {

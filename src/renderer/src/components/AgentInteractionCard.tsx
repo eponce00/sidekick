@@ -74,7 +74,7 @@ function QuestionCompose({
     if (trimmed) onSend(trimmed)
   }
   return (
-    <div className="agent-question-compose">
+    <div className="agent-question-compose field-shell">
       <input
         value={value}
         autoFocus

@@ -375,7 +375,7 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
 
               {selected.models.length > 0 && (
                 <>
-                  <div className="provider-model-search">
+                  <div className="provider-model-search field-shell">
                     <Search size={14} aria-hidden="true" />
                     <input
                       type="search"
@@ -521,6 +521,26 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                           )
                         })}
                     </select>
+                  </label>
+                  <label className="modern-field provider-fast-model">
+                    <span>Sub-agents at once</span>
+                    <select
+                      value={String(selected.subAgentsAtOnce ?? 1)}
+                      onChange={(event) => {
+                        const count = Number(event.target.value)
+                        updateSelected({ subAgentsAtOnce: count > 1 ? count : undefined })
+                      }}
+                    >
+                      <option value="1">One at a time</option>
+                      <option value="2">Two</option>
+                      <option value="3">Three</option>
+                      <option value="4">Four</option>
+                    </select>
+                    <small>
+                      Tasks delegated together run side by side up to this limit; the rest wait
+                      their turn. More than one helps a server that caches several prompts or serves
+                      several requests at once.
+                    </small>
                   </label>
                 </>
               )}

@@ -9,7 +9,8 @@ import type {
   SteerConversationRunResult
 } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
-import { agentRunProfile } from '../../shared/agentToolCatalog'
+import { agentRunProfile, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
+import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
@@ -31,6 +32,7 @@ import {
 import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { loadStoredSettings } from '../ipc/settings'
+import { SubAgentSlots } from './subAgentSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
@@ -51,7 +53,11 @@ import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
-import type { AgentCollaborationToolHandler } from './agentToolRuntime'
+import type {
+  AgentChildRunLauncher,
+  AgentCollaborationToolHandler,
+  ArtifactBuildResult
+} from './agentToolRuntime'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
@@ -99,6 +105,13 @@ export interface CollaborationKernelRunInput {
   onWorkspaceWillMutate?: () => Promise<void>
 }
 
+// A sub-agent answers one bounded question; 80 rounds let one run for an hour.
+const SUB_AGENT_TOOL_ROUNDS = 25
+// Beyond this a provider's KV cache cannot hold every sub-agent's prompt anyway.
+const MAX_SUB_AGENTS_AT_ONCE = 4
+// An artifact that still has a defect after three fixes needs the agent, not a fourth try.
+const ARTIFACT_BUILDER_FIXES = 3
+
 function checkpointLabel(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
   return normalized.length > 72 ? `${normalized.slice(0, 71)}…` : normalized || 'Agent changes'
@@ -122,6 +135,7 @@ export class AgentRuntimeCoordinator {
   private readonly publishExternal: (event: AgentRunEvent) => void
   private readonly settings: () => ProviderSettings
   private readonly skillAssetsPath: () => string
+  private readonly subAgentSlots = new SubAgentSlots()
 
   constructor(
     private readonly db: Database.Database,
@@ -169,7 +183,8 @@ export class AgentRuntimeCoordinator {
       this.publishEvent(event)
     )
     this.tools.setChildLauncher({
-      launch: (task, context, parent) => this.launchChild(task, context, parent)
+      launch: (task, context, parent) => this.launchChild(task, context, parent),
+      buildArtifact: (first, parent) => this.buildArtifact(first, parent)
     })
     this.tools.setArtifactInspector(new ArtifactInspector())
     this.recoverInterruptedRuns()
@@ -690,6 +705,7 @@ export class AgentRuntimeCoordinator {
     context: string | undefined,
     parentContext: {
       runId: string
+      toolCallId?: string
       conversationId?: string
       workspaceRoot?: string
       signal: AbortSignal
@@ -697,9 +713,202 @@ export class AgentRuntimeCoordinator {
   ): Promise<unknown> {
     const parent = this.activeConversations.get(parentContext.runId)
     if (!parent) throw new Error('Parent run is no longer active')
+    parentContext.signal.throwIfAborted()
+    const parentInput = parent.prepared.kernelInput
+    const target = parentInput.request.target
+    const instance = this.settings().providerInstances?.find(
+      ({ id }) => id === target.providerInstanceId
+    )
+    const release = await this.subAgentSlots.acquire(
+      target.providerInstanceId ?? `${target.providerKind}:${target.model}`,
+      Math.min(MAX_SUB_AGENTS_AT_ONCE, Math.max(1, Math.floor(instance?.subAgentsAtOnce ?? 1))),
+      parentContext.signal,
+      () =>
+        this.recordSubAgentEvent(parentContext, 'subagent.queued', 'queued', {
+          toolCallId: parentContext.toolCallId
+        })
+    )
+    try {
+      return await this.runChild(task, context, parentContext, parent)
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Reviews and fixes an artifact in a run of its own, so the chat shows one
+   * finished artifact rather than every attempt. The builder is started as if
+   * it had just made the agent's first version and been shown how it rendered;
+   * it then fixes what the review shows, or says the artifact is right.
+   */
+  private async buildArtifact(
+    first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    }
+  ): Promise<ArtifactBuildResult> {
+    const parent = this.activeConversations.get(parentContext.runId)
+    if (!parent) throw new Error('Parent run is no longer active')
+    parentContext.signal.throwIfAborted()
     const id = randomUUID()
     const parentInput = parent.prepared.kernelInput
     const target = parentInput.request.target
+    const vision = Boolean(first.review.media?.length)
+    const session = await this.tools.createSession({
+      permissionMode: parentInput.permissionMode,
+      runId: id,
+      surface: 'subagent',
+      capabilities: ['artifacts'],
+      persistentSkillIds: [WEB_ARTIFACTS_SKILL_ID],
+      webSearchEnabled: false,
+      browserEnabled: vision,
+      artifactBuilder: true,
+      instructionScopeId: id
+    })
+    const skill = getSkillById(WEB_ARTIFACTS_SKILL_ID)
+    const request = [...parentInput.messages]
+      .reverse()
+      .find((message) => message.role === 'user' && typeof message.content === 'string')
+    const firstCallId = `${id}:first`
+    const { title } = first.artifact
+    const messages: ProviderChatMessage[] = [
+      {
+        role: 'system',
+        content: [
+          "You are SideKick's artifact builder. The agent made an interactive artifact for the user and you check it before the user sees it.",
+          `Review how it rendered against the user's request. If it works and shows what was asked, with no visible defect, reply with one sentence saying so and call no tool. Otherwise call create_artifact with the complete corrected code, keeping the title "${title}", and review the new render the same way.`,
+          'Fix defects and mismatches with the request: errors, a blank or broken render, a loading state that never ends, wrong or mixed units, NaN or placeholder values, clipped or overlapping text, controls that do nothing. Do not redesign it, add features, or restyle what works.',
+          `You have at most ${ARTIFACT_BUILDER_FIXES} fixes.`,
+          skill
+            ? `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n</skill_instructions>`
+            : ''
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      },
+      {
+        role: 'user',
+        content: `The user's request:\n${String(request?.content ?? '').slice(0, 6_000) || '(not available)'}`
+      },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: firstCallId,
+            function: { name: 'create_artifact', arguments: { ...first.artifact } }
+          }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: firstCallId,
+        content: first.review.modelContent,
+        ...(first.review.media?.length ? { media: first.review.media } : {})
+      }
+    ]
+    const stopBuilder = (): void => {
+      this.stop(id)
+    }
+    parentContext.signal.addEventListener('abort', stopBuilder, { once: true })
+    const running = this.kernel.start({
+      id,
+      threadId: parentContext.conversationId || parentContext.runId,
+      parentRunId: parentContext.runId,
+      profile: agentRunProfile(session.catalog()),
+      provider: target.providerKind,
+      model: target.model,
+      catalog: session.catalog,
+      messages,
+      request: { ...parentInput.request, purpose: 'sub-agent' },
+      maxToolRounds: ARTIFACT_BUILDER_FIXES,
+      permissionMode: parentInput.permissionMode,
+      toolRouter: session.router,
+      contextManager: new AgentContextManager({
+        target,
+        contextLength: target.contextLength ?? 32_768,
+        maxOutputTokens: parentInput.request.maxOutputTokens ?? 4_096,
+        threshold: 0.8,
+        enabled: true
+      })
+    })
+    this.recordSubAgentEvent(parentContext, 'subagent.started', id, {
+      toolCallId: parentContext.toolCallId,
+      childRunId: id
+    })
+    let outcome: Awaited<typeof running>
+    try {
+      outcome = await running
+    } finally {
+      parentContext.signal.removeEventListener('abort', stopBuilder)
+      clearWorkspaceInstructionScope(id)
+    }
+    // The version shown is the builder's last one that rendered, or the agent's
+    // own when none of the builder's did.
+    const versions = this.store
+      .listAllEvents(id)
+      .filter(
+        (event) => event.type === 'tool.completed' && event.payload.name === 'create_artifact'
+      )
+      .map((event) => {
+        const result = event.payload.result as Record<string, unknown> | undefined
+        const data = result?.data as
+          | { artifact?: ArtifactBuildResult['artifact']; inspection?: { status?: string } }
+          | undefined
+        return { artifact: data?.artifact, rendered: data?.inspection?.status === 'rendered' }
+      })
+      .filter((version) => typeof version.artifact?.code === 'string')
+    const lastGood = [...versions].reverse().find((version) => version.rendered)?.artifact
+    return {
+      childRunId: id,
+      artifact: { ...(lastGood ?? first.artifact), title },
+      versions: versions.length + 1,
+      status: outcome.phase
+    }
+  }
+
+  private recordSubAgentEvent(
+    parentContext: { runId: string; toolCallId?: string },
+    type: 'subagent.queued' | 'subagent.started',
+    suffix: string,
+    payload: Record<string, unknown>
+  ): void {
+    if (!parentContext.toolCallId) return
+    try {
+      this.publishEvent(
+        this.store.appendEvent({
+          id: `${parentContext.runId}:subagent:${parentContext.toolCallId}:${suffix}`,
+          runId: parentContext.runId,
+          type,
+          payload
+        })
+      )
+    } catch (error) {
+      console.warn(`[AgentRuntime] Could not record ${type}:`, error)
+    }
+  }
+
+  private async runChild(
+    task: string,
+    context: string | undefined,
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    },
+    parent: ActiveConversationRun
+  ): Promise<unknown> {
+    const id = randomUUID()
+    const parentInput = parent.prepared.kernelInput
+    const target = parentInput.request.target
+    // A sub-agent answers one bounded question, so it gets a smaller budget than its parent.
+    const toolRounds = Math.min(parentInput.maxToolRounds, SUB_AGENT_TOOL_ROUNDS)
     const session = await this.tools.createSession({
       permissionMode: parentInput.permissionMode,
       runId: id,
@@ -714,11 +923,18 @@ export class AgentRuntimeCoordinator {
       ...(system ? [system] : []),
       {
         role: 'user',
-        content: `${task}${context ? `\n\nRelevant context:\n${context}` : ''}\n\nComplete this bounded task and return a concise result to the parent agent.`
+        content: `${task}${context ? `\n\nRelevant context:\n${context}` : ''}\n\nComplete this bounded task and return a concise result to the parent agent. Stop as soon as you have what the task asks for; do not keep checking beyond it. You have at most ${toolRounds} rounds of tool calls.`
       }
     ]
     const contextLength = target.contextLength ?? 32_768
-    const result = await this.kernel.start({
+    // Stopping the parent stops the child, and with it any question the child
+    // is waiting on. Without this a stopped chat left its sub-agent running.
+    const stopChild = (): void => {
+      this.stop(id)
+    }
+    parentContext.signal.addEventListener('abort', stopChild, { once: true })
+    const startedAt = Date.now()
+    const running = this.kernel.start({
       id,
       threadId: parentContext.conversationId || parentContext.runId,
       parentRunId: parentContext.runId,
@@ -729,7 +945,7 @@ export class AgentRuntimeCoordinator {
       catalog: session.catalog,
       messages: childMessages,
       request: { ...parentInput.request, purpose: 'sub-agent' },
-      maxToolRounds: parentInput.maxToolRounds,
+      maxToolRounds: toolRounds,
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
       verificationController: session.verificationController,
@@ -741,12 +957,28 @@ export class AgentRuntimeCoordinator {
         enabled: true
       })
     })
-    clearWorkspaceInstructionScope(id)
+    // The chat learns which run its sub-agent is as soon as it starts, so it
+    // can follow the work live rather than only see the result.
+    this.recordSubAgentEvent(parentContext, 'subagent.started', id, {
+      toolCallId: parentContext.toolCallId,
+      childRunId: id
+    })
+    let result: Awaited<typeof running>
+    try {
+      result = await running
+    } finally {
+      parentContext.signal.removeEventListener('abort', stopChild)
+      clearWorkspaceInstructionScope(id)
+    }
     return {
       childRunId: id,
       status: result.phase,
-      content: result.content,
-      error: result.error
+      // The report, not every progress note the sub-agent wrote on the way to it.
+      content: result.finalResponse?.trim() || result.content,
+      error: result.error,
+      // What the finished card shows without loading the sub-agent's whole run.
+      toolCalls: this.store.countEvents(id, 'tool.running'),
+      durationMs: Date.now() - startedAt
     }
   }
 

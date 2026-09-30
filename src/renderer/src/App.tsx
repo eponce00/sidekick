@@ -495,6 +495,19 @@ function App(): React.JSX.Element {
   // IPC chunks can arrive faster than React can reconcile, so we debounce to one update per 250ms.
   const pendingTokenUpdate = useRef<{ tokens: number; max: number } | null>(null)
   const tokenThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Each open chat's last reported context. A chat's panel stays mounted after
+  // it is first opened and reports again only when its messages change, so
+  // switching back to it must restore its figure rather than start from zero.
+  const tokenCountsByConversation = useRef(new Map<string, { current: number; max: number }>())
+  const restoreTokenCounts = useCallback((conversationId: string | null) => {
+    pendingTokenUpdate.current = null
+    setTokenCounts(
+      (conversationId && tokenCountsByConversation.current.get(conversationId)) || {
+        current: 0,
+        max: 4096
+      }
+    )
+  }, [])
 
   const handleTokenCountUpdate = useCallback((tokens: number, max: number) => {
     pendingTokenUpdate.current = { tokens, max }
@@ -597,7 +610,7 @@ function App(): React.JSX.Element {
     setCurrentGroupId(null)
     setCurrentGroupSessionId(null)
     setGroupAgentContext(null)
-    setTokenCounts({ current: 0, max: 4096 })
+    restoreTokenCounts(id)
     setConversationCost(0)
   }
 
@@ -1159,6 +1172,9 @@ function App(): React.JSX.Element {
           planningModelId={settings.planningModelId}
           onModelChange={handleModelChange}
           onTokenCountUpdate={(current, max) => {
+            if (panelConversationId) {
+              tokenCountsByConversation.current.set(panelConversationId, { current, max })
+            }
             if (
               currentConversationIdRef.current === panelConversationId ||
               (visible && panelConversationId === null)
@@ -1330,6 +1346,7 @@ function App(): React.JSX.Element {
           currentGroupId={currentGroupId}
           currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
+          platform={platform}
           busyConversationIds={busyConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
@@ -1342,6 +1359,7 @@ function App(): React.JSX.Element {
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
           onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onDeleteConversation={handleDeleteConversation}
           onDeleteGroup={(id) => void handleDeleteGroup(id)}
           onDeleteAllConversations={handleDeleteAllConversations}

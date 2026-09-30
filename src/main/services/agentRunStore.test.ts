@@ -137,6 +137,20 @@ describe('AgentRunStore', () => {
     expect(store.canContinue('run-2', 'thread-1')).toBe(false)
   })
 
+  it('keeps a chat on its own run when a sub-agent starts after it in the same thread', () => {
+    start('run-1')
+    store.start({
+      id: 'child-1',
+      threadId: 'thread-1',
+      parentRunId: 'run-1',
+      profile: { surface: 'subagent', executionMode: 'act', capabilities: ['wait'] },
+      provider: 'openai-compatible',
+      model: 'test-model'
+    })
+    db.prepare('UPDATE agent_runs SET started_at = started_at + 1 WHERE id = ?').run('child-1')
+    expect(store.latest('thread-1')?.id).toBe('run-1')
+  })
+
   it('rejects transitions after a terminal state', () => {
     const run = start()
     store.transition(run.id, 'completed', 'complete')

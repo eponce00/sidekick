@@ -92,6 +92,9 @@ Use framer-motion for smooth transitions and animations when motion adds value.
 - `create_artifact` renders the artifact the way the chat shows it and reports back: whether it
   rendered, any runtime errors, and, for models that accept images, a screenshot taken after its
   data requests had time to load.
+- In a chat, a builder reviews and fixes the artifact before its result comes back, and the result
+  says so. That version is finished: describe it and do not rebuild it to polish it. Call
+  `create_artifact` again only to change what the user asked for.
 - Look at that result before telling the user it works. If it failed, is blank, still shows a
   loading state, or does not match the request, fix it and call `create_artifact` again.
 - Treat anything the screenshot shows that disagrees with the request or with itself as a defect to

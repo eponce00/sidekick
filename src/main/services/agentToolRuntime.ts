@@ -50,6 +50,7 @@ import { registerWebToolHandlers } from './agentWebToolHandlers'
 import { registerConversationToolHandlers } from './agentConversationToolHandlers'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
+import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
 import { externalImageApprovalForMode } from './externalImageApproval'
@@ -79,12 +80,33 @@ export interface AgentPlanToolHandler {
   }
 }
 
+/** What an artifact builder returns: the version it settled on and how it got there. */
+export interface ArtifactBuildResult {
+  childRunId: string
+  artifact: { type: InspectedArtifactType; title: string; code: string }
+  /** Every version rendered, the agent's first included. */
+  versions: number
+  status: 'completed' | 'failed' | 'cancelled'
+}
+
 export interface AgentChildRunLauncher {
   launch(
     task: string,
     context: string | undefined,
     parent: AgentToolExecutionContext
   ): Promise<unknown>
+  /**
+   * Refines an artifact out of the chat's sight: a builder run renders it,
+   * reviews what it shows, and fixes defects until it is right or out of turns.
+   */
+  buildArtifact(
+    first: {
+      artifact: { type: InspectedArtifactType; title: string; code: string }
+      /** How the first version rendered, as the agent would have been told. */
+      review: ToolExecutionResult
+    },
+    parent: AgentToolExecutionContext
+  ): Promise<ArtifactBuildResult>
 }
 
 export interface AgentToolRuntimeSessionInput {
@@ -97,6 +119,8 @@ export interface AgentToolRuntimeSessionInput {
   browserEnabled?: boolean
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
   artifactContinuation?: boolean
+  /** This run is an artifact builder: its create_artifact renders directly, never through another builder. */
+  artifactBuilder?: boolean
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -376,7 +400,9 @@ export class AgentToolRuntime {
       artifactInspector: () => this.artifactInspector,
       // The visual browser is enabled exactly when the model accepts images.
       visionEnabled: input.browserEnabled === true,
-      artifactContinuation: input.artifactContinuation === true
+      artifactContinuation: input.artifactContinuation === true,
+      // A chat's artifacts are refined out of sight; a builder renders its own directly.
+      buildArtifacts: input.surface === 'conversation' && input.artifactBuilder !== true
     })
     handlers.register(
       ['office_preflight', 'office_validate'],

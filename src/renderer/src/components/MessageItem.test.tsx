@@ -484,6 +484,54 @@ describe('MessageItem shared-channel presentation', () => {
     )
   })
 
+  it('keeps a working reply that ends in text from looking finished', async () => {
+    const render = async (isLoading: boolean): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <MessageItem
+            message={{
+              id: 'still-working',
+              role: 'agent',
+              content: 'Fixing those to derive from metres:',
+              timestamp: Date.now() - 21 * 60_000,
+              segments: [
+                { type: 'thinking', content: 'Checking the render' },
+                { type: 'text', content: 'Fixing those to derive from metres:' }
+              ],
+              tokenUsage: { promptTokens: 48_000, completionTokens: 1_411, tokensPerSecond: 12.5 }
+            }}
+            index={0}
+            isLoading={isLoading}
+            expandedThinking={new Set()}
+            editingMessageId={null}
+            editingGeometry={null}
+            editingContent=""
+            copiedMessageId={null}
+            onToggleThinking={vi.fn()}
+            onHandleArtifactResult={vi.fn()}
+            onEditMessage={vi.fn()}
+            onCancelEditMessage={vi.fn()}
+            onConfirmEditMessage={vi.fn()}
+            onCopyMessage={vi.fn()}
+            onRetryMessage={vi.fn()}
+            onSetEditingContent={vi.fn()}
+            onApproveToolLimitDecision={vi.fn()}
+            onDenyToolLimitDecision={vi.fn()}
+          />
+        )
+      })
+    }
+
+    // The model can spend minutes writing its next tool call with nothing new on screen.
+    await render(true)
+    expect(container.querySelector('.agent-work-tail')?.textContent).toMatch(/^Working for 21/)
+    expect(container.querySelector('.message-meta')).toBeNull()
+
+    await render(false)
+    expect(container.querySelector('.agent-work-tail')).toBeNull()
+    expect(container.querySelector('.message-token-info')?.textContent).toBe('12.5 t/s')
+  })
+
   it('offers message-level undo for a response that changed this workspace', async () => {
     const undo = vi.fn()
     await act(async () => {
