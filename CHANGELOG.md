@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.9.0 — 2026-09-30
+
+- Follow a sub-agent live. A delegated task shows as one row in the reply, never folded away: what
+  the sub-agent is doing now, how many tools it has used, for how long, and a warning when it has
+  gone quiet. Once done, the row leads with the start of its report. Open the row to see the task it
+  was given and everything it did, drawn like any reply; **Back** or **Esc** returns to the chat.
+- Stop a sub-agent from its row, and stop them all by stopping the reply. A sub-agent's questions and
+  approvals now appear under its row instead of waiting where no one could see them, which could
+  leave a chat stuck for hours.
+- Keep sub-agents short. A sub-agent gets 25 rounds of tool calls, is told to stop once it has what
+  the task asks for, and reports what it found when its budget runs out. The agent is asked to
+  delegate a task as the user asked it, without adding requirements. The agent now receives the
+  sub-agent's report, not every progress note written on the way.
+- Run tasks delegated together side by side. Each is approved in turn, then they start together, up
+  to **Sub-agents at once** in the provider's settings (one by default); the rest show as queued.
+- Refine artifacts out of sight. In a chat, a builder reviews how an artifact rendered and fixes what
+  is wrong with it, up to three times, behind one **Building** row. The chat then shows only the
+  finished artifact, and the conversation keeps only its final code.
+- Keep a working reply from looking finished. A reply that ends in text shows a live "Working for…"
+  line while the model writes its next step, and the token and time footer waits for the end.
+- Keep each chat's context figure when switching between chats, and show a sub-agent's own context
+  while its view is open.
+- Reorganize the sidebar. Groups, Projects, and Chats fold away with an arrow, showing a count while
+  closed, and each heading offers its own create action. The header's **⋯** menu holds a new chat,
+  the command palette, collapsing every project, and clearing all chats.
+- Give the Files panel's project folder the same **⋯** menu as the folders inside it.
+- Draw a search field's focus ring around the rounded field, not as a square inside it.
+- Show a reply's duration once when a sub-agent or artifact splits its work into several groups.
+
 ## 0.8.0 — 2026-09-27
 
 - Talk with SideKick. **Ctrl+Space** (**⌥Space** on macOS) or the new microphone turns voice on:
