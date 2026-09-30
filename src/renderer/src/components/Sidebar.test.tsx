@@ -407,5 +407,27 @@ describe('Sidebar chat section', () => {
     })
 
     expect(onOrder).toHaveBeenLastCalledWith(['in-open', 'loose'])
+
+    // A closed section hides its rows, leaves keyboard order, and says how many it holds.
+    const toggle = (label: string): HTMLButtonElement =>
+      [...container.querySelectorAll<HTMLButtonElement>('.sidebar-section-toggle')].find((button) =>
+        button.textContent?.startsWith(label)
+      )!
+    await act(async () => toggle('Chats').click())
+    expect(toggle('Chats').getAttribute('aria-expanded')).toBe('false')
+    expect(toggle('Chats').textContent).toBe('Chats1')
+    expect(container.textContent).not.toContain('loose')
+    expect(onOrder).toHaveBeenLastCalledWith(['in-open'])
+    expect(window.localStorage.setItem).toHaveBeenLastCalledWith(
+      'collapsedSidebarSections',
+      JSON.stringify(['chats'])
+    )
+
+    await act(async () => toggle('Projects').click())
+    expect(onOrder).toHaveBeenLastCalledWith([])
+    expect(container.textContent).not.toContain('in-open')
+
+    await act(async () => toggle('Chats').click())
+    expect(onOrder).toHaveBeenLastCalledWith(['loose'])
   })
 })

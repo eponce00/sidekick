@@ -76,6 +76,8 @@ interface SidebarProps {
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
 
+type SidebarSection = 'groups' | 'projects' | 'chats'
+
 function Sidebar({
   conversations,
   projects,
@@ -144,6 +146,22 @@ function Sidebar({
   }, [collapsedProjectIds])
   const allProjectsCollapsed =
     projects.length > 0 && projects.every(({ id }) => collapsedProjectIds.has(id))
+  const [collapsedSections, setCollapsedSections] = useState<Set<SidebarSection>>(() => {
+    try {
+      return new Set(JSON.parse(window.localStorage.getItem('collapsedSidebarSections') || '[]'))
+    } catch {
+      return new Set()
+    }
+  })
+  useEffect(() => {
+    window.localStorage.setItem('collapsedSidebarSections', JSON.stringify([...collapsedSections]))
+  }, [collapsedSections])
+  const toggleSection = (section: SidebarSection): void =>
+    setCollapsedSections((current) => {
+      const next = new Set(current)
+      if (!next.delete(section)) next.add(section)
+      return next
+    })
 
   useEffect(() => {
     if (!isMenuOpen) return
@@ -215,12 +233,25 @@ function Sidebar({
     () =>
       searching
         ? searchResults.map(({ id }) => id)
-        : sidebarConversationOrder(
-            conversations,
-            projects,
-            isCollapsed ? undefined : collapsedProjectIds
-          ),
-    [collapsedProjectIds, conversations, isCollapsed, projects, searchResults, searching]
+        : isCollapsed
+          ? sidebarConversationOrder(conversations, projects)
+          : sidebarConversationOrder(
+              conversations,
+              projects,
+              collapsedSections.has('projects')
+                ? new Set(projects.map(({ id }) => id))
+                : collapsedProjectIds,
+              collapsedSections.has('chats')
+            ),
+    [
+      collapsedProjectIds,
+      collapsedSections,
+      conversations,
+      isCollapsed,
+      projects,
+      searchResults,
+      searching
+    ]
   )
   useEffect(() => {
     onVisibleConversationOrderChange?.(visibleConversationOrder)
@@ -573,6 +604,32 @@ function Sidebar({
     )
   }
 
+  const sectionHeading = (
+    section: SidebarSection,
+    label: string,
+    count: number
+  ): React.JSX.Element => {
+    const collapsed = collapsedSections.has(section)
+    return (
+      <button
+        type="button"
+        className="sidebar-section-toggle"
+        onClick={() => toggleSection(section)}
+        aria-expanded={!collapsed}
+        title={collapsed ? `Show ${label.toLowerCase()}` : `Hide ${label.toLowerCase()}`}
+      >
+        <ChevronDown
+          size={12}
+          className={`sidebar-section-chevron ${collapsed ? 'is-collapsed' : ''}`}
+          aria-hidden="true"
+        />
+        <span>{label}</span>
+        {/* What a closed section holds, so nothing seems to have gone missing. */}
+        {collapsed && count > 0 && <span className="sidebar-section-count">{count}</span>}
+      </button>
+    )
+  }
+
   return (
     <>
       <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
@@ -765,7 +822,7 @@ function Sidebar({
             <>
               <section className="sidebar-section groups-section">
                 <div className="sidebar-section-label sidebar-section-label-with-action">
-                  <span>Groups</span>
+                  {sectionHeading('groups', 'Groups', activeGroups.length)}
                   <button
                     type="button"
                     className="sidebar-section-create"
@@ -776,7 +833,7 @@ function Sidebar({
                     <Plus size={14} />
                   </button>
                 </div>
-                {activeGroups.length ? (
+                {collapsedSections.has('groups') ? null : activeGroups.length ? (
                   activeGroups.map((group) => (
                     <div key={group.id} className="group-sidebar-item">
                       <div
@@ -895,7 +952,7 @@ function Sidebar({
 
               <section className="sidebar-section project-section">
                 <div className="sidebar-section-label sidebar-section-label-with-action">
-                  <span>Projects</span>
+                  {sectionHeading('projects', 'Projects', projects.length)}
                   <button
                     type="button"
                     className="sidebar-section-create"
@@ -906,7 +963,7 @@ function Sidebar({
                     <Plus size={14} />
                   </button>
                 </div>
-                {projects.length === 0 ? (
+                {collapsedSections.has('projects') ? null : projects.length === 0 ? (
                   <button type="button" className="project-empty-action" onClick={onOpenProject}>
                     <FolderPlus size={15} />
                     <span>Open a folder as a project</span>
@@ -1207,7 +1264,7 @@ function Sidebar({
                 }}
               >
                 <div className="sidebar-section-label sidebar-section-label-with-action">
-                  <span>Chats</span>
+                  {sectionHeading('chats', 'Chats', standaloneConversations.length)}
                   <button
                     type="button"
                     className="sidebar-section-create"
@@ -1218,7 +1275,7 @@ function Sidebar({
                     <SquarePen size={13} />
                   </button>
                 </div>
-                {standaloneConversations.length > 0 ? (
+                {collapsedSections.has('chats') ? null : standaloneConversations.length > 0 ? (
                   standaloneConversations.map((conversation) => renderConversation(conversation))
                 ) : (
                   <div className="empty-conversations compact">

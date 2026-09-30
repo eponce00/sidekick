@@ -112,7 +112,8 @@ filters or manually executed commands.
 
 ### Sidebar
 
-The sidebar has three sections. Each heading offers its own create action when you point at it:
+The sidebar has three sections. Each heading folds its section away with its arrow, showing how many
+items it holds while closed, and offers its own create action when you point at it:
 
 - **Groups:** group chats; **+** starts one.
 - **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename, and

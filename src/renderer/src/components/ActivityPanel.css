@@ -668,7 +668,7 @@
   white-space: nowrap;
 }
 
-.file-explorer-refresh {
+.file-explorer-action {
   all: unset;
   cursor: pointer;
   color: var(--text-muted);
@@ -685,7 +685,7 @@
   flex-shrink: 0;
 }
 
-.file-explorer-refresh:hover {
+.file-explorer-action:hover {
   color: var(--text-primary);
   background: var(--surface-2);
 }

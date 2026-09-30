@@ -629,15 +629,32 @@ function ActivityPanel({
 
             {activeTab === 'files' && !viewedFile && (
               <div className="file-explorer-wrap">
-                <div className="file-explorer-header">
+                <div
+                  className="file-explorer-header"
+                  onContextMenu={(event) => {
+                    if (!workspaceFolder) return
+                    event.preventDefault()
+                    showPathMenu('', true)
+                  }}
+                >
                   <span className="file-explorer-root-name">{fileRootName || 'Workspace'}</span>
                   <button
-                    className="file-explorer-refresh"
+                    className="file-explorer-action"
                     onClick={() => setFileRefreshKey((k) => k + 1)}
                     title="Refresh file tree"
                   >
                     <RefreshCw size={13} />
                   </button>
+                  {workspaceFolder && (
+                    <button
+                      className="file-explorer-action"
+                      onClick={() => showPathMenu('', true)}
+                      title="More actions for the project folder"
+                      aria-label="More actions for the project folder"
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                  )}
                 </div>
                 {fileActionError && (
                   <div className="file-explorer-error" role="alert">

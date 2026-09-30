@@ -612,10 +612,15 @@ export function registerWorkspaceHandlers(): void {
           label: 'Copy Full Path',
           click: () => clipboard.writeText(target)
         },
-        {
-          label: 'Copy Project-Relative Path',
-          click: () => clipboard.writeText(relativePath)
-        }
+        // The project folder itself has no path relative to itself.
+        ...(relativePath
+          ? [
+              {
+                label: 'Copy Project-Relative Path',
+                click: () => clipboard.writeText(relativePath)
+              }
+            ]
+          : [])
       ])
       const window = BrowserWindow.fromWebContents(event.sender)
       menu.popup(window ? { window } : undefined)
