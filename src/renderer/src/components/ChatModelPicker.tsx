@@ -110,7 +110,7 @@ export function ChatModelPicker({
               {offersSearch && (
                 <div className={`model-menu-header ${searchOpen ? 'is-searching' : ''}`}>
                   {searchOpen ? (
-                    <div className="model-menu-search">
+                    <div className="model-menu-search field-shell">
                       <Search size={13} aria-hidden="true" />
                       <input
                         type="search"

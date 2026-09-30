@@ -35,11 +35,14 @@ async function resolveInteraction(
 export function SubAgentView({
   target,
   workspaceFolder,
-  onBack
+  onBack,
+  onContextUpdate
 }: {
   target: SubAgentTarget
   workspaceFolder?: string | null
   onBack: () => void
+  /** The sub-agent's own context, for the meter while its view is open. */
+  onContextUpdate?: (tokens: number) => void
 }): React.JSX.Element {
   const [live, setLive] = useState(true)
   const { snapshot, error, loaded } = useSubAgentRun(target.runId, live)
@@ -50,6 +53,12 @@ export function SubAgentView({
   const scrollRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
   const backRef = useRef<HTMLButtonElement>(null)
+
+  const contextTokens =
+    snapshot.projection.tokenUsage.promptTokens + snapshot.projection.tokenUsage.completionTokens
+  useEffect(() => {
+    if (loaded) onContextUpdate?.(contextTokens)
+  }, [contextTokens, loaded, onContextUpdate])
 
   // Stop listening once the run has ended; a finished run does not change.
   useEffect(() => {

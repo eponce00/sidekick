@@ -224,6 +224,17 @@ select {
   box-shadow: none;
 }
 
+/* A field whose visible edge is its container, such as a search box with an
+   icon: the rounded container shows focus, and the bare input inside it
+   draws no square ring of its own. */
+.field-shell:focus-within {
+  box-shadow: var(--focus-ring);
+}
+
+.field-shell :is(input, textarea):focus-visible {
+  box-shadow: none;
+}
+
 /* Icon spin animation for Lucide Loader2 */
 @keyframes icon-spin {
   from {

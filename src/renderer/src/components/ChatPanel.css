@@ -4666,10 +4666,6 @@ body[data-theme='light'] .tool-approval-command {
 
 /* The focus ring belongs to the field. Left on the bare input inside it, the
    global ring drew a second, square outline within the rounded one. */
-.agent-question-compose input:focus-visible {
-  box-shadow: none;
-}
-
 .agent-question-compose input {
   flex: 1;
   min-width: 0;

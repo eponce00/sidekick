@@ -375,7 +375,7 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
 
               {selected.models.length > 0 && (
                 <>
-                  <div className="provider-model-search">
+                  <div className="provider-model-search field-shell">
                     <Search size={14} aria-hidden="true" />
                     <input
                       type="search"

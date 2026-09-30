@@ -756,7 +756,7 @@ function Sidebar({
         </div>
 
         {!isCollapsed && (conversations.length > 0 || projects.length > 0 || groups.length > 0) && (
-          <label className="sidebar-search">
+          <label className="sidebar-search field-shell">
             <Search size={13} />
             <input
               value={query}

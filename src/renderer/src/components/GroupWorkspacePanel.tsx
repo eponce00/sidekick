@@ -687,7 +687,7 @@ export function GroupWorkspacePanel({
         ) : activeTab === 'files' ? (
           <div className="group-workspace-files">
             <div className="group-workspace-tool-row">
-              <label className="group-workspace-search">
+              <label className="group-workspace-search field-shell">
                 <Search size={13} />
                 <input
                   value={fileQuery}
