@@ -6,7 +6,7 @@ import {
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
 import { skillToolNames, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
-import type { AgentChildRunLauncher } from './agentToolRuntime'
+import type { AgentChildRunLauncher, ArtifactBuildResult } from './agentToolRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import type { ArtifactInspection, ArtifactInspectorLike } from './artifactInspector'
 
@@ -19,7 +19,9 @@ export function artifactToolResult(
   title: string,
   artifact: { type: InspectedArtifactType; title: string; code: string },
   inspection: ArtifactInspection | undefined,
-  visionEnabled: boolean
+  visionEnabled: boolean,
+  /** A builder has already reviewed and fixed it, so the model is not asked to. */
+  reviewed = false
 ): ToolExecutionResult {
   const name = `Artifact "${artifact.title || 'Untitled'}"`
   const data = {
@@ -49,7 +51,9 @@ export function artifactToolResult(
         ]
       : undefined
   const look = media
-    ? 'A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with create_artifact.'
+    ? reviewed
+      ? 'A screenshot of it as the user sees it is attached.'
+      : 'A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with create_artifact.'
     : 'No screenshot was attached because this model does not take images, so how it looks is unverified.'
   const fold = inspection.chatFrameHeight
     ? ` It is taller than the chat's ${inspection.chatFrameHeight}px artifact frame: the user first sees the top ${inspection.chatFrameHeight}px and scrolls inside the card for the rest.${media ? ' The screenshot shows all of it.' : ''}`
@@ -86,6 +90,32 @@ export function artifactToolResult(
   })
 }
 
+/**
+ * The builder's final version as the agent's own create_artifact result: the
+ * artifact the chat shows, how many versions it took, and, when the builder
+ * changed it, the code that is now current, since the agent's call holds the
+ * first version.
+ */
+export function withArtifactBuild(
+  final: ToolExecutionResult,
+  built: ArtifactBuildResult,
+  changed: boolean
+): ToolExecutionResult {
+  const data = final.data && typeof final.data === 'object' ? final.data : {}
+  const review =
+    built.versions > 1
+      ? `A builder reviewed it and made ${built.versions - 1} ${built.versions === 2 ? 'fix' : 'fixes'} before showing it; this is the version in the chat.`
+      : 'A builder reviewed it and found nothing to fix.'
+  const code = changed
+    ? `\nIts current code, which any later change must start from:\n\`\`\`\n${built.artifact.code}\n\`\`\``
+    : ''
+  return {
+    ...final,
+    data: { ...data, childRunId: built.childRunId, versions: built.versions },
+    modelContent: `${final.modelContent}\n${review} It is finished: do not rebuild it to polish it; call create_artifact again only to change what the user asked for.${code}`
+  }
+}
+
 export function registerSkillToolHandlers(
   registry: AgentToolHandlerRegistry,
   options: {
@@ -98,6 +128,8 @@ export function registerSkillToolHandlers(
     visionEnabled?: boolean
     /** The previous reply made an artifact, so its guidance is already in the conversation. */
     artifactContinuation?: boolean
+    /** Refine each artifact in a builder run rather than in the conversation. */
+    buildArtifacts?: boolean
   }
 ): void {
   registry.register('use_skill', async ({ title, arguments: args }) => {
@@ -151,14 +183,43 @@ export function registerSkillToolHandlers(
       code: typeof args.code === 'string' ? args.code : ''
     }
     const inspector = options.artifactInspector?.()
-    const inspection = inspector
-      ? await inspector.inspect(artifact, context.signal).catch((error) => {
-          context.signal?.throwIfAborted()
-          console.warn('[create_artifact] Inspection failed:', error)
-          return undefined
-        })
-      : undefined
-    const result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
+    const inspect = (candidate: typeof artifact): Promise<ArtifactInspection | undefined> =>
+      inspector
+        ? inspector.inspect(candidate, context.signal).catch((error) => {
+            context.signal?.throwIfAborted()
+            console.warn('[create_artifact] Inspection failed:', error)
+            return undefined
+          })
+        : Promise.resolve(undefined)
+    const inspection = await inspect(artifact)
+    let result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
+    // In a chat, the review-and-fix loop runs in a builder the chat does not
+    // show, so the conversation gets one artifact, not every attempt at it.
+    // Without a render, or with nothing wrong and no screenshot to judge, there
+    // is nothing for a builder to review.
+    const launcher = options.childLauncher()
+    if (
+      options.buildArtifacts &&
+      launcher &&
+      inspection &&
+      (inspection.status !== 'rendered' || options.visionEnabled)
+    ) {
+      try {
+        const built = await launcher.buildArtifact({ artifact, review: result }, context)
+        const changed = built.artifact.code !== artifact.code
+        const final = artifactToolResult(
+          title,
+          built.artifact,
+          changed ? await inspect(built.artifact) : inspection,
+          options.visionEnabled === true,
+          true
+        )
+        result = withArtifactBuild(final, built, changed)
+      } catch (error) {
+        context.signal?.throwIfAborted()
+        console.warn('[create_artifact] The builder failed; keeping the first version:', error)
+      }
+    }
     const skill = getSkillById(WEB_ARTIFACTS_SKILL_ID)
     if (!guidanceMissing || !skill) return result
     return {

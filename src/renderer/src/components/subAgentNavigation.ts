@@ -21,8 +21,14 @@ function argument(tool: ToolExecution, name: string): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
+/** A create_artifact call whose artifact a builder is refining. */
+export function isArtifactBuild(tool: ToolExecution): boolean {
+  return tool.name === 'create_artifact'
+}
+
 /** The task's short name: the label the agent gave it, else the start of the task itself. */
 export function subAgentTitle(tool: ToolExecution): string {
+  if (isArtifactBuild(tool)) return `Building “${argument(tool, 'title') ?? 'artifact'}”`
   const label = argument(tool, 'description')
   if (label) return label
   const task = argument(tool, 'task')?.replace(/\s+/g, ' ')
@@ -32,6 +38,13 @@ export function subAgentTitle(tool: ToolExecution): string {
 }
 
 export function subAgentTarget(tool: ToolExecution, runId: string): SubAgentTarget {
+  if (isArtifactBuild(tool)) {
+    return {
+      runId,
+      title: subAgentTitle(tool),
+      task: `Review “${argument(tool, 'title') ?? 'the artifact'}” as it rendered, and fix what is wrong with it before the chat shows it.`
+    }
+  }
   return {
     runId,
     title: subAgentTitle(tool),

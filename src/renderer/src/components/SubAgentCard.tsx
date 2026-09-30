@@ -10,7 +10,12 @@ import {
   type SubAgentState
 } from '../utils/subAgentActivity'
 import AgentInteractionCard from './AgentInteractionCard'
-import { subAgentTarget, subAgentTitle, useOpenSubAgent } from './subAgentNavigation'
+import {
+  isArtifactBuild,
+  subAgentTarget,
+  subAgentTitle,
+  useOpenSubAgent
+} from './subAgentNavigation'
 
 export function SubAgentStateIcon({ state }: { state: SubAgentState }): React.JSX.Element {
   if (state === 'working') return <Loader2 size={14} className="icon-spin" aria-hidden="true" />
@@ -39,6 +44,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
     tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
   const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
   const isRunning = tool.status === 'running' || tool.status === 'pending'
+  const builder = isArtifactBuild(tool)
   const openSubAgent = useOpenSubAgent()
   const [stopping, setStopping] = useState(false)
   const [now, setNow] = useState(Date.now)
@@ -92,8 +98,32 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
 
   let detail: React.ReactNode
   let stats = ''
+  // A build counts versions of the artifact rather than tools; the agent's own is the first.
+  const builds = snapshot.projection.segments.filter(
+    (segment) => segment.type === 'tool' && segment.tool.name === 'create_artifact'
+  )
+  const version = builds.length + 1
+  const rendering = builds.some(
+    (segment) =>
+      segment.type === 'tool' &&
+      (segment.tool.status === 'running' || segment.tool.status === 'pending')
+  )
+
   if (queued) {
     detail = 'Queued until another sub-agent finishes'
+  } else if (isRunning && builder) {
+    detail =
+      state === 'waiting'
+        ? 'Needs your answer below'
+        : rendering
+          ? `Rendering version ${version}`
+          : `Reviewing version ${version}`
+    stats = [
+      `${version} ${version === 1 ? 'version' : 'versions'}`,
+      activity.startedAt !== undefined ? subAgentStats(undefined, now - activity.startedAt) : ''
+    ]
+      .filter(Boolean)
+      .join(' · ')
   } else if (isRunning) {
     detail =
       state === 'waiting' ? (
@@ -125,6 +155,9 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   }
 
   const title = subAgentTitle(tool)
+  const openLabel = builder
+    ? 'See each version the builder made'
+    : 'Open the sub-agent’s transcript'
   const open =
     childRunId && openSubAgent ? () => openSubAgent(subAgentTarget(tool, childRunId)) : undefined
 
@@ -146,7 +179,7 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
           className="sa-card__main"
           onClick={open}
           disabled={!open}
-          title={open ? 'Open the sub-agent’s transcript' : undefined}
+          title={open ? openLabel : undefined}
         >
           <span className="sa-card__icon">
             <Bot size={15} aria-hidden="true" />

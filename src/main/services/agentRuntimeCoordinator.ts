@@ -9,7 +9,8 @@ import type {
   SteerConversationRunResult
 } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
-import { agentRunProfile } from '../../shared/agentToolCatalog'
+import { agentRunProfile, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
+import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
@@ -52,7 +53,11 @@ import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
-import type { AgentCollaborationToolHandler } from './agentToolRuntime'
+import type {
+  AgentChildRunLauncher,
+  AgentCollaborationToolHandler,
+  ArtifactBuildResult
+} from './agentToolRuntime'
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
@@ -104,6 +109,8 @@ export interface CollaborationKernelRunInput {
 const SUB_AGENT_TOOL_ROUNDS = 25
 // Beyond this a provider's KV cache cannot hold every sub-agent's prompt anyway.
 const MAX_SUB_AGENTS_AT_ONCE = 4
+// An artifact that still has a defect after three fixes needs the agent, not a fourth try.
+const ARTIFACT_BUILDER_FIXES = 3
 
 function checkpointLabel(content: string): string {
   const normalized = content.replace(/\s+/g, ' ').trim()
@@ -176,7 +183,8 @@ export class AgentRuntimeCoordinator {
       this.publishEvent(event)
     )
     this.tools.setChildLauncher({
-      launch: (task, context, parent) => this.launchChild(task, context, parent)
+      launch: (task, context, parent) => this.launchChild(task, context, parent),
+      buildArtifact: (first, parent) => this.buildArtifact(first, parent)
     })
     this.tools.setArtifactInspector(new ArtifactInspector())
     this.recoverInterruptedRuns()
@@ -724,6 +732,142 @@ export class AgentRuntimeCoordinator {
       return await this.runChild(task, context, parentContext, parent)
     } finally {
       release()
+    }
+  }
+
+  /**
+   * Reviews and fixes an artifact in a run of its own, so the chat shows one
+   * finished artifact rather than every attempt. The builder is started as if
+   * it had just made the agent's first version and been shown how it rendered;
+   * it then fixes what the review shows, or says the artifact is right.
+   */
+  private async buildArtifact(
+    first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    }
+  ): Promise<ArtifactBuildResult> {
+    const parent = this.activeConversations.get(parentContext.runId)
+    if (!parent) throw new Error('Parent run is no longer active')
+    parentContext.signal.throwIfAborted()
+    const id = randomUUID()
+    const parentInput = parent.prepared.kernelInput
+    const target = parentInput.request.target
+    const vision = Boolean(first.review.media?.length)
+    const session = await this.tools.createSession({
+      permissionMode: parentInput.permissionMode,
+      runId: id,
+      surface: 'subagent',
+      capabilities: ['artifacts'],
+      persistentSkillIds: [WEB_ARTIFACTS_SKILL_ID],
+      webSearchEnabled: false,
+      browserEnabled: vision,
+      artifactBuilder: true,
+      instructionScopeId: id
+    })
+    const skill = getSkillById(WEB_ARTIFACTS_SKILL_ID)
+    const request = [...parentInput.messages]
+      .reverse()
+      .find((message) => message.role === 'user' && typeof message.content === 'string')
+    const firstCallId = `${id}:first`
+    const { title } = first.artifact
+    const messages: ProviderChatMessage[] = [
+      {
+        role: 'system',
+        content: [
+          "You are SideKick's artifact builder. The agent made an interactive artifact for the user and you check it before the user sees it.",
+          `Review how it rendered against the user's request. If it works and shows what was asked, with no visible defect, reply with one sentence saying so and call no tool. Otherwise call create_artifact with the complete corrected code, keeping the title "${title}", and review the new render the same way.`,
+          'Fix defects and mismatches with the request: errors, a blank or broken render, a loading state that never ends, wrong or mixed units, NaN or placeholder values, clipped or overlapping text, controls that do nothing. Do not redesign it, add features, or restyle what works.',
+          `You have at most ${ARTIFACT_BUILDER_FIXES} fixes.`,
+          skill
+            ? `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n</skill_instructions>`
+            : ''
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      },
+      {
+        role: 'user',
+        content: `The user's request:\n${String(request?.content ?? '').slice(0, 6_000) || '(not available)'}`
+      },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: firstCallId,
+            function: { name: 'create_artifact', arguments: { ...first.artifact } }
+          }
+        ]
+      },
+      {
+        role: 'tool',
+        tool_call_id: firstCallId,
+        content: first.review.modelContent,
+        ...(first.review.media?.length ? { media: first.review.media } : {})
+      }
+    ]
+    const stopBuilder = (): void => {
+      this.stop(id)
+    }
+    parentContext.signal.addEventListener('abort', stopBuilder, { once: true })
+    const running = this.kernel.start({
+      id,
+      threadId: parentContext.conversationId || parentContext.runId,
+      parentRunId: parentContext.runId,
+      profile: agentRunProfile(session.catalog()),
+      provider: target.providerKind,
+      model: target.model,
+      catalog: session.catalog,
+      messages,
+      request: { ...parentInput.request, purpose: 'sub-agent' },
+      maxToolRounds: ARTIFACT_BUILDER_FIXES,
+      permissionMode: parentInput.permissionMode,
+      toolRouter: session.router,
+      contextManager: new AgentContextManager({
+        target,
+        contextLength: target.contextLength ?? 32_768,
+        maxOutputTokens: parentInput.request.maxOutputTokens ?? 4_096,
+        threshold: 0.8,
+        enabled: true
+      })
+    })
+    this.recordSubAgentEvent(parentContext, 'subagent.started', id, {
+      toolCallId: parentContext.toolCallId,
+      childRunId: id
+    })
+    let outcome: Awaited<typeof running>
+    try {
+      outcome = await running
+    } finally {
+      parentContext.signal.removeEventListener('abort', stopBuilder)
+      clearWorkspaceInstructionScope(id)
+    }
+    // The version shown is the builder's last one that rendered, or the agent's
+    // own when none of the builder's did.
+    const versions = this.store
+      .listAllEvents(id)
+      .filter(
+        (event) => event.type === 'tool.completed' && event.payload.name === 'create_artifact'
+      )
+      .map((event) => {
+        const result = event.payload.result as Record<string, unknown> | undefined
+        const data = result?.data as
+          | { artifact?: ArtifactBuildResult['artifact']; inspection?: { status?: string } }
+          | undefined
+        return { artifact: data?.artifact, rendered: data?.inspection?.status === 'rendered' }
+      })
+      .filter((version) => typeof version.artifact?.code === 'string')
+    const lastGood = [...versions].reverse().find((version) => version.rendered)?.artifact
+    return {
+      childRunId: id,
+      artifact: { ...(lastGood ?? first.artifact), title },
+      versions: versions.length + 1,
+      status: outcome.phase
     }
   }
 
