@@ -1,6 +1,5 @@
 import type { ProjectedAgentRunMessage } from '../../../shared/agentEventProjection'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
-import type { SubAgentStep } from '../types/subagent.types'
 
 export type SubAgentState = 'working' | 'waiting' | 'done' | 'failed' | 'stopped'
 
@@ -15,10 +14,19 @@ export interface SubAgentActivity {
   current?: string
 }
 
+/** How a finished sub-agent ended, from the delegating tool's result. */
+export interface SubAgentOutcome {
+  state: Exclude<SubAgentState, 'working' | 'waiting'>
+  /** The first line of its report, or why it failed. */
+  headline?: string
+  toolCalls?: number
+  durationMs?: number
+}
+
 // A sub-agent this quiet has usually stalled, rather than being in a long step.
 export const SUB_AGENT_QUIET_MS = 3 * 60_000
 
-const TERMINAL_STATES: Record<string, SubAgentState> = {
+const TERMINAL_STATES: Record<string, SubAgentOutcome['state']> = {
   completed: 'done',
   failed: 'failed',
   cancelled: 'stopped',
@@ -28,6 +36,35 @@ const TERMINAL_STATES: Record<string, SubAgentState> = {
 function clip(text: string, length = 90): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   return flat.length > length ? `${flat.slice(0, length - 1).trimEnd()}…` : flat
+}
+
+/** The first line a reader would take as the report's point, without markdown decoration. */
+function headline(content: string): string | undefined {
+  // Results from before the report was returned on its own carry every turn's
+  // text, turns set apart by runs of blank lines; the report is the last.
+  const report =
+    content
+      .split(/\n{3,}/)
+      .filter((part) => part.trim())
+      .at(-1) ?? ''
+  const lines = report
+    .split('\n')
+    .map((text) => ({
+      heading: /^#+\s/.test(text.trim()),
+      text: text
+        .replace(/^\s*#+\s*|^\s*[-*>]\s+|\*\*|__|`/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .trim()
+    }))
+    .filter((line) => line.text)
+  const [first, second] = lines
+  if (!first) return undefined
+  // A short heading says little alone ("Reno, Nevada"); the line under it carries the point.
+  const text =
+    first.heading && second && first.text.length < 25
+      ? `${first.text} · ${second.text}`
+      : first.text
+  return clip(text, 160)
 }
 
 /** The sub-agent's state and latest step, from its own run journal. */
@@ -49,32 +86,30 @@ export function subAgentActivity(
       (segment.type === 'decision' && segment.decision.status === 'pending')
   )
   const phase = projection.phase ?? ''
-  const state = TERMINAL_STATES[phase] ?? (waiting ? 'waiting' : 'working')
+  // A running phase has no entry, though the record's type does not say so.
+  const ended = TERMINAL_STATES[phase] as SubAgentState | undefined
+  const state: SubAgentState = ended ?? (waiting ? 'waiting' : 'working')
 
   let current: string | undefined
   if (state === 'waiting') current = 'Waiting on you'
   else if (state === 'working') {
+    const running = [...projection.segments]
+      .reverse()
+      .find(
+        (segment) =>
+          segment.type === 'tool' &&
+          (segment.tool.status === 'running' || segment.tool.status === 'pending')
+      )
+    const last = projection.segments.at(-1)
     // Between tools the model is reasoning; the last finished tool is not what it is doing.
-    const runningTool = projection.segments.some(
-      (segment) =>
-        segment.type === 'tool' &&
-        (segment.tool.status === 'running' || segment.tool.status === 'pending')
-    )
-    if (phase === 'streaming' && !runningTool) {
-      const last = projection.segments.at(-1)
-      current = last?.type === 'text' && last.content.trim() ? 'Writing its reply' : 'Thinking'
-    }
-    for (let index = projection.segments.length - 1; index >= 0 && !current; index--) {
-      const segment = projection.segments[index]
-      if (segment.type === 'tool') {
-        current =
-          segment.tool.status === 'running' || segment.tool.status === 'pending'
-            ? clip(segment.tool.title)
-            : `Done: ${clip(segment.tool.title, 70)}`
-      } else if (segment.type === 'thinking') current = 'Thinking'
-      else if (segment.type === 'text' && segment.content.trim()) current = 'Writing its reply'
-    }
-    current ??= 'Starting'
+    current =
+      running?.type === 'tool'
+        ? clip(running.tool.title)
+        : last?.type === 'text' && last.content.trim()
+          ? 'Writing its report'
+          : events.length
+            ? 'Thinking'
+            : 'Starting'
   }
 
   return {
@@ -87,53 +122,35 @@ export function subAgentActivity(
   }
 }
 
-const RESULT_LABELS: Record<string, string> = {
-  completed: 'Done',
-  failed: 'Failed',
-  cancelled: 'Stopped',
-  interrupted: 'Stopped'
+export function formatSubAgentDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  if (hours > 0) return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
+  if (minutes > 0) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+  return `${seconds}s`
 }
 
-/**
- * A finished sub-agent's result as one line: how it ended, then the start of
- * what it reported. Undefined when the tool data is not a sub-agent result.
- */
-export function subAgentResultSummary(data: Record<string, unknown> | null): string | undefined {
-  if (!data || typeof data.status !== 'string' || !RESULT_LABELS[data.status]) return undefined
-  const report = typeof data.content === 'string' ? clip(data.content, 160) : ''
-  const error = typeof data.error === 'string' ? clip(data.error, 160) : ''
-  const detail = report || error
-  return detail ? `${RESULT_LABELS[data.status]} — ${detail}` : RESULT_LABELS[data.status]
+/** "12 tools · 3m 04s", leaving out whatever is not known. */
+export function subAgentStats(toolCalls?: number, durationMs?: number): string {
+  return [
+    toolCalls !== undefined ? `${toolCalls} ${toolCalls === 1 ? 'tool' : 'tools'}` : '',
+    durationMs !== undefined ? formatSubAgentDuration(durationMs) : ''
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
-/** The sub-agent's steps for its transcript: thoughts, tools and results, and what it wrote. */
-export function subAgentSteps(projection: ProjectedAgentRunMessage): SubAgentStep[] {
-  const steps = (segment: ProjectedAgentRunMessage['segments'][number]): SubAgentStep[] => {
-    if (segment.type === 'verification') {
-      const folded = (segment.steps ?? []).flatMap(steps)
-      return segment.content ? [...folded, { type: 'response', content: segment.content }] : folded
-    }
-    if (segment.type === 'thinking') return [{ type: 'thinking', content: segment.content }]
-    if (segment.type === 'text') return [{ type: 'response', content: segment.content }]
-    if (segment.type === 'tool') {
-      return [
-        {
-          type:
-            segment.tool.status === 'running' || segment.tool.status === 'pending'
-              ? 'tool_call'
-              : 'tool_result',
-          name: segment.tool.name,
-          content: segment.tool.output || segment.tool.error || segment.tool.title,
-          status:
-            segment.tool.status === 'error' || segment.tool.status === 'denied'
-              ? 'error'
-              : segment.tool.status === 'success' || segment.tool.status === 'partial'
-                ? 'success'
-                : 'running'
-        }
-      ]
-    }
-    return []
+/** How a sub-agent ended, read from the delegating tool's result; undefined while it runs. */
+export function subAgentOutcome(data: Record<string, unknown> | null): SubAgentOutcome | undefined {
+  const state = typeof data?.status === 'string' ? TERMINAL_STATES[data.status] : undefined
+  if (!data || !state) return undefined
+  const report = typeof data.content === 'string' ? headline(data.content) : undefined
+  const error = typeof data.error === 'string' && data.error ? clip(data.error, 160) : undefined
+  return {
+    state,
+    headline: state === 'done' ? (report ?? error) : (error ?? report),
+    toolCalls: typeof data.toolCalls === 'number' ? data.toolCalls : undefined,
+    durationMs: typeof data.durationMs === 'number' ? data.durationMs : undefined
   }
-  return projection.segments.flatMap(steps)
 }

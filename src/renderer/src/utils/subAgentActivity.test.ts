@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
-import { subAgentActivity, subAgentResultSummary, subAgentSteps } from './subAgentActivity'
+import { subAgentActivity, subAgentOutcome } from './subAgentActivity'
 
 function event(
   sequence: number,
@@ -81,23 +81,62 @@ describe('subAgentActivity', () => {
     expect(activity(thinking).current).toBe('Thinking')
   })
 
-  it('reads a finished result as a sentence', () => {
+  it('says it is writing its report once text follows the last tool', () => {
+    const writing = [
+      ...working,
+      event(5, 'tool.completed', {
+        toolCallId: 't1',
+        result: {
+          status: 'success',
+          title: 'Search Elmcrest Dr',
+          modelContent: 'results',
+          timing: { startedAt: 3000, completedAt: 5000 }
+        }
+      }),
+      event(6, 'assistant.delta', { content: 'Reno sits at' })
+    ]
+    expect(activity(writing).current).toBe('Writing its report')
+  })
+})
+
+describe('subAgentOutcome', () => {
+  it('leads with the first line of the report, without its markdown', () => {
     expect(
-      subAgentResultSummary({ childRunId: 'c', status: 'cancelled', content: '\n\nReno: 264,165.' })
-    ).toBe('Stopped — Reno: 264,165.')
-    expect(subAgentResultSummary({ status: 'failed', error: 'HTTP 502' })).toBe('Failed — HTTP 502')
-    expect(subAgentResultSummary({ output: 'something else' })).toBeUndefined()
+      subAgentOutcome({
+        childRunId: 'c',
+        status: 'completed',
+        content: '\n\n## **Reno, Nevada — 4,505 ft** (1,373 m)\n- GNIS 861100',
+        toolCalls: 99,
+        durationMs: 3_288_000
+      })
+    ).toEqual({
+      state: 'done',
+      headline: 'Reno, Nevada — 4,505 ft (1,373 m)',
+      toolCalls: 99,
+      durationMs: 3_288_000
+    })
   })
 
-  it('lists its steps as a transcript', () => {
-    const steps = subAgentSteps(
-      projectAgentRunEvents([
-        event(1, 'assistant.delta', { thinking: 'Plan it' }),
-        ...working.slice(1),
-        event(5, 'assistant.delta', { content: 'Found the listing.' }),
-        event(6, 'assistant.completed', { content: 'Found the listing.' })
-      ])
+  it('reads an older result, which carried every turn, by its final report', () => {
+    const content =
+      "\n\nI'll research this from primary sources.\n\n\n\n\nFound the record URL format." +
+      '\n\n\n\n\n## Reno, Nevada\n- **Elevation:** 4,505 ft (1,373 m)\n- Source: USGS GNIS'
+    expect(subAgentOutcome({ status: 'completed', content })?.headline).toBe(
+      'Reno, Nevada · Elevation: 4,505 ft (1,373 m)'
     )
-    expect(steps.map((step) => step.type)).toEqual(['thinking', 'tool_call', 'response'])
+  })
+
+  it('leads with the reason when it did not finish', () => {
+    expect(subAgentOutcome({ status: 'failed', error: 'HTTP 502', content: 'Partial' })).toEqual(
+      expect.objectContaining({ state: 'failed', headline: 'HTTP 502' })
+    )
+    expect(subAgentOutcome({ status: 'cancelled', content: '' })).toEqual(
+      expect.objectContaining({ state: 'stopped', headline: undefined })
+    )
+  })
+
+  it('is undefined for anything that is not a finished sub-agent', () => {
+    expect(subAgentOutcome({ output: 'something else' })).toBeUndefined()
+    expect(subAgentOutcome(null)).toBeUndefined()
   })
 })

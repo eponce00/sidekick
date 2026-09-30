@@ -123,7 +123,11 @@ function presentationTitle(
     return { kind, title: name.replace('browser_', '').replaceAll('_', ' ') }
   if (name === 'create_artifact') return { kind, title: explicit || 'Create artifact' }
   if (name === 'spawn_subagent')
-    return { kind, title: 'Delegate task', detail: stringArgument(args, 'task') }
+    return {
+      kind,
+      title: stringArgument(args, 'description') || 'Delegate task',
+      detail: stringArgument(args, 'task')
+    }
   if (name === 'manage_todo_list') return { kind, title: 'Update run tasks' }
   if (name === 'wait')
     return { kind, title: `Wait ${Number(args.seconds) || ''}s`.replace('  ', ' ') }
@@ -459,6 +463,10 @@ const spawnSubagent = definition(
     type: 'object',
     required: ['task'],
     properties: {
+      description: {
+        type: 'string',
+        description: 'A short label for the task, 3 to 6 words, shown to the user.'
+      },
       task: { type: 'string', description: 'Complete delegated task and expected result.' },
       context: {
         type: 'string',

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 import type { ToolExecution } from '../types/chat.types'
 import { SubAgentCard } from './SubAgentCard'
+import { SubAgentNavigation } from './subAgentNavigation'
 
 function event(
   sequence: number,
@@ -22,6 +23,10 @@ const runningTool: ToolExecution = {
   command: '',
   name: 'spawn_subagent',
   status: 'running',
+  input: {
+    description: 'Research the listing',
+    task: 'Find the sale history of 1845 Elmcrest Dr. Cite each source.'
+  },
   data: { childRunId: 'child-1' }
 }
 
@@ -31,6 +36,7 @@ describe('SubAgentCard', () => {
   let publish: ((change: { event: AgentRunEvent }) => void) | undefined
   const stop = vi.fn(async () => ({ stopped: true }))
   const resolveInteraction = vi.fn(async () => ({ success: true }))
+  const open = vi.fn()
 
   const mount = async (events: AgentRunEvent[], tool = runningTool): Promise<void> => {
     Object.assign(window, {
@@ -46,11 +52,20 @@ describe('SubAgentCard', () => {
         }
       }
     })
-    await act(async () => root.render(<SubAgentCard tool={tool} />))
+    await act(async () =>
+      root.render(
+        <SubAgentNavigation.Provider value={open}>
+          <SubAgentCard tool={tool} />
+        </SubAgentNavigation.Provider>
+      )
+    )
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 350))
     })
   }
+
+  const text = (selector: string): string | undefined =>
+    container.querySelector(selector)?.textContent ?? undefined
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -58,6 +73,7 @@ describe('SubAgentCard', () => {
     root = createRoot(container)
     stop.mockClear()
     resolveInteraction.mockClear()
+    open.mockClear()
   })
 
   afterEach(async () => {
@@ -65,50 +81,50 @@ describe('SubAgentCard', () => {
     container.remove()
   })
 
-  it('follows a working sub-agent live and can stop just the sub-agent', async () => {
+  it('names the task and follows what the sub-agent is doing live', async () => {
     await mount([
       event(1, 'run.started', {}),
       event(2, 'tool.pending', { toolCallId: 't1', name: 'web_fetch' }),
       event(3, 'tool.running', { toolCallId: 't1', name: 'web_fetch', title: 'Read zillow.com' })
     ])
-    const status = container.querySelector('.sa-inline__status')
-    expect(status?.textContent).toContain('Working')
-    expect(status?.textContent).toContain('1 tool')
-    expect(status?.textContent).toContain('Read zillow.com')
+    expect(text('.sa-card__title')).toBe('Research the listing')
+    expect(text('.sa-card__detail')).toBe('Read zillow.com')
+    expect(text('.sa-card__stats')).toMatch(/^1 tool · \d+s$/)
 
-    // A new event from the sub-agent updates the line without reloading.
+    // A new event from the sub-agent updates the row without reloading.
     await act(async () => {
-      publish?.({
-        event: event(4, 'tool.pending', { toolCallId: 't2', name: 'web_search' })
-      })
+      publish?.({ event: event(4, 'tool.pending', { toolCallId: 't2', name: 'web_search' }) })
       await new Promise((resolve) => setTimeout(resolve, 350))
     })
-    expect(container.querySelector('.sa-inline__status')?.textContent).toContain('2 tools')
+    expect(text('.sa-card__stats')).toMatch(/^2 tools/)
 
-    const stopButton = container.querySelector<HTMLButtonElement>('.sa-inline__stop')
-    await act(async () => stopButton?.click())
+    await act(async () => container.querySelector<HTMLButtonElement>('.sa-card__stop')?.click())
     expect(stop).toHaveBeenCalledWith('child-1')
   })
 
-  it('shows what the sub-agent needs from the user, and says when it has gone quiet', async () => {
-    const long = Date.now() - 10 * 60_000
+  it('opens the sub-agent in its own view', async () => {
+    await mount([event(1, 'run.started', {})])
+    await act(async () => container.querySelector<HTMLButtonElement>('.sa-card__main')?.click())
+    expect(open).toHaveBeenCalledWith({
+      runId: 'child-1',
+      title: 'Research the listing',
+      task: 'Find the sale history of 1845 Elmcrest Dr. Cite each source.',
+      context: undefined
+    })
+  })
+
+  it('shows what the sub-agent needs from the user under its row', async () => {
     await mount([
-      event(1, 'run.started', {}, long),
-      event(
-        2,
-        'question.requested',
-        {
-          interactionId: 'q1',
-          kind: 'question',
-          request: { questions: [{ id: 'county', question: 'Which county records?' }] }
-        },
-        long
-      )
+      event(1, 'run.started', {}),
+      event(2, 'question.requested', {
+        interactionId: 'q1',
+        kind: 'question',
+        request: { questions: [{ id: 'county', question: 'Which county records?' }] }
+      })
     ])
-    expect(container.querySelector('.sa-inline__status')?.textContent).toContain('Waiting on you')
-    expect(container.querySelector('.sa-inline__interaction')?.textContent).toContain(
-      'Which county records?'
-    )
+    expect(container.querySelector('.sa-card')?.classList.contains('is-waiting')).toBe(true)
+    expect(text('.sa-card__detail')).toBe('Needs your answer below')
+    expect(text('.sa-card__request')).toContain('Which county records?')
   })
 
   it('flags a working sub-agent that has produced nothing for minutes', async () => {
@@ -118,20 +134,38 @@ describe('SubAgentCard', () => {
       event(2, 'tool.pending', { toolCallId: 't1', name: 'web_fetch' }, long),
       event(3, 'tool.running', { toolCallId: 't1', name: 'web_fetch', title: 'Read a page' }, long)
     ])
-    expect(container.querySelector('.sa-inline__quiet')?.textContent).toBe('No activity for 6 min')
+    expect(text('.sa-card__quiet')).toBe(' · No activity for 6 min')
+  })
+
+  it('leads a finished row with the start of the report and its stats', async () => {
+    await mount([], {
+      ...runningTool,
+      status: 'success',
+      data: {
+        childRunId: 'child-1',
+        status: 'completed',
+        content: '**Reno — 4,505 ft** (1,373 m), per USGS GNIS.\n\nCarson City — 4,682 ft.',
+        toolCalls: 99,
+        durationMs: 3_288_000
+      }
+    })
+    expect(container.querySelector('.sa-card')?.classList.contains('is-done')).toBe(true)
+    expect(text('.sa-card__detail')).toBe('Reno — 4,505 ft (1,373 m), per USGS GNIS.')
+    expect(text('.sa-card__stats')).toBe('99 tools · 54m 48s')
+    expect(container.querySelector('.sa-card__stop')).toBeNull()
   })
 
   it('reads a sub-agent stopped with its chat as stopped, not as raw tool data', async () => {
     await mount([], {
       ...runningTool,
-      title: 'spawn subagent',
+      input: { task: 'Find the elevation of Reno. Use primary sources.' },
       status: 'error',
       error: 'Tool execution was cancelled',
       output: '{"ok":false,"code":"cancelled"}',
       data: undefined
     })
-    expect(container.querySelector('.sa-inline__summary')?.textContent).toBe('Stopped')
-    expect(container.textContent).toContain('Delegate task')
+    expect(text('.sa-card__title')).toBe('Find the elevation of Reno.')
+    expect(text('.sa-card__detail')).toBe('Stopped before it reported')
     expect(container.textContent).not.toContain('"ok":false')
   })
 
@@ -144,9 +178,7 @@ describe('SubAgentCard', () => {
         request: { roundsUsed: 80, requestedAdditionalRounds: 40 }
       })
     ])
-    const buttons = [
-      ...container.querySelectorAll<HTMLButtonElement>('.sa-inline__decision button')
-    ]
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('.sa-card__decision button')]
     expect(buttons.map((button) => button.textContent)).toEqual(['Let it continue', 'Stop it'])
     await act(async () => buttons[0].click())
     expect(resolveInteraction).toHaveBeenCalledWith({

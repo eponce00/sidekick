@@ -27,7 +27,6 @@ export interface ToolExecution {
   startedAt?: number
   completedAt?: number
   contextPercent?: number
-  subAgentSteps?: import('./subagent.types').SubAgentStep[]
   /** True while the provider is still streaming the tool's input. */
   isStreaming?: boolean
 }

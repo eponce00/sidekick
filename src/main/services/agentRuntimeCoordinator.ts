@@ -726,6 +726,7 @@ export class AgentRuntimeCoordinator {
       this.stop(id)
     }
     parentContext.signal.addEventListener('abort', stopChild, { once: true })
+    const startedAt = Date.now()
     const running = this.kernel.start({
       id,
       threadId: parentContext.conversationId || parentContext.runId,
@@ -775,8 +776,12 @@ export class AgentRuntimeCoordinator {
     return {
       childRunId: id,
       status: result.phase,
-      content: result.content,
-      error: result.error
+      // The report, not every progress note the sub-agent wrote on the way to it.
+      content: result.finalResponse?.trim() || result.content,
+      error: result.error,
+      // What the finished card shows without loading the sub-agent's whole run.
+      toolCalls: this.store.countEvents(id, 'tool.running'),
+      durationMs: Date.now() - startedAt
     }
   }
 

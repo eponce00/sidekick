@@ -349,6 +349,13 @@ export class AgentRunStore {
     return rows.map(mapEvent)
   }
 
+  countEvents(runId: string, type: AgentRunEvent['type']): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS count FROM agent_run_events WHERE run_id = ? AND type = ?`)
+      .get(runId, type) as { count: number }
+    return row.count
+  }
+
   listAllEvents(runId: string): AgentRunEvent[] {
     const events: AgentRunEvent[] = []
     let cursor = 0

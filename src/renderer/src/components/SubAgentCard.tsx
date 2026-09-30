@@ -1,46 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Check,
-  GitBranch,
-  Globe,
-  Loader2,
-  MessageSquare,
-  Search,
-  Square,
-  Terminal,
-  X
-} from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Bot, Check, ChevronRight, CircleAlert, Loader2, Square, X } from 'lucide-react'
 import type { ToolExecution } from '../types/chat.types'
-import type { SubAgentStep } from '../types/subagent.types'
 import { useSubAgentRun } from '../hooks/useSubAgentRun'
 import {
   SUB_AGENT_QUIET_MS,
   subAgentActivity,
-  subAgentResultSummary,
-  subAgentSteps,
+  subAgentOutcome,
+  subAgentStats,
   type SubAgentState
 } from '../utils/subAgentActivity'
 import AgentInteractionCard from './AgentInteractionCard'
-import ToolCallRow from './ToolCallRow'
+import { subAgentTarget, subAgentTitle, useOpenSubAgent } from './subAgentNavigation'
 
-// A long sub-agent has thousands of steps; the newest are shown, the rest on request.
-const STEPS_SHOWN = 40
-
-const STATE_LABELS: Record<SubAgentState, string> = {
-  working: 'Working',
-  waiting: 'Waiting on you',
-  done: 'Done',
-  failed: 'Failed',
-  stopped: 'Stopped'
-}
-
-function formatElapsed(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  const minutes = Math.floor(seconds / 60)
-  const hours = Math.floor(minutes / 60)
-  if (hours > 0) return `${hours}h ${String(minutes % 60).padStart(2, '0')}m`
-  if (minutes > 0) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
-  return `${seconds}s`
+export function SubAgentStateIcon({ state }: { state: SubAgentState }): React.JSX.Element {
+  if (state === 'working') return <Loader2 size={14} className="icon-spin" aria-hidden="true" />
+  if (state === 'waiting') return <CircleAlert size={14} aria-hidden="true" />
+  if (state === 'done') return <Check size={14} aria-hidden="true" />
+  if (state === 'failed') return <X size={14} aria-hidden="true" />
+  return <Square size={11} aria-hidden="true" />
 }
 
 async function resolveInteraction(
@@ -51,95 +28,42 @@ async function resolveInteraction(
   await window.api.agentRuns.resolveInteraction({ interactionId, response, cancelled })
 }
 
-function SubAgentSteps({ steps }: { steps: SubAgentStep[] }): React.JSX.Element {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const [showAll, setShowAll] = useState(false)
-  const hidden = showAll ? 0 : Math.max(0, steps.length - STEPS_SHOWN)
-
-  // Follow the newest step, as a live log would.
-  useEffect(() => {
-    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
-  }, [steps.length])
-
-  return (
-    <div className="sa-steps" ref={scrollRef}>
-      {hidden > 0 && (
-        <button type="button" className="sa-steps__earlier" onClick={() => setShowAll(true)}>
-          Show {hidden} earlier {hidden === 1 ? 'step' : 'steps'}
-        </button>
-      )}
-      {steps.slice(hidden).map((step, index) => (
-        <div key={hidden + index} className={`sa-step sa-step--${step.type}`}>
-          <span className={`sa-step__icon ${step.status ? `sa-step__icon--${step.status}` : ''}`}>
-            {step.type === 'tool_call' ? (
-              step.name === 'web_search' ? (
-                <Search size={11} />
-              ) : step.name === 'web_fetch' ? (
-                <Globe size={11} />
-              ) : step.name === 'shell' ? (
-                <Terminal size={11} />
-              ) : (
-                <Loader2 size={11} />
-              )
-            ) : step.type === 'tool_result' ? (
-              step.status === 'error' ? (
-                <X size={11} />
-              ) : (
-                <Check size={11} />
-              )
-            ) : step.type === 'response' ? (
-              <MessageSquare size={11} />
-            ) : null}
-          </span>
-          <span className="sa-step__body">{step.content}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /**
- * A delegated task in the chat. While the sub-agent works, the card follows its
- * own run live: what it is doing, for how long, how many tools it has used, and
- * whether it has gone quiet. Anything it needs from the user is answered here,
- * and it can be stopped on its own; the chat then carries on with what it had.
+ * A delegated task in the chat: one row naming the task, with what the
+ * sub-agent is doing now while it works and the start of its report once it
+ * is done. The row opens the sub-agent's full transcript in its own view.
+ * Anything the sub-agent needs from the user is answered under the row.
  */
 export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Element {
   const data =
     tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : null
   const childRunId = typeof data?.childRunId === 'string' ? data.childRunId : null
   const isRunning = tool.status === 'running' || tool.status === 'pending'
-  const [expanded, setExpanded] = useState(false)
+  const openSubAgent = useOpenSubAgent()
   const [stopping, setStopping] = useState(false)
   const [now, setNow] = useState(Date.now)
 
-  // Follow live while running; a finished one loads only when opened.
-  const follow = Boolean(childRunId) && (isRunning || expanded)
-  const { snapshot, error } = useSubAgentRun(follow ? childRunId : null, isRunning)
+  // Only a working sub-agent is followed; a finished one is read from its result.
+  const { snapshot } = useSubAgentRun(isRunning ? childRunId : null, isRunning)
   const activity = useMemo(() => subAgentActivity(snapshot.events, snapshot.projection), [snapshot])
-  const steps = useMemo(() => subAgentSteps(snapshot.projection), [snapshot])
-  const pending = snapshot.projection.segments.flatMap((segment) =>
-    segment.type === 'interaction' && segment.interaction.status === 'pending'
-      ? [segment.interaction]
-      : []
-  )
+  const outcome = subAgentOutcome(data)
+  const live = isRunning && Boolean(childRunId)
+
+  const pending = live
+    ? snapshot.projection.segments.flatMap((segment) =>
+        segment.type === 'interaction' && segment.interaction.status === 'pending'
+          ? [segment.interaction]
+          : []
+      )
+    : []
   // Runs from before sub-agents stopped asking can still hold a tool-limit question.
-  const decisions = snapshot.projection.segments.flatMap((segment) =>
-    segment.type === 'decision' && segment.decision.status === 'pending' ? [segment.decision] : []
-  )
-  const live = isRunning && Boolean(childRunId) && snapshot.events.length > 0
-  // The finished result, read as a sentence rather than the raw tool data.
-  const resultSummary =
-    subAgentResultSummary(data) ??
-    (tool.status === 'error' || tool.status === 'denied'
-      ? /cancel/i.test(tool.error ?? '')
-        ? 'Stopped'
-        : `Failed${tool.error ? ` — ${tool.error}` : ''}`
-      : undefined)
-  // The card keeps the name it had while working, whatever the tool result is titled.
-  const row = useMemo(() => ({ ...tool, title: 'Delegate task' }), [tool])
-  const embeddedSteps = tool.subAgentSteps?.length ? tool.subAgentSteps : null
-  const displayedSteps = embeddedSteps ?? steps
+  const decisions = live
+    ? snapshot.projection.segments.flatMap((segment) =>
+        segment.type === 'decision' && segment.decision.status === 'pending'
+          ? [segment.decision]
+          : []
+      )
+    : []
 
   useEffect(() => {
     if (!live) return undefined
@@ -147,14 +71,57 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
     return () => window.clearInterval(timer)
   }, [live])
 
+  const state: SubAgentState =
+    outcome?.state ??
+    (isRunning
+      ? live && snapshot.events.length
+        ? activity.state === 'waiting'
+          ? 'waiting'
+          : 'working'
+        : 'working'
+      : tool.status === 'success'
+        ? 'done'
+        : /cancel/i.test(tool.error ?? '')
+          ? 'stopped'
+          : 'failed')
   const quietFor =
-    live && activity.state === 'working' && activity.lastActivityAt
-      ? now - activity.lastActivityAt
-      : 0
-  const elapsed =
-    activity.startedAt !== undefined
-      ? (activity.endedAt ?? (live ? now : (activity.lastActivityAt ?? now))) - activity.startedAt
-      : undefined
+    state === 'working' && activity.lastActivityAt ? now - activity.lastActivityAt : 0
+
+  let detail: React.ReactNode
+  let stats = ''
+  if (isRunning) {
+    detail =
+      state === 'waiting' ? (
+        'Needs your answer below'
+      ) : quietFor >= SUB_AGENT_QUIET_MS ? (
+        <>
+          {activity.current ?? 'Working'}
+          <span className="sa-card__quiet">
+            {' '}
+            · No activity for {Math.floor(quietFor / 60_000)} min
+          </span>
+        </>
+      ) : (
+        (activity.current ?? 'Starting')
+      )
+    stats = subAgentStats(
+      activity.toolCalls,
+      activity.startedAt !== undefined ? now - activity.startedAt : undefined
+    )
+  } else {
+    detail =
+      outcome?.headline ??
+      (state === 'stopped'
+        ? 'Stopped before it reported'
+        : state === 'failed'
+          ? tool.error || 'Failed'
+          : 'Finished')
+    stats = subAgentStats(outcome?.toolCalls, outcome?.durationMs)
+  }
+
+  const title = subAgentTitle(tool)
+  const open =
+    childRunId && openSubAgent ? () => openSubAgent(subAgentTarget(tool, childRunId)) : undefined
 
   const stop = async (): Promise<void> => {
     if (!childRunId) return
@@ -167,52 +134,51 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   }
 
   return (
-    <div className={`sa-inline sa-inline-${tool.status}`}>
-      <ToolCallRow
-        tool={row}
-        onSelect={() => setExpanded(!expanded)}
-        expandable
-        expanded={expanded}
-      />
-
-      {live && (
-        <div className={`sa-inline__status is-${activity.state}`} role="status">
-          <span className="sa-inline__dot" aria-hidden="true" />
-          <span className="sa-inline__state">{STATE_LABELS[activity.state]}</span>
-          {elapsed !== undefined && <span>{formatElapsed(elapsed)}</span>}
-          <span>
-            {activity.toolCalls} {activity.toolCalls === 1 ? 'tool' : 'tools'}
+    <div className={`sa-card is-${state}`}>
+      <div className="sa-card__row">
+        <button
+          type="button"
+          className="sa-card__main"
+          onClick={open}
+          disabled={!open}
+          title={open ? 'Open the sub-agent’s transcript' : undefined}
+        >
+          <span className="sa-card__icon">
+            <Bot size={15} aria-hidden="true" />
+            <span className="sa-card__badge">
+              <SubAgentStateIcon state={state} />
+            </span>
           </span>
-          {activity.current && activity.state === 'working' && (
-            <span className="sa-inline__current" title={activity.current}>
-              {activity.current}
+          <span className="sa-card__text">
+            <span className="sa-card__title">{title}</span>
+            <span className="sa-card__detail" role={live ? 'status' : undefined}>
+              {detail}
             </span>
-          )}
-          {quietFor >= SUB_AGENT_QUIET_MS && (
-            <span className="sa-inline__quiet">
-              No activity for {Math.floor(quietFor / 60_000)} min
-            </span>
-          )}
+          </span>
+          {stats && <span className="sa-card__stats">{stats}</span>}
+          {open && <ChevronRight size={14} className="sa-card__open" aria-hidden="true" />}
+        </button>
+        {live && (
           <button
             type="button"
-            className="sa-inline__stop"
+            className="sa-card__stop"
             onClick={() => void stop()}
             disabled={stopping}
             title="Stop this sub-agent; the chat continues with what it found"
+            aria-label="Stop sub-agent"
           >
-            <Square size={9} fill="currentColor" aria-hidden="true" /> Stop
+            <Square size={10} fill="currentColor" aria-hidden="true" />
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* What the sub-agent needs from the user stays in sight, even collapsed. */}
       {pending.map((interaction) => (
-        <div key={interaction.id} className="sa-inline__interaction">
+        <div key={interaction.id} className="sa-card__request">
           <AgentInteractionCard interaction={interaction} onResolve={resolveInteraction} />
         </div>
       ))}
       {decisions.map((decision) => (
-        <div key={decision.id} className="sa-inline__decision">
+        <div key={decision.id} className="sa-card__request sa-card__decision">
           <span>The sub-agent reached its tool limit after {decision.roundsUsed} rounds.</span>
           <button
             type="button"
@@ -228,30 +194,6 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
           </button>
         </div>
       ))}
-
-      {!expanded && !live && (resultSummary || tool.output) && (
-        <div className="sa-inline__summary">{resultSummary || tool.output}</div>
-      )}
-
-      {expanded && (
-        <div className="sa-inline__body">
-          {displayedSteps.length ? (
-            <SubAgentSteps steps={displayedSteps} />
-          ) : isRunning || (follow && !error) ? (
-            <div className="sa-inline__waiting">
-              <Loader2 size={12} className="icon-spin" />
-              <span>{isRunning ? 'Starting…' : 'Loading the sub-agent…'}</span>
-            </div>
-          ) : null}
-          {childRunId && (
-            <div className="sa-inline__lineage">
-              <GitBranch size={11} /> Sub-agent run <code>{childRunId.slice(0, 8)}</code>
-            </div>
-          )}
-          {error && <div className="sa-inline__error">{error}</div>}
-          {tool.error && <div className="sa-inline__error">{tool.error}</div>}
-        </div>
-      )}
     </div>
   )
 }

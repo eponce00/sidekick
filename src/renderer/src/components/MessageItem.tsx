@@ -399,6 +399,10 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
       group.segment.type === 'verification' ||
       group.segment.type === 'summary' ||
       group.segment.type === 'steer' ||
+      // Delegated work is part of the reply, not a step to fold away.
+      (group.segment.type === 'tool' &&
+        !!group.segment.tool &&
+        resolveToolView(group.segment.tool) === 'subagent') ||
       // An interruption is what the reader needs to act on, not work to fold away.
       (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted'))
   )
@@ -420,6 +424,7 @@ function AgentWorkDisclosure({
   children,
   segments,
   awaitingFirstOutput = false,
+  showDuration = true,
   runId: _runId
 }: {
   messageId: string
@@ -429,6 +434,8 @@ function AgentWorkDisclosure({
   children?: React.ReactNode
   segments?: readonly import('../types/chat.types').ContentSegment[]
   awaitingFirstOutput?: boolean
+  /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
+  showDuration?: boolean
   runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(isLoading)
@@ -453,7 +460,11 @@ function AgentWorkDisclosure({
   const durationLabel = startedAt
     ? `${isLoading ? (awaitingFirstOutput ? 'Waiting for model' : 'Working') : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
     : 'Worked'
-  const label = activityLabel ? `${durationLabel} · ${activityLabel}` : durationLabel
+  const label = !showDuration
+    ? activityLabel || 'Steps'
+    : activityLabel
+      ? `${durationLabel} · ${activityLabel}`
+      : durationLabel
   const contentId = `${messageId}-agent-work`
 
   return (
@@ -589,6 +600,7 @@ function MessageItemInner({
   const workStartedAt =
     msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
+  const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
 
   useLayoutEffect(() => {
     if (!isEditing) return
@@ -788,15 +800,12 @@ function MessageItemInner({
                         if (segment.type === 'tool') {
                           return (
                             <div key={`tool-${segIdx}`} className="action-item">
-                              {segment.tool &&
-                                (resolveToolView(segment.tool) === 'subagent' ? (
-                                  <SubAgentCard tool={segment.tool} />
-                                ) : (
-                                  <ToolExecutionCard
-                                    tool={segment.tool}
-                                    workspaceRoot={workspaceFolder}
-                                  />
-                                ))}
+                              {segment.tool && (
+                                <ToolExecutionCard
+                                  tool={segment.tool}
+                                  workspaceRoot={workspaceFolder}
+                                />
+                              )}
                               {!segment.tool && segment.content && (
                                 <ToolCallRow
                                   tool={{
@@ -940,7 +949,7 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'tool' &&
                     group.segment.tool ? (
-                    // Standalone tool (pending approval or sub-agent card)
+                    // Standalone tool (pending approval or sub-agent row)
                     resolveToolView(group.segment.tool) === 'subagent' ? (
                       <SubAgentCard tool={group.segment.tool} />
                     ) : (
@@ -1013,7 +1022,11 @@ function MessageItemInner({
                 changeReviewRendered = true
               }
 
-              blocks.forEach((block) => {
+              // The time goes on the work nearest the answer, or on the live line below it.
+              const timedBlock = showWorkingTail
+                ? -1
+                : blocks.findLastIndex((block) => block.type === 'work')
+              blocks.forEach((block, blockIndex) => {
                 const firstGroupIndex =
                   block.type === 'work' ? block.groups[0]!.groupIndex : block.groupIndex
                 if (firstGroupIndex >= workEnd) appendChangeReview()
@@ -1034,6 +1047,7 @@ function MessageItemInner({
                     startedAt={workStartedAt}
                     completedAt={workCompletedAt}
                     segments={blockSegments}
+                    showDuration={blockIndex === timedBlock}
                     runId={msg.runId}
                   >
                     {block.groups.map(({ groupIndex }) => renderedGroups[groupIndex])}
@@ -1043,9 +1057,7 @@ function MessageItemInner({
               appendChangeReview()
               return output
             })()}
-            {isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text' && (
-              <AgentWorkingTail startedAt={workStartedAt} />
-            )}
+            {showWorkingTail && <AgentWorkingTail startedAt={workStartedAt} />}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
           // Legacy format: separate thinking and content

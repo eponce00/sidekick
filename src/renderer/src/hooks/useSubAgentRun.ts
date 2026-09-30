@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { AgentRunClientModel, type AgentRunClientSnapshot } from '../models/AgentRunClientModel'
 
-// A sub-agent can stream hundreds of events a second; its card redraws at most
+// A sub-agent can stream hundreds of events a second; its views redraw at most
 // this often.
 const REFRESH_MS = 300
 
 /**
- * Follows a sub-agent's own run: loads its journal, then takes its new events
- * as they are published. `live` false loads it once and stops listening.
+ * Follows a sub-agent's own run: loads its journal, then, while `live`, takes
+ * its new events as they are published.
  */
 export function useSubAgentRun(
   runId: string | null,
@@ -20,14 +20,11 @@ export function useSubAgentRun(
   const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
 
+  // Loaded once per run; a run that finishes while followed is not read again.
   useEffect(() => {
     if (!runId) return undefined
     let active = true
-    const unsubscribe = live
-      ? window.api.agentRuns.onEvent(({ event }) => {
-          if (event.runId === runId) model.ingest(event, { deferProjection: true })
-        })
-      : undefined
+    setLoaded(false)
     const load = async (): Promise<void> => {
       let after = 0
       for (;;) {
@@ -45,11 +42,20 @@ export function useSubAgentRun(
       if (active)
         setError(reason instanceof Error ? reason.message : 'Could not load the sub-agent')
     })
-    const timer = live ? window.setInterval(() => model.refresh(), REFRESH_MS) : undefined
     return () => {
       active = false
-      unsubscribe?.()
-      if (timer !== undefined) window.clearInterval(timer)
+    }
+  }, [model, runId])
+
+  useEffect(() => {
+    if (!runId || !live) return undefined
+    const unsubscribe = window.api.agentRuns.onEvent(({ event }) => {
+      if (event.runId === runId) model.ingest(event, { deferProjection: true })
+    })
+    const timer = window.setInterval(() => model.refresh(), REFRESH_MS)
+    return () => {
+      unsubscribe()
+      window.clearInterval(timer)
     }
   }, [live, model, runId])
 

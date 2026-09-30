@@ -67,6 +67,8 @@ import { fileToMessageImage } from '../utils/messageImageAttachments'
 import { loadComposerDraft } from '../services/composerDrafts'
 import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
+import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
+import { SubAgentView } from './SubAgentView'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -213,6 +215,15 @@ function ChatPanel({
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
   const [planModelOverrideId, setPlanModelOverrideId] = useState<string | null>(null)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
+  // A sub-agent opened from its row covers the chat until Back or Esc.
+  const [openSubAgent, setOpenSubAgent] = useState<SubAgentTarget | null>(null)
+  const closeSubAgent = useCallback(() => setOpenSubAgent(null), [])
+  const [subAgentConversationId, setSubAgentConversationId] = useState(conversationId)
+  if (subAgentConversationId !== conversationId) {
+    // Another chat has no view of this one's sub-agent.
+    setSubAgentConversationId(conversationId)
+    setOpenSubAgent(null)
+  }
   const [isFeaturesMenuOpen, setIsFeaturesMenuOpen] = useState(false)
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false)
   const [workspaceRules, setWorkspaceRules] = useState<{
@@ -1384,12 +1395,21 @@ function ChatPanel({
         onConfirm={() => void handleConfirmCheckpointRestore()}
         onCancel={cancelCheckpointRestore}
       />
+
+      {openSubAgent && (
+        <SubAgentView
+          key={openSubAgent.runId}
+          target={openSubAgent}
+          workspaceFolder={workspaceFolder}
+          onBack={closeSubAgent}
+        />
+      )}
     </div>
   )
 
   return (
     <ReviewCommentSinkContext.Provider value={addReviewComment}>
-      {panel}
+      <SubAgentNavigation.Provider value={setOpenSubAgent}>{panel}</SubAgentNavigation.Provider>
     </ReviewCommentSinkContext.Provider>
   )
 }

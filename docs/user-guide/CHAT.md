@@ -14,14 +14,17 @@
 
 ## Sub-agents
 
-When the agent delegates part of the work, the reply shows a **Delegate task** card that follows
-the sub-agent live: whether it is working or waiting on you, for how long, how many tools it has
-used, and what it is doing now. It says so when the sub-agent has produced nothing for a few
-minutes. Open the card to see its steps as they happen.
+When the agent delegates part of the work, the reply shows a row for the task. While the
+sub-agent works, the row shows what it is doing now, how many tools it has used, and for how long,
+and says so when it has produced nothing for a few minutes. Once it is done, the row shows the start
+of its report.
 
-- **Its questions and approvals** appear in the card, and count as the conversation waiting on
+- **Open the row** to see the sub-agent's own transcript in place of the chat: the task it was
+  given, then everything it did, live while it works. **Back** or **Esc** returns to the chat where
+  you left it.
+- **Its questions and approvals** appear under the row, and count as the conversation waiting on
   you.
-- **Stop** in the card stops only the sub-agent; the reply carries on with what it found. Stopping
+- **Stop** on the row stops only the sub-agent; the reply carries on with what it found. Stopping
   the reply also stops its sub-agents.
 - **Its tool budget** is the same as the reply's. When it runs out, the sub-agent reports what it
   found and what it left unchecked, instead of asking to continue; the agent can delegate again.
