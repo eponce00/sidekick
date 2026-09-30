@@ -34,6 +34,7 @@ import {
 import { parseMessageWithArtifacts } from '../utils/artifactParser'
 import { parseMapLink, type MapLinkLocation } from '../utils/mapLinks'
 import { splitMarkdownRenderBlocks } from '../utils/markdownStreaming'
+import { escapeCurrencyDollars } from '../utils/markdownCurrency'
 import { requestWorkspaceFileView } from '../utils/workspaceFileViewer'
 import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
@@ -830,7 +831,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
         p: allowRichMedia ? RichMarkdownParagraph : PlainMarkdownParagraph
       }}
     >
-      {content}
+      {escapeCurrencyDollars(content)}
     </ReactMarkdown>
   )
 })
