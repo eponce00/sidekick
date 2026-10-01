@@ -22,6 +22,11 @@ function applyViewZoom(entry: HostedView): void {
   if (Math.abs(contents.getZoomFactor() - entry.zoom) > 0.001) contents.setZoomFactor(entry.zoom)
 }
 
+// Parked pages are hidden so they can idle. Not on Linux: an X server maps a
+// hidden window back asynchronously, so a capture right after waking it still
+// returned the frame from before, and the page there stays shown as before.
+const HIDE_PARKED_PAGES = process.platform !== 'linux'
+
 // Only main-process-created isolated tabs can be embedded; renderer IDs are never accepted.
 const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
@@ -134,7 +139,7 @@ export function parkBrowserView(id: number): void {
     entry.parking.setOpacity(process.platform === 'darwin' ? 0.01 : 1)
     // A visible parked page keeps animating and painting with no one watching,
     // and a visible window keeps the app alive after its main window closes.
-    if (entry.rendering) entry.parking.showInactive()
+    if (entry.rendering || !HIDE_PARKED_PAGES) entry.parking.showInactive()
     else entry.parking.hide()
   }
 }
@@ -280,7 +285,8 @@ export async function withBrowserRendering<T>(
   operation: () => T | Promise<T>
 ): Promise<T> {
   const entry = views.get(id)
-  if (!entry || entry.host || entry.parking.isDestroyed()) return await operation()
+  if (!HIDE_PARKED_PAGES || !entry || entry.host || entry.parking.isDestroyed())
+    return await operation()
   // A page already shown for a human takeover stays shown after a tool.
   if (!entry.rendering && entry.parking.isVisible()) return await operation()
   entry.rendering++

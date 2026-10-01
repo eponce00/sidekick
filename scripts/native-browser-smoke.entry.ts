@@ -369,7 +369,12 @@ async function runSmoke(): Promise<SmokeResult> {
       expression: 'document.hidden',
       returnByValue: true
     })
-    assert.equal(hiddenPage.result.value, true, 'A parked page must be hidden so it can idle')
+    // Linux keeps parked pages shown; see browserViewHost.
+    assert.equal(
+      hiddenPage.result.value,
+      process.platform !== 'linux',
+      'A parked page must be hidden so it can idle'
+    )
     const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
     assert.ok(parked.screenshot)
     host.destroy()
