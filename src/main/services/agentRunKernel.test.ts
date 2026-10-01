@@ -682,6 +682,38 @@ describe('AgentRunKernel', () => {
       expect(refused?.content).toContain('Reply now with what you found')
     })
 
+    it('gives a sub-agent past its budget a turn without tools to write its report', async () => {
+      // Refusing its calls alone ended a real run on an empty reply: the agent
+      // that delegated got only a stray progress note back.
+      await new AgentRunKernel(store, undefined, sampledTurn({ content: 'Ready' })).start({
+        ...input(),
+        id: 'parent-2'
+      })
+      const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
+      const report = sampledTurn({
+        content: 'Zone X per FEMA NFHL panel 32031C3043G; BFE unchecked.'
+      })
+      const sampler = sequence(sampledTurn(waitCall('wait-1')), report)
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const result = await kernel.start({
+        ...input(router),
+        id: 'child-2',
+        parentRunId: 'parent-2',
+        maxToolRounds: 1
+      })
+
+      expect(result).toMatchObject({
+        phase: 'completed',
+        finalResponse: 'Zone X per FEMA NFHL panel 32031C3043G; BFE unchecked.'
+      })
+      const request = vi.mocked(report).mock.calls[0][0]
+      expect(request.tools).toEqual([])
+      expect(request.messages.at(-1)).toMatchObject({
+        role: 'user',
+        content: expect.stringContaining('Your tool budget for this task is used up')
+      })
+    })
+
     it('still asks the user before a top-level run goes past its budget', async () => {
       const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
       const sampler = sequence(sampledTurn(waitCall('wait-1')), sampledTurn(waitCall('wait-2')))
