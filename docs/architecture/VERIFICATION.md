@@ -60,17 +60,18 @@ When a run changed the workspace and attempts to finish:
 3. The initial completion text is provisional and never appears as a duplicate answer.
 4. A second terminal response is allowed. When verification is impossible, the UI retains an
    honest unverified state rather than looping forever.
-5. If that pass left the workspace revision unchanged, the provisional text stays the answer and
-   the closing reply is marked `verificationNote`. The message shows the answer last, followed by
-   the verification result with the note in sight and the pass's steps inside it. A pass that
-   changed files is ordinary work, and its closing reply is the answer.
-5. A persistent goal consults the same request when the model asks to complete it, before the goal
+5. If that pass left the workspace revision unchanged and the provisional text was not empty, that
+   text stays the answer and the closing reply is marked `verificationNote`. The note and the
+   pass's steps belong to the verification result. A pass that changed files, or that followed an
+   empty provisional answer, is ordinary work, and its closing reply is the answer.
+6. A persistent goal consults the same request when the model asks to complete it, before the goal
    closes. The request is made once per run whichever boundary reaches it first, so a model cannot
    complete a goal and bypass workspace evidence, and a goal it completed is not told afterwards
    that completion cannot be claimed yet.
 
-The final message contains a quiet expandable verification segment reconstructed from the durable
-run event. Direct chats, collaboration participants, and child agents all use the same
+The final message shows the verification result as one status in its footer, reconstructed from
+the durable run event, with the checks, the pass's steps, and any note behind it. A pass still
+running shows inline as live progress. Direct chats, collaboration participants, and child agents all use the same
 `AgentToolRuntime` session and `AgentRunKernel` controller.
 
 ## Limits

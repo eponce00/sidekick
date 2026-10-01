@@ -1644,6 +1644,39 @@ describe('AgentRunKernel', () => {
     expect(store.getInteraction(interaction.id)?.status).toBe('resolved')
   })
 
+  it('asks questions with four choices and numbers questions asked without an id', async () => {
+    const choices = ['One', 'Two', 'Three', 'Four'].map((label) => ({ label }))
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'question-call',
+            function: {
+              name: 'ask_user',
+              arguments: {
+                questions: [
+                  { question: 'Which file?', options: choices },
+                  { id: 'tone', question: 'What does cleaner mean?', options: choices }
+                ]
+              }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Done' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start(input())
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const interaction = store.listPendingInteractions('run-1')[0]
+    expect(
+      (interaction.request as { questions: Array<{ id: string }> }).questions.map(({ id }) => id)
+    ).toEqual(['q1', 'tone'])
+    kernel.resolveInteraction(interaction.id, { q1: 'One', tone: 'Two' })
+    await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Done' })
+  })
+
   it('suspends browser human takeover and resumes the same run after completion', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const sampler = sequence(

@@ -47,7 +47,11 @@ import {
 } from '../../../shared/messageContextAttachments'
 import type { Message, MessageEditGeometry } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
-import type { WorkspaceVerificationSummary } from '../../../shared/verification'
+import {
+  VERIFICATION_STATUS_COPY,
+  type WorkspaceVerificationSummary
+} from '../../../shared/verification'
+import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 
 const RETRY_LABELS: Record<string, string> = {
@@ -261,17 +265,24 @@ function CompactionSummarySegment({
   )
 }
 
-function VerificationSegment({
+const VERIFICATION_LABELS: Record<WorkspaceVerificationSummary['status'], string> = {
+  passed: 'Checks passed',
+  failed: 'Checks failed',
+  stale: 'Checks out of date',
+  unverified: 'Not checked',
+  not_applicable: 'No checks needed'
+}
+
+/** The checks behind a verification result: the work of the pass and the evidence it left. */
+function VerificationDetail({
   verification,
   note,
   steps,
-  pending = false,
   workspaceRoot
 }: {
   verification: WorkspaceVerificationSummary
   note?: string
   steps?: readonly import('../types/chat.types').ContentSegment[]
-  pending?: boolean
   workspaceRoot?: string | null
 }): React.JSX.Element {
   const currentEvidence = verification.evidence.filter(
@@ -281,67 +292,126 @@ function VerificationSegment({
   const history = verification.evidence.filter((evidence) => evidence.id !== authoritative?.id)
 
   return (
-    <div className="verification-result">
-      <details
-        className={`verification-segment verification-${pending ? 'pending' : verification.status}`}
-      >
-        <summary>
-          {pending ? (
-            <Loader2 size={12} className="spinning" />
-          ) : verification.status === 'passed' ? (
-            <Check size={12} />
-          ) : (
-            <CircleAlert size={12} />
-          )}
-          <span>{pending ? 'Verifying changes…' : verification.headline}</span>
-          <ChevronDown size={10} className="verification-arrow" />
-        </summary>
-        <div className="verification-detail">
-          {!pending && verification.detail && <p>{verification.detail}</p>}
-          {Boolean(steps?.length) && (
-            <div className="verification-steps">
-              {steps!.map((step, index) =>
-                step.type === 'tool' && step.tool ? (
-                  <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
-                ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
-                  <p key={index} className={`verification-step-${step.type}`}>
-                    {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
-                  </p>
-                ) : null
-              )}
-            </div>
-          )}
-          {authoritative && (
-            <ul className="verification-current-evidence">
-              <li>
-                <span className={`verification-dot ${authoritative.status}`} />
-                <span>{authoritative.summary}</span>
-                {authoritative.command && <code>{authoritative.command}</code>}
-              </li>
-            </ul>
-          )}
-          {history.length > 0 && (
-            <details className="verification-history">
-              <summary>Earlier attempts ({history.length})</summary>
-              <ul>
-                {history.slice(-4).map((evidence) => (
-                  <li key={evidence.id}>
-                    <span className={`verification-dot ${evidence.status}`} />
-                    <span>{evidence.summary}</span>
-                    {evidence.command && <code>{evidence.command}</code>}
-                  </li>
-                ))}
-              </ul>
-            </details>
+    <div className="verification-detail">
+      {verification.detail && <p>{verification.detail}</p>}
+      {Boolean(steps?.length) && (
+        <div className="verification-steps">
+          {steps!.map((step, index) =>
+            step.type === 'tool' && step.tool ? (
+              <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
+            ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
+              <p key={index} className={`verification-step-${step.type}`}>
+                {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
+              </p>
+            ) : null
           )}
         </div>
-      </details>
+      )}
+      {authoritative && (
+        <ul className="verification-current-evidence">
+          <li>
+            <span className={`verification-dot ${authoritative.status}`} />
+            <span>{authoritative.summary}</span>
+            {authoritative.command && <code>{authoritative.command}</code>}
+          </li>
+        </ul>
+      )}
+      {history.length > 0 && (
+        <details className="verification-history">
+          <summary>Earlier attempts ({history.length})</summary>
+          <ul>
+            {history.slice(-4).map((evidence) => (
+              <li key={evidence.id}>
+                <span className={`verification-dot ${evidence.status}`} />
+                <span>{evidence.summary}</span>
+                {evidence.command && <code>{evidence.command}</code>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {note && (
         <div className="verification-note message-content">
           <MessageMarkdown content={note} workspaceRoot={workspaceRoot} />
         </div>
       )}
     </div>
+  )
+}
+
+/** A verification pass still running, shown live where the reply is being written. */
+function VerificationProgress({
+  steps,
+  workspaceRoot
+}: {
+  steps?: readonly import('../types/chat.types').ContentSegment[]
+  workspaceRoot?: string | null
+}): React.JSX.Element {
+  return (
+    <details className="verification-segment verification-pending">
+      <summary>
+        <Loader2 size={12} className="spinning" />
+        <span>Checking the changes…</span>
+        <ChevronDown size={10} className="verification-arrow" />
+      </summary>
+      <div className="verification-detail">
+        {Boolean(steps?.length) && (
+          <div className="verification-steps">
+            {steps!.map((step, index) =>
+              step.type === 'tool' && step.tool ? (
+                <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
+              ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
+                <p key={index} className={`verification-step-${step.type}`}>
+                  {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
+                </p>
+              ) : null
+            )}
+          </div>
+        )}
+      </div>
+    </details>
+  )
+}
+
+/**
+ * A finished reply's verification result, kept to one line of its footer. Checks are work,
+ * not part of the answer; their details open on demand.
+ */
+function VerificationStatus({
+  segment,
+  workspaceRoot
+}: {
+  segment: import('../types/chat.types').ContentSegment
+  workspaceRoot?: string | null
+}): React.JSX.Element | null {
+  const verification = segment.verification
+  if (!verification) return null
+  const Icon = verification.status === 'passed' ? Check : CircleAlert
+  // Saved results carry the wording of their time; these statuses read the same in every reply.
+  const copy =
+    verification.status === 'stale' || verification.status === 'unverified'
+      ? VERIFICATION_STATUS_COPY[verification.status]
+      : verification
+  return (
+    <MessageFooterPopover
+      className={`message-verification is-${verification.status}`}
+      cardClassName="message-verification-popover"
+      title={copy.headline}
+      label={
+        <>
+          <Icon size={11} aria-hidden="true" />
+          {VERIFICATION_LABELS[verification.status]}
+        </>
+      }
+    >
+      <strong className="message-verification-headline">{copy.headline}</strong>
+      <VerificationDetail
+        verification={{ ...verification, detail: copy.detail }}
+        note={segment.content}
+        steps={segment.steps}
+        workspaceRoot={workspaceRoot}
+      />
+    </MessageFooterPopover>
   )
 }
 
@@ -605,6 +675,9 @@ function MessageItemInner({
     msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
   const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
+  const verificationSegment = msg.segments?.findLast(
+    (segment) => segment.type === 'verification' && segment.verification
+  )
 
   useLayoutEffect(() => {
     if (!isEditing) return
@@ -983,13 +1056,22 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'verification' &&
                     group.segment.verification ? (
-                    <VerificationSegment
-                      verification={group.segment.verification}
-                      note={group.segment.content}
-                      steps={group.segment.steps}
-                      pending={group.segment.pending && isLoading}
-                      workspaceRoot={workspaceFolder}
-                    />
+                    group.segment.pending && isLoading ? (
+                      <VerificationProgress
+                        steps={group.segment.steps}
+                        workspaceRoot={workspaceFolder}
+                      />
+                    ) : finalAnswerIndex < 0 && group.segment.content?.trim() ? (
+                      // Replies saved before the kernel kept such a reply as the answer hold
+                      // their only answer here.
+                      <div className="message-content">
+                        <MessageMarkdown
+                          content={group.segment.content}
+                          workspaceRoot={workspaceFolder}
+                          onArtifactResult={onHandleArtifactResult}
+                        />
+                      </div>
+                    ) : null
                   ) : group.type === 'content' &&
                     group.segment.type === 'summary' &&
                     group.segment.summary ? (
@@ -1141,86 +1223,101 @@ function MessageItemInner({
         <div className="message-meta">
           <div className="message-info">
             {msg.role === 'agent' && msg.tokenUsage && (
-              <details className="message-run-stats">
-                <summary title="Show response metrics">
-                  {(msg.tokenUsage.promptTokens + msg.tokenUsage.completionTokens).toLocaleString()}{' '}
-                  tokens
-                  {workStartedAt && workCompletedAt
-                    ? ` · ${formatWorkDuration(workCompletedAt - workStartedAt)}`
-                    : ''}
-                  <ChevronDown size={10} aria-hidden="true" />
-                </summary>
-                <div className="message-run-stats-popover">
+              <MessageFooterPopover
+                className="message-run-stats"
+                cardClassName="message-run-stats-popover"
+                title="Show response metrics"
+                label={
+                  <>
+                    {(
+                      msg.tokenUsage.promptTokens + msg.tokenUsage.completionTokens
+                    ).toLocaleString()}{' '}
+                    tokens
+                    {workStartedAt && workCompletedAt
+                      ? ` · ${formatWorkDuration(workCompletedAt - workStartedAt)}`
+                      : ''}
+                  </>
+                }
+              >
+                <span>
+                  Input <strong>{msg.tokenUsage.promptTokens.toLocaleString()}</strong>
+                </span>
+                <span>
+                  Output <strong>{msg.tokenUsage.completionTokens.toLocaleString()}</strong>
+                </span>
+                {msg.tokenUsage.cachedPromptTokens !== undefined && (
                   <span>
-                    Input <strong>{msg.tokenUsage.promptTokens.toLocaleString()}</strong>
+                    Cached{' '}
+                    <strong>
+                      {msg.tokenUsage.cachedPromptTokens.toLocaleString()}
+                      {msg.tokenUsage.promptTokens > 0
+                        ? ` (${Math.round(
+                            (msg.tokenUsage.cachedPromptTokens / msg.tokenUsage.promptTokens) * 100
+                          )}%)`
+                        : ''}
+                    </strong>
                   </span>
+                )}
+                {msg.tokenUsage.timeToFirstTokenMs !== undefined && (
                   <span>
-                    Output <strong>{msg.tokenUsage.completionTokens.toLocaleString()}</strong>
+                    First output{' '}
+                    <strong>
+                      {msg.tokenUsage.timeToFirstTokenMs < 1_000
+                        ? `${Math.round(msg.tokenUsage.timeToFirstTokenMs)} ms`
+                        : `${(msg.tokenUsage.timeToFirstTokenMs / 1_000).toFixed(1)} s`}
+                    </strong>
                   </span>
-                  {msg.tokenUsage.cachedPromptTokens !== undefined && (
-                    <span>
-                      Cached{' '}
-                      <strong>
-                        {msg.tokenUsage.cachedPromptTokens.toLocaleString()}
-                        {msg.tokenUsage.promptTokens > 0
-                          ? ` (${Math.round(
-                              (msg.tokenUsage.cachedPromptTokens / msg.tokenUsage.promptTokens) *
-                                100
-                            )}%)`
-                          : ''}
-                      </strong>
-                    </span>
-                  )}
-                  {msg.tokenUsage.timeToFirstTokenMs !== undefined && (
-                    <span>
-                      First output{' '}
-                      <strong>
-                        {msg.tokenUsage.timeToFirstTokenMs < 1_000
-                          ? `${Math.round(msg.tokenUsage.timeToFirstTokenMs)} ms`
-                          : `${(msg.tokenUsage.timeToFirstTokenMs / 1_000).toFixed(1)} s`}
-                      </strong>
-                    </span>
-                  )}
-                  {msg.tokenUsage.tokensPerSecond !== undefined && (
-                    <span>
-                      Speed <strong>{msg.tokenUsage.tokensPerSecond.toFixed(1)} t/s</strong>
-                    </span>
-                  )}
-                  {msg.tokenUsage.cost !== undefined && (
-                    <span>
-                      Cost <strong>${msg.tokenUsage.cost.toFixed(4)}</strong>
-                    </span>
-                  )}
-                  {!!msg.tokenUsage.providerTimings?.length && (
-                    <details>
-                      <summary>
-                        Model request timeline ({msg.tokenUsage.providerTimings.length})
-                      </summary>
-                      <p>
-                        Wait includes network, server queue and prefill; these are not separately
-                        measured. Stream time includes reasoning and output.
-                      </p>
-                      <ol>
-                        {msg.tokenUsage.providerTimings.map((timing, index) => (
-                          <li key={index}>
-                            Request {index + 1}: {(timing.durationMs / 1000).toFixed(1)} s total ·
-                            wait{' '}
-                            {timing.timeToFirstTokenMs === undefined
-                              ? 'not reported'
-                              : `${(timing.timeToFirstTokenMs / 1000).toFixed(1)} s`}{' '}
-                            · stream{' '}
-                            {timing.timeToFirstTokenMs === undefined
-                              ? 'not reported'
-                              : `${(Math.max(0, timing.durationMs - timing.timeToFirstTokenMs) / 1000).toFixed(1)} s`}{' '}
-                            · input {timing.promptTokens.toLocaleString()} · cached{' '}
-                            {timing.cachedPromptTokens?.toLocaleString() ?? 'not reported'}
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  )}
-                </div>
-              </details>
+                )}
+                {msg.tokenUsage.tokensPerSecond !== undefined && (
+                  <span>
+                    Speed <strong>{msg.tokenUsage.tokensPerSecond.toFixed(1)} t/s</strong>
+                  </span>
+                )}
+                {msg.tokenUsage.cost !== undefined && (
+                  <span>
+                    Cost <strong>${msg.tokenUsage.cost.toFixed(4)}</strong>
+                  </span>
+                )}
+                {!!msg.tokenUsage.providerTimings?.length && (
+                  <details>
+                    <summary>
+                      Model request timeline ({msg.tokenUsage.providerTimings.length})
+                    </summary>
+                    <p>
+                      Wait includes network, server queue and prefill; these are not separately
+                      measured. Stream time includes reasoning and output.
+                    </p>
+                    <ol>
+                      {msg.tokenUsage.providerTimings.map((timing, index) => (
+                        <li key={index}>
+                          Request {index + 1}: {(timing.durationMs / 1000).toFixed(1)} s total ·
+                          wait{' '}
+                          {timing.timeToFirstTokenMs === undefined
+                            ? 'not reported'
+                            : `${(timing.timeToFirstTokenMs / 1000).toFixed(1)} s`}{' '}
+                          · stream{' '}
+                          {timing.timeToFirstTokenMs === undefined
+                            ? 'not reported'
+                            : `${(Math.max(0, timing.durationMs - timing.timeToFirstTokenMs) / 1000).toFixed(1)} s`}{' '}
+                          · input {timing.promptTokens.toLocaleString()} · cached{' '}
+                          {timing.cachedPromptTokens?.toLocaleString() ?? 'not reported'}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
+              </MessageFooterPopover>
+            )}
+            {msg.role === 'agent' && verificationSegment && (
+              <VerificationStatus
+                segment={
+                  // A reply saved with its answer in the note shows that note as the answer.
+                  finalAnswerText(msg).trim()
+                    ? verificationSegment
+                    : { ...verificationSegment, content: undefined }
+                }
+                workspaceRoot={workspaceFolder}
+              />
             )}
             <div className="message-timestamp">
               {formatTimestamp(msg.timestamp)}

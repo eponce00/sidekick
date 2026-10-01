@@ -14,6 +14,7 @@ import type {
   WorkspaceVerificationSummary,
   WorkspaceVerificationTerminalController
 } from '../../shared/verification'
+import { VERIFICATION_STATUS_COPY } from '../../shared/verification'
 
 interface EvidenceRow {
   id: string
@@ -519,8 +520,7 @@ export class WorkspaceVerificationService {
         changedPaths,
         evidence,
         suggestedChecks,
-        headline: 'Previous verification is stale.',
-        detail: 'The workspace changed after the recorded check. Run a relevant check again.'
+        ...VERIFICATION_STATUS_COPY.stale
       }
     }
     return {
@@ -531,8 +531,7 @@ export class WorkspaceVerificationService {
       changedPaths,
       evidence,
       suggestedChecks,
-      headline: 'Workspace changes have not been verified.',
-      detail: 'Run the smallest relevant test, build, typecheck, or lint command before finishing.'
+      ...VERIFICATION_STATUS_COPY.unverified
     }
   }
 

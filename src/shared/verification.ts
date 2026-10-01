@@ -53,6 +53,19 @@ export interface WorkspaceVerificationSummary {
   detail?: string
 }
 
+/** What a result without current passing or failing evidence tells the user. */
+export const VERIFICATION_STATUS_COPY = {
+  stale: {
+    headline: 'The last check ran before the latest changes.',
+    detail: 'Files changed after it ran, so its result may no longer hold.'
+  },
+  unverified: {
+    headline: 'No check ran after these changes.',
+    detail:
+      'A check is a test, build, typecheck, or lint command. Reading files or viewing the page does not count.'
+  }
+} as const
+
 export interface VerificationTerminalDecision {
   continue: boolean
   prompt?: string

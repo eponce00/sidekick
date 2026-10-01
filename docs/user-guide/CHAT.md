@@ -12,6 +12,14 @@
   counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
   front. A failed reply is announced the same way.
 
+## Checked changes
+
+When a reply changed project files, its footer says whether a check ran afterwards: **Checks
+passed**, **Checks failed**, **Checks out of date**, or **Not checked**. A check is a test, build,
+typecheck, or lint command; reading files back or viewing a page does not count. Select the status
+to see the commands and their results. The footer appears when you point at the reply, except after
+a failed check, which stays in sight.
+
 ## Sub-agents
 
 When the agent delegates part of the work, the reply shows a row for the task. While the

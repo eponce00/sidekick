@@ -648,7 +648,20 @@ export class AgentRunKernel {
     signal: AbortSignal,
     startedAt: number
   ): Promise<ToolExecutionResult> {
-    const interaction = await this.suspendForInteraction(runId, 'question', args, signal)
+    // Answers are keyed by question id; a question asked without one is numbered.
+    const questions = Array.isArray(args.questions)
+      ? args.questions.map((question: unknown, index) =>
+          question && typeof question === 'object' && !(question as { id?: unknown }).id
+            ? { ...question, id: `q${index + 1}` }
+            : question
+        )
+      : args.questions
+    const interaction = await this.suspendForInteraction(
+      runId,
+      'question',
+      { ...args, questions },
+      signal
+    )
     if (interaction.status !== 'resolved') {
       return toolExecutionFailed({
         title,
