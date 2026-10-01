@@ -44,6 +44,8 @@ export interface AgentScenarioConfig {
   maxOutputTokens?: number
   requestTimeoutMs?: number
   editingDialect?: EditingDialect
+  /** Sampling temperature; null leaves it to the server, as production conversation runs do. */
+  temperature?: number | null
 }
 
 export interface AgentKernelScenarioInput {
@@ -54,6 +56,8 @@ export interface AgentKernelScenarioInput {
   surface?: Extract<AgentRunSurface, 'conversation' | 'collaboration'>
   runId?: string
   threadId?: string
+  /** Conversation message that receives the run's reply; durable history keys runs by it. */
+  outputMessageId?: string
   maxToolRounds?: number
   planMode?: boolean
   autoApprovePlan?: boolean
@@ -108,7 +112,7 @@ function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
           request.maxOutputTokens ?? config.maxOutputTokens ?? 4_096,
           config.maxOutputTokens ?? 8_192
         ),
-        temperature: request.temperature ?? 0
+        temperature: config.temperature === null ? undefined : (request.temperature ?? 0)
         // Preserve server defaults, including production thinking. Never silently disable it.
       },
       config.headers,
@@ -300,6 +304,7 @@ export class AgentScenarioHarness {
       const result = await kernel.start({
         id: runId,
         threadId: input.threadId ?? runId,
+        outputMessageId: input.outputMessageId,
         profile: agentRunProfile(session.catalog()),
         provider: this.config.providerKind ?? 'litellm',
         model: this.config.model,
@@ -309,7 +314,8 @@ export class AgentScenarioHarness {
         request: {
           target,
           maxOutputTokens: this.config.maxOutputTokens ?? 8_192,
-          temperature: 0,
+          temperature:
+            this.config.temperature === null ? undefined : (this.config.temperature ?? 0),
           purpose: 'conversation'
         },
         maxToolRounds: input.maxToolRounds ?? 60,

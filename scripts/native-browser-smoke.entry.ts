@@ -608,15 +608,23 @@ async function runSmoke(): Promise<SmokeResult> {
       }),
       /escapes/
     )
+    // An absolute path names a project file as well as a relative one does,
+    // but only while it stays inside the project.
     await assert.rejects(
       service.upload({
         sessionId: opened.sessionId,
         workspaceRoot: allowedRoot,
-        paths: [insideFile],
+        paths: [outsideFile],
         target: { selector: '#upload' }
       }),
-      /project-relative/
+      /outside the project/
     )
+    await service.upload({
+      sessionId: opened.sessionId,
+      workspaceRoot: allowedRoot,
+      paths: [insideFile],
+      target: { selector: '#upload' }
+    })
     await service.upload({
       sessionId: opened.sessionId,
       workspaceRoot: allowedRoot,

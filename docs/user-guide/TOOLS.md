@@ -18,9 +18,10 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 | Web             | `web_search`, `web_image_search`, `web_fetch`                                                   | Conversation, collaboration, child-agent, and research runs when enabled |
 | Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification | Project-bound runs when browser work is enabled                          |
 
-Project-bound runs can also receive the bounded `read` tool and canonical `apply_patch` editor.
-Files must be read in the same run before they are changed, and every edit uses the same
-transactional workspace mutation service.
+Project-bound runs can also receive the bounded `read` tool and the file editor the model was
+trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,
+and `edit`/`write`/`delete_file` for other models such as Qwen. Files must be read in the same run
+before they are changed, and every edit uses the same transactional workspace mutation service.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,

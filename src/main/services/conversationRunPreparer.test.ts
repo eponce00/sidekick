@@ -23,6 +23,48 @@ function row(overrides: Partial<MessageRow> = {}): MessageRow {
 }
 
 describe('conversation provider history', () => {
+  it('replays edit calls with their real argument names, including legacy byte-count records', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
+    `)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    add.run(
+      'run-1',
+      2,
+      'assistant.completed',
+      JSON.stringify({
+        content: '',
+        toolCalls: [
+          { id: 'old', name: 'apply_patch', arguments: { accessLevel: 'auto', patch_bytes: 1513 } },
+          {
+            id: 'new',
+            name: 'edit',
+            arguments: { file_path: 'a.md', old_string: 'a', new_string: 'b', replace_all: false }
+          }
+        ]
+      })
+    )
+    const history = durableProviderHistory(db, 'conversation-1', [row({ id: 'assistant-1' })], {
+      providerKind: 'openai-compatible',
+      model: 'qwen'
+    })
+    const calls = history.flatMap((message) => message.tool_calls ?? [])
+    expect(calls[0].function.arguments).toEqual({
+      patch: "[This earlier 1,513-byte patch was not kept; the call's result shows what changed.]"
+    })
+    expect(calls[1].function.arguments).toEqual({
+      file_path: 'a.md',
+      old_string: 'a',
+      new_string: 'b',
+      replace_all: false
+    })
+    db.close()
+  })
+
   it('does not duplicate visible text or expose thinking as recorded activity', () => {
     const message = providerMessage(
       row({

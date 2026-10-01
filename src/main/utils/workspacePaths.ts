@@ -28,6 +28,25 @@ async function nearestExistingPath(path: string): Promise<string> {
 }
 
 /**
+ * The project-relative spelling of a path. Models often copy the workspace root from the prompt
+ * or prefix ./, so an absolute path inside the project and ./ prefixes name the same file as the
+ * plain relative path; read receipts and change records are keyed by this spelling.
+ */
+export function projectRelativePath(workspaceRoot: string, requestedPath: string): string {
+  let path = requestedPath.trim()
+  if (isAbsolute(path)) {
+    const rel = relative(resolve(workspaceRoot), resolve(path))
+    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new Error(
+        `Path is outside the project: ${requestedPath}. Use a path relative to the project root.`
+      )
+    }
+    path = rel
+  }
+  return path.replaceAll('\\', '/').replace(/^(?:\.\/)+/, '')
+}
+
+/**
  * Resolve a model- or renderer-supplied project-relative path without allowing
  * lexical traversal or a symlink to cross the canonical project boundary.
  */
@@ -38,7 +57,7 @@ export async function resolveSecureWorkspacePath(
 ): Promise<string> {
   if (requestedPath.includes('\0')) throw new Error('Path contains a null byte')
   if (requestedPath.length > 4_096) throw new Error('Path exceeds the 4,096 character safety limit')
-  if (isAbsolute(requestedPath)) throw new Error(`Path must be project-relative: ${requestedPath}`)
+  if (isAbsolute(requestedPath)) requestedPath = projectRelativePath(workspaceRoot, requestedPath)
 
   const lexicalRoot = resolve(workspaceRoot)
   const candidate = resolve(lexicalRoot, requestedPath)
