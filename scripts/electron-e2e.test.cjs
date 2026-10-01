@@ -27,9 +27,12 @@ test(
     let writer
     try {
       application = await launchSideKick(profile)
+      // The suite's first launch of the packaged app is a cold start; on a
+      // Windows runner it has taken longer than the usual wait.
       await waitForVisible(
         (await application.firstWindow()).getByRole('heading', { name: 'What’s next?' }),
-        'startup'
+        'startup',
+        60_000
       )
       // Inject a real durable partial-run boundary in this disposable profile. The
       // provider/tool is synthetic; restart and recovery use the actual application.
@@ -138,9 +141,9 @@ async function launchSideKick(profile) {
   })
 }
 
-async function waitForVisible(locator, label) {
+async function waitForVisible(locator, label, timeout = 20_000) {
   try {
-    await locator.waitFor({ state: 'visible', timeout: 20_000 })
+    await locator.waitFor({ state: 'visible', timeout })
   } catch (cause) {
     throw new Error(`${label} should be visible`, { cause })
   }

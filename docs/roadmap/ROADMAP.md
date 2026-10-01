@@ -42,6 +42,13 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Refine curated project memory with explicit sources, review, deletion, and prompt-budget controls.
 - Continue adversarial testing of provider dialect recovery, project symlinks, collaboration
   conflicts, prompt injection, release validation, and crash recovery.
+- Let a parked browser page idle. Its parking window stays shown with background throttling off, so
+  an animated page keeps painting with no one watching, and the shown window keeps SideKick running
+  after its main window closes. Hiding parked pages between tool operations made a screenshot taken
+  right after a click return the frame from before it in about a third of native browser smoke runs
+  on Windows, and on Linux every time, even when hiding was delayed or the capture waited for
+  animation frames. A fix must keep every capture fresh, proven by repeated smoke runs on all three
+  platforms.
 
 ## Later work
 
