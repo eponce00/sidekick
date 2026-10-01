@@ -1453,8 +1453,11 @@ The user approved this exact plan revision. Act capabilities are now available a
           planDecision?.continue === true ||
           Boolean(planDecision?.error)
         const closesVerification = Boolean(deferredAnswer && !turn.toolCalls.length && !provisional)
+        // A reply that changed nothing is a note on the answer it followed. When that answer was
+        // empty (the model went straight to checking), the reply is the answer.
         const verificationNote =
           closesVerification &&
+          Boolean(deferredAnswer?.content.trim()) &&
           verificationDecision?.summary.currentRevision === deferredAnswer?.revision
         this.append(input.id, 'assistant.completed', {
           content: projectedTurnContent,

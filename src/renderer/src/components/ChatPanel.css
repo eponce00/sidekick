@@ -3728,8 +3728,16 @@ body[data-theme='light'] .tool-approval-command {
   margin: 0 0 6px 18px;
   max-width: 680px;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
-  line-height: 1.45;
+}
+.verification-note.message-content {
+  font-size: var(--content-text-secondary);
+  line-height: 1.5;
+}
+.verification-note > :first-child {
+  margin-top: 0;
+}
+.verification-note > :last-child {
+  margin-bottom: 0;
 }
 .verification-steps {
   display: grid;

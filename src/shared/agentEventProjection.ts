@@ -193,7 +193,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         lastProvisionalContent = content
       } else {
         committedContent =
-          event.payload.verificationNote === true && deferredAnswer
+          event.payload.verificationNote === true && deferredAnswer?.content.trim()
             ? deferredAnswer.contentBefore + deferredAnswer.content
             : committedContent + content
         committedThinking +=
@@ -446,6 +446,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let verificationPass: {
     marker: ProjectedContentSegment
     steps: ProjectedContentSegment[]
+    followsAnswer: boolean
   } | null = null
   let foldedVerification: { steps: ProjectedContentSegment[]; note: string } | null = null
   let streamedTurnContent = ''
@@ -520,7 +521,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       streamedTurnThinking = ''
       turnSegmentStart = segments.length
       if (verificationPass && !calls.length) {
-        if (event.payload.verificationNote === true) {
+        // Runs recorded before the kernel checked for an empty answer mark the real answer a note.
+        if (event.payload.verificationNote === true && verificationPass.followsAnswer) {
           const steps = verificationPass.steps
           let streamedNote = ''
           for (let index = steps.length - 1; index >= turnStart; index--) {
@@ -612,7 +614,11 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         if (lastProvisional?.content && !lastProvisional.streamed) {
           appendTextualSegment('text', lastProvisional.content)
         }
-        verificationPass = { marker, steps: [] }
+        verificationPass = {
+          marker,
+          steps: [],
+          followsAnswer: Boolean(lastProvisional?.content.trim())
+        }
         segments = verificationPass.steps
         streamedTurnContent = ''
         streamedTurnThinking = ''

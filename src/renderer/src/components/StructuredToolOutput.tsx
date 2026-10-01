@@ -1,6 +1,45 @@
 import { useMemo, useState } from 'react'
 import Anser from 'anser'
 import { ChevronRight, ExternalLink, FileCode2, Image as ImageIcon } from 'lucide-react'
+import {
+  extensionOf,
+  highlightLines,
+  languageFor,
+  parseNumberedLines,
+  type NumberedLine
+} from '../utils/codeHighlight'
+
+/** Source lines with their numbers in a gutter, highlighted, scrolling instead of wrapping. */
+export function CodeExcerpt({
+  lines,
+  path
+}: {
+  lines: NumberedLine[]
+  path?: string
+}): React.JSX.Element {
+  const html = useMemo(
+    () =>
+      highlightLines(
+        lines.map((line) => line.text).join('\n'),
+        path ? languageFor(extensionOf(path)) : null
+      ),
+    [lines, path]
+  )
+  return (
+    <pre className="structured-code">
+      <code className="hljs">
+        {lines.map((line, index) => (
+          <span key={index} className="structured-code-line">
+            <span className="structured-code-gutter" aria-hidden="true">
+              {line.number ?? ''}
+            </span>
+            <span dangerouslySetInnerHTML={{ __html: html[index] || ' ' }} />
+          </span>
+        ))}
+      </code>
+    </pre>
+  )
+}
 
 function normalizedTerminalText(value: string): string {
   return value
@@ -34,7 +73,15 @@ export function AnsiTerminalOutput({ value }: { value: string }): React.JSX.Elem
   )
 }
 
-function JsonNode({ name, value, depth }: { name?: string; value: unknown; depth: number }): React.JSX.Element {
+function JsonNode({
+  name,
+  value,
+  depth
+}: {
+  name?: string
+  value: unknown
+  depth: number
+}): React.JSX.Element {
   const compound = value !== null && typeof value === 'object'
   const [open, setOpen] = useState(depth < 2)
   if (!compound) {
@@ -59,7 +106,9 @@ function JsonNode({ name, value, depth }: { name?: string; value: unknown; depth
       </button>
       {open && (
         <div className="json-tree-children">
-          {entries.map(([key, child]) => <JsonNode key={key} name={key} value={child} depth={depth + 1} />)}
+          {entries.map(([key, child]) => (
+            <JsonNode key={key} name={key} value={child} depth={depth + 1} />
+          ))}
         </div>
       )}
     </div>
@@ -67,7 +116,11 @@ function JsonNode({ name, value, depth }: { name?: string; value: unknown; depth
 }
 
 export function JsonTreeView({ value }: { value: unknown }): React.JSX.Element {
-  return <div className="json-tree"><JsonNode value={value} depth={0} /></div>
+  return (
+    <div className="json-tree">
+      <JsonNode value={value} depth={0} />
+    </div>
+  )
 }
 
 function safeHttpUrl(value: unknown): string | null {
@@ -86,7 +139,9 @@ export function SearchResultsOutput({ data }: { data: unknown }): React.JSX.Elem
     ? ((data as Record<string, unknown>).results as Array<Record<string, unknown>>)
     : []
   if (!results.length) return null
-  const imageResults = results.filter((result) => safeHttpUrl(result.thumbnailUrl || result.imageUrl))
+  const imageResults = results.filter((result) =>
+    safeHttpUrl(result.thumbnailUrl || result.imageUrl)
+  )
   if (imageResults.length) {
     return (
       <div className="structured-image-results">
@@ -96,7 +151,10 @@ export function SearchResultsOutput({ data }: { data: unknown }): React.JSX.Elem
           return (
             <a key={`${page}:${index}`} href={page} target="_blank" rel="noreferrer">
               <img src={image} alt={String(result.title || 'Search result')} loading="lazy" />
-              <span><ImageIcon size={11} />{String(result.title || result.source || 'Image')}</span>
+              <span>
+                <ImageIcon size={11} />
+                {String(result.title || result.source || 'Image')}
+              </span>
             </a>
           )
         })}
@@ -132,8 +190,15 @@ export function WebPageOutput({ data }: { data: unknown }): React.JSX.Element | 
   return (
     <div className="structured-web-output">
       <div className="structured-web-heading">
-        <div><strong>{String(page.title || page.siteName || 'Web page')}</strong>{Boolean(page.byline) && <span>{String(page.byline)}</span>}</div>
-        {href && <a href={href} target="_blank" rel="noreferrer"><ExternalLink size={12} /> Open source</a>}
+        <div>
+          <strong>{String(page.title || page.siteName || 'Web page')}</strong>
+          {Boolean(page.byline) && <span>{String(page.byline)}</span>}
+        </div>
+        {href && (
+          <a href={href} target="_blank" rel="noreferrer">
+            <ExternalLink size={12} /> Open source
+          </a>
+        )}
       </div>
       {Boolean(page.excerpt) && <p>{String(page.excerpt)}</p>}
       {Boolean(page.content) && <pre>{String(page.content).slice(0, 12_000)}</pre>}
@@ -153,17 +218,25 @@ export function ReadFileOutput({
   if (!data || typeof data !== 'object') return null
   const result = data as Record<string, unknown>
   if (typeof result.content !== 'string') return null
+  const lines = parseNumberedLines(result.content)
   return (
     <div className="structured-read-output">
       <div className="structured-read-heading">
-        <span>Lines {Number(result.startLine || 1).toLocaleString()}–{Number(result.endLine || 0).toLocaleString()} of {Number(result.totalLines || 0).toLocaleString()}</span>
+        <span>
+          Lines {Number(result.startLine || 1).toLocaleString()}–
+          {Number(result.endLine || 0).toLocaleString()} of{' '}
+          {Number(result.totalLines || 0).toLocaleString()}
+        </span>
         {path && workspaceRoot && (
-          <button type="button" onClick={() => void window.api.workspace.openFile(path, workspaceRoot)}>
+          <button
+            type="button"
+            onClick={() => void window.api.workspace.openFile(path, workspaceRoot)}
+          >
             <FileCode2 size={12} /> Open file
           </button>
         )}
       </div>
-      <pre>{result.content}</pre>
+      {lines ? <CodeExcerpt lines={lines} path={path} /> : <pre>{result.content}</pre>}
     </div>
   )
 }
@@ -177,7 +250,9 @@ export function FileListOutput({
 }): React.JSX.Element | null {
   if (!data || typeof data !== 'object') return null
   const files = Array.isArray((data as Record<string, unknown>).files)
-    ? ((data as Record<string, unknown>).files as unknown[]).filter((value): value is string => typeof value === 'string')
+    ? ((data as Record<string, unknown>).files as unknown[]).filter(
+        (value): value is string => typeof value === 'string'
+      )
     : []
   if (!files.length) return null
   return (
@@ -188,13 +263,20 @@ export function FileListOutput({
           <button
             key={path}
             type="button"
-            onClick={() => workspaceRoot && void (directory ? window.api.workspace.openFolder(path, workspaceRoot) : window.api.workspace.openFile(path, workspaceRoot))}
+            onClick={() =>
+              workspaceRoot &&
+              void (directory
+                ? window.api.workspace.openFolder(path, workspaceRoot)
+                : window.api.workspace.openFile(path, workspaceRoot))
+            }
             onContextMenu={(event) => {
               event.preventDefault()
-              if (workspaceRoot) void window.api.workspace.showPathMenu(path, workspaceRoot, directory)
+              if (workspaceRoot)
+                void window.api.workspace.showPathMenu(path, workspaceRoot, directory)
             }}
           >
-            <FileCode2 size={12} /><span>{path}</span>
+            <FileCode2 size={12} />
+            <span>{path}</span>
           </button>
         )
       })}

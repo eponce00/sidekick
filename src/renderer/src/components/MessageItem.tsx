@@ -336,7 +336,11 @@ function VerificationSegment({
           )}
         </div>
       </details>
-      {note && <p className="verification-note">{note}</p>}
+      {note && (
+        <div className="verification-note message-content">
+          <MessageMarkdown content={note} workspaceRoot={workspaceRoot} />
+        </div>
+      )}
     </div>
   )
 }

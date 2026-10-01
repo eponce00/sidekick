@@ -6,12 +6,14 @@ import ToolCallRow from './ToolCallRow'
 import { RichDiffBlock } from './RichDiffBlock'
 import {
   AnsiTerminalOutput,
+  CodeExcerpt,
   FileListOutput,
   JsonTreeView,
   ReadFileOutput,
   SearchResultsOutput,
   WebPageOutput
 } from './StructuredToolOutput'
+import { parseNumberedLines } from '../utils/codeHighlight'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -43,6 +45,11 @@ export function ToolExecutionCard({
   const view = resolveToolView(tool)
   const output = tool.error || tool.output || ''
   const bounded = useMemo(() => boundedLines(output, showAll), [output, showAll])
+  // Saved pages of a file read keep the read tool's `12: text` lines; show them as code.
+  const numberedOutput = useMemo(
+    () => (view === 'terminal' ? null : parseNumberedLines(output)),
+    [output, view]
+  )
   const command = typeof tool.input?.command === 'string' ? tool.input.command : tool.command
   const subject = tool.presentation?.subject
   const detail = tool.presentation?.detail || tool.hint
@@ -137,13 +144,17 @@ export function ToolExecutionCard({
                     {copied ? <Check size={11} /> : <Copy size={11} />}
                     {copied ? 'Copied' : 'Copy'}
                   </button>
-                  <pre>{bounded.text}</pre>
+                  {numberedOutput ? (
+                    <CodeExcerpt lines={numberedOutput} />
+                  ) : (
+                    <pre>{bounded.text}</pre>
+                  )}
                 </div>
               )}
               {!output && tool.data !== undefined && view === 'generic' && (
                 <JsonTreeView value={tool.data} />
               )}
-              {bounded.omitted > 0 && (
+              {bounded.omitted > 0 && !numberedOutput && (
                 <button
                   type="button"
                   className="tool-output-expand"
