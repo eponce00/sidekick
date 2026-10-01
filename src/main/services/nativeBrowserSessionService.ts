@@ -1242,6 +1242,18 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   private async captureViewportAwake(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
+    // A page that was hidden has not painted what changed meanwhile, such as a
+    // click's result; capturing at once could return the stale frame. Wait for
+    // two animation frames, bounded, so the capture shows the page as it is.
+    await Promise.race([
+      this.contents
+        .executeJavaScript(
+          'new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))',
+          true
+        )
+        .catch(() => undefined),
+      new Promise((done) => setTimeout(done, 500))
+    ])
     if (
       this.view &&
       !browserViewHost(this.webContentsId) &&
