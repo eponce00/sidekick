@@ -9,6 +9,8 @@ interface HostedView {
   agentInput: number
   /** App zoom the embedded page is rendered at; 1 whenever the view is parked. */
   zoom: number
+  /** Operations that need a parked page painting; it is hidden again when none remain. */
+  rendering: number
 }
 
 /** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
@@ -25,7 +27,7 @@ const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
 
 export function registerBrowserView(view: WebContentsView, parking: BrowserWindow): void {
-  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1 }
+  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1, rendering: 0 }
   const id = view.webContents.id
   views.set(id, entry)
   // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
@@ -130,7 +132,10 @@ export function parkBrowserView(id: number): void {
     const [width, height] = entry.parking.getContentSize()
     entry.view.setBounds({ x: 0, y: 0, width, height })
     entry.parking.setOpacity(process.platform === 'darwin' ? 0.01 : 1)
-    entry.parking.showInactive()
+    // A visible parked page keeps animating and painting with no one watching,
+    // and a visible window keeps the app alive after its main window closes.
+    if (entry.rendering) entry.parking.showInactive()
+    else entry.parking.hide()
   }
 }
 
@@ -259,9 +264,32 @@ export async function browserAgentInput<T>(
   const entry = views.get(id)
   if (entry) entry.agentInput++
   try {
-    return await operation()
+    return await withBrowserRendering(id, operation)
   } finally {
     if (entry) entry.agentInput--
+  }
+}
+
+/**
+ * Wakes a parked page for one bounded operation, such as input, a script, or a
+ * capture, rather than leaving it painting for its whole life. Overlapping
+ * operations share the wake; the page is hidden when the last one ends.
+ */
+export async function withBrowserRendering<T>(
+  id: number,
+  operation: () => T | Promise<T>
+): Promise<T> {
+  const entry = views.get(id)
+  if (!entry || entry.host || entry.parking.isDestroyed()) return await operation()
+  // A page already shown for a human takeover stays shown after a tool.
+  if (!entry.rendering && entry.parking.isVisible()) return await operation()
+  entry.rendering++
+  if (entry.rendering === 1) entry.parking.showInactive()
+  try {
+    return await operation()
+  } finally {
+    entry.rendering--
+    if (!entry.rendering && !entry.host && !entry.parking.isDestroyed()) entry.parking.hide()
   }
 }
 
@@ -272,5 +300,7 @@ export function browserDebuggerCommand<T>(
   method: string,
   operation: () => Promise<T>
 ): Promise<T> {
-  return method.startsWith('Input.') ? browserAgentInput(id, operation) : operation()
+  return method.startsWith('Input.')
+    ? browserAgentInput(id, operation)
+    : withBrowserRendering(id, operation)
 }

@@ -365,6 +365,11 @@ async function runSmoke(): Promise<SmokeResult> {
     await service.completeHumanTakeover(shared.sessionId)
     unmountBrowserHost(host)
     assert.equal(browserViewHost(identity), undefined)
+    const hiddenPage = await contents.debugger.sendCommand('Runtime.evaluate', {
+      expression: 'document.hidden',
+      returnByValue: true
+    })
+    assert.equal(hiddenPage.result.value, true, 'A parked page must be hidden so it can idle')
     const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
     assert.ok(parked.screenshot)
     host.destroy()

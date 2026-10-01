@@ -27,10 +27,46 @@ import {
   mountBrowserView,
   parkBrowserView,
   registerBrowserView,
-  showBrowserPointer
+  showBrowserPointer,
+  withBrowserRendering
 } from './browserViewHost'
 
 let nextId = 900000
+
+it('wakes a parked page for overlapping work and hides it only after the last', async () => {
+  // A visible parked page kept animating with no one watching, and its window
+  // kept the app running after the main window closed.
+  const contents = Object.assign(new EventEmitter(), { id: nextId++, isDestroyed: () => false })
+  const parking = {
+    isDestroyed: () => false,
+    isVisible: () => false,
+    showInactive: vi.fn(),
+    hide: vi.fn()
+  }
+  registerBrowserView(
+    { webContents: contents } as unknown as WebContentsView,
+    parking as unknown as BrowserWindow
+  )
+  let finish!: () => void
+  const first = withBrowserRendering(
+    contents.id,
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  await expect(
+    withBrowserRendering(contents.id, async () => {
+      throw Error('capture failed')
+    })
+  ).rejects.toThrow('capture failed')
+  expect(parking.showInactive).toHaveBeenCalledTimes(1)
+  expect(parking.hide).not.toHaveBeenCalled()
+  finish()
+  await first
+  expect(parking.hide).toHaveBeenCalledTimes(1)
+  contents.emit('destroyed')
+})
 function hosted(zoom?: number) {
   let zoomFactor = 1
   const contents = Object.assign(new EventEmitter(), {
