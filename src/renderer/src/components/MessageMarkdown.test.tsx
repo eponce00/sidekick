@@ -28,6 +28,18 @@ describe('MessageMarkdown rich media', () => {
     container.remove()
   })
 
+  it('reads two prices on a line as prices, and still typesets math', async () => {
+    await act(async () => {
+      root.render(
+        <MessageMarkdown content="Key facts: $825,000 asking, last sold 2015 for $299,500. Area: $x^2$." />
+      )
+    })
+
+    expect(container.textContent).toContain('$825,000 asking, last sold 2015 for $299,500.')
+    // Only the real formula is typeset.
+    expect(container.querySelectorAll('.katex')).toHaveLength(1)
+  })
+
   it('keeps mixed image-and-copy paragraphs in normal document flow', async () => {
     await act(async () => {
       root.render(
