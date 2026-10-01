@@ -1069,6 +1069,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     let toolRoundsAfterGoalComplete = 0
     // Tool rounds a sub-agent attempted after its tool budget was spent.
     let toolRoundsAfterBudgetSpent = 0
+    let reportRequested = false
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1230,7 +1231,29 @@ The user approved this exact plan revision. Act capabilities are now available a
           })
         }
 
-        const toolDefinitions = getAgentToolDefinitions(currentCatalog(input))
+        // A sub-agent whose tool budget is used up gets one more turn to report.
+        // Refusing its tool calls was not enough: a model kept asking until the
+        // run ended on an empty reply, and the agent got no report at all. The
+        // turn is told so, and offered no tools where the provider allows it;
+        // Anthropic rejects a transcript holding tool calls without definitions.
+        const reportOnly =
+          Boolean(input.parentRunId) && toolRounds >= Math.max(1, input.maxToolRounds)
+        if (reportOnly && !reportRequested) {
+          reportRequested = true
+          messages = [
+            ...messages,
+            {
+              role: 'user',
+              content:
+                'Your tool budget for this task is used up, and no more tool calls will run. Reply now, in text, with your report for the agent that delegated this task: what you found, with its sources, and what is left unchecked.'
+            }
+          ]
+          requestMessages = messages
+        }
+        const toolDefinitions =
+          reportOnly && input.provider !== 'anthropic'
+            ? []
+            : getAgentToolDefinitions(currentCatalog(input))
         if (activeContextManager?.shouldCompact(requestMessages, toolDefinitions)) {
           const prepared = await this.compactContext(
             input,

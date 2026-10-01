@@ -53,7 +53,15 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
   const { snapshot } = useSubAgentRun(isRunning ? childRunId : null, isRunning)
   const activity = useMemo(() => subAgentActivity(snapshot.events, snapshot.projection), [snapshot])
   const outcome = subAgentOutcome(data)
-  const live = isRunning && Boolean(childRunId)
+  // Tasks delegated together are recorded as finished only when the last of
+  // them is, so a sub-agent can be done while its call still reads as running.
+  // Its own run says when it has ended; the row follows that.
+  const childEnded =
+    isRunning &&
+    Boolean(childRunId) &&
+    snapshot.events.length > 0 &&
+    (activity.state === 'done' || activity.state === 'failed' || activity.state === 'stopped')
+  const live = isRunning && Boolean(childRunId) && !childEnded
 
   const pending = live
     ? snapshot.projection.segments.flatMap((segment) =>
@@ -79,17 +87,19 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
 
   const state: SubAgentState =
     outcome?.state ??
-    (isRunning
-      ? live && snapshot.events.length
-        ? activity.state === 'waiting'
-          ? 'waiting'
+    (childEnded
+      ? activity.state
+      : isRunning
+        ? live && snapshot.events.length
+          ? activity.state === 'waiting'
+            ? 'waiting'
+            : 'working'
           : 'working'
-        : 'working'
-      : tool.status === 'success'
-        ? 'done'
-        : /cancel/i.test(tool.error ?? '')
-          ? 'stopped'
-          : 'failed')
+        : tool.status === 'success'
+          ? 'done'
+          : /cancel/i.test(tool.error ?? '')
+            ? 'stopped'
+            : 'failed')
   const quietFor =
     state === 'working' && activity.lastActivityAt ? now - activity.lastActivityAt : 0
 
@@ -111,6 +121,22 @@ export function SubAgentCard({ tool }: { tool: ToolExecution }): React.JSX.Eleme
 
   if (queued) {
     detail = 'Queued until another sub-agent finishes'
+  } else if (childEnded) {
+    detail =
+      (builder ? undefined : activity.report) ??
+      (state === 'stopped'
+        ? 'Stopped before it reported'
+        : state === 'failed'
+          ? 'Failed'
+          : builder
+            ? 'Checking the final version'
+            : 'Finished')
+    stats = subAgentStats(
+      builder ? undefined : activity.toolCalls,
+      activity.startedAt !== undefined && activity.endedAt !== undefined
+        ? activity.endedAt - activity.startedAt
+        : undefined
+    )
   } else if (isRunning && builder) {
     detail =
       state === 'waiting'
