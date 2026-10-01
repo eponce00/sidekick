@@ -12,6 +12,8 @@ export interface SubAgentActivity {
   toolCalls: number
   /** What it is doing right now, in a few words. */
   current?: string
+  /** Once it has ended, the first line of what it last wrote. */
+  report?: string
 }
 
 /** How a finished sub-agent ended, from the delegating tool's result. */
@@ -112,13 +114,18 @@ export function subAgentActivity(
             : 'Starting'
   }
 
+  const lastText = ended
+    ? [...projection.segments].reverse().find((segment) => segment.type === 'text')
+    : undefined
+
   return {
     state,
     startedAt,
     endedAt,
     lastActivityAt: events.at(-1)?.timestamp,
     toolCalls: tools.size,
-    current
+    current,
+    report: lastText?.type === 'text' ? headline(lastText.content) : undefined
   }
 }
 

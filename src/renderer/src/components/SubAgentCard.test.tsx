@@ -144,6 +144,29 @@ describe('SubAgentCard', () => {
     expect(text('.sa-card__quiet')).toBe(' · No activity for 6 min')
   })
 
+  it('shows a sub-agent as done once its run ends, while a sibling keeps the call open', async () => {
+    // Tasks delegated together complete as a group, so this call still reads as
+    // running; the row showed "Working · No activity for 4 min" for a finished one.
+    const start = Date.now() - 10 * 60_000
+    await mount([
+      event(1, 'run.started', {}, start),
+      event(2, 'tool.pending', { toolCallId: 't1', name: 'web_search' }, start + 1_000),
+      event(3, 'tool.running', { toolCallId: 't1', name: 'web_search' }, start + 2_000),
+      event(
+        4,
+        'assistant.delta',
+        { content: '## Comps\nMedian sale $790,000 across 6 homes.' },
+        start + 60_000
+      ),
+      event(5, 'run.completed', { phase: 'completed' }, start + 90_000)
+    ])
+    expect(container.querySelector('.sa-card')?.classList.contains('is-done')).toBe(true)
+    expect(text('.sa-card__detail')).toBe('Comps · Median sale $790,000 across 6 homes.')
+    expect(text('.sa-card__stats')).toBe('1 tool · 1m 30s')
+    expect(container.querySelector('.sa-card__quiet')).toBeNull()
+    expect(container.querySelector('.sa-card__stop')).toBeNull()
+  })
+
   it('leads a finished row with the start of the report and its stats', async () => {
     await mount([], {
       ...runningTool,
