@@ -11,6 +11,8 @@ interface HostedView {
   zoom: number
   /** Operations that need a parked page painting; it is hidden again when none remain. */
   rendering: number
+  /** Pending hide after the last operation, cancelled if another one starts. */
+  hideTimer?: ReturnType<typeof setTimeout>
 }
 
 /** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
@@ -26,6 +28,10 @@ function applyViewZoom(entry: HostedView): void {
 // hidden window back asynchronously, so a capture right after waking it still
 // returned the frame from before, and the page there stays shown as before.
 const HIDE_PARKED_PAGES = process.platform !== 'linux'
+// A page is hidden only once it has been idle this long. Hiding it the moment
+// a click ended meant it had not painted the click's result, and the capture
+// that followed woke it and returned the frame from before.
+export const PARKED_PAGE_HIDE_DELAY_MS = 300
 
 // Only main-process-created isolated tabs can be embedded; renderer IDs are never accepted.
 const views = new Map<number, HostedView>()
@@ -287,15 +293,26 @@ export async function withBrowserRendering<T>(
   const entry = views.get(id)
   if (!HIDE_PARKED_PAGES || !entry || entry.host || entry.parking.isDestroyed())
     return await operation()
-  // A page already shown for a human takeover stays shown after a tool.
-  if (!entry.rendering && entry.parking.isVisible()) return await operation()
+  // Still shown from an operation that just ended: take that wake over.
+  if (entry.hideTimer) {
+    clearTimeout(entry.hideTimer)
+    entry.hideTimer = undefined
+  } else if (!entry.rendering && entry.parking.isVisible()) {
+    // A page already shown for a human takeover stays shown after a tool.
+    return await operation()
+  }
   entry.rendering++
-  if (entry.rendering === 1) entry.parking.showInactive()
+  if (entry.rendering === 1 && !entry.parking.isVisible()) entry.parking.showInactive()
   try {
     return await operation()
   } finally {
     entry.rendering--
-    if (!entry.rendering && !entry.host && !entry.parking.isDestroyed()) entry.parking.hide()
+    if (!entry.rendering) {
+      entry.hideTimer = setTimeout(() => {
+        entry.hideTimer = undefined
+        if (!entry.rendering && !entry.host && !entry.parking.isDestroyed()) entry.parking.hide()
+      }, PARKED_PAGE_HIDE_DELAY_MS)
+    }
   }
 }
 

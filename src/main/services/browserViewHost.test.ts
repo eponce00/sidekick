@@ -25,6 +25,7 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   mountBrowserView,
+  PARKED_PAGE_HIDE_DELAY_MS,
   parkBrowserView,
   registerBrowserView,
   showBrowserPointer,
@@ -67,6 +68,12 @@ it.skipIf(process.platform === 'linux')(
     expect(parking.hide).not.toHaveBeenCalled()
     finish()
     await first
+    // The capture that follows a click takes the same wake, so the page has
+    // painted the click's result; it is not hidden and shown again between.
+    await withBrowserRendering(contents.id, () => undefined)
+    expect(parking.showInactive).toHaveBeenCalledTimes(1)
+    expect(parking.hide).not.toHaveBeenCalled()
+    await new Promise((resolve) => setTimeout(resolve, PARKED_PAGE_HIDE_DELAY_MS + 50))
     expect(parking.hide).toHaveBeenCalledTimes(1)
     contents.emit('destroyed')
   }
