@@ -20,25 +20,24 @@ afterEach(async () => {
 })
 
 describe('workspace mutation service', () => {
-  it.each([
-    '--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new',
-    '-old\n+new',
-    'old\nnew'
-  ])('rejects non-canonical patch input without touching the file', async (patch) => {
-    const root = await workspace()
-    await mkdir(join(root, 'src'))
-    await writeFile(join(root, 'src/app.ts'), 'old\n', 'utf8')
+  it.each(['-old\n+new', 'old\nnew'])(
+    'rejects non-canonical patch input without touching the file',
+    async (patch) => {
+      const root = await workspace()
+      await mkdir(join(root, 'src'))
+      await writeFile(join(root, 'src/app.ts'), 'old\n', 'utf8')
 
-    const result = await executeWorkspaceMutation(root, {
-      kind: 'apply-patch',
-      patch,
-      accessLevel: 'auto'
-    })
+      const result = await executeWorkspaceMutation(root, {
+        kind: 'apply-patch',
+        patch,
+        accessLevel: 'auto'
+      })
 
-    expect(result).toMatchObject({ ok: false, changed: false, files: [] })
-    expect(result.error).toContain('*** Begin Patch')
-    expect(await readFile(join(root, 'src/app.ts'), 'utf8')).toBe('old\n')
-  })
+      expect(result).toMatchObject({ ok: false, changed: false, files: [] })
+      expect(result.error).toContain('*** Begin Patch')
+      expect(await readFile(join(root, 'src/app.ts'), 'utf8')).toBe('old\n')
+    }
+  )
 
   it('applies and verifies a canonical multi-file patch', async () => {
     const root = await workspace()
@@ -125,6 +124,108 @@ describe('workspace mutation service', () => {
     })
     expect(missing.error).toContain('was not found')
     expect(await readFile(join(root, 'values.txt'), 'utf8')).toBe('same\nsame\n')
+  })
+
+  describe('model copies that differ only in formatting', () => {
+    const replace = (
+      root: string,
+      filePath: string,
+      oldText: string,
+      newText: string,
+      replaceAll = false
+    ) =>
+      executeWorkspaceMutation(root, {
+        kind: 'replace',
+        filePath,
+        oldText,
+        newText,
+        replaceAll,
+        accessLevel: 'auto'
+      })
+
+    it('matches retyped quotes and dashes and keeps the file typography', async () => {
+      const root = await workspace()
+      const original =
+        '# Report — 2026\n\n| Wildfire | “Not confirmed” — confirm via the NDF map. |  \n| HOA | ❓ |\n'
+      await writeFile(join(root, 'report.md'), original, 'utf8')
+      const result = await replace(
+        root,
+        'report.md',
+        '| Wildfire | "Not confirmed" - confirm via the NDF map. |',
+        '| Wildfire | "Not confirmed" - confirmed outside the NDF zone. |'
+      )
+      expect(result).toMatchObject({ ok: true, changed: true })
+      expect(await readFile(join(root, 'report.md'), 'utf8')).toBe(
+        '# Report — 2026\n\n| Wildfire | “Not confirmed” — confirmed outside the NDF zone. |  \n| HOA | ❓ |\n'
+      )
+    })
+
+    it('matches a copy that dropped an emoji variation selector and LF for CRLF', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'a.md'), 'x\r\n| ⚠️ Expected low |\r\ny\r\n', 'utf8')
+      const result = await replace(root, 'a.md', 'x\n| ⚠ Expected low |', 'x\n| ✅ Low |')
+      expect(result.ok).toBe(true)
+      expect(await readFile(join(root, 'a.md'), 'utf8')).toBe('x\r\n| ✅ Low |\r\ny\r\n')
+    })
+
+    it('strips read-tool line numbers only when every line has one', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'a.ts'), 'const a = 1\nconst b = 2\n', 'utf8')
+      const result = await replace(
+        root,
+        'a.ts',
+        '1: const a = 1\n2: const b = 2',
+        '1: const a = 10\n2: const b = 2'
+      )
+      expect(result.ok).toBe(true)
+      expect(await readFile(join(root, 'a.ts'), 'utf8')).toBe('const a = 10\nconst b = 2\n')
+    })
+
+    it('keeps one stray CRLF line in an LF file instead of converting the file', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'mixed.md'), 'one\ntwo\nthree\r\n', 'utf8')
+      expect((await replace(root, 'mixed.md', 'one\ntwo', 'ONE\ntwo')).ok).toBe(true)
+      expect(await readFile(join(root, 'mixed.md'), 'utf8')).toBe('ONE\ntwo\nthree\r\n')
+    })
+
+    it('rejects ambiguous tolerant matches and shows the closest text when nothing matches', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'q.md'), 'say “hi” now\nsay "hi" now\nother line here\n', 'utf8')
+      const ambiguous = await replace(root, 'q.md', "say 'hi' now", 'bye')
+      expect(ambiguous.ok).toBe(false)
+      const missing = await replace(root, 'q.md', 'other line hear', 'x')
+      expect(missing.failure?.code).toBe('text_not_found')
+      expect(missing.error).toContain('3: other line here')
+      expect(await readFile(join(root, 'q.md'), 'utf8')).toBe(
+        'say “hi” now\nsay "hi" now\nother line here\n'
+      )
+    })
+
+    it('accepts an absolute path inside the project and ./ prefixes', async () => {
+      const root = await workspace()
+      await mkdir(join(root, 'src'))
+      await writeFile(join(root, 'src/a.ts'), 'a\n', 'utf8')
+      const absolute = await replace(root, join(root, 'src', 'a.ts'), 'a', 'b')
+      expect(absolute).toMatchObject({ ok: true })
+      expect(absolute.files[0].path).toBe('src/a.ts')
+      expect((await replace(root, './src/a.ts', 'b', 'c')).files[0].path).toBe('src/a.ts')
+      const outside = await replace(root, join(tmpdir(), 'elsewhere.txt'), 'x', 'y')
+      expect(outside.ok).toBe(false)
+      expect(outside.error).toContain('outside the project')
+    })
+
+    it('keeps the line endings of a file that write replaces', async () => {
+      const root = await workspace()
+      await writeFile(join(root, 'w.txt'), 'old\r\nlines\r\n', 'utf8')
+      const result = await executeWorkspaceMutation(root, {
+        kind: 'write',
+        filePath: 'w.txt',
+        content: 'new\nlines\n',
+        accessLevel: 'auto'
+      })
+      expect(result.ok).toBe(true)
+      expect(await readFile(join(root, 'w.txt'), 'utf8')).toBe('new\r\nlines\r\n')
+    })
   })
 
   it('adapts exact multi-line edits to the file line ending without changing its style', async () => {

@@ -9,7 +9,14 @@ import type {
 import { applyCanonicalUpdate, parseCanonicalPatch } from '../utils/canonicalPatch'
 import { createWorkspaceFileChange } from '../utils/workspaceDiff'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { projectRelativePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  carryOriginalCharacters,
+  closestRegion,
+  findTolerantSpans,
+  stripReadLineNumbers,
+  type TextSpan
+} from '../utils/tolerantMatch'
 
 interface PlannedChange {
   action: 'add' | 'update' | 'delete' | 'move'
@@ -122,29 +129,77 @@ function occurrenceStartLines(content: string, needle: string, limit = 12): numb
   return lines
 }
 
+/** The line ending most lines of `content` use; a single stray CRLF does not convert LF files. */
+function dominantLineEnding(content: string): '\n' | '\r\n' {
+  const crlf = content.match(/\r\n/g)?.length ?? 0
+  const lf = (content.match(/\n/g)?.length ?? 0) - crlf
+  return crlf > lf ? '\r\n' : '\n'
+}
+
+function withLineEnding(text: string, ending: '\n' | '\r\n'): string {
+  return text.replace(/\r?\n/g, ending)
+}
+
 function adaptReplacementLineEndings(
   currentContent: string,
   oldText: string,
   newText: string
 ): { oldText: string; newText: string } {
-  if (currentContent.includes('\r\n')) {
-    return {
-      oldText: oldText.replace(/\r?\n/g, '\r\n'),
-      newText: newText.replace(/\r?\n/g, '\r\n')
+  const ending = dominantLineEnding(currentContent)
+  return { oldText: withLineEnding(oldText, ending), newText: withLineEnding(newText, ending) }
+}
+
+/** Replace each span (in ascending order) with the model's new text, keeping file characters. */
+function replaceSpans(
+  content: string,
+  spans: readonly TextSpan[],
+  modelOld: string,
+  modelNew: string
+): string {
+  let result = ''
+  let cursor = 0
+  for (const span of spans) {
+    const original = content.slice(span.start, span.end)
+    const ending = original.includes('\r\n') ? '\r\n' : dominantLineEnding(content)
+    const carried = carryOriginalCharacters(original, modelOld, modelNew)
+    // Carried text already has the file's endings for kept lines; added lines get the span's.
+    result +=
+      content.slice(cursor, span.start) +
+      (carried === undefined
+        ? withLineEnding(modelNew, ending)
+        : carried.replace(/\r?\n/g, (match) => (match === '\r\n' ? match : ending)))
+    cursor = span.end
+  }
+  return result + content.slice(cursor)
+}
+
+function notFoundError(
+  path: string,
+  content: string,
+  oldText: string
+): WorkspaceMutationPlanningError {
+  const region = closestRegion(content, oldText)
+  return new WorkspaceMutationPlanningError(
+    `Edit rejected: old_string was not found in ${path}; no file changes were made.` +
+      (region
+        ? `\nClosest current text (line numbers are for reference only; do not include them in old_string):\n${region}`
+        : ''),
+    {
+      code: 'text_not_found',
+      recovery: region
+        ? 'Copy old_string exactly from the closest current text above (without line numbers), or re-read the relevant range, then retry once.'
+        : 'Re-read the relevant range and retry once with exact current text.'
     }
-  }
-  return {
-    oldText: oldText.replace(/\r\n/g, '\n'),
-    newText: newText.replace(/\r\n/g, '\n')
-  }
+  )
 }
 
 async function planSingleFileMutation(
   workspaceRoot: string,
   request: Exclude<WorkspaceMutationRequest, { kind: 'apply-patch' }>
 ): Promise<PlannedChange[]> {
-  const absolutePath = await secureWorkspacePath(workspaceRoot, request.filePath)
-  const path = displayPath(request.filePath)
+  const relativePath = projectRelativePath(workspaceRoot, request.filePath)
+  const absolutePath = await secureWorkspacePath(workspaceRoot, relativePath)
+  const path = displayPath(relativePath)
   const before = await readOptional(absolutePath)
   const beforeVersion = await currentVersion(absolutePath)
 
@@ -154,15 +209,19 @@ async function planSingleFileMutation(
   }
 
   if (request.kind === 'write') {
-    if (before === request.content)
-      throw new Error(`Write rejected: ${path} already has identical content`)
+    // Rewriting an existing file keeps its line-ending convention; models emit LF.
+    const content =
+      before !== undefined && !request.content.includes('\r\n')
+        ? withLineEnding(request.content, dominantLineEnding(before))
+        : request.content
+    if (before === content) throw new Error(`Write rejected: ${path} already has identical content`)
     return [
       {
         action: before === undefined ? 'add' : 'update',
         path,
         absolutePath,
         before,
-        after: request.content,
+        after: content,
         beforeVersion
       }
     ]
@@ -187,13 +246,37 @@ async function planSingleFileMutation(
   const replacement = adaptReplacementLineEndings(before, request.oldText, request.newText)
   const occurrences = countOccurrences(before, replacement.oldText)
   if (!occurrences) {
-    throw new WorkspaceMutationPlanningError(
-      `Edit rejected: old_string was not found in ${path}; no file changes were made`,
-      {
-        code: 'text_not_found',
-        recovery: 'Re-read the relevant range and retry once with exact current text.'
-      }
-    )
+    // The model's copy may differ only in typography, trailing whitespace, line endings,
+    // invisible marks or read-tool line numbers. Accept such a copy only if it is unambiguous.
+    let modelOld = request.oldText
+    let modelNew = request.newText
+    let spans = findTolerantSpans(before, modelOld)
+    const unnumbered = spans.length ? undefined : stripReadLineNumbers(modelOld)
+    if (unnumbered !== undefined) {
+      modelOld = unnumbered
+      modelNew = stripReadLineNumbers(modelNew) ?? modelNew
+      spans = findTolerantSpans(before, modelOld)
+    }
+    if (!spans.length) throw notFoundError(path, before, request.oldText)
+    if (spans.length > 1 && !request.replaceAll) {
+      const matchStartLines = spans
+        .slice(0, 12)
+        .map((span) => before.slice(0, span.start).split('\n').length)
+      throw new WorkspaceMutationPlanningError(
+        `Edit rejected: old_string has ${spans.length} matches in ${path}; no file changes were made. Match start lines: ${matchStartLines.join(', ')}. Retry with replace_all=true only if every match should change; otherwise include surrounding lines in old_string so it matches once.`,
+        {
+          code: 'multiple_matches',
+          recovery:
+            'Choose the replacement scope explicitly: set replace_all=true for every match, or add surrounding lines to old_string for one unique match. Do not repeat the unchanged call.',
+          matchCount: spans.length,
+          matchStartLines
+        }
+      )
+    }
+    const after = replaceSpans(before, spans, modelOld, modelNew)
+    if (after === before)
+      throw new Error(`Edit rejected: replacement produced no change in ${path}`)
+    return [{ action: 'update', path, absolutePath, before, after, beforeVersion }]
   }
   if (occurrences > 1 && !request.replaceAll) {
     const matchStartLines = occurrenceStartLines(before, replacement.oldText)
@@ -233,9 +316,10 @@ async function planCanonicalPatch(
     touchedAbsolutePaths.add(key)
   }
   for (const operation of operations) {
-    const absolutePath = await secureWorkspacePath(workspaceRoot, operation.path)
+    const relativePath = projectRelativePath(workspaceRoot, operation.path)
+    const absolutePath = await secureWorkspacePath(workspaceRoot, relativePath)
     claimPath(absolutePath)
-    const path = displayPath(operation.path)
+    const path = displayPath(relativePath)
     const before = await readOptional(absolutePath)
     const beforeVersion = await currentVersion(absolutePath)
     if (operation.type === 'add') {
@@ -251,9 +335,10 @@ async function planCanonicalPatch(
     if (before === undefined) throw new Error(`Patch rejected: Update File is missing: ${path}`)
     const after = applyCanonicalUpdate(before, operation)
     if (operation.movePath) {
-      const absoluteMovePath = await secureWorkspacePath(workspaceRoot, operation.movePath)
+      const relativeMovePath = projectRelativePath(workspaceRoot, operation.movePath)
+      const absoluteMovePath = await secureWorkspacePath(workspaceRoot, relativeMovePath)
       claimPath(absoluteMovePath)
-      const movePath = displayPath(operation.movePath)
+      const movePath = displayPath(relativeMovePath)
       if ((await readOptional(absoluteMovePath)) !== undefined) {
         throw new Error(`Patch rejected: Move destination already exists: ${movePath}`)
       }

@@ -22,6 +22,7 @@ behavior, and the development guide when testing or publishing it.
 ## Architecture
 
 - [System overview](architecture/OVERVIEW.md) — process boundaries, runtime ownership, and data flow.
+- [File-editing evaluation](architecture/EDIT_TOOL_EVALUATION_20260930.md) — editing contracts, tolerant matching, and live results.
 - [Prompt and context](architecture/PROMPT_AND_CONTEXT.md) — trusted instructions and compaction.
 - [Workspace verification](architecture/VERIFICATION.md) — revision-bound evidence and completion guards.
 - [Persistent goals](architecture/PERSISTENT_GOALS.md) — durable multi-run objectives.

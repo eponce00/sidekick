@@ -65,15 +65,30 @@ post-write bytes, and rolls back the transaction if any operation fails. Missing
 replacement text, stale context, no-op changes, and partial multi-file patches are failures; they are
 never reported to a model as successful edits.
 
-`src/shared/agentToolDefinitions.ts` is the single workspace-tool registry. A model receives one
-editing dialect selected from provider/model identity: canonical `apply_patch` for Codex-style
-models, `Edit`/`Write` for Claude-style models, search-and-replace for Grok-style models, or the
-generic structured editing contract. Dialects are adapters over the same mutation request and do
+`src/shared/agentToolDefinitions.ts` is the single workspace-tool registry. Every tool session
+that can edit files (conversation, collaboration and sub-agent runs) receives one editing dialect
+selected for the executing model by `editingDialectForTarget`: canonical `apply_patch` for
+Codex-style models, `Edit`/`Write` for Claude-style models, search-and-replace for Grok-style
+models, or the generic `edit`/`write`/`delete_file` contract, which is also what open-weight
+models such as Qwen are trained on. Dialects are adapters over the same mutation request and do
 not create separate execution paths. Read, list, and search tools are shared across every dialect.
 
 Canonical patches use the `*** Begin Patch` / `*** End Patch` grammar with explicit Add, Update,
-Delete, and optional Move directives. Unified diffs, bare `+`/`-` text, legacy marker formats,
-truncated patches, and patches with non-unique context fail closed. `AgentToolRuntime` requires
+Delete, and optional Move directives. The parser restores an envelope missing around complete file
+operations, reads a final `*** End of Patch` (or an unfollowed `*** End of File`) as the end of the
+patch, converts a plain unified diff with `---`/`+++` headers, ignores unified-diff hunk line
+numbers, accepts a misplaced `*** Move to:`, and merges repeated Update sections for one file.
+Bare `+`/`-` text, prose around a patch, and truncated tool calls still fail closed.
+
+Exact edits and patch hunks match exactly first. Only when nothing matches exactly do they match
+text that differs from the file solely in line endings, trailing whitespace, typographic
+punctuation (curly quotes, dashes, non-breaking spaces), invisible marks such as emoji variation
+selectors, or read-tool `N: ` line prefixes (`src/main/utils/tolerantMatch.ts`). Such a match must
+still be unique, and text the model did not change is written back from the file, so a copy typed
+with ASCII quotes never rewrites the file's typography. Each line keeps its own ending, so a mixed
+CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. A miss
+reports the closest current lines with their line numbers. Paths may be project-relative, `./`
+prefixed, or absolute inside the project; all spellings share one read receipt. `AgentToolRuntime` requires
 same-run version receipts for every existing target, the kernel resolves permission policy, and the
 transactional mutation service commits only after validating the complete plan. Model results
 contain a bounded truthful diff summary; the UI starts the activity row as soon as tool input

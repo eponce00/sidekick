@@ -504,11 +504,22 @@ export function validatePreparedAgentToolCall(
   })
 }
 
+/** How this run creates a file, named with the editing tool the model actually has. */
+function newFileHint(catalog: AgentToolCatalogOptions): string {
+  const names = new Set(getAgentToolCatalog(catalog).map((entry) => entry.definition.function.name))
+  if (names.has('apply_patch')) return 'use apply_patch Add File'
+  const write = ['Write', 'write'].find((name) => names.has(name))
+  return write
+    ? `use ${write} with the complete content`
+    : 'ask the user, since this run cannot create files'
+}
+
 function executionError(
   title: string,
   error: unknown,
   startedAt: number,
-  signal: AbortSignal
+  signal: AbortSignal,
+  catalog: AgentToolCatalogOptions
 ): ToolExecutionResult {
   if (error instanceof ToolRuntimeTimeoutError) {
     return toolExecutionFailed({
@@ -548,8 +559,7 @@ function executionError(
       message,
       retryable: true,
       recoveryAction: 'correct_input',
-      recovery:
-        'The requested file or executable was not found. Verify the path or dependency. If the task explicitly requires a new file, use apply_patch Add File; do not retry reading the unchanged missing path.',
+      recovery: `The requested file or executable was not found. Verify the path or dependency. If the task explicitly requires a new file, ${newFileHint(catalog)}; do not retry reading the unchanged missing path.`,
       startedAt
     })
   }
@@ -670,7 +680,7 @@ export class AgentToolRegistry {
       )
       return normalizeToolExecutionResult(input.title, value, startedAt, Date.now())
     } catch (error) {
-      return executionError(input.title, error, startedAt, executionContext.signal)
+      return executionError(input.title, error, startedAt, executionContext.signal, input.catalog)
     }
   }
 }

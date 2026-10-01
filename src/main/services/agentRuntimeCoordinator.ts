@@ -31,6 +31,7 @@ import {
 } from '../../shared/prompts'
 import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
 import { resolveProviderContext } from '../providers/providerRuntime'
+import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
 import { SubAgentSlots } from './subAgentSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
@@ -351,6 +352,7 @@ export class AgentRuntimeCoordinator {
           runId: input.id,
           surface: 'collaboration',
           workspaceRoot: input.workspaceRoot,
+          editingDialect: editingDialectForTarget(target),
           webSearchEnabled: true,
           collaboration: input.collaboration,
           instructionScopeId: input.id,
@@ -914,6 +916,7 @@ export class AgentRuntimeCoordinator {
       runId: id,
       surface: 'subagent',
       workspaceRoot: parentContext.workspaceRoot,
+      editingDialect: editingDialectForTarget(target),
       webSearchEnabled: true,
       instructionScopeId: id,
       onWorkspaceWillMutate: parent.prepared.onWorkspaceWillMutate

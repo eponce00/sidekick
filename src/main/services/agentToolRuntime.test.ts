@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { ToolExecutionResult } from '../../shared/agentRuntime'
@@ -23,6 +23,14 @@ describe('safe tool arguments', () => {
   it('says how much of a long value the preview left out', () => {
     // A bare ellipsis read as part of the value when the preview came back
     // through history, and the model copied it into a new call.
+    const patch = safeToolArguments('apply_patch', {
+      patch: '*** Begin Patch\n*** End Patch',
+      accessLevel: 'auto'
+    })
+    // Replayed history must show the real argument name, never a byte-count stand-in.
+    expect(patch).toEqual({ patch: '*** Begin Patch\n*** End Patch' })
+    const long = safeToolArguments('write', { file_path: 'a.txt', content: 'x'.repeat(20_000) })
+    expect(String(long.content)).toContain('4,000 more characters were not kept')
     const safe = safeToolArguments('create_artifact', { code: 'a'.repeat(2_500) })
     expect(safe.code).toBe(`${'a'.repeat(2_000)}… [500 more characters not kept]`)
   })
@@ -171,6 +179,52 @@ describe('AgentToolRuntime file receipts', () => {
       }
     }
   )
+  it('treats ./, absolute and plain spellings of a path as one read receipt', async () => {
+    const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
+    const data = await temporaryRoot('sidekick-tool-runtime-data-')
+    await mkdir(join(workspace, 'docs'))
+    await writeFile(join(workspace, 'docs', 'note.md'), 'before\n', 'utf8')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      new CommandService(db, join(data, 'commands')),
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    try {
+      const session = await runtime.createSession({
+        runId: 'run-paths',
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['workspace.read', 'workspace.write'],
+        editingDialect: 'structured-edit'
+      })
+      const context = {
+        runId: 'run-paths',
+        workspaceRoot: workspace,
+        signal: new AbortController().signal
+      }
+      await session.router.execute('read', { path: './docs/note.md' }, context)
+      const result = (await session.router.execute(
+        'edit',
+        {
+          file_path: join(workspace, 'docs', 'note.md'),
+          old_string: 'before',
+          new_string: 'after',
+          replace_all: false
+        },
+        context
+      )) as ToolExecutionResult
+      expect(result.status).toBe('success')
+      expect(await readFile(join(workspace, 'docs', 'note.md'), 'utf8')).toBe('after\n')
+    } finally {
+      await runtime.close()
+      db.close()
+    }
+  })
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
