@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { resolve } from 'path'
 import { stat } from 'node:fs/promises'
-import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import { projectRelativePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import {
   normalizeAgentToolParameters,
   type AgentToolDefinition
@@ -176,6 +176,15 @@ function mcpDefinition(tool: McpToolInfo): AgentToolDefinition {
   }
 }
 
+/** Longest edit text kept in the run ledger; later turns replay it as the model's own call. */
+export const MAX_RECORDED_EDIT_CHARACTERS = 16_000
+
+function recordedEditText(value: string): string {
+  return value.length > MAX_RECORDED_EDIT_CHARACTERS
+    ? `${value.slice(0, MAX_RECORDED_EDIT_CHARACTERS)}\n[${(value.length - MAX_RECORDED_EDIT_CHARACTERS).toLocaleString('en-US')} more characters were not kept]`
+    : value
+}
+
 export function safeToolArguments(
   name: string,
   args: Record<string, unknown>
@@ -183,20 +192,17 @@ export function safeToolArguments(
   if (name === 'office_preflight') return { workflow: stringArg(args, 'workflow') }
   if (name === 'office_validate') return { path: stringArg(args, 'path') }
   if (isWorkspaceMutationTool(name)) {
+    // Keep the tool's own argument names and (bounded) text. Follow-up turns replay these
+    // calls; a byte-count stand-in taught models to call apply_patch with patch_bytes.
+    const text = (key: string) =>
+      key in args ? { [key]: recordedEditText(stringArg(args, key)) } : {}
     return {
-      file_path: args.file_path,
-      accessLevel: args.accessLevel,
+      ...('file_path' in args ? { file_path: args.file_path } : {}),
       ...('replace_all' in args ? { replace_all: args.replace_all } : {}),
-      ...('old_string' in args
-        ? { old_string_bytes: Buffer.byteLength(stringArg(args, 'old_string')) }
-        : {}),
-      ...('new_string' in args
-        ? { new_string_bytes: Buffer.byteLength(stringArg(args, 'new_string')) }
-        : {}),
-      ...(name === 'apply_patch'
-        ? { patch_bytes: Buffer.byteLength(stringArg(args, 'patch')) }
-        : {}),
-      ...('content' in args ? { content_bytes: Buffer.byteLength(stringArg(args, 'content')) } : {})
+      ...text('old_string'),
+      ...text('new_string'),
+      ...text('patch'),
+      ...text('content')
     }
   }
   if (name === 'shell') {
@@ -686,7 +692,8 @@ export class AgentToolRuntime {
           instructions.content + metadata + result.files.join('\n')
         )
       }
-      readReceipts.set(path.replaceAll('\\', '/'), result.version)
+      // Keyed like change records, so ./a.ts, an absolute path and a.ts share one receipt.
+      readReceipts.set(projectRelativePath(this.requireWorkspace(input), path), result.version)
       if (input.workspaceRoot) this.languageIntelligence.observeFile(input.workspaceRoot, path)
       const metadata =
         `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +

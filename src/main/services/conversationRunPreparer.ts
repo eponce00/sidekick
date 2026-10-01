@@ -25,6 +25,7 @@ import type { PinnedModel } from '../../shared/models'
 import type { ProviderSettings } from '../../shared/settings'
 import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
 import { resolveProviderContext } from '../providers/providerRuntime'
+import { editingDialectForTarget, isWorkspaceMutationTool } from '../../shared/workspaceMutations'
 import { beginWorkspaceInstructionScope } from './workspaceRules'
 import { ProjectStore } from './projectStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
@@ -301,6 +302,11 @@ export function durableProviderHistory(
         : []
       for (const call of calls) {
         if (call.function.name === 'create_artifact') artifactCalls.push({ call, outputMessageId })
+        if (isWorkspaceMutationTool(call.function.name)) {
+          call.function.arguments = historicalEditArguments(
+            call.function.arguments as Record<string, unknown>
+          )
+        }
       }
       const sameProviderGeneration =
         event.provider === currentTarget.providerKind && event.model === currentTarget.model
@@ -383,6 +389,29 @@ export function previousReplyMadeArtifact(db: Database.Database, conversationId:
     )
     .get(conversationId)
   return Boolean(row)
+}
+
+const EDIT_TEXT_KEYS = ['old_string', 'new_string', 'patch', 'content'] as const
+
+/**
+ * Edit calls recorded before their text was kept carry only byte counts (patch_bytes and so
+ * on). Replaying those names taught models to call apply_patch with patch_bytes and no patch,
+ * so older calls are shown with the real argument names and a plain note instead.
+ */
+function historicalEditArguments(args: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(args)) {
+    if (key === 'accessLevel' || key.endsWith('_bytes')) continue
+    result[key] = value
+  }
+  for (const key of EDIT_TEXT_KEYS) {
+    const bytes = args[`${key}_bytes`]
+    if (typeof bytes === 'number' && typeof result[key] !== 'string') {
+      result[key] =
+        `[This earlier ${bytes.toLocaleString('en-US')}-byte ${key} was not kept; the call's result shows what changed.]`
+    }
+  }
+  return result
 }
 
 /**
@@ -590,6 +619,8 @@ export class ConversationRunPreparer {
       permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
       runId: input.id,
       surface,
+      // The model that executes the work edits files with the contract it was trained on.
+      editingDialect: editingDialectForTarget(executionTarget),
       workspaceRoot: workspaceRoot ?? undefined,
       webSearchEnabled: true,
       browserEnabled: input.model.supportsVision !== false,

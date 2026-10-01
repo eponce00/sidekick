@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   editingDialectCandidatesForModel,
   editingDialectForModel,
+  editingDialectForTarget,
   verifiedEditingDialectFallbacks,
   workspaceMutationRequestFromTool,
   workspaceMutationResultForModel
@@ -17,6 +18,29 @@ describe('model-aware editing dialects', () => {
     [{ providerKind: 'openrouter' as const, model: 'qwen/qwen3-coder' }, 'structured-edit']
   ])('routes $0 to $1', (target, expected) => {
     expect(editingDialectForModel(target)).toBe(expected)
+  })
+
+  it('derives a run contract from a provider target', () => {
+    expect(
+      editingDialectForTarget({ providerKind: 'openai-compatible', model: 'local-loaded-model' })
+    ).toBe('structured-edit')
+    expect(editingDialectForTarget({ providerKind: 'openai', model: 'gpt-5.4' })).toBe(
+      'apply-patch'
+    )
+    expect(
+      editingDialectForTarget({
+        providerKind: 'litellm',
+        model: 'alias',
+        editingDialect: 'apply-patch'
+      })
+    ).toBe('apply-patch')
+    expect(
+      editingDialectForTarget({
+        providerKind: 'litellm',
+        model: 'alias',
+        upstreamModel: 'claude-sonnet-5'
+      })
+    ).toBe('claude-edit')
   })
 
   it('honors an explicit editing contract for provider aliases', () => {

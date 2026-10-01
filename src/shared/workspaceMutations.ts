@@ -156,6 +156,26 @@ export function editingDialectForModel(target: EditingModelTarget): EditingDiale
   return 'structured-edit'
 }
 
+/**
+ * The editing contract for a resolved provider target: a pinned preference wins, then a valid
+ * calibration, then the model family. Every tool session that can edit files uses this.
+ */
+export function editingDialectForTarget(target: {
+  providerKind?: ProviderKind
+  model: string
+  editingDialect?: EditingDialectPreference
+  upstreamModel?: string
+  editingCalibration?: EditingContractCalibration
+}): EditingDialect {
+  return editingDialectForModel({
+    providerKind: target.providerKind,
+    model: target.model,
+    dialect: target.editingDialect,
+    upstreamModel: target.upstreamModel,
+    calibration: target.editingCalibration
+  })
+}
+
 export function validEditingCalibration(
   target: EditingModelTarget
 ): EditingContractCalibration | undefined {
