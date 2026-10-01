@@ -25,59 +25,12 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   mountBrowserView,
-  PARKED_PAGE_HIDE_DELAY_MS,
   parkBrowserView,
   registerBrowserView,
-  showBrowserPointer,
-  withBrowserRendering
+  showBrowserPointer
 } from './browserViewHost'
 
 let nextId = 900000
-
-// Linux keeps parked pages shown, so there is nothing to wake there.
-it.skipIf(process.platform === 'linux')(
-  'wakes a parked page for overlapping work and hides it only after the last',
-  async () => {
-    // A visible parked page kept animating with no one watching, and its window
-    // kept the app running after the main window closed.
-    const contents = Object.assign(new EventEmitter(), { id: nextId++, isDestroyed: () => false })
-    const parking = {
-      isDestroyed: () => false,
-      isVisible: () => false,
-      showInactive: vi.fn(),
-      hide: vi.fn()
-    }
-    registerBrowserView(
-      { webContents: contents } as unknown as WebContentsView,
-      parking as unknown as BrowserWindow
-    )
-    let finish!: () => void
-    const first = withBrowserRendering(
-      contents.id,
-      () =>
-        new Promise<void>((resolve) => {
-          finish = resolve
-        })
-    )
-    await expect(
-      withBrowserRendering(contents.id, async () => {
-        throw Error('capture failed')
-      })
-    ).rejects.toThrow('capture failed')
-    expect(parking.showInactive).toHaveBeenCalledTimes(1)
-    expect(parking.hide).not.toHaveBeenCalled()
-    finish()
-    await first
-    // The capture that follows a click takes the same wake, so the page has
-    // painted the click's result; it is not hidden and shown again between.
-    await withBrowserRendering(contents.id, () => undefined)
-    expect(parking.showInactive).toHaveBeenCalledTimes(1)
-    expect(parking.hide).not.toHaveBeenCalled()
-    await new Promise((resolve) => setTimeout(resolve, PARKED_PAGE_HIDE_DELAY_MS + 50))
-    expect(parking.hide).toHaveBeenCalledTimes(1)
-    contents.emit('destroyed')
-  }
-)
 function hosted(zoom?: number) {
   let zoomFactor = 1
   const contents = Object.assign(new EventEmitter(), {

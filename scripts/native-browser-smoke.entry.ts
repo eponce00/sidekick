@@ -365,15 +365,6 @@ async function runSmoke(): Promise<SmokeResult> {
     await service.completeHumanTakeover(shared.sessionId)
     unmountBrowserHost(host)
     assert.equal(browserViewHost(identity), undefined)
-    // Linux keeps parked pages shown (see browserViewHost), and what a page
-    // reports there depends on the X server, so only the others are checked.
-    if (process.platform !== 'linux') {
-      const hiddenPage = await contents.debugger.sendCommand('Runtime.evaluate', {
-        expression: 'document.hidden',
-        returnByValue: true
-      })
-      assert.equal(hiddenPage.result.value, true, 'A parked page must be hidden so it can idle')
-    }
     const parked = await service.observe(shared.sessionId, { screenshot: 'viewport' })
     assert.ok(parked.screenshot)
     host.destroy()

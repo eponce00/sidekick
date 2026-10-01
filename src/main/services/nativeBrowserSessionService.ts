@@ -20,8 +20,7 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   browserNavigationState,
-  showBrowserPointer,
-  withBrowserRendering
+  showBrowserPointer
 } from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -1178,10 +1177,7 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.ownerWindow.setSkipTaskbar(true)
       this.ownerWindow.setOpacity(0)
       this.ownerWindow.setFocusable(false)
-      // Hidden, not merely transparent: tools wake the page when they need it.
-      // Linux keeps parked pages shown; see browserViewHost.
-      if (process.platform === 'linux') this.ownerWindow.showInactive()
-      else this.ownerWindow.hide()
+      this.ownerWindow.showInactive()
     }
   }
 
@@ -1233,16 +1229,10 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async executeJavaScript<T>(source: string): Promise<T> {
-    return (await withBrowserRendering(this.webContentsId, () =>
-      this.contents.executeJavaScript(source, true)
-    )) as T
+    return (await this.contents.executeJavaScript(source, true)) as T
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
-    return withBrowserRendering(this.webContentsId, () => this.captureViewportAwake())
-  }
-
-  private async captureViewportAwake(): Promise<NativeBrowserSurfaceCapture> {
     this.contents.invalidate()
     if (
       this.view &&
@@ -1433,8 +1423,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         nodeIntegration: false,
         webSecurity: true,
         allowRunningInsecureContent: false,
-        // A page no one is watching may idle; tools wake it while they work.
-        backgroundThrottling: true,
+        backgroundThrottling: false,
         // Use a normal WebContents so this exact tab can be revealed for
         // same-session human takeover. Full-page CDP capture briefly wakes
         // the window offscreen to keep Chromium's compositor responsive.
@@ -1445,7 +1434,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
     window.contentView.addChildView(view)
     view.setBounds({ x: 0, y: 0, width: options.viewport.width, height: options.viewport.height })
     registerBrowserView(view, window)
-    view.webContents.setBackgroundThrottling(true)
+    view.webContents.setBackgroundThrottling(false)
     const browserSession = view.webContents.session
     const { installBrowserPdfProtocol } = await import('../bootstrap/artifactProtocol')
     await installBrowserPdfProtocol(browserSession.protocol)
