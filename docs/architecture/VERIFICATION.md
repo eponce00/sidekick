@@ -48,8 +48,14 @@ without changing SideKick.
 
 ## Completion policy
 
-After the first tool round that changes the workspace, the model is reminded once, in that
-round's results, to run the smallest relevant check before writing its final answer. Verifying
+Checks are suggested from project manifests: the workspace's own, and for each changed path the
+nearest folder above it that has one, so a workspace holding several projects suggests the changed
+project's checks with the folder to run them in. When nothing changed has a suggested check and no
+evidence was recorded, verification is `not_applicable`: there is no reminder, no verification
+request, and no status in the reply, because no command the model could run would count.
+
+After the first tool round that changes a project with a suggested check, the model is reminded
+once, in that round's results, to run the smallest relevant check before writing its final answer. Verifying
 before answering is the path that reads best, so the request below is a backstop.
 
 When a run changed the workspace and attempts to finish:

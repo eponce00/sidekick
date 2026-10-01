@@ -39,6 +39,13 @@ export interface VerificationCheckSuggestion {
   kind: Exclude<VerificationKind, 'diagnostics' | 'custom'>
   command: string
   source: string
+  /** The project folder to run it in, relative to the workspace, when that is not the workspace. */
+  cwd?: string
+}
+
+/** How a suggested check is named to the model, with the folder it runs in. */
+export function describeCheck(check: VerificationCheckSuggestion): string {
+  return check.cwd ? `${check.command} (in ${check.cwd})` : check.command
 }
 
 export interface WorkspaceVerificationSummary {

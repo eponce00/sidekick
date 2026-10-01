@@ -14,9 +14,12 @@
 
 ## Checked changes
 
-When a reply changed project files, its footer says whether a check ran afterwards: **Checks
-passed**, **Checks failed**, **Checks out of date**, or **Not checked**. A check is a test, build,
-typecheck, or lint command; reading files back or viewing a page does not count. Select the status
+When a reply changed files in a project that defines a check, its footer says whether one ran
+afterwards: **Checks passed**, **Checks failed**, **Checks out of date**, or **Not checked**. A check
+is a test, build, typecheck, or lint command from the project's manifest, such as the scripts in
+`package.json`; reading files back or viewing a page does not count. Changes outside such a project,
+like a standalone page or document, have no check, so the reply shows no status and the agent is
+not asked for one. Select the status
 to see the commands and their results. The footer appears when you point at the reply, except after
 a failed check, which stays in sight.
 

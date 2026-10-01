@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs'
-import { relative, resolve } from 'path'
+import { dirname, relative, resolve } from 'path'
 import type { ToolDiagnostic, ToolWorkspaceChange } from '../../shared/agentRuntime'
 import type { ShellCommandResult } from '../../shared/types'
 import type {
@@ -14,7 +14,7 @@ import type {
   WorkspaceVerificationSummary,
   WorkspaceVerificationTerminalController
 } from '../../shared/verification'
-import { VERIFICATION_STATUS_COPY } from '../../shared/verification'
+import { describeCheck, VERIFICATION_STATUS_COPY } from '../../shared/verification'
 
 interface EvidenceRow {
   id: string
@@ -440,7 +440,7 @@ export class WorkspaceVerificationService {
     const root = resolve(workspaceRoot)
     const currentRevision = this.currentRevision(root)
     const changedPaths = this.changedPaths(runId, root, baselineRevision)
-    const suggestedChecks = this.suggestChecks(root)
+    const suggestedChecks = this.suggestChecks(root, changedPaths)
     if (!changedPaths.length) {
       return {
         status: 'not_applicable',
@@ -523,6 +523,21 @@ export class WorkspaceVerificationService {
         ...VERIFICATION_STATUS_COPY.stale
       }
     }
+    // Pages, documents, and data in a folder with no project manifest have no check SideKick could
+    // suggest or recognize, so the model's own inspection could never count. Asking for one anyway
+    // cost a turn and always ended "not checked".
+    if (!evidence.length && !suggestedChecks.length) {
+      return {
+        status: 'not_applicable',
+        workspaceRoot: root,
+        baselineRevision,
+        currentRevision,
+        changedPaths,
+        evidence,
+        suggestedChecks,
+        headline: 'No project check applies to these changes.'
+      }
+    }
     return {
       status: 'unverified',
       workspaceRoot: root,
@@ -555,7 +570,9 @@ export class WorkspaceVerificationService {
           summary.status === 'failed')
       ) {
         nudged = true
-        const commands = summary.suggestedChecks.slice(0, 3).map((item) => `- ${item.command}`)
+        const commands = summary.suggestedChecks
+          .slice(0, 3)
+          .map((item) => `- ${describeCheck(item)}`)
         return {
           continue: true,
           summary,
@@ -582,13 +599,16 @@ export class WorkspaceVerificationService {
         ),
       afterToolRound: () => {
         if (reminded || nudged) return undefined
-        if (!this.changedPaths(runId, workspaceRoot, baselineRevision).length) return undefined
+        const changedPaths = this.changedPaths(runId, workspaceRoot, baselineRevision)
+        if (!changedPaths.length) return undefined
+        // Nothing to remind about until a changed file belongs to a project with a check.
+        const check = this.suggestChecks(workspaceRoot, changedPaths)[0]
+        if (!check) return undefined
         reminded = true
-        const command = this.suggestChecks(workspaceRoot)[0]?.command
         return (
           `<sidekick_verification_reminder trust="app-policy">\n` +
           `The workspace changed. When your edits are done, run the smallest relevant check ` +
-          `${command ? `(for example \`${command}\`) ` : ''}before writing your final answer, ` +
+          `(for example \`${describeCheck(check)}\`) before writing your final answer, ` +
           `so the answer can report the real result.\n` +
           `</sidekick_verification_reminder>`
         )
@@ -596,8 +616,37 @@ export class WorkspaceVerificationService {
     }
   }
 
-  suggestChecks(workspaceRoot: string): VerificationCheckSuggestion[] {
+  /**
+   * Checks for the workspace's own project, then for the nearest project folder above each changed
+   * path, so a workspace holding several projects suggests the one that changed.
+   */
+  suggestChecks(workspaceRoot: string, changedPaths: string[] = []): VerificationCheckSuggestion[] {
     const root = resolve(workspaceRoot)
+    const suggestions = this.manifestChecks(root)
+    const visited = new Set<string>()
+    for (const path of changedPaths.slice(0, 64)) {
+      const relativePath = normalizedRelativePath(root, path)
+      if (!relativePath || relativePath === '.') continue
+      let directory = dirname(resolve(root, relativePath))
+      while (directory !== root && !visited.has(directory)) {
+        visited.add(directory)
+        const checks = this.manifestChecks(directory)
+        if (checks.length) {
+          const cwd = relative(root, directory).replaceAll('\\', '/')
+          for (const check of checks) {
+            suggestions.push({ ...check, source: `${cwd}/${check.source}`, cwd })
+          }
+          break
+        }
+        directory = dirname(directory)
+      }
+    }
+    return suggestions.slice(0, 4)
+  }
+
+  /** Checks a project folder's manifests define. */
+  private manifestChecks(directory: string): VerificationCheckSuggestion[] {
+    const root = directory
     const suggestions: VerificationCheckSuggestion[] = []
     const add = (
       kind: VerificationCheckSuggestion['kind'],
@@ -646,7 +695,7 @@ export class WorkspaceVerificationService {
     if (existsSync(resolve(root, 'composer.json')))
       add('test', 'vendor/bin/phpunit', 'composer.json')
     if (existsSync(resolve(root, 'Package.swift'))) add('test', 'swift test', 'Package.swift')
-    return suggestions.slice(0, 4)
+    return suggestions
   }
 
   private fingerprint(workspaceRoot: string, paths: string[]): string | undefined {

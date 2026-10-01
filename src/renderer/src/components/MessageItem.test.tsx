@@ -1116,54 +1116,58 @@ describe('MessageItem shared-channel presentation', () => {
   })
 
   it('shows a saved reply whose only answer is its verification note as the answer', async () => {
-    await act(async () => {
-      root.render(
-        <MessageItem
-          message={{
-            id: 'legacy-note',
-            role: 'agent',
-            content: '',
-            timestamp: 1_000,
-            segments: [
-              { type: 'thinking', content: 'Checking the file' },
-              {
-                type: 'verification',
-                content: 'Cleaned up the page.',
-                verification: {
-                  status: 'unverified',
-                  workspaceRoot: '/project',
-                  baselineRevision: 0,
-                  currentRevision: 1,
-                  changedPaths: ['site/index.html'],
-                  evidence: [],
-                  suggestedChecks: [],
-                  headline: 'Workspace changes have not been verified.',
-                  detail: 'Run the smallest relevant test before finishing.'
+    const render = (
+      suggestedChecks: Array<{ kind: 'test'; command: string; source: string }>
+    ): Promise<void> =>
+      act(async () => {
+        root.render(
+          <MessageItem
+            message={{
+              id: 'legacy-note',
+              role: 'agent',
+              content: '',
+              timestamp: 1_000,
+              segments: [
+                { type: 'thinking', content: 'Checking the file' },
+                {
+                  type: 'verification',
+                  content: 'Cleaned up the page.',
+                  verification: {
+                    status: 'unverified',
+                    workspaceRoot: '/project',
+                    baselineRevision: 0,
+                    currentRevision: 1,
+                    changedPaths: ['site/index.html'],
+                    evidence: [],
+                    suggestedChecks,
+                    headline: 'Workspace changes have not been verified.',
+                    detail: 'Run the smallest relevant test before finishing.'
+                  }
                 }
-              }
-            ]
-          }}
-          index={0}
-          isLoading={false}
-          expandedThinking={new Set()}
-          editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
-          copiedMessageId={null}
-          onToggleThinking={vi.fn()}
-          onHandleArtifactResult={vi.fn()}
-          onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
-          onCopyMessage={vi.fn()}
-          onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
-          onApproveToolLimitDecision={vi.fn()}
-          onDenyToolLimitDecision={vi.fn()}
-        />
-      )
-    })
+              ]
+            }}
+            index={0}
+            isLoading={false}
+            expandedThinking={new Set()}
+            editingMessageId={null}
+            editingGeometry={null}
+            editingContent=""
+            copiedMessageId={null}
+            onToggleThinking={vi.fn()}
+            onHandleArtifactResult={vi.fn()}
+            onEditMessage={vi.fn()}
+            onCancelEditMessage={vi.fn()}
+            onConfirmEditMessage={vi.fn()}
+            onCopyMessage={vi.fn()}
+            onRetryMessage={vi.fn()}
+            onSetEditingContent={vi.fn()}
+            onApproveToolLimitDecision={vi.fn()}
+            onDenyToolLimitDecision={vi.fn()}
+          />
+        )
+      })
 
+    await render([{ kind: 'test', command: 'npm test', source: 'package.json' }])
     expect(container.querySelector('.message-segments')?.textContent).toContain(
       'Cleaned up the page.'
     )
@@ -1173,6 +1177,13 @@ describe('MessageItem shared-channel presentation', () => {
     expect(verification?.textContent).not.toContain('Cleaned up the page.')
     expect(verification?.textContent).toContain('No check ran after these changes.')
     expect(verification?.textContent).not.toContain('Run the smallest relevant test')
+
+    // A project with no check to suggest has nothing to report, in saved replies too.
+    await render([])
+    expect(container.querySelector('.message-verification')).toBeNull()
+    expect(container.querySelector('.message-segments')?.textContent).toContain(
+      'Cleaned up the page.'
+    )
   })
 
   it('updates the elapsed time while work is active', async () => {

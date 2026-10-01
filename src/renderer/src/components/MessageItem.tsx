@@ -386,6 +386,14 @@ function VerificationStatus({
 }): React.JSX.Element | null {
   const verification = segment.verification
   if (!verification) return null
+  // Results saved before SideKick treated a project without any check as not applicable.
+  if (
+    verification.status === 'unverified' &&
+    !verification.evidence.length &&
+    !verification.suggestedChecks.length
+  ) {
+    return null
+  }
   const Icon = verification.status === 'passed' ? Check : CircleAlert
   // Saved results carry the wording of their time; these statuses read the same in every reply.
   const copy =
