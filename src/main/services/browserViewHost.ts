@@ -9,6 +9,35 @@ interface HostedView {
   agentInput: number
   /** App zoom the embedded page is rendered at; 1 whenever the view is parked. */
   zoom: number
+  /**
+   * A viewport the agent set. The page lays out at exactly this size, unaffected by app zoom,
+   * and is drawn scaled down to fit the panel while shown in the app.
+   */
+  agentViewport?: { width: number; height: number }
+  applyFit?: (scale: number) => Promise<void>
+  /** The scale the agent viewport is drawn at; 1 when parked. */
+  fit: number
+}
+
+function pageZoom(entry: HostedView): number {
+  return entry.agentViewport ? 1 : entry.zoom
+}
+
+function fitScale(entry: HostedView): number {
+  const viewport = entry.agentViewport
+  if (!viewport || !entry.host) return 1
+  const bounds = entry.view.getBounds()
+  return Math.min(1, bounds.width / viewport.width, bounds.height / viewport.height)
+}
+
+/** Brings the page's zoom and, for an agent viewport, its drawn scale in line with where it is. */
+async function relayout(entry: HostedView, force = false): Promise<void> {
+  applyViewZoom(entry)
+  if (!entry.agentViewport || !entry.applyFit) return
+  const scale = fitScale(entry)
+  if (!force && Math.abs(scale - entry.fit) < 0.001) return
+  entry.fit = scale
+  await entry.applyFit(scale)
 }
 
 /** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
@@ -17,7 +46,8 @@ interface HostedView {
 function applyViewZoom(entry: HostedView): void {
   const contents = entry.view.webContents
   if (contents.isDestroyed()) return
-  if (Math.abs(contents.getZoomFactor() - entry.zoom) > 0.001) contents.setZoomFactor(entry.zoom)
+  const zoom = pageZoom(entry)
+  if (Math.abs(contents.getZoomFactor() - zoom) > 0.001) contents.setZoomFactor(zoom)
 }
 
 // Only main-process-created isolated tabs can be embedded; renderer IDs are never accepted.
@@ -25,7 +55,7 @@ const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
 
 export function registerBrowserView(view: WebContentsView, parking: BrowserWindow): void {
-  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1 }
+  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1, fit: 1 }
   const id = view.webContents.id
   views.set(id, entry)
   // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
@@ -109,9 +139,32 @@ export function mountBrowserView(
   }
   entry.allowInput = allowInput
   entry.zoom = zoom
-  applyViewZoom(entry)
   entry.view.setBounds(bounds)
   entry.view.setVisible(true)
+  void relayout(entry).catch(() => undefined)
+}
+
+/**
+ * Sets or clears the viewport the agent asked for. Returns false for a page that is not an
+ * embeddable view, which keeps its natural scale. `applyFit` sets the page's emulated metrics at
+ * the scale it is drawn at.
+ */
+export async function setBrowserViewAgentViewport(
+  id: number,
+  viewport: { width: number; height: number } | null,
+  applyFit: (scale: number) => Promise<void>
+): Promise<boolean> {
+  const entry = views.get(id)
+  if (!entry) return false
+  entry.agentViewport = viewport ?? undefined
+  entry.applyFit = viewport ? applyFit : undefined
+  if (!viewport) {
+    entry.fit = 1
+    applyViewZoom(entry)
+    return true
+  }
+  await relayout(entry, true)
+  return true
 }
 
 export function parkBrowserView(id: number): void {
@@ -124,11 +177,11 @@ export function parkBrowserView(id: number): void {
   // Parked views back automation and human takeover, which size the page from
   // the parking window itself, so they belong at natural scale.
   entry.zoom = 1
-  applyViewZoom(entry)
   if (!entry.parking.isDestroyed() && !entry.view.webContents.isDestroyed()) {
     entry.parking.contentView.addChildView(entry.view)
     const [width, height] = entry.parking.getContentSize()
     entry.view.setBounds({ x: 0, y: 0, width, height })
+    void relayout(entry).catch(() => undefined)
     entry.parking.setOpacity(process.platform === 'darwin' ? 0.01 : 1)
     entry.parking.showInactive()
   }
@@ -229,8 +282,10 @@ export async function showBrowserPointer(id: number, x: number, y: number): Prom
   const host = entry?.host
   if (!entry || !host || host.isDestroyed() || !Number.isFinite(x) || !Number.isFinite(y)) return
   const bounds = entry.view.getBounds()
-  const left = bounds.x + x * entry.zoom
-  const top = bounds.y + y * entry.zoom
+  // CSS pixels reach the panel scaled by the app zoom, or by the fit of an agent viewport.
+  const scale = entry.agentViewport ? entry.fit : entry.zoom
+  const left = bounds.x + x * scale
+  const top = bounds.y + y * scale
   if (left < bounds.x || top < bounds.y || left > bounds.x + bounds.width) return
   if (top > bounds.y + bounds.height) return
   const overlay = await pointerOverlay(host)

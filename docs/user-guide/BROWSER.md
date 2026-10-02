@@ -36,6 +36,8 @@ interleaving; retry your input when it finishes. Manual changes invalidate old e
 so the agent must observe fresh state before reusing them. Focusing the address bar does not
 pause the agent. Right-click offers native text editing actions.
 
+When the agent resizes the viewport, for example to check a desktop layout, the page lays out at exactly that size whatever the panel's width and the app's zoom. A viewport wider than the panel is drawn scaled down to fit, so you see the whole page. The agent's screenshots are taken from the page itself at full size, never from the panel.
+
 ## Human-only site checks
 
 When SideKick detects a CAPTCHA or anti-bot verification, automated input and page evaluation stop.
