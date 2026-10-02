@@ -186,3 +186,40 @@ describe('TurnChangeReview interactions', () => {
     container.remove()
   })
 })
+
+describe('TurnChangeReview length', () => {
+  it('shows the first files of a long change and the rest on request', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const paths = Array.from({ length: 17 }, (_, index) => `web/src/file${index}.ts`)
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit',
+          title: 'Edit',
+          command: 'apply_patch',
+          status: 'success',
+          changes: paths.map((path) => ({ path, kind: 'create' as const }))
+        }
+      }
+    ]
+    await act(async () => root.render(<TurnChangeReview segments={segments} />))
+
+    const rows = (): number => container.querySelectorAll('.turn-change-file').length
+    const more = container.querySelector('.turn-change-review-more') as HTMLButtonElement
+    expect(rows()).toBe(4)
+    expect(container.textContent).toContain('17 files changed')
+    expect(more.textContent).toBe('Show 13 more files')
+    // The folder is set apart so the file name reads first.
+    expect(container.querySelector('.turn-change-file-dir')?.textContent).toBe('web/src/')
+
+    await act(async () => more.click())
+    expect(rows()).toBe(17)
+    expect(more.textContent).toBe('Show fewer files')
+
+    await act(async () => root.unmount())
+    container.remove()
+  })
+})
