@@ -118,6 +118,28 @@ function pageHtml(): string {
 </html>`
 }
 
+/** A page that marks its right edge, to show whether the whole viewport is seen and reachable. */
+function wideHtml(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Wide fixture</title>
+<style>html,body{margin:0;height:100%;background:#1f7a3a}#edge{position:fixed;top:0;right:0;width:48px;height:100%;background:#ff0000}#reach{position:fixed;right:64px;top:50%;width:120px;height:48px}</style></head>
+<body><div id="edge"></div><button id="reach" onclick="document.title='clicked-right'">Right edge</button></body></html>`
+}
+
+/** Whether a PNG has a mostly red pixel in the given column band, at mid-height. */
+function hasRedAt(path: string, fromX: number, toX: number): boolean {
+  const image = nativeImage.createFromPath(path)
+  const { width, height } = image.getSize()
+  const bitmap = image.toBitmap()
+  const y = Math.floor(height / 4)
+  for (let x = Math.max(0, fromX); x < Math.min(width, toX); x++) {
+    const offset = (y * width + x) * 4
+    // toBitmap() is BGRA.
+    const [b, g, r] = [bitmap[offset], bitmap[offset + 1], bitmap[offset + 2]]
+    if (r > 200 && g < 60 && b < 60) return true
+  }
+  return false
+}
+
 function popupHtml(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Smoke Popup</title></head><body><main><h1>Popup ready</h1></main><script>console.info('sidekick-native-browser-popup-ready')</script></body></html>`
 }
@@ -231,7 +253,13 @@ async function runSmoke(): Promise<SmokeResult> {
       response.statusCode = 200
       response.setHeader('content-type', 'text/html; charset=utf-8')
       response.setHeader('cache-control', 'no-store')
-      response.end(requestUrl.pathname === '/popup' ? popupHtml() : pageHtml())
+      response.end(
+        requestUrl.pathname === '/popup'
+          ? popupHtml()
+          : requestUrl.pathname === '/wide'
+            ? wideHtml()
+            : pageHtml()
+      )
     })
     const port = await listen(server)
     const baseUrl = `http://127.0.0.1:${port}`
@@ -372,6 +400,85 @@ async function runSmoke(): Promise<SmokeResult> {
     progress(
       `Embedded browser, same-tab input, takeover, and background recapture passed (${userInputs} input events)`
     )
+
+    {
+      // The agent sets a desktop viewport while the page sits in a narrow panel at the app's zoom.
+      // Its screenshots must show the whole viewport, its clicks must land, and the panel must
+      // show the whole page scaled to fit, not its left part clipped.
+      progress('Checking an agent viewport wider than the panel')
+      const wide = await service.open({ runId: 'wide-view', url: `${baseUrl}/wide` })
+      const narrowHost = new BrowserWindow({
+        show: false,
+        width: 900,
+        height: 800,
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false }
+      })
+      narrowHost.showInactive()
+      const panel = { x: 20, y: 80, width: 460, height: 600 }
+      mountBrowserView(wide.tab.webContentsId, narrowHost, panel, () => true, 0.9)
+      await service.resize({
+        sessionId: wide.sessionId,
+        viewport: { width: 1280, height: 900, deviceScaleFactor: 1 }
+      })
+      const innerWidth = (
+        await service.evaluate({ sessionId: wide.sessionId, expression: 'window.innerWidth' })
+      ).value
+      assert.equal(innerWidth, 1280, 'The page lays out at the viewport the agent asked for')
+      const shot = await service.observe(wide.sessionId, { screenshot: 'viewport' })
+      const size = nativeImage.createFromPath(shot.screenshot!.path).getSize()
+      assert.deepEqual([size.width, size.height], [1280, 900], 'Screenshot is the whole viewport')
+      assert.ok(
+        hasRedAt(shot.screenshot!.path, 1240, 1280),
+        'The agent screenshot shows the right edge of its viewport'
+      )
+      await service.click({
+        sessionId: wide.sessionId,
+        target: { role: 'button', name: 'Right edge', exact: true }
+      })
+      assert.equal(
+        (await service.evaluate({ sessionId: wide.sessionId, expression: 'document.title' })).value,
+        'clicked-right',
+        'A click near the right edge of the viewport lands'
+      )
+      // The same button, by the point on the agent's screenshot.
+      await service.evaluate({
+        sessionId: wide.sessionId,
+        expression: "document.title = 'unclicked'"
+      })
+      const fresh = await service.observe(wide.sessionId, { screenshot: 'viewport' })
+      await service.click({
+        sessionId: wide.sessionId,
+        target: { coordinates: { x: 1280 - 64 - 60, y: 450 }, screenshotId: fresh.screenshot!.id }
+      })
+      assert.equal(
+        (await service.evaluate({ sessionId: wide.sessionId, expression: 'document.title' })).value,
+        'clicked-right',
+        'A click at screenshot coordinates near the right edge lands'
+      )
+      // The view's surface is the emulated screen; the panel shows its top-left corner, the
+      // panel's size. Scaled to fit, the page's right edge falls at the panel's right edge.
+      const shown = await webContents.fromId(wide.tab.webContentsId)!.capturePage()
+      const shownPath = join(dirname(shot.screenshot!.path), 'panel-view.png')
+      writeFileSync(shownPath, shown.toPNG())
+      const pixelsPerCss = shown.getSize().width / 1280
+      assert.ok(
+        hasRedAt(
+          shownPath,
+          Math.floor(panel.width * pixelsPerCss * 0.9),
+          Math.ceil(panel.width * pixelsPerCss)
+        ),
+        'The panel shows the right edge of the page, scaled to fit'
+      )
+      unmountBrowserHost(narrowHost)
+      const parkedWide = await service.observe(wide.sessionId, { screenshot: 'viewport' })
+      assert.ok(
+        hasRedAt(parkedWide.screenshot!.path, 1240, 1280),
+        'A parked page keeps the agent viewport'
+      )
+      narrowHost.destroy()
+      await service.close({ sessionId: wide.sessionId })
+      progress('Agent viewport wider than the panel: screenshot, click, and fit passed')
+    }
 
     const externalPdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF
     const remotePdf = process.env.SIDEKICK_NATIVE_BROWSER_SMOKE_PDF_URL

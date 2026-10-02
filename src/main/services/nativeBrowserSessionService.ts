@@ -20,7 +20,8 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   browserNavigationState,
-  showBrowserPointer
+  showBrowserPointer,
+  setBrowserViewAgentViewport
 } from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -466,6 +467,11 @@ export interface NativeBrowserSurface {
   /** Shows the agent's cursor at a CSS viewport point to whoever watches the page. */
   showPointer?(x: number, y: number): void
   resizeViewport(viewport: BrowserViewport): void
+  /**
+   * Lays the page out at exactly this viewport, whatever the size and zoom of where it is shown;
+   * a page shown in the app is drawn scaled down to fit.
+   */
+  setAgentViewport?(viewport: BrowserViewport): Promise<void>
   executeJavaScript<T>(source: string): Promise<T>
   captureViewport(): Promise<NativeBrowserSurfaceCapture>
   attachDebugger(): Promise<void>
@@ -980,6 +986,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   private debuggerOwned = false
   private closing = false
   private humanTakeoverVisible = false
+  /** A viewport the agent set, and the scale it is drawn at where it is shown. */
+  private agentViewport?: BrowserViewport
+  private agentViewportScale = 1
 
   constructor(
     private readonly contents: WebContents,
@@ -1212,12 +1221,31 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
     void browserAgentInput(this.webContentsId, () =>
-      this.contents.sendInputEvent(toViewInputEvent(event, this.contents.getZoomFactor()))
+      this.contents.sendInputEvent(
+        toViewInputEvent(event, this.contents.getZoomFactor() * this.agentViewportScale)
+      )
     )
   }
 
   showPointer(x: number, y: number): void {
     void showBrowserPointer(this.webContentsId, x, y).catch(() => undefined)
+  }
+
+  async setAgentViewport(viewport: BrowserViewport): Promise<void> {
+    this.agentViewport = viewport
+    const apply = async (scale: number): Promise<void> => {
+      this.agentViewportScale = scale
+      await this.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
+        width: viewport.width,
+        height: viewport.height,
+        deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
+        mobile: false,
+        screenWidth: viewport.width,
+        screenHeight: viewport.height,
+        scale
+      })
+    }
+    if (!(await setBrowserViewAgentViewport(this.webContentsId, viewport, apply))) await apply(1)
   }
 
   resizeViewport(viewport: BrowserViewport): void {
@@ -1248,10 +1276,31 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
           if (!isTransientViewportCaptureError(error)) throw error
         })
     }
+    // Shown scaled down in a panel, the view holds the page at that scale. Ask Chromium for the
+    // agent's viewport itself, at full size.
+    const scaledAgentViewport =
+      this.agentViewport && this.agentViewportScale < 1 ? this.agentViewport : undefined
     let image = await (
-      !this.view && this.ownerWindow && !this.ownerWindow.isDestroyed()
-        ? this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
-        : this.contents.capturePage(undefined, { stayHidden: true, stayAwake: true })
+      scaledAgentViewport
+        ? this.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
+            format: 'png',
+            fromSurface: true,
+            captureBeyondViewport: false,
+            clip: {
+              x: 0,
+              y: 0,
+              width: scaledAgentViewport.width,
+              height: scaledAgentViewport.height,
+              scale: 1
+            }
+          }).then(async (response) =>
+            (await import('electron')).nativeImage.createFromBuffer(
+              Buffer.from(response.data, 'base64')
+            )
+          )
+        : !this.view && this.ownerWindow && !this.ownerWindow.isDestroyed()
+          ? this.ownerWindow.capturePage(undefined, { stayHidden: true, stayAwake: true })
+          : this.contents.capturePage(undefined, { stayHidden: true, stayAwake: true })
     ).catch(async (error) => {
       if (!isTransientViewportCaptureError(error)) throw error
       // The native window surface can be unavailable for parked popups. Ask
@@ -4395,15 +4444,17 @@ export class NativeBrowserSessionService {
       tab.lastPointer = undefined
       tab.surface.resizeViewport(viewport)
       await abortable(
-        tab.surface.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
-          width: viewport.width,
-          height: viewport.height,
-          deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
-          mobile: false,
-          screenWidth: viewport.width,
-          screenHeight: viewport.height,
-          scale: 1
-        }),
+        tab.surface.setAgentViewport
+          ? tab.surface.setAgentViewport(viewport)
+          : tab.surface.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
+              width: viewport.width,
+              height: viewport.height,
+              deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
+              mobile: false,
+              screenWidth: viewport.width,
+              screenHeight: viewport.height,
+              scale: 1
+            }),
         signal
       )
       this.invalidateSemanticRefs(tab)
