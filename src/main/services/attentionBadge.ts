@@ -1,76 +1,55 @@
 import { app, BrowserWindow, nativeImage } from 'electron'
 
-// The Windows overlay is drawn at 32 px and shown at 16 px, so it stays sharp
-// on high-density screens.
-const SIZE = 32
-const SCALE_FACTOR = 2
-const BADGE_BGRA = [0x3a, 0x3a, 0xd9] as const
-const GLYPH_BGRA = [0xff, 0xff, 0xff] as const
+// The Windows overlay box is 16 device-independent pixels. It is drawn for each display scale
+// up to 400%, so Windows never stretches a smaller image into a blurry one.
+const OVERLAY_SIZE = 16
+const SCALE_FACTORS = [1, 1.25, 1.5, 2, 2.5, 3, 4] as const
+// SideKick's accent, set off by a dark ring so it reads on any icon and taskbar.
+const DOT_BGRA = [0xbd, 0xd4, 0x3b] as const
+const RING_BGRA = [0x14, 0x11, 0x0f] as const
+const DOT_RADIUS = 0.3
+const RING_WIDTH = 0.09
 
-// 3x5 pixel glyphs, one string per row.
-const GLYPHS: Record<string, readonly string[]> = {
-  '0': ['###', '#.#', '#.#', '#.#', '###'],
-  '1': ['.#.', '##.', '.#.', '.#.', '###'],
-  '2': ['###', '..#', '###', '#..', '###'],
-  '3': ['###', '..#', '###', '..#', '###'],
-  '4': ['#.#', '#.#', '###', '..#', '..#'],
-  '5': ['###', '#..', '###', '..#', '###'],
-  '6': ['###', '#..', '###', '#.#', '###'],
-  '7': ['###', '..#', '..#', '..#', '..#'],
-  '8': ['###', '#.#', '###', '#.#', '###'],
-  '9': ['###', '#.#', '###', '..#', '###'],
-  '+': ['...', '.#.', '###', '.#.', '...']
-}
-
-export function attentionBadgeLabel(count: number): string {
-  return count > 9 ? '9+' : String(count)
-}
-
-/** A red disc with the count in white, as raw BGRA pixels for `createFromBitmap`. */
-export function attentionBadgeBitmap(count: number): Buffer {
-  const pixels = Buffer.alloc(SIZE * SIZE * 4)
-  const center = (SIZE - 1) / 2
-  const radius = SIZE / 2
-  for (let y = 0; y < SIZE; y += 1) {
-    for (let x = 0; x < SIZE; x += 1) {
-      const distance = Math.hypot(x - center, y - center)
-      const coverage = Math.max(0, Math.min(1, radius - distance))
-      if (coverage === 0) continue
-      const offset = (y * SIZE + x) * 4
-      // Premultiplied alpha keeps the anti-aliased edge from darkening.
-      pixels[offset] = Math.round(BADGE_BGRA[0] * coverage)
-      pixels[offset + 1] = Math.round(BADGE_BGRA[1] * coverage)
-      pixels[offset + 2] = Math.round(BADGE_BGRA[2] * coverage)
-      pixels[offset + 3] = Math.round(255 * coverage)
+/**
+ * A small accent dot in a dark ring, centred in a square of `size` pixels, as premultiplied
+ * BGRA for `createFromBitmap`. The count is not drawn: at this size digits are blocky, and the
+ * taskbar's description says how many conversations are waiting.
+ */
+export function attentionDotBitmap(size: number): Buffer {
+  const pixels = Buffer.alloc(size * size * 4)
+  const center = size / 2
+  const dot = size * DOT_RADIUS
+  const outer = dot + size * RING_WIDTH
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      // Distance from the pixel's centre; coverage within half a pixel smooths the edges.
+      const distance = Math.hypot(x + 0.5 - center, y + 0.5 - center)
+      const alpha = Math.max(0, Math.min(1, outer - distance + 0.5))
+      if (alpha === 0) continue
+      const inDot = Math.max(0, Math.min(1, dot - distance + 0.5))
+      const offset = (y * size + x) * 4
+      for (let channel = 0; channel < 3; channel += 1) {
+        const color = DOT_BGRA[channel] * inDot + RING_BGRA[channel] * (1 - inDot)
+        pixels[offset + channel] = Math.round(color * alpha)
+      }
+      pixels[offset + 3] = Math.round(255 * alpha)
     }
   }
-  const label = attentionBadgeLabel(count)
-  const scale = label.length === 1 ? 4 : 3
-  const gap = scale
-  const width = label.length * 3 * scale + (label.length - 1) * gap
-  const left = Math.round((SIZE - width) / 2)
-  const top = Math.round((SIZE - 5 * scale) / 2)
-  ;[...label].forEach((character, index) => {
-    const glyph = GLYPHS[character]
-    const glyphLeft = left + index * (3 * scale + gap)
-    glyph.forEach((row, rowIndex) => {
-      ;[...row].forEach((cell, columnIndex) => {
-        if (cell !== '#') return
-        for (let dy = 0; dy < scale; dy += 1) {
-          for (let dx = 0; dx < scale; dx += 1) {
-            const x = glyphLeft + columnIndex * scale + dx
-            const y = top + rowIndex * scale + dy
-            const offset = (y * SIZE + x) * 4
-            pixels[offset] = GLYPH_BGRA[0]
-            pixels[offset + 1] = GLYPH_BGRA[1]
-            pixels[offset + 2] = GLYPH_BGRA[2]
-            pixels[offset + 3] = 255
-          }
-        }
-      })
-    })
-  })
   return pixels
+}
+
+function attentionOverlay(): Electron.NativeImage {
+  const image = nativeImage.createEmpty()
+  for (const scaleFactor of SCALE_FACTORS) {
+    const size = Math.round(OVERLAY_SIZE * scaleFactor)
+    image.addRepresentation({
+      scaleFactor,
+      width: size,
+      height: size,
+      buffer: attentionDotBitmap(size)
+    })
+  }
+  return image
 }
 
 let shownCount = 0
@@ -84,14 +63,7 @@ export function applyAttentionBadge(count: number, platform = process.platform):
   shownCount = Math.max(0, Math.floor(count))
   try {
     if (platform === 'win32') {
-      const overlay =
-        shownCount > 0
-          ? nativeImage.createFromBitmap(attentionBadgeBitmap(shownCount), {
-              width: SIZE,
-              height: SIZE,
-              scaleFactor: SCALE_FACTOR
-            })
-          : null
+      const overlay = shownCount > 0 ? attentionOverlay() : null
       const description =
         shownCount === 1
           ? '1 conversation is waiting for you'
