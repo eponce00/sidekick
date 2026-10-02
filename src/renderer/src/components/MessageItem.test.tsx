@@ -813,6 +813,10 @@ describe('MessageItem shared-channel presentation', () => {
         />
       )
     })
+    // A running reply shows its current step; the full list opens from the header.
+    await act(async () =>
+      (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
+    )
 
     const workText = container.querySelector('.actions-group')?.textContent || ''
     expect(workText.indexOf('First thought')).toBeLessThan(workText.indexOf('First command'))
@@ -860,6 +864,10 @@ describe('MessageItem shared-channel presentation', () => {
         <MessageItem {...common} expandedThinking={new Set(['live-thinking-group-0-thinking-0'])} />
       )
     })
+    // A running reply shows its current step; the full list opens from the header.
+    await act(async () =>
+      (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
+    )
     expect(container.querySelectorAll('.actions-content')).toHaveLength(1)
     expect(container.querySelector('.actions-content')?.textContent).toContain('First thought')
     expect(container.querySelector('.actions-content')?.textContent).not.toContain('Second thought')
@@ -1365,6 +1373,73 @@ describe('MessageItem in long conversations', () => {
     expect(contentReads).toBe(readsAfterMount)
   })
 
+  it('shows a running reply its current step on one line, replaced by the next', async () => {
+    const tool = (id: string, title: string, status: 'success' | 'running') => ({
+      type: 'tool' as const,
+      tool: { id, title, command: 'shell', status, input: { command: title } }
+    })
+    const reply = (segments: Parameters<typeof MessageItem>[0]['message']['segments']) => ({
+      id: 'live-run',
+      role: 'agent' as const,
+      content: '',
+      timestamp: 1,
+      segments
+    })
+    await act(async () =>
+      root.render(
+        renderReply(
+          reply([
+            { type: 'thinking', content: 'Plan the pull' },
+            tool('pull', 'podman pull sglang', 'running')
+          ]),
+          true
+        )
+      )
+    )
+
+    const live = () => container.querySelector('.agent-work-live')
+    expect(live()?.textContent).toContain('podman pull sglang')
+    expect(live()?.textContent).not.toContain('Plan the pull')
+    expect(container.querySelector('.agent-work-content')).toBeNull()
+
+    const first = live()
+    await act(async () =>
+      root.render(
+        renderReply(
+          reply([
+            { type: 'thinking', content: 'Plan the pull' },
+            tool('pull', 'podman pull sglang', 'success'),
+            { type: 'thinking', content: 'Now compare the profiles' }
+          ]),
+          true
+        )
+      )
+    )
+    // A new step mounts a new line, which is what plays its entrance.
+    expect(live()).not.toBe(first)
+    expect(live()?.textContent).toContain('Now compare the profiles')
+
+    await act(async () => (live() as HTMLElement).click())
+    expect(live()).toBeNull()
+    expect(container.querySelector('.agent-work-content')?.textContent).toContain(
+      'podman pull sglang'
+    )
+
+    // Finished, the work folds to its summary line.
+    await act(async () =>
+      root.render(
+        renderReply(
+          reply([
+            { type: 'thinking', content: 'Plan the pull' },
+            { type: 'text', content: 'Done' }
+          ]),
+          false
+        )
+      )
+    )
+    expect(live()).toBeNull()
+  })
+
   it('mounts only the latest steps of a long work block, with the rest one click away', async () => {
     // Hundreds of steps mounted and re-rendered on every update made a
     // long-running agent slower to watch the longer it worked.
@@ -1380,6 +1455,10 @@ describe('MessageItem in long conversations', () => {
       segments: [...segments, { type: 'text' as const, content: 'Done' }]
     }
     await act(async () => root.render(renderReply(message, true)))
+    // A running reply shows its current step; the full list opens from the header.
+    await act(async () =>
+      (container.querySelector('.agent-work-toggle') as HTMLButtonElement).click()
+    )
 
     const visibleSteps = () =>
       container.querySelectorAll('.agent-work-content > .segment-group').length

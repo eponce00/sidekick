@@ -1238,6 +1238,43 @@ body[data-theme='light'] .message-user .message-action:hover {
   }
 }
 
+/* The step in progress, on one line under the running header. Each new step slides in over
+   the last, so the work reads as a ticker rather than a growing list. */
+.agent-work-live {
+  min-width: 0;
+  overflow: hidden;
+  cursor: pointer;
+  animation: agent-work-step-in 220ms ease-out both;
+}
+
+.agent-work-live .tool-call-row {
+  pointer-events: none;
+}
+
+.agent-work-live-thinking {
+  display: block;
+  overflow: hidden;
+  padding: 3px 0;
+  color: var(--text-muted);
+  font-size: var(--content-text-secondary);
+  font-style: italic;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes agent-work-step-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-work-live {
+    animation: none;
+  }
+}
+
 .agent-work-content {
   display: flex;
   min-width: 0;

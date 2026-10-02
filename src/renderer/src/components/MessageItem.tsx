@@ -509,6 +509,7 @@ function AgentWorkDisclosure({
   segments,
   awaitingFirstOutput = false,
   showDuration = true,
+  live = false,
   runId: _runId
 }: {
   messageId: string
@@ -520,9 +521,11 @@ function AgentWorkDisclosure({
   awaitingFirstOutput?: boolean
   /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
   showDuration?: boolean
+  /** The work in progress at the end of a running reply: shows its current step on one line. */
+  live?: boolean
   runId?: string
 }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(isLoading)
+  const [expanded, setExpanded] = useState(false)
   const [showEarlier, setShowEarlier] = useState(false)
   const [now, setNow] = useState(Date.now)
 
@@ -550,6 +553,16 @@ function AgentWorkDisclosure({
       ? `${durationLabel} · ${activityLabel}`
       : durationLabel
   const contentId = `${messageId}-agent-work`
+  // The newest step, replaced by the next as the agent works; the whole list is one click away.
+  const currentIndex =
+    live && !expanded && segments
+      ? segments.findLastIndex(
+          (segment) =>
+            (segment.type === 'tool' && segment.tool) ||
+            (segment.type === 'thinking' && segment.content?.trim())
+        )
+      : -1
+  const current = currentIndex >= 0 ? segments![currentIndex] : undefined
 
   return (
     <div className={`agent-work-disclosure ${isLoading ? 'is-working' : 'is-complete'}`}>
@@ -563,6 +576,22 @@ function AgentWorkDisclosure({
         <span>{label}</span>
         <ChevronRight size={12} className={expanded ? 'expanded' : ''} aria-hidden="true" />
       </button>
+      {current && (
+        <div
+          key={currentIndex}
+          className="agent-work-live"
+          role="status"
+          onClick={() => setExpanded(true)}
+        >
+          {current.type === 'tool' && current.tool ? (
+            <ToolCallRow tool={current.tool} />
+          ) : (
+            <span className="agent-work-live-thinking">
+              {thinkingPreview(current.content ?? '')}
+            </span>
+          )}
+        </div>
+      )}
       {expanded && children && (
         <div id={contentId} className="agent-work-content">
           {(() => {
@@ -1167,6 +1196,7 @@ function MessageItemInner({
                     completedAt={workCompletedAt}
                     segments={blockSegments}
                     showDuration={blockIndex === timedBlock}
+                    live={isLoading && blockIndex === blocks.length - 1}
                     runId={msg.runId}
                   >
                     {block.groups.map(({ groupIndex }) => renderedGroups[groupIndex])}
