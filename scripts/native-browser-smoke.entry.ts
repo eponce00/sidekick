@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, nativeImage, BrowserWindow, webContents } from 'electron'
+import { app, nativeImage, screen, BrowserWindow, webContents } from 'electron'
 import {
   mountBrowserView,
   unmountBrowserHost,
@@ -455,19 +455,21 @@ async function runSmoke(): Promise<SmokeResult> {
         'clicked-right',
         'A click at screenshot coordinates near the right edge lands'
       )
-      // The view's surface is the emulated screen; the panel shows its top-left corner, the
-      // panel's size. Scaled to fit, the page's right edge falls at the panel's right edge.
+      // Scaled to fit, the page's 48-pixel right edge falls at the panel's own right edge. The
+      // capture starts at the panel's top-left in device pixels on every platform; whether it
+      // also holds the rest of the emulated surface differs, so only that band is checked.
       const shown = await webContents.fromId(wide.tab.webContentsId)!.capturePage()
       const shownPath = join(dirname(shot.screenshot!.path), 'panel-view.png')
       writeFileSync(shownPath, shown.toPNG())
-      const pixelsPerCss = shown.getSize().width / 1280
+      const fit = Math.min(1, panel.width / 1280, panel.height / 900)
+      const devicePixels = screen.getDisplayMatching(narrowHost.getBounds()).scaleFactor
       assert.ok(
         hasRedAt(
           shownPath,
-          Math.floor(panel.width * pixelsPerCss * 0.9),
-          Math.ceil(panel.width * pixelsPerCss)
+          Math.floor((1280 - 40) * fit * devicePixels),
+          Math.ceil(1280 * fit * devicePixels)
         ),
-        'The panel shows the right edge of the page, scaled to fit'
+        `The panel shows the right edge of the page, scaled to fit (capture ${shown.getSize().width}x${shown.getSize().height}, scale ${devicePixels})`
       )
       unmountBrowserHost(narrowHost)
       const parkedWide = await service.observe(wide.sessionId, { screenshot: 'viewport' })
