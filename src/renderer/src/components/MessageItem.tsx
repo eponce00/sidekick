@@ -1,4 +1,4 @@
-import { Children, useState, useRef, useEffect, useLayoutEffect, memo } from 'react'
+import { Children, useState, useRef, useEffect, useLayoutEffect, memo, useMemo } from 'react'
 import {
   Loader2,
   Check,
@@ -33,6 +33,7 @@ import Artifact from './artifacts/Artifact'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
+import { changedFilesFromSegments } from '../utils/turnChanges'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
@@ -687,6 +688,17 @@ function MessageItemInner({
     msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
   const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
+  const canUndoChanges = Boolean(
+    !readOnly &&
+    msg.checkpointHash &&
+    msg.checkpointWorkspaceRoot === workspaceFolder &&
+    onUndoCheckpoint
+  )
+  // The changed-files card carries Undo itself; the footer keeps it only for replies without one.
+  const hasChangeReview = useMemo(
+    () => changedFilesFromSegments(msg.segments ?? []).length > 0,
+    [msg.segments]
+  )
   const verificationSegment = msg.segments?.findLast(
     (segment) => segment.type === 'verification' && segment.verification
   )
@@ -1115,6 +1127,15 @@ function MessageItemInner({
                     key={`${msg.id}:change-review`}
                     segments={msg.segments || []}
                     workspaceRoot={workspaceFolder}
+                    undo={
+                      canUndoChanges
+                        ? {
+                            onUndo: () => onUndoCheckpoint!(msg.checkpointHash!),
+                            undone: msg.restoredFrom === msg.checkpointHash,
+                            disabled: isLoading
+                          }
+                        : undefined
+                    }
                   />
                 )
                 changeReviewRendered = true
@@ -1467,29 +1488,26 @@ function MessageItemInner({
                   <GitBranch size={13} />
                 </button>
               )}
-              {!readOnly &&
-                msg.checkpointHash &&
-                msg.checkpointWorkspaceRoot === workspaceFolder &&
-                onUndoCheckpoint && (
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={() => onUndoCheckpoint(msg.checkpointHash!)}
-                    title={
-                      msg.restoredFrom === msg.checkpointHash
-                        ? 'Changes already undone'
-                        : 'Undo file changes from this response'
-                    }
-                    aria-label={
-                      msg.restoredFrom === msg.checkpointHash
-                        ? 'Changes already undone'
-                        : 'Undo file changes'
-                    }
-                    disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
-                  >
-                    <RotateCcw size={13} />
-                  </button>
-                )}
+              {canUndoChanges && !hasChangeReview && (
+                <button
+                  type="button"
+                  className="message-action icon"
+                  onClick={() => onUndoCheckpoint?.(msg.checkpointHash!)}
+                  title={
+                    msg.restoredFrom === msg.checkpointHash
+                      ? 'Changes already undone'
+                      : 'Undo file changes from this response'
+                  }
+                  aria-label={
+                    msg.restoredFrom === msg.checkpointHash
+                      ? 'Changes already undone'
+                      : 'Undo file changes'
+                  }
+                  disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
             </div>
           )}
         </div>
