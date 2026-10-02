@@ -31,7 +31,11 @@ import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService } from './commandService'
 import type { OfficeHelperService } from './officeHelperService'
 import { McpClientManager } from './mcpClientManager'
-import { ToolOutputStore, type ToolOutputPolicy } from './toolOutputStore'
+import {
+  DEFAULT_TOOL_OUTPUT_TOKENS,
+  ToolOutputStore,
+  type ToolOutputPolicy
+} from './toolOutputStore'
 import type { AgentKernelToolRouter } from './agentRunKernel'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 import { resolveWorkspaceInstructionsForPath } from './workspaceRules'
@@ -675,6 +679,9 @@ export class AgentToolRuntime {
         endLine: args.end_line as number | undefined,
         cursor: args.cursor as number | undefined,
         maxEntries: args.max_entries as number | undefined,
+        // Room under the result budget for the header and any scoped instructions, so a long file
+        // ends on a whole line the model can continue from instead of being cut mid-line.
+        maxTokens: DEFAULT_TOOL_OUTPUT_TOKENS - 1_024,
         glob: stringArg(args, 'glob') || undefined,
         signal: context.signal
       })
@@ -698,7 +705,15 @@ export class AgentToolRuntime {
       const metadata =
         `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
         ` | version ${result.version}${result.nextLine ? ` | next_line ${result.nextLine}` : ''}]\n`
-      return this.success(title, result, instructions.content + metadata + result.content)
+      const continuation = result.nextLine
+        ? `\n[Showing lines ${result.startLine}-${result.endLine} of ${result.totalLines}. ` +
+          `Read again with start_line ${result.nextLine} to continue.]`
+        : ''
+      return this.success(
+        title,
+        result,
+        instructions.content + metadata + result.content + continuation
+      )
     }
     if (name === 'code_intelligence') {
       const operation = stringArg(args, 'operation') as CodeIntelligenceInput['operation']

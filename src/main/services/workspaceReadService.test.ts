@@ -62,6 +62,36 @@ describe('WorkspaceReadService', () => {
     expect(result.version).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('ends a read within a token budget on a whole line', async () => {
+    // A 45 KB page passed the line and byte limits, then was cut mid-line by the tool result
+    // budget, and the model paged the rest in byte-sized pieces.
+    const root = await workspace()
+    const line = '<li><span class="badge">ok</span> District = Washoe County School District.</li>'
+    await writeFile(join(root, 'index.html'), Array.from({ length: 400 }, () => line).join('\n'))
+    const service = new WorkspaceReadService()
+
+    const first = await service.readFile(root, 'index.html', { maxTokens: 1_000 })
+    const lines = first.content.split('\n')
+    expect(lines.length).toBeLessThan(400)
+    expect(lines.every((text, index) => text === `${index + 1}: ${line}`)).toBe(true)
+    expect(first.nextLine).toBe(lines.length + 1)
+
+    const next = await service.readFile(root, 'index.html', {
+      startLine: first.nextLine!,
+      maxTokens: 1_000
+    })
+    expect(next.content.startsWith(`${first.nextLine}: <li>`)).toBe(true)
+  })
+
+  it('returns an overlong first line instead of an empty read', async () => {
+    const root = await workspace()
+    await writeFile(join(root, 'min.js'), `${'x'.repeat(4_000)}\nshort`)
+    const result = await new WorkspaceReadService().readFile(root, 'min.js', { maxTokens: 256 })
+    expect(result.startLine).toBe(1)
+    expect(result.endLine).toBe(1)
+    expect(result.nextLine).toBe(2)
+  })
+
   it('rejects binary files', async () => {
     const root = await workspace()
     await writeFile(join(root, 'binary.bin'), Buffer.from([1, 0, 2]))

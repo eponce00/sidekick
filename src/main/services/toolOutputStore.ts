@@ -26,7 +26,9 @@ export interface ReadToolOutputResult {
 
 const DEFAULT_MAX_BYTES = 50 * 1024
 const DEFAULT_MAX_LINES = 2_000
-const DEFAULT_MAX_TOKENS = 8_192
+/** The most of one tool result the model sees before the rest is kept behind a handle. */
+export const DEFAULT_TOOL_OUTPUT_TOKENS = 8_192
+const DEFAULT_MAX_TOKENS = DEFAULT_TOOL_OUTPUT_TOKENS
 const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000
 const HANDLE_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
