@@ -22,8 +22,10 @@
 - Show file contents as code, with line numbers, highlighting, and no wrapping.
 - Keep the chat readable in a smaller window: with the side panel open, the sidebar folds to its
   icons and the panel narrows before the chat does.
-- Show the whole page when the agent sizes the browser for a desktop layout: the panel scales it to
-  fit, and the agent's screenshots show all of it.
+- Browse at 100% in a side panel that widens much further, and choose a phone, tablet, laptop, or
+  desktop size from the browser's device button, as in Chrome's device toolbar; the agent can
+  choose them too. A size wider than the panel is scaled to fit, the agent's screenshots show all
+  of it, and a size the agent set returns to responsive when its reply ends.
 - Mark waiting conversations with a small, sharp dot on the Windows taskbar icon.
 - Quit SideKick when its window is closed on Windows and Linux. A browser page kept out of sight
   for the agent could keep it running with no window, and clicking its icon then opened nothing.

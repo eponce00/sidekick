@@ -120,7 +120,7 @@ function pageHtml(): string {
 
 /** A page that marks its right edge, to show whether the whole viewport is seen and reachable. */
 function wideHtml(): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Wide fixture</title>
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Wide fixture</title>
 <style>html,body{margin:0;height:100%;background:#1f7a3a}#edge{position:fixed;top:0;right:0;width:48px;height:100%;background:#ff0000}#reach{position:fixed;right:64px;top:50%;width:120px;height:48px}</style></head>
 <body><div id="edge"></div><button id="reach" onclick="document.title='clicked-right'">Right edge</button></body></html>`
 }
@@ -477,6 +477,36 @@ async function runSmoke(): Promise<SmokeResult> {
         hasRedAt(parkedWide.screenshot!.path, 1240, 1280),
         'A parked page keeps the agent viewport'
       )
+
+      // A phone preset lays out at its width as a touch, mobile page; responsive gives the page
+      // back the panel's size with the browser's own user agent and input.
+      mountBrowserView(wide.tab.webContentsId, narrowHost, panel, () => true, 1)
+      const page = async (): Promise<{ width: number; touch: number; agent: string }> =>
+        (
+          await service.evaluate({
+            sessionId: wide.sessionId,
+            expression:
+              '({ width: window.innerWidth, touch: navigator.maxTouchPoints, agent: navigator.userAgent })'
+          })
+        ).value as { width: number; touch: number; agent: string }
+      await service.resize({
+        sessionId: wide.sessionId,
+        viewport: { width: 393, height: 852, deviceScaleFactor: 1 },
+        emulation: { mobile: true },
+        device: { id: 'iphone-14-pro', label: 'iPhone 14 Pro', source: 'user' }
+      })
+      const phone = await page()
+      assert.equal(phone.width, 393, 'A phone lays out at its width')
+      assert.ok(phone.touch > 0, 'A phone has touch input')
+      assert.match(phone.agent, /Mobile/, 'A phone reports a mobile user agent')
+      assert.equal(service.workspaceSnapshot(wide.sessionId).device?.id, 'iphone-14-pro')
+      await service.resetViewport({ sessionId: wide.sessionId })
+      const responsive = await page()
+      assert.equal(responsive.width, panel.width, 'Responsive lays out at the panel width at 100%')
+      assert.equal(responsive.touch, 0, 'Responsive has no emulated touch')
+      assert.doesNotMatch(responsive.agent, /Mobile/, 'Responsive has the browser user agent')
+      assert.equal(service.workspaceSnapshot(wide.sessionId).device, null)
+      unmountBrowserHost(narrowHost)
       narrowHost.destroy()
       await service.close({ sessionId: wide.sessionId })
       progress('Agent viewport wider than the panel: screenshot, click, and fit passed')

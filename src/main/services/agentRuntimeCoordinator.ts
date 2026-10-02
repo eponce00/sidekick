@@ -542,6 +542,9 @@ export class AgentRuntimeCoordinator {
       void run
         .then((result) => this.finalizeConversation(input.id, result))
         .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
+        .finally(() => {
+          void this.tools.browser?.resetAgentViewports(input.conversationId).catch(() => undefined)
+        })
       return this.store.get(input.id)!
     } catch (error) {
       if (signal.aborted) return this.cancelPreparation(preparation)

@@ -1,4 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import {
+  BROWSER_DEVICE_PRESETS,
+  BROWSER_RESPONSIVE_DEVICE,
+  type BrowserDevicePreset
+} from '../../shared/browserDevices'
 import type {
   BrowserHumanTakeoverSnapshot,
   ResolveAgentInteractionInput,
@@ -240,8 +245,13 @@ export function registerAgentRunHandlers(): void {
         'reload',
         'new',
         'select',
-        'close'
-      ].includes(input.action)
+        'close',
+        'device',
+        'deviceMenu'
+      ].includes(input.action) ||
+      (input.menuPosition !== undefined &&
+        !(Number.isFinite(input.menuPosition?.x) && Number.isFinite(input.menuPosition?.y))) ||
+      (input.device !== undefined && typeof input.device !== 'string')
     ) {
       throw new Error('Invalid browser workspace request')
     }
@@ -281,7 +291,8 @@ export function registerAgentRunHandlers(): void {
             host,
             clipped,
             () => manager.claimUserControl(input.conversationId),
-            zoom
+            // The page renders at 100%, like a browser window, not at the app interface zoom.
+            1
           )
         else unmountBrowserHost(host)
       }
@@ -326,6 +337,70 @@ export function registerAgentRunHandlers(): void {
           }))
         }
       )
+    }
+    if (input.action === 'deviceMenu') {
+      const state = manager.workspaceState(input.conversationId)
+      if (!state) return null
+      // A native menu: an HTML one would open under the page, which is drawn above the app.
+      const current = state.device?.id ?? BROWSER_RESPONSIVE_DEVICE
+      const choose = (device: string) => () => {
+        void manager
+          .workspaceAction(input.conversationId, {
+            conversationId: input.conversationId,
+            action: 'device',
+            device
+          })
+          .catch((error) => console.warn('[Browser] Could not change the device size:', error))
+      }
+      const item = (preset: BrowserDevicePreset): MenuItemConstructorOptions => ({
+        label: `${preset.label}    ${preset.width} × ${preset.height}`,
+        type: 'radio',
+        checked: current === preset.id,
+        click: choose(preset.id)
+      })
+      const template: MenuItemConstructorOptions[] = [
+        {
+          label: 'Responsive (fit the panel)',
+          type: 'radio',
+          checked: current === BROWSER_RESPONSIVE_DEVICE,
+          click: choose(BROWSER_RESPONSIVE_DEVICE)
+        },
+        ...(state.device?.id === 'custom'
+          ? [
+              {
+                label: `${state.device.label}, set by the agent`,
+                type: 'radio' as const,
+                checked: true,
+                enabled: false
+              }
+            ]
+          : []),
+        ...(['Phone', 'Tablet', 'Laptop', 'Desktop'] as const).flatMap((group) => [
+          { type: 'separator' as const },
+          { label: group, enabled: false },
+          ...BROWSER_DEVICE_PRESETS.filter((preset) => preset.group === group).map(item)
+        ])
+      ]
+      const zoom = event.sender.getZoomFactor()
+      Menu.buildFromTemplate(template).popup({
+        window: host,
+        ...(input.menuPosition
+          ? {
+              x: Math.round(input.menuPosition.x * zoom),
+              y: Math.round(input.menuPosition.y * zoom)
+            }
+          : {})
+      })
+      return {
+        ...state,
+        tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+          id,
+          title,
+          url,
+          active,
+          loading
+        }))
+      }
     }
     const result = await manager.workspaceAction(input.conversationId, input)
     return (

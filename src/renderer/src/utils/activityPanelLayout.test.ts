@@ -12,7 +12,9 @@ import {
 describe('activity panel layout', () => {
   it('clamps the inspector while reserving useful chat space', () => {
     expect(clampActivityPanelWidth(100, 1_400)).toBe(ACTIVITY_PANEL_MIN_WIDTH)
-    expect(clampActivityPanelWidth(900, 1_400)).toBe(ACTIVITY_PANEL_MAX_WIDTH)
+    expect(clampActivityPanelWidth(900, 1_400)).toBe(900)
+    expect(clampActivityPanelWidth(5_000, 1_400)).toBe(1_400 - 360)
+    expect(clampActivityPanelWidth(5_000, 2_400)).toBe(ACTIVITY_PANEL_MAX_WIDTH)
     expect(activityPanelMaximumWidth(760)).toBe(712)
     expect(clampActivityPanelWidth(900, 760)).toBe(712)
   })
