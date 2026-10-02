@@ -51,6 +51,7 @@ import { buildCommandPaletteItems, latestProjectConversationId } from './utils/c
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
+import { storedActivityPanelWidth, workspaceLayout } from './utils/activityPanelLayout'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -208,14 +209,47 @@ function App(): React.JSX.Element {
   const effectiveActivityPanelPinned = isCompactLayout
     ? isCompactActivityOpen
     : isActivityPanelPinned
-  const effectiveSidebarCollapsed = isSidebarCollapsed || (isCompactLayout && isCompactActivityOpen)
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth)
+  useEffect(() => {
+    const update = (): void => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+  const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
+    storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
+  )
+  // Opening the sidebar while it is folded for room keeps it open; the inspector narrows instead.
+  const [isSidebarHeldOpen, setIsSidebarHeldOpen] = useState(false)
+  const layout = workspaceLayout({
+    viewportWidth,
+    sidebarCollapsed: isSidebarCollapsed,
+    sidebarHeldOpen: isSidebarHeldOpen,
+    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelWidth: activityPanelWidth
+  })
+  // A sidebar kept open for one squeeze folds again in the next, once there has been room.
+  const sidebarNeedsRoom = workspaceLayout({
+    viewportWidth,
+    sidebarCollapsed: false,
+    sidebarHeldOpen: false,
+    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelWidth: activityPanelWidth
+  }).sidebarAutoCollapsed
+  useEffect(() => {
+    if (!sidebarNeedsRoom) setIsSidebarHeldOpen(false)
+  }, [sidebarNeedsRoom])
+  const effectiveSidebarCollapsed =
+    isSidebarCollapsed || layout.sidebarAutoCollapsed || (isCompactLayout && isCompactActivityOpen)
   const toggleSidebar = (): void => {
     if (isCompactLayout && effectiveSidebarCollapsed) {
       setIsCompactActivityOpen(false)
       setIsSidebarCollapsed(false)
       return
     }
-    setIsSidebarCollapsed((prev) => !prev)
+    // Opening it is a choice to keep it open; only closing hands it back to the layout.
+    const opening = effectiveSidebarCollapsed
+    setIsSidebarHeldOpen(opening)
+    setIsSidebarCollapsed(!opening)
   }
   const toggleActivityPanel = (): void => {
     if (isCompactLayout) {
@@ -1414,6 +1448,8 @@ function App(): React.JSX.Element {
             onTogglePin={toggleActivityPanel}
             tabRequest={activityTabRequest}
             onActiveTabChange={handleActivityTabChange}
+            maxWidth={layout.panelMaxWidth}
+            onWidthChange={setActivityPanelWidth}
             focusChainTodos={
               currentConversationId
                 ? focusChainTodosByConversation[currentConversationId] || []
