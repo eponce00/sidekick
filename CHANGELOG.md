@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.10.0 — 2026-10-01
+## 0.10.0 — 2026-10-02
 
 - Name files with **@**. Typing `@` in the message box lists the project's files; choosing one
   attaches it. Attached files, up to four per message, are read before the agent starts, so its
@@ -20,11 +20,18 @@
   reply's footer, with the details on demand, and pages and documents with no test or build no
   longer ask for one. An answer written while checking stays the answer.
 - Show file contents as code, with line numbers, highlighting, and no wrapping.
+- Keep the message box's buttons inside it in a narrow window: the model's name shortens, then
+  hides behind its icon.
 - Keep the chat readable in a smaller window: with the side panel open, the sidebar folds to its
   icons and the panel narrows before the chat does.
-- Show the whole page when the agent sizes the browser for a desktop layout: the panel scales it to
-  fit, and the agent's screenshots show all of it.
+- Browse at 100% in a side panel that widens much further, and choose a phone, tablet, laptop, or
+  desktop size from the browser's device button, as in Chrome's device toolbar; the agent can
+  choose them too. A size wider than the panel is scaled to fit its width and fills its height, the agent's screenshots show all
+  of it, and a size the agent set returns to responsive when its reply ends.
 - Mark waiting conversations with a small, sharp dot on the Windows taskbar icon.
+- Quit SideKick when its window is closed on Windows and Linux. A browser page kept out of sight
+  for the agent could keep it running with no window, and clicking its icon then opened nothing.
+  Clicking the icon of a running SideKick now always brings its window back.
 - Show prices as prices, a finished sub-agent as done, and a sub-agent's report when its budget
   runs out. `ask_user` offers up to four choices.
 - Update undici, hono, and brace-expansion for their published advisories.

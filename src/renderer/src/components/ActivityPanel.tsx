@@ -38,6 +38,7 @@ import BrowserActivityPanel from './BrowserActivityPanel'
 import { EMPTY_BROWSER_ACTIVITY, type BrowserActivityState } from '../utils/browserActivity'
 import {
   ACTIVITY_PANEL_DEFAULT_WIDTH,
+  ACTIVITY_PANEL_MAX_WIDTH,
   ACTIVITY_PANEL_MIN_WIDTH,
   ACTIVITY_PANEL_WIDE_WIDTH,
   activityPanelMaximumWidth,
@@ -216,9 +217,12 @@ function ActivityPanel({
     setPanelWidth(fitWidth(next))
   }
 
+  // Widening asks for as much as the window allows; the sidebar folds and the chat keeps its
+  // minimum, so the panel ends as wide as that leaves.
+  const widestWidth = clampActivityPanelWidth(ACTIVITY_PANEL_MAX_WIDTH, window.innerWidth)
+  const isWide = panelWidth >= Math.min(widestWidth, ACTIVITY_PANEL_WIDE_WIDTH) - 20
   const toggleWidePanel = (): void => {
-    const wide = fitWidth(ACTIVITY_PANEL_WIDE_WIDTH)
-    setPanelWidth(renderedWidth >= wide - 20 ? fitWidth(ACTIVITY_PANEL_DEFAULT_WIDTH) : wide)
+    setPanelWidth(isWide ? fitWidth(ACTIVITY_PANEL_DEFAULT_WIDTH) : widestWidth)
   }
 
   const openCollapsedTab = (tab: ActivityTab): void => {
@@ -892,7 +896,7 @@ function ActivityPanel({
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
-                isWide={renderedWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
+                isWide={isWide}
                 onToggleWidth={toggleWidePanel}
               />
             </div>

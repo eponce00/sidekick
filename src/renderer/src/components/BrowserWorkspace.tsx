@@ -8,6 +8,7 @@ import {
   Globe,
   Maximize2,
   Minimize2,
+  MonitorSmartphone,
   Pause
 } from 'lucide-react'
 import type {
@@ -215,6 +216,36 @@ export function BrowserWorkspace({
           }}
           onChange={(event) => setAddress(event.target.value)}
         />
+        <button
+          type="button"
+          className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
+          aria-label="Device size"
+          disabled={!state || pending || state.busy}
+          title={
+            state?.device
+              ? `${state.device.label}, ${state.device.width} × ${state.device.height}${
+                  state.device.source === 'agent' ? ', set by the agent' : ''
+                }. Choose a size, or Responsive to fit the panel.`
+              : 'Responsive: the page fits the panel. Choose a phone, tablet, laptop, or desktop size.'
+          }
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            void window.api.agentRuns
+              .browserWorkspace({
+                conversationId,
+                action: 'deviceMenu',
+                menuPosition: { x: rect.left, y: rect.bottom + 4 }
+              })
+              .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+          }}
+        >
+          <MonitorSmartphone size={15} aria-hidden="true" />
+          {state?.device && (
+            <span>
+              {state.device.width} × {state.device.height}
+            </span>
+          )}
+        </button>
         {state?.verificationHandoff ? (
           <span
             className="browser-workspace-status"

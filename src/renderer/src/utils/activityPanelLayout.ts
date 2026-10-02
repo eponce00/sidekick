@@ -1,7 +1,8 @@
 export const ACTIVITY_PANEL_MIN_WIDTH = 280
 export const ACTIVITY_PANEL_DEFAULT_WIDTH = 320
 export const ACTIVITY_PANEL_WIDE_WIDTH = 560
-export const ACTIVITY_PANEL_MAX_WIDTH = 720
+/** Wide enough for a browser page at a laptop's width; the window's own size limits it first. */
+export const ACTIVITY_PANEL_MAX_WIDTH = 1_600
 const MIN_CONVERSATION_WIDTH = 360
 
 export function activityPanelMaximumWidth(viewportWidth: number): number {

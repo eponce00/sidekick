@@ -1,3 +1,4 @@
+import type { BrowserDeviceState } from '../../shared/browserDevices'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
@@ -21,7 +22,8 @@ import {
   browserDebuggerCommand,
   browserNavigationState,
   showBrowserPointer,
-  setBrowserViewAgentViewport
+  setBrowserViewAgentViewport,
+  type BrowserViewportFit
 } from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -320,6 +322,18 @@ export interface BrowserResizeInput {
   sessionId: string
   tabId?: string
   viewport: BrowserViewport
+  /** Phones and tablets: mobile layout, touch, and a mobile user agent. */
+  emulation?: { mobile: boolean; tablet?: boolean }
+  /** What to call this size and who chose it; explicit dimensions default to the agent. */
+  device?: Omit<BrowserDeviceState, 'width' | 'height'>
+}
+
+/** Chrome on Android, at this Chromium's version; tablets omit "Mobile", as Chrome does. */
+function mobileUserAgent(tablet: boolean): string {
+  const chrome = process.versions.chrome ?? '130.0.0.0'
+  return tablet
+    ? `Mozilla/5.0 (Linux; Android 14; Tablet) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Safari/537.36`
+    : `Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chrome} Mobile Safari/537.36`
 }
 
 export interface BrowserHoverInput {
@@ -471,7 +485,9 @@ export interface NativeBrowserSurface {
    * Lays the page out at exactly this viewport, whatever the size and zoom of where it is shown;
    * a page shown in the app is drawn scaled down to fit.
    */
-  setAgentViewport?(viewport: BrowserViewport): Promise<void>
+  setAgentViewport?(viewport: BrowserViewport, options?: BrowserEmulationOptions): Promise<void>
+  /** Returns the page to the size of where it is shown, with its own user agent and input. */
+  clearAgentViewport?(): Promise<void>
   executeJavaScript<T>(source: string): Promise<T>
   captureViewport(): Promise<NativeBrowserSurfaceCapture>
   attachDebugger(): Promise<void>
@@ -485,6 +501,12 @@ export interface NativeBrowserSurface {
   onDebuggerMessage(listener: (method: string, params: Record<string, unknown>) => void): () => void
   onDestroyed(listener: () => void): () => void
   onOpenUrl(listener: (url: string) => void): () => void
+}
+
+/** How a fixed viewport presents itself: a phone or tablet is mobile, touch, and says so. */
+export interface BrowserEmulationOptions {
+  mobile?: boolean
+  userAgent?: string
 }
 
 export interface NativeBrowserRuntime {
@@ -551,6 +573,8 @@ interface CoordinateCaptureState {
 interface TabState {
   id: string
   surface: NativeBrowserSurface
+  /** A fixed viewport in effect, and who chose it; absent while the page is responsive. */
+  device?: BrowserDeviceState
   /** User-facing source URL when the WebContents is showing an internal viewer. */
   logicalUrl?: string
   pdfSessionToken?: string
@@ -1231,21 +1255,51 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     void showBrowserPointer(this.webContentsId, x, y).catch(() => undefined)
   }
 
-  async setAgentViewport(viewport: BrowserViewport): Promise<void> {
+  async setAgentViewport(
+    viewport: BrowserViewport,
+    options: BrowserEmulationOptions = {}
+  ): Promise<void> {
     this.agentViewport = viewport
-    const apply = async (scale: number): Promise<void> => {
+    const mobile = options.mobile === true
+    const apply = async ({ scale, height }: BrowserViewportFit): Promise<void> => {
       this.agentViewportScale = scale
+      // The laid-out height can grow to fill the panel; screenshots capture what is laid out.
+      this.agentViewport = { ...viewport, height }
       await this.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
         width: viewport.width,
-        height: viewport.height,
+        height,
         deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
-        mobile: false,
+        mobile,
         screenWidth: viewport.width,
-        screenHeight: viewport.height,
+        screenHeight: height,
         scale
       })
     }
-    if (!(await setBrowserViewAgentViewport(this.webContentsId, viewport, apply))) await apply(1)
+    await this.sendDebuggerCommand('Emulation.setTouchEmulationEnabled', {
+      enabled: mobile,
+      ...(mobile ? { maxTouchPoints: 5 } : {})
+    })
+    await this.sendDebuggerCommand('Emulation.setUserAgentOverride', {
+      userAgent: options.userAgent ?? this.contents.getUserAgent()
+    })
+    const placed = await setBrowserViewAgentViewport(
+      this.webContentsId,
+      { width: viewport.width, height: viewport.height, fillHeight: !mobile },
+      apply
+    )
+    if (!placed) await apply({ scale: 1, height: viewport.height })
+  }
+
+  async clearAgentViewport(): Promise<void> {
+    if (!this.agentViewport) return
+    this.agentViewport = undefined
+    this.agentViewportScale = 1
+    await setBrowserViewAgentViewport(this.webContentsId, null, async () => undefined)
+    await this.sendDebuggerCommand('Emulation.clearDeviceMetricsOverride')
+    await this.sendDebuggerCommand('Emulation.setTouchEmulationEnabled', { enabled: false })
+    await this.sendDebuggerCommand('Emulation.setUserAgentOverride', {
+      userAgent: this.contents.getUserAgent()
+    })
   }
 
   resizeViewport(viewport: BrowserViewport): void {
@@ -1518,6 +1572,7 @@ export class NativeBrowserSessionService {
       sessionId,
       activeTabId: session.activeTabId,
       tabs: this.tabSummaries(session),
+      device: this.getTab(session).device ?? null,
       ...browserNavigationState(this.getTab(session).surface.webContentsId)
     }
   }
@@ -4443,9 +4498,13 @@ export class NativeBrowserSessionService {
       const startedAt = this.now()
       tab.lastPointer = undefined
       tab.surface.resizeViewport(viewport)
+      const mobile = input.emulation?.mobile === true
       await abortable(
         tab.surface.setAgentViewport
-          ? tab.surface.setAgentViewport(viewport)
+          ? tab.surface.setAgentViewport(viewport, {
+              mobile,
+              ...(mobile ? { userAgent: mobileUserAgent(input.emulation?.tablet === true) } : {})
+            })
           : tab.surface.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
               width: viewport.width,
               height: viewport.height,
@@ -4457,6 +4516,13 @@ export class NativeBrowserSessionService {
             }),
         signal
       )
+      tab.device = {
+        id: input.device?.id ?? 'custom',
+        label: input.device?.label ?? `${viewport.width} × ${viewport.height}`,
+        source: input.device?.source ?? 'agent',
+        width: viewport.width,
+        height: viewport.height
+      }
       this.invalidateSemanticRefs(tab)
       return this.finishAction(
         session,
@@ -4469,6 +4535,48 @@ export class NativeBrowserSessionService {
         signal
       )
     })
+  }
+
+  /** Returns a tab to the size of where it is shown, as a normal browser window. */
+  async resetViewport(
+    input: { sessionId: string; tabId?: string },
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserActionResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const fingerprint = canonicalFingerprint({ action: 'reset-viewport', tabId: tab.id })
+      await this.ensureBaselineHash(session, tab, signal)
+      const startedAt = this.now()
+      tab.lastPointer = undefined
+      await abortable(
+        tab.surface.clearAgentViewport
+          ? tab.surface.clearAgentViewport()
+          : tab.surface.sendDebuggerCommand('Emulation.clearDeviceMetricsOverride'),
+        signal
+      )
+      tab.surface.resizeViewport(this.defaultViewport)
+      tab.device = undefined
+      this.invalidateSemanticRefs(tab)
+      return this.finishAction(
+        session,
+        tab,
+        'resize',
+        'page',
+        false,
+        fingerprint,
+        startedAt,
+        signal
+      )
+    })
+  }
+
+  /** Tabs the agent left at a fixed size, so its reply can hand them back responsive. */
+  agentSizedTabs(sessionId: string): string[] {
+    const session = this.getSession(sessionId)
+    return [...session.tabs.values()]
+      .filter((tab) => tab.device?.source === 'agent')
+      .map((tab) => tab.id)
   }
 
   async hover(

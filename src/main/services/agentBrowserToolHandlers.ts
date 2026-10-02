@@ -1,3 +1,4 @@
+import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/browserDevices'
 import { resolve } from 'path'
 import {
   toolExecutionFailed,
@@ -711,7 +712,9 @@ export class AgentBrowserSessionManager {
     const entry = this.scopes.get(scope)!
     entry.active++
     try {
-      if (['new', 'select', 'close'].includes(input.action)) {
+      if (input.action === 'device') {
+        await this.applyDevice(entry.sessionId, input.device, 'user')
+      } else if (['new', 'select', 'close'].includes(input.action)) {
         await this.service.tabs({
           sessionId: entry.sessionId,
           action: input.action as 'new' | 'select' | 'close',
@@ -729,6 +732,47 @@ export class AgentBrowserSessionManager {
       entry.active = Math.max(0, entry.active - 1)
     }
     return this.workspaceState(scope)
+  }
+
+  /** Sets a preset size, or returns to responsive, on the active tab. */
+  async applyDevice(
+    sessionId: string,
+    deviceId: string | undefined,
+    source: 'user' | 'agent',
+    signal?: AbortSignal
+  ) {
+    if (!deviceId || deviceId === BROWSER_RESPONSIVE_DEVICE) {
+      return this.service.resetViewport({ sessionId }, { signal })
+    }
+    const preset = browserDevicePreset(deviceId)
+    if (!preset) throw new Error(`Unknown browser device: ${deviceId}`)
+    return this.service.resize(
+      {
+        sessionId,
+        viewport: { width: preset.width, height: preset.height, deviceScaleFactor: 1 },
+        emulation: { mobile: preset.mobile, tablet: preset.group === 'Tablet' },
+        device: { id: preset.id, label: preset.label, source }
+      },
+      { signal }
+    )
+  }
+
+  /**
+   * When a reply ends, a size the agent set goes back to responsive, so the person watching gets
+   * a normal browser again. A size they chose themselves stays.
+   */
+  async resetAgentViewports(scope: string): Promise<void> {
+    const entry = this.scopes.get(scope)
+    if (!entry || entry.active > 0) return
+    let tabIds: string[]
+    try {
+      tabIds = this.service.agentSizedTabs(entry.sessionId)
+    } catch {
+      return
+    }
+    for (const tabId of tabIds) {
+      await this.service.resetViewport({ sessionId: entry.sessionId, tabId }).catch(() => undefined)
+    }
   }
 
   async prepareAgentAction(scope: string, signal: AbortSignal): Promise<void> {
@@ -1473,20 +1517,23 @@ export function registerBrowserToolHandlers(
         const width = finiteNumber(args, 'width')
         const height = finiteNumber(args, 'height')
         const deviceScaleFactor = finiteNumber(args, 'device_scale_factor')
-        if (width === undefined || height === undefined) {
-          throw new Error('browser_resize requires finite width and height')
-        }
-        raw = await manager.service.resize(
-          {
-            sessionId: lease.sessionId,
-            viewport: {
-              width,
-              height,
-              ...(deviceScaleFactor === undefined ? {} : { deviceScaleFactor })
-            }
-          },
-          { signal: context.signal }
-        )
+        const device = typeof args.device === 'string' ? args.device : undefined
+        if (device) {
+          raw = await manager.applyDevice(lease.sessionId, device, 'agent', context.signal)
+        } else if (width === undefined || height === undefined) {
+          throw new Error('browser_resize requires a device, or a finite width and height')
+        } else
+          raw = await manager.service.resize(
+            {
+              sessionId: lease.sessionId,
+              viewport: {
+                width,
+                height,
+                ...(deviceScaleFactor === undefined ? {} : { deviceScaleFactor })
+              }
+            },
+            { signal: context.signal }
+          )
       } else if (name === 'browser_tabs') {
         const action = stringArgument(args, 'action') as 'list' | 'new' | 'select' | 'close'
         if (!action) throw new Error('browser_tabs requires an action')

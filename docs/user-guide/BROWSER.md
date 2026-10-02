@@ -36,7 +36,7 @@ interleaving; retry your input when it finishes. Manual changes invalidate old e
 so the agent must observe fresh state before reusing them. Focusing the address bar does not
 pause the agent. Right-click offers native text editing actions.
 
-When the agent resizes the viewport, for example to check a desktop layout, the page lays out at exactly that size whatever the panel's width and the app's zoom. A viewport wider than the panel is drawn scaled down to fit, so you see the whole page. The agent's screenshots are taken from the page itself at full size, never from the panel.
+The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
 ## Human-only site checks
 

@@ -1,3 +1,4 @@
+import { BROWSER_DEVICE_PRESETS, BROWSER_RESPONSIVE_DEVICE } from './browserDevices'
 import {
   editingToolDefinitions,
   workspaceReadToolDefinitions,
@@ -966,11 +967,17 @@ const browserNavigate = definition(
 
 const browserResize = definition(
   'browser_resize',
-  'Resize the current Chromium viewport and return a fresh visual and semantic observation. Use this to verify responsive layouts at explicit desktop, tablet, or mobile dimensions.',
+  'Set the viewport and return a fresh visual and semantic observation, to check a layout at a phone, tablet, laptop, or desktop size. Pass a device for a standard size, which for phones and tablets also turns on mobile layout, touch, and a mobile user agent, or width and height for an exact size. The user watches this page in a side panel, so pass device "responsive" to return it to the size of the panel when the check is done; a size you set returns to responsive when your reply ends.',
   {
     type: 'object',
-    required: ['width', 'height'],
     properties: {
+      device: {
+        type: 'string',
+        enum: [BROWSER_RESPONSIVE_DEVICE, ...BROWSER_DEVICE_PRESETS.map((preset) => preset.id)],
+        description: BROWSER_DEVICE_PRESETS.map(
+          (preset) => `${preset.id} ${preset.width}x${preset.height}`
+        ).join(', ')
+      },
       width: { type: 'number', minimum: 320, maximum: 3840 },
       height: { type: 'number', minimum: 240, maximum: 2160 },
       device_scale_factor: { type: 'number', minimum: 0.5, maximum: 4 }

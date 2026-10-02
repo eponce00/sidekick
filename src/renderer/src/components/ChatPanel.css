@@ -2984,8 +2984,26 @@ body[data-theme='light'] .message-user .message-action:hover {
 /* Input Buttons Container */
 .input-buttons {
   display: flex;
+  flex-shrink: 0;
   gap: var(--space-2);
   align-items: center;
+}
+
+/* Every control but the model's name keeps its size, so a narrow box never pushes one out. */
+.input-toolbar-left > *,
+.input-toolbar-right > :not(.model-menu-container) {
+  flex-shrink: 0;
+}
+
+.input-container {
+  container: composer / inline-size;
+}
+
+/* Too narrow for the model's name: the selector keeps its icon and status dot. */
+@container composer (max-width: 380px) {
+  .model-selector-inline-label {
+    display: none;
+  }
 }
 
 /* Send/Stop Button */
@@ -3312,6 +3330,9 @@ button.composer-status:hover {
 /* Model Menu */
 .model-menu-container {
   position: relative;
+  /* Lets the selector, the only flexible part of the toolbar, give way in a narrow box. */
+  display: flex;
+  min-width: 0;
 }
 
 .model-menu {

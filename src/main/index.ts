@@ -35,6 +35,7 @@ import { VoiceService } from './services/voice/voiceService'
 import { VoiceModelStore } from './services/voice/voiceModels'
 import { confirmQuitWithActiveRuns, QuitGuard } from './bootstrap/quitConfirmation'
 import { refreshAttentionBadge } from './services/attentionBadge'
+import { isBrowserParkingWindow } from './services/browserViewHost'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
@@ -86,18 +87,38 @@ if (is.dev || e2eUserDataPath) {
 // Automated runs quit on their own schedule and cannot answer a dialog.
 if (e2eUserDataPath || process.argv.includes('--sidekick-packaged-smoke-test')) quitGuard.allow()
 
+let mainWindowOpened = false
+
+/** Windows the user has open, leaving out the off-screen windows that hold browser pages. */
+function userWindows(except?: BrowserWindow): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter(
+    (other) =>
+      other !== except &&
+      !other.isDestroyed() &&
+      other.isVisible() &&
+      !isBrowserParkingWindow(other)
+  )
+}
+
+/** The main window, or a new one when it was closed; never a browser page's hidden window. */
+function showMainWindow(): void {
+  if (!revealWindow(appState.mainWindowRef)) openMainWindow()
+}
+
 /** On Windows and Linux closing the last window quits, so it asks first too. */
 function openMainWindow(): BrowserWindow {
   const window = createMainWindow()
   if (process.platform !== 'darwin') {
     window.on('close', (event) => {
-      const othersVisible = BrowserWindow.getAllWindows().some(
-        (other) => other !== window && !other.isDestroyed() && other.isVisible()
-      )
-      if (othersVisible) return
+      if (userWindows(window).length) return
       if (quitGuard.intercept(() => (window.isDestroyed() ? app.quit() : window.close()))) {
         event.preventDefault()
       }
+    })
+    // Hidden browser windows keep Electron from seeing every window closed, which left
+    // SideKick running with nothing to show and its icon unable to bring a window back.
+    window.on('closed', () => {
+      if (!userWindows().length) app.quit()
     })
   }
   // Windows is logging off or shutting down; it will not wait for a dialog.
@@ -114,8 +135,8 @@ if (!ownsSingleInstance) {
 } else {
   registerArtifactScheme()
   app.on('second-instance', () => {
-    const target = appState.mainWindowRef ?? BrowserWindow.getAllWindows()[0]
-    revealWindow(target)
+    // During startup the first window is still on its way.
+    if (mainWindowOpened) showMainWindow()
   })
 }
 
@@ -186,6 +207,7 @@ async function bootstrapApplication(): Promise<void> {
   registerVoiceHandlers(voiceService)
   onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
   openMainWindow()
+  mainWindowOpened = true
   powerMonitor.on('shutdown', () => quitGuard.allow())
   const dispatchAppCommand = (command: AppCommand): void => {
     const target = BrowserWindow.getFocusedWindow() ?? appState.mainWindowRef
@@ -209,10 +231,7 @@ async function bootstrapApplication(): Promise<void> {
   startWorkspaceWatcher(workspacePath)
   appUpdateService.start()
 
-  app.on('activate', () => {
-    const target = appState.mainWindowRef ?? BrowserWindow.getAllWindows()[0]
-    if (!revealWindow(target)) openMainWindow()
-  })
+  app.on('activate', showMainWindow)
 }
 
 if (ownsSingleInstance) {
