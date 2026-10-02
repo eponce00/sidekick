@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.10.0 — 2026-10-01
+
+- Name files with **@**. Typing `@` in the message box lists the project's files; choosing one
+  attaches it. Attached files, up to four per message, are read before the agent starts, so its
+  first step already has them.
+- Save prompts as **/** commands. Markdown files in `.sidekick/prompts`, in a project or your home
+  folder, appear in the `/` menu; Claude Code's `.claude/commands` folders are read too.
+- **Rewind to here** goes back to before one of your messages without asking again, and puts that
+  message back in the box to change or send, with or without undoing the file changes since.
+- Edit files reliably with local models. Each model gets the editing tool its own harnesses use,
+  edits tolerate line-ending, whitespace, and punctuation differences only when the match is
+  unique, and long files are read in whole lines the model can continue from.
+- See the work as it happens on one line. A running reply shows the step it is on, replaced by the
+  next as it goes; the full list is one click away.
+- Review a reply's file changes in a card with **Undo** and **View changes**. A long list shows four
+  files until you ask for the rest.
+- Keep the end of a reply for its answer. Whether changes were checked is one status in the
+  reply's footer, with the details on demand, and pages and documents with no test or build no
+  longer ask for one. An answer written while checking stays the answer.
+- Show file contents as code, with line numbers, highlighting, and no wrapping.
+- Keep the chat readable in a smaller window: with the side panel open, the sidebar folds to its
+  icons and the panel narrows before the chat does.
+- Show the whole page when the agent sizes the browser for a desktop layout: the panel scales it to
+  fit, and the agent's screenshots show all of it.
+- Mark waiting conversations with a small, sharp dot on the Windows taskbar icon.
+- Show prices as prices, a finished sub-agent as done, and a sub-agent's report when its budget
+  runs out. `ask_user` offers up to four choices.
+- Update undici, hono, and brace-expansion for their published advisories.
+
 ## 0.9.0 — 2026-09-30
 
 - Follow a sub-agent live. A delegated task shows as one row in the reply, never folded away: what
