@@ -119,6 +119,7 @@ describe('AgentToolRuntime file receipts', () => {
     async (truncated) => {
       const workspace = await temporaryRoot('sidekick-diagnostic-scope-')
       const data = await temporaryRoot('sidekick-diagnostic-data-')
+      await writeFile(join(workspace, 'package.json'), '{"scripts":{"test":"vitest"}}')
       await writeFile(join(workspace, 'a.ts'), 'before\n')
       await writeFile(join(workspace, 'b.ts'), 'before\n')
       vi.spyOn(LanguageIntelligenceService.prototype, 'diagnosticsAfterChanges').mockResolvedValue({
@@ -228,6 +229,7 @@ describe('AgentToolRuntime file receipts', () => {
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
+    await writeFile(join(workspace, 'package.json'), '{"scripts":{"test":"vitest"}}')
     await writeFile(join(workspace, 'status.txt'), 'before\n', 'utf8')
     const db = new Database(':memory:')
     applyDatabaseSchema(db)

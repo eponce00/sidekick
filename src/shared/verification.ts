@@ -39,6 +39,13 @@ export interface VerificationCheckSuggestion {
   kind: Exclude<VerificationKind, 'diagnostics' | 'custom'>
   command: string
   source: string
+  /** The project folder to run it in, relative to the workspace, when that is not the workspace. */
+  cwd?: string
+}
+
+/** How a suggested check is named to the model, with the folder it runs in. */
+export function describeCheck(check: VerificationCheckSuggestion): string {
+  return check.cwd ? `${check.command} (in ${check.cwd})` : check.command
 }
 
 export interface WorkspaceVerificationSummary {
@@ -52,6 +59,19 @@ export interface WorkspaceVerificationSummary {
   headline: string
   detail?: string
 }
+
+/** What a result without current passing or failing evidence tells the user. */
+export const VERIFICATION_STATUS_COPY = {
+  stale: {
+    headline: 'The last check ran before the latest changes.',
+    detail: 'Files changed after it ran, so its result may no longer hold.'
+  },
+  unverified: {
+    headline: 'No check ran after these changes.',
+    detail:
+      'A check is a test, build, typecheck, or lint command. Reading files or viewing the page does not count.'
+  }
+} as const
 
 export interface VerificationTerminalDecision {
   continue: boolean

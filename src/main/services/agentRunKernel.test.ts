@@ -504,6 +504,44 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it('keeps the reply as the answer when the pass followed an empty answer', async () => {
+    const sampler = sequence(
+      sampledTurn({ content: '' }),
+      sampledTurn({ content: 'Cleaned up.\n\n- `site/index.html` is well-formed' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const summary = {
+      status: 'unverified' as const,
+      workspaceRoot: '/project',
+      baselineRevision: 0,
+      currentRevision: 1,
+      changedPaths: ['site/index.html'],
+      evidence: [],
+      suggestedChecks: [],
+      headline: 'Workspace changes have not been verified.'
+    }
+    const verificationController = {
+      afterTerminalTurn: vi
+        .fn()
+        .mockResolvedValueOnce({ continue: true, prompt: 'Run verification.', summary })
+        .mockResolvedValueOnce({ continue: false, summary })
+    }
+
+    const result = await kernel.start({ ...input(), verificationController })
+    const projection = projectAgentRunEvents(store.listEvents('run-1'))
+
+    expect(result.finalResponse).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
+    expect(projection.content.trim()).toBe('Cleaned up.\n\n- `site/index.html` is well-formed')
+    // The reply is a top-level answer, not a note folded under the verification result.
+    expect(projection.segments).toContainEqual({
+      type: 'text',
+      content: 'Cleaned up.\n\n- `site/index.html` is well-formed'
+    })
+    const verification = projection.segments.at(-1)
+    expect(verification?.type).toBe('verification')
+    expect(verification && 'content' in verification ? verification.content : '').toBeFalsy()
+  })
+
   it('folds a verification pass that changed nothing under the streamed answer', async () => {
     const router = { execute: vi.fn(async () => ({ content: 'tests passed' })) }
     const sampler = sequence(
@@ -1604,6 +1642,39 @@ describe('AgentRunKernel', () => {
     expect(result).toMatchObject({ phase: 'completed', content: 'Using CSV' })
     expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain('CSV')
     expect(store.getInteraction(interaction.id)?.status).toBe('resolved')
+  })
+
+  it('asks questions with four choices and numbers questions asked without an id', async () => {
+    const choices = ['One', 'Two', 'Three', 'Four'].map((label) => ({ label }))
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'question-call',
+            function: {
+              name: 'ask_user',
+              arguments: {
+                questions: [
+                  { question: 'Which file?', options: choices },
+                  { id: 'tone', question: 'What does cleaner mean?', options: choices }
+                ]
+              }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Done' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start(input())
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const interaction = store.listPendingInteractions('run-1')[0]
+    expect(
+      (interaction.request as { questions: Array<{ id: string }> }).questions.map(({ id }) => id)
+    ).toEqual(['q1', 'tone'])
+    kernel.resolveInteraction(interaction.id, { q1: 'One', tone: 'Two' })
+    await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Done' })
   })
 
   it('suspends browser human takeover and resumes the same run after completion', async () => {

@@ -784,7 +784,10 @@
 .message:hover .message-meta,
 .message:focus-within .message-meta,
 .message-editing .message-meta,
-.message-meta:has(.read-aloud.is-reading) {
+.message-meta:has(.read-aloud.is-reading),
+.message-meta:has(.message-verification[open]),
+/* A failed check is news, not a detail to find on hover. */
+.message-meta:has(.message-verification.is-failed) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1280,46 +1283,108 @@ body[data-theme='light'] .message-user .message-action:hover {
   white-space: nowrap;
 }
 
-.message-run-stats {
+/* Footer items that open a floating card above themselves (MessageFooterPopover). */
+.message-footer-popover {
   position: relative;
 }
 
-.message-run-stats > summary {
+.message-footer-popover > summary {
   display: inline-flex;
   align-items: center;
   gap: 3px;
+  margin: -2px -5px;
+  padding: 2px 5px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   color: var(--text-muted);
   font-size: var(--text-xs);
   list-style: none;
 }
 
-.message-run-stats > summary::-webkit-details-marker {
+.message-footer-popover > summary::-webkit-details-marker {
   display: none;
 }
 
-.message-run-stats[open] > summary svg {
+.message-footer-popover > summary:hover,
+.message-footer-popover[open] > summary {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.message-footer-popover[open] > summary svg:last-child {
   transform: rotate(180deg);
 }
 
-.message-run-stats-popover {
+.message-footer-popover-card {
   position: absolute;
-  left: 0;
-  bottom: calc(100% + 6px);
+  left: var(--footer-popover-shift, 0);
+  bottom: calc(100% + 10px);
   z-index: 4;
   display: grid;
-  min-width: 150px;
-  gap: 5px;
-  padding: 8px 10px;
+  max-height: min(420px, 60vh);
+  overflow: auto;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   background: var(--surface-3);
   box-shadow: var(--shadow-md);
   color: var(--text-secondary);
   font-size: var(--text-xs);
+}
+
+/* The pointer joins the card to the item that opened it. It sits on the item, outside the card's
+   scrolling box, which would clip it. */
+.message-footer-popover[open]::after {
+  content: '';
+  position: absolute;
+  z-index: 5;
+  left: 10px;
+  bottom: calc(100% + 5px);
+  width: 9px;
+  height: 9px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-3);
+  transform: rotate(45deg);
+}
+
+.message-run-stats-popover {
+  min-width: 150px;
   max-width: min(420px, 80vw);
-  max-height: min(420px, 60vh);
-  overflow: auto;
+  gap: 5px;
+  padding: 8px 10px;
+}
+
+.message-verification > summary {
+  gap: 4px;
+}
+
+.message-verification.is-passed > summary {
+  color: var(--success);
+}
+
+.message-verification.is-failed > summary {
+  color: var(--error);
+}
+
+.message-verification-popover {
+  width: min(560px, calc(100vw - 48px));
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.message-verification-headline {
+  font-size: var(--text-sm);
+}
+
+.message-verification-popover .verification-detail {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.message-verification-popover .verification-note {
+  margin: 0;
+  max-width: none;
 }
 
 .message-run-stats-popover span {
@@ -3728,8 +3793,16 @@ body[data-theme='light'] .tool-approval-command {
   margin: 0 0 6px 18px;
   max-width: 680px;
   color: var(--text-secondary);
-  font-size: var(--text-xs);
-  line-height: 1.45;
+}
+.verification-note.message-content {
+  font-size: var(--content-text-secondary);
+  line-height: 1.5;
+}
+.verification-note > :first-child {
+  margin-top: 0;
+}
+.verification-note > :last-child {
+  margin-bottom: 0;
 }
 .verification-steps {
   display: grid;

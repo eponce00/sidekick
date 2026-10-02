@@ -1044,14 +1044,15 @@ describe('MessageItem shared-channel presentation', () => {
       )
     })
 
-    const verification = container.querySelector('.verification-segment') as HTMLDetailsElement
+    const verification = container.querySelector('.message-verification') as HTMLDetailsElement
+    expect(verification.querySelector('summary')?.textContent).toBe('Checks passed')
     verification.open = true
     expect(container.textContent).toContain('Build passed.')
     expect(container.textContent).toContain('Earlier attempts (1)')
     expect(container.querySelector('.verification-history')?.getAttribute('open')).toBeNull()
   })
 
-  it('keeps the answer last to read, with a folded verification pass beneath it', async () => {
+  it('keeps the answer last to read, with the verification pass in its footer', async () => {
     await act(async () => {
       root.render(
         <MessageItem
@@ -1104,12 +1105,84 @@ describe('MessageItem shared-channel presentation', () => {
     const answer = container.querySelector('[data-final-answer]')
     expect(answer?.textContent).toContain('Here is the full answer.')
     expect(answer?.closest('.agent-work-disclosure')).toBeNull()
-    // The note reads without opening the result; the pass's steps sit inside it.
-    const note = container.querySelector('.verification-note')
-    expect(note?.textContent).toBe('All tests pass.')
-    expect(note?.closest('details')).toBeNull()
-    expect(container.querySelector('.verification-steps')?.textContent).toContain(
+    // Checks are work: the reply body ends with the answer, and the result is one footer item.
+    expect(container.querySelector('.message-segments .verification-detail')).toBeNull()
+    const verification = container.querySelector('.message-meta .message-verification')
+    expect(verification?.querySelector('summary')?.textContent).toBe('Checks passed')
+    expect(verification?.querySelector('.verification-note')?.textContent).toBe('All tests pass.')
+    expect(verification?.querySelector('.verification-steps')?.textContent).toContain(
       'Running the tests.'
+    )
+  })
+
+  it('shows a saved reply whose only answer is its verification note as the answer', async () => {
+    const render = (
+      suggestedChecks: Array<{ kind: 'test'; command: string; source: string }>
+    ): Promise<void> =>
+      act(async () => {
+        root.render(
+          <MessageItem
+            message={{
+              id: 'legacy-note',
+              role: 'agent',
+              content: '',
+              timestamp: 1_000,
+              segments: [
+                { type: 'thinking', content: 'Checking the file' },
+                {
+                  type: 'verification',
+                  content: 'Cleaned up the page.',
+                  verification: {
+                    status: 'unverified',
+                    workspaceRoot: '/project',
+                    baselineRevision: 0,
+                    currentRevision: 1,
+                    changedPaths: ['site/index.html'],
+                    evidence: [],
+                    suggestedChecks,
+                    headline: 'Workspace changes have not been verified.',
+                    detail: 'Run the smallest relevant test before finishing.'
+                  }
+                }
+              ]
+            }}
+            index={0}
+            isLoading={false}
+            expandedThinking={new Set()}
+            editingMessageId={null}
+            editingGeometry={null}
+            editingContent=""
+            copiedMessageId={null}
+            onToggleThinking={vi.fn()}
+            onHandleArtifactResult={vi.fn()}
+            onEditMessage={vi.fn()}
+            onCancelEditMessage={vi.fn()}
+            onConfirmEditMessage={vi.fn()}
+            onCopyMessage={vi.fn()}
+            onRetryMessage={vi.fn()}
+            onSetEditingContent={vi.fn()}
+            onApproveToolLimitDecision={vi.fn()}
+            onDenyToolLimitDecision={vi.fn()}
+          />
+        )
+      })
+
+    await render([{ kind: 'test', command: 'npm test', source: 'package.json' }])
+    expect(container.querySelector('.message-segments')?.textContent).toContain(
+      'Cleaned up the page.'
+    )
+    const verification = container.querySelector('.message-verification')
+    expect(verification?.querySelector('summary')?.textContent).toBe('Not checked')
+    // The answer is not repeated in the footer, and saved wording gives way to the current one.
+    expect(verification?.textContent).not.toContain('Cleaned up the page.')
+    expect(verification?.textContent).toContain('No check ran after these changes.')
+    expect(verification?.textContent).not.toContain('Run the smallest relevant test')
+
+    // A project with no check to suggest has nothing to report, in saved replies too.
+    await render([])
+    expect(container.querySelector('.message-verification')).toBeNull()
+    expect(container.querySelector('.message-segments')?.textContent).toContain(
+      'Cleaned up the page.'
     )
   })
 

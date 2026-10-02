@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
@@ -92,6 +92,7 @@ describe('WorkspaceVerificationService', () => {
   })
 
   it('ties evidence to a workspace revision and detects external staleness', async () => {
+    await writeFile(join(root, 'package.json'), '{"scripts":{"test":"vitest"}}')
     await writeFile(join(root, 'app.ts'), 'export const answer = 1\n')
     const baseline = service.beginSession(root)
     expect(
@@ -119,6 +120,7 @@ describe('WorkspaceVerificationService', () => {
   })
 
   it('nudges completion once and then permits an honest unverified finish', async () => {
+    await writeFile(join(root, 'pyproject.toml'), '')
     await writeFile(join(root, 'main.py'), 'print("hello")\n')
     service.recordChanges('run-2', root, 'workspace_tool', [{ path: 'main.py', kind: 'create' }])
     const controller = service.createTerminalController('run-2', root, 0)!
@@ -135,6 +137,7 @@ describe('WorkspaceVerificationService', () => {
     const controller = service.createTerminalController('run-4', root, 0)!
     expect(controller.afterToolRound!()).toBeUndefined()
 
+    await writeFile(join(root, 'pyproject.toml'), '')
     await writeFile(join(root, 'main.py'), 'print("hello")\n')
     service.recordChanges('run-4', root, 'workspace_tool', [{ path: 'main.py', kind: 'create' }])
     expect(controller.afterToolRound!()).toContain('before writing your final answer')
@@ -144,6 +147,7 @@ describe('WorkspaceVerificationService', () => {
   it('asks for verification before a goal completes, and not again once it has', async () => {
     // Asking only at the end of the run told a model whose goal was already
     // complete that it could not claim completion, which sent it back to work.
+    await writeFile(join(root, 'pyproject.toml'), '')
     await writeFile(join(root, 'main.py'), 'print("hello")\n')
     service.recordChanges('run-3', root, 'workspace_tool', [{ path: 'main.py', kind: 'create' }])
     const controller = service.createTerminalController('run-3', root, 0)!
@@ -156,6 +160,36 @@ describe('WorkspaceVerificationService', () => {
     expect(firstRequest.prompt).toContain('The goal was not marked complete')
     expect(secondRequest).toMatchObject({ continue: false, summary: { status: 'unverified' } })
     expect(runEnd.continue).toBe(false)
+  })
+
+  it('does not ask for a check where no project defines one', async () => {
+    // A page or document has no check SideKick could suggest or recognize; asking cost a turn and
+    // always ended "not checked".
+    await writeFile(join(root, 'index.html'), '<h1>Hello</h1>\n')
+    service.recordChanges('run-5', root, 'workspace_tool', [{ path: 'index.html', kind: 'update' }])
+    const controller = service.createTerminalController('run-5', root, 0)!
+
+    expect(controller.afterToolRound!()).toBeUndefined()
+    expect(await controller.afterTerminalTurn()).toMatchObject({
+      continue: false,
+      summary: { status: 'not_applicable' }
+    })
+  })
+
+  it('suggests the checks of the project that changed inside a larger workspace', async () => {
+    await mkdir(join(root, 'site', 'src'), { recursive: true })
+    await writeFile(join(root, 'site', 'package.json'), '{"scripts":{"test":"vitest"}}')
+    await writeFile(join(root, 'site', 'src', 'app.ts'), 'export {}\n')
+    service.recordChanges('run-6', root, 'workspace_tool', [
+      { path: 'site/src/app.ts', kind: 'update' }
+    ])
+    const controller = service.createTerminalController('run-6', root, 0)!
+
+    expect(service.summary('run-6', root, 0)).toMatchObject({
+      status: 'unverified',
+      suggestedChecks: [{ command: 'npm run test', cwd: 'site', source: 'site/package.json' }]
+    })
+    expect(controller.afterToolRound!()).toContain('npm run test (in site)')
   })
 
   it.each([

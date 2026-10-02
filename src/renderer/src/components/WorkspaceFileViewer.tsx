@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import hljs from 'highlight.js/lib/common'
 import {
   ArrowLeft,
   ExternalLink,
@@ -10,35 +9,11 @@ import {
 } from 'lucide-react'
 import { MessageMarkdown } from './MessageMarkdown'
 import type { WorkspaceFileViewRequest } from '../utils/workspaceFileViewer'
+import { extensionOf, highlightLines, languageFor } from '../utils/codeHighlight'
 import './WorkspaceFileViewer.css'
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'])
 const MARKDOWN_EXTENSIONS = new Set(['md', 'markdown', 'mdx'])
-/** Extensions highlight.js does not name the way the file does. */
-const LANGUAGE_ALIASES: Record<string, string> = {
-  mjs: 'javascript',
-  cjs: 'javascript',
-  mts: 'typescript',
-  cts: 'typescript',
-  jsx: 'javascript',
-  tsx: 'typescript',
-  yml: 'yaml',
-  ps1: 'powershell',
-  sh: 'bash',
-  zsh: 'bash',
-  h: 'c',
-  hpp: 'cpp',
-  cc: 'cpp',
-  rs: 'rust',
-  kt: 'kotlin',
-  py: 'python',
-  rb: 'ruby',
-  cs: 'csharp',
-  toml: 'ini',
-  env: 'ini',
-  txt: 'plaintext',
-  log: 'plaintext'
-}
 
 type ViewerState =
   | { kind: 'loading' }
@@ -46,17 +21,6 @@ type ViewerState =
   | { kind: 'image'; dataUrl: string }
   | { kind: 'markdown'; content: string; totalLines: number }
   | { kind: 'code'; content: string; language: string | null; totalLines: number }
-
-function extensionOf(filePath: string): string {
-  const name = filePath.split(/[\\/]/).pop() ?? ''
-  const dot = name.lastIndexOf('.')
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ''
-}
-
-function languageFor(extension: string): string | null {
-  const candidate = LANGUAGE_ALIASES[extension] ?? extension
-  return candidate && hljs.getLanguage(candidate) ? candidate : null
-}
 
 export function WorkspaceFileViewer({
   request,
@@ -110,11 +74,7 @@ export function WorkspaceFileViewer({
   // produced by highlight.js, so it is safe to inject.
   const highlighted = useMemo(() => {
     if (state.kind !== 'code') return null
-    const lines = state.content.replace(/\n$/, '').split('\n')
-    const html = state.language
-      ? hljs.highlight(state.content, { language: state.language, ignoreIllegals: true }).value
-      : hljs.highlightAuto(state.content).value
-    return { html, lineCount: lines.length }
+    return highlightLines(state.content, state.language)
   }, [state])
 
   useEffect(() => {
@@ -193,7 +153,7 @@ export function WorkspaceFileViewer({
         {state.kind === 'code' && highlighted && (
           <pre className="workspace-file-viewer-code">
             <code className="hljs">
-              {highlighted.html.split('\n').map((lineHtml, index) => {
+              {highlighted.map((lineHtml, index) => {
                 const lineNumber = index + 1
                 const isTarget = request.line === lineNumber
                 return (

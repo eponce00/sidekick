@@ -125,7 +125,7 @@ describe('AgentToolRegistry', () => {
     const result = await registry.execute(
       input('ask_user', {
         questions: [
-          { question: 'First?' },
+          { question: 'First?', options: [1, 2, 3, 4, 5].map((n) => ({ label: String(n) })) },
           { id: 'second' },
           { id: 'third', question: 'Third?' },
           { id: 'fourth', question: 'Fourth?' }
@@ -134,7 +134,7 @@ describe('AgentToolRegistry', () => {
       executor
     )
 
-    expect(result.error?.message).toContain('questions[0].id')
+    expect(result.error?.message).toContain('questions[0].options must contain at most 4')
     expect(result.error?.message).toContain('questions[1].question')
     expect(result.error?.message).toContain('at most 3')
     expect(executor).not.toHaveBeenCalled()

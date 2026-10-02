@@ -1110,9 +1110,12 @@ const askUser = definition(
         description: 'One to three questions.',
         items: {
           type: 'object',
-          required: ['id', 'question'],
+          required: ['question'],
           properties: {
-            id: { type: 'string', description: 'Short stable identifier.' },
+            id: {
+              type: 'string',
+              description: 'Short stable identifier. SideKick numbers questions that have none.'
+            },
             header: { type: 'string', description: 'Optional compact label.' },
             question: { type: 'string', description: 'Single concise question.' },
             multiSelect: {
@@ -1127,8 +1130,8 @@ const askUser = definition(
             options: {
               type: 'array',
               minItems: 2,
-              maxItems: 3,
-              description: 'Optional two or three mutually exclusive choices.',
+              maxItems: 4,
+              description: 'Optional two to four mutually exclusive choices.',
               items: {
                 type: 'object',
                 required: ['label'],

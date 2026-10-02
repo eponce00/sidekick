@@ -481,6 +481,21 @@ Keep building the app.
         { type: 'verification', verification: summary, content: 'No check applies.' }
       ])
     })
+
+    it('shows a recorded note as the answer when the pass followed an empty answer', () => {
+      const projection = projectAgentRunEvents([
+        event(2, 'verification.updated', { summary }),
+        event(3, 'assistant.completed', { content: '', provisional: true }),
+        event(4, 'run.retrying', { reason: 'workspace_verification_required' }),
+        event(5, 'assistant.completed', { content: 'Cleaned up the page.', verificationNote: true })
+      ])
+      expect(projection.content).toBe('Cleaned up the page.')
+      expect(projection.segments).toEqual([
+        expect.objectContaining({ type: 'run_status' }),
+        { type: 'text', content: 'Cleaned up the page.' },
+        { type: 'verification', verification: summary }
+      ])
+    })
   })
 
   it('knows a running sub-agent by its run as soon as it starts', () => {

@@ -42,6 +42,11 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Refine curated project memory with explicit sources, review, deletion, and prompt-budget controls.
 - Continue adversarial testing of provider dialect recovery, project symlinks, collaboration
   conflicts, prompt injection, release validation, and crash recovery.
+- Ask OpenAI-compatible servers for schema-constrained tool arguments (`strict: true`) where they
+  support it, as vLLM does, so a local model cannot send arguments its tool schema forbids. About
+  one call in a thousand from a local model is still refused and retried today. It must stay
+  optional per provider and be qualified for stability and speed first: the reference vLLM server
+  recorded GPU faults during schema-constrained requests.
 - Let a parked browser page idle. Its parking window stays shown with background throttling off, so
   an animated page keeps painting with no one watching, and the shown window keeps SideKick running
   after its main window closes. Hiding parked pages between tool operations made a screenshot taken
