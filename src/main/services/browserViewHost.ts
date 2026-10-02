@@ -191,6 +191,15 @@ export function unmountBrowserHost(host: BrowserWindow): void {
   for (const [id, entry] of views) if (entry.host === host) parkBrowserView(id)
 }
 
+/**
+ * Whether a window only holds a browser page out of sight. It keeps the page rendering for the
+ * agent, so it is shown off screen, but it is not a window the user has open.
+ */
+export function isBrowserParkingWindow(window: BrowserWindow): boolean {
+  for (const entry of views.values()) if (entry.parking === window) return true
+  return false
+}
+
 export function browserViewHost(id: number): BrowserWindow | undefined {
   return views.get(id)?.host
 }
