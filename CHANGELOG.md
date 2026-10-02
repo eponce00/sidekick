@@ -24,7 +24,7 @@
   icons and the panel narrows before the chat does.
 - Browse at 100% in a side panel that widens much further, and choose a phone, tablet, laptop, or
   desktop size from the browser's device button, as in Chrome's device toolbar; the agent can
-  choose them too. A size wider than the panel is scaled to fit, the agent's screenshots show all
+  choose them too. A size wider than the panel is scaled to fit its width and fills its height, the agent's screenshots show all
   of it, and a size the agent set returns to responsive when its reply ends.
 - Mark waiting conversations with a small, sharp dot on the Windows taskbar icon.
 - Quit SideKick when its window is closed on Windows and Linux. A browser page kept out of sight

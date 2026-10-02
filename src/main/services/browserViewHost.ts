@@ -10,34 +10,77 @@ interface HostedView {
   /** App zoom the embedded page is rendered at; 1 whenever the view is parked. */
   zoom: number
   /**
-   * A viewport the agent set. The page lays out at exactly this size, unaffected by app zoom,
-   * and is drawn scaled down to fit the panel while shown in the app.
+   * A fixed viewport. The page lays out at exactly its width, unaffected by app zoom, and is
+   * drawn scaled down to fit the panel while shown in the app.
    */
-  agentViewport?: { width: number; height: number }
-  applyFit?: (scale: number) => Promise<void>
-  /** The scale the agent viewport is drawn at; 1 when parked. */
+  agentViewport?: BrowserAgentViewport
+  applyFit?: (layout: BrowserViewportFit) => Promise<void>
+  /** The scale and laid-out height in effect; scale 1 and the requested height when parked. */
   fit: number
+  fitHeight: number
+  /** Where the panel is, while shown; the page may take a centred part of it. */
+  panelBounds?: BrowserPanelBounds
+}
+
+export interface BrowserAgentViewport {
+  width: number
+  height: number
+  /**
+   * A desktop-like size grows its height to fill the panel at the width's scale, as a tall
+   * window would; a phone or tablet keeps its exact size and is centred.
+   */
+  fillHeight: boolean
+}
+
+export interface BrowserViewportFit {
+  scale: number
+  /** The height the page lays out at, in CSS pixels. */
+  height: number
 }
 
 function pageZoom(entry: HostedView): number {
   return entry.agentViewport ? 1 : entry.zoom
 }
 
-function fitScale(entry: HostedView): number {
+/** How a fixed viewport sits in the panel: its scale, laid-out height, and the view's rectangle. */
+function agentLayout(
+  entry: HostedView
+): (BrowserViewportFit & { bounds?: BrowserPanelBounds }) | undefined {
   const viewport = entry.agentViewport
-  if (!viewport || !entry.host) return 1
-  const bounds = entry.view.getBounds()
-  return Math.min(1, bounds.width / viewport.width, bounds.height / viewport.height)
+  if (!viewport) return undefined
+  const panel = entry.host ? entry.panelBounds : undefined
+  if (!panel) return { scale: 1, height: viewport.height }
+  const scale = viewport.fillHeight
+    ? Math.min(1, panel.width / viewport.width)
+    : Math.min(1, panel.width / viewport.width, panel.height / viewport.height)
+  const height = viewport.fillHeight
+    ? Math.max(viewport.height, Math.floor(panel.height / scale))
+    : viewport.height
+  const width = Math.min(panel.width, Math.round(viewport.width * scale))
+  const shown = Math.min(panel.height, Math.round(height * scale))
+  return {
+    scale,
+    height,
+    bounds: {
+      x: panel.x + Math.floor((panel.width - width) / 2),
+      y: panel.y + Math.floor((panel.height - shown) / 2),
+      width,
+      height: shown
+    }
+  }
 }
 
-/** Brings the page's zoom and, for an agent viewport, its drawn scale in line with where it is. */
+/** Brings the page's zoom, and a fixed viewport's scale, height and place, in line with where it is. */
 async function relayout(entry: HostedView, force = false): Promise<void> {
   applyViewZoom(entry)
-  if (!entry.agentViewport || !entry.applyFit) return
-  const scale = fitScale(entry)
-  if (!force && Math.abs(scale - entry.fit) < 0.001) return
-  entry.fit = scale
-  await entry.applyFit(scale)
+  const layout = agentLayout(entry)
+  if (entry.host && entry.panelBounds) entry.view.setBounds(layout?.bounds ?? entry.panelBounds)
+  if (!layout || !entry.applyFit) return
+  if (!force && Math.abs(layout.scale - entry.fit) < 0.001 && layout.height === entry.fitHeight)
+    return
+  entry.fit = layout.scale
+  entry.fitHeight = layout.height
+  await entry.applyFit({ scale: layout.scale, height: layout.height })
 }
 
 /** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
@@ -55,7 +98,7 @@ const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
 
 export function registerBrowserView(view: WebContentsView, parking: BrowserWindow): void {
-  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1, fit: 1 }
+  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1, fit: 1, fitHeight: 0 }
   const id = view.webContents.id
   views.set(id, entry)
   // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
@@ -139,7 +182,7 @@ export function mountBrowserView(
   }
   entry.allowInput = allowInput
   entry.zoom = zoom
-  entry.view.setBounds(bounds)
+  entry.panelBounds = bounds
   entry.view.setVisible(true)
   void relayout(entry).catch(() => undefined)
 }
@@ -151,8 +194,8 @@ export function mountBrowserView(
  */
 export async function setBrowserViewAgentViewport(
   id: number,
-  viewport: { width: number; height: number } | null,
-  applyFit: (scale: number) => Promise<void>
+  viewport: BrowserAgentViewport | null,
+  applyFit: (layout: BrowserViewportFit) => Promise<void>
 ): Promise<boolean> {
   const entry = views.get(id)
   if (!entry) return false
@@ -160,7 +203,9 @@ export async function setBrowserViewAgentViewport(
   entry.applyFit = viewport ? applyFit : undefined
   if (!viewport) {
     entry.fit = 1
+    entry.fitHeight = 0
     applyViewZoom(entry)
+    if (entry.host && entry.panelBounds) entry.view.setBounds(entry.panelBounds)
     return true
   }
   await relayout(entry, true)
@@ -173,6 +218,7 @@ export function parkBrowserView(id: number): void {
   hidePointer(entry.host)
   if (!entry.host.isDestroyed()) entry.host.contentView.removeChildView(entry.view)
   entry.host = undefined
+  entry.panelBounds = undefined
   entry.allowInput = undefined
   // Parked views back automation and human takeover, which size the page from
   // the parking window itself, so they belong at natural scale.

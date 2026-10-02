@@ -426,7 +426,17 @@ async function runSmoke(): Promise<SmokeResult> {
       assert.equal(innerWidth, 1280, 'The page lays out at the viewport the agent asked for')
       const shot = await service.observe(wide.sessionId, { screenshot: 'viewport' })
       const size = nativeImage.createFromPath(shot.screenshot!.path).getSize()
-      assert.deepEqual([size.width, size.height], [1280, 900], 'Screenshot is the whole viewport')
+      // A desktop width scaled to the panel's width grows tall enough to fill the panel's height.
+      const filledHeight = Math.floor(panel.height / (panel.width / 1280))
+      const innerHeight = (
+        await service.evaluate({ sessionId: wide.sessionId, expression: 'window.innerHeight' })
+      ).value
+      assert.equal(innerHeight, filledHeight, 'A desktop size fills the panel height')
+      assert.deepEqual(
+        [size.width, size.height],
+        [1280, filledHeight],
+        'Screenshot is the whole viewport'
+      )
       assert.ok(
         hasRedAt(shot.screenshot!.path, 1240, 1280),
         'The agent screenshot shows the right edge of its viewport'
@@ -448,7 +458,10 @@ async function runSmoke(): Promise<SmokeResult> {
       const fresh = await service.observe(wide.sessionId, { screenshot: 'viewport' })
       await service.click({
         sessionId: wide.sessionId,
-        target: { coordinates: { x: 1280 - 64 - 60, y: 450 }, screenshotId: fresh.screenshot!.id }
+        target: {
+          coordinates: { x: 1280 - 64 - 60, y: Math.round(filledHeight / 2) + 24 },
+          screenshotId: fresh.screenshot!.id
+        }
       })
       assert.equal(
         (await service.evaluate({ sessionId: wide.sessionId, expression: 'document.title' })).value,
@@ -497,6 +510,12 @@ async function runSmoke(): Promise<SmokeResult> {
       })
       const phone = await page()
       assert.equal(phone.width, 393, 'A phone lays out at its width')
+      assert.equal(
+        (await service.evaluate({ sessionId: wide.sessionId, expression: 'window.innerHeight' }))
+          .value,
+        852,
+        'A phone keeps its exact height, centred in the panel'
+      )
       assert.ok(phone.touch > 0, 'A phone has touch input')
       assert.match(phone.agent, /Mobile/, 'A phone reports a mobile user agent')
       assert.equal(service.workspaceSnapshot(wide.sessionId).device?.id, 'iphone-14-pro')

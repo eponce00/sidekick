@@ -22,7 +22,8 @@ import {
   browserDebuggerCommand,
   browserNavigationState,
   showBrowserPointer,
-  setBrowserViewAgentViewport
+  setBrowserViewAgentViewport,
+  type BrowserViewportFit
 } from './browserViewHost'
 import type {
   BrowserWindow as ElectronBrowserWindow,
@@ -1260,15 +1261,17 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   ): Promise<void> {
     this.agentViewport = viewport
     const mobile = options.mobile === true
-    const apply = async (scale: number): Promise<void> => {
+    const apply = async ({ scale, height }: BrowserViewportFit): Promise<void> => {
       this.agentViewportScale = scale
+      // The laid-out height can grow to fill the panel; screenshots capture what is laid out.
+      this.agentViewport = { ...viewport, height }
       await this.sendDebuggerCommand('Emulation.setDeviceMetricsOverride', {
         width: viewport.width,
-        height: viewport.height,
+        height,
         deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
         mobile,
         screenWidth: viewport.width,
-        screenHeight: viewport.height,
+        screenHeight: height,
         scale
       })
     }
@@ -1279,7 +1282,12 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     await this.sendDebuggerCommand('Emulation.setUserAgentOverride', {
       userAgent: options.userAgent ?? this.contents.getUserAgent()
     })
-    if (!(await setBrowserViewAgentViewport(this.webContentsId, viewport, apply))) await apply(1)
+    const placed = await setBrowserViewAgentViewport(
+      this.webContentsId,
+      { width: viewport.width, height: viewport.height, fillHeight: !mobile },
+      apply
+    )
+    if (!placed) await apply({ scale: 1, height: viewport.height })
   }
 
   async clearAgentViewport(): Promise<void> {
