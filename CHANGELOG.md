@@ -20,6 +20,8 @@
   reply's footer, with the details on demand, and pages and documents with no test or build no
   longer ask for one. An answer written while checking stays the answer.
 - Show file contents as code, with line numbers, highlighting, and no wrapping.
+- Keep the message box's buttons inside it in a narrow window: the model's name shortens, then
+  hides behind its icon.
 - Keep the chat readable in a smaller window: with the side panel open, the sidebar folds to its
   icons and the panel narrows before the chat does.
 - Browse at 100% in a side panel that widens much further, and choose a phone, tablet, laptop, or
