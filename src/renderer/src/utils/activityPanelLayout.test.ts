@@ -51,7 +51,22 @@ describe('workspace layout beside an open inspector', () => {
     expect(layout({ viewportWidth: 1_600 }).sidebarAutoCollapsed).toBe(false)
     expect(layout({ panelWidth: 320 }).sidebarAutoCollapsed).toBe(false)
     expect(layout({ panelOpen: false }).sidebarAutoCollapsed).toBe(false)
-    expect(layout({ viewportWidth: 1_000 }).sidebarAutoCollapsed).toBe(false)
+    expect(layout({ viewportWidth: 760 }).sidebarAutoCollapsed).toBe(false)
     expect(layout({ sidebarCollapsed: true }).sidebarAutoCollapsed).toBe(false)
+  })
+})
+
+describe('narrow windows', () => {
+  it('keeps the inspector beside the chat down to the rail, chat, and inspector minimums', () => {
+    // 901 wide: the rail, a 440 chat, and a 413 inspector, instead of a drawer over the chat.
+    expect(
+      workspaceLayout({
+        viewportWidth: 901,
+        sidebarCollapsed: false,
+        sidebarHeldOpen: false,
+        panelOpen: true,
+        panelWidth: 649
+      })
+    ).toEqual({ sidebarAutoCollapsed: true, panelMaxWidth: 901 - 48 - 440 })
   })
 })
