@@ -366,7 +366,8 @@ function ChatPanel({
     requestCheckpointRestore: handleUndoCheckpoint,
     cancelCheckpointRestore,
     confirmCheckpointRestore: handleConfirmCheckpointRestore,
-    retryMessage: handleRetryMessage
+    retryMessage: handleRetryMessage,
+    rewindToMessage: handleRewindToMessage
   } = useConversationActions({
     messages,
     setMessages,
@@ -374,6 +375,18 @@ function ChatPanel({
     selectedModel,
     workspaceFolder,
     onCheckpointCreated,
+    restoreDraft: async (message, discardsGoalStart) => {
+      if (discardsGoalStart && conversationId) {
+        const current = await window.api.conversationGoals.current(conversationId)
+        if (current && ['active', 'paused', 'blocked'].includes(current.status)) {
+          await window.api.conversationGoals.clear(current.id)
+        }
+      }
+      setInputValue(message.content)
+      setAttachedImages(message.images ?? [])
+      setAttachedContext(message.attachments ?? [])
+      window.requestAnimationFrame(() => inputRef.current?.focus())
+    },
     rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
       if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
         // The goal being replaced belonged to history this rewind removes.
@@ -398,6 +411,14 @@ function ChatPanel({
       }
     }
   })
+
+  const rewindToMessageRef = useRef(handleRewindToMessage)
+  rewindToMessageRef.current = handleRewindToMessage
+  const rewindMessage = useCallback(
+    (message: Message, restoreFiles: boolean) =>
+      void rewindToMessageRef.current(message, restoreFiles),
+    []
+  )
 
   useEffect(() => {
     if (!workspaceFolder) {
@@ -1192,6 +1213,7 @@ function ChatPanel({
           : undefined
       }
       onForkMessage={forkMessage}
+      onRewindMessage={isLoading ? undefined : rewindMessage}
       copiedMessageId={copiedMessageId}
       onSetEditingContent={setEditingDraft}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}

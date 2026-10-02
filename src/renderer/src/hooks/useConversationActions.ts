@@ -18,6 +18,11 @@ interface ConversationActionsOptions {
     mode: ConversationRunMode,
     goal: RewoundGoal
   ) => Promise<void>
+  /**
+   * After a rewind to a message, that message goes back into the message box. Clears a goal
+   * the rewind discarded the start of.
+   */
+  restoreDraft?: (message: Message, discardsGoalStart: boolean) => Promise<void> | void
 }
 
 /**
@@ -48,6 +53,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
   cancelCheckpointRestore: () => void
   confirmCheckpointRestore: () => Promise<void>
   retryMessage: (message: Message) => void
+  rewindToMessage: (message: Message, restoreFiles: boolean) => Promise<void>
 } {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingDraft, setEditingDraft] = useState('')
@@ -63,11 +69,11 @@ export function useConversationActions(options: ConversationActionsOptions): {
     []
   )
 
-  const rewindConversation = async (message: Message, updatedContent?: string): Promise<void> => {
-    if (!options.conversationId || !options.selectedModel) return
-    const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
-    if (targetIndex < 0) return
-
+  /**
+   * Returns the project's files to how they were before the message at this index: back to the
+   * last earlier History point, or, with none, to before the first one after it.
+   */
+  const restoreFilesBefore = async (targetIndex: number): Promise<void> => {
     if (options.workspaceFolder) {
       const priorHash = options.messages
         .slice(0, targetIndex)
@@ -117,6 +123,14 @@ export function useConversationActions(options: ConversationActionsOptions): {
         }
       }
     }
+  }
+
+  const rewindConversation = async (message: Message, updatedContent?: string): Promise<void> => {
+    if (!options.conversationId || !options.selectedModel) return
+    const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
+    if (targetIndex < 0) return
+
+    await restoreFilesBefore(targetIndex)
 
     const trimmedContent = updatedContent?.trim()
     if (updatedContent !== undefined && !trimmedContent) return
@@ -183,6 +197,33 @@ export function useConversationActions(options: ConversationActionsOptions): {
           .slice(targetIndex + 1)
           .some((candidate) => candidate.startsGoal === true)
       }
+    )
+  }
+
+  /**
+   * Goes back to before a message without answering again: the message and everything after it
+   * leave the conversation, SideKick's file changes since then are undone when asked, and the
+   * message returns to the message box to change or send.
+   */
+  const rewindToMessage = async (message: Message, restoreFiles: boolean): Promise<void> => {
+    if (!options.conversationId) return
+    const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
+    if (targetIndex < 0) return
+    if (restoreFiles) await restoreFilesBefore(targetIndex)
+    const previous = options.messages[targetIndex - 1]
+    try {
+      await window.api.conversations.deleteMessagesAfter(
+        options.conversationId,
+        previous ? previous.timestamp : message.timestamp - 1
+      )
+    } catch (error) {
+      console.error('[Rewind] The rewound messages could not be cleared:', error)
+      return
+    }
+    options.setMessages(options.messages.slice(0, targetIndex))
+    await options.restoreDraft?.(
+      message,
+      options.messages.slice(targetIndex).some((candidate) => candidate.startsGoal === true)
     )
   }
 
@@ -278,6 +319,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
       void rewindConversation(message, editingDraft)
     },
     copyMessage,
+    rewindToMessage,
     requestCheckpointRestore: setPendingCheckpointRestore,
     cancelCheckpointRestore: () => setPendingCheckpointRestore(null),
     confirmCheckpointRestore,

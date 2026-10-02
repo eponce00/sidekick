@@ -19,7 +19,8 @@ import {
   FolderOpen,
   MessageSquareText,
   CornerDownRight,
-  Play
+  Play,
+  Undo2
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
 import {
@@ -631,6 +632,8 @@ interface MessageItemProps {
   /** Continues this interrupted reply; passed only while it can still be continued. */
   onContinueRun?: (msg: Message) => void | Promise<void>
   onForkMessage?: (messageId: string) => void
+  /** Goes back to before this message and returns it to the message box; absent while running. */
+  onRewindMessage?: (message: Message, restoreFiles: boolean) => void
   onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
@@ -665,6 +668,7 @@ function MessageItemInner({
   onRetryMessage,
   onContinueRun,
   onForkMessage,
+  onRewindMessage,
   onSetEditingContent,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
@@ -1409,6 +1413,30 @@ function MessageItemInner({
                           <GitBranch size={13} />
                         </button>
                       )}
+                      {onRewindMessage && (
+                        <MessageFooterPopover
+                          className="message-rewind"
+                          cardClassName="message-rewind-card"
+                          summaryClassName="message-action icon"
+                          chevron={false}
+                          title="Rewind to before this message"
+                          label={<Undo2 size={13} aria-label="Rewind to here" />}
+                        >
+                          <strong>Rewind to before this message</strong>
+                          <p>
+                            This message and everything after it leave the chat, and the message
+                            goes back into the box to change or send.
+                          </p>
+                          <div className="message-rewind-actions">
+                            <button type="button" onClick={() => onRewindMessage(msg, true)}>
+                              Rewind chat and files
+                            </button>
+                            <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                              Chat only
+                            </button>
+                          </div>
+                        </MessageFooterPopover>
+                      )}
                     </>
                   )}
                 </>
@@ -1480,6 +1508,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   if (prev.isLoading !== next.isLoading) return false
   if (prev.readOnly !== next.readOnly) return false
   if (prev.onForkMessage !== next.onForkMessage) return false
+  if (prev.onRewindMessage !== next.onRewindMessage) return false
   if (prev.onContinueRun !== next.onContinueRun) return false
   // Re-render if this message is being edited or stopped being edited
   if (

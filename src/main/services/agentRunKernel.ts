@@ -1281,7 +1281,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
     try {
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
-      await preloadReads(input.preloadReads)
+      if (input.preloadReads?.length) await preloadReads(input.preloadReads)
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
         const steered = this.applySteers(input.id)

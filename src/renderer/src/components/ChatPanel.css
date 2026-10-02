@@ -801,7 +801,7 @@
 .message:focus-within .message-meta,
 .message-editing .message-meta,
 .message-meta:has(.read-aloud.is-reading),
-.message-meta:has(.message-verification[open]),
+.message-meta:has(.message-footer-popover[open]),
 /* A failed check is news, not a detail to find on hover. */
 .message-meta:has(.message-verification.is-failed) {
   opacity: 1;
@@ -1368,6 +1368,61 @@ body[data-theme='light'] .message-user .message-action:hover {
   max-width: min(420px, 80vw);
   gap: 5px;
   padding: 8px 10px;
+}
+
+/* The rewind item is one of the message's icon buttons, opening a card of choices. */
+.message-footer-popover.message-rewind > summary {
+  margin: 0;
+  padding: 0;
+}
+
+.message-footer-popover.message-rewind[open] > summary {
+  background: var(--surface-3);
+  color: var(--text-primary);
+  opacity: 1;
+}
+
+.message-rewind-card {
+  width: min(320px, calc(100vw - 48px));
+  gap: 8px;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.message-rewind-card strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.message-rewind-card p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.message-rewind-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.message-rewind-actions button {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.message-rewind-actions button:first-child {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.message-rewind-actions button:hover {
+  color: var(--text-primary);
 }
 
 .message-verification > summary {

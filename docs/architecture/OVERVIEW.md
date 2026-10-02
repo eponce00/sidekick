@@ -178,6 +178,7 @@ accepted, so the evidence is gathered before the goal closes rather than questio
 Every normal conversation, research run, collaboration participant, and child agent executes in the trusted main process through one runtime:
 
 - `AgentRunKernel` owns provider streaming, transcript repair, the model → tool → continuation loop, cancellation, permission/question suspension, tool-limit continuation, and context-compaction boundaries.
+- Before the first model turn, the kernel reads up to four project files the user attached through the ordinary `read` tool and records them as calls the model made. The model starts from their contents, the reads register the receipts its edits need, and the renderer shows them as normal tool rows.
 - `AgentRunStore` persists the append-only run/event ledger, typed phases, parent/child identity, pending interactions, and run todos.
 - `AgentToolRuntime` builds capability-filtered sessions from the shared catalog and dispatches bounded workspace reads, transactional mutations, foreground/background commands, wait, web, MCP, skills, artifacts, todos, subagents, collaboration tools, and retained tool output.
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
