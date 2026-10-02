@@ -210,7 +210,7 @@ describe('TurnChangeReview length', () => {
     const rows = (): number => container.querySelectorAll('.turn-change-file').length
     const more = container.querySelector('.turn-change-review-more') as HTMLButtonElement
     expect(rows()).toBe(4)
-    expect(container.textContent).toContain('17 files changed')
+    expect(container.textContent).toContain('Created 17 files')
     expect(more.textContent).toBe('Show 13 more files')
     // The folder is set apart so the file name reads first.
     expect(container.querySelector('.turn-change-file-dir')?.textContent).toBe('web/src/')
@@ -218,6 +218,69 @@ describe('TurnChangeReview length', () => {
     await act(async () => more.click())
     expect(rows()).toBe(17)
     expect(more.textContent).toBe('Show fewer files')
+
+    await act(async () => root.unmount())
+    container.remove()
+  })
+})
+
+describe('TurnChangeReview actions', () => {
+  it('opens every diff from the header and undoes the response from the card', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    const onUndo = vi.fn()
+    const segments: ContentSegment[] = [
+      {
+        type: 'tool',
+        tool: {
+          id: 'edit',
+          title: 'Edit',
+          command: 'apply_patch',
+          status: 'success',
+          changes: [
+            { path: 'src/a.ts', kind: 'update' },
+            { path: 'src/b.ts', kind: 'update' }
+          ],
+          data: {
+            diff: [
+              'diff --git a/src/a.ts b/src/a.ts',
+              '--- a/src/a.ts',
+              '+++ b/src/a.ts',
+              '@@ -1 +1 @@',
+              '-old',
+              '+new',
+              'diff --git a/src/b.ts b/src/b.ts',
+              '--- a/src/b.ts',
+              '+++ b/src/b.ts',
+              '@@ -1 +1 @@',
+              '-old',
+              '+new'
+            ].join('\n')
+          }
+        }
+      }
+    ]
+    const render = (undone: boolean): Promise<void> =>
+      act(async () =>
+        root.render(<TurnChangeReview segments={segments} undo={{ onUndo, undone }} />)
+      )
+    await render(false)
+
+    const button = (label: string): HTMLButtonElement =>
+      [...container.querySelectorAll('button')].find((item) =>
+        item.textContent?.startsWith(label)
+      ) as HTMLButtonElement
+    expect(container.textContent).toContain('Edited 2 files')
+    await act(async () => button('View changes').click())
+    expect(container.querySelectorAll('.rich-diff-block')).toHaveLength(2)
+    await act(async () => button('Hide changes').click())
+    expect(container.querySelectorAll('.rich-diff-block')).toHaveLength(0)
+
+    await act(async () => button('Undo').click())
+    expect(onUndo).toHaveBeenCalledTimes(1)
+    await render(true)
+    expect(button('Undone').disabled).toBe(true)
 
     await act(async () => root.unmount())
     container.remove()

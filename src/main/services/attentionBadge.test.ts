@@ -5,58 +5,63 @@ const electron = vi.hoisted(() => {
   return {
     window,
     app: { dock: { setBadge: vi.fn() }, setBadgeCount: vi.fn() },
-    createFromBitmap: vi.fn((buffer: Buffer) => ({ buffer }))
+    image: { addRepresentation: vi.fn() },
+    createEmpty: vi.fn()
   }
 })
 
 vi.mock('electron', () => ({
   app: electron.app,
   BrowserWindow: { getAllWindows: () => [electron.window] },
-  nativeImage: { createFromBitmap: electron.createFromBitmap }
+  nativeImage: { createEmpty: electron.createEmpty }
 }))
 
-import {
-  applyAttentionBadge,
-  attentionBadgeBitmap,
-  attentionBadgeLabel,
-  refreshAttentionBadge
-} from './attentionBadge'
+import { applyAttentionBadge, attentionDotBitmap, refreshAttentionBadge } from './attentionBadge'
 
-function pixel(buffer: Buffer, x: number, y: number): number[] {
-  const offset = (y * 32 + x) * 4
+function pixel(buffer: Buffer, size: number, x: number, y: number): number[] {
+  const offset = (y * size + x) * 4
   return [...buffer.subarray(offset, offset + 4)]
 }
 
 describe('attention badge', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    electron.createEmpty.mockReturnValue(electron.image)
     applyAttentionBadge(0, 'linux')
     vi.clearAllMocks()
+    electron.createEmpty.mockReturnValue(electron.image)
   })
 
-  it('caps the label at 9+', () => {
-    expect(attentionBadgeLabel(3)).toBe('3')
-    expect(attentionBadgeLabel(10)).toBe('9+')
+  it('draws a small accent dot in a dark ring with smooth, transparent edges', () => {
+    const size = 48
+    const bitmap = attentionDotBitmap(size)
+    expect(bitmap).toHaveLength(size * size * 4)
+    expect(pixel(bitmap, size, 0, 0)[3]).toBe(0)
+    expect(pixel(bitmap, size, size - 1, size - 1)[3]).toBe(0)
+    // The accent at the centre, the ring just inside the edge, and partial coverage at the edge.
+    expect(pixel(bitmap, size, 24, 24)).toEqual([0xbd, 0xd4, 0x3b, 255])
+    expect(pixel(bitmap, size, 24, 7)).toEqual([0x14, 0x11, 0x0f, 255])
+    const edgeAlphas = Array.from({ length: size }, (_, x) => pixel(bitmap, size, x, 24)[3])
+    expect(edgeAlphas.some((alpha) => alpha > 0 && alpha < 255)).toBe(true)
   })
 
-  it('draws a disc with a light glyph and transparent corners', () => {
-    const bitmap = attentionBadgeBitmap(1)
-    expect(bitmap).toHaveLength(32 * 32 * 4)
-    expect(pixel(bitmap, 0, 0)[3]).toBe(0)
-    expect(pixel(bitmap, 4, 16)[3]).toBe(255)
-    // The top of the "1" sits in the middle column of the glyph.
-    expect(pixel(bitmap, 16, 7)).toEqual([255, 255, 255, 255])
-  })
-
-  it('sets and clears a Windows taskbar overlay', () => {
+  it('sets a Windows overlay drawn for every display scale, and clears it', () => {
     applyAttentionBadge(2, 'win32')
-    expect(electron.createFromBitmap).toHaveBeenCalledWith(expect.any(Buffer), {
-      width: 32,
-      height: 32,
-      scaleFactor: 2
-    })
+    const sizes = electron.image.addRepresentation.mock.calls.map(([options]) => [
+      options.scaleFactor,
+      options.width
+    ])
+    expect(sizes).toEqual([
+      [1, 16],
+      [1.25, 20],
+      [1.5, 24],
+      [2, 32],
+      [2.5, 40],
+      [3, 48],
+      [4, 64]
+    ])
     expect(electron.window.setOverlayIcon).toHaveBeenLastCalledWith(
-      expect.anything(),
+      electron.image,
       '2 conversations are waiting for you'
     )
     applyAttentionBadge(0, 'win32')

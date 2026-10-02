@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronRight, ExternalLink, Files } from 'lucide-react'
+import { ChevronDown, ExternalLink, FileDiff, Undo2 } from 'lucide-react'
 import type { ContentSegment, ToolExecution } from '../types/chat.types'
 import { changedFilesFromSegments } from '../utils/turnChanges'
 import { useReviewCommentSink } from '../hooks/useReviewCommentSink'
@@ -9,12 +9,21 @@ import './TurnChangeReview.css'
 /** A long change list shows this many files until it is expanded, so the answer stays in view. */
 const COLLAPSED_FILE_COUNT = 4
 
+/** Undoing the file changes of the response the card belongs to. */
+export interface TurnChangeUndo {
+  onUndo: () => void
+  undone: boolean
+  disabled?: boolean
+}
+
 export function TurnChangeReview({
   segments,
-  workspaceRoot
+  workspaceRoot,
+  undo
 }: {
   segments: readonly ContentSegment[]
   workspaceRoot?: string | null
+  undo?: TurnChangeUndo
 }): React.JSX.Element | null {
   const files = useMemo(() => changedFilesFromSegments(segments), [segments])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -23,26 +32,73 @@ export function TurnChangeReview({
   if (!files.length) return null
   const additions = files.reduce((total, file) => total + file.additions, 0)
   const deletions = files.reduce((total, file) => total + file.deletions, 0)
+  const verb = files.every((file) => file.kind === 'create') ? 'Created' : 'Edited'
+  const withDiffs = files.filter((file) => file.diff)
+  const allOpen = withDiffs.length > 0 && withDiffs.every((file) => expanded.has(file.path))
+  const visible = showAll ? files : files.slice(0, COLLAPSED_FILE_COUNT)
+  const hidden = files.length - visible.length
 
-  const openPath = (path: string): void => {
-    if (!workspaceRoot) return
-    void window.api.workspace.openFile(path, workspaceRoot)
-  }
+  const toggle = (path: string): void =>
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
 
   return (
     <section className="turn-change-review" aria-label="Files changed in this response">
       <div className="turn-change-review-header">
-        <span>
-          <Files size={14} /> {files.length} {files.length === 1 ? 'file' : 'files'} changed
+        <span className="turn-change-review-icon" aria-hidden="true">
+          <FileDiff size={16} />
         </span>
-        <span className="turn-change-review-stats">
-          <strong>+{additions}</strong>
-          <em>−{deletions}</em>
+        <span className="turn-change-review-title">
+          <strong>
+            {verb} {files.length} {files.length === 1 ? 'file' : 'files'}
+          </strong>
+          <span className="turn-change-review-stats">
+            <span className="is-add">+{additions}</span>
+            <span className="is-delete">−{deletions}</span>
+          </span>
+        </span>
+        <span className="turn-change-review-actions">
+          {undo && (
+            <button
+              type="button"
+              className="turn-change-review-undo"
+              onClick={undo.onUndo}
+              disabled={undo.disabled || undo.undone}
+              title={
+                undo.undone ? 'These changes are undone' : 'Undo the file changes of this response'
+              }
+            >
+              {undo.undone ? 'Undone' : 'Undo'}
+              <Undo2 size={14} aria-hidden="true" />
+            </button>
+          )}
+          {withDiffs.length > 0 && (
+            <button
+              type="button"
+              className="turn-change-review-view"
+              aria-expanded={allOpen}
+              onClick={() => {
+                if (allOpen) {
+                  setExpanded(new Set())
+                  return
+                }
+                setShowAll(true)
+                setExpanded(new Set(withDiffs.map((file) => file.path)))
+              }}
+            >
+              {allOpen ? 'Hide changes' : 'View changes'}
+            </button>
+          )}
         </span>
       </div>
       <div className="turn-change-review-files">
-        {(showAll ? files : files.slice(0, COLLAPSED_FILE_COUNT)).map((file) => {
+        {visible.map((file) => {
           const open = expanded.has(file.path)
+          const slash = file.path.lastIndexOf('/')
           const syntheticTool: ToolExecution = {
             id: `review:${file.path}`,
             title: file.path,
@@ -64,41 +120,37 @@ export function TurnChangeReview({
                 <button
                   type="button"
                   className="turn-change-file-toggle"
-                  onClick={() =>
-                    setExpanded((current) => {
-                      const next = new Set(current)
-                      if (next.has(file.path)) next.delete(file.path)
-                      else next.add(file.path)
-                      return next
-                    })
-                  }
-                  aria-expanded={open}
+                  onClick={() => file.diff && toggle(file.path)}
+                  aria-expanded={file.diff ? open : undefined}
+                  title={file.path}
                 >
-                  <ChevronRight size={13} className={open ? 'expanded' : ''} />
-                  <span className="turn-change-file-path" title={file.path}>
-                    {file.path.includes('/') && (
-                      <span className="turn-change-file-dir">
-                        {file.path.slice(0, file.path.lastIndexOf('/') + 1)}
-                      </span>
+                  <span className="turn-change-file-path">
+                    {slash >= 0 && (
+                      <span className="turn-change-file-dir">{file.path.slice(0, slash + 1)}</span>
                     )}
-                    {file.path.slice(file.path.lastIndexOf('/') + 1)}
+                    <span className="turn-change-file-name">{file.path.slice(slash + 1)}</span>
                   </span>
-                  <span className={`turn-change-kind is-${file.kind}`}>{file.kind}</span>
+                  {file.kind !== 'update' && (
+                    <span className={`turn-change-kind is-${file.kind}`}>
+                      {file.kind === 'create' ? 'new' : file.kind}
+                    </span>
+                  )}
                 </button>
-                <span className="turn-change-file-stats">
-                  {file.additions > 0 && <strong>+{file.additions}</strong>}
-                  {file.deletions > 0 && <em>−{file.deletions}</em>}
-                </span>
                 {workspaceRoot && (
                   <button
                     type="button"
                     className="turn-change-open"
-                    onClick={() => openPath(file.path)}
+                    onClick={() => void window.api.workspace.openFile(file.path, workspaceRoot)}
                     aria-label={`Open ${file.path}`}
+                    title="Open file"
                   >
                     <ExternalLink size={12} />
                   </button>
                 )}
+                <span className="turn-change-file-stats">
+                  <span className="is-add">+{file.additions}</span>
+                  <span className="is-delete">−{file.deletions}</span>
+                </span>
               </div>
               {open && file.diff && (
                 <RichDiffBlock
@@ -122,11 +174,8 @@ export function TurnChangeReview({
           aria-expanded={showAll}
           onClick={() => setShowAll((value) => !value)}
         >
-          {showAll
-            ? 'Show fewer files'
-            : `Show ${files.length - COLLAPSED_FILE_COUNT} more ${
-                files.length - COLLAPSED_FILE_COUNT === 1 ? 'file' : 'files'
-              }`}
+          {showAll ? 'Show fewer files' : `Show ${hidden} more ${hidden === 1 ? 'file' : 'files'}`}
+          <ChevronDown size={14} aria-hidden="true" className={showAll ? 'is-open' : ''} />
         </button>
       )}
     </section>

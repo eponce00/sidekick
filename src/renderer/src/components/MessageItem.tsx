@@ -1,4 +1,4 @@
-import { Children, useState, useRef, useEffect, useLayoutEffect, memo } from 'react'
+import { Children, useState, useRef, useEffect, useLayoutEffect, memo, useMemo } from 'react'
 import {
   Loader2,
   Check,
@@ -33,6 +33,7 @@ import Artifact from './artifacts/Artifact'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
+import { changedFilesFromSegments } from '../utils/turnChanges'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
@@ -508,6 +509,7 @@ function AgentWorkDisclosure({
   segments,
   awaitingFirstOutput = false,
   showDuration = true,
+  live = false,
   runId: _runId
 }: {
   messageId: string
@@ -519,9 +521,11 @@ function AgentWorkDisclosure({
   awaitingFirstOutput?: boolean
   /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
   showDuration?: boolean
+  /** The work in progress at the end of a running reply: shows its current step on one line. */
+  live?: boolean
   runId?: string
 }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(isLoading)
+  const [expanded, setExpanded] = useState(false)
   const [showEarlier, setShowEarlier] = useState(false)
   const [now, setNow] = useState(Date.now)
 
@@ -549,6 +553,16 @@ function AgentWorkDisclosure({
       ? `${durationLabel} · ${activityLabel}`
       : durationLabel
   const contentId = `${messageId}-agent-work`
+  // The newest step, replaced by the next as the agent works; the whole list is one click away.
+  const currentIndex =
+    live && !expanded && segments
+      ? segments.findLastIndex(
+          (segment) =>
+            (segment.type === 'tool' && segment.tool) ||
+            (segment.type === 'thinking' && segment.content?.trim())
+        )
+      : -1
+  const current = currentIndex >= 0 ? segments![currentIndex] : undefined
 
   return (
     <div className={`agent-work-disclosure ${isLoading ? 'is-working' : 'is-complete'}`}>
@@ -562,6 +576,22 @@ function AgentWorkDisclosure({
         <span>{label}</span>
         <ChevronRight size={12} className={expanded ? 'expanded' : ''} aria-hidden="true" />
       </button>
+      {current && (
+        <div
+          key={currentIndex}
+          className="agent-work-live"
+          role="status"
+          onClick={() => setExpanded(true)}
+        >
+          {current.type === 'tool' && current.tool ? (
+            <ToolCallRow tool={current.tool} />
+          ) : (
+            <span className="agent-work-live-thinking">
+              {thinkingPreview(current.content ?? '')}
+            </span>
+          )}
+        </div>
+      )}
       {expanded && children && (
         <div id={contentId} className="agent-work-content">
           {(() => {
@@ -687,6 +717,17 @@ function MessageItemInner({
     msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
   const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
+  const canUndoChanges = Boolean(
+    !readOnly &&
+    msg.checkpointHash &&
+    msg.checkpointWorkspaceRoot === workspaceFolder &&
+    onUndoCheckpoint
+  )
+  // The changed-files card carries Undo itself; the footer keeps it only for replies without one.
+  const hasChangeReview = useMemo(
+    () => changedFilesFromSegments(msg.segments ?? []).length > 0,
+    [msg.segments]
+  )
   const verificationSegment = msg.segments?.findLast(
     (segment) => segment.type === 'verification' && segment.verification
   )
@@ -1115,6 +1156,15 @@ function MessageItemInner({
                     key={`${msg.id}:change-review`}
                     segments={msg.segments || []}
                     workspaceRoot={workspaceFolder}
+                    undo={
+                      canUndoChanges
+                        ? {
+                            onUndo: () => onUndoCheckpoint!(msg.checkpointHash!),
+                            undone: msg.restoredFrom === msg.checkpointHash,
+                            disabled: isLoading
+                          }
+                        : undefined
+                    }
                   />
                 )
                 changeReviewRendered = true
@@ -1146,6 +1196,7 @@ function MessageItemInner({
                     completedAt={workCompletedAt}
                     segments={blockSegments}
                     showDuration={blockIndex === timedBlock}
+                    live={isLoading && blockIndex === blocks.length - 1}
                     runId={msg.runId}
                   >
                     {block.groups.map(({ groupIndex }) => renderedGroups[groupIndex])}
@@ -1467,29 +1518,26 @@ function MessageItemInner({
                   <GitBranch size={13} />
                 </button>
               )}
-              {!readOnly &&
-                msg.checkpointHash &&
-                msg.checkpointWorkspaceRoot === workspaceFolder &&
-                onUndoCheckpoint && (
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={() => onUndoCheckpoint(msg.checkpointHash!)}
-                    title={
-                      msg.restoredFrom === msg.checkpointHash
-                        ? 'Changes already undone'
-                        : 'Undo file changes from this response'
-                    }
-                    aria-label={
-                      msg.restoredFrom === msg.checkpointHash
-                        ? 'Changes already undone'
-                        : 'Undo file changes'
-                    }
-                    disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
-                  >
-                    <RotateCcw size={13} />
-                  </button>
-                )}
+              {canUndoChanges && !hasChangeReview && (
+                <button
+                  type="button"
+                  className="message-action icon"
+                  onClick={() => onUndoCheckpoint?.(msg.checkpointHash!)}
+                  title={
+                    msg.restoredFrom === msg.checkpointHash
+                      ? 'Changes already undone'
+                      : 'Undo file changes from this response'
+                  }
+                  aria-label={
+                    msg.restoredFrom === msg.checkpointHash
+                      ? 'Changes already undone'
+                      : 'Undo file changes'
+                  }
+                  disabled={isLoading || msg.restoredFrom === msg.checkpointHash}
+                >
+                  <RotateCcw size={13} />
+                </button>
+              )}
             </div>
           )}
         </div>
