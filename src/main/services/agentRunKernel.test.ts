@@ -106,6 +106,42 @@ describe('AgentRunKernel', () => {
     ])
   })
 
+  it('reads the files the user named before the first model turn', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, workspaceRoot: '/project' }
+    const router = {
+      execute: vi.fn(async (_name: string, args: Record<string, unknown>) => ({
+        content: `1: contents of ${String(args.path)}`
+      }))
+    }
+    const sampler = sampledTurn({ content: 'Tightened it.' })
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start({
+      ...input(router),
+      workspaceRoot: '/project',
+      preloadReads: ['site/index.html', 'site/index.html', 'notes.md']
+    })
+
+    expect(result.phase).toBe('completed')
+    expect(router.execute.mock.calls.map(([name, args]) => [name, args])).toEqual([
+      ['read', { path: 'site/index.html' }],
+      ['read', { path: 'notes.md' }]
+    ])
+    // The model's first turn already holds both reads, as calls it made and their results.
+    const firstRequest = vi.mocked(sampler).mock.calls[0][0]
+    const toolResults = firstRequest.messages.filter((message) => message.role === 'tool')
+    expect(toolResults.map((message) => message.content)).toEqual([
+      expect.stringContaining('contents of site/index.html'),
+      expect.stringContaining('contents of notes.md')
+    ])
+    expect(
+      store
+        .listEvents('run-1')
+        .filter((event) => event.type === 'tool.completed')
+        .map((event) => event.payload.name)
+    ).toEqual(['read', 'read'])
+  })
+
   it('executes a synchronously approved hook once despite a throwing resolution observer', async () => {
     const router = { execute: vi.fn(async () => ({ content: 'hook complete' })) }
     const sampler = sampledTurn({ content: 'Ready' })

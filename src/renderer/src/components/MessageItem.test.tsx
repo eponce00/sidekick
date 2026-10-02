@@ -1186,6 +1186,49 @@ describe('MessageItem shared-channel presentation', () => {
     )
   })
 
+  it('offers to rewind to before a message, with or without its file changes', async () => {
+    const rewind = vi.fn()
+    const message = { id: 'ask', role: 'user' as const, content: 'Tighten it', timestamp: 1_000 }
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={message}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onRewindMessage={rewind}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+
+    const item = container.querySelector('.message-rewind') as HTMLDetailsElement
+    expect(item.querySelector('summary')?.getAttribute('title')).toBe(
+      'Rewind to before this message'
+    )
+    const choice = (label: string): HTMLButtonElement =>
+      [...item.querySelectorAll('button')].find((button) => button.textContent === label)!
+    await act(async () => choice('Chat only').click())
+    await act(async () => choice('Rewind chat and files').click())
+    expect(rewind.mock.calls).toEqual([
+      [message, false],
+      [message, true]
+    ])
+  })
+
   it('updates the elapsed time while work is active', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(233_000)

@@ -78,6 +78,10 @@ interface ActivityPanelProps {
   /** Shows a tab when `at` changes, as when the command palette asks for the browser. */
   tabRequest?: { tab: ActivityTab; at: number } | null
   onActiveTabChange?: (tab: ActivityTab) => void
+  /** The widest the panel may render beside the chat; its preferred width is kept for later. */
+  maxWidth?: number
+  /** The width the user chose, so the layout can make room for it. */
+  onWidthChange?: (width: number) => void
 }
 
 function ActivityPanel({
@@ -94,7 +98,9 @@ function ActivityPanel({
   fastModelName,
   isAgentBusy = false,
   tabRequest = null,
-  onActiveTabChange
+  onActiveTabChange,
+  maxWidth,
+  onWidthChange
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
   const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
@@ -110,6 +116,14 @@ function ActivityPanel({
     storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
   )
   const [isResizing, setIsResizing] = useState(false)
+  const renderedWidth = Math.min(panelWidth, maxWidth ?? Number.POSITIVE_INFINITY)
+  const maxWidthRef = useRef(maxWidth)
+  maxWidthRef.current = maxWidth
+  const fitWidth = (width: number): number =>
+    Math.min(
+      clampActivityPanelWidth(width, window.innerWidth),
+      maxWidthRef.current ?? Number.POSITIVE_INFINITY
+    )
   const resizeStartRef = useRef({ x: 0, width: panelWidth })
   const [checkpoints, setCheckpoints] = useState<CheckpointHistoryItem[]>([])
   const [checkpointsLoading, setCheckpointsLoading] = useState(false)
@@ -135,7 +149,8 @@ function ActivityPanel({
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelWidth', String(panelWidth))
-  }, [panelWidth])
+    onWidthChange?.(panelWidth)
+  }, [panelWidth, onWidthChange])
 
   useEffect(() => {
     const clampToViewport = (): void => {
@@ -153,9 +168,7 @@ function ActivityPanel({
     document.body.style.userSelect = 'none'
     const move = (event: PointerEvent): void => {
       const delta = resizeStartRef.current.x - event.clientX
-      setPanelWidth(
-        clampActivityPanelWidth(resizeStartRef.current.width + delta, window.innerWidth)
-      )
+      setPanelWidth(fitWidth(resizeStartRef.current.width + delta))
     }
     const stop = (): void => setIsResizing(false)
     window.addEventListener('pointermove', move)
@@ -185,7 +198,7 @@ function ActivityPanel({
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (!isPinned || event.button !== 0) return
-    resizeStartRef.current = { x: event.clientX, width: panelWidth }
+    resizeStartRef.current = { x: event.clientX, width: renderedWidth }
     setIsResizing(true)
     event.preventDefault()
   }
@@ -194,22 +207,18 @@ function ActivityPanel({
     if (!isPinned) return
     const step = event.shiftKey ? 50 : 20
     let next: number | undefined
-    if (event.key === 'ArrowLeft') next = panelWidth + step
-    else if (event.key === 'ArrowRight') next = panelWidth - step
+    if (event.key === 'ArrowLeft') next = renderedWidth + step
+    else if (event.key === 'ArrowRight') next = renderedWidth - step
     else if (event.key === 'Home') next = ACTIVITY_PANEL_MIN_WIDTH
-    else if (event.key === 'End') next = activityPanelMaximumWidth(window.innerWidth)
+    else if (event.key === 'End') next = maxWidth ?? activityPanelMaximumWidth(window.innerWidth)
     if (next === undefined) return
     event.preventDefault()
-    setPanelWidth(clampActivityPanelWidth(next, window.innerWidth))
+    setPanelWidth(fitWidth(next))
   }
 
   const toggleWidePanel = (): void => {
-    const wide = clampActivityPanelWidth(ACTIVITY_PANEL_WIDE_WIDTH, window.innerWidth)
-    setPanelWidth((current) =>
-      current >= wide - 20
-        ? clampActivityPanelWidth(ACTIVITY_PANEL_DEFAULT_WIDTH, window.innerWidth)
-        : wide
-    )
+    const wide = fitWidth(ACTIVITY_PANEL_WIDE_WIDTH)
+    setPanelWidth(renderedWidth >= wide - 20 ? fitWidth(ACTIVITY_PANEL_DEFAULT_WIDTH) : wide)
   }
 
   const openCollapsedTab = (tab: ActivityTab): void => {
@@ -559,7 +568,7 @@ function ActivityPanel({
       )}
       <aside
         className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
-        style={isPinned ? { width: panelWidth, minWidth: panelWidth } : undefined}
+        style={isPinned ? { width: renderedWidth, minWidth: renderedWidth } : undefined}
       >
         {isPinned && (
           <div
@@ -568,8 +577,8 @@ function ActivityPanel({
             aria-label="Resize workspace inspector"
             aria-orientation="vertical"
             aria-valuemin={ACTIVITY_PANEL_MIN_WIDTH}
-            aria-valuemax={activityPanelMaximumWidth(window.innerWidth)}
-            aria-valuenow={panelWidth}
+            aria-valuemax={maxWidth ?? activityPanelMaximumWidth(window.innerWidth)}
+            aria-valuenow={renderedWidth}
             tabIndex={0}
             onPointerDown={beginResize}
             onKeyDown={resizeFromKeyboard}
@@ -883,7 +892,7 @@ function ActivityPanel({
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
-                isWide={panelWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
+                isWide={renderedWidth >= ACTIVITY_PANEL_WIDE_WIDTH - 20}
                 onToggleWidth={toggleWidePanel}
               />
             </div>

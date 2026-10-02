@@ -9,14 +9,19 @@ import { ChevronDown } from 'lucide-react'
 export function MessageFooterPopover({
   className,
   cardClassName,
+  summaryClassName,
   title,
   label,
+  chevron = true,
   children
 }: {
   className: string
   cardClassName: string
+  /** Lets the item look like its neighbours, such as the message's icon buttons. */
+  summaryClassName?: string
   title: string
   label: React.ReactNode
+  chevron?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   const detailsRef = useRef<HTMLDetailsElement>(null)
@@ -60,9 +65,9 @@ export function MessageFooterPopover({
       className={`message-footer-popover ${className}`}
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary title={title}>
+      <summary title={title} className={summaryClassName}>
         {label}
-        <ChevronDown size={10} aria-hidden="true" />
+        {chevron && <ChevronDown size={10} aria-hidden="true" />}
       </summary>
       <div ref={cardRef} className={`message-footer-popover-card ${cardClassName}`}>
         {children}

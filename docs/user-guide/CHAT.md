@@ -54,8 +54,23 @@ of its report.
 - **Comments on changes:** in a reply's file changes, click a line number (shift-click to extend
   the range) and write a comment. It is attached to your next message as a card, with the file,
   the lines, and the quoted change, for the agent to act on.
+- **Files:** type `@` to pick a project file. Its path goes into the message and the file is
+  attached. Attached files, up to four per message, are read before the agent starts, so its first
+  step already has their contents; the reads show in the reply like any other.
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
-  goal.
+  goal, and for your saved prompts.
+- **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,
+  is offered as `/` followed by its file name. A `description:` line in a leading `---` block
+  describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
+  the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
+
+## Going back
+
+- **Rewind to here** on a message you sent goes back to before it without asking again: the
+  message and everything after it leave the chat, and the message returns to the box to change or
+  send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
+  [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
+- **Edit** and **Retry** on a message do the same, then ask again at once.
 
 ## After an interruption
 

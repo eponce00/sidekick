@@ -1,5 +1,6 @@
 import React from 'react'
 import {
+  AtSign,
   Brain,
   Check,
   Command,
@@ -48,6 +49,12 @@ import {
   type PromptHistoryEntry,
   type PromptHistoryPosition
 } from '../utils/composerPromptHistory'
+import {
+  activeFileMentionAtCursor,
+  insertFileMention,
+  rankFileMentions
+} from '../utils/fileMentions'
+import { SAVED_PROMPT_ARGUMENTS, type SavedPrompt } from '../../../shared/savedPrompts'
 import './ChatInput.css'
 
 interface FeatureMenuActionProps {
@@ -163,6 +170,8 @@ interface ChatInputProps {
   onInputChange: (value: string) => void
   onAddImageFiles: (files: File[]) => void
   onAddContextAttachments: () => void
+  /** Attaches a project file named with `@` in the message, so it is read before the reply. */
+  onAddFileMention?: (relativePath: string) => void
   onAddPastedText: (text: string) => void
   onInsertPastedText: (id: string) => void
   onRemoveImage: (id: string) => void
@@ -276,7 +285,8 @@ export function ChatInput({
   promptRefinementHistory,
   getPromptHistory,
   showScrollToBottom = false,
-  onScrollToBottom = () => undefined
+  onScrollToBottom = () => undefined,
+  onAddFileMention
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
   // With voice on, the empty box says what the conversation is doing.
@@ -284,6 +294,14 @@ export function ChatInput({
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
+  const [savedPrompts, setSavedPrompts] = React.useState<SavedPrompt[]>([])
+  const [caret, setCaret] = React.useState(inputValue.length)
+  const [fileIndex, setFileIndex] = React.useState(0)
+  const [projectFiles, setProjectFiles] = React.useState<{ root: string; files: string[] } | null>(
+    null
+  )
+  // Escape closes the menu for the mention being typed; typing a new `@` opens it again.
+  const [dismissedMentionStart, setDismissedMentionStart] = React.useState<number | null>(null)
   const promptHistoryRef = React.useRef<PromptHistoryPosition | null>(null)
   const selectedPinnedModel = selectedModel
     ? pinnedModels.find((m) => m.id === selectedModel)
@@ -389,13 +407,106 @@ export function ChatInput({
   )
   const commandMatch = /^\/([^\s]*)$/.exec(inputValue)
   const commandQuery = commandMatch?.[1].toLowerCase() ?? ''
+  const commandMenuOpen = Boolean(commandMatch)
+  React.useEffect(() => {
+    if (!commandMenuOpen) return
+    let cancelled = false
+    // Read each time the menu opens, so a prompt saved a moment ago is offered.
+    void window.api.workspace.listPrompts(workspaceFolder).then((result) => {
+      if (!cancelled && result.ok) setSavedPrompts(result.prompts)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [commandMenuOpen, workspaceFolder])
+  // A selection to make once the box shows the text it belongs to; the text arrives a render later.
+  const pendingSelectionRef = React.useRef<{ value: string; start: number; end: number } | null>(
+    null
+  )
+  React.useLayoutEffect(() => {
+    const pending = pendingSelectionRef.current
+    const input = inputRef.current
+    if (!pending || !input || input.value !== pending.value) return
+    pendingSelectionRef.current = null
+    input.focus()
+    input.setSelectionRange(pending.start, pending.end)
+    setCaret(pending.end)
+  }, [inputValue, inputRef])
+  const applySavedPrompt = (prompt: SavedPrompt): void => {
+    // Typing replaces the arguments placeholder, so the prompt is filled in where it expects.
+    const at = prompt.body.indexOf(SAVED_PROMPT_ARGUMENTS)
+    pendingSelectionRef.current =
+      at >= 0
+        ? { value: prompt.body, start: at, end: at + SAVED_PROMPT_ARGUMENTS.length }
+        : { value: prompt.body, start: prompt.body.length, end: prompt.body.length }
+    onInputChange(prompt.body)
+  }
+  const allCommands = [
+    ...commands,
+    ...savedPrompts
+      .filter((prompt) => !commands.some((command) => command.id === prompt.name.toLowerCase()))
+      .map((prompt) => ({
+        id: prompt.name,
+        label: prompt.description || 'Saved prompt',
+        hint: prompt.location,
+        keywords: `saved prompt ${prompt.body.slice(0, 200)}`,
+        disabled: false,
+        run: () => applySavedPrompt(prompt)
+      }))
+  ]
   const visibleCommands = commandMatch
-    ? commands.filter((command) =>
+    ? allCommands.filter((command) =>
         `${command.id} ${command.label} ${command.keywords}`.toLowerCase().includes(commandQuery)
       )
     : []
 
   React.useEffect(() => setCommandIndex(0), [commandQuery])
+
+  // The caret also moves without typing, by arrow keys or a click.
+  React.useEffect(() => {
+    const onSelectionChange = (): void => {
+      const input = inputRef.current
+      if (input && document.activeElement === input) setCaret(input.selectionStart)
+    }
+    document.addEventListener('selectionchange', onSelectionChange)
+    return () => document.removeEventListener('selectionchange', onSelectionChange)
+  }, [inputRef])
+
+  const typedMention =
+    !commandMatch && workspaceFolder && onAddFileMention && !editingMessageId
+      ? activeFileMentionAtCursor(inputValue, Math.min(caret, inputValue.length))
+      : null
+  const fileMention =
+    typedMention && typedMention.start !== dismissedMentionStart ? typedMention : null
+  const mentionFiles = React.useMemo(
+    () =>
+      fileMention && projectFiles?.root === workspaceFolder
+        ? rankFileMentions(projectFiles.files, fileMention.query)
+        : [],
+    [fileMention, projectFiles, workspaceFolder]
+  )
+  const fileMentionActive = Boolean(fileMention)
+  React.useEffect(() => {
+    if (!fileMentionActive || !workspaceFolder) return
+    let cancelled = false
+    // Listed each time the menu opens, so files made since the last mention appear.
+    void window.api.workspace.listFiles(workspaceFolder).then((result) => {
+      if (!cancelled && result.ok) setProjectFiles({ root: workspaceFolder, files: result.files })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [fileMentionActive, workspaceFolder])
+  React.useEffect(() => setFileIndex(0), [fileMention?.query])
+
+  const chooseFile = (index: number): void => {
+    const path = mentionFiles[index]
+    if (!path || !fileMention || !onAddFileMention) return
+    const next = insertFileMention(inputValue, fileMention, caret, path)
+    pendingSelectionRef.current = { value: next.value, start: next.caret, end: next.caret }
+    onInputChange(next.value)
+    onAddFileMention(path)
+  }
 
   const runCommand = (index: number): void => {
     const command = visibleCommands[index]
@@ -464,6 +575,24 @@ export function ChatInput({
         runCommand(commandIndex)
         return
       }
+    }
+    if (fileMention && mentionFiles.length) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault()
+        const step = event.key === 'ArrowDown' ? 1 : -1
+        setFileIndex((current) => (current + step + mentionFiles.length) % mentionFiles.length)
+        return
+      }
+      if ((event.key === 'Enter' && !event.shiftKey) || event.key === 'Tab') {
+        event.preventDefault()
+        chooseFile(fileIndex)
+        return
+      }
+    }
+    if (fileMention && event.key === 'Escape') {
+      event.preventDefault()
+      setDismissedMentionStart(fileMention.start)
+      return
     }
     if (commandMatch && event.key === 'Escape') {
       event.preventDefault()
@@ -627,7 +756,10 @@ export function ChatInput({
             }
           : undefined
       }
-      onChange={onInputChange}
+      onChange={(value) => {
+        onInputChange(value)
+        setCaret(inputRef.current?.selectionStart ?? value.length)
+      }}
       onKeyDown={handleComposerKeyDown}
       onPaste={(event) => {
         const plainPaste = plainPasteRef.current
@@ -676,14 +808,58 @@ export function ChatInput({
               <div className="composer-command-empty">No matching commands</div>
             )}
           </div>
+        ) : fileMention ? (
+          <div
+            className="composer-command-menu is-files"
+            id="composer-file-menu"
+            role="listbox"
+            aria-label="Project files"
+            onMouseDown={(event) => event.preventDefault()}
+          >
+            <div className="composer-command-header">
+              <AtSign size={12} aria-hidden="true" /> Files · read before the reply
+              <span>↑↓ navigate · Enter attach · Esc close</span>
+            </div>
+            {mentionFiles.map((path, index) => {
+              const slash = path.lastIndexOf('/')
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`composer-file-${index}`}
+                  aria-selected={index === fileIndex}
+                  className={index === fileIndex ? 'active' : ''}
+                  key={path}
+                  title={path}
+                  onMouseEnter={() => setFileIndex(index)}
+                  onClick={() => chooseFile(index)}
+                >
+                  <FileText size={13} aria-hidden="true" />
+                  <span>
+                    <strong>{path.slice(slash + 1)}</strong>
+                    {slash > 0 && <small>{path.slice(0, slash)}</small>}
+                  </span>
+                </button>
+              )
+            })}
+            {!mentionFiles.length && (
+              <div className="composer-command-empty">
+                {projectFiles?.root === workspaceFolder ? 'No matching files' : 'Listing files…'}
+              </div>
+            )}
+          </div>
         ) : undefined
       }
-      inputAriaControls={commandMatch ? 'composer-command-menu' : undefined}
-      inputAriaExpanded={Boolean(commandMatch)}
+      inputAriaControls={
+        commandMatch ? 'composer-command-menu' : fileMention ? 'composer-file-menu' : undefined
+      }
+      inputAriaExpanded={Boolean(commandMatch || fileMention)}
       inputAriaActiveDescendant={
         commandMatch && visibleCommands[commandIndex]
           ? `composer-command-${visibleCommands[commandIndex].id}`
-          : undefined
+          : fileMention && mentionFiles[fileIndex]
+            ? `composer-file-${fileIndex}`
+            : undefined
       }
       attachmentTray={
         attachedImages.length || attachedContext.length || attachmentError ? (

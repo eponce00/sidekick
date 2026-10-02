@@ -6,6 +6,9 @@ import { useReviewCommentSink } from '../hooks/useReviewCommentSink'
 import { RichDiffBlock } from './RichDiffBlock'
 import './TurnChangeReview.css'
 
+/** A long change list shows this many files until it is expanded, so the answer stays in view. */
+const COLLAPSED_FILE_COUNT = 4
+
 export function TurnChangeReview({
   segments,
   workspaceRoot
@@ -15,6 +18,7 @@ export function TurnChangeReview({
 }): React.JSX.Element | null {
   const files = useMemo(() => changedFilesFromSegments(segments), [segments])
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [showAll, setShowAll] = useState(false)
   const addReviewComment = useReviewCommentSink()
   if (!files.length) return null
   const additions = files.reduce((total, file) => total + file.additions, 0)
@@ -37,7 +41,7 @@ export function TurnChangeReview({
         </span>
       </div>
       <div className="turn-change-review-files">
-        {files.map((file) => {
+        {(showAll ? files : files.slice(0, COLLAPSED_FILE_COUNT)).map((file) => {
           const open = expanded.has(file.path)
           const syntheticTool: ToolExecution = {
             id: `review:${file.path}`,
@@ -71,7 +75,14 @@ export function TurnChangeReview({
                   aria-expanded={open}
                 >
                   <ChevronRight size={13} className={open ? 'expanded' : ''} />
-                  <span className="turn-change-file-path">{file.path}</span>
+                  <span className="turn-change-file-path" title={file.path}>
+                    {file.path.includes('/') && (
+                      <span className="turn-change-file-dir">
+                        {file.path.slice(0, file.path.lastIndexOf('/') + 1)}
+                      </span>
+                    )}
+                    {file.path.slice(file.path.lastIndexOf('/') + 1)}
+                  </span>
                   <span className={`turn-change-kind is-${file.kind}`}>{file.kind}</span>
                 </button>
                 <span className="turn-change-file-stats">
@@ -104,6 +115,20 @@ export function TurnChangeReview({
           )
         })}
       </div>
+      {files.length > COLLAPSED_FILE_COUNT && (
+        <button
+          type="button"
+          className="turn-change-review-more"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll
+            ? 'Show fewer files'
+            : `Show ${files.length - COLLAPSED_FILE_COUNT} more ${
+                files.length - COLLAPSED_FILE_COUNT === 1 ? 'file' : 'files'
+              }`}
+        </button>
+      )}
     </section>
   )
 }

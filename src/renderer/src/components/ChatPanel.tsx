@@ -366,7 +366,8 @@ function ChatPanel({
     requestCheckpointRestore: handleUndoCheckpoint,
     cancelCheckpointRestore,
     confirmCheckpointRestore: handleConfirmCheckpointRestore,
-    retryMessage: handleRetryMessage
+    retryMessage: handleRetryMessage,
+    rewindToMessage: handleRewindToMessage
   } = useConversationActions({
     messages,
     setMessages,
@@ -374,6 +375,18 @@ function ChatPanel({
     selectedModel,
     workspaceFolder,
     onCheckpointCreated,
+    restoreDraft: async (message, discardsGoalStart) => {
+      if (discardsGoalStart && conversationId) {
+        const current = await window.api.conversationGoals.current(conversationId)
+        if (current && ['active', 'paused', 'blocked'].includes(current.status)) {
+          await window.api.conversationGoals.clear(current.id)
+        }
+      }
+      setInputValue(message.content)
+      setAttachedImages(message.images ?? [])
+      setAttachedContext(message.attachments ?? [])
+      window.requestAnimationFrame(() => inputRef.current?.focus())
+    },
     rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
       if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
         // The goal being replaced belonged to history this rewind removes.
@@ -398,6 +411,14 @@ function ChatPanel({
       }
     }
   })
+
+  const rewindToMessageRef = useRef(handleRewindToMessage)
+  rewindToMessageRef.current = handleRewindToMessage
+  const rewindMessage = useCallback(
+    (message: Message, restoreFiles: boolean) =>
+      void rewindToMessageRef.current(message, restoreFiles),
+    []
+  )
 
   useEffect(() => {
     if (!workspaceFolder) {
@@ -1030,6 +1051,34 @@ function ChatPanel({
     )
   }
 
+  const addFileMention = (relativePath: string): void => {
+    setAttachedContext((previous) => {
+      if (
+        previous.some(
+          (attachment) =>
+            isProjectContextAttachment(attachment) && attachment.relativePath === relativePath
+        )
+      ) {
+        return previous
+      }
+      if (previous.length >= MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+        setAttachmentError(
+          `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+        )
+        return previous
+      }
+      return [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          kind: 'file' as const,
+          name: relativePath.slice(relativePath.lastIndexOf('/') + 1),
+          relativePath
+        }
+      ]
+    })
+  }
+
   const addPastedText = (text: string): void => {
     if (text.length > MAX_PASTED_TEXT_CHARACTERS) {
       setAttachmentError(
@@ -1164,6 +1213,7 @@ function ChatPanel({
           : undefined
       }
       onForkMessage={forkMessage}
+      onRewindMessage={isLoading ? undefined : rewindMessage}
       copiedMessageId={copiedMessageId}
       onSetEditingContent={setEditingDraft}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
@@ -1275,6 +1325,7 @@ function ChatPanel({
         onInputChange={setInputValue}
         onAddImageFiles={(files) => void addImageFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
+        onAddFileMention={addFileMention}
         onAddPastedText={addPastedText}
         onInsertPastedText={insertPastedText}
         onRemoveImage={(id) => {

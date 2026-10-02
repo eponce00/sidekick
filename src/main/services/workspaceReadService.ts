@@ -1,6 +1,7 @@
 import { createReadStream, promises as fs } from 'fs'
 import { join, relative, sep } from 'path'
 import { createInterface } from 'readline'
+import { estimateTextTokens } from '../../shared/contextBudget'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 
@@ -107,6 +108,7 @@ export class WorkspaceReadService {
       endLine?: number
       cursor?: number
       maxEntries?: number
+      maxTokens?: number
       glob?: string
       signal?: AbortSignal
     } = {}
@@ -121,6 +123,7 @@ export class WorkspaceReadService {
         ...(await this.readFile(workspaceRoot, path, {
           startLine: options.startLine,
           endLine: options.endLine,
+          maxTokens: options.maxTokens,
           signal: options.signal
         }))
       }
@@ -160,6 +163,11 @@ export class WorkspaceReadService {
       endLine?: number
       maxLines?: number
       maxBytes?: number
+      /**
+       * Stop before this many estimated tokens, on a line boundary. A reader cut afterwards by
+       * size splits a line and leaves the rest in pieces; ending here names the line to continue.
+       */
+      maxTokens?: number
       signal?: AbortSignal
     } = {}
   ): Promise<WorkspaceReadResult> {
@@ -195,6 +203,7 @@ export class WorkspaceReadService {
     const selected: string[] = []
     let totalLines = 0
     let returnedBytes = 0
+    let returnedTokens = 0
     let endedByByteLimit = false
     const onAbort = (): void => {
       stream.destroy(new DOMException('Workspace read cancelled', 'AbortError'))
@@ -207,12 +216,19 @@ export class WorkspaceReadService {
         if (totalLines < startLine || totalLines > lastAllowedLine || endedByByteLimit) continue
         const numbered = `${totalLines}: ${line}`
         const bytes = Buffer.byteLength(numbered + '\n')
-        if (returnedBytes + bytes > maxBytes) {
+        const tokens = options.maxTokens ? estimateTextTokens(numbered) + 1 : 0
+        // The first line is always returned, so a read past an overlong line still moves on.
+        if (
+          selected.length &&
+          (returnedBytes + bytes > maxBytes ||
+            (options.maxTokens && returnedTokens + tokens > options.maxTokens))
+        ) {
           endedByByteLimit = true
           continue
         }
         selected.push(numbered)
         returnedBytes += bytes
+        returnedTokens += tokens
       }
     } finally {
       options.signal?.removeEventListener('abort', onAbort)

@@ -1183,6 +1183,18 @@ export function installBrowserApiMock(): void {
         ok: true,
         files: ['README.md', 'package.json', 'src/', 'src/main/', 'src/renderer/']
       }),
+      listPrompts: async () => ({
+        ok: true,
+        prompts: [
+          {
+            name: 'review',
+            description: 'Review the current changes',
+            body: 'Review the changes in $ARGUMENTS for bugs and missing tests.',
+            source: 'project' as const,
+            location: '.sidekick/prompts/review.md'
+          }
+        ]
+      }),
       readFile: async (_root: string, filePath: string) =>
         filePath.endsWith('.md')
           ? {

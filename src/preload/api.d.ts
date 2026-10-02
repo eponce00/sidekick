@@ -251,6 +251,12 @@ interface WorkspaceAPI {
     subPath?: string,
     glob?: string
   ) => Promise<{ ok: boolean; files: string[]; error?: string }>
+  /** Saved prompts from the project's and your own prompt folders, offered as `/` commands. */
+  listPrompts: (workspaceRoot: string | null) => Promise<{
+    ok: boolean
+    prompts: import('../shared/savedPrompts').SavedPrompt[]
+    error?: string
+  }>
   readFile: (
     workspaceRoot: string,
     filePath: string,

@@ -141,6 +141,52 @@ describe('useConversationActions', () => {
       authorizationToken: 'undo-token'
     })
   })
+
+  it.each([true, false])(
+    'rewinds to before a message without answering, back into the message box (files: %s)',
+    async (restoreFiles) => {
+      await act(async () => root.unmount())
+      rewindToBeforeCheckpoint.mockClear()
+      const restoreDraft = vi.fn()
+      function RewindHarness(): null {
+        const [messages, setMessages] = useState<Message[]>([
+          researchRequest,
+          {
+            ...researchResponse,
+            checkpointHash: 'abcdef123456',
+            checkpointWorkspaceRoot: 'C:\\project'
+          }
+        ])
+        const value = useConversationActions({
+          messages,
+          setMessages,
+          conversationId: 'conversation-1',
+          selectedModel: 'model-1',
+          workspaceFolder: 'C:\\project',
+          rerunStream,
+          restoreDraft
+        })
+        useEffect(() => {
+          controller = value
+        }, [value])
+        useEffect(() => {
+          latestMessages = messages
+        }, [messages])
+        return null
+      }
+      root = createRoot(container)
+      await act(async () => root.render(<RewindHarness />))
+
+      await act(async () => controller.rewindToMessage(researchRequest, restoreFiles))
+
+      // The message itself leaves the chat along with everything after it.
+      expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 0)
+      expect(latestMessages).toEqual([])
+      expect(restoreDraft).toHaveBeenCalledWith(researchRequest, false)
+      expect(rerunStream).not.toHaveBeenCalled()
+      expect(rewindToBeforeCheckpoint).toHaveBeenCalledTimes(restoreFiles ? 1 : 0)
+    }
+  )
 })
 
 describe('useConversationActions with a persistent goal', () => {

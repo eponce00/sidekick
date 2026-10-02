@@ -27,6 +27,7 @@ import type { WorkspaceMutationAuthorization } from '../../shared/types'
 import { permissionBroker } from '../services/permissionBroker'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
+import { listSavedPrompts } from '../services/savedPrompts'
 import { discoverExternalOpeners } from '../services/externalOpeners'
 import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
 
@@ -306,6 +307,16 @@ export function registerWorkspaceHandlers(): void {
       }
     }
   )
+
+  // Saved prompts come from the open project and the user's home folder; nothing else is read.
+  ipcMain.handle('workspace:listPrompts', async (_, passedRoot: string | null) => {
+    try {
+      const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : null
+      return { ok: true, prompts: await listSavedPrompts(workspaceRoot) }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message, prompts: [] }
+    }
+  })
 
   // Workspace: read an image for the in-app viewer. Text goes through readFile;
   // this is the only path that hands raw bytes to the renderer, so it is capped

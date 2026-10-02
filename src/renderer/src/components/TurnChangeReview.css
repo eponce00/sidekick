@@ -78,6 +78,25 @@
   white-space: nowrap;
   font: 500 12px/1.3 var(--font-mono);
 }
+/* The folder recedes so the file name, the part that differs, reads first. */
+.turn-change-file-dir {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+.turn-change-review-more {
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  border-top: 1px solid var(--surface-3);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.turn-change-review-more:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
 .turn-change-kind {
   color: var(--text-muted);
   font-size: var(--text-xs);

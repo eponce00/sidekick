@@ -512,7 +512,9 @@ select {
   display: none;
 }
 
-@media (max-width: 1050px) {
+/* The sidebar rail, the narrowest chat, and the narrowest inspector need 768 pixels. Matches
+   ACTIVITY_PANEL_OVERLAY_MAX_VIEWPORT in activityPanelLayout.ts. */
+@media (max-width: 767px) {
   .activity-panel.is-pinned {
     position: absolute;
     z-index: 20;

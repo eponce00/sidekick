@@ -414,6 +414,11 @@ describe('ChatInput prompt history', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
+    // The command menu lists saved prompts when it opens.
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { workspace: { listPrompts: vi.fn(async () => ({ ok: true, prompts: [] })) } }
+    })
   })
 
   afterEach(async () => {
