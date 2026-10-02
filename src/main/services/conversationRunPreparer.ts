@@ -42,6 +42,7 @@ import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
   formatReviewCommentAttachments,
+  isProjectContextAttachment,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
 import { normalizeToolResultMedia, type ToolResultMediaAttachment } from '../../shared/agentRuntime'
@@ -828,9 +829,10 @@ export class ConversationRunPreparer {
       systemPrompt,
       ...(revision ? { revision } : {})
     })
+    const latestUserMessage = [...rows].reverse().find((row) => row.role === 'user') ?? null
     return {
       workspaceRoot,
-      latestUserMessage: [...rows].reverse().find((row) => row.role === 'user') ?? null,
+      latestUserMessage,
       onWorkspaceWillMutate,
       latestCompaction: () => latestRunCompaction,
       ...(goal ? { goalId: goal.id } : {}),
@@ -844,6 +846,10 @@ export class ConversationRunPreparer {
           currentSettings.projectCompletionHooks,
           workspaceRoot
         ),
+        preloadReads: parseMessageContextAttachments(latestUserMessage?.attachments)
+          .filter(isProjectContextAttachment)
+          .filter((attachment) => attachment.kind === 'file')
+          .map((attachment) => attachment.relativePath),
         id: input.id,
         threadId: input.conversationId,
         outputMessageId: input.assistantMessageId,

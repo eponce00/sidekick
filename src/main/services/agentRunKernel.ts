@@ -153,10 +153,15 @@ export interface AgentKernelPlanController {
   afterTerminalTurn: () => Promise<AgentPlanTerminalDecision>
 }
 
+/** Files named in one message that are read up front; more are left for the model to open. */
+const MAX_PRELOADED_READS = 4
+
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
   projectStartCommands?: string[]
   projectCompletionCommands?: string[]
+  /** Project files the user named in the message, read before the model's first turn. */
+  preloadReads?: string[]
   catalog: AgentToolCatalogOptions | (() => AgentToolCatalogOptions)
   messages: ProviderChatMessage[]
   request: Omit<ProviderChatRequest, 'messages' | 'tools'>
@@ -1220,9 +1225,63 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
       }
     }
+    // Files the user named come back as reads the model already made, so its first turn starts
+    // from their contents instead of spending a round opening them. They run through the read
+    // tool, which records the receipts an edit of those files needs.
+    const preloadReads = async (paths: string[] | undefined): Promise<void> => {
+      if (!input.workspaceRoot || !getAgentToolEntry(currentCatalog(input), 'read')) return
+      for (const path of [...new Set(paths ?? [])].slice(0, MAX_PRELOADED_READS)) {
+        if (signal.aborted) return
+        const call: AgentToolCall = { id: randomUUID(), name: 'read', arguments: { path } }
+        const title = `Read ${path}`
+        this.append(input.id, 'tool.pending', {
+          toolCallId: call.id,
+          name: call.name,
+          title,
+          arguments: call.arguments
+        })
+        this.transition(input.id, 'executing_tool')
+        this.append(input.id, 'tool.running', {
+          toolCallId: call.id,
+          name: call.name,
+          title,
+          arguments: call.arguments
+        })
+        const result = await this.tools.execute(
+          {
+            catalog: currentCatalog(input),
+            call,
+            title,
+            context: {
+              runId: input.id,
+              conversationId: input.threadId,
+              workspaceRoot: input.workspaceRoot,
+              signal
+            }
+          },
+          ((args, context) => input.toolRouter.execute('read', args, context)) as AgentToolExecutor
+        )
+        this.append(input.id, 'tool.completed', { toolCallId: call.id, name: call.name, result })
+        messages.push(
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: call.id,
+                type: 'function',
+                function: { name: 'read', arguments: JSON.stringify(call.arguments) }
+              }
+            ]
+          },
+          { role: 'tool', tool_call_id: call.id, content: result.modelContent }
+        )
+      }
+    }
     if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
     try {
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
+      await preloadReads(input.preloadReads)
       this.transition(started.id, 'streaming')
       while (!signal.aborted) {
         const steered = this.applySteers(input.id)

@@ -360,6 +360,8 @@ const api = {
     setPath: (folderPath: string | null) => ipcRenderer.invoke('workspace:setPath', folderPath),
     listFiles: (workspaceRoot: string, subPath?: string, glob?: string) =>
       ipcRenderer.invoke('workspace:listFiles', workspaceRoot, subPath, glob),
+    listPrompts: (workspaceRoot: string | null) =>
+      ipcRenderer.invoke('workspace:listPrompts', workspaceRoot),
     readFile: (workspaceRoot: string, filePath: string, startLine?: number, endLine?: number) =>
       ipcRenderer.invoke('workspace:readFile', workspaceRoot, filePath, startLine, endLine),
     readImage: (workspaceRoot: string, filePath: string) =>

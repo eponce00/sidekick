@@ -90,6 +90,22 @@
   padding: 14px 10px;
 }
 
+.composer-command-menu.is-files > button {
+  grid-template-columns: 14px minmax(0, 1fr);
+  align-items: center;
+}
+
+.composer-command-menu.is-files > button > svg {
+  color: var(--text-muted);
+}
+
+.composer-command-menu.is-files small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
 .messages-container {
   flex: 1;
   overflow-y: auto;

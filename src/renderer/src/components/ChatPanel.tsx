@@ -1030,6 +1030,34 @@ function ChatPanel({
     )
   }
 
+  const addFileMention = (relativePath: string): void => {
+    setAttachedContext((previous) => {
+      if (
+        previous.some(
+          (attachment) =>
+            isProjectContextAttachment(attachment) && attachment.relativePath === relativePath
+        )
+      ) {
+        return previous
+      }
+      if (previous.length >= MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+        setAttachmentError(
+          `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+        )
+        return previous
+      }
+      return [
+        ...previous,
+        {
+          id: crypto.randomUUID(),
+          kind: 'file' as const,
+          name: relativePath.slice(relativePath.lastIndexOf('/') + 1),
+          relativePath
+        }
+      ]
+    })
+  }
+
   const addPastedText = (text: string): void => {
     if (text.length > MAX_PASTED_TEXT_CHARACTERS) {
       setAttachmentError(
@@ -1275,6 +1303,7 @@ function ChatPanel({
         onInputChange={setInputValue}
         onAddImageFiles={(files) => void addImageFiles(files)}
         onAddContextAttachments={() => void addContextAttachments()}
+        onAddFileMention={addFileMention}
         onAddPastedText={addPastedText}
         onInsertPastedText={insertPastedText}
         onRemoveImage={(id) => {
