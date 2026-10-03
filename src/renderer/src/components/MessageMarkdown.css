@@ -344,6 +344,9 @@
   background: var(--surface-2);
 }
 
+/* Emoji are images sized like a letter wherever Markdown renders: thinking and notes are not
+   inside a message, and an unsized emoji filled the whole width there. */
+img[data-twemoji],
 .message-content img[data-twemoji] {
   width: 1.1em;
   height: 1.1em;
