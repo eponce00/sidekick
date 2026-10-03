@@ -122,7 +122,7 @@ export function steeredProviderMessage(payload: Record<string, unknown>): Provid
  * journal like a steered message, so later runs replay it in the same place.
  */
 export const RUN_CONTINUATION_PROMPT = `<sidekick_run_continuation trust="app-policy">
-SideKick stopped before your previous reply finished, and the user asked you to continue it. Pick up the interrupted work from where the transcript above ends. A tool result marked as interrupted or OUTCOME UNKNOWN may or may not have taken effect: inspect the actual files, processes, browser or service first, and repeat that operation only if it did not happen. Never repeat a side effect blindly, and do not redo work whose result is recorded. Finish the original request, then reply as you would have.
+Your previous reply stopped before it finished (SideKick closed, or the connection to the model failed), and the user asked you to continue it. Pick up the interrupted work from where the transcript above ends. A tool result marked as interrupted or OUTCOME UNKNOWN may or may not have taken effect: inspect the actual files, processes, browser or service first, and repeat that operation only if it did not happen. Never repeat a side effect blindly, and do not redo work whose result is recorded. Finish the original request, then reply as you would have.
 </sidekick_run_continuation>`
 
 interface ProviderHistoryEventRow {

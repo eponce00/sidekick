@@ -137,6 +137,29 @@ describe('AgentRunStore', () => {
     expect(store.canContinue('run-2', 'thread-1')).toBe(false)
   })
 
+  it('lets a reply that failed on a retryable error be continued, keeping its work', () => {
+    // A dropped connection to the model ended an 18-minute reply; Retry was the only way on, and
+    // it discarded the reply and undid its file changes.
+    start('dropped')
+    store.transition('dropped', 'failed', 'fail-1', {
+      code: 'internal',
+      message: 'fetch failed (UND_ERR_SOCKET)',
+      retryable: true,
+      recoveryAction: 'retry_later'
+    })
+    expect(store.canContinue('dropped', 'thread-1')).toBe(true)
+
+    start('refused')
+    db.prepare('UPDATE agent_runs SET started_at = started_at + 1 WHERE id = ?').run('refused')
+    store.transition('refused', 'failed', 'fail-2', {
+      code: 'unsupported',
+      message: 'The model rejected the request',
+      retryable: false,
+      recoveryAction: 'change_strategy'
+    })
+    expect(store.canContinue('refused', 'thread-1')).toBe(false)
+  })
+
   it('keeps a chat on its own run when a sub-agent starts after it in the same thread', () => {
     start('run-1')
     store.start({

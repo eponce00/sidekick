@@ -324,13 +324,17 @@ export class AgentRunStore {
    * the latest run of its conversation. A continuation, or any later message,
    * becomes the latest run, so one interruption is continued at most once.
    */
+  /**
+   * A reply can be continued from its journal when it stopped short: the app closed under it, or
+   * it failed with an error worth retrying, such as a dropped connection to the model. Only the
+   * conversation's latest reply, so a continuation never jumps over later turns.
+   */
   canContinue(runId: string, threadId: string): boolean {
     const run = this.get(runId)
+    const stoppedShort =
+      run?.phase === 'interrupted' || (run?.phase === 'failed' && run.error?.retryable !== false)
     return Boolean(
-      run &&
-      run.threadId === threadId &&
-      run.phase === 'interrupted' &&
-      this.latest(threadId)?.id === run.id
+      run && stoppedShort && run.threadId === threadId && this.latest(threadId)?.id === run.id
     )
   }
 
