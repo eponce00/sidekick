@@ -164,6 +164,14 @@ export class ToolOutputStore {
     return join(this.root, `${handle}.txt`)
   }
 
+  /** Keeps text the model was shown only part of, for reading on with `tool_output`. */
+  async save(content: string): Promise<string> {
+    await fs.mkdir(this.root, { recursive: true })
+    const handle = randomUUID()
+    await fs.writeFile(this.path(handle), content, { encoding: 'utf8', mode: 0o600 })
+    return handle
+  }
+
   async apply(content: string, policy: ToolOutputPolicy = {}): Promise<BoundedToolOutput> {
     const bounded = boundToolOutputPreview(content, policy)
     if (!bounded.truncated) {
@@ -178,9 +186,7 @@ export class ToolOutputStore {
         }
       }
     }
-    await fs.mkdir(this.root, { recursive: true })
-    const handle = randomUUID()
-    await fs.writeFile(this.path(handle), content, { encoding: 'utf8', mode: 0o600 })
+    const handle = await this.save(content)
     const hint =
       `\n\n[Output truncated: ${bounded.originalBytes - bounded.returnedBytes} bytes omitted; ` +
       `approximately ${bounded.originalEstimatedTokens - bounded.returnedEstimatedTokens} tokens omitted. ` +

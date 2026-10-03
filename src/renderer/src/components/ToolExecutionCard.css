@@ -638,3 +638,31 @@
   color: var(--text-muted);
   font-size: var(--content-text-secondary);
 }
+
+/* The image itself, under its row, like an attachment in the conversation. */
+.tool-image-preview {
+  display: block;
+  margin: 4px 0 8px 24px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  cursor: zoom-in;
+}
+
+.tool-image-preview img {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 200px;
+  object-fit: contain;
+}
+
+.tool-image-preview.is-enlarged {
+  cursor: zoom-out;
+}
+
+.tool-image-preview.is-enlarged img {
+  max-width: min(100%, 860px);
+  max-height: 640px;
+}

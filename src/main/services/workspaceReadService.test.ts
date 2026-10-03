@@ -92,6 +92,15 @@ describe('WorkspaceReadService', () => {
     expect(result.nextLine).toBe(2)
   })
 
+  it('gives a viewer the file text without the line numbers the model reads', async () => {
+    const root = await workspace()
+    await writeFile(join(root, 'PLAN.md'), '# Plan\n\n- one\n- two')
+    const result = await new WorkspaceReadService().readFile(root, 'PLAN.md', {
+      numberLines: false
+    })
+    expect(result.content).toBe('# Plan\n\n- one\n- two')
+  })
+
   it('rejects binary files', async () => {
     const root = await workspace()
     await writeFile(join(root, 'binary.bin'), Buffer.from([1, 0, 2]))

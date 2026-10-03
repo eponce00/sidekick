@@ -6,6 +6,8 @@ import {
   type ToolResultImageMimeType
 } from '../../shared/agentRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import { saveViewedImagePreview } from './viewedImagePreviews'
+import { imageContentType } from '../../shared/imageContent'
 const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -62,8 +64,7 @@ export function registerVisionToolHandlers(
       const rel = root ? relative(root, path) : undefined
       const external =
         rel === undefined || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
-      const mimeType = TYPES[extname(path).toLowerCase()]
-      if (!mimeType)
+      if (!TYPES[extname(path).toLowerCase()])
         return toolExecutionFailed({
           title,
           code: 'unsupported',
@@ -128,12 +129,25 @@ export function registerVisionToolHandlers(
         await file.close()
       }
       if (context.signal.aborted) return cancelled()
+      const mimeType = imageContentType(bytes)
+      if (!mimeType)
+        return toolExecutionFailed({
+          title,
+          code: 'unsupported',
+          message:
+            `${requested} is not a whole PNG, JPEG, WebP, or GIF image, so it was not attached. ` +
+            'A shell redirect such as `adb shell screencap -p > file.png` or PowerShell `>` ' +
+            'rewrites binary output. Save the file where it is made and copy it instead, for ' +
+            'example `adb shell screencap -p /sdcard/screen.png` then `adb pull /sdcard/screen.png`.'
+        })
+      const previewUrl = await saveViewedImagePreview(bytes)
       return toolExecutionSucceeded({
         title,
         data: {
           path: requested,
           mimeType,
           bytes: bytes.length,
+          ...(previewUrl ? { previewUrl } : {}),
           detail: args.detail === 'original' || args.detail === 'high' ? args.detail : 'auto'
         },
         modelContent: `Attached image ${requested} (${mimeType}, ${bytes.length} bytes) for visual inspection.`,

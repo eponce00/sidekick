@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { projectStartCommands } from './projectHooks'
+import { imageContentType } from '../../shared/imageContent'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { estimateProviderRequestTokens, resolveMaxOutputTokens } from '../../shared/contextBudget'
@@ -132,10 +133,22 @@ interface ProviderHistoryEventRow {
   payload_json: string
 }
 
+/**
+ * An image saved before view_image checked its bytes may not decode. Sent again, it fails every
+ * later request in the conversation, so the replay leaves it out and keeps the tool's text.
+ */
+function decodableMedia(attachment: ToolResultMediaAttachment): boolean {
+  if (attachment.type !== 'image' || attachment.source.type !== 'data_url') return true
+  const base64 = attachment.source.dataUrl.slice(attachment.source.dataUrl.indexOf(',') + 1)
+  return imageContentType(Buffer.from(base64, 'base64')) !== undefined
+}
+
 function durableToolMedia(value: unknown): ToolResultMediaAttachment[] {
   if (!Array.isArray(value)) return []
   try {
-    return normalizeToolResultMedia(value as ToolResultMediaAttachment[]) || []
+    return (normalizeToolResultMedia(value as ToolResultMediaAttachment[]) || []).filter(
+      decodableMedia
+    )
   } catch {
     // A malformed historic attachment must not poison the entire conversation transcript.
     return []

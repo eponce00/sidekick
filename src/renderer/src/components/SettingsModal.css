@@ -378,6 +378,7 @@ body[data-theme='light'] .settings-overlay {
 
 .modern-field input,
 .modern-field select,
+.modern-field textarea,
 .provider-name-input,
 .manual-model-row input {
   width: 100%;
@@ -1956,4 +1957,113 @@ body[data-theme='light'] .settings-overlay {
   display: block;
   color: var(--text-primary);
   font-weight: 600;
+}
+
+/* Project hooks: each a row with its switch, moment, command, and folder; the form below. */
+.project-hook-list {
+  display: grid;
+  gap: 0;
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.project-hook {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.project-hook + .project-hook {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.project-hook .modern-switch {
+  margin-top: 2px;
+  flex: none;
+}
+
+.project-hook-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.project-hook-stage {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.project-hook-command {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font: 500 var(--text-sm) / 1.4 var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.project-hook-folder {
+  overflow: hidden;
+  color: var(--text-muted);
+  font: var(--text-xs) / 1.4 var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-hook-remove {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.project-hook-remove:hover {
+  background: var(--surface-3);
+  color: var(--error);
+}
+
+.project-hook-form {
+  display: grid;
+  gap: 10px;
+}
+
+.project-hook-form > strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.project-hook-form textarea {
+  min-height: 60px;
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+.project-hook-folder-input {
+  display: flex;
+  gap: 8px;
+}
+
+.project-hook-folder-input input {
+  flex: 1;
+}
+
+.project-hook-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.project-hook-actions small {
+  color: var(--text-muted);
 }

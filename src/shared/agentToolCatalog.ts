@@ -1147,7 +1147,8 @@ const askUser = definition(
                   description: { type: 'string' },
                   recommended: {
                     type: 'boolean',
-                    description: 'Mark the option the agent recommends, when there is one.'
+                    description:
+                      'Mark the option the agent recommends, when there is one, and say in its description what the recommendation rests on.'
                   }
                 }
               }

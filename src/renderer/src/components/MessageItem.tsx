@@ -124,17 +124,21 @@ function RunErrorSegment({
       </div>
     )
   }
+  if (interrupted) {
+    // Continued, or followed by another message: the reply below carries on, so this is history
+    // rather than a failure to act on.
+    return (
+      <div className="run-interrupted-note" role="status">
+        <CircleAlert size={13} aria-hidden="true" />
+        <span>Interrupted. {error.message}</span>
+      </div>
+    )
+  }
   return (
-    <div className="run-error-segment" role={interrupted ? 'status' : 'alert'}>
+    <div className="run-error-segment" role="alert">
       <CircleAlert size={15} aria-hidden="true" />
       <div>
-        <strong>
-          {interrupted
-            ? 'Interrupted'
-            : error.code
-              ? error.code.replaceAll('_', ' ')
-              : 'Run failed'}
-        </strong>
+        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
         <span>{error.message}</span>
       </div>
       {error.retryable && (
@@ -488,7 +492,13 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
         !!group.segment.tool &&
         resolveToolView(group.segment.tool) === 'subagent') ||
       // An interruption is what the reader needs to act on, not work to fold away.
-      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted'))
+      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted') ||
+      // So is anything waiting on the user. A question and its answer stay part of the reply;
+      // an answered approval is only a step.
+      (group.segment.type === 'interaction' &&
+        (group.segment.interaction?.status === 'pending' ||
+          group.segment.interaction?.kind === 'question')) ||
+      (group.segment.type === 'decision' && group.segment.decision?.status === 'pending'))
   )
 }
 

@@ -358,7 +358,12 @@ export function registerWorkspaceHandlers(): void {
         const workspaceRoot = resolveKnownWorkspace(passedRoot)
         return {
           ok: true,
-          ...(await workspaceReads.readFile(workspaceRoot, filePath, { startLine, endLine }))
+          // The file viewer shows the file's own text; line numbers are for the model.
+          ...(await workspaceReads.readFile(workspaceRoot, filePath, {
+            startLine,
+            endLine,
+            numberLines: false
+          }))
         }
       } catch (err) {
         return { ok: false, error: (err as Error).message, content: null }

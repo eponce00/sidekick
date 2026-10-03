@@ -298,6 +298,56 @@ describe('conversation provider history', () => {
     db.close()
   })
 
+  it('leaves a saved image that does not decode out of the replay', () => {
+    // A PNG signature whose LF bytes a shell turned into CRLF; sent again, the provider rejects
+    // every later request in the conversation.
+    const broken = Buffer.from('89504e470d0d0a1a0d0a', 'hex').toString('base64')
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai', 'gpt', 1);
+    `)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    add.run('run-1', 1, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    add.run(
+      'run-1',
+      2,
+      'assistant.completed',
+      JSON.stringify({
+        content: '',
+        toolCalls: [{ id: 'call-1', name: 'view_image', arguments: { path: 'screen.png' } }]
+      })
+    )
+    add.run(
+      'run-1',
+      3,
+      'tool.completed',
+      JSON.stringify({
+        toolCallId: 'call-1',
+        result: {
+          modelContent: 'Attached image screen.png',
+          media: [
+            {
+              type: 'image',
+              mimeType: 'image/png',
+              name: 'screen.png',
+              source: { type: 'data_url', dataUrl: `data:image/png;base64,${broken}` }
+            }
+          ]
+        }
+      })
+    )
+
+    const [, tool] = durableProviderHistory(db, 'conversation-1', [row({ id: 'assistant-1' })], {
+      providerKind: 'openrouter',
+      model: 'gpt'
+    })
+    expect(tool).toMatchObject({ role: 'tool', content: 'Attached image screen.png' })
+    expect(tool.media).toBeUndefined()
+    db.close()
+  })
+
   it('keeps a steered message where the run took it in', () => {
     const db = new Database(':memory:')
     db.exec(`

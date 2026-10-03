@@ -3,7 +3,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import { imageContentType } from '../../shared/imageContent'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
+// A whole 1x1 PNG.
+const PIXEL_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64'
+)
 const roots: string[] = []
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
@@ -22,7 +28,7 @@ describe('agent vision tools', () => {
   it('returns project images as typed model media', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-vision-'))
     roots.push(root)
-    await writeFile(join(root, 'pixel.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+    await writeFile(join(root, 'pixel.png'), PIXEL_PNG)
     const registry = new AgentToolHandlerRegistry()
     registerVisionToolHandlers(registry)
     const result = await registry.execute({
@@ -35,8 +41,33 @@ describe('agent vision tools', () => {
     expect(result.media?.[0]).toMatchObject({
       type: 'image',
       mimeType: 'image/png',
-      source: { type: 'data_url', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }
+      source: { type: 'data_url', dataUrl: `data:image/png;base64,${PIXEL_PNG.toString('base64')}` }
     })
+  })
+
+  it('fails a file whose bytes are not a whole image instead of attaching it', async () => {
+    // `adb shell screencap -p > screen.png` turns each LF into CRLF; PowerShell `>` re-encodes the
+    // bytes as text; a capture can stop early. A provider rejects such an image and ends the run.
+    const crlf = Buffer.from(PIXEL_PNG.toString('latin1').replace(/\n/g, '\r\n'), 'latin1')
+    const text = Buffer.from(PIXEL_PNG.toString('latin1'), 'utf8')
+    const cut = PIXEL_PNG.subarray(0, PIXEL_PNG.length - 20)
+    for (const bytes of [crlf, text, cut]) expect(imageContentType(bytes)).toBeUndefined()
+    expect(imageContentType(PIXEL_PNG)).toBe('image/png')
+
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-vision-broken-'))
+    roots.push(root)
+    await writeFile(join(root, 'screen.png'), crlf)
+    const registry = new AgentToolHandlerRegistry()
+    registerVisionToolHandlers(registry)
+    const result = await registry.execute({
+      name: 'view_image',
+      title: 'View screen.png',
+      arguments: { path: 'screen.png' },
+      context: context(root)
+    })
+    expect(result.status).toBe('error')
+    expect(result.error?.message).toContain('adb pull')
+    expect(result.media).toBeUndefined()
   })
 
   it('rejects paths outside the active project', async () => {
@@ -67,7 +98,7 @@ it.each(['allow', 'deny', 'cancel', 'changed', 'junction'])(
     await mkdir(project)
     await mkdir(outside)
     const image = join(outside, 'pixel.png')
-    await writeFile(image, 'fixture')
+    await writeFile(image, PIXEL_PNG)
     if (mode === 'junction')
       await symlink(
         outside,
@@ -109,7 +140,7 @@ it.each(['allow', 'deny', 'cancel', 'changed', 'junction'])(
       await writeFile(image, 'later-change')
       expect(result.media?.[0].source).toEqual({
         type: 'data_url',
-        dataUrl: 'data:image/png;base64,Zml4dHVyZQ=='
+        dataUrl: `data:image/png;base64,${PIXEL_PNG.toString('base64')}`
       })
     }
   }

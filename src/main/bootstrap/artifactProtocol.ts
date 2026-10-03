@@ -1,3 +1,5 @@
+import { setBrowserArtifactRoot } from '../services/browserArtifactRoot'
+import { imageContentType } from '../../shared/imageContent'
 import { app, net, protocol, type Protocol } from 'electron'
 import { existsSync, promises as fsPromises } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
@@ -25,7 +27,7 @@ const ARTIFACT_SCHEME = 'sidekick-artifact'
 const BROWSER_ARTIFACT_SCHEME = 'sidekick-browser'
 const MAX_BROWSER_ARTIFACT_BYTES = 8 * 1024 * 1024
 const MAX_BROWSER_PDF_SAVE_BYTES = 256 * 1024 * 1024
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+const BROWSER_ARTIFACT_TYPES: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg' }
 let browserArtifactRoot: string | null = null
 const pdfProtocolInstallations = new WeakSet<object>()
 const CONTENT_TYPES: Record<string, string> = {
@@ -78,6 +80,7 @@ export function registerArtifactScheme(): void {
 
 export function configureBrowserArtifactRoot(root: string): void {
   browserArtifactRoot = normalize(root)
+  setBrowserArtifactRoot(browserArtifactRoot)
 }
 
 function resolveArtifactPath(rendererRoot: string, pathname: string): string | null {
@@ -313,7 +316,9 @@ export async function installArtifactProtocol(): Promise<void> {
     }
     const targetPath = resolveArtifactPath(browserArtifactRoot, pathname)
     const extension = targetPath ? extname(targetPath).toLowerCase() : ''
-    if (!targetPath || extension !== '.png') {
+    // Screenshots are PNG; previews of images the agent viewed are JPEG.
+    const expectedType = BROWSER_ARTIFACT_TYPES[extension]
+    if (!targetPath || !expectedType) {
       return new Response('Not found', { status: 404 })
     }
     try {
@@ -326,15 +331,11 @@ export async function installArtifactProtocol(): Promise<void> {
         return new Response('Not found', { status: 404 })
       }
       const stat = await fsPromises.stat(realTarget)
-      if (
-        !stat.isFile() ||
-        stat.size < PNG_SIGNATURE.length ||
-        stat.size > MAX_BROWSER_ARTIFACT_BYTES
-      ) {
+      if (!stat.isFile() || stat.size < 8 || stat.size > MAX_BROWSER_ARTIFACT_BYTES) {
         return new Response('Not found', { status: 404 })
       }
       const data = await fsPromises.readFile(realTarget)
-      if (!data.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+      if (imageContentType(data) !== expectedType) {
         return new Response('Not found', { status: 404 })
       }
       return new Response(data, {

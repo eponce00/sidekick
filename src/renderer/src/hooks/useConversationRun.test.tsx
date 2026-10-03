@@ -11,7 +11,7 @@ import type {
 } from '../../../shared/agentRunApi'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 import type { Message } from '../types/chat.types'
-import { useConversationRun } from './useConversationRun'
+import { RunAlreadyActiveError, useConversationRun } from './useConversationRun'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -264,6 +264,70 @@ describe('useConversationRun', () => {
       listener?.({ event: runEvent(4, 'run.finalized', { persisted: true }) })
       await completion
     })
+  })
+
+  it('follows a reply the main process is already running instead of dropping it', async () => {
+    // A retry started a reply, a second start was refused, and the window then forgot the running
+    // reply: it showed nothing running while every new message was refused.
+    vi.mocked(window.api.agentRuns.startConversation).mockRejectedValueOnce(
+      new Error(
+        "Error invoking remote method 'agentRuns:startConversation': Error: This conversation already has an active run"
+      )
+    )
+    vi.mocked(window.api.agentRuns.latest).mockResolvedValueOnce({
+      run: {
+        id: 'running',
+        threadId: 'conversation-1',
+        surface: 'conversation',
+        executionMode: 'act',
+        phase: 'streaming',
+        provider: 'ollama',
+        model: 'test',
+        lastSequence: 1,
+        startedAt: 1,
+        updatedAt: 1
+      },
+      events: [
+        {
+          id: 'running-1',
+          runId: 'running',
+          sequence: 1,
+          type: 'run.started',
+          payload: { outputMessageId: 'running-reply' },
+          timestamp: 1
+        }
+      ],
+      pendingInteractions: []
+    })
+
+    let refusal: unknown
+    await act(async () => {
+      await controller
+        .startRun({
+          id: 'second',
+          conversationId: 'conversation-1',
+          assistantMessageId: 'assistant-1',
+          model
+        })
+        .catch((error) => {
+          refusal = error
+        })
+    })
+
+    expect(refusal).toBeInstanceOf(RunAlreadyActiveError)
+    expect(controller.isRunActive()).toBe(true)
+    expect(controller.runConversationId).toBe('conversation-1')
+    expect(renderedMessages.map((message) => message.id)).toContain('running-reply')
+    // A second start from this window is refused before it reaches the main process.
+    await expect(
+      controller.startRun({
+        id: 'third',
+        conversationId: 'conversation-1',
+        assistantMessageId: 'assistant-1',
+        model
+      })
+    ).rejects.toBeInstanceOf(RunAlreadyActiveError)
+    expect(window.api.agentRuns.startConversation).toHaveBeenCalledTimes(1)
   })
 
   it('retains queued messages until the finalized run is consumed', async () => {

@@ -1,5 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Bell, Bot, Boxes, Palette, Search, Server, Settings2 } from 'lucide-react'
+import {
+  ArrowLeft,
+  Bell,
+  Bot,
+  Boxes,
+  FolderOpen,
+  Palette,
+  Search,
+  Server,
+  Settings2
+} from 'lucide-react'
 import type { ProviderSettings } from '../types/app.types'
 import {
   DEFAULT_TOOL_CALL_LIMIT,
@@ -423,48 +433,56 @@ function SettingsModal({
                 }
               />
             </label>
-            <PermissionAuditPanel />
             <div className="modern-field">
-              <span>Direct Office helper Python (optional)</span>
-              <input
-                aria-label="Office Python interpreter"
-                readOnly
-                value={settings.officeHelperInterpreter ?? ''}
-                placeholder="Not configured - direct Office tools disabled"
-              />
-              <button
-                type="button"
-                className="modern-button secondary"
-                onClick={async () => {
-                  const choice = await window.api.settings.selectOfficeInterpreter().catch(() => ({
-                    canceled: false,
-                    path: undefined,
-                    error: 'Interpreter selection failed'
-                  }))
-                  if (choice.error) setSaveError(choice.error)
-                  if (choice.path) {
-                    setSaveError(null)
-                    setSettings((current) => ({ ...current, officeHelperInterpreter: choice.path }))
-                  }
-                }}
-              >
-                Choose trusted Python
-              </button>
-              <button
-                type="button"
-                className="modern-button secondary"
-                disabled={!settings.officeHelperInterpreter}
-                onClick={() =>
-                  setSettings((current) => ({ ...current, officeHelperInterpreter: undefined }))
-                }
-              >
-                Clear Office Python
-              </button>
+              <span>Office helper Python (optional)</span>
+              <span className="project-hook-folder-input">
+                <input
+                  aria-label="Office Python interpreter"
+                  readOnly
+                  value={settings.officeHelperInterpreter ?? ''}
+                  placeholder="Not set, direct Office tools are off"
+                />
+                <button
+                  type="button"
+                  className="settings-secondary-action"
+                  aria-label="Choose Office Python"
+                  onClick={async () => {
+                    const choice = await window.api.settings
+                      .selectOfficeInterpreter()
+                      .catch(() => ({
+                        canceled: false,
+                        path: undefined,
+                        error: 'Interpreter selection failed'
+                      }))
+                    if (choice.error) setSaveError(choice.error)
+                    if (choice.path) {
+                      setSaveError(null)
+                      setSettings((current) => ({
+                        ...current,
+                        officeHelperInterpreter: choice.path
+                      }))
+                    }
+                  }}
+                >
+                  <FolderOpen size={14} />
+                  Choose
+                </button>
+                {settings.officeHelperInterpreter && (
+                  <button
+                    type="button"
+                    className="settings-secondary-action"
+                    aria-label="Clear Office Python"
+                    onClick={() =>
+                      setSettings((current) => ({ ...current, officeHelperInterpreter: undefined }))
+                    }
+                  >
+                    Clear
+                  </button>
+                )}
+              </span>
               <small>
-                Only read-only preflight and structural validation are enabled after loading an
-                Office skill in a project. Uses your chosen host executable and normal execution
-                approvals. Disabled in Docker. Selecting a file does not execute it or install
-                packages.
+                Lets an Office skill check documents with read-only validation. It runs with your
+                normal approvals, never installs packages, and is off in Docker.
               </small>
             </div>
             <label className="modern-field">
@@ -482,28 +500,28 @@ function SettingsModal({
                 <option value="docker">Isolated Linux container (no network)</option>
               </select>
               <small>
-                Docker mode requires a local Linux Docker daemon and the pinned Node image. Only the
-                project is mounted; no host fallback. Host tools, background commands and network
-                are unavailable. Other tools and language servers are not container-isolated.
-                Changing back to Host is an explicit permission expansion.
+                Docker runs commands in a Linux container with only the project mounted and no
+                network. It needs a local Docker daemon, and other tools still run on the host.
               </small>
             </label>
+            <PermissionAuditPanel />
           </SettingCard>
           <ProjectHooksPanel
-            hooks={settings.projectStartHooks ?? []}
-            onChange={(projectStartHooks) => setSettings({ ...settings, projectStartHooks })}
-          />
-          <ProjectHooksPanel
-            stage="completion"
-            hooks={settings.projectCompletionHooks ?? []}
-            onChange={(projectCompletionHooks) =>
-              setSettings({ ...settings, projectCompletionHooks })
+            hooks={{
+              start: settings.projectStartHooks ?? [],
+              completion: settings.projectCompletionHooks ?? [],
+              worktree: settings.projectWorktreeHooks ?? []
+            }}
+            onChange={(stage, hooks) =>
+              setSettings({
+                ...settings,
+                ...(stage === 'start'
+                  ? { projectStartHooks: hooks }
+                  : stage === 'completion'
+                    ? { projectCompletionHooks: hooks }
+                    : { projectWorktreeHooks: hooks })
+              })
             }
-          />
-          <ProjectHooksPanel
-            stage="worktree"
-            hooks={settings.projectWorktreeHooks ?? []}
-            onChange={(projectWorktreeHooks) => setSettings({ ...settings, projectWorktreeHooks })}
           />
         </div>
       )

@@ -11,6 +11,8 @@ interface ConversationActionsOptions {
   conversationId: string | null
   selectedModel: string
   workspaceFolder: string | null
+  /** Whether a reply is running or starting, read at call time. */
+  isRunActive?: () => boolean
   onCheckpointCreated?: (restoredHash?: string) => void
   rerunStream: (
     messages: Message[],
@@ -125,7 +127,27 @@ export function useConversationActions(options: ConversationActionsOptions): {
     }
   }
 
+  const rewindingRef = useRef(false)
+
+  /**
+   * A rewind deletes the replies after the message and starts a new one. Under a running reply,
+   * or twice from a double click, the second start was refused and took the first one down with
+   * it, leaving a reply running that the window no longer followed.
+   */
   const rewindConversation = async (message: Message, updatedContent?: string): Promise<void> => {
+    if (rewindingRef.current || options.isRunActive?.()) return
+    rewindingRef.current = true
+    try {
+      await rewindConversationOnce(message, updatedContent)
+    } finally {
+      rewindingRef.current = false
+    }
+  }
+
+  const rewindConversationOnce = async (
+    message: Message,
+    updatedContent?: string
+  ): Promise<void> => {
     if (!options.conversationId || !options.selectedModel) return
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
@@ -206,7 +228,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
    * message returns to the message box to change or send.
    */
   const rewindToMessage = async (message: Message, restoreFiles: boolean): Promise<void> => {
-    if (!options.conversationId) return
+    if (!options.conversationId || options.isRunActive?.()) return
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
     if (restoreFiles) await restoreFilesBefore(targetIndex)

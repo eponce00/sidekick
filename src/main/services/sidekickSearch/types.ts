@@ -38,6 +38,10 @@ export interface PageContent {
   excerpt: string
   byline: string
   siteName: string
+  /** Metadata and structured data: description, author, dates, ratings, prices. */
+  details?: string[]
+  /** Text outside the main article, without what the article already says. */
+  elsewhere?: string
   success: boolean
   error?: string
 }

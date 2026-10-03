@@ -168,17 +168,14 @@ test(
         await page.getByRole('button', { name: /^Agent/ }).click()
         const field = page.getByRole('textbox', { name: 'Office Python interpreter' })
         assert.equal(await field.inputValue(), '')
-        assert.equal(
-          await page.getByRole('button', { name: 'Clear Office Python' }).isDisabled(),
-          true
-        )
-        await page.getByRole('button', { name: 'Choose trusted Python' }).click()
+        assert.equal(await page.getByRole('button', { name: 'Clear Office Python' }).count(), 0)
+        await page.getByRole('button', { name: 'Choose Office Python' }).click()
         await page.waitForFunction(() =>
           Boolean(document.querySelector('[aria-label="Office Python interpreter"]')?.value)
         )
         await page.getByRole('button', { name: 'Clear Office Python' }).click()
         assert.equal(await field.inputValue(), '')
-        await page.getByRole('button', { name: 'Choose trusted Python' }).click()
+        await page.getByRole('button', { name: 'Choose Office Python' }).click()
         await page.waitForFunction(() =>
           Boolean(document.querySelector('[aria-label="Office Python interpreter"]')?.value)
         )

@@ -42,6 +42,7 @@ export function ToolExecutionCard({
   const [expanded, setExpanded] = useState(false)
   const [showAll, setShowAll] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [imageEnlarged, setImageEnlarged] = useState(false)
   const view = resolveToolView(tool)
   const output = tool.error || tool.output || ''
   const bounded = useMemo(() => boundedLines(output, showAll), [output, showAll])
@@ -60,6 +61,12 @@ export function ToolExecutionCard({
   const hasSearchOutput = Array.isArray(dataRecord?.results) && dataRecord.results.length > 0
   const hasWebOutput = Boolean(dataRecord && (dataRecord.url || dataRecord.content))
   const hasFileListOutput = Array.isArray(dataRecord?.files) && dataRecord.files.length > 0
+  // An image the agent looked at, kept as a reduced copy in the app's own image store.
+  const previewUrl =
+    typeof dataRecord?.previewUrl === 'string' &&
+    dataRecord.previewUrl.startsWith('sidekick-browser://artifact/')
+      ? dataRecord.previewUrl
+      : null
   const expandable = Boolean(
     command || detail || subject || output || tool.changes?.length || tool.diagnostics?.length
   )
@@ -72,6 +79,21 @@ export function ToolExecutionCard({
         expandable={expandable}
         expanded={expanded}
       />
+      {previewUrl && (
+        <button
+          type="button"
+          className={`tool-image-preview${imageEnlarged ? ' is-enlarged' : ''}`}
+          onClick={() => setImageEnlarged((value) => !value)}
+          aria-label={imageEnlarged ? 'Show the image smaller' : 'Show the image larger'}
+          title={subject || readPath}
+        >
+          <img
+            src={previewUrl}
+            alt={`Image the agent viewed: ${subject || readPath || ''}`}
+            loading="lazy"
+          />
+        </button>
+      )}
       {expanded && (
         <div className="tool-execution-detail">
           {subject && (
@@ -129,7 +151,7 @@ export function ToolExecutionCard({
                   <AnsiTerminalOutput value={bounded.text} />
                 </div>
               )}
-              {output && view !== 'terminal' && (
+              {output && view !== 'terminal' && !previewUrl && (
                 <div className={`rich-tool-output is-${view}`}>
                   <button
                     type="button"

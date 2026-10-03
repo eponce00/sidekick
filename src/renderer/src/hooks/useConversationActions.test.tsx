@@ -89,6 +89,17 @@ describe('useConversationActions', () => {
     expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 1)
   })
 
+  it('starts one reply for a double-clicked retry', async () => {
+    // The second start was refused and took the first reply down with it.
+    act(() => {
+      controller.retryMessage(researchResponse)
+      controller.retryMessage(researchResponse)
+    })
+
+    await vi.waitFor(() => expect(rerunStream).toHaveBeenCalledTimes(1))
+    expect(deleteMessagesAfter).toHaveBeenCalledTimes(1)
+  })
+
   it('does not answer on top of history it failed to truncate', async () => {
     deleteMessagesAfter.mockRejectedValueOnce(new Error('database is locked'))
 

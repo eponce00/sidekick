@@ -168,6 +168,8 @@ export class WorkspaceReadService {
        * size splits a line and leaves the rest in pieces; ending here names the line to continue.
        */
       maxTokens?: number
+      /** Prefix each line with its number, as the model reads files; viewers want the text. */
+      numberLines?: boolean
       signal?: AbortSignal
     } = {}
   ): Promise<WorkspaceReadResult> {
@@ -214,7 +216,7 @@ export class WorkspaceReadService {
         abortIfNeeded(options.signal)
         totalLines++
         if (totalLines < startLine || totalLines > lastAllowedLine || endedByByteLimit) continue
-        const numbered = `${totalLines}: ${line}`
+        const numbered = options.numberLines === false ? line : `${totalLines}: ${line}`
         const bytes = Buffer.byteLength(numbered + '\n')
         const tokens = options.maxTokens ? estimateTextTokens(numbered) + 1 : 0
         // The first line is always returned, so a read past an overlong line still moves on.

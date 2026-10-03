@@ -6,11 +6,15 @@ import {
   type ToolResultMediaAttachment
 } from '../../shared/agentRuntime'
 import { searchImages } from './sidekickSearch/imageSearch'
+import { digestPage } from './sidekickSearch/pageDigest'
 import { readPage } from './sidekickSearch/pageReader'
 import { searchWeb } from './sidekickSearch/searchCoordinator'
 import type { ImageSearchResult, PageContent } from './sidekickSearch/types'
 import type { ToolOutputStore } from './toolOutputStore'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+
+/** One page read, leaving room in the tool result bound for the note on what was left out. */
+const PAGE_READ_TOKENS = 6_000
 
 /**
  * A page that could not be read is a failed call. Reporting it as a success
@@ -104,7 +108,17 @@ export function registerWebToolHandlers(
     const data = await readPage(String(args.url || ''))
     const failure = pageFetchFailure(title, data)
     if (failure) return failure
-    const boundedOutput = await outputs.apply(JSON.stringify(data), { preview: 'head-tail' })
+    const digest = digestPage(data, String(args.information_needed || ''), PAGE_READ_TOKENS)
+    let modelContent = digest.text
+    if (digest.reduced) {
+      const handle = await outputs.save(digest.full)
+      modelContent +=
+        `\n\n[The page is longer than one read, so the parts that best match what you asked ` +
+        `for were kept. The whole page in this form is tool_output handle ${handle}; read it ` +
+        `with an offset, or fetch again asking for something else.]`
+    }
+    // Markdown, not JSON: escaped newlines made headings, lists and code hard to read.
+    const boundedOutput = await outputs.apply(modelContent, { preview: 'head' })
     return toolExecutionSucceeded({
       title,
       data,

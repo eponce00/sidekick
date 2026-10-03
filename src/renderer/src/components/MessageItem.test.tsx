@@ -746,14 +746,82 @@ describe('MessageItem shared-channel presentation', () => {
     expect(onContinueRun).toHaveBeenCalledWith(message)
     expect(button.disabled).toBe(true)
 
-    // Once something else follows it, the interruption can only be retried.
+    // Once continued, or once something else follows it, the interruption is a quiet note: the
+    // reply below carries on, so it is not shown as a failure.
     await act(async () => {
       root.render(<MessageItem {...props} message={{ ...message }} />)
     })
-    const labels = [...container.querySelectorAll('.run-error-segment button')].map((candidate) =>
-      candidate.textContent?.trim()
+    expect(container.querySelector('.run-error-segment')).toBeNull()
+    expect(container.querySelector('.run-interrupted-note')?.textContent).toContain(
+      'SideKick closed before this reply finished.'
     )
-    expect(labels).toEqual(['Retry'])
+  })
+
+  it('shows a question the agent is waiting on outside the folded work', async () => {
+    // The question sat inside the collapsed work block, so the run waited on an answer the user
+    // could not see until they expanded it.
+    const message = {
+      id: 'asking',
+      runId: 'run-1',
+      role: 'agent' as const,
+      content: '',
+      timestamp: 1_000,
+      segments: [
+        { type: 'thinking' as const, content: 'Ask first.' },
+        {
+          type: 'tool' as const,
+          tool: { id: 'ask', title: 'ask user', command: 'ask_user', status: 'running' as const }
+        },
+        {
+          type: 'interaction' as const,
+          interaction: {
+            id: 'question-1',
+            kind: 'question' as const,
+            status: 'pending' as const,
+            request: {
+              questions: [
+                {
+                  id: 'install',
+                  question: 'Install ws-scrcpy now?',
+                  options: [{ label: 'Yes' }, { label: 'Later' }]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={message}
+          index={0}
+          isLoading
+          expandedThinking={new Set<string>()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={vi.fn()}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+          onResolveAgentInteraction={vi.fn()}
+        />
+      )
+    })
+
+    const question = [...container.querySelectorAll('*')].find(
+      (element) => element.children.length === 0 && element.textContent === 'Install ws-scrcpy now?'
+    )
+    expect(question).toBeDefined()
+    expect(question!.closest('.agent-work-disclosure')).toBeNull()
   })
 
   it('renders thinking and tool activity in the order it happened', async () => {
