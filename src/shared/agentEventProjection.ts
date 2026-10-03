@@ -252,7 +252,16 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     if (event.type === 'tool.pending') {
       const id = toolCallId(event)
-      if (!tools.has(id)) {
+      const known = tools.get(id)
+      // A streamed call is announced before its arguments are complete and again once they
+      // name their target; the later announcement is the one to show.
+      if (known?.status === 'pending') {
+        known.input =
+          (event.payload.arguments as Record<string, unknown> | undefined) ?? known.input
+        known.presentation =
+          (event.payload.presentation as ToolPresentationIntent | undefined) ?? known.presentation
+      }
+      if (!known) {
         tools.set(id, {
           id,
           callId: id,
