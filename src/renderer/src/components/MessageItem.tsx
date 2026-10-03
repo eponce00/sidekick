@@ -492,7 +492,13 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
         !!group.segment.tool &&
         resolveToolView(group.segment.tool) === 'subagent') ||
       // An interruption is what the reader needs to act on, not work to fold away.
-      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted'))
+      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted') ||
+      // So is anything waiting on the user. A question and its answer stay part of the reply;
+      // an answered approval is only a step.
+      (group.segment.type === 'interaction' &&
+        (group.segment.interaction?.status === 'pending' ||
+          group.segment.interaction?.kind === 'question')) ||
+      (group.segment.type === 'decision' && group.segment.decision?.status === 'pending'))
   )
 }
 
