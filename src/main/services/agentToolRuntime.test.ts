@@ -373,7 +373,13 @@ describe('AgentToolRuntime file receipts', () => {
     const workspace = await temporaryRoot('sidekick-image-mode-project-')
     const data = await temporaryRoot('sidekick-image-mode-external-')
     const image = join(data, 'pixel.png')
-    await writeFile(image, Buffer.from('89504e470d0a1a0a', 'hex'))
+    await writeFile(
+      image,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+        'base64'
+      )
+    )
     const db = new Database(':memory:')
     applyDatabaseSchema(db)
     try {
@@ -406,7 +412,8 @@ describe('AgentToolRuntime file receipts', () => {
           {
             source: {
               type: 'data_url',
-              dataUrl: 'data:image/png;base64,iVBORw0KGgo='
+              dataUrl:
+                'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
             }
           }
         ]

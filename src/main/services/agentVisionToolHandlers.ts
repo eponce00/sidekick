@@ -15,6 +15,23 @@ const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.gif': 'image/gif'
 }
 const LIMIT = 8 * 1024 * 1024
+const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex')
+const PNG_END = Buffer.from('49454e44ae426082', 'hex')
+
+/**
+ * The image type its bytes declare, or nothing when they are not a whole image. A provider rejects
+ * a request carrying an undecodable image and the run ends there, so a file named .png that a shell
+ * redirect re-encoded, or a capture cut short, must fail as this tool call instead.
+ */
+export function imageContentType(bytes: Buffer): ToolResultImageMimeType | undefined {
+  if (bytes.subarray(0, 8).equals(PNG_SIGNATURE))
+    return bytes.includes(PNG_END, bytes.length - 64) ? 'image/png' : undefined
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  const head = bytes.subarray(0, 12).toString('latin1')
+  if (head.startsWith('GIF87a') || head.startsWith('GIF89a')) return 'image/gif'
+  if (head.startsWith('RIFF') && head.slice(8) === 'WEBP') return 'image/webp'
+  return undefined
+}
 export type ExternalImageApproval = (canonicalPath: string, signal: AbortSignal) => Promise<boolean>
 async function approved(
   approve: ExternalImageApproval,
@@ -63,8 +80,7 @@ export function registerVisionToolHandlers(
       const rel = root ? relative(root, path) : undefined
       const external =
         rel === undefined || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)
-      const mimeType = TYPES[extname(path).toLowerCase()]
-      if (!mimeType)
+      if (!TYPES[extname(path).toLowerCase()])
         return toolExecutionFailed({
           title,
           code: 'unsupported',
@@ -129,6 +145,17 @@ export function registerVisionToolHandlers(
         await file.close()
       }
       if (context.signal.aborted) return cancelled()
+      const mimeType = imageContentType(bytes)
+      if (!mimeType)
+        return toolExecutionFailed({
+          title,
+          code: 'unsupported',
+          message:
+            `${requested} is not a whole PNG, JPEG, WebP, or GIF image, so it was not attached. ` +
+            'A shell redirect such as `adb shell screencap -p > file.png` or PowerShell `>` ' +
+            'rewrites binary output. Save the file where it is made and copy it instead, for ' +
+            'example `adb shell screencap -p /sdcard/screen.png` then `adb pull /sdcard/screen.png`.'
+        })
       const previewUrl = await saveViewedImagePreview(bytes)
       return toolExecutionSucceeded({
         title,
