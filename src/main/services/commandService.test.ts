@@ -19,7 +19,7 @@ async function waitForBackground(
 ): Promise<ReturnType<CommandService['listBackground']>[number]> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const task = service.listBackground(runId)[0]
+    const task = service.listBackground({ runId })[0]
     if (task && task.status !== 'running') return task
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 25))
   }
@@ -105,8 +105,8 @@ describe('CommandService', () => {
     if (!('runId' in task)) throw new Error('Expected a background task')
     const completed = await waitForBackground(service, 'run-2')
     expect(completed.status).toBe('success')
-    expect(service.listBackground('run-2')).toHaveLength(1)
-    expect(service.listBackground('another-run')).toHaveLength(0)
+    expect(service.listBackground({ runId: 'run-2' })).toHaveLength(1)
+    expect(service.listBackground({ runId: 'another-run' })).toHaveLength(0)
     const row = db.prepare('SELECT status FROM background_tasks WHERE id = ?').get(task.id) as {
       status: string
     }

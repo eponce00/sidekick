@@ -39,8 +39,9 @@ module.exports = {
     '!{.env,.env.*,.npmrc,pnpm-lock.yaml}',
     '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   ],
-  // sherpa-onnx loads native libraries that the OS cannot read from inside app.asar.
-  asarUnpack: ['resources/**', '**/node_modules/sherpa-onnx-*/**'],
+  // sherpa-onnx loads native libraries that the OS cannot read from inside app.asar, and
+  // node-pty starts its own helpers (Windows' console host, a macOS spawn helper) from disk.
+  asarUnpack: ['resources/**', '**/node_modules/sherpa-onnx-*/**', '**/node_modules/node-pty/**'],
   win: {
     executableName: identity.productName,
     icon: 'build/icon.ico',

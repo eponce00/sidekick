@@ -49,6 +49,8 @@ import { recoverAgentRunMaterializations } from './agentRunRecovery'
 import { AgentMessageMaterializer } from './agentMessageMaterializer'
 import { AgentToolRuntime } from './agentToolRuntime'
 import { CommandService } from './commandService'
+import { TerminalSessionStore } from './terminalSessions'
+import type { TerminalSessionEvent } from '../../shared/terminalSessions'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
@@ -127,7 +129,7 @@ export class AgentRuntimeCoordinator {
   private readonly messages: AgentMessageMaterializer
   private readonly admissions: PromptAdmissionStore
   private readonly mcp = new McpClientManager()
-  private readonly commands: CommandService
+  readonly commands: CommandService
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()
   private readonly preparations = new Map<string, PreparingRun>()
@@ -147,6 +149,8 @@ export class AgentRuntimeCoordinator {
       settings?: () => ProviderSettings
       skillAssetsPath?: () => string
       pdfOutputRoot?: string
+      /** Where every agent command's terminal output and state is published. */
+      publishTerminal?: (event: TerminalSessionEvent) => void
     } = {}
   ) {
     this.publishExternal = publish
@@ -162,7 +166,11 @@ export class AgentRuntimeCoordinator {
       join(userDataRoot, 'command-outputs'),
       undefined,
       this.skillAssetsPath(),
-      () => this.settings().shellIsolation === 'docker'
+      () => this.settings().shellIsolation === 'docker',
+      {
+        terminals: new TerminalSessionStore(options.publishTerminal),
+        terminalEnabled: () => this.settings().agentCommandTerminal !== false
+      }
     )
     this.browser = new NativeBrowserSessionService({
       artifactRoot: join(userDataRoot, 'browser-artifacts'),

@@ -82,6 +82,8 @@ export interface ProviderInstance {
 
 export interface ProviderSettings {
   shellIsolation?: 'host' | 'docker'
+  /** Run agent commands in a terminal so they behave as for the user. Default on. */
+  agentCommandTerminal?: boolean
   /** Explicit user-selected canonical host Python; unset means no direct Office tools. */
   officeHelperInterpreter?: string
   /** Main-owned identity invalidates pending helper requests when configuration changes. */

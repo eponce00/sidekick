@@ -12,7 +12,12 @@ export function capabilitiesFromTools(tools: readonly AgentToolDefinition[]): Pr
     artifacts: names.has('create_artifact'),
     todoList: names.has('manage_todo_list'),
     commands: names.has('shell'),
-    backgroundCommands: hasAny('list_background_tasks', 'cancel_background_task'),
+    backgroundCommands: hasAny(
+      'list_background_tasks',
+      'cancel_background_task',
+      'read_command_output',
+      'send_command_input'
+    ),
     subagents: names.has('spawn_subagent'),
     skills: names.has('use_skill'),
     webSearch: names.has('web_search'),

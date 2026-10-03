@@ -190,7 +190,7 @@ model-visible `output_truncated` result so the model can retry with a smaller re
 non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
 
-The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
+The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
 but no provider or tool execution. Research report is a run profile on the same kernel, not a
@@ -393,10 +393,15 @@ controls.
 Because participant projects are intentionally isolated, concrete text-file handoffs use immutable,
 size-bounded `collaboration_artifacts` snapshots. Sharing emits a public artifact reference and
 addressed wake; importing is a separate permission-checked write into the recipient's own project.
-Long-running servers use the canonical per-run background command service and list/cancel tools.
-Foreground commands
-cannot detach themselves with shell `&`, and Unix command cancellation targets the whole detached
-process group so a child cannot keep the agent loop stuck by inheriting output pipes. Collaboration
+Long-running servers use the canonical background command service, owned by the conversation,
+and its list, read, input and cancel tools. Commands run in a pseudo-terminal (node-pty, ConPTY on
+Windows) unless isolation or the user's setting asks for pipes; a headless terminal renders their
+output to the text the model reads. `TerminalSessionStore` keeps one record per command for the chat,
+the Terminal panel and those tools. A foreground command that waits at a prompt, or that the user
+moves to the background, becomes a background task instead of holding the agent loop. Foreground
+commands cannot detach themselves with shell `&`. Unix cancellation targets the command's whole
+process group; on Windows the tree is ended with `taskkill`, and children orphaned by a shell that
+died first are found by their parent ID, so no child keeps the loop stuck by inheriting output. Collaboration
 prompts and provider-boundary reminders require kickoff, actionable-request responses, and periodic
 public updates without serializing the two independent loops. Peer messages carry an explicit
 `request`, `response`, `update`, or `completion` intent. Only requests create a required reply;

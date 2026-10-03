@@ -80,6 +80,9 @@ function presentationTitle(
   const explicit = stringArgument(args, 'title')
   if (name === 'shell')
     return { kind, title: explicit || 'Run command', detail: stringArgument(args, 'command') }
+  if (name === 'read_command_output') return { kind, title: 'Read command output' }
+  if (name === 'send_command_input')
+    return { kind, title: 'Type into command', detail: stringArgument(args, 'input') }
   if (name === 'read') return { kind, title: `Read ${path || 'file'}`, subject: path }
   if (name === 'list_files') return { kind, title: 'List workspace files', subject: path }
   if (name === 'search_files')
@@ -136,7 +139,13 @@ function presentationTitle(
 }
 
 function presentationKind(name: string): ToolPresentationKind {
-  if (name === 'shell' || name === 'list_background_tasks' || name === 'cancel_background_task')
+  if (
+    name === 'shell' ||
+    name === 'list_background_tasks' ||
+    name === 'cancel_background_task' ||
+    name === 'read_command_output' ||
+    name === 'send_command_input'
+  )
     return 'terminal'
   if (name === 'read') return 'read'
   if (name === 'apply_patch' || isWorkspaceMutationTool(name)) return 'diff'
@@ -395,17 +404,62 @@ const shell = definition(
 
 const listBackgroundTasks = definition(
   'list_background_tasks',
-  'List background commands owned by this agent run, including status and bounded output.',
+  'List the background commands of this conversation, including ones started in earlier replies, with their status and, once finished, bounded output.',
   { type: 'object', properties: {} }
 )
 
 const cancelBackgroundTask = definition(
   'cancel_background_task',
-  'Cancel a background command owned by this agent run.',
+  'Stop a running background command of this conversation.',
   {
     type: 'object',
     required: ['taskId'],
     properties: { taskId: { type: 'string', description: 'Background task ID.' } }
+  }
+)
+
+const readCommandOutput = definition(
+  'read_command_output',
+  'Read what a command of this conversation printed, as its terminal shows it, while it runs or after. By default returns the output since your last read of that command; use it to check a dev server, a watcher or a long build without stopping it.',
+  {
+    type: 'object',
+    required: ['taskId'],
+    properties: {
+      taskId: { type: 'string', description: 'Task ID of the command.' },
+      mode: {
+        type: 'string',
+        enum: ['new', 'tail'],
+        description: '"new" (default): output since your last read. "tail": the latest lines.'
+      },
+      lines: {
+        type: 'number',
+        minimum: 1,
+        maximum: 400,
+        description: 'Most lines to return, the latest kept. Default 80.'
+      },
+      pattern: {
+        type: 'string',
+        description:
+          'Optional case-insensitive regular expression; only matching lines are returned.'
+      }
+    }
+  }
+)
+
+const sendCommandInput = definition(
+  'send_command_input',
+  "Type into a running command of this conversation, as a user at its terminal would, then read what it printed in response. Use it to answer a prompt such as a confirmation. Never type secrets or make a choice that is the user's to make; ask them instead.",
+  {
+    type: 'object',
+    required: ['taskId', 'input'],
+    properties: {
+      taskId: { type: 'string', description: 'Task ID of the running command.' },
+      input: { type: 'string', description: 'Text to type.' },
+      enter: {
+        type: 'boolean',
+        description: 'Press Enter after the text. Default true; false for a single keypress.'
+      }
+    }
   }
 )
 
@@ -1295,6 +1349,8 @@ const coreEntries: AgentToolCatalogEntry[] = [
   }),
   entry(listBackgroundTasks, 'command.background', 'read'),
   entry(cancelBackgroundTask, 'command.background', 'execute'),
+  entry(readCommandOutput, 'command.background', 'read'),
+  entry(sendCommandInput, 'command.background', 'execute'),
   entry(wait, 'wait', 'read'),
   // Tasks delegated in one step start together; the provider's limit decides how many run at once.
   entry(spawnSubagent, 'subagents', 'execute', { host: 'main', concurrency: 'approved-parallel' }),

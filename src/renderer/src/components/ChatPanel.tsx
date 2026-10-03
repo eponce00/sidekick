@@ -20,6 +20,7 @@ import {
 } from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
 import { useConversationActions } from '../hooks/useConversationActions'
+import { loadTerminalSessions } from '../utils/terminalSessionStore'
 import { useConversationGoal } from '../hooks/useConversationGoal'
 import { MessageItem } from './MessageItem'
 import { ChatInput } from './ChatInput'
@@ -296,6 +297,11 @@ function ChatPanel({
     }
   })
   const { goal, createGoal, pauseGoal, resumeGoal, clearGoal } = useConversationGoal(conversationId)
+
+  // Commands the agent ran in this conversation, so each command row can show its terminal.
+  useEffect(() => {
+    if (conversationId) loadTerminalSessions(conversationId)
+  }, [conversationId])
 
   useEffect(() => {
     if (conversationId) onFocusChainUpdate(conversationId, goal?.plan ?? [])

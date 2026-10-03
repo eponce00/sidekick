@@ -130,6 +130,11 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+.browser-live-dot.is-waiting {
+  background: var(--warning);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
 /* Remove old underline indicator */
 .activity-tab-button.active::after {
   display: none;

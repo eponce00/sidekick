@@ -21,9 +21,13 @@ import {
   PanelRight,
   RefreshCw,
   RotateCcw,
+  SquareTerminal,
   Trash2
 } from 'lucide-react'
 import ConfirmDialog from './ConfirmDialog'
+import { TerminalPanel } from './TerminalPanel'
+import { subscribeTerminalView, useTerminalSessions } from '../utils/terminalSessionStore'
+import { terminalSessionIsLive } from '../../../shared/terminalSessions'
 import type { TodoItem } from '../../../shared/types'
 import type { PinnedModel } from '../types/models.types'
 import {
@@ -52,11 +56,11 @@ import {
 } from '../utils/workspaceFileViewer'
 import './ActivityPanel.css'
 
-type ActivityTab = 'checkpoints' | 'files' | 'browser'
+type ActivityTab = 'checkpoints' | 'files' | 'browser' | 'terminal'
 
 function storedActivityTab(): ActivityTab {
   const value = window.localStorage.getItem('activityPanelTab')
-  return value === 'checkpoints' || value === 'browser' ? value : 'files'
+  return value === 'checkpoints' || value === 'browser' || value === 'terminal' ? value : 'files'
 }
 
 interface ActivityPanelProps {
@@ -264,6 +268,23 @@ function ActivityPanel({
   const [fileRootName, setFileRootName] = useState<string>('')
   const [fileRefreshKey, setFileRefreshKey] = useState(0)
   const [viewedFile, setViewedFile] = useState<WorkspaceFileViewRequest | null>(null)
+  const [terminalRequest, setTerminalRequest] = useState<{ id: string; at: number } | null>(null)
+  const terminalSessions = useTerminalSessions(conversationId)
+  const terminalIsLive = terminalSessions.some((session) => terminalSessionIsLive(session.state))
+  const terminalIsWaiting = terminalSessions.some(
+    (session) => session.state === 'waiting_for_input'
+  )
+
+  // "Open in Terminal" on a command in the chat shows it here.
+  useEffect(
+    () =>
+      subscribeTerminalView((id) => {
+        setTerminalRequest({ id, at: Date.now() })
+        setActiveTab('terminal')
+        if (!isPinned) onTogglePin()
+      }),
+    [isPinned, onTogglePin]
+  )
 
   // A file reference clicked anywhere in the app opens here, over the tree,
   // and makes sure the panel is actually visible to show it.
@@ -622,6 +643,25 @@ function ActivityPanel({
               </span>
               <span className="tab-label">Browser</span>
             </button>
+            <button
+              className={`activity-tab-button ${activeTab === 'terminal' ? 'active' : ''}`}
+              onClick={() => setActiveTab('terminal')}
+              title="Agent commands"
+              aria-label="Open the agent's terminal"
+            >
+              <span className="activity-tab-icon-wrap">
+                <SquareTerminal size={15} />
+                {terminalIsLive && (
+                  <span
+                    className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
+                    aria-label={
+                      terminalIsWaiting ? 'A command is waiting for input' : 'A command is running'
+                    }
+                  />
+                )}
+              </span>
+              <span className="tab-label">Terminal</span>
+            </button>
           </div>
           <div className="activity-header-right">
             <button
@@ -892,6 +932,9 @@ function ActivityPanel({
                 )}
               </div>
             )}
+            {activeTab === 'terminal' && (
+              <TerminalPanel conversationId={conversationId} requestedSessionId={terminalRequest} />
+            )}
             <div className="activity-browser-wrap" hidden={activeTab !== 'browser'}>
               <BrowserActivityPanel
                 conversationId={conversationId}
@@ -927,6 +970,17 @@ function ActivityPanel({
             >
               <MonitorUp size={17} />
               {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
+            </button>
+            <button
+              className="activity-tab-vertical"
+              onClick={() => openCollapsedTab('terminal')}
+              title="Open the agent's terminal"
+              aria-label="Open the agent's terminal"
+            >
+              <SquareTerminal size={17} />
+              {terminalIsLive && (
+                <span className="collapsed-tab-badge">{terminalIsWaiting ? 'Input' : 'Live'}</span>
+              )}
             </button>
           </div>
         )}

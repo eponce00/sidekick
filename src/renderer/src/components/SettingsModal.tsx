@@ -504,6 +504,14 @@ function SettingsModal({
                 network. It needs a local Docker daemon, and other tools still run on the host.
               </small>
             </label>
+            <ToggleField
+              label="Run commands in a terminal"
+              hint="Programs behave as they do for you: colours, progress, and prompts you or the agent can answer. Turn off to use plain pipes."
+              checked={settings.agentCommandTerminal ?? true}
+              onChange={(agentCommandTerminal) =>
+                setSettings({ ...settings, agentCommandTerminal })
+              }
+            />
             <PermissionAuditPanel />
           </SettingCard>
           <ProjectHooksPanel
