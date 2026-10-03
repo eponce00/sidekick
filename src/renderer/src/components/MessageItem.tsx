@@ -38,6 +38,7 @@ import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
 import { CommandLiveView } from './CommandLiveView'
+import { useFollowBottom } from '../hooks/useFollowBottom'
 import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { ReadAloudButton } from './ReadAloudButton'
@@ -477,6 +478,24 @@ function waitedCommand(input: Record<string, unknown> | undefined): string | und
   const ids = input?.taskIds
   const first = Array.isArray(ids) ? ids[0] : input?.taskId
   return typeof first === 'string' && first ? first : undefined
+}
+
+/** A thinking step's full text; while it streams, the box follows the newest line. */
+function ThinkingText({
+  content,
+  workspaceRoot,
+  streaming
+}: {
+  content: string
+  workspaceRoot?: string | null
+  streaming: boolean
+}): React.JSX.Element {
+  const ref = useFollowBottom<HTMLDivElement>(streaming)
+  return (
+    <div className="action-text" ref={ref}>
+      <MessageMarkdown content={content} richMedia={false} workspaceRoot={workspaceRoot} />
+    </div>
+  )
 }
 
 function thinkingPreview(content: string): string {
@@ -997,13 +1016,15 @@ function MessageItemInner({
                               <div className="actions-content">
                                 <div className="action-item">
                                   <div className="action-thinking">
-                                    <div className="action-text">
-                                      <MessageMarkdown
-                                        content={segment.content}
-                                        richMedia={false}
-                                        workspaceRoot={workspaceFolder}
-                                      />
-                                    </div>
+                                    <ThinkingText
+                                      content={segment.content}
+                                      workspaceRoot={workspaceFolder}
+                                      streaming={
+                                        isLoading &&
+                                        groupIdx === groupedSegments.length - 1 &&
+                                        segIdx === group.segments.length - 1
+                                      }
+                                    />
                                   </div>
                                 </div>
                               </div>
