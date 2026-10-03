@@ -824,6 +824,70 @@ describe('MessageItem shared-channel presentation', () => {
     expect(question!.closest('.agent-work-disclosure')).toBeNull()
   })
 
+  it('offers Continue on a reply that failed mid-run, and asks before Retry discards it', async () => {
+    // Retry on a dropped connection discarded 18 minutes of work and undid its file changes.
+    const onContinueRun = vi.fn(() => new Promise<void>(() => undefined))
+    const onRetryMessage = vi.fn()
+    const message = {
+      id: 'failed-reply',
+      runId: 'run-failed',
+      role: 'agent' as const,
+      content: '',
+      timestamp: 1_000,
+      segments: [
+        {
+          type: 'run_error' as const,
+          runError: { code: 'internal', message: 'fetch failed (UND_ERR_SOCKET)', retryable: true }
+        }
+      ]
+    }
+    await act(async () => {
+      root.render(
+        <MessageItem
+          message={message}
+          index={0}
+          isLoading={false}
+          expandedThinking={new Set<string>()}
+          editingMessageId={null}
+          editingGeometry={null}
+          editingContent=""
+          copiedMessageId={null}
+          onToggleThinking={vi.fn()}
+          onHandleArtifactResult={vi.fn()}
+          onEditMessage={vi.fn()}
+          onCancelEditMessage={vi.fn()}
+          onConfirmEditMessage={vi.fn()}
+          onCopyMessage={vi.fn()}
+          onRetryMessage={onRetryMessage}
+          onContinueRun={onContinueRun}
+          onSetEditingContent={vi.fn()}
+          onApproveToolLimitDecision={vi.fn()}
+          onDenyToolLimitDecision={vi.fn()}
+        />
+      )
+    })
+    const button = (label: string): HTMLButtonElement | undefined =>
+      [...container.querySelectorAll('.run-error-segment button')].find(
+        (candidate) => candidate.textContent?.trim() === label
+      ) as HTMLButtonElement | undefined
+
+    await act(async () => button('Retry')!.click())
+    expect(onRetryMessage).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('file changes it made are undone')
+    await act(async () => button('Cancel')!.click())
+    expect(button('Discard and retry')).toBeUndefined()
+
+    await act(async () => button('Retry')!.click())
+    await act(async () => button('Discard and retry')!.click())
+    expect(onRetryMessage).toHaveBeenCalledWith(message)
+    await act(async () => button('Cancel')!.click())
+
+    await act(async () => button('Continue')!.click())
+    expect(onContinueRun).toHaveBeenCalledWith(message)
+    // While it continues, the reply cannot also be started over.
+    expect(button('Retry')!.disabled).toBe(true)
+  })
+
   it('renders thinking and tool activity in the order it happened', async () => {
     await act(async () => {
       root.render(
