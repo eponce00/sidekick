@@ -443,7 +443,7 @@ with nested conversations and keeps standalone chats in a separate section. See
 
 ## Built-in SideKick Search
 
-`src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and Readability-based page extraction use the same internal capability.
+`src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and page reading (Markdown conversion, Readability for the main article, and a digest bounded by what the agent asked for) use the same internal capability.
 
 Only `AgentToolRuntime` can invoke search, image discovery, or page extraction; there is no raw
 renderer search bridge. See [Search](../user-guide/SEARCH.md) for behavior, privacy boundaries,

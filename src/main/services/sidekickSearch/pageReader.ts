@@ -3,6 +3,7 @@ import axios from 'axios'
 import { BrowserWindow } from 'electron'
 import { JSDOM } from 'jsdom'
 import { browserIdentity } from './browserIdentity'
+import { htmlToMarkdown } from './htmlMarkdown'
 import type { PageContent } from './types'
 
 const DIRECT_FETCH_TIMEOUT_MS = 18_000
@@ -67,30 +68,157 @@ function validatedPageUrl(value: string): URL {
   return url
 }
 
-function readablePage(
+/** Page-level facts that sit outside any article: what it is, who wrote it, when it changed. */
+export function pageDetails(document: Document): string[] {
+  const meta = (...names: string[]): string | undefined => {
+    for (const name of names) {
+      const value = document
+        .querySelector(`meta[name="${name}"], meta[property="${name}"], meta[itemprop="${name}"]`)
+        ?.getAttribute('content')
+        ?.trim()
+      if (value) return value
+    }
+    return undefined
+  }
+  const details: string[] = []
+  const add = (label: string, value: unknown): void => {
+    const text = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
+    if (!text) return
+    const line = `${label}: ${text.length > 300 ? `${text.slice(0, 299)}…` : text}`
+    if (!details.includes(line)) details.push(line)
+  }
+  add('Description', meta('description', 'og:description', 'twitter:description'))
+  add('Author', meta('author', 'article:author'))
+  add('Published', meta('article:published_time', 'datePublished', 'date', 'dc.date'))
+  add('Updated', meta('article:modified_time', 'og:updated_time', 'dateModified', 'last-modified'))
+  add('Type', meta('og:type'))
+  add('Canonical', document.querySelector('link[rel="canonical"]')?.getAttribute('href'))
+
+  // Structured data is where many sites state ratings, prices, versions and dates.
+  const items: Record<string, unknown>[] = []
+  const collect = (value: unknown): void => {
+    if (Array.isArray(value)) return value.forEach(collect)
+    if (!value || typeof value !== 'object') return
+    const record = value as Record<string, unknown>
+    if (Array.isArray(record['@graph'])) collect(record['@graph'])
+    if (record['@type']) items.push(record)
+  }
+  for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+    try {
+      collect(JSON.parse(script.textContent ?? ''))
+    } catch {
+      // A malformed block is the site's problem; the rest of the page still reads.
+    }
+  }
+  const nameOf = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(nameOf).filter(Boolean).join(', ')
+      : value && typeof value === 'object'
+        ? (value as Record<string, unknown>).name
+        : value
+  for (const item of items.slice(0, 4)) {
+    const type = [item['@type']].flat().join(', ')
+    add(`${type} name`, item.name ?? item.headline)
+    add(`${type} author`, nameOf(item.author))
+    add(`${type} published`, item.datePublished)
+    add(`${type} updated`, item.dateModified)
+    add(`${type} version`, item.softwareVersion ?? item.version)
+    const rating = item.aggregateRating as Record<string, unknown> | undefined
+    if (rating?.ratingValue !== undefined) {
+      const count = rating.ratingCount ?? rating.reviewCount
+      add(
+        `${type} rating`,
+        `${rating.ratingValue}${count !== undefined ? ` (${count} ratings)` : ''}`
+      )
+    }
+    const offer = [item.offers].flat()[0] as Record<string, unknown> | undefined
+    if (offer?.price !== undefined) {
+      add(`${type} price`, `${offer.price} ${offer.priceCurrency ?? ''}`)
+    }
+  }
+  return details
+}
+
+const PAGE_CHROME = 'nav, footer, [role="navigation"], [role="banner"], [role="contentinfo"]'
+
+function comparable(line: string): string {
+  return line
+    .replace(/\]\([^)]*\)/g, ']')
+    .replace(/[#>*_`|[\]!-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+}
+
+/**
+ * Text on the page outside its main article. Readability keeps only the article, so a sidebar's
+ * facts were lost: a project's stars and last release, a product's price, a post's date.
+ */
+export function elsewhereOnPage(document: Document, url: string, article: string): string {
+  const body = document.body?.cloneNode(true) as HTMLElement | undefined
+  if (!body) return ''
+  body.querySelectorAll(PAGE_CHROME).forEach((element) => element.remove())
+  const seen = new Set(article.split('\n').map(comparable).filter(Boolean))
+  const kept: string[] = []
+  let fence: string | null = null
+  for (const line of htmlToMarkdown(body, url).split('\n')) {
+    // Code in the article is already there; code beside it is rarely what was asked for.
+    const opener = line.match(/^(`{3,})/)?.[1]
+    if (fence) {
+      if (line.startsWith(fence)) fence = null
+      continue
+    }
+    if (opener) {
+      fence = opener
+      continue
+    }
+    const key = comparable(line)
+    if (!key) {
+      if (kept.length && kept.at(-1) !== '') kept.push('')
+      continue
+    }
+    if (seen.has(key)) continue
+    seen.add(key)
+    kept.push(line)
+  }
+  return kept.join('\n').trim()
+}
+
+export function readablePage(
   url: string,
   html: string,
   maxContentLength: number
 ): PageContent | undefined {
   const dom = new JSDOM(html, { url })
-  const article = new Readability(dom.window.document).parse()
-  dom.window.close()
-  if (!article) return undefined
+  try {
+    const document = dom.window.document
+    const details = pageDetails(document)
+    // On a page with no single article, such as a front page, Readability takes the whole page,
+    // menus included. The menus are never the content.
+    const content = document.cloneNode(true) as Document
+    content.querySelectorAll(PAGE_CHROME).forEach((element) => element.remove())
+    const article = new Readability(content, { keepClasses: true }).parse()
+    const main = article?.content
+      ? htmlToMarkdown(JSDOM.fragment(article.content), url)
+      : htmlToMarkdown(content.body ?? content, url)
+    if (!main.trim()) return undefined
+    const elsewhere = article?.content ? elsewhereOnPage(document, url, main) : ''
 
-  let content = article.textContent?.trim() || ''
-  if (!content) return undefined
-  if (content.length > maxContentLength) {
-    content = `${content.slice(0, maxContentLength)}\n\n[Content truncated...]`
-  }
-
-  return {
-    url,
-    title: article.title || '',
-    content,
-    excerpt: article.excerpt || '',
-    byline: article.byline || '',
-    siteName: article.siteName || '',
-    success: true
+    const bound = (text: string, limit: number): string =>
+      text.length > limit ? `${text.slice(0, limit)}\n\n[Content truncated...]` : text
+    return {
+      url,
+      title: article?.title || document.title || '',
+      content: bound(main, maxContentLength),
+      excerpt: article?.excerpt || '',
+      byline: article?.byline || '',
+      siteName: article?.siteName || '',
+      details,
+      ...(elsewhere ? { elsewhere: bound(elsewhere, Math.floor(maxContentLength / 4)) } : {}),
+      success: true
+    }
+  } finally {
+    dom.window.close()
   }
 }
 
@@ -152,7 +280,8 @@ async function renderPage(url: string, maxContentLength: number): Promise<PageCo
 }
 
 /**
- * Reads a page directly and extracts its main text with Firefox Readability.
+ * Reads a page directly: its main article as Markdown (found with Firefox Readability), the
+ * page's own details, and the text around the article.
  * JavaScript-heavy or protected pages are rendered once in Sidekick's embedded Chromium.
  */
 export async function readPage(
