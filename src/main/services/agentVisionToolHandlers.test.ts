@@ -3,7 +3,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
-import { imageContentType, registerVisionToolHandlers } from './agentVisionToolHandlers'
+import { imageContentType } from '../../shared/imageContent'
+import { registerVisionToolHandlers } from './agentVisionToolHandlers'
 // A whole 1x1 PNG.
 const PIXEL_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
