@@ -51,6 +51,8 @@ export interface WorkspaceReadResult {
   truncated: boolean
   version: string
   size: number
+  /** Not text: no content is returned, only the version and size. */
+  binary?: boolean
 }
 
 export interface WorkspaceListResult {
@@ -124,6 +126,7 @@ export class WorkspaceReadService {
           startLine: options.startLine,
           endLine: options.endLine,
           maxTokens: options.maxTokens,
+          describeBinary: true,
           signal: options.signal
         }))
       }
@@ -170,6 +173,11 @@ export class WorkspaceReadService {
       maxTokens?: number
       /** Prefix each line with its number, as the model reads files; viewers want the text. */
       numberLines?: boolean
+      /**
+       * Describe a binary file instead of refusing it. The version still identifies the file, so
+       * the agent can delete or replace an image it cannot read as text.
+       */
+      describeBinary?: boolean
       signal?: AbortSignal
     } = {}
   ): Promise<WorkspaceReadResult> {
@@ -181,6 +189,19 @@ export class WorkspaceReadService {
     try {
       const sample = Buffer.alloc(Math.min(8_192, stat.size))
       const { bytesRead } = await sampleHandle.read(sample, 0, sample.length, 0)
+      if (options.describeBinary && sample.subarray(0, bytesRead).includes(0)) {
+        return {
+          content: '',
+          totalLines: 0,
+          startLine: 0,
+          endLine: 0,
+          nextLine: null,
+          truncated: false,
+          version: workspaceFileVersion(stat),
+          size: stat.size,
+          binary: true
+        }
+      }
       assertTextSample(sample.subarray(0, bytesRead), filePath)
     } finally {
       await sampleHandle.close()
