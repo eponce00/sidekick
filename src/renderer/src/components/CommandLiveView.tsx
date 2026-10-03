@@ -8,8 +8,15 @@ import './CommandLiveView.css'
  * A running command at a glance: its last lines as its terminal shows them, and the controls a
  * user at that terminal would have. Shown while the command runs, under its row in the chat.
  */
-export function CommandLiveView({ toolCallId }: { toolCallId: string }): React.JSX.Element | null {
-  const session = useTerminalSessionForTool(toolCallId)
+export function CommandLiveView({
+  toolCallId,
+  sessionId
+}: {
+  toolCallId?: string
+  /** A command named directly, as by a wait for it. */
+  sessionId?: string
+}): React.JSX.Element | null {
+  const session = useTerminalSessionForTool(toolCallId, sessionId)
   const [answer, setAnswer] = useState('')
   if (!session || !terminalSessionIsLive(session.state)) return null
   const waiting = session.state === 'waiting_for_input'

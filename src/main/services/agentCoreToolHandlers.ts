@@ -1,5 +1,4 @@
-import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
-import { waitForAgentDelay } from '../../shared/agentWait'
+import { toolExecutionSucceeded } from '../../shared/agentRuntime'
 import type { ToolOutputStore } from './toolOutputStore'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 
@@ -12,18 +11,6 @@ export function registerCoreToolHandlers(
   registry: AgentToolHandlerRegistry,
   outputs: ToolOutputStore
 ): void {
-  registry.register('wait', async ({ title, arguments: args, context }) => {
-    const result = await waitForAgentDelay(args.seconds, { signal: context.signal })
-    return result.completed
-      ? toolExecutionSucceeded({ title, data: result })
-      : toolExecutionFailed({
-          title,
-          code: 'cancelled',
-          message: 'Wait cancelled',
-          status: 'cancelled',
-          data: result
-        })
-  })
   registry.register('tool_output', async ({ title, arguments: args }) => {
     const result = await outputs.read(
       String(args.handle || ''),

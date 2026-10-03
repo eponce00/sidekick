@@ -2,14 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { getSubAgentToolDefinitions, getToolDefinitions } from './toolDefinitions'
 
 describe('tool definitions', () => {
-  it('offers the bounded native wait tool to direct and delegated agents', () => {
+  it('offers the native wait tool to direct and delegated agents', () => {
     const direct = getToolDefinitions(false).find(({ function: tool }) => tool.name === 'wait')
     const delegated = getSubAgentToolDefinitions(false).find(
       ({ function: tool }) => tool.name === 'wait'
     )
 
-    expect(direct?.function.parameters.required).toEqual(['seconds'])
-    expect(direct?.function.description).toContain('capped at 200 seconds')
+    // Waiting is for something to happen; the seconds are only a limit.
+    expect(direct?.function.parameters.required ?? []).toEqual([])
+    expect(direct?.function.description).toContain('Wait until something happens')
     expect(delegated).toEqual(direct)
   })
 

@@ -76,6 +76,7 @@ import type { VerificationTerminalDecision } from '../../shared/verification'
 import type { AgentPlanReview, AgentPlanStage } from '../../shared/agentPlans'
 import type { AgentPlanTerminalDecision } from './agentPlanService'
 import { abortablePromise } from './abortablePromise'
+import { agentWaitTitle } from '../../shared/agentWait'
 
 export interface AgentKernelModelTurn {
   content: string
@@ -340,7 +341,7 @@ function mergeToolCalls(existing: ProviderToolCall[], incoming: ProviderToolCall
 
 function defaultToolTitle(name: string, args: Record<string, unknown>): string {
   if (name === 'shell') return String(args.title || 'Run command')
-  if (name === 'wait') return `Wait ${String(args.seconds || '')}s`
+  if (name === 'wait') return agentWaitTitle(args)
   if (name === 'web_search') return `Search: ${String(args.query || '')}`
   if (name === 'web_image_search') return `Image search: ${String(args.query || '')}`
   if (name === 'web_fetch') return `Fetch: ${String(args.url || '')}`

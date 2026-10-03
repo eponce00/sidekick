@@ -312,6 +312,80 @@ describe('AgentToolRuntime file receipts', () => {
     }
   }, 30_000)
 
+  it('waits until a command ends, prints what was asked for, or the user writes', async () => {
+    // A fixed 200-second wait slept through a build that had failed after 4.8 seconds.
+    const workspace = await temporaryRoot('sidekick-tool-runtime-wait-')
+    const data = await temporaryRoot('sidekick-tool-runtime-wait-data-')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const commands = new CommandService(db, join(data, 'commands'))
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      commands,
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    const session = await runtime.createSession({
+      runId: 'run-wait',
+      surface: 'conversation',
+      workspaceRoot: workspace,
+      webSearchEnabled: false,
+      capabilities: ['command.execute', 'command.background', 'wait']
+    })
+    const context = {
+      runId: 'run-wait',
+      conversationId: 'chat',
+      workspaceRoot: workspace,
+      signal: new AbortController().signal
+    }
+    const background = async (script: string): Promise<string> => {
+      const started = (await session.router.execute(
+        'shell',
+        { title: 'Work', command: `node -e "${script}"`, background: true, accessLevel: 'auto' },
+        context
+      )) as ToolExecutionResult
+      return (started.data as { id: string }).id
+    }
+    const wait = async (args: Record<string, unknown>) => {
+      const startedAt = Date.now()
+      const result = (await session.router.execute('wait', args, context)) as ToolExecutionResult
+      return { elapsed: Date.now() - startedAt, ...JSON.parse(result.modelContent!) }
+    }
+    try {
+      const build = await background(
+        "setTimeout(() => { console.log('error: cannot find symbol'); process.exit(1) }, 800)"
+      )
+      const ended = await wait({ taskIds: [build], seconds: 120 })
+      expect(ended).toMatchObject({ woke: 'task_ended', taskId: build, exitCode: 1 })
+      expect(ended.output).toContain('cannot find symbol')
+      expect(ended.elapsed).toBeLessThan(15_000)
+      // It was seen ending, so it is not reported again before the next step.
+      expect(commands.takeNotices('chat')).toEqual([])
+
+      const server = await background(
+        "setTimeout(() => console.log('ready on http://localhost:5173'), 800); setInterval(() => {}, 1000)"
+      )
+      const ready = await wait({ taskIds: [server], pattern: 'ready on', seconds: 120 })
+      expect(ready).toMatchObject({ woke: 'pattern_matched', taskId: server, state: 'running' })
+      expect(ready.output).toContain('ready on http://localhost:5173')
+
+      setTimeout(() => runtime.notifyUserMessage('run-wait'), 300)
+      const interrupted = await wait({ seconds: 30 })
+      expect(interrupted).toMatchObject({ woke: 'user_message' })
+      expect(interrupted.elapsed).toBeLessThan(5_000)
+
+      commands.cancelBackground(server, { conversationId: 'chat' })
+      await vi.waitFor(() => expect(commands.terminals.get(server)?.state).toBe('stopped'), {
+        timeout: 10_000
+      })
+    } finally {
+      commands.cancelAll()
+      await runtime.close()
+      db.close()
+    }
+  }, 60_000)
+
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')
