@@ -89,6 +89,8 @@ export interface ConversationRunController {
   queuedMessages: PendingRunMessageItem[]
   pivotMessage: PendingRunMessageItem | null
   runConversationId: string | null
+  /** Whether a reply is running or starting, read at call time. */
+  isRunActive: () => boolean
   /** Resolves with the phase the run ended in once it is finalized. */
   startRun: (input: StartConversationAgentRunInput) => Promise<AgentRunPhase>
   finishRun: () => Promise<PendingRunMessage | null>
@@ -147,6 +149,17 @@ function createPendingRunMessage(
     ...(images.length ? { images } : {}),
     ...(attachments.length ? { attachments } : {}),
     mode
+  }
+}
+
+/**
+ * A reply is already running in the conversation. Not a failure of that reply: the caller leaves
+ * the running reply alone instead of reporting an error or finishing it.
+ */
+export class RunAlreadyActiveError extends Error {
+  constructor() {
+    super('A reply is already running in this conversation')
+    this.name = 'RunAlreadyActiveError'
   }
 }
 
@@ -321,68 +334,82 @@ export function useConversationRun({
     })
   }, [persistAdmissions, replacePivot, replaceQueue, scheduleProject])
 
+  /**
+   * Follows the conversation's run that the main process is already running, as when the window
+   * opens a conversation mid-run. Resolves once attached, or at once when nothing is running.
+   */
+  const attachLatestRun = useCallback(
+    async (
+      targetConversationId: string,
+      isCancelled: () => boolean = () => false
+    ): Promise<void> => {
+      const result = await completeJournalWindow(
+        await window.api.agentRuns.latest(targetConversationId)
+      )
+      if (isCancelled() || activeRef.current || !result.run || !result.events.length) return
+      const run = result.run
+      if (TERMINAL_PHASES.has(run.phase)) return
+      const started = result.events.find((event) => event.type === 'run.started')
+      const assistantMessageId = String(started?.payload.outputMessageId || '')
+      if (!assistantMessageId) return
+      const runStartedAt = run.startedAt
+      const active: ActiveRun = {
+        runId: run.id,
+        conversationId: targetConversationId,
+        assistantMessageId,
+        mode:
+          run.surface === 'research'
+            ? 'research'
+            : agentRunUsesPlan(result.events)
+              ? 'plan'
+              : 'conversation',
+        model: new AgentRunClientModel(),
+        resolve: () => undefined,
+        attached: true
+      }
+      activeRef.current = active
+      active.model.replace(run, result.events)
+      active.model.merge(run, unattachedEventsRef.current.get(run.id) ?? [], {
+        deferProjection: true
+      })
+      unattachedEventsRef.current.delete(run.id)
+      setRunConversationId(targetConversationId)
+      setActiveMode(active.mode)
+      setMessages((previous) =>
+        previous.some((message) => message.id === assistantMessageId)
+          ? previous
+          : [
+              ...previous,
+              {
+                id: assistantMessageId,
+                runId: run.id,
+                role: 'agent',
+                content: '',
+                thinking: '',
+                timestamp: runStartedAt,
+                runMode: active.mode
+              }
+            ]
+      )
+      scheduleProject(active, true)
+    },
+    [scheduleProject, setMessages]
+  )
+
   useEffect(() => {
     if (!conversationId || activeRef.current) return
     let cancelled = false
-    void window.api.agentRuns
-      .latest(conversationId)
-      .then(completeJournalWindow)
-      .then((result) => {
-        if (cancelled || !result.run || !result.events.length) return
-        const run = result.run
-        if (TERMINAL_PHASES.has(run.phase)) return
-        const started = result.events.find((event) => event.type === 'run.started')
-        const assistantMessageId = String(started?.payload.outputMessageId || '')
-        if (!assistantMessageId) return
-        const runStartedAt = run.startedAt
-        const active: ActiveRun = {
-          runId: run.id,
-          conversationId,
-          assistantMessageId,
-          mode:
-            run.surface === 'research'
-              ? 'research'
-              : agentRunUsesPlan(result.events)
-                ? 'plan'
-                : 'conversation',
-          model: new AgentRunClientModel(),
-          resolve: () => undefined,
-          attached: true
-        }
-        activeRef.current = active
-        active.model.replace(run, result.events)
-        active.model.merge(run, unattachedEventsRef.current.get(run.id) ?? [], {
-          deferProjection: true
-        })
-        unattachedEventsRef.current.delete(run.id)
-        setRunConversationId(conversationId)
-        setActiveMode(active.mode)
-        setMessages((previous) =>
-          previous.some((message) => message.id === assistantMessageId)
-            ? previous
-            : [
-                ...previous,
-                {
-                  id: assistantMessageId,
-                  runId: run.id,
-                  role: 'agent',
-                  content: '',
-                  thinking: '',
-                  timestamp: runStartedAt,
-                  runMode: active.mode
-                }
-              ]
-        )
-        scheduleProject(active, true)
-      })
+    void Promise.resolve()
+      .then(() => attachLatestRun(conversationId, () => cancelled))
+      .catch((error) => console.error('[AgentRun] Could not attach the running reply', error))
     return () => {
       cancelled = true
     }
-  }, [conversationId, scheduleProject, setMessages])
+  }, [attachLatestRun, conversationId])
 
   const startRun = useCallback(
     async (input: StartConversationAgentRunInput): Promise<AgentRunPhase> => {
-      if (activeRef.current) throw new Error('A conversation run is already active')
+      if (activeRef.current) throw new RunAlreadyActiveError()
       setPhase('queued')
       setRunConversationId(input.conversationId)
       const mode =
@@ -419,11 +446,19 @@ export function useConversationRun({
           setActiveMode(null)
           setPhase('failed')
         }
+        // The main process is running a reply this window lost track of. Follow that one.
+        if (error instanceof Error && /already has an active run/.test(error.message)) {
+          await attachLatestRun(input.conversationId).catch(() => undefined)
+          throw new RunAlreadyActiveError()
+        }
         throw error
       }
     },
-    [scheduleProject]
+    [attachLatestRun, scheduleProject]
   )
+
+  /** Read at call time, so two clicks in one frame cannot both start a run. */
+  const isRunActive = useCallback((): boolean => activeRef.current !== null, [])
 
   useEffect(() => {
     let cancelled = false
@@ -690,6 +725,7 @@ export function useConversationRun({
     queuedMessages,
     pivotMessage,
     runConversationId,
+    isRunActive,
     startRun,
     finishRun,
     requestStop,

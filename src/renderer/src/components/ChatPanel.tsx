@@ -13,6 +13,7 @@ import { finalAnswerText } from '../utils/segmentGrouping'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
+  RunAlreadyActiveError,
   useConversationRun,
   type DuringRunSubmission,
   type SendConversationMessageOptions
@@ -276,6 +277,7 @@ function ChatPanel({
     moveQueuedMessage,
     steerQueuedMessage,
     resolveInteraction,
+    isRunActive,
     sendMessage: sendConversationMessage
   } = useConversationRun({
     conversationId,
@@ -373,6 +375,7 @@ function ChatPanel({
     setMessages,
     conversationId,
     selectedModel,
+    isRunActive,
     workspaceFolder,
     onCheckpointCreated,
     restoreDraft: async (message, discardsGoalStart) => {
@@ -740,6 +743,8 @@ function ChatPanel({
     }
     const model = pinnedModels.find((candidate) => candidate.id === selectedModel)
     if (!model) throw new Error('The selected model is no longer available')
+    // A reply already running stays as it is; starting another would be refused anyway.
+    if (isRunActive()) return
 
     const pendingGoalObjective = pendingGoalStartRef.current
     if (pendingGoalObjective) {
@@ -782,6 +787,7 @@ function ChatPanel({
 
     let completed = false
     let failed = false
+    let leftRunningReply = false
     try {
       const finalPhase = await startRun({
         id: crypto.randomUUID(),
@@ -846,14 +852,21 @@ function ChatPanel({
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Agent run failed'
-      setMessages((previous) =>
-        previous.map((item) =>
-          item.id === assistantMessageId ? { ...item, content: `Error: ${message}` } : item
+      if (error instanceof RunAlreadyActiveError) {
+        // The window now follows the reply that was already running. Finishing here would stop
+        // following it, and the conversation would refuse every message until a restart.
+        leftRunningReply = true
+        setMessages((previous) => previous.filter((item) => item.id !== assistantMessageId))
+      } else {
+        const message = error instanceof Error ? error.message : 'Agent run failed'
+        setMessages((previous) =>
+          previous.map((item) =>
+            item.id === assistantMessageId ? { ...item, content: `Error: ${message}` } : item
+          )
         )
-      )
+      }
     } finally {
-      const pendingMessage = await finishRun()
+      const pendingMessage = leftRunningReply ? null : await finishRun()
       if (pendingMessage) {
         window.setTimeout(() => {
           void sendMessage(pendingMessage.content, {
@@ -864,7 +877,7 @@ function ChatPanel({
             attachments: pendingMessage.attachments
           })
         }, 50)
-      } else if (completed && !failed) {
+      } else if (completed && !failed && !leftRunningReply) {
         // A failed run is announced by the attention alert, which says what went wrong.
         onResponseComplete?.('Response complete. Ready for your next message.')
       }
