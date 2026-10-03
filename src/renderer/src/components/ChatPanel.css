@@ -1060,7 +1060,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   border-color: color-mix(in srgb, var(--color-error) 45%, transparent);
 }
 
-.message-agent .message-content .markdown-code-block {
+.markdown-code-block {
   position: relative;
   margin: 0.65em 0;
   overflow: hidden;
@@ -1069,7 +1069,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   background: var(--surface-2);
 }
 
-.message-agent .message-content .markdown-code-header {
+.markdown-code-header {
   min-height: 30px;
   display: flex;
   align-items: center;
@@ -1081,7 +1081,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   text-transform: lowercase;
 }
 
-.message-agent .message-content .markdown-code-header button {
+.markdown-code-header button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1094,14 +1094,25 @@ body[data-theme='light'] .message-user .message-action:hover {
   cursor: pointer;
 }
 
-.message-agent .message-content .markdown-code-header button:hover {
+.markdown-code-header button:hover {
   color: var(--text-primary);
 }
 
+/* Markdown also renders in thinking, notes and briefs, so a code block styles itself. */
+.markdown-code-block pre,
 .message-agent .message-content .markdown-code-block pre {
   margin: 0;
+  padding: var(--space-4);
+  overflow-x: auto;
   border-radius: 0;
   background: transparent;
+  white-space: pre;
+}
+
+.markdown-code-block pre code {
+  padding: 0;
+  background: transparent;
+  font-family: var(--font-mono);
 }
 
 .message-agent .message-content blockquote {
