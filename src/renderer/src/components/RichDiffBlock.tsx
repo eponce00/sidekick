@@ -148,6 +148,17 @@ export function RichDiffBlock({
       />
     ) : null
 
+  // A change still waiting to run has nothing to compare yet; an empty diff read as a failed one.
+  if (!diff.trim()) {
+    return (
+      <div className="rich-diff-empty">
+        {tool.status === 'pending' || tool.status === 'running'
+          ? 'Not written yet'
+          : 'No line changes'}
+      </div>
+    )
+  }
+
   return (
     <div className="rich-diff-block">
       <div className="rich-diff-toolbar">

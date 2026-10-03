@@ -498,6 +498,31 @@ Keep building the app.
     })
   })
 
+  it('names a streamed call by the target it is announced with once its arguments arrive', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'tool.pending', {
+        toolCallId: 'write-1',
+        name: 'write',
+        arguments: {},
+        presentation: { kind: 'diff', title: 'write', subject: '' }
+      }),
+      event(2, 'tool.pending', {
+        toolCallId: 'write-1',
+        name: 'write',
+        arguments: { file_path: 'settings.gradle' },
+        presentation: { kind: 'diff', title: 'write settings.gradle', subject: 'settings.gradle' }
+      })
+    ])
+    const tool = projection.segments.find((segment) => segment.type === 'tool')
+    expect(tool).toMatchObject({
+      tool: {
+        status: 'pending',
+        input: { file_path: 'settings.gradle' },
+        presentation: { title: 'write settings.gradle', subject: 'settings.gradle' }
+      }
+    })
+  })
+
   it('knows a running sub-agent by its run as soon as it starts', () => {
     const running = projectAgentRunEvents([
       event(1, 'tool.pending', { toolCallId: 'spawn-1', name: 'spawn_subagent' }),

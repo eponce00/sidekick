@@ -632,3 +632,9 @@
   text-align: right;
   user-select: none;
 }
+
+.rich-diff-empty {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: var(--content-text-secondary);
+}
