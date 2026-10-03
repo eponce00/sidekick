@@ -6,6 +6,7 @@ import {
   type ToolResultImageMimeType
 } from '../../shared/agentRuntime'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import { saveViewedImagePreview } from './viewedImagePreviews'
 const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -128,12 +129,14 @@ export function registerVisionToolHandlers(
         await file.close()
       }
       if (context.signal.aborted) return cancelled()
+      const previewUrl = await saveViewedImagePreview(bytes)
       return toolExecutionSucceeded({
         title,
         data: {
           path: requested,
           mimeType,
           bytes: bytes.length,
+          ...(previewUrl ? { previewUrl } : {}),
           detail: args.detail === 'original' || args.detail === 'high' ? args.detail : 'auto'
         },
         modelContent: `Attached image ${requested} (${mimeType}, ${bytes.length} bytes) for visual inspection.`,

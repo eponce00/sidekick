@@ -1,3 +1,4 @@
+import { setBrowserArtifactRoot } from '../services/browserArtifactRoot'
 import { app, net, protocol, type Protocol } from 'electron'
 import { existsSync, promises as fsPromises } from 'fs'
 import { dirname, extname, join, normalize, parse, relative } from 'path'
@@ -78,6 +79,7 @@ export function registerArtifactScheme(): void {
 
 export function configureBrowserArtifactRoot(root: string): void {
   browserArtifactRoot = normalize(root)
+  setBrowserArtifactRoot(browserArtifactRoot)
 }
 
 function resolveArtifactPath(rendererRoot: string, pathname: string): string | null {
