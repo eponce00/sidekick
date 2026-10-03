@@ -95,10 +95,11 @@ function RunErrorSegment({
 }: {
   error: NonNullable<import('../types/chat.types').ContentSegment['runError']>
   onRetry: () => void
-  /** Offered only on an interrupted reply that is still the end of its conversation. */
+  /** Offered only on the conversation's last reply, while nothing runs. */
   onContinue?: () => void | Promise<void>
 }): React.JSX.Element {
   const [continuing, setContinuing] = useState(false)
+  const [confirmingRetry, setConfirmingRetry] = useState(false)
   const interrupted = error.code === 'interrupted'
   if (interrupted && onContinue) {
     return (
@@ -136,18 +137,55 @@ function RunErrorSegment({
       </div>
     )
   }
+  // A reply that failed on a retryable error, such as a dropped connection to the model, can go
+  // on from where it stopped. Retry starts it over instead, discarding its work, so it asks first.
+  const canContinue = error.retryable && Boolean(onContinue)
   return (
     <div className="run-error-segment" role="alert">
       <CircleAlert size={15} aria-hidden="true" />
       <div>
         <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
-        <span>{error.message}</span>
+        <span>
+          {error.message}
+          {canContinue ? ' Continue picks up from where it stopped and keeps its work.' : ''}
+        </span>
+        {confirmingRetry && (
+          <span className="run-error-confirm">
+            Retry starts this reply over: its work in the chat and any file changes it made are
+            undone.
+          </span>
+        )}
       </div>
-      {error.retryable && (
-        <button type="button" onClick={onRetry}>
-          <RotateCcw size={11} /> Retry
-        </button>
-      )}
+      <div className="run-error-actions">
+        {canContinue && !confirmingRetry && (
+          <button
+            type="button"
+            className="run-error-continue"
+            disabled={continuing}
+            onClick={() => {
+              setContinuing(true)
+              void Promise.resolve(onContinue!()).catch(() => setContinuing(false))
+            }}
+          >
+            {continuing ? <Loader2 size={11} className="icon-spin" /> : <Play size={11} />} Continue
+          </button>
+        )}
+        {error.retryable &&
+          (confirmingRetry ? (
+            <>
+              <button type="button" onClick={() => setConfirmingRetry(false)}>
+                Cancel
+              </button>
+              <button type="button" className="is-danger" onClick={onRetry}>
+                <RotateCcw size={11} /> Discard and retry
+              </button>
+            </>
+          ) : (
+            <button type="button" onClick={() => setConfirmingRetry(true)} disabled={continuing}>
+              <RotateCcw size={11} /> Retry
+            </button>
+          ))}
+      </div>
     </div>
   )
 }
@@ -518,8 +556,9 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
       (group.segment.type === 'tool' &&
         !!group.segment.tool &&
         resolveToolView(group.segment.tool) === 'subagent') ||
-      // An interruption is what the reader needs to act on, not work to fold away.
-      (group.segment.type === 'run_error' && group.segment.runError?.code === 'interrupted') ||
+      // How a reply ended early (interrupted or failed) is what the reader acts on, not work to
+      // fold away.
+      group.segment.type === 'run_error' ||
       // So is anything waiting on the user. A question and its answer stay part of the reply;
       // an answered approval is only a step.
       (group.segment.type === 'interaction' &&

@@ -4313,6 +4313,23 @@ body[data-theme='light'] .tool-approval-command {
   color: var(--warning);
 }
 
+.run-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.run-error-segment .run-error-confirm {
+  margin-top: 4px;
+  color: var(--text-primary);
+}
+
+.run-error-segment button.is-danger {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, var(--border-color));
+}
+
 .run-error-segment-interrupted {
   border-color: color-mix(in srgb, var(--warning) 30%, var(--border-color));
   background: color-mix(in srgb, var(--warning) 7%, var(--surface-1));
