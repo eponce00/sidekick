@@ -397,8 +397,10 @@ Long-running servers use the canonical background command service, owned by the 
 and its list, read, input and cancel tools. Commands run in a pseudo-terminal (node-pty, ConPTY on
 Windows) unless isolation or the user's setting asks for pipes; a headless terminal renders their
 output to the text the model reads. `TerminalSessionStore` keeps one record per command for the chat,
-the Terminal panel and those tools. A foreground command that waits at a prompt, or that the user
-moves to the background, becomes a background task instead of holding the agent loop. Foreground
+the Terminal panel and those tools. A foreground command that waits at a prompt, that the user
+moves to the background, or that is still running when its call's time is up becomes a background
+task instead of holding the agent loop. Ended background tasks are reported to the agent before its
+next model step, and `wait` ends on a named task ending, a pattern in its output, or a user message. Foreground
 commands cannot detach themselves with shell `&`. Unix cancellation targets the command's whole
 process group; on Windows the tree is ended with `taskkill`, and children orphaned by a shell that
 died first are found by their parent ID, so no child keeps the loop stuck by inheriting output. Collaboration

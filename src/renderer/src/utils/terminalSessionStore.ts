@@ -78,14 +78,20 @@ export function useTerminalSessions(
   )
 }
 
-/** The terminal of the command a tool call ran, once one exists. */
+/** The terminal of the command a tool call ran, once one exists, or of a command by its ID. */
 export function useTerminalSessionForTool(
-  toolCallId: string | undefined
+  toolCallId: string | undefined,
+  sessionId?: string
 ): TerminalSessionSummary | undefined {
   const all = useSyncExternalStore(subscribe, snapshot)
   return useMemo(
-    () => (toolCallId ? all.find((session) => session.toolCallId === toolCallId) : undefined),
-    [all, toolCallId]
+    () =>
+      sessionId
+        ? all.find((session) => session.id === sessionId)
+        : toolCallId
+          ? all.find((session) => session.toolCallId === toolCallId)
+          : undefined,
+    [all, sessionId, toolCallId]
   )
 }
 

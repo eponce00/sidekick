@@ -29,9 +29,28 @@ export interface OwnedBackgroundTask extends BackgroundTask {
   conversationId?: string
   cwd: string
   /** A foreground command moved to the background before it finished, and why. */
-  detached?: 'waiting_for_input' | 'user'
-  /** For a command waiting for input, the question it asked. */
-  prompt?: string
+  detached?: CommandDetachReason
+  /** For a command moved to the background, its latest lines as its terminal shows them. */
+  recentOutput?: string
+}
+
+/**
+ * Why a foreground command went on in the background: it stopped at a prompt, the user moved it,
+ * or it was still running when its call's time was up.
+ */
+export type CommandDetachReason = 'waiting_for_input' | 'user' | 'still_running'
+
+/** A background command that ended without the agent having seen it end. */
+export interface BackgroundTaskNotice {
+  taskId: string
+  title: string
+  command: string
+  status: BackgroundTask['status']
+  exitCode?: number
+  durationMs: number
+  stoppedByUser?: boolean
+  /** Its last lines as its terminal showed them. */
+  tail: string[]
 }
 
 /** Which background commands a caller may see and stop. */
@@ -86,6 +105,10 @@ function sessionState(
 }
 
 const MAX_RENDERED_OUTPUT = 256 * 1024
+/** How long a command handed to the background may still run, unless its call asked for longer. */
+const BACKGROUND_COMMAND_LIMIT_SECONDS = 3_600
+/** Lines of a command's output handed back with it when it moves to the background. */
+const RECENT_OUTPUT_LINES = 20
 
 function compactResult(result: ShellCommandResult | undefined): ShellCommandResult | undefined {
   if (!result) return undefined
@@ -112,14 +135,35 @@ export function projectRelativeCommandCwd(workspaceRoot: string, cwd = ''): stri
   return withinProject
 }
 
+/** How the agent is told background commands ended, kept apart from anything the user wrote. */
+export function backgroundNoticeMessage(notices: readonly BackgroundTaskNotice[]): string {
+  const lines = notices.map((notice) => {
+    const outcome = notice.stoppedByUser
+      ? 'was stopped by the user'
+      : notice.status === 'success'
+        ? 'finished successfully'
+        : notice.status === 'cancelled'
+          ? 'was cancelled'
+          : `failed${notice.exitCode !== undefined && notice.exitCode !== -1 ? ` with exit code ${notice.exitCode}` : ''}`
+    const seconds = Math.round(notice.durationMs / 100) / 10
+    const tail = notice.tail.length ? `\nLast lines:\n${notice.tail.join('\n')}` : ''
+    return `- Task ${notice.taskId} "${notice.title}" (${notice.command}) ${outcome} after ${seconds}s.${tail}`
+  })
+  return `<background_commands>\nSideKick note, not from the user: these background commands ended.\n${lines.join('\n')}\nRead more with read_command_output.\n</background_commands>`
+}
+
 export class CommandService {
   private readonly runner = new CommandRunner()
   private readonly backgroundTasks = new Map<string, OwnedBackgroundTask>()
   readonly terminals: TerminalSessionStore
   private readonly terminalEnabled: () => boolean
   /** Ends a foreground command's wait, leaving it running as a background task. */
-  private readonly detachers = new Map<string, (reason: 'waiting_for_input' | 'user') => void>()
+  private readonly detachers = new Map<string, (reason: CommandDetachReason) => void>()
   private readonly stoppedByUser = new Set<string>()
+  /** Ended background commands the agent has not yet seen end, by task ID. */
+  private readonly notices = new Map<string, BackgroundTaskNotice & { conversationId: string }>()
+  /** Endings the agent saw, as from a wait, before their notice was due. */
+  private readonly seenEndings = new Set<string>()
 
   constructor(
     private readonly db: Database.Database,
@@ -271,12 +315,16 @@ export class CommandService {
       this.runner.cancel(id)
     }
     input.signal?.addEventListener('abort', abort, { once: true })
+    const waitSeconds = Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30))
     const run = this.runner.run({
       id,
       command: input.command,
       process: sandbox,
       cwd,
-      timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30)) * 1_000,
+      // A host command still running when its call's time is up goes on in the background, where
+      // the agent can check on it; an isolated one is stopped with its container.
+      timeoutMs:
+        (sandbox ? waitSeconds : Math.max(waitSeconds, BACKGROUND_COMMAND_LIMIT_SECONDS)) * 1_000,
       outputPath: this.outputPath(id),
       env,
       terminal: !sandbox && this.terminalEnabled(),
@@ -290,7 +338,10 @@ export class CommandService {
     // host command can go on in the background.
     const detached = sandbox
       ? new Promise<never>(() => undefined)
-      : new Promise<'waiting_for_input' | 'user'>((resolve) => this.detachers.set(id, resolve))
+      : new Promise<CommandDetachReason>((resolve) => this.detachers.set(id, resolve))
+    const callTime = sandbox
+      ? undefined
+      : setTimeout(() => this.detachers.get(id)?.('still_running'), waitSeconds * 1_000)
     try {
       const outcome = await Promise.race([
         run.then((result) => ({ result })),
@@ -302,6 +353,7 @@ export class CommandService {
       }
       return await this.completeSession(id, outcome.result)
     } finally {
+      clearTimeout(callTime)
       this.detachers.delete(id)
       input.signal?.removeEventListener('abort', abort)
       await sandbox?.cleanup()
@@ -363,7 +415,7 @@ export class CommandService {
     cwd: string,
     input: CommandServiceRunInput,
     run: Promise<ShellCommandResult>,
-    reason: 'waiting_for_input' | 'user'
+    reason: CommandDetachReason
   ): Promise<OwnedBackgroundTask> {
     const task: OwnedBackgroundTask = {
       id,
@@ -383,9 +435,7 @@ export class CommandService {
     return {
       ...task,
       detached: reason,
-      ...(reason === 'waiting_for_input' && lines.length
-        ? { prompt: lines.slice(-6).join('\n') }
-        : {})
+      ...(lines.length ? { recentOutput: lines.slice(-RECENT_OUTPUT_LINES).join('\n') } : {})
     }
   }
 
@@ -396,6 +446,7 @@ export class CommandService {
         task.result = result
         task.endedAt = Date.now()
         task.status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error'
+        this.queueNotice(task, result)
         this.persist(task)
         this.onTaskUpdate({ ...task })
       })
@@ -437,6 +488,43 @@ export class CommandService {
       })
     )
     return { ...task }
+  }
+
+  private queueNotice(task: OwnedBackgroundTask, result: ShellCommandResult): void {
+    // The agent stopped it itself, or its run was stopped: there is nothing to tell.
+    if (this.seenEndings.delete(task.id)) return
+    if (!task.conversationId || (result.cancelled && !result.stoppedByUser)) return
+    this.notices.set(task.id, {
+      conversationId: task.conversationId,
+      taskId: task.id,
+      title: task.title,
+      command: task.command,
+      status: task.status,
+      exitCode: result.exitCode,
+      durationMs: (task.endedAt ?? Date.now()) - task.startedAt,
+      ...(result.stoppedByUser ? { stoppedByUser: true } : {}),
+      tail: this.terminals.get(task.id)?.tail ?? []
+    })
+  }
+
+  /** Background commands of the conversation that ended unseen, each reported once. */
+  takeNotices(conversationId: string): BackgroundTaskNotice[] {
+    const taken: BackgroundTaskNotice[] = []
+    for (const [taskId, notice] of this.notices) {
+      if (notice.conversationId !== conversationId) continue
+      this.notices.delete(taskId)
+      const { conversationId: _owner, ...rest } = notice
+      taken.push(rest)
+    }
+    return taken
+  }
+
+  /** The agent saw the command end some other way, as from a wait or a read. */
+  markSeen(taskId: string): void {
+    // A wait can see a command end before the ending is recorded and its notice queued.
+    if (!this.notices.delete(taskId) && this.backgroundTasks.get(taskId)?.status === 'running') {
+      this.seenEndings.add(taskId)
+    }
   }
 
   listBackground(scope: BackgroundTaskScope = {}): OwnedBackgroundTask[] {

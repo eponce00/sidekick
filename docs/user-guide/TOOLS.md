@@ -54,6 +54,16 @@ isolation always uses pipes.
   `read_command_output`, which by default returns the output since its last look, and answers
   prompts with `send_command_input`. It is told not to type secrets or make choices that are yours.
 
+- **Waiting.** The agent does not guess how long work takes. A foreground command still running when
+  its time is up (30 seconds unless the agent asks for more) goes on in the background, and the
+  agent gets its output so far. When a background command ends, the agent is told before its next
+  step, with the exit code and last lines. `wait` ends as soon as what it names happens:
+  - a named command ends or stops at a prompt;
+  - a command prints a line matching a pattern, such as `ready|error`;
+  - for a plain wait, any background command of the conversation ends.
+
+  Its seconds are only a maximum, and a message from you always ends it.
+
 Commands from earlier app sessions are not listed in the Terminal tab; their output stays in the
 chat.
 

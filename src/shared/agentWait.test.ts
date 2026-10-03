@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { MAX_AGENT_WAIT_SECONDS, normalizeAgentWaitSeconds, waitForAgentDelay } from './agentWait'
+import {
+  MAX_AGENT_CONDITIONAL_WAIT_SECONDS,
+  MAX_AGENT_WAIT_SECONDS,
+  normalizeAgentWaitSeconds,
+  waitForAgentDelay
+} from './agentWait'
 
 describe('agent wait', () => {
   afterEach(() => vi.useRealTimers())
@@ -29,5 +34,32 @@ describe('agent wait', () => {
       requestedSeconds: 200,
       reason: 'cancelled'
     })
+  })
+})
+
+describe('agent wait with something to wake it', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('ends as soon as what it watches happens, not when the time runs out', async () => {
+    vi.useFakeTimers()
+    let wake!: (event: string) => void
+    const unsubscribe = vi.fn()
+    const result = waitForAgentDelay<string>(600, {
+      maxSeconds: MAX_AGENT_CONDITIONAL_WAIT_SECONDS,
+      wake: (callback) => {
+        wake = callback
+        return unsubscribe
+      }
+    })
+    await vi.advanceTimersByTimeAsync(4_800)
+    wake('build failed')
+    await expect(result).resolves.toEqual({
+      completed: false,
+      reason: 'woken',
+      event: 'build failed',
+      requestedSeconds: 600,
+      waitedMs: 4_800
+    })
+    expect(unsubscribe).toHaveBeenCalledOnce()
   })
 })

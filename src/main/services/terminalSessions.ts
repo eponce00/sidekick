@@ -58,6 +58,7 @@ interface SessionRecord {
 export class TerminalSessionStore {
   private readonly sessions = new Map<string, SessionRecord>()
   private readonly stateListeners = new Set<(session: TerminalSessionSummary) => void>()
+  private readonly outputListeners = new Set<(id: string, data: string) => void>()
 
   constructor(
     private readonly publish: (event: TerminalSessionEvent) => void = () => undefined,
@@ -68,6 +69,12 @@ export class TerminalSessionStore {
   onStateChange(listener: (session: TerminalSessionSummary) => void): () => void {
     this.stateListeners.add(listener)
     return () => this.stateListeners.delete(listener)
+  }
+
+  /** Called with each piece of raw output, for whoever waits for a command to print something. */
+  onOutput(listener: (id: string, data: string) => void): () => void {
+    this.outputListeners.add(listener)
+    return () => this.outputListeners.delete(listener)
   }
 
   start(input: StartTerminalSessionInput): TerminalSessionSummary {
@@ -105,6 +112,7 @@ export class TerminalSessionStore {
     }
     void record.screen?.write(data)
     this.publish({ type: 'output', id, offset, data })
+    for (const listener of this.outputListeners) listener(id, data)
     if (record.summary.state === 'waiting_for_input') this.setState(record, 'running')
     this.scheduleTail(record)
     this.watchForPrompt(record)

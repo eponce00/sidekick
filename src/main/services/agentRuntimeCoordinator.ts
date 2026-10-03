@@ -43,12 +43,16 @@ import {
   type PreparedConversationAgentRun
 } from './conversationRunPreparer'
 import { PromptAdmissionStore } from './promptAdmissionStore'
-import { AgentRunKernel, type AgentKernelRunResult } from './agentRunKernel'
+import {
+  AgentRunKernel,
+  type AgentKernelRunResult,
+  type StartAgentKernelRunInput
+} from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
 import { AgentMessageMaterializer } from './agentMessageMaterializer'
 import { AgentToolRuntime } from './agentToolRuntime'
-import { CommandService } from './commandService'
+import { backgroundNoticeMessage, CommandService } from './commandService'
 import { TerminalSessionStore } from './terminalSessions'
 import type { TerminalSessionEvent } from '../../shared/terminalSessions'
 import { McpClientManager } from './mcpClientManager'
@@ -542,7 +546,13 @@ export class AgentRuntimeCoordinator {
       }
       workspaceRoot = prepared.workspaceRoot
       this.activeConversations.set(input.id, { input, prepared, capture })
-      const run = this.kernel.start(prepared.kernelInput)
+      const run = this.kernel.start({
+        ...prepared.kernelInput,
+        beforeModelStep: this.withBackgroundNotices(
+          input.conversationId,
+          prepared.kernelInput.beforeModelStep
+        )
+      })
       kernelStarted = true
       this.finishPreparation(preparation)
       if (signal.aborted) this.kernel.stop(input.id)
@@ -996,6 +1006,23 @@ export class AgentRuntimeCoordinator {
     }
   }
 
+  /**
+   * Before each model step, tells the agent about background commands of the conversation that
+   * ended since it last looked, so it learns a build failed when it does, not by polling.
+   */
+  private withBackgroundNotices(
+    conversationId: string,
+    next?: StartAgentKernelRunInput['beforeModelStep']
+  ): NonNullable<StartAgentKernelRunInput['beforeModelStep']> {
+    return async (messages, signal, toolRounds) => {
+      const notices = this.commands.takeNotices(conversationId)
+      const injected = next ? await next(messages, signal, toolRounds) : []
+      return notices.length
+        ? [...injected, { role: 'user', content: backgroundNoticeMessage(notices) }]
+        : injected
+    }
+  }
+
   stop(runId: string): boolean {
     const preparation = this.preparations.get(runId)
     if (preparation) {
@@ -1072,14 +1099,15 @@ export class AgentRuntimeCoordinator {
       ...(admission.images?.length ? { images: admission.images } : {}),
       ...(admission.attachments?.length ? { attachments: admission.attachments } : {})
     }
-    return {
-      accepted: this.kernel.steer(input.runId, {
-        id: admission.id,
-        message: steeredProviderMessage(payload),
-        payload,
-        onApplied: () => this.admissions.remove(conversationId, admission.id)
-      })
-    }
+    const accepted = this.kernel.steer(input.runId, {
+      id: admission.id,
+      message: steeredProviderMessage(payload),
+      payload,
+      onApplied: () => this.admissions.remove(conversationId, admission.id)
+    })
+    // A wait in the run ends, so the message is read now rather than after it.
+    if (accepted) this.tools.notifyUserMessage(input.runId)
+    return { accepted }
   }
 
   resolveInteraction(input: ResolveAgentInteractionInput): void {

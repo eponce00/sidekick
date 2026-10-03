@@ -472,6 +472,13 @@ function SystemNoticeBody({
   )
 }
 
+/** The command a wait is waiting for, whose output is worth seeing while it waits. */
+function waitedCommand(input: Record<string, unknown> | undefined): string | undefined {
+  const ids = input?.taskIds
+  const first = Array.isArray(ids) ? ids[0] : input?.taskId
+  return typeof first === 'string' && first ? first : undefined
+}
+
 function thinkingPreview(content: string): string {
   // Only the opening is shown; normalizing whole reasoning blocks on every
   // render was measurable across the hundreds in a long run.
@@ -599,6 +606,9 @@ function AgentWorkDisclosure({
               <ToolCallRow tool={current.tool} />
               {resolveToolView(current.tool) === 'terminal' && (
                 <CommandLiveView toolCallId={current.tool.id} />
+              )}
+              {current.tool.name === 'wait' && waitedCommand(current.tool.input) && (
+                <CommandLiveView sessionId={waitedCommand(current.tool.input)} />
               )}
             </>
           ) : (

@@ -16,6 +16,7 @@ import {
 } from './agentRuntime'
 import type { ToolRisk } from './types'
 import type { AgentPlanStage } from './agentPlans'
+import { agentWaitTitle } from './agentWait'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
@@ -133,8 +134,7 @@ function presentationTitle(
       detail: stringArgument(args, 'task')
     }
   if (name === 'manage_todo_list') return { kind, title: 'Update run tasks' }
-  if (name === 'wait')
-    return { kind, title: `Wait ${Number(args.seconds) || ''}s`.replace('  ', ' ') }
+  if (name === 'wait') return { kind, title: agentWaitTitle(args) }
   return { kind, title: name.replaceAll('_', ' ') }
 }
 
@@ -392,7 +392,7 @@ const shell = definition(
         minimum: 1,
         maximum: 86400,
         description:
-          'Timeout in seconds. Default 30 for foreground work and 3600 for background work.'
+          'Seconds to wait for a foreground command (default 30). One still running then goes on in the background, and you get its output so far and its task ID. For a background command, how long it may run (default 3600).'
       },
       background: {
         type: 'boolean',
@@ -465,16 +465,26 @@ const sendCommandInput = definition(
 
 const wait = definition(
   'wait',
-  'Pause this agent run without invoking the shell. Prefer checking available state directly. Waiting is safe, capped at 200 seconds, and stops immediately when the run is cancelled.',
+  'Wait until something happens instead of guessing how long it takes. With taskIds, returns as soon as one of those commands ends or stops at a prompt, with its output; with pattern, as soon as a command prints a matching line, such as "ready|error|BUILD (SUCCESSFUL|FAILED)". Without either, returns when any background command of this conversation ends, or after seconds. A message from the user always ends a wait. Prefer working on something else while a command runs: you are told when background commands end.',
   {
     type: 'object',
-    required: ['seconds'],
     properties: {
+      taskIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Task IDs of background commands to wait for; any one ending ends the wait.'
+      },
+      pattern: {
+        type: 'string',
+        description:
+          'Case-insensitive regular expression; the wait ends when the commands print a match.'
+      },
       seconds: {
         type: 'number',
         minimum: 1,
-        maximum: 200,
-        description: 'Whole seconds to wait, from 1 through 200.'
+        maximum: 1800,
+        description:
+          'The most to wait, not a guess at how long the work takes. Up to 1800 with taskIds or pattern (default 600); up to 200 without (default 30).'
       },
       reason: { type: 'string', description: 'Short user-visible reason for waiting.' }
     }

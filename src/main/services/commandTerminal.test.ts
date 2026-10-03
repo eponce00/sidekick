@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import { CommandService, type OwnedBackgroundTask } from './commandService'
+import { backgroundNoticeMessage, CommandService, type OwnedBackgroundTask } from './commandService'
 import { looksLikePrompt, TerminalScreen } from './terminalScreen'
 import { TerminalSessionStore } from './terminalSessions'
 import type { ShellCommandResult } from '../../shared/types'
@@ -146,7 +146,7 @@ describe.each([false, true])('CommandService in a terminal: %s', (terminal) => {
       timeoutSecs: 30
     })) as OwnedBackgroundTask
     expect(result.detached).toBe('waiting_for_input')
-    expect(result.prompt).toContain('Continue? (y/n)')
+    expect(result.recentOutput).toContain('Continue? (y/n)')
     expect(service.terminals.get(result.id)).toMatchObject({
       state: 'waiting_for_input',
       background: true,
@@ -218,6 +218,55 @@ describe.each([false, true])('CommandService in a terminal: %s', (terminal) => {
   }, 30_000)
 })
 
+it('hands a command still running at its time to the background, and reports when it ends', async () => {
+  // Killing a build at a guessed timeout lost it; waiting for it blocked the agent instead.
+  const { root, service } = await setup(false)
+  const task = (await service.execute({
+    runId: 'run',
+    conversationId: 'chat',
+    title: 'Build',
+    command: node(
+      "console.log('compiling'); setTimeout(() => { console.log('done'); process.exit(3) }, 2500)"
+    ),
+    workspaceRoot: root,
+    timeoutSecs: 1
+  })) as OwnedBackgroundTask
+  expect(task).toMatchObject({ detached: 'still_running', status: 'running' })
+  expect(task.recentOutput).toContain('compiling')
+
+  const notices = await until(() => {
+    const taken = service.takeNotices('chat')
+    return taken.length ? taken : undefined
+  })
+  expect(notices).toEqual([
+    expect.objectContaining({
+      taskId: task.id,
+      status: 'error',
+      exitCode: 3,
+      tail: expect.arrayContaining(['done'])
+    })
+  ])
+  // Each ending is reported once.
+  expect(service.takeNotices('chat')).toEqual([])
+}, 30_000)
+
+it('does not report an ending the agent already saw', async () => {
+  const { root, service } = await setup(false)
+  const task = (await service.execute({
+    runId: 'run',
+    conversationId: 'chat',
+    title: 'Quick',
+    command: node("console.log('ok')"),
+    workspaceRoot: root,
+    background: true
+  })) as OwnedBackgroundTask
+  await until(() =>
+    service.listBackground({ conversationId: 'chat' }).find((item) => item.status !== 'running')
+  )
+  service.markSeen(task.id)
+  expect(service.takeNotices('chat')).toEqual([])
+}, 30_000)
+
 it('returns what a terminal shows when a command runs in one', async () => {
   const { root, service } = await setup(true)
   const result = (await service.execute({
@@ -232,3 +281,33 @@ it('returns what a terminal shows when a command runs in one', async () => {
   // Wherever a pseudo-terminal opened, the model reads text, not escape sequences.
   if (result.terminal) expect(result.stdout).not.toContain('\u001b')
 }, 30_000)
+
+it('tells the agent how background commands ended, apart from anything the user wrote', () => {
+  const message = backgroundNoticeMessage([
+    {
+      taskId: 'a',
+      title: 'Build',
+      command: './gradlew assembleDebug',
+      status: 'error',
+      exitCode: 1,
+      durationMs: 4_800,
+      tail: ['BUILD FAILED in 4s']
+    },
+    {
+      taskId: 'b',
+      title: 'Server',
+      command: 'npm run dev',
+      status: 'cancelled',
+      exitCode: -1,
+      durationMs: 60_000,
+      stoppedByUser: true,
+      tail: []
+    }
+  ])
+  expect(message).toContain('not from the user')
+  expect(message).toContain(
+    'Task a "Build" (./gradlew assembleDebug) failed with exit code 1 after 4.8s.'
+  )
+  expect(message).toContain('BUILD FAILED in 4s')
+  expect(message).toContain('Task b "Server" (npm run dev) was stopped by the user after 60s.')
+})

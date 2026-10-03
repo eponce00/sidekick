@@ -30,7 +30,17 @@ import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
 import type { TerminalModelRead } from './terminalSessions'
-import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
+import {
+  MAX_TERMINAL_INPUT_LENGTH,
+  terminalSessionIsLive,
+  type TerminalSessionSummary
+} from '../../shared/terminalSessions'
+import {
+  MAX_AGENT_CONDITIONAL_WAIT_SECONDS,
+  MAX_AGENT_WAIT_SECONDS,
+  agentWaitTitle,
+  waitForAgentDelay
+} from '../../shared/agentWait'
 import type { OfficeHelperService } from './officeHelperService'
 import { McpClientManager } from './mcpClientManager'
 import {
@@ -164,14 +174,34 @@ function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'waiting_for_input') {
     return (
       `The command stopped at a prompt and is waiting for input, so it now runs in the background as task ${task.id}; ` +
-      'its last lines are in "prompt". Answer with send_command_input, read more with read_command_output, or stop it ' +
+      'its last lines are in "recentOutput". Answer with send_command_input, read more with read_command_output, or stop it ' +
       'with cancel_background_task. Ask the user instead when the answer is their decision or a secret.'
     )
   }
   if (task.detached === 'user') {
-    return `The user moved this command to the background; it keeps running as task ${task.id}. Check on it with read_command_output.`
+    return `The user moved this command to the background; it keeps running as task ${task.id}. You will be told when it ends; check on it with read_command_output.`
   }
-  return `Running in the background as task ${task.id}. Read its output with read_command_output.`
+  if (task.detached === 'still_running') {
+    return (
+      `The command was still running when its time was up, so it goes on in the background as task ${task.id}; ` +
+      '"recentOutput" is what it printed so far. Keep working and you will be told when it ends, or call wait with ' +
+      'its task ID to wait for it. Stop it with cancel_background_task if it is stuck.'
+    )
+  }
+  return `Running in the background as task ${task.id}. You will be told when it ends; read its output with read_command_output, or wait for it with wait.`
+}
+
+// eslint-disable-next-line no-control-regex
+const TERMINAL_CONTROL = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g
+
+/** What woke a wait, as the model is told. */
+type WaitWake =
+  | { woke: 'task_ended' | 'waiting_for_input' | 'pattern_matched'; task: TerminalSessionSummary }
+  | { woke: 'user_message' }
+
+function stringList(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
+  return [...new Set(values.filter((item): item is string => typeof item === 'string' && !!item))]
 }
 
 function commandReadContent(read: TerminalModelRead): string {
@@ -380,6 +410,9 @@ export class AgentToolRuntime {
     this.browser = browser ? new AgentBrowserSessionManager(browser) : undefined
   }
 
+  /** Waits in a run that end when the user sends it a message. */
+  private readonly userMessageWaiters = new Map<string, Set<() => void>>()
+
   setChildLauncher(launcher: AgentChildRunLauncher): void {
     this.childLauncher = launcher
   }
@@ -522,6 +555,7 @@ export class AgentToolRuntime {
         'read',
         'code_intelligence',
         'shell',
+        'wait',
         'list_background_tasks',
         'cancel_background_task',
         'read_command_output',
@@ -639,7 +673,7 @@ export class AgentToolRuntime {
     if (name === 'enter_plan_mode') return 'Suggest Plan mode'
     if (name === 'present_plan') return 'Review plan'
     if (name === 'complete_plan') return 'Complete plan contract'
-    if (name === 'wait') return `Wait ${String(args.seconds)}s`
+    if (name === 'wait') return agentWaitTitle(args)
     return name.replaceAll('_', ' ')
   }
 
@@ -1032,8 +1066,10 @@ export class AgentToolRuntime {
     }
     // A conversation's background commands outlive the reply that started them.
     const commandScope = { conversationId: context.conversationId, runId: context.runId }
+    if (name === 'wait') return this.waitUntil(title, args, context)
     if (name === 'list_background_tasks') {
       const tasks = this.commands.listBackground(commandScope)
+      for (const task of tasks) if (task.status !== 'running') this.commands.markSeen(task.id)
       if (input.workspaceRoot) {
         for (const task of tasks) {
           if (!task.result || this.recordedBackgroundVerification.has(task.id)) continue
@@ -1054,6 +1090,7 @@ export class AgentToolRuntime {
     }
     if (name === 'cancel_background_task') {
       const cancelled = this.commands.cancelBackground(stringArg(args, 'taskId'), commandScope)
+      if (cancelled) this.commands.markSeen(stringArg(args, 'taskId'))
       return cancelled
         ? this.success(title, { cancelled: true, taskId: args.taskId })
         : toolExecutionFailed({
@@ -1092,6 +1129,7 @@ export class AgentToolRuntime {
       if (!read) {
         return toolExecutionFailed({ title, code: 'not_found', message: 'Command output is gone' })
       }
+      if (!terminalSessionIsLive(read.state)) this.commands.markSeen(taskId)
       return this.success(title, read, commandReadContent(read))
     }
     if (name === 'send_command_input') {
@@ -1139,6 +1177,138 @@ export class AgentToolRuntime {
       code: 'unknown_tool',
       message: `No runtime implementation exists for ${name}`
     })
+  }
+
+  /**
+   * Waits at most `seconds` for what the agent named: a command to end, its output to match a
+   * pattern, or, for a plain wait, any background command of the conversation to end. A message
+   * from the user always ends it, so the agent never sleeps through what they said.
+   */
+  private async waitUntil(
+    title: string,
+    args: Record<string, unknown>,
+    context: AgentToolExecutionContext
+  ): Promise<ToolExecutionResult> {
+    const scope = { conversationId: context.conversationId, runId: context.runId }
+    const taskIds = stringList(args.taskIds ?? args.taskId)
+    const unknown = taskIds.find((id) => !this.commands.ownsCommand(id, scope))
+    if (unknown) {
+      return toolExecutionFailed({
+        title,
+        code: 'not_found',
+        message: `No command with ID ${unknown} in this conversation`
+      })
+    }
+    let pattern: RegExp | undefined
+    const source = stringArg(args, 'pattern')
+    if (source) {
+      try {
+        pattern = new RegExp(source, 'i')
+      } catch (error) {
+        return toolExecutionFailed({
+          title,
+          code: 'invalid_arguments',
+          message: `Invalid pattern: ${error instanceof Error ? error.message : String(error)}`
+        })
+      }
+    }
+    const conditional = taskIds.length > 0 || pattern !== undefined
+    const terminals = this.commands.terminals
+    const alreadyEnded = taskIds
+      .map((id) => terminals.get(id))
+      .find((session) => session && !terminalSessionIsLive(session.state))
+    if (alreadyEnded) {
+      return this.waitResult(title, { woke: 'task_ended', task: alreadyEnded }, 0, 0)
+    }
+
+    const relevant = (session: TerminalSessionSummary): boolean =>
+      taskIds.length
+        ? taskIds.includes(session.id)
+        : Boolean(context.conversationId) && session.conversationId === context.conversationId
+    const printed = new Map<string, string>()
+    const result = await waitForAgentDelay<WaitWake>(args.seconds ?? (conditional ? 600 : 30), {
+      signal: context.signal,
+      maxSeconds: conditional ? MAX_AGENT_CONDITIONAL_WAIT_SECONDS : MAX_AGENT_WAIT_SECONDS,
+      wake: (wake) => {
+        const stopStates = terminals.onStateChange((session) => {
+          if (!relevant(session)) return
+          if (session.state === 'waiting_for_input')
+            wake({ woke: 'waiting_for_input', task: session })
+          // A foreground command of another tool call ending is that call's business.
+          else if (!terminalSessionIsLive(session.state) && (taskIds.length || session.background))
+            wake({ woke: 'task_ended', task: session })
+        })
+        const stopOutput = pattern
+          ? terminals.onOutput((id, data) => {
+              const session = terminals.get(id)
+              if (!session || !relevant(session)) return
+              const text = ((printed.get(id) ?? '') + data.replace(TERMINAL_CONTROL, '')).slice(
+                -16_384
+              )
+              printed.set(id, text)
+              if (pattern!.test(text)) wake({ woke: 'pattern_matched', task: session })
+            })
+          : () => undefined
+        const userMessage = (): void => wake({ woke: 'user_message' })
+        const waiters = this.userMessageWaiters.get(context.runId) ?? new Set<() => void>()
+        waiters.add(userMessage)
+        this.userMessageWaiters.set(context.runId, waiters)
+        return () => {
+          stopStates()
+          stopOutput()
+          waiters.delete(userMessage)
+          if (!waiters.size) this.userMessageWaiters.delete(context.runId)
+        }
+      }
+    })
+    if (result.reason === 'cancelled') {
+      return toolExecutionFailed({
+        title,
+        code: 'cancelled',
+        message: 'Wait cancelled',
+        status: 'cancelled',
+        data: result
+      })
+    }
+    return this.waitResult(title, result.event, result.waitedMs, result.requestedSeconds)
+  }
+
+  private async waitResult(
+    title: string,
+    wake: WaitWake | undefined,
+    waitedMs: number,
+    requestedSeconds: number
+  ): Promise<ToolExecutionResult> {
+    const task = wake && 'task' in wake ? wake.task : undefined
+    const read = task
+      ? await this.commands.terminals.readForModel(task.id, { mode: 'new', maxLines: 60 })
+      : undefined
+    if (task && read && !terminalSessionIsLive(read.state)) this.commands.markSeen(task.id)
+    const summary = {
+      woke: wake?.woke ?? 'timeout',
+      waitedSeconds: Math.round(waitedMs / 100) / 10,
+      requestedSeconds,
+      ...(task
+        ? {
+            taskId: task.id,
+            title: task.title,
+            state: read?.state ?? task.state,
+            ...((read?.exitCode ?? task.exitCode) !== undefined
+              ? { exitCode: read?.exitCode ?? task.exitCode }
+              : {})
+          }
+        : {}),
+      ...(wake?.woke === 'user_message'
+        ? { note: 'The user sent a message; it is in the conversation now.' }
+        : {}),
+      ...(read?.text ? { output: read.text } : {})
+    }
+    return this.success(title, summary, JSON.stringify(summary))
+  }
+
+  /** The user sent a message to the run; a wait in it ends so the agent reads it now. */
+  notifyUserMessage(runId: string): void {
+    for (const wake of [...(this.userMessageWaiters.get(runId) ?? [])]) wake()
   }
 
   cancelRun(runId: string): void {

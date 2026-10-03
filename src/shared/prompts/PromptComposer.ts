@@ -97,7 +97,8 @@ ${shellRules}
 - Use background execution only for processes that should outlive a single command call.${
     input.capabilities.backgroundCommands
       ? `
-- Commands run in a terminal. Check a background command with read_command_output instead of waiting blind or restarting it. A command that stops at a prompt is moved to the background; answer it with send_command_input only when the answer is clearly yours to give.`
+- Commands run in a terminal. Check a background command with read_command_output instead of waiting blind or restarting it. A command that stops at a prompt is moved to the background; answer it with send_command_input only when the answer is clearly yours to give.
+- Never guess how long work takes. Start long work (builds, test suites, servers) in the background and keep working; you are told when background commands end. To block until one ends or prints something, call wait with its taskIds and a pattern such as "ready|error|FAILED". A foreground command still running when its time is up goes on in the background, and you get its output so far.`
       : ''
   }`
 }
