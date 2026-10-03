@@ -4285,6 +4285,20 @@ body[data-theme='light'] .tool-approval-command {
   gap: 4px;
 }
 
+.run-interrupted-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.run-interrupted-note svg {
+  flex: none;
+  color: var(--warning);
+}
+
 .run-error-segment-interrupted {
   border-color: color-mix(in srgb, var(--warning) 30%, var(--border-color));
   background: color-mix(in srgb, var(--warning) 7%, var(--surface-1));

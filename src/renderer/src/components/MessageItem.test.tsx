@@ -746,14 +746,15 @@ describe('MessageItem shared-channel presentation', () => {
     expect(onContinueRun).toHaveBeenCalledWith(message)
     expect(button.disabled).toBe(true)
 
-    // Once something else follows it, the interruption can only be retried.
+    // Once continued, or once something else follows it, the interruption is a quiet note: the
+    // reply below carries on, so it is not shown as a failure.
     await act(async () => {
       root.render(<MessageItem {...props} message={{ ...message }} />)
     })
-    const labels = [...container.querySelectorAll('.run-error-segment button')].map((candidate) =>
-      candidate.textContent?.trim()
+    expect(container.querySelector('.run-error-segment')).toBeNull()
+    expect(container.querySelector('.run-interrupted-note')?.textContent).toContain(
+      'SideKick closed before this reply finished.'
     )
-    expect(labels).toEqual(['Retry'])
   })
 
   it('renders thinking and tool activity in the order it happened', async () => {

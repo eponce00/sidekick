@@ -124,17 +124,21 @@ function RunErrorSegment({
       </div>
     )
   }
+  if (interrupted) {
+    // Continued, or followed by another message: the reply below carries on, so this is history
+    // rather than a failure to act on.
+    return (
+      <div className="run-interrupted-note" role="status">
+        <CircleAlert size={13} aria-hidden="true" />
+        <span>Interrupted. {error.message}</span>
+      </div>
+    )
+  }
   return (
-    <div className="run-error-segment" role={interrupted ? 'status' : 'alert'}>
+    <div className="run-error-segment" role="alert">
       <CircleAlert size={15} aria-hidden="true" />
       <div>
-        <strong>
-          {interrupted
-            ? 'Interrupted'
-            : error.code
-              ? error.code.replaceAll('_', ' ')
-              : 'Run failed'}
-        </strong>
+        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
         <span>{error.message}</span>
       </div>
       {error.retryable && (
