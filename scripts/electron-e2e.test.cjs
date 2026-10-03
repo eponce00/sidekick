@@ -220,15 +220,23 @@ test(
         await new Promise((resolve) => setTimeout(resolve, 45_000))
       }
       await page.getByRole('button', { name: 'New browser tab' }).click()
-      await waitForVisible(page.getByRole('tab', { name: 'about:blank', exact: true }), 'new blank tab')
+      await waitForVisible(
+        page.getByRole('tab', { name: 'about:blank', exact: true }),
+        'new blank tab'
+      )
       assert.equal(await page.getByRole('tab', { name: 'Shared browser fixture' }).count(), 1)
       await page.getByRole('tab', { name: 'Shared browser fixture' }).click()
       await address.fill(`http://127.0.0.1:${server.address().port}/again`)
       await address.press('Enter')
       await page.waitForFunction((url) => {
-        const tab = [...document.querySelectorAll('[role="tab"]')].find((item) => item.title === url)
-        return tab?.getAttribute('aria-selected') === 'true' && !tab.disabled &&
+        const tab = [...document.querySelectorAll('[role="tab"]')].find(
+          (item) => item.title === url
+        )
+        return (
+          tab?.getAttribute('aria-selected') === 'true' &&
+          !tab.disabled &&
           tab.textContent.includes('Shared browser fixture')
+        )
       }, `http://127.0.0.1:${server.address().port}/again`)
       await page.getByRole('button', { name: 'Settings', exact: true }).click()
       await waitForVisible(page.getByRole('dialog', { name: 'Settings' }), 'settings above browser')
@@ -310,7 +318,8 @@ test(
           ? require('@electron/asar').extractFile(appRoot, join('out', 'main', 'index.js'))
           : readFileSync(join(appRoot, 'out', 'main', 'index.js'))
         assert.deepEqual(report.application.artifact, {
-          scope: 'main-bundle-on-disk', algorithm: 'sha256',
+          scope: 'main-bundle-on-disk',
+          algorithm: 'sha256',
           sha256: require('node:crypto').createHash('sha256').update(code).digest('hex')
         })
         assert.equal(JSON.stringify(report).includes(profile), false)
@@ -322,33 +331,26 @@ test(
       }
 
       await page.getByRole('button', { name: /^Agent/ }).click()
-      const completionHooks = page.locator('section.settings-card').filter({
-        has: page.getByRole('heading', { name: 'Project completion hooks', exact: true })
+      const projectHooks = page.locator('section.settings-card').filter({
+        has: page.getByRole('heading', { name: 'Project hooks', exact: true })
       })
-      await completionHooks
-        .getByRole('textbox', { name: 'completion hook project folder' })
-        .fill(profile)
-      await completionHooks
-        .getByRole('textbox', { name: 'completion hook command' })
-        .fill('echo fixture-only')
-      await completionHooks.getByRole('button', { name: 'Add disabled hook' }).click()
-      assert.equal(await completionHooks.getByRole('checkbox').isChecked(), false)
-      await completionHooks.getByRole('button', { name: 'Remove hook' }).click()
-      assert.equal(await completionHooks.getByRole('checkbox').count(), 0)
-
-      const worktreeHooks = page.locator('section.settings-card').filter({
-        has: page.getByRole('heading', { name: 'Project worktree hooks', exact: true })
-      })
-      await worktreeHooks
-        .getByRole('textbox', { name: 'worktree hook project folder' })
-        .fill(profile)
-      await worktreeHooks
-        .getByRole('textbox', { name: 'worktree hook command' })
-        .fill('echo fixture-only')
-      await worktreeHooks.getByRole('button', { name: 'Add disabled hook' }).click()
-      assert.equal(await worktreeHooks.getByRole('checkbox').isChecked(), false)
-      await worktreeHooks.getByRole('button', { name: 'Remove hook' }).click()
-      assert.equal(await worktreeHooks.getByRole('checkbox').count(), 0)
+      for (const moment of ['Before the final answer', 'After creating a worktree']) {
+        await projectHooks.getByRole('combobox', { name: 'When' }).selectOption({ label: moment })
+        await projectHooks.getByRole('textbox', { name: 'Hook project folder' }).fill(profile)
+        await projectHooks.getByRole('textbox', { name: 'Hook command' }).fill('echo fixture-only')
+        await projectHooks.getByRole('button', { name: 'Add hook', exact: true }).click()
+        const hook = projectHooks.locator('li.project-hook')
+        assert.equal(await hook.count(), 1)
+        // Adding a hook never runs anything until it is switched on.
+        assert.equal(await hook.getByRole('checkbox').isChecked(), false)
+        assert.equal(
+          await hook.locator('.project-hook-stage').textContent(),
+          moment,
+          `${moment} hook is listed under its moment`
+        )
+        await hook.getByRole('button', { name: 'Remove hook' }).click()
+        assert.equal(await projectHooks.locator('li.project-hook').count(), 0)
+      }
 
       await page.getByRole('button', { name: /^Providers/ }).click()
       await waitForVisible(page.getByRole('heading', { name: 'Providers' }), 'provider settings')

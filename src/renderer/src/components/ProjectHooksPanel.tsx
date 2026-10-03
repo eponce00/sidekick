@@ -147,7 +147,11 @@ export function ProjectHooksPanel({
             />
           </label>
           <div className="project-hook-actions">
-            {full && <small>This moment already has ten hooks.</small>}
+            <small>
+              {full
+                ? 'This moment already has ten hooks.'
+                : 'A new hook is added switched off. Turn it on in the list to use it.'}
+            </small>
             <button
               type="button"
               className="settings-secondary-action"
@@ -155,7 +159,8 @@ export function ProjectHooksPanel({
               onClick={() => {
                 onChange(stage, [
                   ...hooks[stage],
-                  { workspaceRoot: workspaceRoot.trim(), command: command.trim(), enabled: true }
+                  // A new hook stays off until it is switched on, so adding one never runs anything.
+                  { workspaceRoot: workspaceRoot.trim(), command: command.trim(), enabled: false }
                 ])
                 setCommand('')
               }}

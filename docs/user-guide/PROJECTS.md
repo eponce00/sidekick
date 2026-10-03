@@ -60,11 +60,17 @@ higher-priority task.
 
 ## Interface
 
-### Project start hooks
+### Project hooks
 
-Agent settings include **Project start hooks** for setup commands in an exact
-absolute project folder. Add a command, enable its checkbox and save settings.
-New hooks are disabled by default. SideKick does not search repositories for
+Agent settings include one **Project hooks** card for commands SideKick runs at
+set moments in an exact absolute project folder: when a run starts, before the
+final answer, or after creating a worktree. Choose the moment, the folder and
+the command, add the hook, switch it on in the list and save settings. New hooks
+are added switched off.
+
+#### When a run starts
+
+Start hooks run setup commands before the agent begins. SideKick does not search repositories for
 executable hook files, and hooks do not automatically apply to subprojects or
 new worktree paths.
 
@@ -75,9 +81,9 @@ before model sampling; inspect any partial side effects before starting again.
 Plan mode and profiles without shell access do not run hooks. Commands use the
 selected host or Docker shell environment; only approve trusted commands.
 
-### Project completion hooks
+#### Before the final answer
 
-Completion hooks use the same exact-folder matching, disabled-by-default setting,
+Completion hooks use the same exact-folder matching, switched-off default,
 ordered execution, and per-command approval. They run once before the final answer
 of an ordinary Act conversation, not Plan or goal-driven runs. The preliminary
 answer remains provisional while hooks run. Afterwards the agent receives the
@@ -86,9 +92,9 @@ Denial or failure stops the run rather than publishing a successful final answer
 Interrupted commands are not automatically replayed; inspect their actual effects
 before retrying.
 
-### Worktree creation hooks
+#### After creating a worktree
 
-The **Project worktree hooks** settings are disabled by default. They match the
+Worktree hooks are also added switched off. They match the
 original project's exact folder and run only when a new isolated conversation
 fork has been saved successfully. Commands execute inside the new worktree, in
 order, with a separate native approval for each command in every permission mode.
