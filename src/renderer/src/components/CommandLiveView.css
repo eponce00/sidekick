@@ -1,0 +1,117 @@
+.command-live {
+  display: grid;
+  gap: 6px;
+  margin: 4px 0 6px 22px;
+  min-width: 0;
+  cursor: default;
+}
+
+.command-live-tail {
+  margin: 0;
+  padding: 7px 10px;
+  max-height: calc(6 * 1.45em + 14px);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre;
+  text-overflow: ellipsis;
+}
+
+.command-live.is-waiting .command-live-tail {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+}
+
+.command-live-answer {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.command-live-answer input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.command-live-answer input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.command-live-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.command-live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.command-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: command-live-pulse 1.6s ease-in-out infinite;
+}
+
+.command-live.is-waiting .command-live-dot {
+  background: var(--warning);
+}
+
+@keyframes command-live-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .command-live-dot {
+    animation: none;
+  }
+}
+
+.command-live-actions button,
+.command-live-answer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.command-live-actions button:hover,
+.command-live-answer button:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.command-live-actions button:focus-visible,
+.command-live-answer button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

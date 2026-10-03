@@ -226,6 +226,92 @@ describe('AgentToolRuntime file receipts', () => {
       db.close()
     }
   })
+  it('lets a later reply read and answer a command its conversation started', async () => {
+    const workspace = await temporaryRoot('sidekick-tool-runtime-terminal-')
+    const data = await temporaryRoot('sidekick-tool-runtime-terminal-data-')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const commands = new CommandService(db, join(data, 'commands'))
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      commands,
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    const sessionFor = (runId: string) =>
+      runtime.createSession({
+        runId,
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['command.execute', 'command.background']
+      })
+    const contextFor = (runId: string, conversationId: string) => ({
+      runId,
+      conversationId,
+      workspaceRoot: workspace,
+      signal: new AbortController().signal
+    })
+    try {
+      const first = await sessionFor('run-1')
+      const started = (await first.router.execute(
+        'shell',
+        {
+          title: 'Echo lines',
+          command: `node -e "console.log('ready'); process.stdin.on('data', (d) => console.log('echo ' + d.toString().trim()))"`,
+          background: true,
+          accessLevel: 'auto'
+        },
+        contextFor('run-1', 'chat')
+      )) as ToolExecutionResult
+      const taskId = (started.data as { id: string }).id
+      expect(started.modelContent).toContain('read_command_output')
+      await vi.waitFor(
+        () => expect(commands.terminals.get(taskId)?.outputLength).toBeGreaterThan(0),
+        {
+          timeout: 10_000
+        }
+      )
+
+      const later = await sessionFor('run-2')
+      const read = (await later.router.execute(
+        'read_command_output',
+        { taskId },
+        contextFor('run-2', 'chat')
+      )) as ToolExecutionResult
+      expect(read.status).toBe('success')
+      expect(JSON.parse(read.modelContent!)).toMatchObject({ state: 'running', output: 'ready' })
+
+      const answered = (await later.router.execute(
+        'send_command_input',
+        { taskId, input: 'hello', accessLevel: 'auto' },
+        contextFor('run-2', 'chat')
+      )) as ToolExecutionResult
+      expect(JSON.parse(answered.modelContent!).output).toContain('echo hello')
+
+      const elsewhere = (await later.router.execute(
+        'read_command_output',
+        { taskId },
+        contextFor('run-3', 'another-chat')
+      )) as ToolExecutionResult
+      expect(elsewhere).toMatchObject({ status: 'error', error: { code: 'not_found' } })
+      await later.router.execute(
+        'cancel_background_task',
+        { taskId, accessLevel: 'auto' },
+        contextFor('run-2', 'chat')
+      )
+      // The project folder is free once the stopped command has ended.
+      await vi.waitFor(() => expect(commands.terminals.get(taskId)?.state).toBe('stopped'), {
+        timeout: 10_000
+      })
+    } finally {
+      commands.cancelAll()
+      await runtime.close()
+      db.close()
+    }
+  }, 30_000)
+
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')

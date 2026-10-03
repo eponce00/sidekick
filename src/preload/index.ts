@@ -180,6 +180,23 @@ const api = {
       return () => ipcRenderer.removeListener('agentRuns:attention', listener)
     }
   },
+  terminal: {
+    list: (conversationId: string) => ipcRenderer.invoke('terminal:list', conversationId),
+    read: (id: string, offset?: number) => ipcRenderer.invoke('terminal:read', id, offset),
+    stop: (id: string) => ipcRenderer.invoke('terminal:stop', id),
+    moveToBackground: (id: string) => ipcRenderer.invoke('terminal:moveToBackground', id),
+    write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
+    onEvent: (
+      callback: (event: import('../shared/terminalSessions').TerminalSessionEvent) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        event: import('../shared/terminalSessions').TerminalSessionEvent
+      ): void => callback(event)
+      ipcRenderer.on('terminal:event', listener)
+      return () => ipcRenderer.removeListener('terminal:event', listener)
+    }
+  },
   conversationGoals: {
     current: (conversationId: string) =>
       ipcRenderer.invoke('conversationGoals:current', conversationId),

@@ -37,6 +37,7 @@ import { changedFilesFromSegments } from '../utils/turnChanges'
 import AgentInteractionCard from './AgentInteractionCard'
 import { resolveToolView } from '../services/uiContributions'
 import { MessageMarkdown } from './MessageMarkdown'
+import { CommandLiveView } from './CommandLiveView'
 import { MessageSources } from './MessageSources'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { ReadAloudButton } from './ReadAloudButton'
@@ -594,7 +595,12 @@ function AgentWorkDisclosure({
           onClick={() => setExpanded(true)}
         >
           {current.type === 'tool' && current.tool ? (
-            <ToolCallRow tool={current.tool} />
+            <>
+              <ToolCallRow tool={current.tool} />
+              {resolveToolView(current.tool) === 'terminal' && (
+                <CommandLiveView toolCallId={current.tool.id} />
+              )}
+            </>
           ) : (
             <span className="agent-work-live-thinking">
               {thinkingPreview(current.content ?? '')}

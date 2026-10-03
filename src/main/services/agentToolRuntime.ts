@@ -28,7 +28,9 @@ import {
 } from '../../shared/workspaceMutations'
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
-import { CommandService } from './commandService'
+import { CommandService, type OwnedBackgroundTask } from './commandService'
+import type { TerminalModelRead } from './terminalSessions'
+import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
 import type { OfficeHelperService } from './officeHelperService'
 import { McpClientManager } from './mcpClientManager'
 import {
@@ -153,6 +155,33 @@ function boundedNumber(value: unknown, fallback: number, minimum: number, maximu
   return Number.isFinite(number)
     ? Math.max(minimum, Math.min(maximum, Math.trunc(number)))
     : fallback
+}
+
+/** How long a reply to command input waits for the program to react before reading it. */
+const COMMAND_INPUT_SETTLE_MS = 1_500
+
+function backgroundNote(task: OwnedBackgroundTask): string {
+  if (task.detached === 'waiting_for_input') {
+    return (
+      `The command stopped at a prompt and is waiting for input, so it now runs in the background as task ${task.id}; ` +
+      'its last lines are in "prompt". Answer with send_command_input, read more with read_command_output, or stop it ' +
+      'with cancel_background_task. Ask the user instead when the answer is their decision or a secret.'
+    )
+  }
+  if (task.detached === 'user') {
+    return `The user moved this command to the background; it keeps running as task ${task.id}. Check on it with read_command_output.`
+  }
+  return `Running in the background as task ${task.id}. Read its output with read_command_output.`
+}
+
+function commandReadContent(read: TerminalModelRead): string {
+  return JSON.stringify({
+    taskId: read.id,
+    state: read.state,
+    ...(read.exitCode !== undefined ? { exitCode: read.exitCode } : {}),
+    ...(read.omittedLines ? { omittedLines: read.omittedLines } : {}),
+    output: read.text
+  })
 }
 
 function stringArg(args: Record<string, unknown>, key: string, fallback = ''): string {
@@ -495,6 +524,8 @@ export class AgentToolRuntime {
         'shell',
         'list_background_tasks',
         'cancel_background_task',
+        'read_command_output',
+        'send_command_input',
         ...WORKSPACE_MUTATION_TOOL_NAMES
       ],
       ({ name, arguments: args, context }) =>
@@ -923,6 +954,8 @@ export class AgentToolRuntime {
       const commandStartedAt = Date.now()
       const result = await this.commands.execute({
         runId: context.runId,
+        ...(context.conversationId ? { conversationId: context.conversationId } : {}),
+        ...(context.toolCallId ? { toolCallId: context.toolCallId } : {}),
         title,
         command,
         workspaceRoot,
@@ -943,7 +976,7 @@ export class AgentToolRuntime {
               error: result.error,
               cancelled: result.cancelled
             })
-          : JSON.stringify(publicResult)
+          : JSON.stringify({ ...publicResult, note: backgroundNote(result) })
       if ('stdout' in result) {
         this.verification.recordCommand(
           input.runId,
@@ -961,6 +994,21 @@ export class AgentToolRuntime {
         const bounded = await this.outputs.apply(content, { preview: 'head-tail' })
         const timedOut = result.error?.toLowerCase().includes('timed out') === true
         const cancelled = result.cancelled === true
+        if (result.stoppedByUser) {
+          return toolExecutionFailed({
+            title,
+            code: 'cancelled',
+            message: 'The user stopped this command',
+            retryable: false,
+            recoveryAction: 'change_strategy',
+            recovery:
+              'The user stopped this command. Do not run it again unless they ask; continue with what you have, or ask them how to proceed.',
+            data: publicResult,
+            modelContent: bounded.content,
+            output: bounded.output,
+            status: 'error'
+          })
+        }
         return toolExecutionFailed({
           title,
           code: cancelled ? 'cancelled' : timedOut ? 'timeout' : 'command_failed',
@@ -982,8 +1030,10 @@ export class AgentToolRuntime {
       }
       return this.success(title, publicResult, content, { policy: { preview: 'head-tail' } })
     }
+    // A conversation's background commands outlive the reply that started them.
+    const commandScope = { conversationId: context.conversationId, runId: context.runId }
     if (name === 'list_background_tasks') {
-      const tasks = this.commands.listBackground(context.runId)
+      const tasks = this.commands.listBackground(commandScope)
       if (input.workspaceRoot) {
         for (const task of tasks) {
           if (!task.result || this.recordedBackgroundVerification.has(task.id)) continue
@@ -1003,14 +1053,82 @@ export class AgentToolRuntime {
       return this.success(title, { tasks })
     }
     if (name === 'cancel_background_task') {
-      const cancelled = this.commands.cancelBackground(stringArg(args, 'taskId'), context.runId)
+      const cancelled = this.commands.cancelBackground(stringArg(args, 'taskId'), commandScope)
       return cancelled
         ? this.success(title, { cancelled: true, taskId: args.taskId })
         : toolExecutionFailed({
             title,
             code: 'not_found',
-            message: 'Background task was not found in this run'
+            message: 'No running background task with that ID in this conversation'
           })
+    }
+    if (name === 'read_command_output') {
+      const taskId = stringArg(args, 'taskId')
+      if (!this.commands.ownsCommand(taskId, commandScope)) {
+        return toolExecutionFailed({
+          title,
+          code: 'not_found',
+          message: 'No command with that ID in this conversation'
+        })
+      }
+      let pattern: RegExp | undefined
+      const source = stringArg(args, 'pattern')
+      if (source) {
+        try {
+          pattern = new RegExp(source, 'i')
+        } catch (error) {
+          return toolExecutionFailed({
+            title,
+            code: 'invalid_arguments',
+            message: `Invalid pattern: ${error instanceof Error ? error.message : String(error)}`
+          })
+        }
+      }
+      const read = await this.commands.terminals.readForModel(taskId, {
+        mode: args.mode === 'tail' ? 'tail' : 'new',
+        maxLines: boundedNumber(args.lines, 80, 1, 400),
+        pattern
+      })
+      if (!read) {
+        return toolExecutionFailed({ title, code: 'not_found', message: 'Command output is gone' })
+      }
+      return this.success(title, read, commandReadContent(read))
+    }
+    if (name === 'send_command_input') {
+      const taskId = stringArg(args, 'taskId')
+      const session = this.commands.terminals.get(taskId)
+      if (!session || !this.commands.ownsCommand(taskId, commandScope)) {
+        return toolExecutionFailed({
+          title,
+          code: 'not_found',
+          message: 'No command with that ID in this conversation'
+        })
+      }
+      const text = stringArg(args, 'input')
+      if (text.length > MAX_TERMINAL_INPUT_LENGTH) {
+        return toolExecutionFailed({
+          title,
+          code: 'invalid_arguments',
+          message: `Input is limited to ${MAX_TERMINAL_INPUT_LENGTH} characters`
+        })
+      }
+      // A terminal's Enter is a carriage return; a pipe reads lines.
+      const enter = args.enter === false ? '' : session.pty ? '\r' : '\n'
+      if (!this.commands.write(taskId, text + enter)) {
+        return toolExecutionFailed({
+          title,
+          code: 'not_found',
+          message: 'The command is no longer running'
+        })
+      }
+      // Give the program a moment to answer, so the result shows what the input did.
+      await new Promise((resolve) => setTimeout(resolve, COMMAND_INPUT_SETTLE_MS))
+      const read = await this.commands.terminals.readForModel(taskId, { mode: 'new' })
+      return this.success(
+        title,
+        { sent: true, taskId },
+        read ? commandReadContent(read) : JSON.stringify({ sent: true, taskId })
+      )
     }
     if (name.startsWith('collaboration_') && input.collaboration) {
       if (name === 'collaboration_import_artifact') readReceipts.clear()

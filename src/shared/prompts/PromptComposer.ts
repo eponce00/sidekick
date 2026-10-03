@@ -94,7 +94,12 @@ ${shellRules}
 - Keep filesystem effects inside the active project. Use the managed SIDEKICK_SCRATCH directory for temporary files and SIDEKICK_WORKSPACE to locate the project. Do not write to arbitrary system or user-profile paths.
 - Never expose credentials or secrets in command text or output; SideKick removes ambient credential variables from shell processes.
 - Verify exit status and expected effects. Missing or ambiguous output is not verification.
-- Use background execution only for processes that should outlive a single command call.`
+- Use background execution only for processes that should outlive a single command call.${
+    input.capabilities.backgroundCommands
+      ? `
+- Commands run in a terminal. Check a background command with read_command_output instead of waiting blind or restarting it. A command that stops at a prompt is moved to the background; answer it with send_command_input only when the answer is clearly yours to give.`
+      : ''
+  }`
 }
 
 function planSection(input: PromptComposerInput): string {

@@ -22,6 +22,7 @@ import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
+import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
 import { ConversationAttentionTracker } from '../services/conversationAttention'
 import { applyAttentionBadge } from '../services/attentionBadge'
 import {
@@ -63,7 +64,10 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       app.getPath('userData'),
       publish,
       publishGoal,
-      { pdfOutputRoot: app.getPath('downloads') }
+      {
+        pdfOutputRoot: app.getPath('downloads'),
+        publishTerminal: (event) => publishDesktopEvent('terminal:event', event)
+      }
     )
   }
   return coordinator
@@ -517,6 +521,32 @@ export function registerAgentRunHandlers(): void {
     if (!validId(goalId)) throw new Error('Invalid goal')
     return engine.request({ type: 'goal.clear', goalId })
   })
+
+  // The user's own controls over agent commands: watch, stop, background, type.
+  const commands = (): import('../services/commandService').CommandService =>
+    getAgentRuntimeCoordinator().commands
+  ipcMain.handle('terminal:list', (_event, conversationId: unknown) =>
+    validId(conversationId) ? commands().terminals.list(conversationId) : []
+  )
+  ipcMain.handle('terminal:read', (_event, id: unknown, offset: unknown) => {
+    if (!validId(id)) return null
+    const start = typeof offset === 'number' && Number.isFinite(offset) ? Math.max(0, offset) : 0
+    return commands().terminals.read(id, start) ?? null
+  })
+  ipcMain.handle('terminal:stop', (_event, id: unknown) => ({
+    stopped: validId(id) && commands().stopByUser(id)
+  }))
+  ipcMain.handle('terminal:moveToBackground', (_event, id: unknown) => ({
+    moved: validId(id) && commands().moveToBackground(id)
+  }))
+  ipcMain.handle('terminal:write', (_event, id: unknown, data: unknown) => ({
+    written:
+      validId(id) &&
+      typeof data === 'string' &&
+      data.length > 0 &&
+      data.length <= MAX_TERMINAL_INPUT_LENGTH &&
+      commands().write(id, data)
+  }))
 }
 
 export async function shutdownAgentRuntime(): Promise<void> {

@@ -6,9 +6,14 @@ import type { BackgroundTask, ShellCommandResult } from '../../shared/types'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { CommandRunner } from './commandRunner'
 import { isolatedShellProcess } from './dockerShellIsolation'
+import { TerminalSessionStore } from './terminalSessions'
+import type { TerminalSessionState } from '../../shared/terminalSessions'
 
 export interface CommandServiceRunInput {
   runId: string
+  /** The conversation the command belongs to; its background commands outlive one reply. */
+  conversationId?: string
+  toolCallId?: string
   title: string
   command: string
   workspaceRoot: string
@@ -21,7 +26,25 @@ export interface CommandServiceRunInput {
 
 export interface OwnedBackgroundTask extends BackgroundTask {
   runId: string
+  conversationId?: string
   cwd: string
+  /** A foreground command moved to the background before it finished, and why. */
+  detached?: 'waiting_for_input' | 'user'
+  /** For a command waiting for input, the question it asked. */
+  prompt?: string
+}
+
+/** Which background commands a caller may see and stop. */
+export interface BackgroundTaskScope {
+  conversationId?: string
+  runId?: string
+}
+
+export interface CommandServiceOptions {
+  /** The shared record of every command's terminal; one is made when none is given. */
+  terminals?: TerminalSessionStore
+  /** Run commands in a pseudo-terminal when one is available. */
+  terminalEnabled?: () => boolean
 }
 
 const MAX_PERSISTED_OUTPUT = 32 * 1024
@@ -47,6 +70,22 @@ export function shellChildEnvironment(
   if (skillAssetsPath) safe.SIDEKICK_SKILLS = skillAssetsPath
   return safe
 }
+
+function inScope(task: OwnedBackgroundTask, scope: BackgroundTaskScope): boolean {
+  if (scope.conversationId) return task.conversationId === scope.conversationId
+  return !scope.runId || task.runId === scope.runId
+}
+
+function sessionState(
+  result: ShellCommandResult
+): Exclude<TerminalSessionState, 'running' | 'waiting_for_input'> {
+  if (result.cancelled) return 'stopped'
+  if (result.error?.toLowerCase().includes('timed out')) return 'timed_out'
+  if (result.exitCode === -1 && result.error) return 'failed'
+  return 'exited'
+}
+
+const MAX_RENDERED_OUTPUT = 256 * 1024
 
 function compactResult(result: ShellCommandResult | undefined): ShellCommandResult | undefined {
   if (!result) return undefined
@@ -76,14 +115,27 @@ export function projectRelativeCommandCwd(workspaceRoot: string, cwd = ''): stri
 export class CommandService {
   private readonly runner = new CommandRunner()
   private readonly backgroundTasks = new Map<string, OwnedBackgroundTask>()
+  readonly terminals: TerminalSessionStore
+  private readonly terminalEnabled: () => boolean
+  /** Ends a foreground command's wait, leaving it running as a background task. */
+  private readonly detachers = new Map<string, (reason: 'waiting_for_input' | 'user') => void>()
+  private readonly stoppedByUser = new Set<string>()
 
   constructor(
     private readonly db: Database.Database,
     private readonly outputRoot: string,
     private readonly onTaskUpdate: (task: OwnedBackgroundTask) => void = () => undefined,
     private readonly skillAssetsPath?: string,
-    private readonly isolationEnabled: () => boolean = () => false
+    private readonly isolationEnabled: () => boolean = () => false,
+    options: CommandServiceOptions = {}
   ) {
+    this.terminals = options.terminals ?? new TerminalSessionStore()
+    this.terminalEnabled = options.terminalEnabled ?? (() => false)
+    // A foreground command stopped at a prompt cannot be answered while the agent waits on it.
+    this.terminals.onStateChange((session) => {
+      if (session.state === 'waiting_for_input')
+        this.detachers.get(session.id)?.('waiting_for_input')
+    })
     this.restore()
   }
 
@@ -136,12 +188,15 @@ export class CommandService {
   private restore(): void {
     const rows = this.db
       .prepare(
-        `SELECT id, run_id, title, command, cwd, status, started_at, ended_at, result_json
-         FROM background_tasks ORDER BY started_at DESC LIMIT 200`
+        `SELECT task.id, task.run_id, run.thread_id, task.title, task.command, task.cwd,
+                task.status, task.started_at, task.ended_at, task.result_json
+         FROM background_tasks task LEFT JOIN agent_runs run ON run.id = task.run_id
+         ORDER BY task.started_at DESC LIMIT 200`
       )
       .all() as Array<{
       id: string
       run_id: string | null
+      thread_id: string | null
       title: string
       command: string
       cwd: string | null
@@ -163,6 +218,7 @@ export class CommandService {
       const task: OwnedBackgroundTask = {
         id: row.id,
         runId: row.run_id || 'user',
+        ...(row.thread_id ? { conversationId: row.thread_id } : {}),
         title: row.title,
         command: row.command,
         cwd: row.cwd || process.cwd(),
@@ -215,21 +271,138 @@ export class CommandService {
       this.runner.cancel(id)
     }
     input.signal?.addEventListener('abort', abort, { once: true })
+    const run = this.runner.run({
+      id,
+      command: input.command,
+      process: sandbox,
+      cwd,
+      timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30)) * 1_000,
+      outputPath: this.outputPath(id),
+      env,
+      terminal: !sandbox && this.terminalEnabled(),
+      onStart: ({ pty }) => this.openSession(id, cwd, input, false, pty),
+      onOutput: (data) => {
+        this.terminals.append(id, data.chunk)
+        input.onOutput?.(data)
+      }
+    })
+    // An isolated command runs in a container that is removed when the call returns, so only a
+    // host command can go on in the background.
+    const detached = sandbox
+      ? new Promise<never>(() => undefined)
+      : new Promise<'waiting_for_input' | 'user'>((resolve) => this.detachers.set(id, resolve))
     try {
-      return await this.runner.run({
-        id,
-        command: input.command,
-        process: sandbox,
-        cwd,
-        timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 30)) * 1_000,
-        outputPath: this.outputPath(id),
-        env,
-        onOutput: input.onOutput
-      })
+      const outcome = await Promise.race([
+        run.then((result) => ({ result })),
+        detached.then((reason) => ({ reason }))
+      ])
+      if ('reason' in outcome) {
+        input.signal?.removeEventListener('abort', abort)
+        return await this.continueInBackground(id, cwd, input, run, outcome.reason)
+      }
+      return await this.completeSession(id, outcome.result)
     } finally {
+      this.detachers.delete(id)
       input.signal?.removeEventListener('abort', abort)
       await sandbox?.cleanup()
     }
+  }
+
+  private openSession(
+    id: string,
+    cwd: string,
+    input: CommandServiceRunInput,
+    background: boolean,
+    pty: boolean
+  ): void {
+    this.terminals.start({
+      id,
+      runId: input.runId,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.toolCallId ? { toolCallId: input.toolCallId } : {}),
+      title: input.title,
+      command: input.command,
+      cwd,
+      background,
+      pty
+    })
+  }
+
+  /**
+   * Records how a command ended. Output from a pseudo-terminal is replaced by the text the
+   * terminal shows: the raw stream is full of cursor moves and repaints a model cannot read.
+   */
+  private async completeSession(
+    id: string,
+    result: ShellCommandResult
+  ): Promise<ShellCommandResult> {
+    const stoppedByUser = this.stoppedByUser.delete(id)
+    await this.terminals.finish(id, { state: sessionState(result), exitCode: result.exitCode })
+    let completed: ShellCommandResult = stoppedByUser
+      ? {
+          ...result,
+          stoppedByUser: true,
+          error: 'The user stopped this command'
+        }
+      : result
+    if (result.terminal) {
+      const text = ((await this.terminals.lines(id)) ?? []).join('\n')
+      const truncated = text.length > MAX_RENDERED_OUTPUT
+      completed = {
+        ...completed,
+        stdout: truncated ? text.slice(-MAX_RENDERED_OUTPUT) : text,
+        truncated: completed.truncated || truncated
+      }
+    }
+    return completed
+  }
+
+  /** Turns a foreground command whose call has returned into a background task. */
+  private async continueInBackground(
+    id: string,
+    cwd: string,
+    input: CommandServiceRunInput,
+    run: Promise<ShellCommandResult>,
+    reason: 'waiting_for_input' | 'user'
+  ): Promise<OwnedBackgroundTask> {
+    const task: OwnedBackgroundTask = {
+      id,
+      runId: input.runId,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      title: input.title,
+      command: input.command,
+      cwd,
+      status: 'running',
+      startedAt: this.terminals.get(id)?.startedAt ?? Date.now()
+    }
+    this.backgroundTasks.set(id, task)
+    this.persist(task)
+    this.terminals.moveToBackground(id)
+    this.followBackground(task, run)
+    const lines = (await this.terminals.lines(id)) ?? []
+    return {
+      ...task,
+      detached: reason,
+      ...(reason === 'waiting_for_input' && lines.length
+        ? { prompt: lines.slice(-6).join('\n') }
+        : {})
+    }
+  }
+
+  private followBackground(task: OwnedBackgroundTask, run: Promise<ShellCommandResult>): void {
+    void run
+      .then((result) => this.completeSession(task.id, result))
+      .then((result) => {
+        task.result = result
+        task.endedAt = Date.now()
+        task.status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error'
+        this.persist(task)
+        this.onTaskUpdate({ ...task })
+      })
+      // A command ending as the app shuts down has nowhere to record it; nothing else to do.
+      .catch((error: unknown) =>
+        console.warn('[Commands] Could not record a finished task:', error)
+      )
   }
 
   private startBackground(
@@ -240,6 +413,7 @@ export class CommandService {
     const task: OwnedBackgroundTask = {
       id,
       runId: input.runId,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
       title: input.title,
       command: input.command,
       cwd,
@@ -248,35 +422,33 @@ export class CommandService {
     }
     this.backgroundTasks.set(id, task)
     this.persist(task)
-    void this.runner
-      .run({
+    this.followBackground(
+      task,
+      this.runner.run({
         id,
         command: input.command,
         cwd,
         timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 3_600)) * 1_000,
         outputPath: this.outputPath(id),
-        env: this.shellEnvironment(input.runId, input.workspaceRoot)
+        env: this.shellEnvironment(input.runId, input.workspaceRoot),
+        terminal: this.terminalEnabled(),
+        onStart: ({ pty }) => this.openSession(id, cwd, input, true, pty),
+        onOutput: (data) => this.terminals.append(id, data.chunk)
       })
-      .then((result) => {
-        task.result = result
-        task.endedAt = Date.now()
-        task.status = result.cancelled ? 'cancelled' : result.success ? 'success' : 'error'
-        this.persist(task)
-        this.onTaskUpdate({ ...task })
-      })
+    )
     return { ...task }
   }
 
-  listBackground(runId?: string): OwnedBackgroundTask[] {
+  listBackground(scope: BackgroundTaskScope = {}): OwnedBackgroundTask[] {
     return [...this.backgroundTasks.values()]
-      .filter((task) => !runId || task.runId === runId)
+      .filter((task) => inScope(task, scope))
       .sort((left, right) => right.startedAt - left.startedAt)
       .map((task) => ({ ...task, result: compactResult(task.result) }))
   }
 
-  cancelBackground(taskId: string, runId?: string): boolean {
+  cancelBackground(taskId: string, scope: BackgroundTaskScope = {}): boolean {
     const task = this.backgroundTasks.get(taskId)
-    if (!task || (runId && task.runId !== runId)) return false
+    if (!task || !inScope(task, scope)) return false
     const cancelled = this.runner.cancel(taskId)
     if (cancelled) {
       task.status = 'cancelled'
@@ -287,9 +459,40 @@ export class CommandService {
     return cancelled
   }
 
+  /** Whether a command, foreground or background, belongs to the conversation. */
+  ownsCommand(id: string, scope: BackgroundTaskScope): boolean {
+    const session = this.terminals.get(id)
+    if (!session) return false
+    if (scope.conversationId) return session.conversationId === scope.conversationId
+    return !scope.runId || session.runId === scope.runId
+  }
+
+  /** The user stopped one command; the agent is told so and goes on. */
+  stopByUser(id: string): boolean {
+    if (!this.runner.isRunning(id)) return false
+    this.stoppedByUser.add(id)
+    const task = this.backgroundTasks.get(id)
+    if (task) return this.cancelBackground(id)
+    return this.runner.cancel(id)
+  }
+
+  /** Stops waiting on a foreground command and lets it run on in the background. */
+  moveToBackground(id: string): boolean {
+    const detach = this.detachers.get(id)
+    if (!detach) return false
+    detach('user')
+    return true
+  }
+
+  /** Types into a running command, as at its terminal. */
+  write(id: string, data: string): boolean {
+    return this.runner.write(id, data)
+  }
+
   cancelRun(runId: string): void {
     for (const task of this.backgroundTasks.values()) {
-      if (task.runId === runId && task.status === 'running') this.cancelBackground(task.id, runId)
+      if (task.runId === runId && task.status === 'running')
+        this.cancelBackground(task.id, { runId })
     }
   }
 

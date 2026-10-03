@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Copy, ExternalLink } from 'lucide-react'
+import { Check, Copy, ExternalLink, SquareTerminal } from 'lucide-react'
 import type { ToolExecution } from '../types/chat.types'
 import { resolveToolView } from '../services/uiContributions'
 import ToolCallRow from './ToolCallRow'
@@ -14,6 +14,8 @@ import {
   WebPageOutput
 } from './StructuredToolOutput'
 import { parseNumberedLines } from '../utils/codeHighlight'
+import { CommandLiveView } from './CommandLiveView'
+import { requestTerminalView, useTerminalSessionForTool } from '../utils/terminalSessionStore'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -44,6 +46,7 @@ export function ToolExecutionCard({
   const [copied, setCopied] = useState(false)
   const [imageEnlarged, setImageEnlarged] = useState(false)
   const view = resolveToolView(tool)
+  const terminalSession = useTerminalSessionForTool(view === 'terminal' ? tool.id : undefined)
   const output = tool.error || tool.output || ''
   const bounded = useMemo(() => boundedLines(output, showAll), [output, showAll])
   // Saved pages of a file read keep the read tool's `12: text` lines; show them as code.
@@ -79,6 +82,7 @@ export function ToolExecutionCard({
         expandable={expandable}
         expanded={expanded}
       />
+      {view === 'terminal' && <CommandLiveView toolCallId={tool.id} />}
       {previewUrl && (
         <button
           type="button"
@@ -131,6 +135,16 @@ export function ToolExecutionCard({
                 <div className="rich-tool-command">
                   <span>$</span>
                   <code>{command}</code>
+                  {terminalSession && (
+                    <button
+                      type="button"
+                      className="rich-tool-open-terminal"
+                      onClick={() => requestTerminalView(terminalSession.id)}
+                    >
+                      <SquareTerminal size={11} />
+                      Open in Terminal
+                    </button>
+                  )}
                 </div>
               )}
               {output && view === 'terminal' && (

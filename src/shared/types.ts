@@ -21,6 +21,10 @@ export interface ShellCommandResult {
   cancelled?: boolean
   truncated?: boolean
   outputPath?: string
+  /** Ran in a pseudo-terminal: `stdout` is the output as the terminal shows it. */
+  terminal?: boolean
+  /** The user stopped this command from SideKick, not the agent or a timeout. */
+  stoppedByUser?: boolean
 }
 
 export interface CommandExecutionRequest {

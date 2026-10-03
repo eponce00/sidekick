@@ -1,3 +1,4 @@
+import { previewTerminalApi } from './terminalPreview'
 import type {
   CollaborationAgentSessionMessage,
   CollaborationGroup,
@@ -575,6 +576,27 @@ const previewMessages = [
         }
       },
       {
+        type: 'tool' as const,
+        tool: {
+          id: 'preview-tool-dev-server',
+          name: 'shell',
+          title: 'Start the dev server',
+          command: 'npm run dev',
+          status: 'success' as const,
+          accessLevel: 'auto' as const,
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'terminal' as const,
+            title: 'Start the dev server',
+            subject: 'npm run dev',
+            detail: 'Running in the background'
+          },
+          output: 'Running in the background.',
+          startedAt: Date.now() - 90_000,
+          completedAt: Date.now() - 89_000
+        }
+      },
+      {
         type: 'thinking' as const,
         content:
           'The data path is sound. I can now simplify the work disclosure and make file changes explicit.'
@@ -961,6 +983,7 @@ export function installBrowserApiMock(): void {
       attention: async () => ({ waitingConversationIds: [] }),
       onAttention: () => () => undefined
     },
+    terminal: previewTerminalApi(),
     conversationGoals: {
       current: async (conversationId) =>
         previewGoal?.conversationId === conversationId ? previewGoal : null,

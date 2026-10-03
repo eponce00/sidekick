@@ -6,17 +6,17 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 ## Core catalog
 
-| Capability      | Tools                                                                                           | Availability                                                             |
-| --------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Work tracking   | `manage_todo_list`                                                                              | Conversation and Plan runs                                               |
-| Commands        | `execute_command`, `list_background_tasks`, `cancel_background_task`                            | Project-bound conversation, collaboration, and child-agent runs          |
-| Coordination    | `wait`                                                                                          | All agent profiles                                                       |
-| Delegation      | `spawn_subagent`                                                                                | Project-bound conversation runs                                          |
-| Skills          | `use_skill`                                                                                     | Conversation runs, including read-only planning                          |
-| Human input     | `ask_user`                                                                                      | All interactive agent profiles                                           |
-| Retained output | `read_tool_output`                                                                              | All agent profiles                                                       |
-| Web             | `web_search`, `web_image_search`, `web_fetch`                                                   | Conversation, collaboration, child-agent, and research runs when enabled |
-| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification | Project-bound runs when browser work is enabled                          |
+| Capability      | Tools                                                                                                   | Availability                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Work tracking   | `manage_todo_list`                                                                                      | Conversation and Plan runs                                               |
+| Commands        | `shell`, `list_background_tasks`, `cancel_background_task`, `read_command_output`, `send_command_input` | Project-bound conversation, collaboration, and child-agent runs          |
+| Coordination    | `wait`                                                                                                  | All agent profiles                                                       |
+| Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                          |
+| Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                          |
+| Human input     | `ask_user`                                                                                              | All interactive agent profiles                                           |
+| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                       |
+| Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, collaboration, child-agent, and research runs when enabled |
+| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                          |
 
 Project-bound runs can also receive the bounded `read` tool and the file editor the model was
 trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,
@@ -32,6 +32,30 @@ vision-capable model. See [Visual browser](BROWSER.md).
 
 The `code_intelligence` tool appears only when a matching language server is already installed on
 the machine or in the project. SideKick does not download language servers or toolchains.
+
+## Agent commands and the Terminal
+
+Agent commands run in a terminal (a pseudo-terminal), so programs behave as they do for you:
+colours, progress bars, and prompts. The model reads the output as a terminal shows it, without
+control codes. **Agent settings → Run commands in a terminal** switches to plain pipes; Docker
+isolation always uses pipes.
+
+- **In the chat.** A running command shows its last lines under its row, with **Stop**,
+  **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
+  stopped it and goes on. Background stops the agent waiting on it while it keeps running.
+- **The Terminal tab.** The side panel lists the conversation's commands with their state and run
+  time. Select one to see all of its output in a terminal view, copy it, stop it, or type into it.
+- **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
+  marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
+  was waiting on it, the agent gets it back as a background task, with the question, instead of
+  waiting until it times out.
+- **Background commands** belong to the conversation, so a later reply can still read, answer,
+  or stop a dev server an earlier reply started. The agent reads a running command with
+  `read_command_output`, which by default returns the output since its last look, and answers
+  prompts with `send_command_input`. It is told not to type secrets or make choices that are yours.
+
+Commands from earlier app sessions are not listed in the Terminal tab; their output stays in the
+chat.
 
 ## Conditional tools
 
@@ -70,7 +94,7 @@ global policy is Full access.
 - A multi-file patch is validated as one transaction. Any failure prevents the full change set or
   rolls it back.
 - Foreground and background commands use an explicit project-relative working directory. Background
-  commands return an ID that can be inspected or cancelled.
+  commands return an ID that can be read, answered, or cancelled from any reply in the conversation.
 - Tool output is bounded. Overflow is retained in trusted storage and can be read through an opaque
   handle; it is not silently inserted into the prompt.
 - Web pages and MCP responses are untrusted content. They cannot promote their text into system
