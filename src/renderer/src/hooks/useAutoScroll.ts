@@ -17,6 +17,8 @@ export interface AutoScrollController {
 }
 
 const REVEAL_MARGIN = 12
+/** How long a jump to the latest message keeps correcting for rows measured on the way. */
+const JUMP_SETTLE_MS = 1_500
 
 export function scrollDistanceFromBottom(
   container: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>
@@ -54,6 +56,8 @@ export function useAutoScroll<T>(
   changeKey?: unknown
 ): AutoScrollController {
   const shouldStickToBottomRef = useRef(true)
+  /** A jump to the latest message is under way; its own scroll events are not the reader's. */
+  const jumpingRef = useRef(false)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const autoScrollChange = changeKey === undefined ? messages : changeKey
 
@@ -71,17 +75,57 @@ export function useAutoScroll<T>(
 
   const updatePosition = useCallback((): void => {
     const container = scrollContainerRef.current
-    if (!container) return
+    if (!container || jumpingRef.current) return
     const distance = scrollDistanceFromBottom(container)
     shouldStickToBottomRef.current = distance <= FOLLOW_BOTTOM_THRESHOLD
     setShowScrollToBottom(shouldShowScrollToBottom(distance))
   }, [scrollContainerRef])
 
+  /**
+   * Jumps to the latest message. A long timeline is virtualized: rows below the view have only
+   * estimated heights until they are measured on the way down, so the end moves while the jump
+   * runs. Keep landing on the end until it stops moving, unless the reader scrolls themselves.
+   */
   const scrollToBottom = useCallback((): void => {
     shouldStickToBottomRef.current = true
     setShowScrollToBottom(false)
-    moveToBottom('smooth')
-  }, [moveToBottom])
+    const container = scrollContainerRef.current
+    if (!container || typeof container.scrollTo !== 'function') {
+      moveToBottom('smooth')
+      return
+    }
+    // Far away, an animated scroll only shows rows streaming past; land at once.
+    const far = scrollDistanceFromBottom(container) > container.clientHeight * 2
+    moveToBottom(far ? 'auto' : 'smooth')
+    jumpingRef.current = true
+    const startedAt = Date.now()
+    let settledFrames = 0
+    const stop = (): void => {
+      jumpingRef.current = false
+      container.removeEventListener('wheel', stop)
+      container.removeEventListener('touchstart', stop)
+      container.removeEventListener('keydown', stop)
+      updatePosition()
+    }
+    // The reader taking over ends the jump where they are.
+    container.addEventListener('wheel', stop, { passive: true })
+    container.addEventListener('touchstart', stop, { passive: true })
+    container.addEventListener('keydown', stop)
+    const settle = (): void => {
+      if (!jumpingRef.current) return
+      const elapsed = Date.now() - startedAt
+      if (scrollDistanceFromBottom(container) <= 2) settledFrames += 1
+      else {
+        settledFrames = 0
+        // A smooth scroll gets its moment; then, or for a far jump, snap to the new end.
+        if (far || elapsed > 400)
+          container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
+      }
+      if (settledFrames >= 3 || elapsed > JUMP_SETTLE_MS) stop()
+      else window.requestAnimationFrame(settle)
+    }
+    window.requestAnimationFrame(settle)
+  }, [moveToBottom, scrollContainerRef, updatePosition])
 
   const revealStart = useCallback(
     (element: HTMLElement, options: { onlyIfFollowing?: boolean } = {}): void => {
