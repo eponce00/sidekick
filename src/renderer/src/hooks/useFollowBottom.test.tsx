@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, useState } from 'react'
+import { act, useEffect, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { useFollowBottom } from './useFollowBottom'
@@ -12,7 +12,9 @@ let box: HTMLDivElement | null = null
 
 function Streaming({ streaming }: { streaming: boolean }): React.JSX.Element {
   const [text, update] = useState('first line')
-  setText = update
+  useEffect(() => {
+    setText = update
+  }, [])
   const ref = useFollowBottom<HTMLDivElement>(streaming)
   return (
     <div
