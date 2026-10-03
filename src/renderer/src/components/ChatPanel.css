@@ -741,9 +741,12 @@
   background: rgb(40 45 56 / 0.95);
 }
 
+/* The reading column matches the composer's: without a cap, closing the side panel on a wide
+   window stretched every line edge to edge while the composer stayed narrow. */
 .virtual-message-timeline {
   position: relative;
-  width: 100%;
+  width: min(100%, 880px);
+  margin-inline: auto;
 }
 
 .virtual-message-row {
