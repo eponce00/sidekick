@@ -386,6 +386,60 @@ describe('AgentToolRuntime file receipts', () => {
     }
   }, 60_000)
 
+  it('reads a binary file as a description, so it can be deleted without the shell', async () => {
+    // read refused binary files, delete_file needs a read receipt, so the agent deleted stray
+    // screenshots with Remove-Item, outside the mutation service and its history.
+    const workspace = await temporaryRoot('sidekick-tool-runtime-binary-')
+    const data = await temporaryRoot('sidekick-tool-runtime-binary-data-')
+    await writeFile(
+      join(workspace, 'shot.png'),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 13, 1, 2])
+    )
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      new CommandService(db, join(data, 'commands')),
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    try {
+      const session = await runtime.createSession({
+        runId: 'run-binary',
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['workspace.read', 'workspace.write'],
+        editingDialect: 'structured-edit'
+      })
+      const context = {
+        runId: 'run-binary',
+        workspaceRoot: workspace,
+        signal: new AbortController().signal
+      }
+      const read = (await session.router.execute(
+        'read',
+        { path: 'shot.png' },
+        context
+      )) as ToolExecutionResult
+      expect(read.status).toBe('success')
+      expect(read.modelContent).toContain('binary, 10 bytes')
+      expect(read.modelContent).toContain('view_image')
+
+      const deleted = (await session.router.execute(
+        'delete_file',
+        { file_path: 'shot.png', accessLevel: 'auto' },
+        context
+      )) as ToolExecutionResult
+      expect(deleted.status).toBe('success')
+      await expect(readFile(join(workspace, 'shot.png'))).rejects.toThrow()
+    } finally {
+      await runtime.close()
+      db.close()
+    }
+  })
+
   it('binds existing-file mutations to reads performed by the same run', async () => {
     const workspace = await temporaryRoot('sidekick-tool-runtime-workspace-')
     const data = await temporaryRoot('sidekick-tool-runtime-data-')

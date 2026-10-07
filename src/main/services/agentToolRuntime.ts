@@ -766,6 +766,20 @@ export class AgentToolRuntime {
       }
       // Keyed like change records, so ./a.ts, an absolute path and a.ts share one receipt.
       readReceipts.set(projectRelativePath(this.requireWorkspace(input), path), result.version)
+      if (result.binary) {
+        // A receipt without text: the agent may now delete or replace the file through the
+        // mutation service, instead of falling back to the shell.
+        const image = /\.(png|jpe?g|webp|gif)$/i.test(path)
+        return this.success(
+          title,
+          result,
+          instructions.content +
+            `[File: ${path} | binary, ${result.size} bytes | version ${result.version}]\n` +
+            'This is a binary file, so its contents are not shown as text.' +
+            (image ? ' Use view_image to look at it.' : '') +
+            ' You may delete or replace it with the editing tools.'
+        )
+      }
       if (input.workspaceRoot) this.languageIntelligence.observeFile(input.workspaceRoot, path)
       const metadata =
         `[File: ${path} | lines ${result.startLine}-${result.endLine} of ${result.totalLines}` +
