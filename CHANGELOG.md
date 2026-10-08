@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.11.0 — 2026-10-07
+
+- Watch the agent's commands run. Commands run in a real terminal: a running command shows its
+  last lines in the chat with **Stop**, **Background** and **Open in Terminal**, and a box to
+  answer when it asks a question. The side panel's **Terminal** tab lists every command of the
+  conversation in a terminal you can type into.
+- Wait for what matters, not a guessed number of seconds. The agent's wait ends as soon as a
+  command ends, stops at a prompt, or prints a matching line, or when you send a message. The
+  agent hears when a background command ends, and a command still running at its time limit goes
+  on in the background instead of being killed.
+- Continue a reply that failed mid-run, as you would an interrupted one. **Retry** now asks first,
+  since it discards the reply's work and file changes, and errors show outside the folded work.
+- Read whole web pages. A page reads as Markdown with its details, structure, and the facts around
+  the main article, and a long page keeps the parts that match what the agent was looking for.
+- See the image the agent viewed under its step, and questions the agent is waiting on without
+  expanding its work.
+- Read Markdown files in the file viewer as clean documents, and files as their own text.
+- Add as many models to a provider as you like. The **Add model** field disappeared after the
+  first one.
+- Land on the latest message with the jump-to-bottom button in a long chat, instead of a chunk
+  above it.
+- Follow thinking as it streams, size emoji in thinking like letters, style code blocks in
+  thinking, and keep the chat as wide as the message box.
+- Set up project hooks in one card. A new hook is added switched off.
+- Name a queued write by its file and say it is not written yet. The agent can read a binary
+  file's details, so it can delete or replace it with its editing tools.
+- Keep following a running reply when a double-clicked Retry is refused, and leave an image that
+  does not decode out of a conversation's replay.
+- Update the MCP SDK, KaTeX, proxy-addr, and source-map-js for their published advisories.
+
 ## 0.10.0 — 2026-10-02
 
 - Name files with **@**. Typing `@` in the message box lists the project's files; choosing one

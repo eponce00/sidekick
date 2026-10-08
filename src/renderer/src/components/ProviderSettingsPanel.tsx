@@ -350,28 +350,26 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                   </div>
                 )}
 
-              {(selected.modelSource === 'manual' || selected.models.length === 0) && (
-                <div className="manual-model-row">
-                  <input
-                    value={manualModel}
-                    onChange={(event) => setManualModel(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        addManualModel()
-                      }
-                    }}
-                    placeholder="Model id, for example local-model"
-                  />
-                  <button
-                    type="button"
-                    className="settings-secondary-action"
-                    onClick={addManualModel}
-                  >
-                    Add model
-                  </button>
-                </div>
-              )}
+              <div className="manual-model-row">
+                <input
+                  value={manualModel}
+                  onChange={(event) => setManualModel(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      addManualModel()
+                    }
+                  }}
+                  placeholder="Model id, for example local-model"
+                />
+                <button
+                  type="button"
+                  className="settings-secondary-action"
+                  onClick={addManualModel}
+                >
+                  Add model
+                </button>
+              </div>
 
               {selected.models.length > 0 && (
                 <>
@@ -463,22 +461,18 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                                 >
                                   <SlidersHorizontal size={13} />
                                 </button>
-                                {selected.modelSource === 'manual' && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      updateSelected({
-                                        models: selected.models.filter(
-                                          (item) => item.id !== model.id
-                                        )
-                                      })
-                                    }}
-                                    aria-label={`Remove ${display.label}`}
-                                    title="Remove model"
-                                  >
-                                    <X size={13} />
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateSelected({
+                                      models: selected.models.filter((item) => item.id !== model.id)
+                                    })
+                                  }}
+                                  aria-label={`Remove ${display.label}`}
+                                  title="Remove model"
+                                >
+                                  <X size={13} />
+                                </button>
                               </span>
                             </div>
                           </div>
