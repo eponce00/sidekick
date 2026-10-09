@@ -4280,6 +4280,24 @@ body[data-theme='light'] .tool-approval-command {
   font-size: var(--text-xs);
 }
 
+.steer-segment-actions {
+  display: inline-flex;
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity var(--duration-fast) ease;
+}
+
+.steer-segment:hover .steer-segment-actions,
+.steer-segment:focus-within .steer-segment-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .steer-segment-actions {
+    opacity: 1;
+  }
+}
+
 .steer-segment-content {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

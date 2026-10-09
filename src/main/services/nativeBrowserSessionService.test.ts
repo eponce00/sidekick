@@ -1304,7 +1304,7 @@ describe('NativeBrowserSessionService', () => {
     const { service, runtime } = await testService()
     await expect(
       service.open({ runId: 'remote-http', url: 'http://example.com/' })
-    ).rejects.toThrow('loopback')
+    ).rejects.toThrow('this computer')
     const local = await service.open({ runId: 'local-http', url: 'http://127.0.0.1:5173/' })
     await service.close({ sessionId: local.sessionId })
     await expect(service.open({ runId: 'script', url: 'javascript:alert(1)' })).rejects.toThrow(
@@ -1335,6 +1335,48 @@ describe('NativeBrowserSessionService', () => {
         allowedFileRoots: [project]
       })
     ).rejects.toThrow('approved project root')
+  })
+
+  it('opens a local-network address over HTTP only once the user allows it', async () => {
+    const approved = new Set<string>()
+    const asked: string[] = []
+    let answer = false
+    const { service, runtime } = await testService({
+      networkPolicy: {
+        approved: (origin) => approved.has(origin),
+        approve: async (origin) => {
+          asked.push(origin)
+          if (answer) approved.add(origin)
+          return answer
+        }
+      }
+    })
+
+    await expect(
+      service.open({ runId: 'denied', url: 'http://10.50.160.123:8080/status' })
+    ).rejects.toThrow('did not allow')
+    // A public site over plain HTTP is never offered for approval.
+    await expect(service.open({ runId: 'public', url: 'http://example.com/' })).rejects.toThrow(
+      'this computer'
+    )
+    expect(asked).toEqual(['http://10.50.160.123:8080'])
+
+    answer = true
+    const opened = await service.open({ runId: 'allowed', url: 'http://10.50.160.123:8080/' })
+    const surface = runtime.surfaces.at(-1)!
+    expect(surface.requestAllowed('http://10.50.160.123:8080/api/status')).toBe(true)
+    // A page cannot reach another local device, or the same host on another port.
+    expect(surface.requestAllowed('http://10.50.160.123:4840/')).toBe(false)
+    expect(surface.requestAllowed('http://192.168.1.1/')).toBe(false)
+    await service.close({ sessionId: opened.sessionId })
+    expect(asked).toEqual(['http://10.50.160.123:8080', 'http://10.50.160.123:8080'])
+  })
+
+  it('keeps local-network HTTP closed without a network policy', async () => {
+    const { service } = await testService()
+    await expect(service.open({ runId: 'no-policy', url: 'http://192.168.1.10/' })).rejects.toThrow(
+      'this computer'
+    )
   })
 
   it('returns console and failed-request deltas without losing bounded history', async () => {

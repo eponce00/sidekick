@@ -55,8 +55,7 @@ import { createConversationTitleMessages } from '../services/prompts'
 import { MAX_MESSAGE_IMAGES, type MessageImageAttachment } from '../../../shared/messageImages'
 import {
   MAX_MESSAGE_CONTEXT_ATTACHMENTS,
-  MAX_MESSAGE_PASTED_TEXT_CHARACTERS,
-  MAX_PASTED_TEXT_CHARACTERS,
+  pastedTextBudget,
   createPastedTextAttachment,
   createReviewCommentAttachment,
   isPastedTextAttachment,
@@ -1099,24 +1098,22 @@ function ChatPanel({
   }
 
   const addPastedText = (text: string): void => {
-    if (text.length > MAX_PASTED_TEXT_CHARACTERS) {
-      setAttachmentError(
-        `Pasted text can be up to ${MAX_PASTED_TEXT_CHARACTERS.toLocaleString()} characters. Save it as a project file and attach that instead.`
-      )
-      return
-    }
     if (attachedContext.length >= MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
       setAttachmentError(
         `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
       )
       return
     }
+    const budget = pastedTextBudget(selectedPinnedModel?.contextLength)
     const pastedCharacters = attachedContext
       .filter(isPastedTextAttachment)
       .reduce((total, attachment) => total + attachment.content.length, text.length)
-    if (pastedCharacters > MAX_MESSAGE_PASTED_TEXT_CHARACTERS) {
+    if (pastedCharacters > budget) {
+      const model = selectedPinnedModel?.contextLength
+        ? `about half of ${selectedPinnedModel.name}'s ${Math.round(selectedPinnedModel.contextLength / 1024)}K-token context`
+        : 'what this model is assumed to fit'
       setAttachmentError(
-        `Pasted text in one message can be up to ${MAX_MESSAGE_PASTED_TEXT_CHARACTERS.toLocaleString()} characters`
+        `This paste would bring the message to ${pastedCharacters.toLocaleString()} characters of pasted text; up to ${budget.toLocaleString()} fit, ${model}. Save it as a project file and attach that, so the agent reads it in parts.`
       )
       return
     }

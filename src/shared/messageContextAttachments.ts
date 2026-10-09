@@ -6,9 +6,28 @@ export const MAX_MESSAGE_CONTEXT_ATTACHMENTS = 12
  */
 export const PASTED_TEXT_MIN_CHARACTERS = 2_000
 export const PASTED_TEXT_MIN_LINES = 30
-/** One paste, and all pasted text in one message. Each is sent with every later turn. */
-export const MAX_PASTED_TEXT_CHARACTERS = 100_000
-export const MAX_MESSAGE_PASTED_TEXT_CHARACTERS = 200_000
+/**
+ * Pasted text is sent whole with every later turn, so what one message may carry follows the
+ * model: about half its context window, leaving room for the conversation, tools, and the reply.
+ * A model whose window is unknown keeps a fixed budget, and none goes past a storage ceiling.
+ */
+export const PASTED_TEXT_CONTEXT_SHARE = 0.5
+/** A little under the usual four, so code and non-English text still fit. */
+export const PASTED_TEXT_CHARACTERS_PER_TOKEN = 3.5
+export const MIN_PASTED_TEXT_CHARACTERS = 20_000
+export const DEFAULT_PASTED_TEXT_CHARACTERS = 200_000
+export const MAX_PASTED_TEXT_CHARACTERS = 2_000_000
+
+/** How many characters of pasted text one message may carry for a model with this window. */
+export function pastedTextBudget(contextTokens?: number): number {
+  if (!contextTokens || !Number.isFinite(contextTokens) || contextTokens <= 0) {
+    return DEFAULT_PASTED_TEXT_CHARACTERS
+  }
+  const budget = Math.floor(
+    contextTokens * PASTED_TEXT_CONTEXT_SHARE * PASTED_TEXT_CHARACTERS_PER_TOKEN
+  )
+  return Math.min(MAX_PASTED_TEXT_CHARACTERS, Math.max(MIN_PASTED_TEXT_CHARACTERS, budget))
+}
 
 /** A comment on changed lines: the comment itself and the quoted diff lines stay small. */
 export const MAX_REVIEW_COMMENT_CHARACTERS = 4_000
@@ -225,9 +244,9 @@ export function validateMessageContextAttachments(value: unknown): MessageContex
   const pastedCharacters = normalized
     .filter(isPastedTextAttachment)
     .reduce((total, attachment) => total + attachment.content.length, 0)
-  if (pastedCharacters > MAX_MESSAGE_PASTED_TEXT_CHARACTERS) {
+  if (pastedCharacters > MAX_PASTED_TEXT_CHARACTERS) {
     throw new Error(
-      `Pasted text in one message can be up to ${MAX_MESSAGE_PASTED_TEXT_CHARACTERS.toLocaleString('en-US')} characters`
+      `Pasted text in one message can be up to ${MAX_PASTED_TEXT_CHARACTERS.toLocaleString('en-US')} characters`
     )
   }
   return normalized

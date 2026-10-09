@@ -40,6 +40,11 @@ const previewSettings = {
   ]
 }
 
+let previewBrowserNetwork = [
+  { origin: 'http://10.50.160.123:8080', approvedAt: Date.now() - 86_400_000 },
+  { origin: 'http://rno-l-024:8080', approvedAt: Date.now() - 3_600_000 }
+]
+
 const previewPermissionAudit = [
   {
     id: 'preview-audit-1',
@@ -465,6 +470,14 @@ const previewMessages = [
         type: 'thinking' as const,
         content:
           'I should inspect the current information hierarchy before changing visual density.'
+      },
+      {
+        type: 'steer' as const,
+        steer: {
+          id: 'preview-steer-1',
+          content: 'Keep the sidebar as it is; focus on the chat and the composer.',
+          timestamp: Date.now() - 150_000
+        }
       },
       {
         type: 'interaction' as const,
@@ -1113,6 +1126,13 @@ export function installBrowserApiMock(): void {
         effectiveAccess: operation.requestedAccess
       }),
       listAudit: async () => previewPermissionAudit
+    },
+    browserNetwork: {
+      list: async () => [...previewBrowserNetwork],
+      revoke: async (origin) => {
+        previewBrowserNetwork = previewBrowserNetwork.filter((entry) => entry.origin !== origin)
+        return [...previewBrowserNetwork]
+      }
     },
     window: {
       minimize: () => {},

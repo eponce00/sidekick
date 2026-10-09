@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.12.0 — 2026-10-09
+
+- Open devices and gateways on your local network in the browser. A plain HTTP address such as
+  `http://10.0.0.5:8080` opens after you allow it once in a dialog. Public sites over plain HTTP
+  stay blocked, and a page cannot reach any other local address on its own. Allowed addresses are
+  listed in **Settings › Agent › Local network**, where you can remove them.
+- Paste as much text as the model can read. A message's pasted text may fill about half the
+  selected model's context window, instead of a fixed 100,000 characters, and the message says
+  how much fits when a paste is too long.
+- Copy or read aloud a message you sent while the agent worked.
+
 ## 0.11.0 — 2026-10-07
 
 - Watch the agent's commands run. Commands run in a real terminal: a running command shows its

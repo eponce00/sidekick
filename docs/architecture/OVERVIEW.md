@@ -214,7 +214,8 @@ surfaces backed by the Electron runtime already shipped in the desktop package. 
 internal CDP bridge for accessibility snapshots, semantic node references, full-page capture,
 network accounting, and coordinate fallback; no debugging port is exposed and no personal browser
 profile is attached. Local files are limited to explicitly granted project roots, plain HTTP is
-limited to loopback development servers, credential-bearing URLs and unsupported schemes fail
+limited to loopback servers and local-network origins the user approved in a native dialog
+(stored apart from settings, revocable in Settings), credential-bearing URLs and unsupported schemes fail
 closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
 subresources whose real path escapes that session's project grant. Conversation sessions persist
 across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used

@@ -62,8 +62,9 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
   can be copied, turned back into typed text, or removed. Ctrl+Shift+V pastes inline, as does any
   paste while editing a sent message. The text is stored with the message's attachments, so queued,
   retried, and forked messages keep it, and the model receives it whole ahead of the typed message
-  in a `<sidekick_pasted_text>` block. One paste holds up to 100,000 characters, one message
-  200,000, since the text is sent again with every later turn.
+  in a `<sidekick_pasted_text>` block. Since the text is sent again with every later turn, a
+  message's pasted text may fill about half the selected model's context window (3.5 characters a
+  token), at least 20,000 characters and at most 2,000,000; 200,000 when the window is unknown.
 - When a run is active, Enter queues a follow-up. Pressing Enter again with an empty composer sends
   the oldest queued message immediately as steering.
 - Do not render permanent pills for capabilities the agent manages automatically. Built-in web search and auto-discovered skills remain invisible unless their execution appears in the conversation.
