@@ -447,6 +447,7 @@ export interface DesktopApi {
   collaboration: CollaborationAPI
   mcp: McpAPI
   permissions: PermissionsAPI
+  browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
   window: WindowAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI

@@ -275,12 +275,12 @@ async function runSmoke(): Promise<SmokeResult> {
     progress('Checking non-loopback HTTP rejection')
     await assert.rejects(
       service.open({ runId: 'blocked-http', url: 'http://example.com/not-loopback' }),
-      /Plain HTTP is allowed only for loopback/
+      /Plain HTTP is allowed only for this computer/
     )
     progress('Checking active-content URL rejection')
     await assert.rejects(
       service.open({ runId: 'blocked-scheme', url: 'javascript:document.body.remove()' }),
-      /Only HTTPS, loopback HTTP, and approved local file URLs/
+      /Only HTTPS, plain HTTP on this computer/
     )
     await assert.rejects(
       service.open({ runId: 'blocked-credentials', url: 'https://user:secret@example.com/' }),

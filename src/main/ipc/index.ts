@@ -11,6 +11,7 @@ import { registerCollaborationHandlers } from './collaboration'
 import { registerAgentRunHandlers } from './agentRuns'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
+import { registerBrowserNetworkHandlers } from './browserNetwork'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -26,6 +27,7 @@ export function registerAllHandlers(): void {
   registerCheckpointHandlers()
   registerMcpHandlers()
   registerPermissionHandlers()
+  registerBrowserNetworkHandlers()
   registerSupportHandlers()
   registerCollaborationHandlers()
   registerAgentRunHandlers()

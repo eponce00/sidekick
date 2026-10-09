@@ -1,4 +1,6 @@
 import type { BrowserDeviceState } from '../../shared/browserDevices'
+import { browserNetworkOrigin, loopbackHost, privateNetworkHost } from '../../shared/browserNetwork'
+import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
@@ -433,6 +435,8 @@ export interface NativeBrowserSessionServiceOptions {
   maxArtifacts?: number
   maxArtifactBytes?: number
   maxRemotePdfBytes?: number
+  /** Which local-network origins may be opened over plain HTTP; none without it. */
+  networkPolicy?: BrowserNetworkPolicy
   artifactRetentionMs?: number
   maxTelemetryEntries?: number
   maxRepeatedNoChangeActions?: number
@@ -828,17 +832,6 @@ function safeSegment(value: string): string {
 function isPathWithin(root: string, candidate: string): boolean {
   const path = relative(root, candidate)
   return path === '' || (!path.startsWith('..') && !isAbsolute(path))
-}
-
-function loopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
-  return (
-    host === 'localhost' ||
-    host === '::1' ||
-    host === '0.0.0.0' ||
-    host === '127.0.0.1' ||
-    /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)
-  )
 }
 
 function valueOf(value: CDPAXValue | undefined): string {
@@ -1896,13 +1889,22 @@ export class NativeBrowserSessionService {
     return result
   }
 
+  /** This computer, or a local-network origin the user approved. */
+  private plainHttpAllowed(url: URL): boolean {
+    if (loopbackHost(url.hostname)) return true
+    return Boolean(
+      privateNetworkHost(url.hostname) &&
+      this.options.networkPolicy?.approved(browserNetworkOrigin(url))
+    )
+  }
+
   private navigationUrlAllowedSync(input: string, allowedFileRoots: string[]): boolean {
     try {
       const url = new URL(input)
       if (url.username || url.password) return false
       if (url.protocol === 'about:') return url.href === 'about:blank'
       if (url.protocol === 'https:') return true
-      if (url.protocol === 'http:') return loopbackHost(url.hostname)
+      if (url.protocol === 'http:') return this.plainHttpAllowed(url)
       if (url.protocol !== 'file:' || (url.hostname && url.hostname !== 'localhost')) return false
       // The native implementation expands Windows 8.3 aliases (for example
       // RUNNER~1), keeping request checks aligned with async fs.realpath roots.
@@ -1924,13 +1926,22 @@ export class NativeBrowserSessionService {
     if (url.protocol === 'about:' && url.href === 'about:blank') return url.href
     if (url.protocol === 'https:') return url.href
     if (url.protocol === 'http:') {
-      if (!loopbackHost(url.hostname)) {
-        throw new Error('Plain HTTP is allowed only for loopback development servers')
+      if (this.plainHttpAllowed(url)) return url.href
+      const policy = this.options.networkPolicy
+      if (policy && privateNetworkHost(url.hostname)) {
+        if (await policy.approve(browserNetworkOrigin(url))) return url.href
+        throw new Error(
+          `The user did not allow the browser to open ${browserNetworkOrigin(url)}. Ask them before trying it again.`
+        )
       }
-      return url.href
+      throw new Error(
+        'Plain HTTP is allowed only for this computer and approved local-network addresses; use HTTPS'
+      )
     }
     if (url.protocol !== 'file:') {
-      throw new Error('Only HTTPS, loopback HTTP, and approved local file URLs are supported')
+      throw new Error(
+        'Only HTTPS, plain HTTP on this computer or an allowed local-network address, and approved local file URLs are supported'
+      )
     }
     if (url.hostname && url.hostname !== 'localhost') {
       throw new Error('Remote file URLs are not supported')
@@ -2474,7 +2485,7 @@ export class NativeBrowserSessionService {
       const redirected = new URL(currentUrl)
       if (
         redirected.protocol !== 'https:' &&
-        !(redirected.protocol === 'http:' && loopbackHost(redirected.hostname))
+        !(redirected.protocol === 'http:' && this.plainHttpAllowed(redirected))
       ) {
         throw new Error('Remote PDF redirects must remain on an approved network URL')
       }
@@ -2543,9 +2554,11 @@ export class NativeBrowserSessionService {
         const parsed = new URL(url)
         if (
           parsed.protocol !== 'https:' &&
-          !(parsed.protocol === 'http:' && loopbackHost(parsed.hostname))
+          !(parsed.protocol === 'http:' && this.plainHttpAllowed(parsed))
         )
-          throw new Error('Downloads require HTTPS or a loopback fixture URL')
+          throw new Error(
+            'Downloads require HTTPS, or plain HTTP on this computer or an allowed local-network address'
+          )
         response = await abortable(
           tab.surface.fetch(url, { redirect: 'manual', credentials: 'include', signal }),
           signal

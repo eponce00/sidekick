@@ -283,6 +283,10 @@ const api = {
       ipcRenderer.invoke('permissions:authorize', operation),
     listAudit: () => ipcRenderer.invoke('permissions:listAudit')
   },
+  browserNetwork: {
+    list: () => ipcRenderer.invoke('browserNetwork:list'),
+    revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),

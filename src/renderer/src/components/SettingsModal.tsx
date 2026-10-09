@@ -28,6 +28,7 @@ import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
 import { ProjectHooksPanel } from './ProjectHooksPanel'
+import { BrowserNetworkSettings } from './BrowserNetworkSettings'
 import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
 import { VoiceSettings } from './VoiceSettings'
 import { useModalDialog } from '../hooks/useModalDialog'
@@ -514,6 +515,7 @@ function SettingsModal({
             />
             <PermissionAuditPanel />
           </SettingCard>
+          <BrowserNetworkSettings />
           <ProjectHooksPanel
             hooks={{
               start: settings.projectStartHooks ?? [],

@@ -35,6 +35,7 @@ import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
 import { SubAgentSlots } from './subAgentSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
+import { browserNetworkApprovals } from './browserNetworkApprovals'
 import { CheckpointTitleStore } from './checkpointTitleStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
@@ -179,6 +180,7 @@ export class AgentRuntimeCoordinator {
     this.browser = new NativeBrowserSessionService({
       artifactRoot: join(userDataRoot, 'browser-artifacts'),
       pdfOutputRoot: options.pdfOutputRoot,
+      networkPolicy: browserNetworkApprovals,
       maxTotalSessions: 6
     })
     this.tools = new AgentToolRuntime(

@@ -639,7 +639,7 @@ const browserOpen = definition(
       url: {
         type: 'string',
         description:
-          'HTTPS, loopback HTTP, about:blank, or a file URL inside the active project. Plain HTTP is limited to localhost development servers.'
+          'HTTPS, about:blank, a file URL inside the active project, or plain HTTP on this computer. Plain HTTP to a local-network address (a device or gateway) asks the user once; if they decline, do not retry.'
       },
       width: { type: 'number', minimum: 320, maximum: 2560, description: 'Viewport width.' },
       height: {
