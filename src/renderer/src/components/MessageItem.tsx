@@ -196,11 +196,32 @@ function SteerSegment({
 }: {
   steer: NonNullable<import('../types/chat.types').ContentSegment['steer']>
 }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  const copy = async (): Promise<void> => {
+    const result = await window.api.clipboard.writeText(steer.content)
+    if (!result?.success) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1_500)
+  }
   return (
     <div className="steer-segment" role="group" aria-label="Your message, sent while working">
       <div className="steer-segment-label">
         <CornerDownRight size={11} aria-hidden="true" />
         <span>You, while it worked</span>
+        {steer.content && (
+          <span className="steer-segment-actions">
+            <button
+              type="button"
+              className={`message-action icon ${copied ? 'copied-icon' : 'copy-icon'}`}
+              onClick={() => void copy()}
+              title={copied ? 'Copied!' : 'Copy message'}
+              aria-label={copied ? 'Copied' : 'Copy message'}
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+            <ReadAloudButton messageId={`steer-${steer.id}`} text={steer.content} />
+          </span>
+        )}
       </div>
       {steer.content && <div className="steer-segment-content">{steer.content}</div>}
       {Boolean(steer.images?.length) && (

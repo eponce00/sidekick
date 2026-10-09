@@ -682,6 +682,15 @@ describe('MessageItem shared-channel presentation', () => {
     const steer = container.querySelector('.steer-segment')
     expect(steer?.textContent).toContain('Use tabs instead.')
     expect(steer?.closest('.agent-work-disclosure')).toBeNull()
+
+    const writeText = vi.fn(async () => ({ success: true }))
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ...window.api, clipboard: { writeText } }
+    })
+    const copy = steer?.querySelector<HTMLButtonElement>('[aria-label="Copy message"]')
+    await act(async () => copy?.click())
+    expect(writeText).toHaveBeenCalledWith('Use tabs instead.')
     expect(container.querySelector('[data-final-answer]')?.textContent).toContain(
       'Switched to tabs.'
     )
