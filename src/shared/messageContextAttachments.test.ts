@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_PASTED_TEXT_CHARACTERS,
   MAX_PASTED_TEXT_CHARACTERS,
   MAX_REVIEW_COMMENT_CHARACTERS,
+  MIN_PASTED_TEXT_CHARACTERS,
   PASTED_TEXT_MIN_CHARACTERS,
   PASTED_TEXT_MIN_LINES,
   createPastedTextAttachment,
+  pastedTextBudget,
   createReviewCommentAttachment,
   formatMessageContextAttachments,
   formatPastedTextAttachments,
@@ -65,7 +68,7 @@ describe('message context attachments', () => {
     ).toEqual([])
 
     const large = (id: string): PastedTextAttachment =>
-      createPastedTextAttachment('x'.repeat(MAX_PASTED_TEXT_CHARACTERS), id)
+      createPastedTextAttachment('x'.repeat(MAX_PASTED_TEXT_CHARACTERS / 2), id)
     expect(validateMessageContextAttachments([large('a'), large('b')])).toHaveLength(2)
     expect(() =>
       validateMessageContextAttachments([
@@ -73,7 +76,7 @@ describe('message context attachments', () => {
         large('b'),
         createPastedTextAttachment('x', 'c')
       ])
-    ).toThrow('Pasted text in one message can be up to 200,000 characters')
+    ).toThrow('Pasted text in one message can be up to 2,000,000 characters')
   })
 
   it('treats a paste as an attachment once it is long or has many lines', () => {
@@ -195,5 +198,20 @@ describe('review comment attachments', () => {
     expect(formatted.match(/<\/sidekick_review_comments>/g)).toHaveLength(1)
     expect(formatReviewCommentAttachments([file])).toBe('')
     expect(formatMessageContextAttachments([comment])).toBe('')
+  })
+})
+
+describe('pastedTextBudget', () => {
+  it('lets pasted text fill about half the model context, within a floor and a ceiling', () => {
+    expect(pastedTextBudget(200_000)).toBe(350_000)
+    expect(pastedTextBudget(131_072)).toBe(229_376)
+    expect(pastedTextBudget(8_192)).toBe(MIN_PASTED_TEXT_CHARACTERS)
+    expect(pastedTextBudget(10_000_000)).toBe(MAX_PASTED_TEXT_CHARACTERS)
+  })
+
+  it('keeps a fixed budget when the context window is unknown', () => {
+    expect(pastedTextBudget(undefined)).toBe(DEFAULT_PASTED_TEXT_CHARACTERS)
+    expect(pastedTextBudget(0)).toBe(DEFAULT_PASTED_TEXT_CHARACTERS)
+    expect(pastedTextBudget(Number.NaN)).toBe(DEFAULT_PASTED_TEXT_CHARACTERS)
   })
 })
