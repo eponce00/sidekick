@@ -23,13 +23,10 @@ import {
   Search,
   SquarePen,
   Trash2,
-  Users,
   X
 } from 'lucide-react'
 import type { Conversation, Project } from '../types/app.types'
 import type { MoveConversationInput } from '../../../shared/projects'
-import type { CollaborationGroup } from '../../../shared/collaboration'
-import { groupAgentSessionsByProject } from '../utils/projectAgentSessions'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
 import { conversationRunStatus, type ConversationRunStatus } from '../utils/conversationAttention'
 import {
@@ -48,8 +45,6 @@ import {
   SIDEBAR_STATUS_FILTER_LABELS,
   SIDEBAR_STATUS_FILTERS,
   SIDEBAR_VIEW_STORAGE_KEY,
-  agentSessionStatus,
-  collaborationGroupStatus,
   groupConversationsByRecency,
   matchesStatusFilter,
   storedSidebarView,
@@ -67,10 +62,7 @@ import './Sidebar.css'
 interface SidebarProps {
   conversations: Conversation[]
   projects: Project[]
-  groups: CollaborationGroup[]
   currentConversationId: string | null
-  currentGroupId: string | null
-  currentGroupSessionId: string | null
   isCollapsed: boolean
   /** For the shortcut shown beside each menu item. */
   platform: DesktopPlatform
@@ -79,20 +71,14 @@ interface SidebarProps {
   /** Conversations paused on the user's approval or answer. */
   waitingConversationIds?: ReadonlySet<string>
   onSelectConversation: (id: string) => void
-  onSelectGroup: (id: string) => void
-  onSelectGroupSession: (groupId: string, sessionId: string) => void
   onToggleCollapsed: () => void
   onNewConversation: (projectId?: string | null) => void
-  onNewGroup: () => void
   onOpenProject: () => void
   onOpenCommandPalette: () => void
   onDeleteConversation: (id: string) => void
-  onDeleteGroup: (id: string) => void
   onDeleteAllConversations: () => void
   onForkConversation: (id: string) => void
   onRenameConversation: (id: string, title: string) => void
-  onRenameGroup: (id: string, title: string) => void
-  onRenameGroupSession: (id: string, title: string) => void
   onMoveConversation: (input: MoveConversationInput) => void
   onRenameProject: (id: string, name: string) => void
   onToggleConversationPin: (id: string, pinned: boolean) => void
@@ -129,35 +115,26 @@ const EMPTY_FILTER_MESSAGES: Record<ConversationRunStatus, string> = {
   unread: 'No unread replies'
 }
 
-type SidebarSection = 'groups' | 'projects' | 'chats'
+type SidebarSection = 'projects' | 'chats'
 
 function Sidebar({
   conversations,
   projects,
-  groups,
   currentConversationId,
-  currentGroupId,
-  currentGroupSessionId,
   isCollapsed,
   platform,
   busyConversationIds,
   unreadConversationIds,
   waitingConversationIds = NO_CONVERSATIONS,
   onSelectConversation,
-  onSelectGroup,
-  onSelectGroupSession,
   onToggleCollapsed,
   onNewConversation,
-  onNewGroup,
   onOpenProject,
   onOpenCommandPalette,
   onDeleteConversation,
-  onDeleteGroup,
   onDeleteAllConversations,
   onForkConversation,
   onRenameConversation,
-  onRenameGroup,
-  onRenameGroupSession,
   onMoveConversation,
   onRenameProject,
   onToggleConversationPin,
@@ -169,7 +146,6 @@ function Sidebar({
   sessionStatuses = NO_SESSION_STATUSES
 }: SidebarProps): React.JSX.Element {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
-  const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<string | null>(null)
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -178,8 +154,6 @@ function Sidebar({
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Conversation[]>([])
   const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null)
-  const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
-  const [renamingGroupSessionId, setRenamingGroupSessionId] = useState<string | null>(null)
   const [renamingProjectId, setRenamingProjectId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
   const [movingConversationId, setMovingConversationId] = useState<string | null>(null)
@@ -350,8 +324,6 @@ function Sidebar({
     [topLevelConversations]
   )
 
-  const activeGroups = useMemo(() => groups.filter(({ status }) => status === 'active'), [groups])
-
   const dotById = useMemo(() => {
     const dots = new Map<string, SidebarDot | null>()
     for (const { id } of conversations) {
@@ -391,21 +363,11 @@ function Sidebar({
     (managerId: string): boolean => !filtering && collapsedFamilyIds.has(managerId),
     [collapsedFamilyIds, filtering]
   )
-  // Group agent sessions are left out of a filtered list; their group's row stands for them.
   const statusCounts = useMemo(() => {
     const counts: Record<ConversationRunStatus, number> = { waiting: 0, working: 0, unread: 0 }
     for (const status of statusById.values()) if (status) counts[status] += 1
-    for (const group of activeGroups) {
-      const status = collaborationGroupStatus(group)
-      if (status) counts[status] += 1
-    }
     return counts
-  }, [activeGroups, statusById])
-  const visibleGroups = filtering
-    ? activeGroups.filter((group) =>
-        matchesStatusFilter(collaborationGroupStatus(group), statusFilter)
-      )
-    : activeGroups
+  }, [statusById])
   const filteredConversations = useMemo(
     () => topLevelConversations.filter(familyMatches),
     [familyMatches, topLevelConversations]
@@ -506,8 +468,6 @@ function Sidebar({
     onVisibleConversationOrderChange?.(visibleConversationOrder)
   }, [onVisibleConversationOrderChange, visibleConversationOrder])
 
-  const agentSessionsByProject = useMemo(() => groupAgentSessionsByProject(groups), [groups])
-
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.name])),
     [projects]
@@ -521,15 +481,11 @@ function Sidebar({
   const currentConversation = currentConversationId
     ? conversationById.get(currentConversationId)
     : undefined
-  const compactDestination = currentGroupId
-    ? currentGroupSessionId
-      ? 'projects'
-      : 'groups'
-    : currentConversation?.project_id
-      ? 'projects'
-      : currentConversation
-        ? 'chats'
-        : null
+  const compactDestination = currentConversation?.project_id
+    ? 'projects'
+    : currentConversation
+      ? 'chats'
+      : null
 
   const canMoveToProject = (conversation: Conversation, projectId: string | null): boolean => {
     if (conversation.project_id === projectId) return true
@@ -579,8 +535,6 @@ function Sidebar({
 
   const beginConversationRename = (conversation: Conversation): void => {
     setRenamingConversationId(conversation.id)
-    setRenamingGroupId(null)
-    setRenamingGroupSessionId(null)
     setRenamingProjectId(null)
     setRenameValue(conversation.title)
   }
@@ -588,25 +542,7 @@ function Sidebar({
   const beginProjectRename = (project: Project): void => {
     setRenamingProjectId(project.id)
     setRenamingConversationId(null)
-    setRenamingGroupId(null)
-    setRenamingGroupSessionId(null)
     setRenameValue(project.name)
-  }
-
-  const beginGroupSessionRename = (session: CollaborationGroup['agentSessions'][number]): void => {
-    setRenamingGroupSessionId(session.id)
-    setRenamingConversationId(null)
-    setRenamingGroupId(null)
-    setRenamingProjectId(null)
-    setRenameValue(session.title)
-  }
-
-  const beginGroupRename = (group: CollaborationGroup): void => {
-    setRenamingGroupId(group.id)
-    setRenamingConversationId(null)
-    setRenamingGroupSessionId(null)
-    setRenamingProjectId(null)
-    setRenameValue(group.title)
   }
 
   const finishRename = (): void => {
@@ -614,14 +550,8 @@ function Sidebar({
     if (normalized && renamingConversationId) {
       onRenameConversation(renamingConversationId, normalized)
     }
-    if (normalized && renamingGroupId) onRenameGroup(renamingGroupId, normalized)
     if (normalized && renamingProjectId) onRenameProject(renamingProjectId, normalized)
-    if (normalized && renamingGroupSessionId) {
-      onRenameGroupSession(renamingGroupSessionId, normalized)
-    }
     setRenamingConversationId(null)
-    setRenamingGroupId(null)
-    setRenamingGroupSessionId(null)
     setRenamingProjectId(null)
   }
 
@@ -1013,7 +943,7 @@ function Sidebar({
                 <CalendarClock size={15} />
               </button>
             )}
-            {!isCollapsed && (conversations.length > 0 || activeGroups.length > 0 || filtering) && (
+            {!isCollapsed && (conversations.length > 0 || filtering) && (
               <>
                 <div className="sidebar-view-switch" role="group" aria-label="List chats">
                   <button
@@ -1132,19 +1062,6 @@ function Sidebar({
                     <kbd>{shortcutLabel('command-palette', platform)}</kbd>
                   </button>
                   {/* Expanded, these live on their section's heading, and Recent has no Projects heading. */}
-                  {isCollapsed && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsMenuOpen(false)
-                        onNewGroup()
-                      }}
-                    >
-                      <Users size={15} />
-                      <span>New group chat</span>
-                    </button>
-                  )}
                   {(isCollapsed || view === 'recent') && (
                     <button
                       type="button"
@@ -1206,7 +1123,7 @@ function Sidebar({
           </div>
         </div>
 
-        {!isCollapsed && (conversations.length > 0 || projects.length > 0 || groups.length > 0) && (
+        {!isCollapsed && (conversations.length > 0 || projects.length > 0) && (
           <label className="sidebar-search field-shell">
             <Search size={13} />
             <input
@@ -1236,18 +1153,6 @@ function Sidebar({
         <div className="conversation-list">
           {isCollapsed ? (
             <nav className="collapsed-sidebar-nav" aria-label="Sidebar destinations">
-              {activeGroups.length > 0 && (
-                <button
-                  type="button"
-                  className={compactDestination === 'groups' ? 'active' : ''}
-                  onClick={onToggleCollapsed}
-                  title={`Groups (${activeGroups.length})`}
-                  aria-label={`Expand groups, ${activeGroups.length} total`}
-                >
-                  <Users size={16} />
-                  <span>{activeGroups.length}</span>
-                </button>
-              )}
               {projects.length > 0 && (
                 <button
                   type="button"
@@ -1286,138 +1191,6 @@ function Sidebar({
             </section>
           ) : (
             <>
-              {(!filtering || visibleGroups.length > 0) && (
-                <section className="sidebar-section groups-section">
-                  <div className="sidebar-section-label sidebar-section-label-with-action">
-                    {sectionHeading('groups', 'Groups', activeGroups.length)}
-                    <button
-                      type="button"
-                      className="sidebar-section-create"
-                      onClick={onNewGroup}
-                      title="New group chat"
-                      aria-label="New group chat"
-                    >
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                  {isSectionCollapsed('groups') ? null : visibleGroups.length ? (
-                    visibleGroups.map((group) => (
-                      <div key={group.id} className="group-sidebar-item">
-                        <div
-                          className={`group-sidebar-row ${currentGroupId === group.id && !currentGroupSessionId ? 'active' : ''}`}
-                        >
-                          {renamingGroupId === group.id ? (
-                            <div className="group-sidebar-select">
-                              <span className="group-sidebar-icon">
-                                <Users size={14} />
-                              </span>
-                              <input
-                                className="group-rename-input"
-                                value={renameValue}
-                                autoFocus
-                                onChange={(event) => setRenameValue(event.target.value)}
-                                onBlur={finishRename}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter') event.currentTarget.blur()
-                                  if (event.key === 'Escape') setRenamingGroupId(null)
-                                }}
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              className="group-sidebar-select"
-                              onClick={() => onSelectGroup(group.id)}
-                              onDoubleClick={() => beginGroupRename(group)}
-                              title={`${group.title} — double-click to rename`}
-                            >
-                              <span className="group-sidebar-icon">
-                                <Users size={14} />
-                              </span>
-                              <span className="group-sidebar-copy">
-                                <strong>{group.title}</strong>
-                                <small>
-                                  {(group.activeMissionId || group.unreadCompletionAt) && (
-                                    <span
-                                      className={`group-live-dot ${
-                                        group.activeMissionId
-                                          ? group.activeMissionStatus === 'paused'
-                                            ? 'paused'
-                                            : 'working'
-                                          : 'unread'
-                                      }`}
-                                      title={
-                                        group.activeMissionId
-                                          ? group.activeMissionStatus === 'paused'
-                                            ? 'Agents paused'
-                                            : 'Agents working'
-                                          : 'Completed group response unread'
-                                      }
-                                    />
-                                  )}
-                                  {group.activeMissionStatus === 'paused'
-                                    ? 'Paused'
-                                    : group.activeMissionId
-                                      ? 'Working'
-                                      : `${group.participantCount} agents`}
-                                </small>
-                              </span>
-                            </button>
-                          )}
-                          <span className="group-sidebar-actions sidebar-overflow-wrap">
-                            <button
-                              type="button"
-                              className="group-sidebar-action"
-                              onClick={() =>
-                                setOpenActionsMenu((current) =>
-                                  current === `group:${group.id}` ? null : `group:${group.id}`
-                                )
-                              }
-                              title="Group actions"
-                              aria-label={`Actions for ${group.title}`}
-                              aria-haspopup="menu"
-                              aria-expanded={openActionsMenu === `group:${group.id}`}
-                            >
-                              <MoreHorizontal size={15} />
-                            </button>
-                            {openActionsMenu === `group:${group.id}` && (
-                              <div className="sidebar-overflow-menu" role="menu">
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenActionsMenu(null)
-                                    beginGroupRename(group)
-                                  }}
-                                >
-                                  <Pencil size={13} /> Rename
-                                </button>
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="danger"
-                                  onClick={() => {
-                                    setOpenActionsMenu(null)
-                                    setDeleteGroupConfirm(group.id)
-                                  }}
-                                >
-                                  <Trash2 size={13} /> Archive
-                                </button>
-                              </div>
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <button type="button" className="project-empty-action" onClick={onNewGroup}>
-                      <Users size={15} />
-                      <span>Start a group chat</span>
-                    </button>
-                  )}
-                </section>
-              )}
-
               {view === 'recent' ? (
                 recentGroups.map((group) => (
                   <section className="sidebar-section recent-section" key={group.bucket}>
@@ -1455,18 +1228,11 @@ function Sidebar({
                           const projectConversations = (
                             conversationsByProject.get(project.id) || []
                           ).filter(familyMatches)
-                          const projectAgentSessions = filtering
-                            ? []
-                            : agentSessionsByProject.get(project.id) || []
                           const isProjectCollapsed =
                             !filtering && collapsedProjectIds.has(project.id)
-                          const hasActiveConversation =
-                            projectConversations.some(
-                              (conversation) => conversation.id === currentConversationId
-                            ) ||
-                            projectAgentSessions.some(
-                              ({ session }) => session.id === currentGroupSessionId
-                            )
+                          const hasActiveConversation = projectConversations.some(
+                            (conversation) => conversation.id === currentConversationId
+                          )
                           return (
                             <div
                               className={`project-group ${
@@ -1606,119 +1372,7 @@ function Sidebar({
                               {!isProjectCollapsed && (
                                 <div className="project-conversations">
                                   {renderConversationList(projectConversations, { nested: true })}
-                                  {projectAgentSessions.map(({ group, session }) => {
-                                    const sessionStatus = agentSessionStatus(session)
-                                    return (
-                                      <div
-                                        key={session.id}
-                                        className={`conversation-item nested ${
-                                          currentGroupSessionId === session.id ? 'active' : ''
-                                        }`}
-                                      >
-                                        {renamingGroupSessionId === session.id ? (
-                                          <div className="conversation-content">
-                                            <input
-                                              className="conversation-rename-input"
-                                              value={renameValue}
-                                              autoFocus
-                                              onChange={(event) =>
-                                                setRenameValue(event.target.value)
-                                              }
-                                              onBlur={finishRename}
-                                              onKeyDown={(event) => {
-                                                if (event.key === 'Enter')
-                                                  event.currentTarget.blur()
-                                                if (event.key === 'Escape') {
-                                                  setRenamingGroupSessionId(null)
-                                                }
-                                              }}
-                                            />
-                                          </div>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            className="conversation-select-button conversation-content"
-                                            onClick={() =>
-                                              onSelectGroupSession(group.id, session.id)
-                                            }
-                                            onDoubleClick={() => beginGroupSessionRename(session)}
-                                            title={`${session.title} — double-click to rename`}
-                                          >
-                                            <span className="conversation-title">
-                                              {session.title}
-                                            </span>
-                                          </button>
-                                        )}
-                                        {sessionStatus && (
-                                          <span
-                                            className={`conversation-run-indicator ${sessionStatus}`}
-                                            title={SIDEBAR_DOT_LABELS[sessionStatus]}
-                                            aria-label={SIDEBAR_DOT_LABELS[sessionStatus]}
-                                          />
-                                        )}
-                                        <span className="conversation-actions sidebar-overflow-wrap">
-                                          <button
-                                            type="button"
-                                            className="conversation-action-button"
-                                            onClick={(event) => {
-                                              event.stopPropagation()
-                                              setOpenActionsMenu((current) =>
-                                                current === `session:${session.id}`
-                                                  ? null
-                                                  : `session:${session.id}`
-                                              )
-                                            }}
-                                            title="Chat actions"
-                                            aria-label={`Actions for ${session.title}`}
-                                            aria-haspopup="menu"
-                                            aria-expanded={
-                                              openActionsMenu === `session:${session.id}`
-                                            }
-                                          >
-                                            <MoreHorizontal size={15} />
-                                          </button>
-                                          {openActionsMenu === `session:${session.id}` && (
-                                            <div className="sidebar-overflow-menu" role="menu">
-                                              <button
-                                                type="button"
-                                                role="menuitem"
-                                                onClick={() => {
-                                                  setOpenActionsMenu(null)
-                                                  beginGroupSessionRename(session)
-                                                }}
-                                              >
-                                                <Pencil size={13} /> Rename
-                                              </button>
-                                              <button
-                                                type="button"
-                                                role="menuitem"
-                                                onClick={() => {
-                                                  setOpenActionsMenu(null)
-                                                  onSelectGroup(group.id)
-                                                }}
-                                              >
-                                                <Users size={13} /> Open group
-                                              </button>
-                                              <button
-                                                type="button"
-                                                role="menuitem"
-                                                className="danger"
-                                                onClick={() => {
-                                                  setOpenActionsMenu(null)
-                                                  setDeleteGroupConfirm(group.id)
-                                                }}
-                                              >
-                                                <Trash2 size={13} /> Archive group
-                                              </button>
-                                            </div>
-                                          )}
-                                        </span>
-                                      </div>
-                                    )
-                                  })}
-                                  {!filtering &&
-                                  projectConversations.length === 0 &&
-                                  projectAgentSessions.length === 0 ? (
+                                  {!filtering && projectConversations.length === 0 ? (
                                     <button
                                       type="button"
                                       className="project-new-chat-empty"
@@ -1780,7 +1434,7 @@ function Sidebar({
                 </>
               )}
 
-              {filtering && filteredConversations.length === 0 && visibleGroups.length === 0 ? (
+              {filtering && filteredConversations.length === 0 ? (
                 <div className="empty-conversations">{EMPTY_FILTER_MESSAGES[statusFilter]}</div>
               ) : view === 'recent' && conversations.length === 0 ? (
                 <div className="empty-conversations compact">
@@ -1805,20 +1459,6 @@ function Sidebar({
           setDeleteConfirm(null)
         }}
         onCancel={() => setDeleteConfirm(null)}
-      />
-
-      <ConfirmDialog
-        isOpen={deleteGroupConfirm !== null}
-        title="Archive group chat?"
-        message="This hides the group and stops its active mission while preserving the shared timeline. Project folders are not changed."
-        confirmText="Archive"
-        cancelText="Cancel"
-        variant="danger"
-        onConfirm={() => {
-          if (deleteGroupConfirm) onDeleteGroup(deleteGroupConfirm)
-          setDeleteGroupConfirm(null)
-        }}
-        onCancel={() => setDeleteGroupConfirm(null)}
       />
 
       <ConfirmDialog

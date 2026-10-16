@@ -290,7 +290,6 @@
 
 .sidebar-search input,
 .conversation-rename-input,
-.group-rename-input,
 .project-rename-input {
   width: 100%;
   min-width: 0;
@@ -300,15 +299,6 @@
   background: transparent;
   color: var(--text-primary);
   font: inherit;
-}
-
-.group-rename-input {
-  min-width: 0;
-  height: 26px;
-  padding: 0 5px;
-  border-radius: var(--radius-xs);
-  background: var(--input-bg);
-  font-size: var(--text-sm);
 }
 
 .conversation-list {
@@ -359,111 +349,6 @@
   margin-top: 14px;
 }
 
-.group-sidebar-row {
-  min-height: 39px;
-  display: flex;
-  align-items: center;
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-}
-
-.group-sidebar-row:hover,
-.group-sidebar-row.active {
-  color: var(--text-primary);
-  background: var(--surface-2);
-}
-
-.group-sidebar-row.active .group-sidebar-icon {
-  color: var(--accent);
-}
-
-.group-sidebar-select {
-  min-width: 0;
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 5px 4px 7px;
-  border: 0;
-  color: inherit;
-  background: transparent;
-  text-align: left;
-}
-
-.group-sidebar-icon {
-  width: 21px;
-  height: 27px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  color: var(--text-muted);
-}
-.group-sidebar-copy {
-  min-width: 0;
-  display: grid;
-  gap: 1px;
-}
-.group-sidebar-copy strong,
-.group-sidebar-copy small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.group-sidebar-copy strong {
-  font-size: var(--text-sm);
-  font-weight: 400;
-}
-.group-sidebar-copy small {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-.group-live-dot {
-  width: 5px;
-  height: 5px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.group-live-dot.working {
-  animation: sidebar-live-pulse 1.8s ease-in-out infinite;
-}
-.group-live-dot.paused {
-  background: var(--text-muted);
-  animation: none;
-}
-.group-live-dot.unread {
-  animation: none;
-}
-
-@keyframes sidebar-live-pulse {
-  50% {
-    opacity: 0.42;
-  }
-}
-.group-sidebar-action {
-  width: 25px;
-  height: 27px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  margin-right: 3px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  opacity: 0;
-  color: var(--text-muted);
-  background: transparent;
-}
-.group-sidebar-row:hover .group-sidebar-action,
-.group-sidebar-row:focus-within .group-sidebar-action {
-  opacity: 1;
-}
-.group-sidebar-action:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
 .collapsed-sidebar-nav {
   display: grid;
   justify-items: center;

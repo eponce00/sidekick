@@ -1,7 +1,7 @@
 import type { AgentToolDefinition } from './agentToolDefinitions'
 import type { ToolRisk } from './types'
 
-export const AGENT_RUN_SURFACES = ['conversation', 'collaboration', 'subagent', 'research'] as const
+export const AGENT_RUN_SURFACES = ['conversation', 'subagent', 'research'] as const
 
 export type AgentRunSurface = (typeof AGENT_RUN_SURFACES)[number]
 
@@ -24,7 +24,6 @@ export const AGENT_CAPABILITIES = [
   'todo',
   'artifacts',
   'subagents',
-  'collaboration',
   'goal',
   'plan',
   'tool.output',

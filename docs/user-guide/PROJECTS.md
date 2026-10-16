@@ -143,8 +143,8 @@ starting:
 Closing the prompt leaves the message unsent in the composer. The rule also covers folders inside or
 around the busy one, and runs started without the composer: SideKick's
 runtime refuses a second writer in a busy folder unless the run was started to share it. Research
-reports only read, so they are never held back. Group chat agents count as writers, so a chat is
-warned about them too.
+reports only read, so they are never held back. A worker chat set to work in its manager's folder
+shares it by design; see [Chats that work together](CHATS_THAT_WORK_TOGETHER.md).
 
 #### Managing worktrees
 
@@ -207,10 +207,9 @@ the line appears shortly after you install or sign in to `gh`.
 
 ### Sidebar
 
-The sidebar has three sections. Each heading folds its section away with its arrow, showing how many
+The sidebar has two sections. Each heading folds its section away with its arrow, showing how many
 items it holds while closed, and offers its own create action when you point at it:
 
-- **Groups:** group chats; **+** starts one.
 - **Projects:** compact folder rows with collapsible nested conversations, new-chat, pin, rename, and
   remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
@@ -218,20 +217,23 @@ items it holds while closed, and offers its own create action when you point at 
 The folder and clock buttons beside the SideKick name switch between two layouts, and SideKick
 remembers your choice:
 
-- **By folder:** the three sections above.
+- **By folder:** the two sections above.
 - **By recent activity:** every chat in one list, newest first, under Pinned, Today, Yesterday,
   Previous 7 days, and Older. Each row names its project, and rows keep their time order, so they
   cannot be dragged; use **Move to** instead.
 
 The filter button narrows either layout to chats that **Need attention** (waiting on an approval or
-an answer, or a group whose agents are paused), are **Working**, or have an **Unread** reply. Its
+an answer), are **Working**, or have an **Unread** reply. Its
 menu counts each kind, and the button itself shows how many chats are waiting on you, even inside a
 folded project. A filter opens every section and project so nothing it matches is hidden; clear it
 with the **×** on the chip under the search box. Filters reset when SideKick restarts.
 
 The **⋯** menu holds the rest: a new chat, the command palette, collapsing or expanding every
-project at once, and clearing all chats. When the sidebar is collapsed, it also starts a group chat
-or opens a project, and in the recent-activity layout it opens a project.
+project at once, and clearing all chats. When the sidebar is collapsed, it also opens a project, as
+it does in the recent-activity layout.
+
+Chats that another chat started sit under it in both layouts; see
+[Chats that work together](CHATS_THAT_WORK_TOGETHER.md).
 
 Search spans the sections and labels project-backed results. The title bar and composer project pill
 show the active project so folder context is never implicit.

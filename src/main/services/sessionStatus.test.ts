@@ -218,7 +218,7 @@ describe('SessionStatusService', () => {
     expect(service.status('manager')?.family?.state).toBe('done')
   })
 
-  it('leaves group chats out and does not read the database while a reply streams', () => {
+  it('does not read the database while a reply streams', () => {
     addChat('chat')
     const sources = databaseSessionSources(db)
     const durable = vi.fn(sources.durableFacts)
@@ -230,9 +230,6 @@ describe('SessionStatusService', () => {
     })
     service.onChange((change) => changes.push(change))
     service.start()
-    startRun('group-run', 'group-session', 'collaboration')
-    expect(service.statuses()).toEqual([])
-
     startRun('run-1', 'chat')
     durable.mockClear()
     const before = changes.length

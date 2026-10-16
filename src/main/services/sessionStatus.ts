@@ -92,7 +92,7 @@ export class SessionStatusService {
     if (!STATE_EVENTS.has(event.type)) return
     this.attention.observe(event)
     const run = this.sources.runIdentity(event.runId)
-    if (!run || run.surface === 'collaboration') {
+    if (!run) {
       this.flushAlert()
       return
     }

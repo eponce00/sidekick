@@ -32,7 +32,7 @@ executable.
 
 The deterministic suite covers shared policy and contracts, provider stream assembly, durable run
 and interaction recovery, transactional workspace mutations, path and symlink containment,
-permission enforcement, prompt boundaries, context compaction, plan and goal state, collaboration,
+permission enforcement, prompt boundaries, context compaction, plan and goal state, chats that start other chats,
 update validation, and renderer behavior. Coverage thresholds are explicit in `package.json` and
 must not be lowered merely to make a change pass.
 

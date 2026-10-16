@@ -5,9 +5,9 @@ const names = (options: Parameters<typeof getAgentToolDefinitions>[0]): string[]
   getAgentToolDefinitions(options).map(({ function: tool }) => tool.name)
 
 describe('canonical agent tool catalog', () => {
-  it('uses the same command/background names for conversations and collaboration', () => {
+  it('uses the same command/background names for conversations and sub-agents', () => {
     const conversation = names({ surface: 'conversation', webSearchEnabled: true })
-    const collaboration = names({ surface: 'collaboration', webSearchEnabled: true })
+    const subagent = names({ surface: 'subagent', webSearchEnabled: true })
 
     for (const name of [
       'shell',
@@ -20,9 +20,9 @@ describe('canonical agent tool catalog', () => {
       'web_fetch'
     ]) {
       expect(conversation).toContain(name)
-      expect(collaboration).toContain(name)
+      expect(subagent).toContain(name)
     }
-    expect(collaboration).not.toEqual(
+    expect(subagent).not.toEqual(
       expect.arrayContaining([
         'start_background_command',
         'list_background_commands',
@@ -41,7 +41,7 @@ describe('canonical agent tool catalog', () => {
     expect(openAi).toEqual(expect.arrayContaining(['read', 'shell', 'apply_patch', 'tool_output']))
 
     const claude = names({
-      surface: 'collaboration',
+      surface: 'subagent',
       workspaceRoot: '/workspace',
       editingDialect: 'claude-edit'
     })
@@ -228,7 +228,7 @@ describe('canonical agent tool catalog', () => {
   })
 
   it('exposes language intelligence conditionally and consistently across coding surfaces', () => {
-    for (const surface of ['conversation', 'collaboration', 'subagent'] as const) {
+    for (const surface of ['conversation', 'subagent'] as const) {
       expect(
         names({ surface, workspaceRoot: '/workspace', codeIntelligenceAvailable: false })
       ).not.toContain('code_intelligence')

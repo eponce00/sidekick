@@ -75,15 +75,8 @@ Shipped in this pass: the service above, "Work in" for new project chats, the bu
 and runtime refusal, the management view, safe and forced removal, sync with base, and cleanup when
 a worktree's last chat is deleted. Still open:
 
-- **Scheduled and agent-started runs choose a policy.** The runtime already refuses them in a busy
-  folder. A schedule should pick one of: skip and record a missed run, wait, or start in a new
-  worktree through `ManagedWorktreeService.createForConversation`. A manager agent that starts
-  worker chats should create each worker's worktree the same way before its first run.
-- **Group chats.** Group participants are recorded as writers, but starting a group mission does not
-  check for chats already writing in a participant's folder, and participants of one group may
-  share a folder by design. The group setup should offer a worktree per participant.
-- **Archive.** SideKick has no chat archive yet. When it does, archiving should remove a clean
-  worktree as deleting does, and keep one with work until the chat is unarchived or deleted.
+- **Archive.** Chats can be archived in the main process but not yet from the interface. Archiving
+  should remove a clean worktree as deleting does, and keep one with work until the chat is unarchived or deleted.
 - **Snapshot before forced removal** (Codex): save uncommitted changes as a stash-like commit or
   patch so a forced removal can be undone when the chat is reopened.
 - **Git worktree locks** (Claude Code): `git worktree lock` while an agent runs, so tools outside

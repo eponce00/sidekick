@@ -66,7 +66,7 @@ replacement text, stale context, no-op changes, and partial multi-file patches a
 never reported to a model as successful edits.
 
 `src/shared/agentToolDefinitions.ts` is the single workspace-tool registry. Every tool session
-that can edit files (conversation, collaboration and sub-agent runs) receives one editing dialect
+that can edit files (conversation and sub-agent runs) receives one editing dialect
 selected for the executing model by `editingDialectForTarget`: canonical `apply_patch` for
 Codex-style models, `Edit`/`Write` for Claude-style models, search-and-replace for Grok-style
 models, or the generic `edit`/`write`/`delete_file` contract, which is also what open-weight
@@ -95,7 +95,7 @@ contain a bounded truthful diff summary; the UI starts the activity row as soon 
 streams and only shows success after `ok` and `changed` are both true.
 
 The same canonical path resolver protects reads, searches, shell-open actions, direct mutations,
-and collaboration project access. It rejects lexical traversal and symlink escapes; mutation paths
+and attachment imports between chats. It rejects lexical traversal and symlink escapes; mutation paths
 also reject internal symlink aliases so snapshots and rollback always refer to one concrete file.
 Recursive search and listing never follow symlink entries.
 
@@ -129,7 +129,7 @@ Consecutive byte-equivalent calls receive sparse, model-only advisory reminders;
 state revisits receive the same non-blocking treatment. A raw number of successful edits or rewrites
 is never considered proof of a loop, and post-execution guidance cannot replace success with an
 error. Identical failures, same-tool failure streaks, and consecutive all-failed tool turns remain
-hard recovery boundaries. This applies in the shared kernel, so direct, group, child-agent, and
+hard recovery boundaries. This applies in the shared kernel, so direct, worker, child-agent, and
 research runs cannot diverge. Terminal failure messages summarize the concrete failing tools,
 missing fields, and call counts.
 
@@ -175,12 +175,12 @@ accepted, so the evidence is gathered before the goal closes rather than questio
 
 ## Canonical agent runtime
 
-Every normal conversation, research run, collaboration participant, and child agent executes in the trusted main process through one runtime:
+Every normal conversation, worker chat, research run, and child agent executes in the trusted main process through one runtime:
 
 - `AgentRunKernel` owns provider streaming, transcript repair, the model → tool → continuation loop, cancellation, permission/question suspension, tool-limit continuation, and context-compaction boundaries.
 - Before the first model turn, the kernel reads up to four project files the user attached through the ordinary `read` tool and records them as calls the model made. The model starts from their contents, the reads register the receipts its edits need, and the renderer shows them as normal tool rows.
 - `AgentRunStore` persists the append-only run/event ledger, typed phases, parent/child identity, pending interactions, and run todos.
-- `AgentToolRuntime` builds capability-filtered sessions from the shared catalog and dispatches bounded workspace reads, transactional mutations, foreground/background commands, wait, web, MCP, skills, artifacts, todos, subagents, collaboration tools, and retained tool output.
+- `AgentToolRuntime` builds capability-filtered sessions from the shared catalog and dispatches bounded workspace reads, transactional mutations, foreground/background commands, wait, web, MCP, skills, artifacts, todos, subagents, chat tools, and retained tool output.
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
 - `AgentContextManager` performs budget-aware model compaction with a deterministic fallback and records the actual strategy and lineage.
 
@@ -317,7 +317,7 @@ planner/executor identities, normalized contract, content-derived revision, revi
 completion evidence in `agent_run_plans`. `AgentToolRuntime` projects the current plan phase into
 the canonical catalog. During planning, the policy allowlist admits bounded reads, diagnostics,
 web research, questions, skills, todos, waits, and retained output while removing mutations,
-commands, MCP, artifacts, collaboration writes, and child agents even under Bypass.
+commands, MCP, artifacts, chat tools, and child agents even under Bypass.
 
 Manual Plan selection begins in that restricted profile. An ordinary agent may instead request
 `enter_plan_mode`, but the kernel suspends on a durable human interaction before switching. The
@@ -388,64 +388,68 @@ second inferred execution state.
 
 On startup, nonterminal runs become `interrupted`; conversation/research partial output is projected into the linked assistant message, unfinished tools become visible interrupted failures, pending interactions are cancelled, and a recovered `run.finalized` event closes the ledger. A renderer reload reconstructs an active message from events without replaying a tool.
 
-## Project-agent group chats
+## Chats that start other chats
 
-Cross-project collaboration uses durable Slack-like groups with project-agent memberships and a
-user-visible append-only event timeline. The public timeline contains only human and agent messages;
-tool traces and local execution stay in each participant's durable private agent session. Each
-substantial user request creates a separate mission inside the persistent group, so completing one
-task does not close the conversation. V1 uses two project-bound participant agents. It does not
-reuse ephemeral sub-agents as peers or mount hidden normal chat panels. A small main-process
-scheduler serializes work per project while allowing separate projects to run concurrently. The
-scheduler does not own a provider or tool loop: each participant is a collaboration profile on
-`AgentRunKernel`. Each participant
-has a durable session transcript, shared-channel cursor, addressed wake inbox, explicit run state,
-and an independent safety budget sourced from the normal Agent setting.
+A chat can start worker chats and message them; together they form a family. `SessionService` in
+the main process owns families: it creates workers, routes messages, sends reports, and wakes
+chats. The links live on `conversations` (`started_by_conversation_id`,
+`report_to_conversation_id`, `session_handle`, `work_in`, `archived_at`), and messages, attachments,
+suggestions and project grants in `session_*` tables. Workers cannot start chats, so a family is
+one level deep. The user-facing behavior is in
+[Chats that work together](../user-guide/CHATS_THAT_WORK_TOGETHER.md).
 
-Every public message is visible to both participant sessions in canonical sequence. Addressing only
-controls which idle agent wakes immediately; it is not a privacy boundary. Before each provider
-step, unseen public messages enter the participant's durable transcript with
-SideKick-authenticated sender, project, kind, and sequence metadata. Assistant tool requests,
-results, recovery errors, and checkpoint links are also persisted, so an app restart resumes from
-the private session rather than reconstructing execution from the public channel. No global turn
-counter blocks another agent. Cancellation and mission completion remain explicit user-visible
-controls.
+- **Runs.** A worker is an ordinary conversation. Its brief is its first user message, stored with
+  the same id as the `brief` session message so the chat can show it as a brief. Every run it makes
+  goes through the same engine request as a chat the user sends, so the kernel, permissions, folder
+  guard, verification and History are unchanged. Writing workers get a managed worktree from
+  `ManagedWorktreeService.createForConversation` before their first run.
+- **Tools.** `ConversationRunPreparer` asks the sessions tool factory for each conversation run's
+  role and capabilities. A manager receives `start_session`, `send_message`, `list_sessions`,
+  `stop_session` and `import_attachment`; a worker only the last three. A worker's capabilities never
+  exceed a conversation's ordinary set, and a read-only worker loses every capability that edits or
+  executes. Planning removes the chat tools with every other side effect.
+- **Start card.** `start_session` computes the rows first. In full access, and when every project
+  is already allowed, it starts at once; otherwise it pauses the run on a durable `question`
+  interaction (`intent: 'start_sessions'`) through `AgentRunKernel.requestUserDecision`, and applies
+  the user's changes before starting. Starting from the card grants any new project to the manager.
+- **Delivery.** Messages are durable rows. A running chat receives waiting messages as kernel
+  steers, so they are recorded as `run.steered` and replayed in later histories; a run that starts
+  takes its waiting messages as initial steers. Each message is framed as untrusted content with
+  SideKick-authenticated sender, role and intent, and a message steered into a running chat also
+  ends a `wait` in it. Messages carry no authority: interactions resolve only through the renderer's
+  `agentRuns:resolveInteraction`.
+- **Wakes and reports.** When a worker's run ends, its final message goes to the manager as a
+  `report`, with its branch and whether the user stepped in. A `request` wakes an idle recipient, a
+  `response` wakes the chat that asked, and reports wake the manager only once none of its workers
+  is working or queued. Updates, status notes and broadcasts never wake. A request left unanswered
+  when its recipient's run ends is reported back to the sender. A chat woken 20 times in a row
+  without the user starting or steering a run pauses until the user does.
+- **Slots and restarts.** `RunSlots` admits chats, workers, scheduled runs and sub-agents against
+  one global limit (`maxConcurrentRuns`, 4 by default) and a per-provider limit; a run waiting for
+  the user, a `wait`, or its sub-agents gives its slots back. After a restart, interrupted workers
+  are listed and resumed only by the user, and each manager receives one status note that does not
+  wake it.
 
-Because participant projects are intentionally isolated, concrete text-file handoffs use immutable,
-size-bounded `collaboration_artifacts` snapshots. Sharing emits a public artifact reference and
-addressed wake; importing is a separate permission-checked write into the recipient's own project.
-Long-running servers use the canonical background command service, owned by the conversation,
-and its list, read, input and cancel tools. Commands run in a pseudo-terminal (node-pty, ConPTY on
+Group chats from earlier versions are converted by migration `20261016_004_group_chats_to_chats`:
+each group becomes a standalone manager with one `folder` worker per project agent and a grant for
+each agent's project. People's messages become the manager's messages, agents' posts become
+delivered session messages from their workers, and each agent's own replies stay in its worker. The
+group tables and group-agent runs are then dropped.
+
+## Background commands
+
+Long-running servers use the canonical background command service, owned by the conversation, and
+its list, read, input and cancel tools. Commands run in a pseudo-terminal (node-pty, ConPTY on
 Windows) unless isolation or the user's setting asks for pipes; a headless terminal renders their
-output to the text the model reads. `TerminalSessionStore` keeps one record per command for the chat,
-the Terminal panel and those tools. A foreground command that waits at a prompt, that the user
+output to the text the model reads. `TerminalSessionStore` keeps one record per command for the
+chat, the Terminal panel and those tools. A foreground command that waits at a prompt, that the user
 moves to the background, or that is still running when its call's time is up becomes a background
 task instead of holding the agent loop. Ended background tasks are reported to the agent before its
-next model step, and `wait` ends on a named task ending, a pattern in its output, or a user message. Foreground
-commands cannot detach themselves with shell `&`. Unix cancellation targets the command's whole
-process group; on Windows the tree is ended with `taskkill`, and children orphaned by a shell that
-died first are found by their parent ID, so no child keeps the loop stuck by inheriting output. Collaboration
-prompts and provider-boundary reminders require kickoff, actionable-request responses, and periodic
-public updates without serializing the two independent loops. Peer messages carry an explicit
-`request`, `response`, `update`, or `completion` intent. Only requests create a required reply;
-responses may wake a waiting peer, while updates/completions remain visible without creating an
-acknowledgment loop. Mission settlement queries the complete mission event stream rather than the
-bounded timeline page used by the UI.
-
-The desktop group view is a three-way communication surface: shared chat and composer on the left,
-with two independently scrolling agent-session inspectors stacked on the right. Each inspector has
-Work, Files, and read-only SideKick History tabs and can open as a full inspector from the group or
-its nested sidebar entry. On narrow windows the inspectors become a drawer. History restore remains
-disabled there so one project rollback cannot silently invalidate the shared conversation.
-
-The current main-process `workspacePath` remains UI state for direct chats and is not collaboration
-authority. The scheduler resolves each participant's project id and canonical root from trusted
-SQLite records. File tools, instructions, and private History use that root directly. Commands use
-it as cwd but are not an OS sandbox, so group commands require approval unless the user explicitly
-enabled bypass mode. Saved workspace memory is loaded from the same project path and explicitly
-framed as untrusted context rather than instructions or authority. The detailed product model,
-trust boundary, persistence, phases, and acceptance matrix are in
-[Project agent collaboration](../user-guide/COLLABORATION.md).
+next model step, and `wait` ends on a named task ending, a pattern in its output, a user message, or
+a message from another chat. Foreground commands cannot detach themselves with shell `&`. Unix
+cancellation targets the command's whole process group; on Windows the tree is ended with
+`taskkill`, and children orphaned by a shell that died first are found by their parent ID, so no
+child keeps the loop stuck by inheriting output.
 
 ## Private workspace History
 
@@ -488,8 +492,9 @@ storage shape under the private `worktrees` folder, the recorded branch, and reg
 `src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
 `AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a
 folder that is the same as, inside, or contains a busy one, unless the start input says
-`workspaceSharing: 'allow'`. Research runs read only and are not guarded; group participants are
-recorded so chats are warned about them. The renderer asks first through
+`workspaceSharing: 'allow'`. Research runs read only and are not guarded. A worker that works in
+its manager's folder starts with sharing allowed, because choosing that folder is the decision to
+share it. The renderer asks first through
 `agentRuns.workspaceOccupants`, but the refusal in the runtime is the enforcement. See the
 [worktree design note](../roadmap/WORKTREES.md) for the comparison with other harnesses and the
 open work.

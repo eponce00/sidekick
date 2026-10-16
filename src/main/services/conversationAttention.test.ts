@@ -27,8 +27,7 @@ describe('ConversationAttentionTracker', () => {
   const runs = {
     'run-a': { threadId: 'chat-a', surface: 'conversation' as const },
     'child-a': { threadId: 'chat-a', surface: 'subagent' as const },
-    'run-b': { threadId: 'chat-b', surface: 'research' as const },
-    'group-run': { threadId: 'session-1', surface: 'collaboration' as const }
+    'run-b': { threadId: 'chat-b', surface: 'research' as const }
   }
 
   it('marks a conversation waiting on an approval and alerts once', () => {
@@ -72,11 +71,8 @@ describe('ConversationAttentionTracker', () => {
     expect(attention.state().waitingConversationIds.sort()).toEqual(['chat-a', 'chat-b'])
   })
 
-  it('ignores group sessions and unknown runs', () => {
+  it('ignores unknown runs', () => {
     const { tracker: attention, onChange } = tracker(runs)
-    attention.observe(
-      event('group-run', 'permission.requested', { interactionId: 'g', kind: 'permission' })
-    )
     attention.observe(
       event('missing', 'permission.requested', { interactionId: 'm', kind: 'permission' })
     )

@@ -11,26 +11,12 @@ import type {
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
-import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
-import { resolveMaxOutputTokens } from '../../shared/contextBudget'
-import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
-import type { ProviderInstance } from '../../shared/settings'
+import { agentPermissionDecision } from '../../shared/permissions'
 import type { ProviderSettings } from '../../shared/settings'
-import {
-  providerDefinition,
-  providerKindForTransport,
-  type ProviderKind
-} from '../../shared/providerRegistry'
+import { providerKindForTransport, type ProviderKind } from '../../shared/providerRegistry'
 import { abortablePromise } from './abortablePromise'
 import { classifyAgentKernelFailure } from './agentKernelFailure'
-import {
-  capabilitiesFromTools,
-  createPromptModelProfile,
-  PromptComposer
-} from '../../shared/prompts'
-import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
-import { resolveProviderContext } from '../providers/providerRuntime'
+import type { ProviderChatMessage } from '../../shared/providerRuntime'
 import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
 import { RunSlots, type RunLease } from './runSlots'
@@ -63,12 +49,7 @@ import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
-import type {
-  AgentChildRunLauncher,
-  AgentCollaborationToolHandler,
-  ArtifactBuildResult
-} from './agentToolRuntime'
-import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import type { AgentChildRunLauncher, ArtifactBuildResult } from './agentToolRuntime'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { mainProcessMcpTrust } from './mcpServerTrust'
@@ -99,26 +80,6 @@ interface PreparingRun {
   done: Promise<void>
   finish: () => void
   goalId?: string
-}
-
-export interface CollaborationKernelRunInput {
-  id: string
-  threadId: string
-  workspaceRoot: string
-  target: ProviderTarget
-  messages: ProviderChatMessage[]
-  projectInstructions: { content: string; sources: readonly string[] }
-  projectMemory?: string
-  collaborationInstructions: string
-  maxToolRounds?: number
-  collaboration: AgentCollaborationToolHandler
-  beforeModelStep?: (
-    messages: ProviderChatMessage[],
-    signal: AbortSignal,
-    toolRounds: number
-  ) => Promise<ProviderChatMessage[]>
-  onEvent?: (event: AgentRunEvent) => void
-  onWorkspaceWillMutate?: () => Promise<void>
 }
 
 // A sub-agent answers one bounded question; 80 rounds let one run for an hour.
@@ -372,164 +333,6 @@ export class AgentRuntimeCoordinator {
     // still belong to the caller; they are not merely renderer notification failures.
     if (publicationErrors.length) throw publicationErrors[0]
     return this.store.get(identity.id)!
-  }
-
-  async runCollaborationParticipant(
-    input: CollaborationKernelRunInput
-  ): Promise<AgentKernelRunResult> {
-    const preparation = this.beginPreparation({
-      id: input.id,
-      threadId: input.threadId,
-      workspaceRoot: input.workspaceRoot,
-      provider: input.target.providerKind,
-      model: input.target.model,
-      profile: { surface: 'collaboration', executionMode: 'act', capabilities: [] }
-    })
-    const { signal } = preparation.controller
-    // Group agents coordinate among themselves, but a chat starting in their folder is warned.
-    const releaseWorkspace = this.occupancy.claim({
-      runId: input.id,
-      conversationId: input.threadId,
-      title: this.threadTitle(input.threadId) ?? 'A group chat agent',
-      workspaceRoot: input.workspaceRoot
-    })
-    try {
-      if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
-      await this.awaitPreparation(
-        this.acquireRunSlot(input.id, input.threadId, input.target, signal),
-        preparation
-      )
-      const currentSettings = this.settings()
-      const configuredThreshold = Number(currentSettings.autoCompactThreshold)
-      const configuredInstances = Array.isArray(currentSettings.providerInstances)
-        ? (currentSettings.providerInstances as ProviderInstance[])
-        : []
-      const target = refreshProviderTargetMetadata(input.target, configuredInstances)
-      const resolved = await resolveProviderContext(target, signal)
-      signal.throwIfAborted()
-      const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
-      const maxOutputTokens = resolveMaxOutputTokens(contextLength, target.maxOutputTokens)
-      const session = await this.awaitPreparation(
-        this.tools.createSession({
-          permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
-          runId: input.id,
-          surface: 'collaboration',
-          workspaceRoot: input.workspaceRoot,
-          editingDialect: editingDialectForTarget(target),
-          webSearchEnabled: currentSettings.webSearchEnabled !== false,
-          collaboration: input.collaboration,
-          instructionScopeId: input.id,
-          onWorkspaceWillMutate: input.onWorkspaceWillMutate
-        }),
-        preparation
-      )
-      signal.throwIfAborted()
-      const catalog = session.catalog()
-      const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
-      const provider = providerDefinition(input.target.providerKind).transport
-      const composed = new PromptComposer().compose({
-        platform:
-          process.platform === 'win32'
-            ? 'windows'
-            : process.platform === 'darwin'
-              ? 'macos'
-              : 'linux',
-        capabilities: capabilitiesFromTools(getAgentToolDefinitions(catalog)),
-        permissionMode,
-        model: createPromptModelProfile({
-          id: `${target.providerKind}:${target.model}`,
-          name: target.model,
-          provider,
-          providerKind: target.providerKind,
-          providerModelId: target.model
-        }),
-        project: {
-          workspaceRoot: input.workspaceRoot,
-          instructions: input.projectInstructions.content,
-          instructionSources: input.projectInstructions.sources,
-          memory: input.projectMemory ?? ''
-        },
-        currentDate: new Intl.DateTimeFormat('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        }).format(new Date()),
-        toolRoundLimit: normalizeToolCallLimit(
-          input.maxToolRounds ?? currentSettings.toolCallLimit
-        ),
-        activeSkillIds: [],
-        skillAssetsPath: this.skillAssetsPath()
-      })
-      const messages: ProviderChatMessage[] = [
-        {
-          role: 'system',
-          content: `${composed.content}\n\n## Collaboration role\n${input.collaborationInstructions}`
-        },
-        ...(composed.projectInstructionsMessage
-          ? [{ role: 'user' as const, content: composed.projectInstructionsMessage }]
-          : []),
-        ...input.messages
-      ]
-      signal.throwIfAborted()
-      const run = this.kernel.start({
-        id: input.id,
-        threadId: input.threadId,
-        profile: agentRunProfile(catalog),
-        provider: target.providerKind,
-        model: target.model,
-        workspaceRoot: input.workspaceRoot,
-        promptContext: {
-          version: 'sidekick-collaboration-kernel-v1',
-          contextLength,
-          contextReliable: resolved.reliable
-        },
-        catalog: session.catalog,
-        messages,
-        request: {
-          target: { ...target, contextLength },
-          maxOutputTokens,
-          purpose: 'conversation',
-          temperature: 0.2
-        },
-        maxToolRounds: normalizeToolCallLimit(input.maxToolRounds ?? currentSettings.toolCallLimit),
-        permissionMode,
-        toolRouter: session.router,
-        verificationController: session.verificationController,
-        beforeModelStep: this.withRunSlot(input.id, input.beforeModelStep),
-        contextManager: new AgentContextManager({
-          target: { ...target, contextLength },
-          contextLength,
-          maxOutputTokens,
-          threshold: Math.max(
-            0.5,
-            Math.min(0.95, Number.isFinite(configuredThreshold) ? configuredThreshold : 0.8)
-          ),
-          enabled: currentSettings.autoCompactEnabled !== false
-        })
-      })
-      this.finishPreparation(preparation)
-      if (signal.aborted) this.kernel.stop(input.id)
-      return await run
-    } catch (error) {
-      if (!signal.aborted) throw error
-      this.cancelPreparation(preparation)
-      return {
-        runId: input.id,
-        phase: 'cancelled',
-        content: '',
-        thinking: '',
-        messages: [],
-        toolRounds: 0,
-        error: 'Agent run cancelled'
-      }
-    } finally {
-      releaseWorkspace()
-      this.releaseRunSlot(input.id)
-      this.finishPreparation(preparation)
-      this.observers.delete(input.id)
-      clearWorkspaceInstructionScope(input.id)
-    }
   }
 
   private threadTitle(threadId: string): string | null {
@@ -1476,7 +1279,7 @@ export class AgentRuntimeCoordinator {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
   }
 
-  /** Conversations (or group sessions) with a run being prepared or executing.
+  /** Conversations with a run being prepared or executing.
    * A sub-agent shares its parent's thread, so it is not counted twice. */
   activeThreadIds(): string[] {
     const threads = new Set<string>()
@@ -1484,19 +1287,6 @@ export class AgentRuntimeCoordinator {
     for (const runId of this.kernel.activeRunIds()) {
       const threadId = this.store.get(runId)?.threadId
       if (threadId) threads.add(threadId)
-    }
-    return [...threads]
-  }
-
-  /** Chats with a chat or research run being prepared or executing, leaving out group sessions. */
-  activeConversationIds(): string[] {
-    const threads = new Set<string>()
-    for (const { identity } of this.preparations.values()) {
-      if (identity.profile.surface !== 'collaboration') threads.add(identity.threadId)
-    }
-    for (const runId of this.kernel.activeRunIds()) {
-      const run = this.store.get(runId)
-      if (run && run.surface !== 'collaboration') threads.add(run.threadId)
     }
     return [...threads]
   }

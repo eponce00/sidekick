@@ -6,7 +6,7 @@ export type WorkInChoice = 'folder' | 'worktree'
 export const WORKTREE_BRANCH_PREFIX = 'sidekick/'
 
 export interface ManagedWorktreeOwner {
-  kind: 'chat' | 'group-participant'
+  kind: 'chat'
   id: string
   title: string
   running: boolean

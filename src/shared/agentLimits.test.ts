@@ -8,7 +8,7 @@ import {
 } from './agentLimits'
 
 describe('agent round limits', () => {
-  it('normalizes the same range for direct and group agents', () => {
+  it('normalizes the tool round range', () => {
     expect(normalizeToolCallLimit(undefined)).toBe(DEFAULT_TOOL_CALL_LIMIT)
     expect(normalizeToolCallLimit(1)).toBe(MIN_TOOL_CALL_LIMIT)
     expect(normalizeToolCallLimit(10_000)).toBe(MAX_TOOL_CALL_LIMIT)

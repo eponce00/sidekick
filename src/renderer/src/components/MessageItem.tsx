@@ -844,9 +844,8 @@ function MessageItemInner({
   const messageRef = useRef<HTMLDivElement>(null)
   const editInputRef = useRef<HTMLTextAreaElement>(null)
   const isEditing = editingMessageId === msg.id
-  const workStartedAt =
-    msg.tokenUsage?.runStartedAt ?? (isLoading || msg.completedAt ? msg.timestamp : undefined)
-  const workCompletedAt = msg.tokenUsage?.runCompletedAt ?? msg.completedAt
+  const workStartedAt = msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
+  const workCompletedAt = msg.tokenUsage?.runCompletedAt
   const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
   const canUndoChanges = Boolean(
     !readOnly &&
@@ -868,9 +867,7 @@ function MessageItemInner({
     const input = editInputRef.current
     const message = messageRef.current
     if (!input || !message) return
-    const scrollContainer = message.closest<HTMLElement>(
-      '.messages-container, .group-timeline, .group-agent-transcript'
-    )
+    const scrollContainer = message.closest<HTMLElement>('.messages-container')
     input.style.height = '0px'
     input.style.height = `${Math.max(24, input.scrollHeight)}px`
     if (scrollContainer && editingGeometry) {
@@ -892,7 +889,7 @@ function MessageItemInner({
     <div
       key={msg.id}
       ref={messageRef}
-      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${msg.peerLabel ? 'message-peer' : ''} ${editingMessageId === msg.id ? 'message-editing' : ''}`}
+      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${editingMessageId === msg.id ? 'message-editing' : ''}`}
     >
       <div
         className="message-bubble"
@@ -905,12 +902,6 @@ function MessageItemInner({
             : undefined
         }
       >
-        {(msg.senderLabel || msg.peerLabel) && (
-          <div className="message-sender">
-            <strong>{msg.senderLabel || `From ${msg.peerLabel}`}</strong>
-            {msg.senderContext && <span>{msg.senderContext}</span>}
-          </div>
-        )}
         {msg.role === 'agent' && msg.runMode === 'research' && (
           <div className="message-run-profile">
             <Microscope size={12} aria-hidden="true" />

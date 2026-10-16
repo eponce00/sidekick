@@ -579,6 +579,15 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         type: 'run_status',
         status: { kind: 'retrying', reason: 'run_continued', timestamp: event.timestamp }
       })
+    } else if (event.type === 'run.steered' && event.payload.kind === 'session_message') {
+      // A message from another chat is a turn boundary for the model, but the chat shows it from
+      // the session messages (as received rows), not as something the user typed.
+      for (const id of pendingTurnTools) emitTool(id)
+      pendingTurnTools.length = 0
+      closeVerificationPass()
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+      turnSegmentStart = segments.length
     } else if (event.type === 'run.steered') {
       // Like compaction, the user's message is a hard turn boundary. It belongs
       // to the conversation, so it never folds into a verification pass.

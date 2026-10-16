@@ -25,7 +25,8 @@ The stricter modes are available per conversation from the composer and in Setti
 | Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
 | Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
 | MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |
-| Agent/child/collaboration tools   | Shared catalog policy    | Same kernel suspension and result envelope                                          |
+| Agent and child-agent tools       | Shared catalog policy    | Same kernel suspension and result envelope                                          |
+| Agent starting other chats        | Mode-dependent           | Start card unless Full access; a new project always asks; see below                 |
 | Checkpoint restore/rewind/reset   | Confirm                  | Exact broker grant consumed before private-History mutation                         |
 | User file deletion                | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin                       |
 | External browser navigation       | Auto                     | Main-window policy before opening                                                   |
@@ -58,6 +59,16 @@ MCP connectors are approved by what they run, not by name. A connector you add, 
 command, arguments, folder, environment, URL, or read auto-approval changes by any means, shows
 **Needs approval** in **Settings → Integrations** and does not start until you choose **Review and
 allow** and confirm what it runs. The [command line](COMMAND_LINE.md) follows the same rules.
+
+## Starting other chats
+
+An agent that wants to start other chats starts them at once in Full access. In the other modes it
+shows a card listing each chat, where you can change its project and where it works before starting
+it or not. A project the chat has not been allowed to use always asks first, in every mode, and
+starting from the card allows it. A worker chat gets no tool its manager could not have, follows
+your permission mode, and asks for its own approvals: **Allow for this chat** in the manager does
+not carry over. Messages between chats cannot answer an approval. See
+[Chats that work together](CHATS_THAT_WORK_TOGETHER.md).
 
 ## Binding
 

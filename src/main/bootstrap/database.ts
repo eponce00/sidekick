@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
+import { convertGroupChats } from './groupChatMigration'
 
 type ColumnRow = { name: string }
 
@@ -42,12 +43,6 @@ const REQUIRED_COLUMNS = [
   { table: 'conversations', column: 'unread_completion_at', definition: 'INTEGER' },
   { table: 'conversations', column: 'forked_from_conversation_id', definition: 'TEXT' },
   { table: 'conversations', column: 'forked_from_message_id', definition: 'TEXT' },
-  { table: 'collaboration_groups', column: 'unread_completion_at', definition: 'INTEGER' },
-  {
-    table: 'collaboration_agent_sessions',
-    column: 'unread_completion_at',
-    definition: 'INTEGER'
-  },
   { table: 'messages', column: 'checkpoint_workspace_root', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'base_ref', definition: 'TEXT' },
   {
@@ -430,6 +425,15 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     apply: (db) => {
       ensureRequiredColumns(db)
       db.exec(SESSION_TABLES)
+    }
+  },
+  {
+    id: '20261016_004_group_chats_to_chats',
+    description: 'turn each group chat into a manager chat with worker chats and drop group tables',
+    contentId: 'v1|convert-groups-to-session-families|drop-collaboration-tables',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      convertGroupChats(db)
     }
   }
 ]
@@ -841,167 +845,6 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_conversation_project_events_latest
       ON conversation_project_events(conversation_id, moved_at DESC);
-
-    CREATE TABLE IF NOT EXISTS collaboration_groups (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      description TEXT,
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      unread_completion_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS collaboration_participants (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL,
-      project_id TEXT NOT NULL,
-      label TEXT NOT NULL,
-      provider_target_json TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      joined_at INTEGER NOT NULL,
-      removed_at INTEGER,
-      last_read_seq INTEGER NOT NULL DEFAULT 0,
-      FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT
-    );
-
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_collaboration_participant_project
-      ON collaboration_participants(group_id, project_id)
-      WHERE status = 'active';
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_participants_group
-      ON collaboration_participants(group_id, status, joined_at);
-
-    CREATE TABLE IF NOT EXISTS collaboration_agent_sessions (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL,
-      participant_id TEXT NOT NULL UNIQUE,
-      project_id TEXT NOT NULL,
-      title TEXT NOT NULL,
-      last_event_seq INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      unread_completion_at INTEGER,
-      FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE,
-      FOREIGN KEY (participant_id) REFERENCES collaboration_participants(id) ON DELETE CASCADE,
-      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_agent_sessions_group
-      ON collaboration_agent_sessions(group_id, updated_at DESC);
-
-    CREATE TABLE IF NOT EXISTS collaboration_agent_session_messages (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      mission_id TEXT,
-      role TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      content TEXT NOT NULL DEFAULT '',
-      tool_calls_json TEXT,
-      tool_call_id TEXT,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES collaboration_agent_sessions(id) ON DELETE CASCADE,
-      FOREIGN KEY (mission_id) REFERENCES collaboration_missions(id) ON DELETE SET NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_session_messages
-      ON collaboration_agent_session_messages(session_id, created_at ASC);
-
-    CREATE TABLE IF NOT EXISTS collaboration_missions (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL,
-      objective_event_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      requested_participants_json TEXT NOT NULL,
-      round_count INTEGER NOT NULL DEFAULT 0,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      error TEXT,
-      FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_missions_group
-      ON collaboration_missions(group_id, created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS collaboration_participant_runs (
-      mission_id TEXT NOT NULL,
-      participant_id TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'queued',
-      iteration_count INTEGER NOT NULL DEFAULT 0,
-      max_iterations INTEGER NOT NULL DEFAULT 1000,
-      last_ingested_seq INTEGER NOT NULL DEFAULT 0,
-      current_activity TEXT,
-      started_at INTEGER,
-      updated_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      error TEXT,
-      PRIMARY KEY (mission_id, participant_id),
-      FOREIGN KEY (mission_id) REFERENCES collaboration_missions(id) ON DELETE CASCADE,
-      FOREIGN KEY (participant_id) REFERENCES collaboration_participants(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_participant_runs_mission
-      ON collaboration_participant_runs(mission_id, status, updated_at);
-
-    CREATE TABLE IF NOT EXISTS collaboration_events (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL,
-      mission_id TEXT,
-      seq INTEGER NOT NULL,
-      actor_type TEXT NOT NULL,
-      actor_participant_id TEXT,
-      kind TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      reply_to_event_id TEXT,
-      idempotency_key TEXT,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE,
-      FOREIGN KEY (mission_id) REFERENCES collaboration_missions(id) ON DELETE SET NULL,
-      FOREIGN KEY (actor_participant_id) REFERENCES collaboration_participants(id) ON DELETE SET NULL,
-      FOREIGN KEY (reply_to_event_id) REFERENCES collaboration_events(id) ON DELETE SET NULL,
-      UNIQUE (group_id, seq),
-      UNIQUE (idempotency_key)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_events_group
-      ON collaboration_events(group_id, seq);
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_events_mission
-      ON collaboration_events(mission_id, seq);
-
-    CREATE TABLE IF NOT EXISTS collaboration_deliveries (
-      event_id TEXT NOT NULL,
-      participant_id TEXT NOT NULL,
-      state TEXT NOT NULL DEFAULT 'pending',
-      delivered_at INTEGER,
-      consumed_at INTEGER,
-      wake_attempts INTEGER NOT NULL DEFAULT 0,
-      PRIMARY KEY (event_id, participant_id),
-      FOREIGN KEY (event_id) REFERENCES collaboration_events(id) ON DELETE CASCADE,
-      FOREIGN KEY (participant_id) REFERENCES collaboration_participants(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS collaboration_artifacts (
-      id TEXT PRIMARY KEY,
-      group_id TEXT NOT NULL,
-      mission_id TEXT,
-      sender_participant_id TEXT NOT NULL,
-      name TEXT NOT NULL,
-      source_path TEXT NOT NULL,
-      content TEXT NOT NULL,
-      byte_size INTEGER NOT NULL,
-      sha256 TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE,
-      FOREIGN KEY (mission_id) REFERENCES collaboration_missions(id) ON DELETE SET NULL,
-      FOREIGN KEY (sender_participant_id) REFERENCES collaboration_participants(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_collaboration_artifacts_group
-      ON collaboration_artifacts(group_id, created_at DESC);
   `)
   db.exec(SCHEDULE_TABLES)
 

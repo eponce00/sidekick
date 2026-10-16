@@ -10,9 +10,12 @@ import {
   toOpenAICompatibleMessages
 } from '../providers/providerRuntime'
 import { AgentRunKernel, type AgentKernelProviderSampler } from '../services/agentRunKernel'
-import type { AgentKernelContextManager } from '../services/agentRunKernel'
+import type {
+  AgentKernelContextManager,
+  StartAgentKernelRunInput
+} from '../services/agentRunKernel'
 import { AgentRunStore } from '../services/agentRunStore'
-import { AgentToolRuntime, type AgentCollaborationToolHandler } from '../services/agentToolRuntime'
+import { AgentToolRuntime } from '../services/agentToolRuntime'
 import { CommandService } from '../services/commandService'
 import { McpClientManager } from '../services/mcpClientManager'
 import { ToolOutputStore } from '../services/toolOutputStore'
@@ -26,7 +29,6 @@ import type {
   ProviderThinkingBlock,
   ProviderToolCall
 } from '../../shared/providerRuntime'
-import type { CollaborationKernelRunInput } from '../services/agentRuntimeCoordinator'
 import type { ProviderKind } from '../../shared/providerRegistry'
 import { AgentPlanService } from '../services/agentPlanService'
 import type { NativeBrowserSessionService } from '../services/nativeBrowserSessionService'
@@ -53,7 +55,7 @@ export interface AgentKernelScenarioInput {
   capabilities?: readonly AgentCapability[]
   workspaceRoot: string
   messages: ProviderChatMessage[]
-  surface?: Extract<AgentRunSurface, 'conversation' | 'collaboration'>
+  surface?: Extract<AgentRunSurface, 'conversation'>
   runId?: string
   threadId?: string
   /** Conversation message that receives the run's reply; durable history keys runs by it. */
@@ -61,8 +63,7 @@ export interface AgentKernelScenarioInput {
   maxToolRounds?: number
   planMode?: boolean
   autoApprovePlan?: boolean
-  collaboration?: AgentCollaborationToolHandler
-  beforeModelStep?: CollaborationKernelRunInput['beforeModelStep']
+  beforeModelStep?: StartAgentKernelRunInput['beforeModelStep']
   onEvent?: (event: AgentRunEvent) => void
   onWorkspaceWillMutate?: () => Promise<void>
   afterToolExecution?: (
@@ -261,7 +262,6 @@ export class AgentScenarioHarness {
       browserEnabled: Boolean(this.config.browser),
       webSearchEnabled: false,
       editingDialect,
-      collaboration: input.collaboration,
       plan: planService
         ? {
             stage: () => planService.stage(),
@@ -379,57 +379,6 @@ export class AgentScenarioHarness {
 
   stop(runId: string): boolean {
     return this.activeKernels.get(runId)?.stop(runId) ?? false
-  }
-
-  collaborationRuntime(): {
-    runCollaborationParticipant: (
-      input: CollaborationKernelRunInput
-    ) => Promise<AgentKernelScenarioResult>
-    stop: (runId: string) => boolean
-    events: (
-      runId: string,
-      afterSequence?: number
-    ) => {
-      run: ReturnType<AgentRunStore['get']>
-      events: AgentRunEvent[]
-      pendingInteractions: ReturnType<AgentRunStore['listPendingInteractions']>
-    }
-  } {
-    return {
-      runCollaborationParticipant: async (input) =>
-        this.run({
-          runId: input.id,
-          threadId: input.threadId,
-          workspaceRoot: input.workspaceRoot,
-          surface: 'collaboration',
-          messages: [
-            {
-              role: 'system',
-              content: `You are running inside an isolated SideKick evaluation project. Use the available tools to do real work. Read existing files before editing them, keep all work inside the assigned project, verify the result, and communicate through the collaboration tools.\n\n${input.collaborationInstructions}`
-            },
-            ...(input.projectInstructions.content
-              ? [
-                  {
-                    role: 'user',
-                    content: `<project_instructions trust="app-loaded-project-instructions">\n${input.projectInstructions.content}\n</project_instructions>`
-                  }
-                ]
-              : []),
-            ...input.messages
-          ],
-          maxToolRounds: input.maxToolRounds,
-          collaboration: input.collaboration,
-          beforeModelStep: input.beforeModelStep,
-          onEvent: input.onEvent,
-          onWorkspaceWillMutate: input.onWorkspaceWillMutate
-        }),
-      stop: (runId) => this.stop(runId),
-      events: (runId, afterSequence = 0) => ({
-        run: this.store.get(runId),
-        events: this.store.listEvents(runId, afterSequence, 10_000),
-        pendingInteractions: this.store.listPendingInteractions(runId)
-      })
-    }
   }
 
   async close(options: { closeDatabase?: boolean } = {}): Promise<void> {

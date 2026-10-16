@@ -7,7 +7,6 @@ import { AgentRunStore } from '../services/agentRunStore'
 import { AgentMessageMaterializer } from '../services/agentMessageMaterializer'
 import { openApplicationDatabase } from '../bootstrap/database'
 import { resolveProviderContext } from './providerRuntime'
-import { AgentRunKernel } from '../services/agentRunKernel'
 import { ConversationGoalStore } from '../services/conversationGoalStore'
 import type { PreparedConversationAgentRun } from '../services/conversationRunPreparer'
 
@@ -42,16 +41,6 @@ const target = {
   providerKind: 'openai-compatible' as const,
   providerInstanceId: 'fixture',
   model: 'fixture'
-}
-const collaborationInput = {
-  id: 'fixture-run',
-  threadId: 'fixture-thread',
-  workspaceRoot: 'fixture-workspace',
-  target,
-  messages: [],
-  projectInstructions: { content: '', sources: [] },
-  collaborationInstructions: '',
-  collaboration: { execute: vi.fn() }
 }
 const conversationInput: StartConversationAgentRunInput = {
   id: 'fixture-run',
@@ -131,29 +120,6 @@ function contextOnlyPreparation() {
 }
 
 describe('provider context discovery before kernel registration', () => {
-  it('stops pending collaboration discovery durably and prevents delayed session/model setup', async () => {
-    const { coordinator, store, kernel, tools } = fixture()
-    const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
-    await network.started
-    expect(network.fetch.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
-    expect(coordinator.hasActiveRuns()).toBe(true)
-    expect(coordinator.stop('fixture-run')).toBe(true)
-    expect(coordinator.stop('fixture-run')).toBe(true)
-    expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    expect(await pending).toMatchObject({ phase: 'cancelled', toolRounds: 0, messages: [] })
-    network.release()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(tools.createSession).not.toHaveBeenCalled()
-    expect(kernel.start).not.toHaveBeenCalled()
-    expect(store.listAllEvents('fixture-run').map((event) => event.type)).toEqual([
-      'run.started',
-      'run.completed'
-    ])
-    expect(coordinator.hasActiveRuns()).toBe(false)
-    expect(coordinator.stop('fixture-run')).toBe(false)
-  })
-
   it('materializes one cancelled conversation and rejects overlapping preparation', async () => {
     const { coordinator, store, db, kernel } = fixture()
     const network = deferredFetch()
@@ -184,7 +150,8 @@ describe('provider context discovery before kernel registration', () => {
       throw new Error('synthetic observer failure')
     })
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     expect(() => coordinator.stop('fixture-run')).toThrow('synthetic observer failure')
     expect(await pending).toMatchObject({ phase: 'cancelled' })
@@ -196,14 +163,15 @@ describe('provider context discovery before kernel registration', () => {
   it('shutdown cancels pending discovery without waiting for a signal-ignoring fetch', async () => {
     const { coordinator, tools } = fixture()
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     await coordinator.close()
     expect(await pending).toMatchObject({ phase: 'cancelled' })
     expect(tools.close).toHaveBeenCalledOnce()
     expect(coordinator.hasActiveRuns()).toBe(false)
     await expect(
-      coordinator.runCollaborationParticipant({ ...collaborationInput, id: 'after-close' })
+      coordinator.startConversation({ ...conversationInput, id: 'after-close' })
     ).rejects.toThrow('closing')
     network.release()
   })
@@ -224,102 +192,20 @@ describe('provider context discovery before kernel registration', () => {
     expect(coordinator.hasActiveRuns()).toBe(false)
   })
 
-  it('transfers a synchronous stop during kernel registration to the newly active kernel', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    const sampler = vi.fn().mockRejectedValue(new Error('model must not run'))
-    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
-      if (event.type === 'run.started') expect(coordinator.stop(event.runId)).toBe(true)
-    })
-    Object.assign(coordinator, { kernel })
-    const result = await coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect(result.phase).toBe('cancelled')
-    expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.completed')
-    ).toHaveLength(1)
-    expect(sampler).not.toHaveBeenCalled()
-    expect(coordinator.hasActiveRuns()).toBe(false)
-  })
-
-  it('hands ordinary preparation to the kernel without duplicate run records or model turns', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    const sampler = vi.fn(async () => ({
-      result: { ok: true },
-      turn: {
-        content: 'Synthetic completion',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'stop' }
-      }
-    }))
-    Object.assign(coordinator, { kernel: new AgentRunKernel(store, undefined, sampler) })
-    const result = await coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect(result.phase).toBe('completed')
-    expect(sampler).toHaveBeenCalledOnce()
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.started')
-    ).toHaveLength(1)
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.completed')
-    ).toHaveLength(1)
-    expect(coordinator.hasActiveRuns()).toBe(false)
-  })
-
   it('shutdown completes cleanup before surfacing cancellation observer failure', async () => {
     const { coordinator, tools, publish } = fixture()
     publish.mockImplementation(() => {
       throw new Error('synthetic observer failure')
     })
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     await expect(coordinator.close()).rejects.toThrow('synthetic observer failure')
     expect(await pending).toMatchObject({ phase: 'cancelled' })
     expect(tools.close).toHaveBeenCalledOnce()
     expect(coordinator.hasActiveRuns()).toBe(false)
     network.release()
-  })
-
-  it('drains a synchronous shutdown at kernel registration before closing tools', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    tools.close.mockImplementation(async () => {
-      expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    })
-    let closed: Promise<void> | undefined
-    const sampler = vi.fn().mockRejectedValue(new Error('model must not run'))
-    Object.assign(coordinator, {
-      kernel: new AgentRunKernel(store, undefined, sampler, (event) => {
-        if (event.type === 'run.started') closed = coordinator.close()
-      })
-    })
-    const pending = coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect((await pending).phase).toBe('cancelled')
-    expect(closed).toBeDefined()
-    await closed
-    expect(tools.close).toHaveBeenCalledOnce()
-    expect(sampler).not.toHaveBeenCalled()
   })
 
   it('passes cancellation through the real conversation preparer context-discovery awaits', async () => {

@@ -7,7 +7,6 @@ import { registerMcpHandlers } from './mcp'
 import { registerPermissionHandlers } from './permissions'
 import { registerProjectHandlers } from './projects'
 import { registerProviderRuntimeHandlers } from './providerRuntime'
-import { registerCollaborationHandlers } from './collaboration'
 import { registerAgentRunHandlers } from './agentRuns'
 import { registerSessionStatusHandlers } from './sessionStatus'
 import { registerSupportHandlers } from './support'
@@ -37,7 +36,6 @@ export function registerAllHandlers(): void {
   registerBrowserNetworkHandlers()
   registerPullRequestHandlers()
   registerSupportHandlers()
-  registerCollaborationHandlers()
   registerAgentRunHandlers()
   registerSessionStatusHandlers()
   registerCommandLineHandlers()
