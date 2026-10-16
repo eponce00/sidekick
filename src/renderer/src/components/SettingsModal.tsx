@@ -1,14 +1,31 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import {
+  AppWindow,
   ArrowLeft,
   Bell,
   Bot,
   Boxes,
+  Check,
+  CircleAlert,
+  Container,
+  Download,
+  FileCode2,
   FolderOpen,
+  Globe,
+  Hand,
+  LifeBuoy,
+  MapPin,
   Palette,
+  RefreshCw,
+  Repeat,
+  Route,
   Search,
   Server,
-  Settings2
+  Settings2,
+  ShieldCheck,
+  SquareTerminal,
+  Type,
+  Workflow
 } from 'lucide-react'
 import type { ProviderSettings } from '../types/app.types'
 import {
@@ -31,6 +48,7 @@ import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { BrowserNetworkSettings } from './BrowserNetworkSettings'
 import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
 import { VoiceSettings } from './VoiceSettings'
+import { SettingsPageHeader, SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
@@ -61,60 +79,6 @@ const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
   icon: SETTINGS_ICONS[value.icon]
 }))
 
-function SettingCard({
-  id,
-  title,
-  description,
-  children
-}: {
-  id?: string
-  title: string
-  description?: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <section className="settings-card" id={id}>
-      <div className="settings-card-heading">
-        <h3>{title}</h3>
-        {description && <p>{description}</p>}
-      </div>
-      <div className="settings-card-content">{children}</div>
-    </section>
-  )
-}
-
-function ToggleField({
-  label,
-  hint,
-  checked,
-  disabled,
-  onChange
-}: {
-  label: string
-  hint: string
-  checked: boolean
-  disabled?: boolean
-  onChange: (checked: boolean) => void
-}): React.JSX.Element {
-  return (
-    <label className={`settings-toggle-row ${disabled ? 'disabled' : ''}`}>
-      <span>
-        <strong>{label}</strong>
-        <small>{hint}</small>
-      </span>
-      <span className="modern-switch">
-        <input
-          type="checkbox"
-          checked={checked}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.checked)}
-        />
-        <span />
-      </span>
-    </label>
-  )
-}
-
 function SettingsModal({
   settings: initialSettings,
   onSave,
@@ -135,6 +99,11 @@ function SettingsModal({
     message: string
   } | null>(null)
   const dialogRef = useModalDialog<HTMLDivElement>(true, onClose)
+  const controlId = useId()
+  const unsaved = useMemo(
+    () => JSON.stringify(settings) !== JSON.stringify(initialSettings),
+    [settings, initialSettings]
+  )
   const planningModels = pinnedModelsFromProviderInstances(settings.providerInstances || []).filter(
     (model) => model.supportsTools !== false
   )
@@ -235,11 +204,12 @@ function SettingsModal({
     if (activeSection === 'general') {
       return (
         <div className="settings-page">
-          <div className="settings-page-heading">
-            <h2>General</h2>
-            <p>Everyday behavior without provider-specific noise.</p>
-          </div>
-          <SettingCard
+          <SettingsPageHeader
+            title="General"
+            description="Everyday behavior without provider-specific noise."
+          />
+          <SettingsSection
+            icon={Bell}
             title="Notifications"
             description="Only notify when SideKick is not focused."
           >
@@ -260,9 +230,10 @@ function SettingsModal({
                 setSettings({ ...settings, notificationSoundEnabled })
               }
             />
-          </SettingCard>
+          </SettingsSection>
           {window.api.app.platform !== 'macos' && (
-            <SettingCard
+            <SettingsSection
+              icon={AppWindow}
               title="Background"
               description="Keep agents working after you close the window."
             >
@@ -276,21 +247,14 @@ function SettingsModal({
                 checked={settings.closeToTray ?? true}
                 onChange={(closeToTray) => setSettings({ ...settings, closeToTray })}
               />
-            </SettingCard>
+            </SettingsSection>
           )}
-          <SettingCard
-            title="Voice"
-            description="Dictate messages and have replies read aloud. Speech never leaves this device."
-          >
-            <ToggleField
-              label="Dictation and read-aloud"
-              hint="Downloads about 820 MB of speech models in the background: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) and Supertone Supertonic 3."
-              checked={settings.voiceEnabled ?? true}
-              onChange={(voiceEnabled) => setSettings({ ...settings, voiceEnabled })}
-            />
-            {(settings.voiceEnabled ?? true) && <VoiceSettings />}
-          </SettingCard>
-          <SettingCard
+          <VoiceSettings
+            enabled={settings.voiceEnabled ?? true}
+            onEnabledChange={(voiceEnabled) => setSettings({ ...settings, voiceEnabled })}
+          />
+          <SettingsSection
+            icon={Globe}
             title="Web search"
             description="Search without an account or API key, through public search engines."
           >
@@ -300,24 +264,31 @@ function SettingsModal({
               checked={settings.webSearchEnabled ?? true}
               onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
             />
-          </SettingCard>
-          <SettingCard
+          </SettingsSection>
+          <SettingsSection
+            icon={MapPin}
             title="Location"
             description="Optional context for weather, travel, and local recommendations."
           >
-            <label className="modern-field">
-              <span>City or region</span>
-              <input
-                value={settings.manualLocation || ''}
-                onChange={(event) =>
-                  setSettings({ ...settings, manualLocation: event.target.value })
-                }
-                placeholder="Reno, NV"
-              />
-            </label>
-          </SettingCard>
-          <SettingCard
+            <SettingsRow
+              label="City or region"
+              description="Leave empty to keep your location private."
+              controlId={`${controlId}-location`}
+              control={
+                <input
+                  id={`${controlId}-location`}
+                  value={settings.manualLocation || ''}
+                  onChange={(event) =>
+                    setSettings({ ...settings, manualLocation: event.target.value })
+                  }
+                  placeholder="Reno, NV"
+                />
+              }
+            />
+          </SettingsSection>
+          <SettingsSection
             id="settings-updates"
+            icon={RefreshCw}
             title="Updates"
             description="Check the public project releases. Installation stays under your control."
           >
@@ -330,50 +301,59 @@ function SettingsModal({
               }
             />
             <AppUpdateSettings />
-          </SettingCard>
-          <SettingCard
+          </SettingsSection>
+          <SettingsSection
+            icon={LifeBuoy}
             title="Support"
             description="Create a metadata-only report for troubleshooting."
           >
-            <div className="support-export-row">
-              <span>
-                <strong>Diagnostic report</strong>
-                <small>
-                  Excludes conversations, prompts, files, paths, endpoints, model names, logs, and
-                  credentials.
-                </small>
-              </span>
-              <button
-                type="button"
-                className="settings-secondary-action"
-                onClick={() => void handleExportDiagnostics()}
-                disabled={exportingDiagnostics}
-              >
-                {exportingDiagnostics ? 'Exporting…' : 'Export diagnostics'}
-              </button>
-            </div>
+            <SettingsRow
+              label="Diagnostic report"
+              description="Excludes conversations, prompts, files, paths, endpoints, model names, logs, and credentials."
+              control={
+                <button
+                  type="button"
+                  className="settings-secondary-action"
+                  onClick={() => void handleExportDiagnostics()}
+                  disabled={exportingDiagnostics}
+                >
+                  <Download size={14} aria-hidden="true" />
+                  {exportingDiagnostics ? 'Exporting…' : 'Export diagnostics'}
+                </button>
+              }
+            />
             {diagnosticsStatus && (
               <p
-                className={`support-export-status ${diagnosticsStatus.kind}`}
+                className={`settings-note support-export-status ${diagnosticsStatus.kind}`}
                 role="status"
                 aria-live="polite"
               >
+                {diagnosticsStatus.kind === 'success' ? (
+                  <Check size={14} aria-hidden="true" />
+                ) : (
+                  <CircleAlert size={14} aria-hidden="true" />
+                )}
                 {diagnosticsStatus.message}
               </p>
             )}
-          </SettingCard>
+          </SettingsSection>
         </div>
       )
     }
 
     if (activeSection === 'agent') {
+      const compactThreshold = Math.round((settings.autoCompactThreshold ?? 0.8) * 100)
       return (
         <div className="settings-page">
-          <div className="settings-page-heading">
-            <h2>Agent</h2>
-            <p>Control autonomy, long-running work, and default capabilities.</p>
-          </div>
-          <SettingCard title="Run behavior">
+          <SettingsPageHeader
+            title="Agent"
+            description="Control autonomy, long-running work, and default capabilities."
+          />
+          <SettingsSection
+            icon={Workflow}
+            title="Run behavior"
+            description="How the agent keeps track of long tasks."
+          >
             <ToggleField
               label="Focus Chain"
               hint="Track multi-step work with a visible task list."
@@ -387,161 +367,132 @@ function SettingsModal({
               onChange={(autoCompactEnabled) => setSettings({ ...settings, autoCompactEnabled })}
             />
             {settings.autoCompactEnabled !== false && (
-              <label className="modern-field">
-                <span>
-                  Compaction threshold · {Math.round((settings.autoCompactThreshold ?? 0.8) * 100)}%
-                </span>
-                <input
-                  type="range"
-                  min="50"
-                  max="95"
-                  value={(settings.autoCompactThreshold ?? 0.8) * 100}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      autoCompactThreshold: Number(event.target.value) / 100
-                    })
-                  }
-                />
-              </label>
+              <SettingsRow
+                label="Compaction threshold"
+                description="How full the context gets before SideKick summarizes it."
+                controlId={`${controlId}-compact`}
+                control={
+                  <>
+                    <input
+                      id={`${controlId}-compact`}
+                      type="range"
+                      min="50"
+                      max="95"
+                      value={compactThreshold}
+                      onChange={(event) =>
+                        setSettings({
+                          ...settings,
+                          autoCompactThreshold: Number(event.target.value) / 100
+                        })
+                      }
+                    />
+                    <output className="settings-range-value" htmlFor={`${controlId}-compact`}>
+                      {compactThreshold}%
+                    </output>
+                  </>
+                }
+              />
             )}
-          </SettingCard>
-          <SettingCard
+          </SettingsSection>
+          <SettingsSection
+            icon={Route}
             title="Planning"
             description="Use a dedicated model to design a plan, then return to the selected chat model for execution."
           >
-            <label className="modern-field">
-              <span>Default planning model</span>
-              <select
-                value={settings.planningModelId || ''}
-                onChange={(event) =>
-                  setSettings({ ...settings, planningModelId: event.target.value || undefined })
-                }
-              >
-                <option value="">Same as the current chat model</option>
-                {planningModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name}
-                  </option>
-                ))}
-              </select>
-              <small>You can override this from the composer whenever Plan mode is selected.</small>
-            </label>
-          </SettingCard>
-          <SettingCard
+            <SettingsRow
+              label="Default planning model"
+              description="You can override this from the composer whenever Plan mode is selected."
+              controlId={`${controlId}-planning`}
+              control={
+                <select
+                  id={`${controlId}-planning`}
+                  value={settings.planningModelId || ''}
+                  onChange={(event) =>
+                    setSettings({ ...settings, planningModelId: event.target.value || undefined })
+                  }
+                >
+                  <option value="">Same as the current chat model</option>
+                  {planningModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+              }
+            />
+          </SettingsSection>
+          <SettingsSection
+            icon={ShieldCheck}
             title="Permissions"
             description="One policy applies consistently to shell, files, MCP, checkpoints, and browser actions."
           >
-            <label className="modern-field">
-              <span>Tool approval mode</span>
-              <select
-                value={settings.commandPermissionMode || 'full-access'}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    commandPermissionMode: event.target
-                      .value as ProviderSettings['commandPermissionMode']
-                  })
-                }
-              >
-                <option value="full-access">Full access (default)</option>
-                <option value="sensitive-only">Ask only for sensitive actions</option>
-                <option value="always-ask">Ask for every write or command</option>
-              </select>
-              <small>
-                Full access runs tools without approval popups. Destructive actions still follow
-                SideKick&apos;s safety rules and the scope of your request.
-              </small>
-            </label>
-            <label className="modern-field">
-              <span>
-                Agent rounds before safety pause <em>Default {DEFAULT_TOOL_CALL_LIMIT}</em>
-              </span>
-              <input
-                type="number"
-                min={MIN_TOOL_CALL_LIMIT}
-                max={MAX_TOOL_CALL_LIMIT}
-                value={settings.toolCallLimit ?? DEFAULT_TOOL_CALL_LIMIT}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    toolCallLimit: normalizeToolCallLimit(event.target.value)
-                  })
-                }
-              />
-            </label>
-            <div className="modern-field">
-              <span>Office helper Python (optional)</span>
-              <span className="project-hook-folder-input">
-                <input
-                  aria-label="Office Python interpreter"
-                  readOnly
-                  value={settings.officeHelperInterpreter ?? ''}
-                  placeholder="Not set, direct Office tools are off"
-                />
-                <button
-                  type="button"
-                  className="settings-secondary-action"
-                  aria-label="Choose Office Python"
-                  onClick={async () => {
-                    const choice = await window.api.settings
-                      .selectOfficeInterpreter()
-                      .catch(() => ({
-                        canceled: false,
-                        path: undefined,
-                        error: 'Interpreter selection failed'
-                      }))
-                    if (choice.error) setSaveError(choice.error)
-                    if (choice.path) {
-                      setSaveError(null)
-                      setSettings((current) => ({
-                        ...current,
-                        officeHelperInterpreter: choice.path
-                      }))
-                    }
-                  }}
+            <SettingsRow
+              icon={Hand}
+              label="Tool approval mode"
+              description="Full access runs tools without approval popups. Destructive actions still follow SideKick's safety rules and the scope of your request."
+              controlId={`${controlId}-approval`}
+              control={
+                <select
+                  id={`${controlId}-approval`}
+                  value={settings.commandPermissionMode || 'full-access'}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      commandPermissionMode: event.target
+                        .value as ProviderSettings['commandPermissionMode']
+                    })
+                  }
                 >
-                  <FolderOpen size={14} />
-                  Choose
-                </button>
-                {settings.officeHelperInterpreter && (
-                  <button
-                    type="button"
-                    className="settings-secondary-action"
-                    aria-label="Clear Office Python"
-                    onClick={() =>
-                      setSettings((current) => ({ ...current, officeHelperInterpreter: undefined }))
-                    }
-                  >
-                    Clear
-                  </button>
-                )}
-              </span>
-              <small>
-                Lets an Office skill check documents with read-only validation. It runs with your
-                normal approvals, never installs packages, and is off in Docker.
-              </small>
-            </div>
-            <label className="modern-field">
-              <span>Shell execution environment</span>
-              <select
-                value={settings.shellIsolation ?? 'host'}
-                onChange={(event) =>
-                  setSettings({
-                    ...settings,
-                    shellIsolation: event.target.value as 'host' | 'docker'
-                  })
-                }
-              >
-                <option value="host">Host shell (not sandboxed)</option>
-                <option value="docker">Isolated Linux container (no network)</option>
-              </select>
-              <small>
-                Docker runs commands in a Linux container with only the project mounted and no
-                network. It needs a local Docker daemon, and other tools still run on the host.
-              </small>
-            </label>
+                  <option value="full-access">Full access (default)</option>
+                  <option value="sensitive-only">Ask only for sensitive actions</option>
+                  <option value="always-ask">Ask for every write or command</option>
+                </select>
+              }
+            />
+            <SettingsRow
+              icon={Repeat}
+              label="Agent rounds before safety pause"
+              description={`The agent stops to check in after this many rounds. Default ${DEFAULT_TOOL_CALL_LIMIT}.`}
+              controlId={`${controlId}-rounds`}
+              control={
+                <input
+                  id={`${controlId}-rounds`}
+                  type="number"
+                  min={MIN_TOOL_CALL_LIMIT}
+                  max={MAX_TOOL_CALL_LIMIT}
+                  value={settings.toolCallLimit ?? DEFAULT_TOOL_CALL_LIMIT}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      toolCallLimit: normalizeToolCallLimit(event.target.value)
+                    })
+                  }
+                />
+              }
+            />
+            <SettingsRow
+              icon={Container}
+              label="Shell execution environment"
+              description="Docker runs commands in a Linux container with only the project mounted and no network. It needs a local Docker daemon, and other tools still run on the host."
+              controlId={`${controlId}-shell`}
+              control={
+                <select
+                  id={`${controlId}-shell`}
+                  value={settings.shellIsolation ?? 'host'}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      shellIsolation: event.target.value as 'host' | 'docker'
+                    })
+                  }
+                >
+                  <option value="host">Host shell (not sandboxed)</option>
+                  <option value="docker">Isolated Linux container (no network)</option>
+                </select>
+              }
+            />
             <ToggleField
+              icon={SquareTerminal}
               label="Run commands in a terminal"
               hint="Programs behave as they do for you: colours, progress, and prompts you or the agent can answer. Turn off to use plain pipes."
               checked={settings.agentCommandTerminal ?? true}
@@ -549,8 +500,65 @@ function SettingsModal({
                 setSettings({ ...settings, agentCommandTerminal })
               }
             />
+            <SettingsRow
+              icon={FileCode2}
+              label="Office helper Python"
+              description="Optional. Lets an Office skill check documents with read-only validation. It runs with your normal approvals, never installs packages, and is off in Docker."
+              stacked
+              control={
+                <span className="settings-inline-field">
+                  <input
+                    className="settings-path-input"
+                    aria-label="Office Python interpreter"
+                    readOnly
+                    value={settings.officeHelperInterpreter ?? ''}
+                    placeholder="Not set, direct Office tools are off"
+                  />
+                  <button
+                    type="button"
+                    className="settings-secondary-action"
+                    aria-label="Choose Office Python"
+                    onClick={async () => {
+                      const choice = await window.api.settings
+                        .selectOfficeInterpreter()
+                        .catch(() => ({
+                          canceled: false,
+                          path: undefined,
+                          error: 'Interpreter selection failed'
+                        }))
+                      if (choice.error) setSaveError(choice.error)
+                      if (choice.path) {
+                        setSaveError(null)
+                        setSettings((current) => ({
+                          ...current,
+                          officeHelperInterpreter: choice.path
+                        }))
+                      }
+                    }}
+                  >
+                    <FolderOpen size={14} aria-hidden="true" />
+                    Choose
+                  </button>
+                  {settings.officeHelperInterpreter && (
+                    <button
+                      type="button"
+                      className="settings-ghost-action"
+                      aria-label="Clear Office Python"
+                      onClick={() =>
+                        setSettings((current) => ({
+                          ...current,
+                          officeHelperInterpreter: undefined
+                        }))
+                      }
+                    >
+                      Clear
+                    </button>
+                  )}
+                </span>
+              }
+            />
             <PermissionAuditPanel />
-          </SettingCard>
+          </SettingsSection>
           <BrowserNetworkSettings />
           <ProjectHooksPanel
             hooks={{
@@ -574,19 +582,27 @@ function SettingsModal({
     }
 
     if (activeSection === 'appearance') {
+      const textSize = settings.contentFontSize ?? 13
+      const activePalette = settings.accentPalette || 'teal'
       return (
         <div className="settings-page">
-          <div className="settings-page-heading">
-            <h2>Appearance</h2>
-            <p>Keep SideKick calm, readable, and personal.</p>
-          </div>
-          <SettingCard title="Accent color">
-            <div className="modern-palette-grid">
+          <SettingsPageHeader
+            title="Appearance"
+            description="Keep SideKick calm, readable, and personal."
+          />
+          <SettingsSection
+            icon={Palette}
+            title="Accent color"
+            description="Highlights the selection, switches, and primary buttons."
+          >
+            <div className="modern-palette-grid" role="radiogroup" aria-label="Accent color">
               {ACCENT_PALETTES.map((palette) => (
                 <button
                   type="button"
                   key={palette.id}
-                  className={(settings.accentPalette || 'teal') === palette.id ? 'active' : ''}
+                  role="radio"
+                  aria-checked={activePalette === palette.id}
+                  className={activePalette === palette.id ? 'active' : ''}
                   onClick={() => {
                     setSettings({ ...settings, accentPalette: palette.id })
                     applyAccentPalette(
@@ -597,39 +613,52 @@ function SettingsModal({
                 >
                   <i style={{ background: palette.swatch }} />
                   <span>{palette.name}</span>
+                  {activePalette === palette.id && <Check size={14} aria-hidden="true" />}
                 </button>
               ))}
             </div>
-          </SettingCard>
-          <SettingCard
+          </SettingsSection>
+          <SettingsSection
+            icon={Type}
             title="Conversation text"
             description="Adjust messages and the composer without changing the whole interface. Use Ctrl + or Ctrl − for window zoom."
           >
-            <label className="modern-field">
-              <span>
-                Text size <em>{settings.contentFontSize ?? 13}px</em>
-              </span>
-              <input
-                type="range"
-                min={12}
-                max={17}
-                step={1}
-                value={settings.contentFontSize ?? 13}
-                onChange={(event) => {
-                  const contentFontSize = Number(event.target.value)
-                  setSettings({ ...settings, contentFontSize })
-                  document.documentElement.style.setProperty(
-                    '--content-text',
-                    `${contentFontSize}px`
-                  )
-                  document.documentElement.style.setProperty(
-                    '--content-text-secondary',
-                    `${Math.max(11, contentFontSize - (contentFontSize > 14 ? 2 : 1))}px`
-                  )
-                }}
-              />
-            </label>
-          </SettingCard>
+            <SettingsRow
+              label="Text size"
+              controlId={`${controlId}-text-size`}
+              control={
+                <>
+                  <input
+                    id={`${controlId}-text-size`}
+                    type="range"
+                    min={12}
+                    max={17}
+                    step={1}
+                    value={textSize}
+                    onChange={(event) => {
+                      const contentFontSize = Number(event.target.value)
+                      setSettings({ ...settings, contentFontSize })
+                      document.documentElement.style.setProperty(
+                        '--content-text',
+                        `${contentFontSize}px`
+                      )
+                      document.documentElement.style.setProperty(
+                        '--content-text-secondary',
+                        `${Math.max(11, contentFontSize - (contentFontSize > 14 ? 2 : 1))}px`
+                      )
+                    }}
+                  />
+                  <output className="settings-range-value" htmlFor={`${controlId}-text-size`}>
+                    {textSize}px
+                  </output>
+                </>
+              }
+            >
+              <p className="settings-text-preview">
+                SideKick reads, plans, and edits with you. This is how messages will look.
+              </p>
+            </SettingsRow>
+          </SettingsSection>
         </div>
       )
     }
@@ -637,20 +666,15 @@ function SettingsModal({
     if (activeSection === 'integrations') {
       return (
         <div className="settings-page">
-          <div className="settings-page-heading">
-            <h2>Integrations</h2>
-            <p>Connect and manage external MCP tool servers.</p>
-          </div>
-          <SettingCard
-            title="MCP servers"
-            description="External MCP server commands run as local processes."
-          >
-            <McpServerSettings
-              servers={settings.mcpServers || []}
-              onChange={(mcpServers) => setSettings({ ...settings, mcpServers })}
-            />
-            {mcpValidationError && <span className="field-error">{mcpValidationError}</span>}
-          </SettingCard>
+          <SettingsPageHeader
+            title="Integrations"
+            description="Connect and manage external MCP tool servers."
+          />
+          <McpServerSettings
+            servers={settings.mcpServers || []}
+            onChange={(mcpServers) => setSettings({ ...settings, mcpServers })}
+            validationError={mcpValidationError}
+          />
         </div>
       )
     }
@@ -697,7 +721,7 @@ function SettingsModal({
                   aria-current={activeSection === item.id ? 'page' : undefined}
                   title={`${item.label} — ${item.description}`}
                 >
-                  <Icon size={17} />
+                  <Icon size={16} aria-hidden="true" />
                   <strong>{item.label}</strong>
                 </button>
               )
@@ -707,10 +731,6 @@ function SettingsModal({
             )}
           </nav>
           <div className="settings-sidebar-footer">
-            <div className="settings-sidebar-note">
-              <Bell size={14} />
-              <span>Changes apply after you save.</span>
-            </div>
             <AppVersionButton
               onSelect={() => {
                 setNavigationQuery('')
@@ -729,8 +749,17 @@ function SettingsModal({
             {renderSection()}
           </main>
           <footer className="settings-footer">
-            {saveError && <span className="field-error">{saveError}</span>}
-            <button type="button" className="settings-cancel-action" onClick={onClose}>
+            {saveError ? (
+              <span className="settings-footer-status error" role="alert">
+                <CircleAlert size={14} aria-hidden="true" />
+                {saveError}
+              </span>
+            ) : (
+              <span className={`settings-footer-status${unsaved ? ' dirty' : ''}`}>
+                {unsaved ? 'Unsaved changes' : 'Changes apply after you save.'}
+              </span>
+            )}
+            <button type="button" className="settings-secondary-action" onClick={onClose}>
               Cancel
             </button>
             <button

@@ -72,6 +72,29 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 - Use `ProviderIcon` everywhere a provider or provider-owned model is identified. Resolve from `providerKind` before transport so OpenAI-compatible connections, LM Studio, and llama.cpp remain visually distinct.
 - Custom SVG is reserved for official provider marks and genuine data visualizations such as the context ring or research progress—not ordinary buttons.
 
+## Settings pages
+
+Settings pages are built from the blocks in `components/SettingsLayout.tsx`, so a new setting looks
+like the rest without new CSS:
+
+- `SettingsPageHeader`: the page title, one line of description, and any page-level action.
+- `SettingsSection`: a heading with a Lucide icon and description, then one bordered group whose
+  rows are split by hairlines. Every direct child of the group is one row or block.
+- `SettingsRow`: label and description on the left, the control on the right. Pass `controlId` so
+  the label focuses the control; `stacked` puts a wide control, such as a path, under the label;
+  children add detail under the row, such as a level meter. Rows take an icon when a section has
+  enough rows that icons help scanning, and then every row in that section has one.
+- `ToggleField`: a row whose control is a switch; the whole row toggles it.
+- `SettingsEmptyState`: an icon, a title, a sentence, and the next action; `compact` for a list
+  that is simply empty.
+
+Buttons use `settings-primary-action` for the one action a view leads with,
+`settings-secondary-action` for other actions, `settings-ghost-action` for quiet actions in lists
+and headers, and `settings-danger-action` for removal; add `is-small` inside rows and headers and
+`is-icon` for icon-only buttons. Controls are 32px tall (28px small) with `--radius-sm`. Changes
+are kept until **Save changes**, and the footer says when there are unsaved ones; device-only
+preferences, such as voice devices, apply at once and say so.
+
 ## References in replies
 
 - A file path a reply mentions becomes a chip only once the main process confirms it exists in the

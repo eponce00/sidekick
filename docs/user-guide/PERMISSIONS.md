@@ -82,4 +82,4 @@ Kernel decisions live in `agent_run_events`; broker authorization/consumption re
 settings store. Settings projects the latest 500 entries from both authoritative sources into one
 chronological audit. Each row includes operation kind/title, requested/effective access, active
 mode, a safe operation fingerprint, outcome, timestamp, and failure reason when applicable. The
-latest records are visible under Settings → Agent → Permissions.
+latest records are under Settings → Agent → Permissions → **Authorization audit**.

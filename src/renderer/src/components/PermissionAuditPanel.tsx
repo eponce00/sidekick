@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
-import { RefreshCw, ShieldCheck } from 'lucide-react'
+import { ChevronDown, History, RefreshCw } from 'lucide-react'
 import type { PermissionAuditRecord } from '../../../shared/permissions'
+import { SettingsRow } from './SettingsLayout'
 import './PermissionAuditPanel.css'
 
 const DECISION_LABELS: Record<NonNullable<PermissionAuditRecord['decision']>, string> = {
@@ -40,23 +41,35 @@ export function PermissionAuditPanel(): React.JSX.Element {
   }
 
   return (
-    <div className="permission-audit">
-      <button
-        type="button"
-        className="permission-audit-toggle"
-        onClick={toggle}
-        aria-expanded={expanded}
-      >
-        <ShieldCheck size={15} />
-        {expanded ? 'Hide authorization audit' : 'View authorization audit'}
-      </button>
+    <SettingsRow
+      icon={History}
+      className="permission-audit"
+      label="Authorization audit"
+      description="The latest agent decisions and grants, newest first."
+      control={
+        <button
+          type="button"
+          className="settings-secondary-action permission-audit-toggle"
+          onClick={toggle}
+          aria-expanded={expanded}
+          aria-label={expanded ? 'Hide authorization audit' : 'View authorization audit'}
+        >
+          {expanded ? 'Hide' : 'View'}
+          <ChevronDown size={14} aria-hidden="true" />
+        </button>
+      }
+    >
       {expanded && (
         <div className="permission-audit-content">
           <div className="permission-audit-header">
-            <span>Latest agent decisions and user-action grant events</span>
+            <span>
+              {loading
+                ? 'Loading…'
+                : `${records.length} recent event${records.length === 1 ? '' : 's'}`}
+            </span>
             <button
               type="button"
-              className="permission-audit-refresh"
+              className="settings-ghost-action is-small is-icon"
               onClick={() => void load()}
               disabled={loading}
               aria-label="Refresh authorization audit"
@@ -86,6 +99,6 @@ export function PermissionAuditPanel(): React.JSX.Element {
           ))}
         </div>
       )}
-    </div>
+    </SettingsRow>
   )
 }

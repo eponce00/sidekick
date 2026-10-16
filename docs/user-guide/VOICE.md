@@ -37,11 +37,13 @@ links are skipped.
 **Settings → General → Voice** holds:
 
 - the switch for voice, including its background download;
-- the **microphone** and **speaker**, the system default unless you choose one, with a level
-  test and a spoken sample;
+- the **microphone** and **speaker**, the system default unless you choose one. **Test** beside
+  the microphone shows a live input level under it; **Sample** beside the speaker plays a short
+  spoken sample;
 - the **voice**, one of ten;
 - the **read-aloud language**, detected from each message unless you choose one;
-- **Talk back and forth**, on by default.
+- **Talk back and forth**, on by default;
+- the **mic shortcut**, for reference.
 
 Device, voice, and language choices apply at once and belong to this machine.
 
