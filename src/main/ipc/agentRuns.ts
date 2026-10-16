@@ -34,12 +34,18 @@ import {
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
+const activityListeners = new Set<() => void>()
+
+function notifyActivity(): void {
+  for (const listener of activityListeners) listener()
+}
 
 const attention = new ConversationAttentionTracker(
   (runId) => coordinator?.store.get(runId) ?? null,
   (state) => {
     applyAttentionBadge(state.waitingConversationIds.length)
     publishDesktopEvent('agentRuns:attention', state)
+    notifyActivity()
   }
 )
 
@@ -51,6 +57,7 @@ function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void
     console.warn('[Attention] Could not follow a run event:', error)
   }
   publishDesktopEvent('agentRuns:event', { event })
+  notifyActivity()
 }
 
 function publishGoal(goal: import('../../shared/conversationGoals').ConversationGoal): void {
@@ -564,4 +571,15 @@ export function hasActiveAgentWork(): boolean {
 
 export function activeAgentConversationCount(): number {
   return coordinator?.activeThreadIds().length ?? 0
+}
+
+/** Conversations paused on an approval or a question. */
+export function waitingAgentConversationIds(): string[] {
+  return attention.state().waitingConversationIds
+}
+
+/** Called after any run event, so a listener can re-read the counts above. */
+export function onAgentActivity(listener: () => void): () => void {
+  activityListeners.add(listener)
+  return () => activityListeners.delete(listener)
 }

@@ -261,6 +261,23 @@ function SettingsModal({
               }
             />
           </SettingCard>
+          {window.api.app.platform !== 'macos' && (
+            <SettingCard
+              title="Background"
+              description="Keep agents working after you close the window."
+            >
+              <ToggleField
+                label={
+                  window.api.app.platform === 'windows'
+                    ? 'Close to the notification area'
+                    : 'Close to the system tray'
+                }
+                hint="Closing the window hides SideKick to its tray icon. Quit from the icon's right-click menu. Off, closing the window quits SideKick."
+                checked={settings.closeToTray ?? true}
+                onChange={(closeToTray) => setSettings({ ...settings, closeToTray })}
+              />
+            </SettingCard>
+          )}
           <SettingCard
             title="Voice"
             description="Dictate messages and have replies read aloud. Speech never leaves this device."
