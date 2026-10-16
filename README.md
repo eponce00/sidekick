@@ -16,6 +16,7 @@
   <a href="./docs/architecture/OVERVIEW.md"><strong>Architecture</strong></a> ·
   <a href="./CONTRIBUTING.md"><strong>Contributing</strong></a> ·
   <a href="./PRIVACY.md"><strong>Privacy</strong></a> ·
+  <a href="./docs/development/CODE_SIGNING.md"><strong>Code signing policy</strong></a> ·
   <a href="./CHANGELOG.md"><strong>Changelog</strong></a> ·
   <a href="https://github.com/eponce00/sidekick/issues"><strong>Issues</strong></a>
 </p>
@@ -38,7 +39,8 @@
 > SideKick is under active development and is permanently free. It will not use subscriptions,
 > advertising, paid signing certificates, or paid developer/store programs. Community packages
 > therefore have honest operating-system warnings: macOS builds are ad-hoc signed and not notarized,
-> and the GitHub Windows installer is unsigned. See [Install](#install) before downloading.
+> and the GitHub Windows installer is unsigned until free signing through SignPath Foundation is
+> active. See [Install](#install) before downloading.
 
 ## Why SideKick
 
@@ -171,11 +173,11 @@ and deletion behavior.
 
 The community distribution targets are deliberately narrow:
 
-| Platform             | Package                             | Trust and first launch                                                                                                                 |
-| -------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS, Apple Silicon | DMG or ZIP from GitHub Releases     | Ad-hoc signed and not notarized. macOS requires explicit per-app approval through Privacy & Security on first launch.                  |
-| Windows, x64         | NSIS installer from GitHub Releases | Unsigned; Windows SmartScreen may warn. A free Microsoft Store MSIX is the preferred future Windows channel.                           |
-| Linux, x64           | AppImage from GitHub Releases       | Self-contained and unsigned. Download it, make it executable with `chmod +x SideKick-*.AppImage`, then run it without root privileges. |
+| Platform             | Package                             | Trust and first launch                                                                                                                                 |
+| -------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| macOS, Apple Silicon | DMG or ZIP from GitHub Releases     | Ad-hoc signed and not notarized. macOS requires explicit per-app approval through Privacy & Security on first launch.                                  |
+| Windows, x64         | NSIS installer from GitHub Releases | Unsigned until SignPath Foundation signing is active; Windows SmartScreen may warn. See the [code signing policy](./docs/development/CODE_SIGNING.md). |
+| Linux, x64           | AppImage from GitHub Releases       | Self-contained and unsigned. Download it, make it executable with `chmod +x SideKick-*.AppImage`, then run it without root privileges.                 |
 
 Published versions are available from
 [GitHub Releases](https://github.com/eponce00/sidekick/releases). Each release includes exact

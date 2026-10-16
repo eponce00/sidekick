@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
-import { createWriteStream, mkdirSync } from 'fs'
+import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import type { IPty } from 'node-pty'
 import type { ShellCommandResult } from '../../shared/types'
@@ -60,6 +60,30 @@ function windowsScript(command: string, reportExitCodeOnStderr: boolean): string
       ${reportExitCodeOnStderr ? `[Console]::Error.WriteLine('${WINDOWS_EXIT_MARKER}' + $sidekickFinalExitCode)` : ''}
       exit $sidekickFinalExitCode
     }`
+}
+
+/**
+ * Runs a wrapped command from a file beside its log. Passing the script as an argument lets
+ * Windows argv quoting corrupt commands that contain quotes (for example `node -e "..."`), which
+ * could start an interactive child, report exit 0, and leave the workspace directory locked.
+ * -EncodedCommand avoided that, but antivirus heuristics count it as a malware trait, as they
+ * do -ExecutionPolicy Bypass, so the file is read into a script block instead of run with -File.
+ */
+function windowsScriptLaunch(
+  outputPath: string,
+  command: string,
+  reportExitCodeOnStderr: boolean
+): { args: string[]; scriptPath: string } {
+  const scriptPath = `${outputPath}.ps1`
+  writeFileSync(scriptPath, windowsScript(command, reportExitCodeOnStderr), 'utf8')
+  const literal = scriptPath.replaceAll("'", "''")
+  return {
+    scriptPath,
+    args: [
+      '-Command',
+      `& ([ScriptBlock]::Create([IO.File]::ReadAllText('${literal}', [Text.Encoding]::UTF8)))`
+    ]
+  }
 }
 
 export interface CommandRunOptions {
@@ -190,20 +214,14 @@ export class CommandRunner {
     const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_BYTES
     mkdirSync(dirname(options.outputPath), { recursive: true })
     const log = createWriteStream(options.outputPath, { flags: 'w' })
-    const [file, args] =
+    const launch =
       process.platform === 'win32'
-        ? [
-            'powershell.exe',
-            [
-              '-NoProfile',
-              // EncodedCommand avoids Windows argv quoting corrupting commands that contain
-              // quotes. Unlike the pipe path there is no -NonInteractive: a prompt here can
-              // be answered.
-              '-EncodedCommand',
-              Buffer.from(windowsScript(options.command, false), 'utf16le').toString('base64')
-            ]
-          ]
-        : ['bash', ['-c', options.command]]
+        ? windowsScriptLaunch(options.outputPath, options.command, false)
+        : undefined
+    const [file, args] = launch
+      ? // Unlike the pipe path there is no -NonInteractive: a prompt here can be answered.
+        ['powershell.exe', ['-NoProfile', ...launch.args]]
+      : ['bash', ['-c', options.command]]
     const terminal = ptyModule.spawn(file, args, {
       name: 'xterm-256color',
       cols: TERMINAL_COLUMNS,
@@ -239,6 +257,7 @@ export class CommandRunner {
         this.active.delete(options.id)
         dataSubscription.dispose()
         exitSubscription.dispose()
+        if (launch) rmSync(launch.scriptPath, { force: true })
         log.end(() => {
           resolve({
             ...result,
@@ -306,18 +325,13 @@ export class CommandRunner {
     mkdirSync(dirname(options.outputPath), { recursive: true })
     const log = createWriteStream(options.outputPath, { flags: 'w' })
     const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash'
-    const args =
-      process.platform === 'win32'
-        ? [
-            '-NoProfile',
-            '-NonInteractive',
-            // EncodedCommand avoids Windows argv quoting corrupting commands that themselves
-            // contain quotes (for example `node -e "..."`). Corruption could start an
-            // interactive child, report exit 0, and leave the workspace directory locked.
-            '-EncodedCommand',
-            Buffer.from(windowsScript(options.command, true), 'utf16le').toString('base64')
-          ]
-        : ['-c', options.command]
+    const launch =
+      process.platform === 'win32' && !options.process
+        ? windowsScriptLaunch(options.outputPath, options.command, true)
+        : undefined
+    const args = launch
+      ? ['-NoProfile', '-NonInteractive', ...launch.args]
+      : ['-c', options.command]
     const child = spawn(options.process?.file ?? shell, options.process?.args ?? args, {
       cwd: options.cwd,
       windowsHide: true,
@@ -355,6 +369,7 @@ export class CommandRunner {
         if (forceKillTimer) clearTimeout(forceKillTimer)
         if (settleTimer) clearTimeout(settleTimer)
         this.active.delete(options.id)
+        if (launch) rmSync(launch.scriptPath, { force: true })
         log.end(() => {
           resolve({
             ...result,

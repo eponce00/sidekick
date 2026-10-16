@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: July 22, 2026
+Last updated: October 15, 2026
 
 SideKick is a local-first desktop application. It does not require a SideKick account and does not
 send application data through a SideKick-operated backend. The app does not include analytics,
@@ -46,7 +46,8 @@ the trusted main process to the configured provider endpoint.
 ### Search, pages, images, and maps
 
 Built-in web search sends the search text directly to public DuckDuckGo, Brave Search, and Bing
-surfaces. Opening or reading a result contacts the result site's server. Image search and retrieval
+surfaces. Turning off **Let the agent search the web** in Settings › General › Web search removes the
+agent's web search, image search, and page-reading tools. Opening or reading a result contacts the result site's server. Image search and retrieval
 can contact DuckDuckGo and the selected image host. Interactive or linked map content can contact
 the map provider shown in the interface. These services receive ordinary network information such
 as your IP address and may apply their own cookies, logging, and privacy policies.
@@ -76,7 +77,9 @@ disconnect connectors you no longer use.
 ### Updates and operating-system services
 
 Installed builds contact the public GitHub Releases feed to check for, download, and install
-updates. No GitHub account or bundled GitHub token is used. If notifications are enabled, SideKick
+updates, after startup and every six hours. Turning off **Check automatically** in Settings › General ›
+Updates stops those checks; **Check now** there, or **Check for updates** in the command palette,
+still asks once. No GitHub account or bundled GitHub token is used. If notifications are enabled, SideKick
 uses the operating system's notification service. Clipboard operations occur only after an
 explicit copy action.
 

@@ -190,7 +190,10 @@ async function bootstrapApplication(): Promise<void> {
     },
     disabledReason: process.argv.includes('--sidekick-packaged-smoke-test')
       ? 'development'
-      : undefined
+      : undefined,
+    automaticChecks: () =>
+      (appState.store?.get('settings') as { automaticUpdateChecks?: boolean } | undefined)
+        ?.automaticUpdateChecks !== false
   })
   registerAppUpdateHandlers(appUpdateService)
   // Smoke and end-to-end runs must not start a large background download.

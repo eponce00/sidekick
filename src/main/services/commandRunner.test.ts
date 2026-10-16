@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -84,6 +84,42 @@ describe('CommandRunner', () => {
       })
       expect(result.success).toBe(false)
       expect(result.exitCode).toBe(7)
+    }
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'runs quotes, pipelines, and non-ASCII text intact without -EncodedCommand, then removes its script',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "sidekick command's "))
+      tempDirs.push(dir)
+      const outputPath = join(dir, 'quoted.log')
+      const command = [
+        `node -e "process.stdout.write('node:' + JSON.stringify({ quoted: 'yes' }))"`,
+        `1..3 | Where-Object { $_ -gt 1 } | ForEach-Object { "item:$_" }`,
+        // Console output uses the OEM code page; a file shows the script text arrived intact.
+        `[IO.File]::WriteAllText((Join-Path $PWD 'unicode.txt'), 'café ✓')`,
+        `(Get-CimInstance Win32_Process -Filter "ProcessId=$PID").CommandLine`
+      ].join('; ')
+      for (const terminal of [false, true]) {
+        const result = await new CommandRunner().run({
+          id: `quoted-${terminal}`,
+          command,
+          cwd: dir,
+          timeoutMs: 15_000,
+          outputPath,
+          terminal
+        })
+        expect(result.success, result.stderr).toBe(true)
+        const output = result.stdout
+          .replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[a-zA-Z]`, 'g'), '')
+          .replace(/\r?\n/g, '\n')
+        expect(output).toContain('node:{"quoted":"yes"}')
+        expect(output).toContain('item:2\n')
+        expect(output).toContain('item:3')
+        expect(readFileSync(join(dir, 'unicode.txt'), 'utf8')).toBe('café ✓')
+        expect(output).not.toMatch(/EncodedCommand|ExecutionPolicy/i)
+        expect(existsSync(`${outputPath}.ps1`)).toBe(false)
+      }
     }
   )
 

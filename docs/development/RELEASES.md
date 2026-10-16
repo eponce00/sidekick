@@ -24,9 +24,14 @@ The Windows Store route may require a maintainer to complete Microsoft's free id
 and reserve the product identity, but it must not require payment. If Microsoft makes that route
 paid, the GitHub community installer remains the supported fallback.
 
-[SignPath Foundation](https://signpath.org/) may be evaluated as an optional free open-source
-Authenticode service. It is not part of the core release contract because acceptance and continued
-service are controlled by a third party; SideKick must remain releasable when it is unavailable.
+[SignPath Foundation](https://signpath.org/) provides free Authenticode signing to open-source
+projects, and SideKick has applied. The release workflow signs the Windows installer through it when
+the repository variable `SIGNPATH_ORGANIZATION_ID` is set, together with `SIGNPATH_PROJECT_SLUG`,
+`SIGNPATH_SIGNING_POLICY_SLUG`, and the secret `SIGNPATH_API_TOKEN`; each request waits up to an hour
+for an approver. Without those values the installer is built unsigned, so SideKick remains
+releasable if the service is unavailable. Signing stays outside the core release contract because a
+third party controls acceptance and continued service. The [code signing policy](CODE_SIGNING.md)
+names the team roles and what may be signed.
 
 The macOS warning cannot be removed by a technical workaround without either paying Apple or asking
 users to weaken system-wide security. SideKick does neither. Contributors may build from source,
@@ -103,8 +108,9 @@ SHA256SUMS.txt
 
 The macOS application uses an ad-hoc code signature so its nested Electron bundle has a complete
 code-signing structure, but it has no Apple Developer ID and no notarization ticket. The Windows
-installer has no Authenticode signature. The workflow verifies both facts so an accidental local
-identity or an undocumented paid dependency cannot change the release contract.
+installer has no Authenticode signature unless SignPath Foundation signed it. The workflow verifies
+these facts so an accidental local identity or an undocumented paid dependency cannot change the
+release contract.
 
 Application branding has one vector master at `build/icon.svg`. Its reviewed ICNS, ICO, and runtime
 PNG derivatives are checked in and hash-validated so clean release runners do not depend on an icon
@@ -142,7 +148,8 @@ A manual workflow run builds and tests packages without publishing them. A stabl
 
 All three platform jobs run typechecks, lint, documentation validation, the test suites, release
 validator tests, a packaged build, an isolated real-Electron critical journey, a packaged-content
-audit, and a launch smoke test. Windows verifies that its NSIS installer is intentionally unsigned.
+audit, and a launch smoke test. Windows verifies that its NSIS installer is unsigned, or, with SignPath configured, that it
+carries a valid SignPath Foundation signature.
 macOS verifies strict bundle integrity, an ad-hoc signature, and the absence of an Apple certificate
 authority. Linux extracts and validates its AppImage metadata and icon identity, then launches the
 final AppImage under Xvfb.

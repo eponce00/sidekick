@@ -150,7 +150,8 @@ Windows uses `npm run smoke:packaged:windows`. Linux uses
 `xvfb-run --auto-servernum npm run smoke:packaged:linux` and validates the final AppImage with
 `npm run validate:linux-appimage -- <appimage-path>`. The community release workflow additionally
 proves an exact artifact set and hashes, GitHub/Sigstore provenance, an ad-hoc-only macOS signature,
-an intentionally unsigned Windows installer, the Linux desktop/icon identity, and application
+a Windows installer that is unsigned or, once configured, carries a valid SignPath Foundation
+signature, the Linux desktop/icon identity, and application
 launch on all three operating systems. See [Releases](RELEASES.md) for the exact artifact and
 physical-machine release contract.
 

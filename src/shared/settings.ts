@@ -113,6 +113,10 @@ export interface ProviderSettings {
   notificationSoundEnabled?: boolean
   /** Local dictation and read-aloud, and the background download of their models. On unless false. */
   voiceEnabled?: boolean
+  /** Lets the agent search the web through public search engines. On unless false. */
+  webSearchEnabled?: boolean
+  /** Checks GitHub Releases for updates after startup and every six hours. On unless false. */
+  automaticUpdateChecks?: boolean
   manualLocation?: string
   fastModelOllama?: string
   fastModelOllamaCloud?: string

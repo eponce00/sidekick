@@ -274,6 +274,17 @@ function SettingsModal({
             {(settings.voiceEnabled ?? true) && <VoiceSettings />}
           </SettingCard>
           <SettingCard
+            title="Web search"
+            description="Search without an account or API key, through public search engines."
+          >
+            <ToggleField
+              label="Let the agent search the web"
+              hint="Sends search text to DuckDuckGo, Brave Search, and Bing, and reads the pages it finds. Off, the agent neither searches nor reads web pages; the browser panel still opens what you or the agent choose."
+              checked={settings.webSearchEnabled ?? true}
+              onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
+            />
+          </SettingCard>
+          <SettingCard
             title="Location"
             description="Optional context for weather, travel, and local recommendations."
           >
@@ -293,6 +304,14 @@ function SettingsModal({
             title="Updates"
             description="Check the public project releases. Installation stays under your control."
           >
+            <ToggleField
+              label="Check automatically"
+              hint="Asks GitHub Releases for a newer version after startup and every six hours. Off, SideKick checks only when you choose Check now."
+              checked={settings.automaticUpdateChecks ?? true}
+              onChange={(automaticUpdateChecks) =>
+                setSettings({ ...settings, automaticUpdateChecks })
+              }
+            />
             <AppUpdateSettings />
           </SettingCard>
           <SettingCard

@@ -56,7 +56,10 @@ module.exports = {
     artifactName: '${productName}-${version}-windows-x64-setup.${ext}',
     shortcutName: identity.productName,
     uninstallDisplayName: identity.productName,
-    createDesktopShortcut: 'always'
+    createDesktopShortcut: 'always',
+    // Shown on a first install only; an update skips it. Code signing through SignPath
+    // Foundation requires the privacy terms to be shown during installation.
+    license: 'build/installer-notice.txt'
   },
   mac: {
     // Explicit ad-hoc signing also works when CI disables identity discovery.

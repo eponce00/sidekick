@@ -1,0 +1,33 @@
+SideKick - before you install
+
+SideKick is free, open-source software under the GNU General Public License,
+version 3 or later. The full license is installed with the application.
+
+PRIVACY
+
+SideKick runs on this computer. It has no SideKick account, no analytics, no
+advertising, and no remote crash reporting, and it sends nothing to a server
+run by the SideKick project.
+
+It contacts other services only as follows:
+
+- The model providers and connectors you add receive what a request needs:
+  your prompt, conversation context, and the files and tool results involved.
+- Web search sends search text to DuckDuckGo, Brave Search, and Bing, and the
+  agent reads the pages it finds. Turn it off in Settings > General >
+  Web search.
+- Update checks ask GitHub Releases for a newer version after startup and
+  every six hours. Turn them off in Settings > General > Updates; you can
+  still check for updates yourself.
+- Links in replies show the linked site's icon, fetched from that site.
+- Dictation and read-aloud download their speech models once. Turn voice off
+  in Settings > General > Voice.
+
+The agent can run commands, change files in projects you open, and use a
+browser, within the approval mode you choose in Settings > Agent.
+
+Uninstalling SideKick keeps your conversations and settings so a reinstall can
+use them. To remove them, delete %APPDATA%\SideKick after uninstalling.
+
+The full privacy policy:
+https://github.com/eponce00/sidekick/blob/main/PRIVACY.md

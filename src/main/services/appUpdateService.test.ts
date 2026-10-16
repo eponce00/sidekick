@@ -52,6 +52,23 @@ describe('AppUpdateService', () => {
     expect(openExternal).toHaveBeenCalledWith(release.releaseUrl)
   })
 
+  it('skips automatic checks the user turned off, but still checks on request', async () => {
+    const fetchLatestRelease = vi.fn(async () => release)
+    let automatic = false
+    const service = new AppUpdateService({
+      fetchLatestRelease,
+      downloadUpdate: null,
+      automaticChecks: () => automatic
+    })
+
+    expect(await service.check(false)).toMatchObject({ status: 'idle' })
+    expect(fetchLatestRelease).not.toHaveBeenCalled()
+    expect(await service.check()).toMatchObject({ status: 'available' })
+    automatic = true
+    await service.check(false)
+    expect(fetchLatestRelease).toHaveBeenCalledTimes(2)
+  })
+
   it('reports current and older releases as up to date', async () => {
     const service = new AppUpdateService({
       fetchLatestRelease: async () => ({ ...release, version: '1.0.0' }),
