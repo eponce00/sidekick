@@ -482,6 +482,25 @@ const previewMessages = [
       {
         type: 'interaction' as const,
         interaction: {
+          id: 'preview-question-answered',
+          kind: 'question' as const,
+          status: 'resolved' as const,
+          request: {
+            questions: [
+              {
+                id: 'scope',
+                header: 'Redesign scope',
+                question: 'Which parts of the interface should this pass change?',
+                options: [{ label: 'Everything, all of it' }, { label: 'Only the conversation' }]
+              }
+            ]
+          },
+          response: { scope: 'Everything, all of it' }
+        }
+      },
+      {
+        type: 'interaction' as const,
+        interaction: {
           id: 'preview-question-1',
           kind: 'question' as const,
           status: 'pending' as const,

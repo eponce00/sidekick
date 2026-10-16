@@ -12,6 +12,18 @@
   counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
   front. A failed reply is announced the same way.
 
+## Questions from the agent
+
+When the agent needs a decision, it asks in the reply, one question at a time, with numbered
+choices and a field for an answer of your own.
+
+- **Answer:** click a choice, or press its number. Arrow keys move between the choices and the
+  field. A question that takes several answers has square marks and a **Next** or **Send answers**
+  button.
+- **Skip** passes over one question; **Cancel** dismisses all of them without answering.
+- **Once answered,** the question folds to one line showing what was asked and what you chose.
+  Select it to see every question and answer.
+
 ## Checked changes
 
 When a reply changed files in a project that defines a check, its footer says whether one ran
