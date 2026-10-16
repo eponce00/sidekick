@@ -47,6 +47,7 @@ import { PromptAdmissionStore } from './promptAdmissionStore'
 import {
   AgentRunKernel,
   type AgentKernelRunResult,
+  type AgentRunSteer,
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
@@ -148,6 +149,9 @@ export class AgentRuntimeCoordinator {
   private readonly skillAssetsPath: () => string
   private readonly subAgentSlots = new SubAgentSlots()
   private readonly occupancy = new WorkspaceOccupancy()
+  /** Messages from other chats waiting for a conversation, taken in before its first step. */
+  private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
+    null
 
   constructor(
     private readonly db: Database.Database,
@@ -596,8 +600,15 @@ export class AgentRuntimeCoordinator {
       }
       workspaceRoot = prepared.workspaceRoot
       this.activeConversations.set(input.id, { input, prepared, capture })
+      const inbox =
+        input.mode === 'research'
+          ? []
+          : (this.conversationInbox?.(input.conversationId, input.id) ?? [])
       const run = this.kernel.start({
         ...prepared.kernelInput,
+        ...(inbox.length
+          ? { initialSteers: [...(prepared.kernelInput.initialSteers ?? []), ...inbox] }
+          : {}),
         beforeModelStep: this.withBackgroundNotices(
           input.conversationId,
           prepared.kernelInput.beforeModelStep
@@ -1162,6 +1173,23 @@ export class AgentRuntimeCoordinator {
     // A wait in the run ends, so the message is read now rather than after it.
     if (accepted) this.tools.notifyUserMessage(input.runId)
     return { accepted }
+  }
+
+  setConversationInbox(
+    inbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null
+  ): void {
+    this.conversationInbox = inbox
+  }
+
+  /** Hands a message from another chat to the conversation's running run, ending a wait in it. */
+  steerConversation(conversationId: string, steer: AgentRunSteer): boolean {
+    for (const [runId, active] of this.activeConversations) {
+      if (active.input.conversationId !== conversationId) continue
+      const accepted = this.kernel.steer(runId, steer)
+      if (accepted) this.tools.notifyUserMessage(runId)
+      return accepted
+    }
+    return false
   }
 
   resolveInteraction(input: ResolveAgentInteractionInput): void {
