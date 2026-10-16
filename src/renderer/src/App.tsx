@@ -544,6 +544,10 @@ function App(): React.JSX.Element {
     () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree])),
     [worktrees]
   )
+  const worktreeSources = useMemo(
+    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree.sourceProjectId])),
+    [worktrees]
+  )
 
   const markConversationRead = useCallback((id: string): void => {
     setConversations((current) =>
@@ -1312,6 +1316,7 @@ function App(): React.JSX.Element {
       <main className="app-main">
         <Sidebar
           sessionStatuses={sessionStatuses.byId}
+          worktreeSources={worktreeSources}
           conversations={conversations}
           projects={projects}
           currentConversationId={currentConversationId}

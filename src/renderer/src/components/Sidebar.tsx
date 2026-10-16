@@ -91,10 +91,13 @@ interface SidebarProps {
   onOpenSchedules?: () => void
   /** Each chat's state from the main process; chats missing from it are idle. */
   sessionStatuses?: ReadonlyMap<string, SessionStatus>
+  /** The project each managed worktree project was made from, by worktree project id. */
+  worktreeSources?: ReadonlyMap<string, string>
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
 const NO_SESSION_STATUSES: ReadonlyMap<string, SessionStatus> = new Map()
+const NO_WORKTREE_SOURCES: ReadonlyMap<string, string> = new Map()
 
 const COLLAPSED_FAMILIES_STORAGE_KEY = 'collapsedSessionFamilies'
 
@@ -143,7 +146,8 @@ function Sidebar({
   onVisibleConversationOrderChange,
   scheduleNames,
   onOpenSchedules,
-  sessionStatuses = NO_SESSION_STATUSES
+  sessionStatuses = NO_SESSION_STATUSES,
+  worktreeSources = NO_WORKTREE_SOURCES
 }: SidebarProps): React.JSX.Element {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
@@ -400,11 +404,20 @@ function Sidebar({
   const standaloneMatches = filtering
     ? standaloneConversations.filter(familyMatches)
     : standaloneConversations
+  // A worker's worktree is a project too, but its chats are listed under their manager, so a
+  // worktree with no chat of its own would be an empty row.
+  const listedProjects = useMemo(
+    () =>
+      projects.filter(
+        (project) => !worktreeSources.has(project.id) || conversationsByProject.has(project.id)
+      ),
+    [conversationsByProject, projects, worktreeSources]
+  )
   const projectsWithMatches = filtering
-    ? projects.filter((project) =>
+    ? listedProjects.filter((project) =>
         (conversationsByProject.get(project.id) || []).some(familyMatches)
       )
-    : projects
+    : listedProjects
   // A filter shows every match, so it opens closed sections and projects.
   const isSectionCollapsed = (section: SidebarSection): boolean =>
     !filtering && collapsedSections.has(section)
@@ -577,9 +590,14 @@ function Sidebar({
       ? conversationById.get(conversation.started_by_conversation_id ?? '')
       : undefined
     // A worker elsewhere stays with its manager and names its own project instead.
+    // A worktree counts as the project it came from, so a worker in its own worktree of the
+    // manager's project is not "elsewhere".
+    const homeProjectId = (projectId: string | null): string | null =>
+      projectId ? (worktreeSources.get(projectId) ?? projectId) : null
+    const workerHome = homeProjectId(conversation.project_id)
     const projectTag =
-      manager && conversation.project_id && conversation.project_id !== manager.project_id
-        ? (projectNameById.get(conversation.project_id) ?? conversation.home_project_name)
+      manager && workerHome && workerHome !== homeProjectId(manager.project_id)
+        ? (projectNameById.get(workerHome) ?? conversation.home_project_name)
         : null
     const label =
       options.title ?? (options.worker && conversation.session_handle) ?? conversation.title
@@ -1153,16 +1171,16 @@ function Sidebar({
         <div className="conversation-list">
           {isCollapsed ? (
             <nav className="collapsed-sidebar-nav" aria-label="Sidebar destinations">
-              {projects.length > 0 && (
+              {listedProjects.length > 0 && (
                 <button
                   type="button"
                   className={compactDestination === 'projects' ? 'active' : ''}
                   onClick={onToggleCollapsed}
-                  title={`Projects (${projects.length})`}
-                  aria-label={`Expand projects, ${projects.length} total`}
+                  title={`Projects (${listedProjects.length})`}
+                  aria-label={`Expand projects, ${listedProjects.length} total`}
                 >
                   <FolderOpen size={16} />
-                  <span>{projects.length}</span>
+                  <span>{listedProjects.length}</span>
                 </button>
               )}
               {standaloneConversations.length > 0 && (
@@ -1203,7 +1221,7 @@ function Sidebar({
                   {(!filtering || projectsWithMatches.length > 0) && (
                     <section className="sidebar-section project-section">
                       <div className="sidebar-section-label sidebar-section-label-with-action">
-                        {sectionHeading('projects', 'Projects', projects.length)}
+                        {sectionHeading('projects', 'Projects', listedProjects.length)}
                         <button
                           type="button"
                           className="sidebar-section-create"
@@ -1214,7 +1232,7 @@ function Sidebar({
                           <Plus size={14} />
                         </button>
                       </div>
-                      {isSectionCollapsed('projects') ? null : projects.length === 0 ? (
+                      {isSectionCollapsed('projects') ? null : listedProjects.length === 0 ? (
                         <button
                           type="button"
                           className="project-empty-action"

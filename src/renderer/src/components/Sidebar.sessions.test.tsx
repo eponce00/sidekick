@@ -87,6 +87,8 @@ describe('Sidebar chat families', () => {
       unread?: Set<string>
       onOrder?: (ids: string[]) => void
       sessionStatuses?: ReadonlyMap<string, SessionStatus>
+      projects?: Project[]
+      worktreeSources?: ReadonlyMap<string, string>
     } = {}
   ): Promise<void> => {
     await act(async () => {
@@ -94,7 +96,8 @@ describe('Sidebar chat families', () => {
         <Sidebar
           sessionStatuses={props.sessionStatuses}
           conversations={props.conversations ?? family}
-          projects={[project('p1', 'alpha'), project('p2', 'beta')]}
+          projects={props.projects ?? [project('p1', 'alpha'), project('p2', 'beta')]}
+          worktreeSources={props.worktreeSources}
           currentConversationId={null}
           isCollapsed={false}
           busyConversationIds={props.busy ?? new Set()}
@@ -127,6 +130,32 @@ describe('Sidebar chat families', () => {
     )!
   const titles = (): string[] =>
     [...container.querySelectorAll('.conversation-title')].map((node) => node.textContent ?? '')
+
+  it('treats a worker in a worktree as in its source project, and hides worktree rows with no chats of their own', async () => {
+    await render({
+      conversations: [
+        chat('manager', { title: 'Design review' }),
+        worker('cards', 1, 'wt-alpha'),
+        worker('api', 2, 'wt-beta')
+      ],
+      projects: [
+        project('p1', 'alpha'),
+        project('p2', 'beta'),
+        project('wt-alpha', 'alpha (cards)'),
+        project('wt-beta', 'beta (api)')
+      ],
+      worktreeSources: new Map([
+        ['wt-alpha', 'p1'],
+        ['wt-beta', 'p2']
+      ])
+    })
+    // Same source project as the manager: no tag. Another source project: tagged with that name.
+    expect(row('cards').querySelector('.session-project-tag')).toBeNull()
+    expect(row('api').querySelector('.session-project-tag')?.textContent).toBe('beta')
+    expect(
+      [...container.querySelectorAll('.project-name')].map((node) => node.textContent)
+    ).toEqual(['alpha', 'beta'])
+  })
 
   it('nests workers under their manager by handle, with a tag for one in another project', async () => {
     await render()
