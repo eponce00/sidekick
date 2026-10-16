@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0 — 2026-10-15
+
+- Run the agent's Windows commands without `powershell -EncodedCommand`, a pattern antivirus
+  software associates with malware. Commands with quotes, pipelines, and non-English text run as
+  before.
+- Tell the agent why a command failed when it wrapped PowerShell in another `powershell -Command`,
+  which breaks its quotes and `$_`, instead of letting it retry until the loop guard stops the reply.
+- Turn off web search in **Settings → General → Web search**, and automatic update checks in
+  **Settings → General → Updates**. **Check now** still works.
+- Show a short privacy summary when SideKick is first installed on Windows.
+- Publish a [code signing policy](docs/development/CODE_SIGNING.md) and prepare Windows releases
+  for free signing through SignPath Foundation, and a Microsoft Store package that installs without
+  SmartScreen warnings. Both start once their accounts are set up; this release is still unsigned.
+
 ## 0.12.0 — 2026-10-09
 
 - Open devices and gateways on your local network in the browser. A plain HTTP address such as
