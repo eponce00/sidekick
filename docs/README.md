@@ -12,7 +12,7 @@ behavior, and the development guide when testing or publishing it.
 - [Permissions](user-guide/PERMISSIONS.md) — choose a policy and review authorization events.
 - [Plan mode](user-guide/PLAN_MODE.md) — approve a revisioned plan before implementation.
 - [Research](user-guide/RESEARCH.md) — run evidence-backed web research through the normal agent runtime.
-- [Collaboration](user-guide/COLLABORATION.md) — coordinate two independent project agents in one group.
+- [Chats that work together](user-guide/CHATS_THAT_WORK_TOGETHER.md) — let a chat start other chats, message them, and collect their reports.
 - [Search](user-guide/SEARCH.md) — understand web search, image search, and page retrieval.
 - [Visual browser](user-guide/BROWSER.md) — inspect, interact with, and verify pages in the native browser.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
@@ -49,7 +49,6 @@ behavior, and the development guide when testing or publishing it.
 ## Roadmap
 
 - [Roadmap](roadmap/ROADMAP.md) — incomplete work and release readiness.
-- [Multi-agent sessions](roadmap/MULTI_AGENT.md) — proposal: worker sessions, messaging and reports, replacing group chat.
 - [Worktrees for parallel agents](roadmap/WORKTREES.md) — how other harnesses isolate agents, and
   the worktree work still open.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.

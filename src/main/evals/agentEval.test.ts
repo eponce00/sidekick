@@ -17,7 +17,7 @@ describe('agent evaluation reports', () => {
       plannedMetrics: [
         { name: 'completion', category: 'provider', weight: 20 },
         { name: 'tool-loop', category: 'workspace', weight: 30 },
-        { name: 'follow-up', category: 'collaboration', weight: 50 }
+        { name: 'follow-up', category: 'planning', weight: 50 }
       ],
       metrics: [
         { name: 'completion', category: 'provider', passed: true, latencyMs: 10 },
@@ -60,7 +60,7 @@ describe('agent evaluation reports', () => {
           maxPoints: 30,
           score: 0
         },
-        collaboration: {
+        planning: {
           passedCases: 0,
           totalCases: 1,
           passRate: 0,

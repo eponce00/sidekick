@@ -3,7 +3,7 @@ import type { ModelProvider, PinnedModel } from '../models'
 import type { ProviderKind } from '../providerRegistry'
 import type { ConversationProjectTransition } from '../projects'
 
-export const AGENT_PROMPT_VERSION = 'sidekick-agent-v9'
+export const AGENT_PROMPT_VERSION = 'sidekick-agent-v10'
 
 export type HostPlatform = 'windows' | 'macos' | 'linux'
 export type ModelFamily =

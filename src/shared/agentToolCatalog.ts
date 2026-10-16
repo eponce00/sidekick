@@ -1400,87 +1400,6 @@ const createArtifact = definition(
   }
 )
 
-const collaborationRead = definition(
-  'collaboration_read',
-  'Read public group-chat messages posted since this agent cursor. Every public message is visible to every participant; mentions control wake-up only.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationSend = definition(
-  'collaboration_send',
-  'Post a concise message in the public group channel. Audience routes attention; it does not create a private chat. Use human for the user, other_agent for peers, and everyone only when both need the message. Never write @User or @Human in the message body.',
-  {
-    type: 'object',
-    required: ['message', 'audience', 'message_type'],
-    properties: {
-      message: {
-        type: 'string',
-        description: 'Natural group-chat text without @User or @Human placeholders.'
-      },
-      audience: {
-        type: 'string',
-        enum: ['human', 'other_agent', 'everyone'],
-        description:
-          'Who needs attention: human for the user, other_agent for peers, everyone for both.'
-      },
-      message_type: {
-        type: 'string',
-        enum: ['request', 'response', 'update', 'completion'],
-        description:
-          'request needs an answer or action; response answers one; update reports progress; completion is verified final status.'
-      }
-    }
-  }
-)
-
-const collaborationShareFile = definition(
-  'collaboration_share_file',
-  'Publish a bounded UTF-8 snapshot from this project to the group artifact exchange. This does not grant cross-project filesystem access.',
-  {
-    type: 'object',
-    required: ['file_path'],
-    properties: {
-      file_path: { type: 'string' },
-      name: { type: 'string', description: 'Optional display name.' }
-    }
-  }
-)
-
-const collaborationListArtifacts = definition(
-  'collaboration_list_artifacts',
-  'List file snapshots shared in this group.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationImportArtifact = definition(
-  'collaboration_import_artifact',
-  'Import a shared UTF-8 artifact into this project through the normal transactional write and permission policy.',
-  {
-    type: 'object',
-    required: ['artifact_id', 'destination_path'],
-    properties: {
-      artifact_id: { type: 'string' },
-      destination_path: { type: 'string' }
-    }
-  }
-)
-
-const collaborationStatus = definition(
-  'collaboration_status',
-  'Inspect the shared mission and participant states.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationClaimComplete = definition(
-  'collaboration_claim_complete',
-  'Record that assigned work is complete and summarize verification.',
-  {
-    type: 'object',
-    required: ['summary'],
-    properties: { summary: { type: 'string' } }
-  }
-)
-
 const coreEntries: AgentToolCatalogEntry[] = [
   entry(settingsReadTool, 'settings', 'read'),
   entry(settingsReferenceTool, 'settings', 'read'),
@@ -1571,16 +1490,6 @@ const sessionEntries: Record<'manager' | 'worker', AgentToolCatalogEntry[]> = {
   ]
 }
 
-const collaborationEntries: AgentToolCatalogEntry[] = [
-  entry(collaborationRead, 'collaboration', 'read'),
-  entry(collaborationSend, 'collaboration', 'write'),
-  entry(collaborationShareFile, 'collaboration', 'read'),
-  entry(collaborationListArtifacts, 'collaboration', 'read'),
-  entry(collaborationImportArtifact, 'collaboration', 'write'),
-  entry(collaborationStatus, 'collaboration', 'read'),
-  entry(collaborationClaimComplete, 'collaboration', 'write')
-]
-
 const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> = {
   conversation: [
     'workspace.read',
@@ -1602,19 +1511,6 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'tool.output',
     'settings',
     'sessions'
-  ],
-  collaboration: [
-    'workspace.read',
-    'workspace.write',
-    'code.intelligence',
-    'command.execute',
-    'command.background',
-    'wait',
-    'web.search',
-    'web.images',
-    'web.fetch',
-    'collaboration',
-    'tool.output'
   ],
   subagent: [
     'workspace.read',
@@ -1772,7 +1668,6 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
           )
         ]
       : []),
-    ...(options.surface === 'collaboration' ? collaborationEntries : []),
     ...(options.sessionRole ? sessionEntries[options.sessionRole] : []),
     // Skill tools are offered whether or not their skill is loaded yet. A tool
     // list that changes when a skill loads invalidates the provider's prompt
@@ -1821,7 +1716,7 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
     return 'workspace.read'
   }
-  return [...coreEntries, ...collaborationEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.capability
 }
@@ -1831,7 +1726,7 @@ export function toolRiskForName(name: string): ToolRisk | undefined {
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'
-  return [...coreEntries, ...collaborationEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.risk
 }

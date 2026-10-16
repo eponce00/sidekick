@@ -2,8 +2,8 @@
 
 SideKick `0.6.0` is in active development. The current codebase includes the local-first desktop
 runtime, provider connections, agent tools, projects, permissions, plan mode, persistent goals,
-research, native visual browser automation, conversation forks, managed worktrees, two-agent
-project collaboration, private workspace recovery, packaging, and a guarded public-release
+research, native visual browser automation, conversation forks, managed worktrees, chats that
+start and coordinate other chats, private workspace recovery, packaging, and a guarded public-release
 notification path. Release availability is tracked on the canonical
 [GitHub Releases page](https://github.com/eponce00/sidekick/releases).
 
@@ -30,8 +30,10 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   current command permission and project-containment boundaries.
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
-- Let a session start, message and receive reports from worker sessions, and fold group chat into
-  that model, as proposed in [Multi-agent sessions](MULTI_AGENT.md).
+- Finish chats that start other chats ([current behavior](../user-guide/CHATS_THAT_WORK_TOGETHER.md)):
+  Archive and Resume buttons for worker chats (the main process already supports both), an optional
+  token or cost budget per family that pauses it when reached, a Merge into base action for a finished worker, and letting a schedule decide
+  whether its runs may start chats.
 - Finish worktree isolation for parallel agents: schedule and manager-agent policies, group
   participants, archive cleanup, snapshots before forced removal, and the other items in
   [Worktrees for parallel agents](WORKTREES.md).
@@ -45,8 +47,8 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Expand protocol and visual contract suites so prompt/tool schemas, reconnect baselines, tool
   cards, diffs, approvals, and narrow layouts are reviewed as stable harness behavior.
 - Refine curated project memory with explicit sources, review, deletion, and prompt-budget controls.
-- Continue adversarial testing of provider dialect recovery, project symlinks, collaboration
-  conflicts, prompt injection, release validation, and crash recovery.
+- Continue adversarial testing of provider dialect recovery, project symlinks, conflicts
+  between chats, prompt injection, release validation, and crash recovery.
 - Ask OpenAI-compatible servers for schema-constrained tool arguments (`strict: true`) where they
   support it, as vLLM does, so a local model cannot send arguments its tool schema forbids. About
   one call in a thousand from a local model is still refused and retried today. It must stay

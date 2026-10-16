@@ -392,8 +392,6 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
-    'collaboration_send',
-    'collaboration_claim_complete',
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',
     'send_message',
@@ -833,7 +831,7 @@ export class AgentRunKernel {
         title,
         data: { entered: true, plannerModel: transition.model },
         modelContent: `<sidekick_plan_mode trust="app-policy">
-The user approved Plan mode. The runtime has removed all project mutations, shell commands, MCP calls, artifacts, collaboration writes, and child agents. Explore with the currently available read-only tools, ask focused questions when needed, and finish by calling present_plan with a verifiable contract. Do not implement yet.
+The user approved Plan mode. The runtime has removed all project mutations, shell commands, MCP calls, artifacts, and child agents. Explore with the currently available read-only tools, ask focused questions when needed, and finish by calling present_plan with a verifiable contract. Do not implement yet.
 </sidekick_plan_mode>`,
         startedAt
       })

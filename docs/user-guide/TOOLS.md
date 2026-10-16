@@ -6,18 +6,19 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 ## Core catalog
 
-| Capability      | Tools                                                                                                   | Availability                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Work tracking   | `manage_todo_list`                                                                                      | Conversation and Plan runs                                               |
-| Commands        | `shell`, `list_background_tasks`, `cancel_background_task`, `read_command_output`, `send_command_input` | Project-bound conversation, collaboration, and child-agent runs          |
-| Coordination    | `wait`                                                                                                  | All agent profiles                                                       |
-| Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                          |
-| Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                          |
-| SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first                 |
-| Human input     | `ask_user`                                                                                              | All interactive agent profiles                                           |
-| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                       |
-| Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, collaboration, child-agent, and research runs when enabled |
-| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                          |
+| Capability      | Tools                                                                                                   | Availability                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Work tracking   | `manage_todo_list`                                                                                      | Conversation and Plan runs                                             |
+| Commands        | `shell`, `list_background_tasks`, `cancel_background_task`, `read_command_output`, `send_command_input` | Project-bound conversation and child-agent runs                        |
+| Coordination    | `wait`                                                                                                  | All agent profiles                                                     |
+| Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                        |
+| Other chats     | `start_session`, `stop_session`, `send_message`, `list_sessions`, `import_attachment`                   | Conversation runs, not planning; workers only message, list and import |
+| Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                        |
+| SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first               |
+| Human input     | `ask_user`                                                                                              | All interactive agent profiles                                         |
+| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                     |
+| Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, child-agent, and research runs when enabled              |
+| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                        |
 
 Project-bound runs can also receive the bounded `read` tool and the file editor the model was
 trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,

@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { CollaborationGroup } from '../../../shared/collaboration'
 import type { Conversation } from '../types/app.types'
-import {
-  collaborationGroupStatus,
-  groupConversationsByRecency,
-  matchesStatusFilter,
-  storedSidebarView
-} from './sidebarView'
+import { groupConversationsByRecency, matchesStatusFilter, storedSidebarView } from './sidebarView'
 
 const chat = (id: string, updatedAt: Date, pinned = false): Conversation => ({
   id,
@@ -61,24 +55,6 @@ describe('status filter', () => {
     expect(matchesStatusFilter('waiting', 'waiting')).toBe(true)
     expect(matchesStatusFilter('waiting', 'working')).toBe(false)
     expect(matchesStatusFilter(null, 'unread')).toBe(false)
-  })
-
-  it('counts a paused group mission as needing attention', () => {
-    const group = (fields: Partial<CollaborationGroup>): CollaborationGroup =>
-      ({
-        activeMissionId: null,
-        activeMissionStatus: null,
-        unreadCompletionAt: null,
-        ...fields
-      }) as CollaborationGroup
-    expect(
-      collaborationGroupStatus(group({ activeMissionId: 'm', activeMissionStatus: 'paused' }))
-    ).toBe('waiting')
-    expect(
-      collaborationGroupStatus(group({ activeMissionId: 'm', activeMissionStatus: 'running' }))
-    ).toBe('working')
-    expect(collaborationGroupStatus(group({ unreadCompletionAt: 1 }))).toBe('unread')
-    expect(collaborationGroupStatus(group({}))).toBeNull()
   })
 
   it('falls back to the folder view for anything but a stored "recent"', () => {

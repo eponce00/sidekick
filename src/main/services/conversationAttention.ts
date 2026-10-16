@@ -11,8 +11,7 @@ export interface AttentionRunIdentity {
 
 /**
  * Follows the run event stream to know which conversations are paused on the
- * user. A sub-agent's request counts for the conversation it works for; group
- * sessions have their own surface and are left out.
+ * user. A sub-agent's request counts for the conversation it works for.
  */
 export class ConversationAttentionTracker {
   private readonly pending = new Map<
@@ -36,7 +35,7 @@ export class ConversationAttentionTracker {
     if (event.type === 'permission.requested' || event.type === 'question.requested') {
       if (typeof interactionId !== 'string' || this.pending.has(interactionId)) return
       const run = this.runIdentity(event.runId)
-      if (!run || run.surface === 'collaboration') return
+      if (!run) return
       const alreadyWaiting = this.isWaiting(run.threadId)
       const kind = event.payload.kind === 'question' ? 'question' : 'approval'
       this.pending.set(interactionId, { runId: event.runId, conversationId: run.threadId, kind })

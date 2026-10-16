@@ -7,10 +7,8 @@ import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
 import type { SettingsSection } from './components/SettingsModal'
 import ContextIndicator from './components/ContextIndicator'
-import GroupChatPanel from './components/GroupChatPanel'
 import SchedulesDialog from './components/SchedulesDialog'
 import { useSchedules } from './hooks/useSchedules'
-import GroupSetupDialog from './components/GroupSetupDialog'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
@@ -31,7 +29,6 @@ import {
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
 import type { PinnedModel } from './types/models.types'
-import type { CollaborationGroup, CreateCollaborationGroupInput } from '../../shared/collaboration'
 import {
   DEFAULT_TOOL_CALL_LIMIT,
   TOOL_CALL_LIMIT_POLICY_VERSION,
@@ -42,7 +39,6 @@ import {
 import { resolveFastModel } from './utils/fastModel'
 import { isPlaceholderConversationTitle } from './utils/chatPanelHelpers'
 import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
-import type { GroupAgentContextSnapshot } from './utils/groupAgentContext'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
@@ -108,20 +104,6 @@ function getPreviewTheme(): 'dark' | 'light' | null {
 
 const previewTheme = getPreviewTheme()
 
-function getPreviewGroupId(): string | null {
-  const params = new URLSearchParams(window.location.search)
-  return params.has('ui-preview') && params.get('view') === 'group' ? 'preview-group-1' : null
-}
-
-const previewGroupId = getPreviewGroupId()
-
-function getPreviewGroupSessionId(): string | null {
-  const params = new URLSearchParams(window.location.search)
-  return params.has('ui-preview') && params.get('view') === 'group' ? params.get('session') : null
-}
-
-const previewGroupSessionId = getPreviewGroupSessionId()
-
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
@@ -172,7 +154,6 @@ function App(): React.JSX.Element {
   const [pinnedModels, setPinnedModels] = useState<PinnedModel[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [pendingFork, setPendingFork] = useState<{
     conversationId: string
@@ -184,21 +165,9 @@ function App(): React.JSX.Element {
   const [worktreesDialog, setWorktreesDialog] = useState<{ focusProjectId: string | null } | null>(
     null
   )
-  const [currentGroupId, setCurrentGroupId] = useState<string | null>(previewGroupId)
-  const [currentGroupSessionId, setCurrentGroupSessionId] = useState<string | null>(
-    previewGroupSessionId
-  )
-  const currentGroupIdRef = useRef(currentGroupId)
-  const currentGroupSessionIdRef = useRef(currentGroupSessionId)
-  useEffect(() => {
-    currentGroupIdRef.current = currentGroupId
-    currentGroupSessionIdRef.current = currentGroupSessionId
-  }, [currentGroupId, currentGroupSessionId])
   const currentConversation = conversations.find(
     (conversation) => conversation.id === currentConversationId
   )
-  const [groupAgentContext, setGroupAgentContext] = useState<GroupAgentContextSnapshot | null>(null)
-  const [isGroupSetupOpen, setIsGroupSetupOpen] = useState(false)
   const [isSchedulesOpen, setIsSchedulesOpen] = useState(false)
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
@@ -250,7 +219,7 @@ function App(): React.JSX.Element {
     viewportWidth,
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
-    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelOpen: effectiveActivityPanelPinned,
     panelWidth: activityPanelWidth
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
@@ -258,7 +227,7 @@ function App(): React.JSX.Element {
     viewportWidth,
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
-    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelOpen: effectiveActivityPanelPinned,
     panelWidth: activityPanelWidth
   }).sidebarAutoCollapsed
   useEffect(() => {
@@ -390,15 +359,13 @@ function App(): React.JSX.Element {
           }
         }
 
-        const [conversationsList, projectsList, groupsList] = await Promise.all([
+        const [conversationsList, projectsList] = await Promise.all([
           window.api.conversations.list(),
           window.api.projects.list(),
-          window.api.collaboration.listGroups(),
           window.api.workspace.setPath(null)
         ])
         setConversations(conversationsList)
         setProjects(projectsList)
-        setGroups(groupsList)
 
         // Local data is ready — show the app immediately
         setIsReady(true)
@@ -418,56 +385,6 @@ function App(): React.JSX.Element {
 
     loadData()
   }, [])
-
-  useEffect(
-    () =>
-      window.api.collaboration.onChanged(() => {
-        void window.api.collaboration.listGroups().then((nextGroups) => {
-          const openGroupId = currentGroupIdRef.current
-          const openSessionId = currentGroupSessionIdRef.current
-          if (!openGroupId) {
-            setGroups(nextGroups)
-            return
-          }
-          setGroups(
-            nextGroups.map((group) => {
-              if (group.id !== openGroupId) return group
-              if (openSessionId) {
-                const openSession = group.agentSessions.find(
-                  (session) => session.id === openSessionId
-                )
-                if (!openSession?.unreadCompletionAt) return group
-                void window.api.collaboration.markAgentSessionRead(openSessionId)
-                return {
-                  ...group,
-                  agentSessions: group.agentSessions.map((session) =>
-                    session.id === openSessionId
-                      ? { ...session, unreadCompletionAt: null }
-                      : session
-                  )
-                }
-              }
-              if (
-                !group.unreadCompletionAt &&
-                !group.agentSessions.some((session) => session.unreadCompletionAt)
-              ) {
-                return group
-              }
-              void window.api.collaboration.markGroupRead(openGroupId)
-              return {
-                ...group,
-                unreadCompletionAt: null,
-                agentSessions: group.agentSessions.map((session) => ({
-                  ...session,
-                  unreadCompletionAt: null
-                }))
-              }
-            })
-          )
-        })
-      }),
-    []
-  )
 
   useEffect(
     () =>
@@ -637,40 +554,6 @@ function App(): React.JSX.Element {
     void window.api.conversations.markRead(id)
   }, [])
 
-  const markGroupRead = useCallback((id: string): void => {
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === id
-          ? {
-              ...group,
-              unreadCompletionAt: null,
-              agentSessions: group.agentSessions.map((session) => ({
-                ...session,
-                unreadCompletionAt: null
-              }))
-            }
-          : group
-      )
-    )
-    void window.api.collaboration.markGroupRead(id)
-  }, [])
-
-  const markGroupSessionRead = useCallback((groupId: string, sessionId: string): void => {
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === groupId
-          ? {
-              ...group,
-              agentSessions: group.agentSessions.map((session) =>
-                session.id === sessionId ? { ...session, unreadCompletionAt: null } : session
-              )
-            }
-          : group
-      )
-    )
-    void window.api.collaboration.markAgentSessionRead(sessionId)
-  }, [])
-
   const handleNewConversation = async (projectId: string | null = null): Promise<void> => {
     await activateProjectWorkspace(projectId)
     const newConv = await window.api.conversations.create(
@@ -680,9 +563,6 @@ function App(): React.JSX.Element {
     )
     setConversations((prev) => [newConv, ...prev])
     setCurrentConversationId(newConv.id)
-    setCurrentGroupId(null)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
     setTokenCounts({ current: 0, max: 4096 })
     setConversationCost(0)
     void refreshProjects()
@@ -693,76 +573,8 @@ function App(): React.JSX.Element {
     markConversationRead(id)
     await activateProjectWorkspace(conversation?.project_id)
     setCurrentConversationId(id)
-    setCurrentGroupId(null)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
     restoreTokenCounts(id)
     setConversationCost(0)
-  }
-
-  const handleSelectGroup = async (id: string): Promise<void> => {
-    markGroupRead(id)
-    setCurrentConversationId(null)
-    setCurrentGroupId(id)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
-    await window.api.workspace.setPath(null)
-  }
-
-  const handleSelectGroupSession = async (groupId: string, sessionId: string): Promise<void> => {
-    const session = groups
-      .find((group) => group.id === groupId)
-      ?.agentSessions.find((candidate) => candidate.id === sessionId)
-    markGroupSessionRead(groupId, sessionId)
-    setCurrentConversationId(null)
-    setCurrentGroupId(groupId)
-    setCurrentGroupSessionId(sessionId)
-    setGroupAgentContext(null)
-    await activateProjectWorkspace(session?.projectId ?? null)
-  }
-
-  const handleRenameGroupSession = async (id: string, title: string): Promise<void> => {
-    const updated = await window.api.collaboration.updateAgentSession(id, { title })
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === updated.groupId
-          ? {
-              ...group,
-              agentSessions: group.agentSessions.map((session) =>
-                session.id === updated.id ? updated : session
-              )
-            }
-          : group
-      )
-    )
-  }
-
-  const handleRenameGroup = async (id: string, title: string): Promise<void> => {
-    const updated = await window.api.collaboration.updateGroup(id, { title })
-    setGroups((current) =>
-      current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group))
-    )
-  }
-
-  const handleCreateGroup = async (input: CreateCollaborationGroupInput): Promise<void> => {
-    const detail = await window.api.collaboration.createGroup(input)
-    setGroups(await window.api.collaboration.listGroups())
-    setCurrentConversationId(null)
-    setCurrentGroupId(detail.group.id)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
-    setIsGroupSetupOpen(false)
-    await window.api.workspace.setPath(null)
-  }
-
-  const handleDeleteGroup = async (id: string): Promise<void> => {
-    await window.api.collaboration.deleteGroup(id)
-    setGroups((current) => current.filter((group) => group.id !== id))
-    if (currentGroupId === id) {
-      setCurrentGroupId(null)
-      setCurrentGroupSessionId(null)
-      setGroupAgentContext(null)
-    }
   }
 
   const handleDeleteConversation = async (id: string): Promise<void> => {
@@ -1011,7 +823,7 @@ function App(): React.JSX.Element {
     setIsSettingsOpen(true)
   }
   const showAdjacentConversation = (direction: 1 | -1): void => {
-    const shown = currentGroupId ? null : currentConversationId
+    const shown = currentConversationId
     const target = adjacentConversationId(sidebarOrderRef.current, shown, direction)
     if (target && target !== shown) void handleSelectConversation(target)
   }
@@ -1059,16 +871,13 @@ function App(): React.JSX.Element {
         conversations,
         projects,
         sidebarOrder: sidebarOrderRef.current,
-        currentConversationId: currentGroupId ? null : currentConversationId,
+        currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
-        browserPanelOpen: currentGroupId
-          ? null
-          : effectiveActivityPanelPinned && activityTabRef.current === 'browser',
+        browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
         voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
         theme,
         actions: {
           newChat: () => void handleNewConversation(null),
-          newGroupChat: () => setIsGroupSetupOpen(true),
           openSchedules: () => setIsSchedulesOpen(true),
           openProject: () => void handleOpenProject(false),
           openSettings,
@@ -1172,7 +981,7 @@ function App(): React.JSX.Element {
       const notify = shouldNotifyAttention({
         notificationsEnabled: settings.notificationsEnabled ?? true,
         appFocused: document.hasFocus(),
-        shownConversationId: currentGroupIdRef.current ? null : currentConversationIdRef.current,
+        shownConversationId: currentConversationIdRef.current,
         conversationId: alert.conversationId
       })
       if (!notify) return
@@ -1206,6 +1015,17 @@ function App(): React.JSX.Element {
       .catch((error) => console.error('[Schedules] Could not refresh chats', error))
   }, [currentConversationIdRef, markConversationRead])
   const { schedules } = useSchedules(refreshConversationsForSchedules)
+  // Chats another chat starts are created in the main process, often in a new worktree project,
+  // so the lists here learn about them from the family change rather than from a user action.
+  useEffect(
+    () =>
+      window.api.sessions.onChanged((change) => {
+        if (change.kind !== 'family') return
+        refreshConversationsForSchedules()
+        void refreshProjects()
+      }),
+    [refreshConversationsForSchedules, refreshProjects]
+  )
   const scheduleNames = useMemo(
     () => new Map(schedules.map(({ id, name }) => [id, name])),
     [schedules]
@@ -1257,10 +1077,6 @@ function App(): React.JSX.Element {
       )
     }
   })
-  const currentGroup = groups.find((group) => group.id === currentGroupId)
-  const currentGroupSession = currentGroup?.agentSessions.find(
-    (session) => session.id === currentGroupSessionId
-  )
   const unreadConversationIds = useMemo(
     () =>
       new Set(
@@ -1271,11 +1087,9 @@ function App(): React.JSX.Element {
     [conversations]
   )
   const activeProject = projectById(currentConversation?.project_id)
-  const titleBarContext = currentGroupId
-    ? currentGroupSession?.title || currentGroup?.title || 'Group chat'
-    : currentConversationId
-      ? currentConversation?.title || 'Conversation'
-      : null
+  const titleBarContext = currentConversationId
+    ? currentConversation?.title || 'Conversation'
+    : null
   const historyWorkspaceFolder =
     activeProject?.folder_path ?? currentConversation?.home_workspace_root ?? null
   const historyReadOnly = !activeProject && Boolean(currentConversation?.home_workspace_root)
@@ -1435,27 +1249,15 @@ function App(): React.JSX.Element {
         </div>
         <div className="title-bar-right">
           <div className="title-bar-actions">
-            {!currentGroupId && (
-              <ContextIndicator
-                currentTokens={tokenCounts.current}
-                maxTokens={tokenCounts.max}
-                selectedModel={selectedModel}
-                model={selectedPinnedModel}
-                autoCompactEnabled={settings.autoCompactEnabled ?? true}
-                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-                conversationCost={conversationCost}
-              />
-            )}
-            {currentGroupSession && groupAgentContext?.sessionId === currentGroupSession.id && (
-              <ContextIndicator
-                currentTokens={groupAgentContext.currentTokens}
-                maxTokens={groupAgentContext.maxTokens}
-                selectedModel={groupAgentContext.selectedModel}
-                model={groupAgentContext.model}
-                autoCompactEnabled={settings.autoCompactEnabled ?? true}
-                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              />
-            )}
+            <ContextIndicator
+              currentTokens={tokenCounts.current}
+              maxTokens={tokenCounts.max}
+              selectedModel={selectedModel}
+              model={selectedPinnedModel}
+              autoCompactEnabled={settings.autoCompactEnabled ?? true}
+              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
+              conversationCost={conversationCost}
+            />
             <button
               className="theme-toggle-button"
               onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
@@ -1512,32 +1314,21 @@ function App(): React.JSX.Element {
           sessionStatuses={sessionStatuses.byId}
           conversations={conversations}
           projects={projects}
-          groups={groups}
           currentConversationId={currentConversationId}
-          currentGroupId={currentGroupId}
-          currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
           platform={platform}
           busyConversationIds={runningConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}
-          onSelectGroup={(id) => void handleSelectGroup(id)}
-          onSelectGroupSession={(groupId, sessionId) =>
-            void handleSelectGroupSession(groupId, sessionId)
-          }
           onToggleCollapsed={toggleSidebar}
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
-          onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onDeleteConversation={handleDeleteConversation}
-          onDeleteGroup={(id) => void handleDeleteGroup(id)}
           onDeleteAllConversations={handleDeleteAllConversations}
           onForkConversation={handleForkConversation}
           onRenameConversation={handleUpdateConversationTitle}
-          onRenameGroup={(id, title) => void handleRenameGroup(id, title)}
-          onRenameGroupSession={(id, title) => void handleRenameGroupSession(id, title)}
           onMoveConversation={(input) => void handleMoveConversation(input)}
           onRenameProject={(id, name) => void handleRenameProject(id, name)}
           onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
@@ -1548,78 +1339,44 @@ function App(): React.JSX.Element {
           onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
         <div className="conversation-panel-stack">
-          {currentGroupId && (
-            <GroupChatPanel
-              groupId={currentGroupId}
-              focusedSessionId={currentGroupSessionId}
-              onFocusSession={(sessionId) => {
-                setGroupAgentContext(null)
-                setCurrentGroupSessionId(sessionId)
-                if (sessionId) markGroupSessionRead(currentGroupId!, sessionId)
-              }}
-              pinnedModels={pinnedModels}
-              autoCompactEnabled={settings.autoCompactEnabled ?? true}
-              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              onFocusedSessionContextChange={setGroupAgentContext}
-              onOpenModelSearch={() => {
-                setSettingsInitialSection('providers')
-                setIsSettingsOpen(true)
-              }}
-            />
-          )}
-          {!currentGroupId &&
-            !currentConversationId &&
-            renderConversationPanel(null, draftPanelKey, true)}
+          {!currentConversationId && renderConversationPanel(null, draftPanelKey, true)}
           {mountedConversationIds.map((id) => {
             const conversation = conversations.find((candidate) => candidate.id === id)
             if (!conversation) return null
             return renderConversationPanel(
               conversation,
               conversationPanelKeys[id] ?? `conversation:${id}`,
-              !currentGroupId && currentConversationId === id
+              currentConversationId === id
             )
           })}
         </div>
-        {!currentGroupId && (
-          <ActivityPanel
-            isPinned={effectiveActivityPanelPinned}
-            conversationId={currentConversationId}
-            onTogglePin={toggleActivityPanel}
-            tabRequest={activityTabRequest}
-            onActiveTabChange={handleActivityTabChange}
-            maxWidth={layout.panelMaxWidth}
-            onWidthChange={setActivityPanelWidth}
-            onOpenConversation={(id) => void handleSelectConversation(id)}
-            focusChainTodos={
-              currentConversationId
-                ? focusChainTodosByConversation[currentConversationId] || []
-                : []
-            }
-            workspaceFolder={activeProject?.folder_path ?? null}
-            historyWorkspaceFolder={historyWorkspaceFolder}
-            historyReadOnly={historyReadOnly}
-            checkpointVersion={checkpointVersion}
-            restoredHash={restoredHash}
-            onGoToCheckpoint={(hash) => {
-              setCheckpointVersion((v) => v + 1)
-              setRestoredHash(hash)
-              setChatRollbackHash(hash)
-            }}
-            titleModel={selectedPinnedModel}
-            fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
-            isAgentBusy={isAgentBusy}
-          />
-        )}
+        <ActivityPanel
+          isPinned={effectiveActivityPanelPinned}
+          conversationId={currentConversationId}
+          onTogglePin={toggleActivityPanel}
+          tabRequest={activityTabRequest}
+          onActiveTabChange={handleActivityTabChange}
+          maxWidth={layout.panelMaxWidth}
+          onWidthChange={setActivityPanelWidth}
+          onOpenConversation={(id) => void handleSelectConversation(id)}
+          focusChainTodos={
+            currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
+          }
+          workspaceFolder={activeProject?.folder_path ?? null}
+          historyWorkspaceFolder={historyWorkspaceFolder}
+          historyReadOnly={historyReadOnly}
+          checkpointVersion={checkpointVersion}
+          restoredHash={restoredHash}
+          onGoToCheckpoint={(hash) => {
+            setCheckpointVersion((v) => v + 1)
+            setRestoredHash(hash)
+            setChatRollbackHash(hash)
+          }}
+          titleModel={selectedPinnedModel}
+          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          isAgentBusy={isAgentBusy}
+        />
       </main>
-
-      <GroupSetupDialog
-        isOpen={isGroupSetupOpen}
-        projects={projects}
-        models={pinnedModels}
-        selectedModelId={selectedModel}
-        onCancel={() => setIsGroupSetupOpen(false)}
-        onCreate={handleCreateGroup}
-      />
 
       {isSchedulesOpen && (
         <SchedulesDialog

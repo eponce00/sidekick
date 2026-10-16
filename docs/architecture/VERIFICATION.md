@@ -77,7 +77,7 @@ When a run changed the workspace and attempts to finish:
 
 The final message shows the verification result as one status in its footer, reconstructed from
 the durable run event, with the checks, the pass's steps, and any note behind it. A pass still
-running shows inline as live progress. Direct chats, collaboration participants, and child agents all use the same
+running shows inline as live progress. Direct chats, worker chats, and child agents all use the same
 `AgentToolRuntime` session and `AgentRunKernel` controller.
 
 ## Limits

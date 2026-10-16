@@ -382,72 +382,6 @@ interface WorkspaceAPI {
   watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
 
-interface CollaborationAPI {
-  listGroups: () => Promise<import('../shared/collaboration').CollaborationGroup[]>
-  getGroup: (
-    id: string
-  ) => Promise<import('../shared/collaboration').CollaborationGroupDetail | null>
-  getAgentSession: (
-    id: string
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSession | null>
-  updateAgentSession: (
-    id: string,
-    input: import('../shared/collaboration').UpdateCollaborationAgentSessionInput
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSession>
-  markGroupRead: (id: string) => Promise<{ success: boolean }>
-  markAgentSessionRead: (id: string) => Promise<{ success: boolean }>
-  listAgentSessionMessages: (
-    sessionId: string,
-    afterCreatedAt?: number
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSessionMessage[]>
-  listEvents: (
-    groupId: string,
-    afterSeq?: number
-  ) => Promise<import('../shared/collaboration').CollaborationEvent[]>
-  createGroup: (
-    input: import('../shared/collaboration').CreateCollaborationGroupInput
-  ) => Promise<import('../shared/collaboration').CollaborationGroupDetail>
-  updateGroup: (
-    id: string,
-    input: import('../shared/collaboration').UpdateCollaborationGroupInput
-  ) => Promise<import('../shared/collaboration').CollaborationGroup>
-  deleteGroup: (id: string) => Promise<void>
-  addParticipant: (
-    input: import('../shared/collaboration').AddCollaborationParticipantInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant>
-  removeParticipant: (groupId: string, participantId: string) => Promise<void>
-  updateParticipant: (
-    participantId: string,
-    input: import('../shared/collaboration').UpdateCollaborationParticipantInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant>
-  updateParticipants: (
-    input: import('../shared/collaboration').UpdateCollaborationParticipantsInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant[]>
-  sendMessage: (input: import('../shared/collaboration').SendCollaborationMessageInput) => Promise<{
-    event: import('../shared/collaboration').CollaborationEvent
-    mission: import('../shared/collaboration').CollaborationMission
-  }>
-  rewriteMessage: (
-    input: import('../shared/collaboration').RewriteCollaborationMessageInput
-  ) => Promise<import('../shared/collaboration').RewriteCollaborationMessageResult>
-  pauseMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  resumeMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  stopMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  stopParticipant: (
-    missionId: string,
-    participantId: string
-  ) => Promise<import('../shared/collaboration').CollaborationParticipantRun>
-  onChanged: (
-    callback: (change: import('../shared/collaboration').CollaborationChangedEvent) => void
-  ) => () => void
-}
-
 export interface DesktopApi {
   providers: ProvidersAPI
   settings: SettingsAPI
@@ -462,7 +396,6 @@ export interface DesktopApi {
   schedules: import('../shared/schedules').SchedulesAPI
   sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
-  collaboration: CollaborationAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI

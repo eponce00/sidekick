@@ -84,14 +84,6 @@ import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agent
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { nestedPowerShellHint } from './shellCommandHints'
 
-export interface AgentCollaborationToolHandler {
-  execute(
-    name: string,
-    args: Record<string, unknown>,
-    context: AgentToolExecutionContext
-  ): Promise<unknown>
-}
-
 /** Starts, messages and lists other chats for a conversation run; see SessionService. */
 export interface AgentSessionToolHandler {
   role: 'manager' | 'worker'
@@ -169,7 +161,6 @@ export interface AgentToolRuntimeSessionInput {
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
   mcpConfigs?: readonly McpServerConfig[]
-  collaboration?: AgentCollaborationToolHandler
   sessions?: AgentSessionToolHandler
   goal?: AgentGoalToolHandler
   plan?: AgentPlanToolHandler
@@ -361,59 +352,6 @@ export function safeToolArguments(
   )
 }
 
-function comparablePath(path: string): string {
-  const normalized = path.replace(/\\([ !"#$&'()*,:;<=>?@[\]^`{|}~])/g, '$1').replaceAll('\\', '/')
-  return process.platform === 'win32' || process.platform === 'darwin'
-    ? normalized.toLowerCase()
-    : normalized
-}
-
-/**
- * Rejects obvious shell paths that accidentally cross a collaboration
- * participant's project boundary. This is defense in depth, not an OS sandbox:
- * unrestricted host commands can use indirection that text inspection cannot
- * prove safe. Permission/audit UI must not describe this guard as confinement.
- */
-export function collaborationCommandScopeError(
-  command: string,
-  workspaceRoot: string
-): string | null {
-  const normalizedCommand = command.trim()
-  if (
-    /(^|[\s;&|()])(?:cd\s+)?\.\.(?:[\\/]|(?=$|[\s;&|()]))/.test(normalizedCommand) ||
-    /\$\{?WORKSPACE_FOLDER\}?[\\/]\.\./i.test(normalizedCommand) ||
-    /dirname\s+(?:["']?\$\{?WORKSPACE_FOLDER\}?)/i.test(normalizedCommand)
-  ) {
-    return 'Collaboration commands cannot traverse above the assigned project root.'
-  }
-
-  const root = comparablePath(workspaceRoot).replace(/[\\/]$/, '')
-  const pathBoundary = String.raw`(?:^|[\s;&|(<>'"\x60=])`
-  const pathEnd = String.raw`(?:[\\/]|(?=$|[\s;&|()<>'"\x60]))`
-  const locationAliases = new RegExp(
-    `${pathBoundary}(?:~(?=${pathEnd})|\\$(?:\\{)?(?:HOME|USERPROFILE|TMPDIR|TEMP|TMP)(?:\\})?(?=${pathEnd})|%(?:USERPROFILE|TEMP|TMP)%|\\$env:(?:USERPROFILE|TEMP|TMP)(?=${pathEnd}))`,
-    'i'
-  )
-  if (locationAliases.test(normalizedCommand)) {
-    return 'Collaboration commands cannot access paths outside the assigned project root. Use collaboration_share_file and collaboration_import_artifact for cross-project handoffs.'
-  }
-  const unixPaths = new RegExp(`${pathBoundary}(/(?:(?:\\\\.)|[^\\s;&|<>'"\\x60])+)`, 'g')
-  const windowsPaths = new RegExp(
-    `${pathBoundary}([A-Za-z]:[\\\\/](?:(?:\\\\.)|[^\\s;&|<>'"\\x60])+)`,
-    'g'
-  )
-  const absoluteCandidates = [
-    ...[...normalizedCommand.matchAll(unixPaths)].map((match) => match[1]),
-    ...[...normalizedCommand.matchAll(windowsPaths)].map((match) => match[1])
-  ].map((path) => comparablePath(path).replace(/[),]+$/, ''))
-  const outside = absoluteCandidates.find(
-    (candidate) => candidate !== root && !candidate.startsWith(`${root}/`)
-  )
-  return outside
-    ? 'Collaboration commands cannot access paths outside the assigned project root. Use collaboration_share_file and collaboration_import_artifact for cross-project handoffs.'
-    : null
-}
-
 export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
   private artifactInspector?: ArtifactInspectorLike
@@ -601,21 +539,6 @@ export class AgentToolRuntime {
       ({ name, arguments: args, context }) =>
         this.execute(input, readReceipts, sessionState, name, args, context)
     )
-    if (input.collaboration) {
-      handlers.register(
-        [
-          'collaboration_read',
-          'collaboration_send',
-          'collaboration_share_file',
-          'collaboration_list_artifacts',
-          'collaboration_import_artifact',
-          'collaboration_status',
-          'collaboration_claim_complete'
-        ],
-        ({ name, arguments: args, context }) =>
-          this.execute(input, readReceipts, sessionState, name, args, context)
-      )
-    }
     if (input.sessions) {
       handlers.register([...SESSION_TOOL_NAMES], ({ name, arguments: args, context }) =>
         this.execute(input, readReceipts, sessionState, name, args, context)
@@ -1021,17 +944,6 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
-      const scopeError =
-        input.surface === 'collaboration'
-          ? collaborationCommandScopeError(command, workspaceRoot)
-          : null
-      if (scopeError) {
-        return toolExecutionFailed({
-          title,
-          code: 'workspace_scope',
-          message: scopeError
-        })
-      }
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
       if (instructions.retryRequired) {
         return this.success(
@@ -1242,10 +1154,6 @@ export class AgentToolRuntime {
         readReceipts.clear()
       }
       return this.success(title, await input.sessions.execute(name, args, context))
-    }
-    if (name.startsWith('collaboration_') && input.collaboration) {
-      if (name === 'collaboration_import_artifact') readReceipts.clear()
-      return this.success(title, await input.collaboration.execute(name, args, context))
     }
     return toolExecutionFailed({
       title,

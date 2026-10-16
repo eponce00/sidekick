@@ -12,7 +12,6 @@ import { initializeWorkspaceState } from './bootstrap/workspace'
 import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
-import { shutdownCollaboration } from './ipc/collaboration'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
 import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
@@ -66,7 +65,6 @@ function prepareApplicationShutdown(): Promise<void> {
   appUpdateService?.stop()
   stopScheduler()
   voiceService?.dispose()
-  shutdownCollaboration()
   applicationShutdown = Promise.allSettled([
     stopControlEndpoint?.(),
     shutdownAgentRuntime(),

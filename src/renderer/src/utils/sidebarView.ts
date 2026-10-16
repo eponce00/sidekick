@@ -1,4 +1,3 @@
-import type { CollaborationGroup } from '../../../shared/collaboration'
 import type { Conversation } from '../types/app.types'
 import type { ConversationRunStatus } from './conversationAttention'
 
@@ -33,19 +32,6 @@ export function matchesStatusFilter(
   filter: SidebarStatusFilter
 ): boolean {
   return filter === 'all' || status === filter
-}
-
-/** A paused mission waits for the user to resume it, so it needs attention. */
-export function collaborationGroupStatus(group: CollaborationGroup): ConversationRunStatus | null {
-  if (group.activeMissionId) return group.activeMissionStatus === 'paused' ? 'waiting' : 'working'
-  return group.unreadCompletionAt ? 'unread' : null
-}
-
-export function agentSessionStatus(
-  session: CollaborationGroup['agentSessions'][number]
-): ConversationRunStatus | null {
-  if (['queued', 'working'].includes(session.activeRunStatus || '')) return 'working'
-  return session.unreadCompletionAt ? 'unread' : null
 }
 
 export type RecentBucket = 'pinned' | 'today' | 'yesterday' | 'week' | 'older'

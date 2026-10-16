@@ -39,29 +39,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={[]}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={onNewConversation}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -81,7 +72,6 @@ describe('Sidebar chat section', () => {
   })
 
   it('creates from each section heading, and keeps the rest in the header menu', async () => {
-    const onNewGroup = vi.fn()
     const onOpenProject = vi.fn()
     const onOpenCommandPalette = vi.fn()
     const project = (id: string, name: string): Project => ({
@@ -97,29 +87,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={[]}
           projects={[project('p1', 'alpha'), project('p2', 'beta')]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={onNewGroup}
           onOpenProject={onOpenProject}
           onOpenCommandPalette={onOpenCommandPalette}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -134,8 +115,6 @@ describe('Sidebar chat section', () => {
       await act(async () => element!.click())
     }
 
-    await click('button[aria-label="New group chat"]')
-    expect(onNewGroup).toHaveBeenCalledOnce()
     await click('button[aria-label="Open a folder as a project"]')
     expect(onOpenProject).toHaveBeenCalledOnce()
 
@@ -169,29 +148,20 @@ describe('Sidebar chat section', () => {
             }
           ]}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={onDeleteConversation}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -243,29 +213,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={conversations}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set(['working-chat'])}
           unreadConversationIds={new Set(['working-chat', 'unread-chat'])}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -300,30 +261,21 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={conversations}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set(['waiting-chat', 'working-chat'])}
           unreadConversationIds={new Set()}
           waitingConversationIds={new Set(['waiting-chat'])}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -373,29 +325,20 @@ describe('Sidebar chat section', () => {
             created_at: 1,
             updated_at: 1
           }))}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -461,28 +404,19 @@ describe('Sidebar chat section', () => {
         root.render(
           <Sidebar
             {...props}
-            groups={[]}
             currentConversationId={null}
-            currentGroupId={null}
-            currentGroupSessionId={null}
             isCollapsed={false}
             unreadConversationIds={new Set()}
             onSelectConversation={vi.fn()}
-            onSelectGroup={vi.fn()}
-            onSelectGroupSession={vi.fn()}
             onToggleCollapsed={vi.fn()}
             onNewConversation={vi.fn()}
-            onNewGroup={vi.fn()}
             onOpenProject={vi.fn()}
             onOpenCommandPalette={vi.fn()}
             platform="windows"
             onDeleteConversation={vi.fn()}
-            onDeleteGroup={vi.fn()}
             onDeleteAllConversations={vi.fn()}
             onForkConversation={vi.fn()}
             onRenameConversation={vi.fn()}
-            onRenameGroup={vi.fn()}
-            onRenameGroupSession={vi.fn()}
             onMoveConversation={vi.fn()}
             onRenameProject={vi.fn()}
             onToggleConversationPin={vi.fn()}
@@ -583,7 +517,7 @@ describe('Sidebar chat section', () => {
       await click('button[aria-label="Sort by recent activity"]')
       expect(
         [...container.querySelectorAll('.sidebar-section-label')].map((label) => label.textContent)
-      ).toEqual(['Groups', 'Today', 'Older'])
+      ).toEqual(['Today', 'Older'])
       expect(onOrder).toHaveBeenLastCalledWith(['loose-now', 'in-b-now', 'older-in-a'])
       // The project heading is gone, so each row names its folder.
       expect(container.textContent).toContain('in-b-nowb folder')

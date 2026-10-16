@@ -43,6 +43,138 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('turns each group chat into a manager chat with worker chats and drops group tables', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-groups-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk
+        .prepare("DELETE FROM schema_migrations WHERE id = '20261016_004_group_chats_to_chats'")
+        .run()
+      // The group tables as the last release stored them, with one group of two agents.
+      disk.exec(`
+        CREATE TABLE collaboration_groups (
+          id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT,
+          status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL, unread_completion_at INTEGER);
+        CREATE TABLE collaboration_participants (
+          id TEXT PRIMARY KEY, group_id TEXT NOT NULL, project_id TEXT NOT NULL, label TEXT NOT NULL,
+          provider_target_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+          joined_at INTEGER NOT NULL, removed_at INTEGER, last_read_seq INTEGER NOT NULL DEFAULT 0,
+          FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE,
+          FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT);
+        CREATE TABLE collaboration_agent_sessions (
+          id TEXT PRIMARY KEY, group_id TEXT NOT NULL, participant_id TEXT NOT NULL UNIQUE,
+          project_id TEXT NOT NULL, title TEXT NOT NULL, last_event_seq INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, unread_completion_at INTEGER,
+          FOREIGN KEY (participant_id) REFERENCES collaboration_participants(id) ON DELETE CASCADE);
+        CREATE TABLE collaboration_agent_session_messages (
+          id TEXT PRIMARY KEY, session_id TEXT NOT NULL, mission_id TEXT, role TEXT NOT NULL,
+          kind TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', tool_calls_json TEXT,
+          tool_call_id TEXT, metadata_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL,
+          FOREIGN KEY (session_id) REFERENCES collaboration_agent_sessions(id) ON DELETE CASCADE);
+        CREATE TABLE collaboration_events (
+          id TEXT PRIMARY KEY, group_id TEXT NOT NULL, mission_id TEXT, seq INTEGER NOT NULL,
+          actor_type TEXT NOT NULL, actor_participant_id TEXT, kind TEXT NOT NULL,
+          payload_json TEXT NOT NULL, reply_to_event_id TEXT, idempotency_key TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (group_id) REFERENCES collaboration_groups(id) ON DELETE CASCADE);
+        INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+          VALUES ('demo', 'sidekick-demo', '/p/demo', 1, 1), ('api', 'sidekick-api', '/p/api', 1, 1);
+        INSERT INTO collaboration_groups VALUES ('g1', 'Desktop + API launch', NULL, 'active', 10, 50, NULL);
+        INSERT INTO collaboration_participants VALUES
+          ('p1', 'g1', 'demo', 'Desktop client', '{}', 'active', 11, NULL, 0),
+          ('p2', 'g1', 'api', 'API endpoint', '{}', 'active', 12, NULL, 0);
+        INSERT INTO collaboration_agent_sessions VALUES
+          ('s1', 'g1', 'p1', 'demo', 'Desktop client', 0, 11, 50, NULL),
+          ('s2', 'g1', 'p2', 'api', 'API endpoint', 0, 12, 50, NULL);
+        INSERT INTO collaboration_agent_session_messages VALUES
+          ('m1', 's2', NULL, 'assistant', 'text', 'Contract test added.', NULL, NULL, '{}', 30),
+          ('m2', 's2', NULL, 'tool', 'tool_result', '{"ok":true}', NULL, 'c1', '{}', 31);
+        INSERT INTO collaboration_events VALUES
+          ('e1', 'g1', NULL, 1, 'user', NULL, 'user_message', '{"text":"Agree on the contract."}', NULL, NULL, 20),
+          ('e2', 'g1', NULL, 2, 'agent', 'p1', 'peer_message', '{"text":"Shape of /v1/projects?","metadata":{"messageType":"request"}}', NULL, NULL, 21),
+          ('e3', 'g1', NULL, 3, 'agent', 'p2', 'agent_activity', '{"text":"Running tests"}', NULL, NULL, 22),
+          ('e4', 'g1', NULL, 4, 'agent', 'p2', 'peer_message', '{"text":"{ projects, nextCursor }","metadata":{"messageType":"response"}}', NULL, NULL, 23);
+        INSERT INTO agent_runs (id, thread_id, surface, phase, provider, model, profile_json, started_at, updated_at)
+          VALUES ('collab-run', 's2', 'collaboration', 'completed', 'p', 'm', '{}', 1, 1);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(
+        disk.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'collaboration_%'").all()
+      ).toEqual([])
+      expect(
+        disk
+          .prepare("SELECT count(*) AS count FROM agent_runs WHERE surface = 'collaboration'")
+          .get()
+      ).toEqual({ count: 0 })
+      const manager = disk.prepare("SELECT * FROM conversations WHERE id = 'g1'").get() as Record<
+        string,
+        unknown
+      >
+      expect(manager).toMatchObject({
+        title: 'Desktop + API launch',
+        project_id: null,
+        started_by_conversation_id: null
+      })
+      const workers = disk
+        .prepare(
+          'SELECT * FROM conversations WHERE started_by_conversation_id = ? ORDER BY created_at'
+        )
+        .all('g1') as Array<Record<string, unknown>>
+      expect(
+        workers.map(({ session_handle, project_id, work_in }) => [
+          session_handle,
+          project_id,
+          work_in
+        ])
+      ).toEqual([
+        ['desktop-client', 'demo', 'folder'],
+        ['api-endpoint', 'api', 'folder']
+      ])
+      expect(
+        disk
+          .prepare(
+            'SELECT project_id FROM session_project_grants WHERE conversation_id = ? ORDER BY project_id'
+          )
+          .all('g1')
+      ).toEqual([{ project_id: 'api' }, { project_id: 'demo' }])
+      // The shared timeline stays readable in the manager: the person's message, then each post.
+      expect(
+        disk
+          .prepare(
+            "SELECT role, content FROM messages WHERE conversation_id = 'g1' ORDER BY timestamp"
+          )
+          .all()
+      ).toEqual([
+        { role: 'system', content: expect.stringContaining('Converted from the group chat') },
+        { role: 'user', content: 'Agree on the contract.' }
+      ])
+      expect(
+        disk
+          .prepare(
+            "SELECT intent, body, delivered_at IS NOT NULL AS delivered FROM session_messages WHERE to_conversation_id = 'g1' ORDER BY created_at"
+          )
+          .all()
+      ).toEqual([
+        { intent: 'request', body: 'Shape of /v1/projects?', delivered: 1 },
+        { intent: 'response', body: '{ projects, nextCursor }', delivered: 1 }
+      ])
+      expect(
+        disk
+          .prepare('SELECT role, content FROM messages WHERE conversation_id = ?')
+          .all(workers[1].id)
+      ).toEqual([{ role: 'agent', content: 'Contract test added.' }])
+      expect(disk.pragma('foreign_key_check')).toEqual([])
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('adds family links, messages, proposals and grants to an installed database', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-sessions-'))
     let disk: Database.Database | undefined
@@ -195,7 +327,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 12
+        count: 13
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -306,14 +438,9 @@ describe('database schema migrations', () => {
         'forked_from_message_id'
       ])
     )
-    const groupColumns = db.prepare('PRAGMA table_info(collaboration_groups)').all() as Array<{
-      name: string
-    }>
-    const agentSessionColumns = db
-      .prepare('PRAGMA table_info(collaboration_agent_sessions)')
-      .all() as Array<{ name: string }>
-    expect(groupColumns.map(({ name }) => name)).toContain('unread_completion_at')
-    expect(agentSessionColumns.map(({ name }) => name)).toContain('unread_completion_at')
+    expect(
+      db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'collaboration_%'").all()
+    ).toEqual([])
     expect(messageColumns.map(({ name }) => name)).toEqual(
       expect.arrayContaining(['run_mode', 'images', 'attachments', 'notice_tone', 'starts_goal'])
     )
@@ -331,7 +458,8 @@ describe('database schema migrations', () => {
       { id: '20260923_002_message_goal_origin', checksum_length: 64 },
       { id: '20261016_001_schedules', checksum_length: 64 },
       { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
-      { id: '20261016_003_sessions', checksum_length: 64 }
+      { id: '20261016_003_sessions', checksum_length: 64 },
+      { id: '20261016_004_group_chats_to_chats', checksum_length: 64 }
     ])
     expect(
       db

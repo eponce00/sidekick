@@ -140,11 +140,6 @@ export interface Message {
   runId?: string
   role: 'user' | 'agent' | 'system'
   sourceRole?: 'system' | 'user' | 'assistant' | 'tool' // Provider role for synthetic loop context
-  /** Identifies a public update from another project agent in a linked group chat. */
-  peerLabel?: string
-  /** Optional author and routing context for shared-channel messages. */
-  senderLabel?: string
-  senderContext?: string
   /** Compact app-authored status presentation; never used for prompt/control instructions. */
   noticeTone?: 'info' | 'success' | 'error'
   /** This user message is the objective a persistent goal began from. */
@@ -159,8 +154,6 @@ export interface Message {
   /** Durable execution profile used for this request/response. */
   runMode?: ConversationRunMode
   tokenUsage?: TokenUsage // Token usage and cost info for this response
-  /** Completion time for projected group-agent messages that are not backed by agent run events. */
-  completedAt?: number
   checkpointHash?: string // Shadow-git checkpoint hash (set after workspace file writes)
   checkpointWorkspaceRoot?: string // Workspace that owns checkpointHash; never inferred after a move
   restoredFrom?: string // Set after a successful checkpoint restore (for 'Restored' badge)

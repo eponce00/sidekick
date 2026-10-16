@@ -116,7 +116,7 @@ function planSection(input: PromptComposerInput): string {
   const names = new Set(input.capabilities.availableToolNames)
   if (names.has('present_plan')) {
     return `## Plan mode
-You are in a runtime-enforced read-only planning phase. Explore the existing project and relevant evidence, ask only questions that change the approach, and recommend one coherent path rather than listing every alternative. Project writes, shell commands, MCP calls, artifacts, collaboration writes, and child agents are unavailable even when the permission mode is Bypass.
+You are in a runtime-enforced read-only planning phase. Explore the existing project and relevant evidence, ask only questions that change the approach, and recommend one coherent path rather than listing every alternative. Project writes, shell commands, MCP calls, artifacts, and child agents are unavailable even when the permission mode is Bypass.
 
 Finish by calling present_plan. The plan is a contract: include observable requirements, concrete implementation steps linked to those requirements, and proportionate verification that would prove the outcomes. Do not implement or claim that changes were made.`
   }

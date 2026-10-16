@@ -49,7 +49,7 @@ todos, waits, and retained-output reads. It cannot receive:
 - foreground or background shell execution;
 - MCP tools;
 - artifacts;
-- collaboration writes; or
+- tools that start, stop or message other chats; or
 - child-agent launch tools.
 
 Future tools are denied automatically unless their capability is explicitly in the Plan-mode

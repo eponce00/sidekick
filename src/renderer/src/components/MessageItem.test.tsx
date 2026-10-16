@@ -22,7 +22,7 @@ describe('MessageItem shared-channel presentation', () => {
     container.remove()
   })
 
-  it('uses the normal hover action surface while preserving sender context', async () => {
+  it('uses the normal hover action surface', async () => {
     const copyMessage = vi.fn()
     const editMessage = vi.fn()
     const retryMessage = vi.fn()
@@ -33,8 +33,6 @@ describe('MessageItem shared-channel presentation', () => {
           message={{
             id: 'message',
             role: 'user',
-            senderLabel: 'You',
-            senderContext: 'to Data agent',
             content: 'Run the analysis',
             timestamp: Date.now()
           }}
@@ -62,8 +60,6 @@ describe('MessageItem shared-channel presentation', () => {
       )
     })
 
-    expect(container.querySelector('.message-sender')?.textContent).toContain('You')
-    expect(container.querySelector('.message-sender')?.textContent).toContain('to Data agent')
     expect(container.querySelector('[aria-label="Copy message"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Edit and resend"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="Send again"]')).not.toBeNull()

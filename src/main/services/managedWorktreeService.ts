@@ -222,28 +222,12 @@ export class ManagedWorktreeService {
     const chats = this.db
       .prepare('SELECT id, title FROM conversations WHERE project_id = ? ORDER BY updated_at DESC')
       .all(projectId) as Array<{ id: string; title: string }>
-    const participants = this.db
-      .prepare(
-        `SELECT p.id, p.label, g.title AS group_title
-         FROM collaboration_participants p
-         LEFT JOIN collaboration_groups g ON g.id = p.group_id
-         WHERE p.project_id = ?`
-      )
-      .all(projectId) as Array<{ id: string; label: string; group_title: string | null }>
-    return [
-      ...chats.map(({ id, title }) => ({
-        kind: 'chat' as const,
-        id,
-        title,
-        running: this.projects.hasActiveRun(id)
-      })),
-      ...participants.map(({ id, label, group_title }) => ({
-        kind: 'group-participant' as const,
-        id,
-        title: group_title ? `${label} in ${group_title}` : label,
-        running: false
-      }))
-    ]
+    return chats.map(({ id, title }) => ({
+      kind: 'chat' as const,
+      id,
+      title,
+      running: this.projects.hasActiveRun(id)
+    }))
   }
 
   /** The canonical worktree folder, only when it has exactly the shape SideKick creates. */

@@ -118,8 +118,13 @@ const branchStatus: Record<string, { ahead: number; changedFiles: number }> = {
   'thinking-toggle': { ahead: 2, changedFiles: 0 },
   'settings-polish': { ahead: 4, changedFiles: 0 },
   schedules: { ahead: 3, changedFiles: 4 },
+  'release-notes': { ahead: 0, changedFiles: 1 },
   'api-contract': { ahead: 1, changedFiles: 2 }
 }
+
+// This module loads with the app, so a worker missing above must not stop SideKick from starting.
+const statusOf = (handle: string): { ahead: number; changedFiles: number } =>
+  branchStatus[handle] ?? { ahead: 0, changedFiles: 0 }
 
 export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((worker, index) => ({
   id: `preview-worker-worktree-${worker.handle}`,
@@ -143,9 +148,9 @@ export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((wo
   ],
   status: {
     currentBranch: `sidekick/${worker.handle}`,
-    ahead: branchStatus[worker.handle].ahead,
+    ahead: statusOf(worker.handle).ahead,
     behind: 0,
-    changedFiles: branchStatus[worker.handle].changedFiles,
+    changedFiles: statusOf(worker.handle).changedFiles,
     merged: false
   },
   blockers: []

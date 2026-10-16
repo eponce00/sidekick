@@ -33,7 +33,7 @@ export function registerSessionStatusHandlers(): void {
   const current = new SessionStatusService({
     ...databaseSessionSources(db),
     runIdentity: (runId) => existingAgentRuntimeCoordinator()?.store.get(runId) ?? null,
-    activeConversationIds: () => existingAgentRuntimeCoordinator()?.activeConversationIds() ?? []
+    activeConversationIds: () => existingAgentRuntimeCoordinator()?.activeThreadIds() ?? []
   })
   service = current
   current.onChange((change: SessionsChangedEvent) => {

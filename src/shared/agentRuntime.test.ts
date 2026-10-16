@@ -156,9 +156,9 @@ describe('agent runtime contracts', () => {
 
   it('filters behavior through explicit run capabilities', () => {
     const profile: AgentRunProfile = {
-      surface: 'collaboration',
+      surface: 'subagent',
       executionMode: 'act',
-      capabilities: ['workspace.read', 'collaboration']
+      capabilities: ['workspace.read', 'todo']
     }
     expect(hasAgentCapability(profile, 'workspace.read')).toBe(true)
     expect(hasAgentCapability(profile, 'command.execute')).toBe(false)

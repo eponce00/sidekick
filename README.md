@@ -87,9 +87,9 @@ receives each request, which tools are available, and how much autonomy the agen
       artifacts.
     </td>
     <td width="50%" valign="top">
-      <h3>Multi-project agent groups</h3>
-      Put two project-bound agents in one persistent room. They work concurrently within separate
-      folder boundaries, share progress through a common timeline, and keep private tool histories.
+      <h3>Chats that work together</h3>
+      A chat can start other chats, each in its own worktree or project. They work at the same
+      time, message each other, and report back when they finish; you can step into any of them.
     </td>
   </tr>
 </table>
@@ -102,15 +102,15 @@ capture screenshots, and verify the result. The docked Browser panel shows the l
 cursor, and concise activity while the ordinary conversation keeps text, thinking, and tools in
 their real execution order.
 
-## One workspace, multiple agents
+## Chats that work together
 
-Group chats are built for work that crosses project boundaries without collapsing those boundaries.
-Each participant gets its own provider/model, project instructions, workspace tools, private
-conversation, and SideKick History. The shared channel stays readable while the agent-session panes
-show what each participant is doing.
+Ask a chat to split work into parallel chats. Each one gets its own model, project instructions,
+tools, transcript and Git worktree, and reports back to the chat that started it when it finishes.
+They sit under it in the sidebar, their reports fold into its conversation, and you can open and
+talk to any of them. See [Chats that work together](docs/user-guide/CHATS_THAT_WORK_TOGETHER.md).
 
 <p align="center">
-  <img src="./docs/assets/screenshots/group-agents.png" width="1200" alt="SideKick group chat coordinating two project-bound agents" />
+  <img src="./docs/assets/screenshots/chat-family.png" width="1200" alt="A SideKick chat that started two worker chats, showing them nested in the sidebar and their reports in the conversation" />
 </p>
 
 ## Local models and cloud models, together
@@ -143,7 +143,7 @@ SideKick treats the renderer as untrusted. Provider requests, decrypted credenti
 execution, workspace mutations, MCP calls, checkpoint restoration, and external navigation are
 resolved or authorized in the main process.
 
-- Conversations, projects, runs, plans, goals, and group state are stored in local SQLite.
+- Conversations, projects, runs, plans, goals, and chat families are stored in local SQLite.
 - Provider credentials are encrypted with Electron `safeStorage` when the operating-system
   credential service is available; decrypted values are not returned to normal renderer state.
 - Workspace edits are path-confined, symlink-aware, transactional, post-write verified, and rolled
@@ -222,7 +222,8 @@ only after its smoke tests, exact artifact set, checksums, and public provenance
 
 The React renderer never owns model credentials or privileged execution. A small typed preload
 surface connects it to the trusted main process, where one canonical runtime handles ordinary
-conversations, research, child agents, persistent goals, Plan mode, and group participants.
+conversations, chats started by other chats, research, child agents, persistent goals, and Plan
+mode.
 
 ```mermaid
 flowchart LR

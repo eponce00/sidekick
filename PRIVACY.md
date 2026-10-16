@@ -14,7 +14,7 @@ informed choice before connecting a provider or granting an agent broader permis
 
 SideKick keeps the following data in the operating system's application-data directory:
 
-- conversations, messages, projects, group chats, plans, goals, run state, permission records, and
+- conversations, messages, projects, messages between chats, plans, goals, run state, permission records, and
   workspace memory in a local SQLite database;
 - application preferences and provider or connector configuration;
 - SideKick History snapshots for changes made through SideKick;
@@ -85,7 +85,7 @@ explicit copy action.
 
 ## Retention and deletion
 
-Conversations and groups remain on the device until you delete them in SideKick or remove the local
+Conversations remain on the device until you delete them in SideKick or remove the local
 application data. Removing a project from SideKick removes its app association; it does not delete
 the project folder. Uninstalling the application may leave its application-data directory in place
 so a reinstall can preserve settings and conversations.

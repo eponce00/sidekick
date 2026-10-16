@@ -287,61 +287,6 @@ const api = {
       return () => ipcRenderer.removeListener('sessions:changed', listener)
     }
   },
-  collaboration: {
-    listGroups: () => ipcRenderer.invoke('collaboration:listGroups'),
-    getGroup: (id: string) => ipcRenderer.invoke('collaboration:getGroup', id),
-    getAgentSession: (id: string) => ipcRenderer.invoke('collaboration:getAgentSession', id),
-    updateAgentSession: (
-      id: string,
-      input: import('../shared/collaboration').UpdateCollaborationAgentSessionInput
-    ) => ipcRenderer.invoke('collaboration:updateAgentSession', id, input),
-    markGroupRead: (id: string) => ipcRenderer.invoke('collaboration:markGroupRead', id),
-    markAgentSessionRead: (id: string) =>
-      ipcRenderer.invoke('collaboration:markAgentSessionRead', id),
-    listAgentSessionMessages: (sessionId: string, afterCreatedAt?: number) =>
-      ipcRenderer.invoke('collaboration:listAgentSessionMessages', sessionId, afterCreatedAt),
-    listEvents: (groupId: string, afterSeq?: number) =>
-      ipcRenderer.invoke('collaboration:listEvents', groupId, afterSeq),
-    createGroup: (input: import('../shared/collaboration').CreateCollaborationGroupInput) =>
-      ipcRenderer.invoke('collaboration:createGroup', input),
-    updateGroup: (
-      id: string,
-      input: import('../shared/collaboration').UpdateCollaborationGroupInput
-    ) => ipcRenderer.invoke('collaboration:updateGroup', id, input),
-    deleteGroup: (id: string) => ipcRenderer.invoke('collaboration:deleteGroup', id),
-    addParticipant: (input: import('../shared/collaboration').AddCollaborationParticipantInput) =>
-      ipcRenderer.invoke('collaboration:addParticipant', input),
-    removeParticipant: (groupId: string, participantId: string) =>
-      ipcRenderer.invoke('collaboration:removeParticipant', groupId, participantId),
-    updateParticipant: (
-      participantId: string,
-      input: import('../shared/collaboration').UpdateCollaborationParticipantInput
-    ) => ipcRenderer.invoke('collaboration:updateParticipant', participantId, input),
-    updateParticipants: (
-      input: import('../shared/collaboration').UpdateCollaborationParticipantsInput
-    ) => ipcRenderer.invoke('collaboration:updateParticipants', input),
-    sendMessage: (input: import('../shared/collaboration').SendCollaborationMessageInput) =>
-      ipcRenderer.invoke('collaboration:sendMessage', input),
-    rewriteMessage: (input: import('../shared/collaboration').RewriteCollaborationMessageInput) =>
-      ipcRenderer.invoke('collaboration:rewriteMessage', input),
-    pauseMission: (missionId: string) =>
-      ipcRenderer.invoke('collaboration:pauseMission', missionId),
-    resumeMission: (missionId: string) =>
-      ipcRenderer.invoke('collaboration:resumeMission', missionId),
-    stopMission: (missionId: string) => ipcRenderer.invoke('collaboration:stopMission', missionId),
-    stopParticipant: (missionId: string, participantId: string) =>
-      ipcRenderer.invoke('collaboration:stopParticipant', missionId, participantId),
-    onChanged: (
-      callback: (change: import('../shared/collaboration').CollaborationChangedEvent) => void
-    ) => {
-      const listener = (
-        _event: Electron.IpcRendererEvent,
-        change: import('../shared/collaboration').CollaborationChangedEvent
-      ): void => callback(change)
-      ipcRenderer.on('collaboration:changed', listener)
-      return () => ipcRenderer.removeListener('collaboration:changed', listener)
-    }
-  },
   mcp: {
     listTools: () => ipcRenderer.invoke('mcp:listTools'),
     authenticate: (serverId: string) => ipcRenderer.invoke('mcp:authenticate', serverId),

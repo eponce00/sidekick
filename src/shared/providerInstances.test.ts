@@ -130,7 +130,7 @@ describe('provider instance migration', () => {
     })
   })
 
-  it('refreshes a persisted collaboration target from current model overrides', () => {
+  it('refreshes a persisted provider target from current model overrides', () => {
     expect(
       refreshProviderTargetMetadata(
         {

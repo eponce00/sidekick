@@ -2053,7 +2053,7 @@ describe('AgentRunKernel', () => {
     expect(providerRequest?.messages[1].content).toContain('interrupted')
   })
 
-  it('injects external collaboration messages before the next provider step', async () => {
+  it('injects external messages before the next provider step', async () => {
     const requests: ProviderChatRequest[] = []
     const sampler = sequence(
       async (request) => {
