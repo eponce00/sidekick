@@ -468,10 +468,26 @@ const api = {
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
     showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
       ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
-    onFilesChanged: (callback: () => void) => {
-      const listener = () => callback()
+    watchFiles: (workspaceRoot: string, callback: () => void) => {
+      let subscriptionId: string | null = null
+      let stopped = false
+      const listener = (_event: Electron.IpcRendererEvent, changedId: string): void => {
+        if (changedId === subscriptionId) callback()
+      }
       ipcRenderer.on('workspace:filesChanged', listener)
-      return () => ipcRenderer.removeListener('workspace:filesChanged', listener)
+      ipcRenderer
+        .invoke('workspace:watch', workspaceRoot)
+        .then((id: string) => {
+          if (stopped) void ipcRenderer.invoke('workspace:unwatch', id)
+          else subscriptionId = id
+        })
+        // An unknown folder simply gets no live updates.
+        .catch(() => undefined)
+      return () => {
+        stopped = true
+        ipcRenderer.removeListener('workspace:filesChanged', listener)
+        if (subscriptionId) void ipcRenderer.invoke('workspace:unwatch', subscriptionId)
+      }
     }
   }
 } satisfies DesktopApi

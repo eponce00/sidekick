@@ -1334,7 +1334,7 @@ export function installBrowserApiMock(): void {
       }),
       revealFile: async () => {},
       showPathMenu: async () => {},
-      onFilesChanged: () => () => {}
+      watchFiles: () => () => {}
     }
   }
 }

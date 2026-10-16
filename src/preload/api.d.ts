@@ -365,7 +365,8 @@ interface WorkspaceAPI {
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
-  onFilesChanged: (callback: () => void) => () => void
+  /** Calls back when files under the folder change; returns the function that stops watching. */
+  watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
 
 interface CollaborationAPI {

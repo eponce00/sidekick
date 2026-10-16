@@ -2,7 +2,7 @@ import { promises as fsPromises } from 'fs'
 import { checkGitAvailable, cleanupOldCheckpoints } from '../services/checkpoints'
 import { appState, getStore } from '../ipc/state'
 
-export async function initializeWorkspaceState(): Promise<string | null> {
+export async function initializeWorkspaceState(): Promise<void> {
   const store = getStore()
   const savedWorkspacePath = store.get('workspacePath', null) as string | null
 
@@ -11,13 +11,13 @@ export async function initializeWorkspaceState(): Promise<string | null> {
   if (gitVersion) console.log('[Checkpoints] git available:', gitVersion)
   else console.warn('[Checkpoints] git not found on PATH — shadow checkpoints disabled')
 
-  if (!savedWorkspacePath) return null
+  if (!savedWorkspacePath) return
   try {
     await fsPromises.access(savedWorkspacePath)
   } catch {
     store.set('workspacePath', null)
     console.log('[Checkpoints] Cleared stale workspace path:', savedWorkspacePath)
-    return null
+    return
   }
 
   try {
@@ -25,5 +25,4 @@ export async function initializeWorkspaceState(): Promise<string | null> {
   } catch (error) {
     console.warn('[Checkpoints] Cleanup error:', error)
   }
-  return savedWorkspacePath
 }

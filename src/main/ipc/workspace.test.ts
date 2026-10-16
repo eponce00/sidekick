@@ -32,6 +32,7 @@ const {
   menuTemplates: [] as Array<
     Array<{
       label?: string
+      icon?: unknown
       click?: () => void
       submenu?: Array<{ label?: string; click?: () => void }>
     }>
@@ -62,20 +63,10 @@ vi.mock('electron', () => ({
 
 vi.mock('./state', () => ({
   appState: {
-    workspaceWatcher: null,
-    watchDebounceTimer: null,
     mainWindowRef: null
   },
   getStore: () => ({ get: vi.fn(), set: vi.fn() })
 }))
-
-const watchMock = vi.hoisted(() => vi.fn())
-// Only `watch` is faked; the rest of fs stays real so the file-IPC tests above
-// keep operating on their temporary directories.
-vi.mock('fs', async () => {
-  const actual = await vi.importActual<typeof import('fs')>('fs')
-  return { ...actual, watch: watchMock }
-})
 
 vi.mock('./workspaceUtils', () => ({
   getStoredWorkspace: () => workspaceState.root,
@@ -103,11 +94,11 @@ vi.mock('../services/externalOpeners', () => ({
       executable: 'Code.exe',
       args: (target: string) => [target]
     }
-  ])
+  ]),
+  fileManagerIcon: vi.fn().mockResolvedValue('file-manager-icon')
 }))
 
-import { registerWorkspaceHandlers, startWorkspaceWatcher } from './workspace'
-import { appState } from './state'
+import { registerWorkspaceHandlers } from './workspace'
 
 type TrashFileHandler = (
   event: unknown,
@@ -218,10 +209,11 @@ describe('workspace file IPC', () => {
     await handler({ sender: {} }, 'notes/draft.md', workspaceState.root, false)
 
     const template = menuTemplates[0]
+    const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
     expect(template.map((item) => item.label).filter(Boolean)).toEqual([
       'Open in VS Code',
+      revealLabel,
       'Open with',
-      process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder',
       'Copy Full Path',
       'Copy Project-Relative Path'
     ])
@@ -233,9 +225,9 @@ describe('workspace file IPC', () => {
     ).toEqual([
       'VS Code',
       'Default app',
-      ...(process.platform === 'win32' ? ['Choose another app…'] : []),
-      process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
+      ...(process.platform === 'win32' ? ['Choose another app…'] : [])
     ])
+    expect(template.find((item) => item.label === revealLabel)?.icon).toBe('file-manager-icon')
     template.find((item) => item.label === 'Copy Project-Relative Path')?.click?.()
     expect(clipboardWriteText).toHaveBeenCalledWith('notes/draft.md')
     expect(menuPopup).toHaveBeenCalledOnce()
@@ -309,70 +301,5 @@ describe('workspace:resolveFileReference', () => {
       matches: string[]
     }
     expect(result).toEqual({ ok: false, matches: [] })
-  })
-})
-
-describe('workspace watcher resilience', () => {
-  function fakeWatcher(): {
-    on: ReturnType<typeof vi.fn>
-    close: ReturnType<typeof vi.fn>
-    fail: (error: Error) => void
-  } {
-    const listeners = new Map<string, (error: Error) => void>()
-    return {
-      on: vi.fn((event: string, handler: (error: Error) => void) => {
-        listeners.set(event, handler)
-      }),
-      close: vi.fn(),
-      fail: (error: Error) => listeners.get('error')?.(error)
-    }
-  }
-
-  beforeEach(() => {
-    vi.useFakeTimers()
-    watchMock.mockReset()
-    appState.workspaceWatcher = null
-    appState.watchDebounceTimer = null
-    appState.mainWindowRef = {
-      isDestroyed: () => false,
-      webContents: { send: vi.fn() }
-    } as unknown as typeof appState.mainWindowRef
-  })
-
-  afterEach(() => {
-    startWorkspaceWatcher(null)
-    vi.useRealTimers()
-    appState.mainWindowRef = null
-  })
-
-  it('re-establishes a watch that drops instead of going silent for the session', async () => {
-    const first = fakeWatcher()
-    const second = fakeWatcher()
-    watchMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
-
-    startWorkspaceWatcher('C:\\project')
-    expect(watchMock).toHaveBeenCalledTimes(1)
-
-    first.fail(new Error('EPERM'))
-    expect(appState.workspaceWatcher).toBeNull()
-
-    await vi.advanceTimersByTimeAsync(2_000)
-    expect(watchMock).toHaveBeenCalledTimes(2)
-    expect(appState.workspaceWatcher).toBe(second)
-  })
-
-  it('stops retrying a folder that never comes back', async () => {
-    watchMock.mockImplementation(() => {
-      const watcher = fakeWatcher()
-      queueMicrotask(() => watcher.fail(new Error('ENOENT')))
-      return watcher
-    })
-
-    startWorkspaceWatcher('C:\\deleted')
-    await vi.advanceTimersByTimeAsync(60_000)
-
-    // One initial attempt plus the bounded retry budget, then it gives up
-    // rather than spinning for the lifetime of the app.
-    expect(watchMock).toHaveBeenCalledTimes(6)
   })
 })

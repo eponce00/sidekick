@@ -16,7 +16,6 @@ import { shutdownCollaboration } from './ipc/collaboration'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
-import { startWorkspaceWatcher } from './ipc/workspace'
 import {
   configureCheckpointStorageRoot,
   recoverInterruptedCheckpointCaptures
@@ -174,7 +173,7 @@ async function bootstrapApplication(): Promise<void> {
     }
     console.log(`[History] Recovered ${recoveredCaptures.length} interrupted file change set(s)`)
   }
-  const workspacePath = await initializeWorkspaceState()
+  await initializeWorkspaceState()
 
   electronApp.setAppUserModelId(PRODUCT_IDENTITY.appId)
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
@@ -231,7 +230,6 @@ async function bootstrapApplication(): Promise<void> {
     'open-project': () => dispatchAppCommand('open-project'),
     'check-for-updates': () => void appUpdateService?.check()
   })
-  startWorkspaceWatcher(workspacePath)
   appUpdateService.start()
 
   app.on('activate', showMainWindow)
