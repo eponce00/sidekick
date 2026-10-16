@@ -28,6 +28,7 @@ import type { ConversationGoal } from '../../../shared/conversationGoals'
 import type { PromptRefinementHistorySelection } from '../utils/promptRefinementHistory'
 import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
+import { PullRequestBar } from './PullRequestBar'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
 import {
@@ -743,6 +744,7 @@ export function ChatInput({
           />
         ) : undefined
       }
+      footer={<PullRequestBar workspaceRoot={workspaceFolder} />}
       promptRefinement={
         selectedPinnedModel
           ? {

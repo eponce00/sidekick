@@ -448,6 +448,7 @@ export interface DesktopApi {
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI

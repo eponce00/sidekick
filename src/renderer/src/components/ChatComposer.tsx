@@ -19,6 +19,8 @@ interface ChatComposerProps {
   toolbarRight?: ReactNode
   contextBar?: ReactNode
   queueTray?: ReactNode
+  /** A status line under the composer card, such as the branch's pull request. */
+  footer?: ReactNode
   popover?: ReactNode
   floatingAccessory?: ReactNode
   attachmentTray?: ReactNode
@@ -49,6 +51,7 @@ export function ChatComposer({
   toolbarRight,
   contextBar,
   queueTray,
+  footer,
   popover,
   floatingAccessory,
   attachmentTray,
@@ -172,6 +175,7 @@ export function ChatComposer({
           </div>
         </div>
       </div>
+      {footer}
     </div>
   )
 }

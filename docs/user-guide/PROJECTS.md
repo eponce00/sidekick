@@ -116,6 +116,31 @@ SideKick's managed worktree commands disable implicit Git hooks for that invocat
 without changing your Git configuration. This is not a sandbox for arbitrary Git
 filters or manually executed commands.
 
+### Pull request status
+
+A line under the composer shows the GitHub pull request for the branch checked out in the chat's
+folder, whether that is the project folder or a managed worktree:
+
+- the pull request number, which opens it in your browser
+- its state: draft, open, in a merge queue, merged, or closed
+- merge status: ready to merge, conflicts, blocked, behind the base branch, or checks failing
+- lines added and removed
+- CI checks; click the summary to list each check, and click a check to open its log
+- the branch name
+
+When the branch has no pull request, **Create PR** opens GitHub's compare form for it. Push your
+commits before you submit that form. SideKick never pushes, creates, or merges anything here; it
+only reads.
+
+Status refreshes every 30 seconds while the window is visible, when the window regains focus, and
+from the refresh button. A failed refresh keeps the last status and shows a message you can dismiss.
+
+The line needs the [GitHub CLI](https://cli.github.com/) installed and signed in with
+`gh auth login`, and an `origin` remote on github.com over HTTPS or SSH. It is hidden for the
+default branch, a detached HEAD, a folder that is not a Git repository, and other Git hosts. A
+missing or signed-out GitHub CLI also hides it; SideKick checks again about every five minutes, so
+the line appears shortly after you install or sign in to `gh`.
+
 ### Sidebar
 
 The sidebar has three sections. Each heading folds its section away with its arrow, showing how many
