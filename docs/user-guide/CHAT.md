@@ -9,8 +9,9 @@
   your message instead.
 - **Queue:** a message added to the queue waits for the reply to finish and is sent next.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
-  counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
-  front. A failed reply is announced the same way.
+  counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
+  when SideKick is not in front. A failed reply is announced the same way. See
+  [Working in the background](BACKGROUND.md).
 
 ## Checked changes
 

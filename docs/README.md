@@ -18,6 +18,7 @@ behavior, and the development guide when testing or publishing it.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
+- [Working in the background](user-guide/BACKGROUND.md) — keep agents working from the tray or Dock, and quit.
 
 ## Architecture
 

@@ -67,6 +67,31 @@ delivery must not be promised where the zero-cost identity cannot provide it.
 
 Reference: [Electron notifications](https://www.electronjs.org/docs/latest/tutorial/notifications).
 
+## Tray and background work
+
+Agent runs live in the main process, so they continue while no window is visible. On Windows and
+Linux the main window's close is intercepted and the window hidden, while the `closeToTray`
+setting is on (the default) and a tray icon could be created. The tray icon exists only while
+that setting is on; turning it off restores close-to-quit. A close that belongs to a quit (the
+quit sequence has started, the updater is restarting, or the operating system is ending the
+session) is never intercepted. Quit from the tray or app menu goes through the same active-work
+confirmation as any other quit; when the window is hidden, that dialog is shown unparented so it
+stays visible.
+
+The tray menu is rebuilt from a snapshot (working conversations, waiting conversations with their
+titles, update state) after run events, coalesced so streaming does not rebuild it per token. A
+waiting conversation adds the accent attention dot to the tray icon. Windows and Linux open the
+window on a left click and the menu on a right click; Linux indicators that only support a menu
+show it on any click. Electron cannot tell whether a Linux desktop actually displays tray icons,
+so relaunching SideKick (which reveals the existing window) is the fallback there.
+
+macOS gets no menu-bar extra. Closing a window there already leaves the app running, and the Dock
+reopens it and badges the waiting count, so a second always-visible icon would duplicate the Dock.
+The tray's contextual entries (New Chat and waiting conversations) go in the Dock menu instead.
+
+The tray's shape (Open, New, a running-count status line, Settings, update entry, Quit, and
+hide-on-close) follows Cline's desktop app; SideKick's implementation is independent.
+
 ## Dialog and accessibility behavior
 
 Settings is a full-window application workspace rather than a modal. It keeps the platform caption
@@ -86,11 +111,13 @@ composition, notification byte bounds, title-bar menu state, platform mapping, a
 restoration. Before release, physically verify:
 
 - macOS: traffic lights, tiling/full screen, `Command` shortcuts, Lookup/Services, automatic English
-  and Spanish spelling, focus restoration, Dock icon, actual notification behavior, first-launch
-  Gatekeeper approval, Finder reveal.
+  and Spanish spelling, focus restoration, Dock icon and its menu, actual notification behavior,
+  first-launch Gatekeeper approval, Finder reveal.
 - Windows: caption buttons, maximize/restore glyph, title-bar right-click, `Alt+Space`, hidden menu
   via Alt, `Ctrl` shortcuts, English and Spanish suggestions, installed native notification,
-  File Explorer reveal, Recycle Bin wording, multi-monitor restore.
+  File Explorer reveal, Recycle Bin wording, multi-monitor restore, close to the notification
+  area, tray click and menu, quit from the tray.
 - Linux: AppImage executable permission and launch, caption buttons, maximize/restore glyph, hidden
   menu via Alt, `Ctrl` shortcuts, available dictionaries, desktop notification and launcher icon,
-  file-manager reveal, Trash wording, X11 and Wayland desktop association, multi-monitor restore.
+  file-manager reveal, Trash wording, X11 and Wayland desktop association, multi-monitor restore,
+  tray icon on KDE and on GNOME with and without an AppIndicator extension.

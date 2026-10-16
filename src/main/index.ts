@@ -13,7 +13,12 @@ import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { shutdownCollaboration } from './ipc/collaboration'
-import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
+import {
+  activeAgentConversationCount,
+  onAgentActivity,
+  shutdownAgentRuntime,
+  waitingAgentConversationIds
+} from './ipc/agentRuns'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
@@ -35,12 +40,17 @@ import { VoiceModelStore } from './services/voice/voiceModels'
 import { confirmQuitWithActiveRuns, QuitGuard } from './bootstrap/quitConfirmation'
 import { refreshAttentionBadge } from './services/attentionBadge'
 import { isBrowserParkingWindow } from './services/browserViewHost'
+import { SystemTray, type TraySnapshot } from './bootstrap/systemTray'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
 let applicationShutdown: Promise<void> | null = null
 let shutdownReady = false
 let quitAfterShutdownRequested = false
+let systemTray: SystemTray | null = null
+// The operating system is ending the session; windows must really close.
+let sessionEnding = false
+const TRAY_NOTICE_SHOWN_KEY = 'closeToTrayNoticeShown'
 const quitGuard = new QuitGuard({
   activeConversationCount: activeAgentConversationCount,
   confirm: (count) => confirmQuitWithActiveRuns(count, appState.mainWindowRef)
@@ -104,11 +114,61 @@ function showMainWindow(): void {
   if (!revealWindow(appState.mainWindowRef)) openMainWindow()
 }
 
-/** On Windows and Linux closing the last window quits, so it asks first too. */
+function storedSettings(): { closeToTray?: boolean } | undefined {
+  return appState.store?.get('settings') as { closeToTray?: boolean } | undefined
+}
+
+/** Windows and Linux hide the window to the tray instead of closing it, unless SideKick is quitting. */
+function hidesToTray(): boolean {
+  return (
+    process.platform !== 'darwin' &&
+    Boolean(systemTray?.installed) &&
+    !sessionEnding &&
+    !quitAfterShutdownRequested &&
+    !shutdownReady
+  )
+}
+
+function hideToTray(window: BrowserWindow): void {
+  window.hide()
+  if (appState.store?.get(TRAY_NOTICE_SHOWN_KEY) === true) return
+  appState.store?.set(TRAY_NOTICE_SHOWN_KEY, true)
+  systemTray?.showHiddenNotice()
+}
+
+/** macOS always has its Dock menu; elsewhere the tray icon follows the close-to-tray setting. */
+function syncSystemTray(): void {
+  if (!systemTray) return
+  if (process.platform === 'darwin' || storedSettings()?.closeToTray !== false) {
+    systemTray.install()
+  } else {
+    systemTray.destroy()
+  }
+}
+
+function waitingConversations(): TraySnapshot['waiting'] {
+  const ids = waitingAgentConversationIds()
+  if (!ids.length || !appState.db?.open) return []
+  const titleOf = appState.db.prepare('SELECT title FROM conversations WHERE id = ?')
+  return ids.map((id) => ({
+    id,
+    title: (titleOf.get(id) as { title?: string } | undefined)?.title ?? ''
+  }))
+}
+
+/**
+ * On Windows and Linux closing the window hides it to the tray when that is on;
+ * otherwise closing the last window quits, so it asks first too.
+ */
 function openMainWindow(): BrowserWindow {
   const window = createMainWindow()
   if (process.platform !== 'darwin') {
     window.on('close', (event) => {
+      if (hidesToTray()) {
+        event.preventDefault()
+        hideToTray(window)
+        return
+      }
       if (userWindows(window).length) return
       if (quitGuard.intercept(() => (window.isDestroyed() ? app.quit() : window.close()))) {
         event.preventDefault()
@@ -122,7 +182,10 @@ function openMainWindow(): BrowserWindow {
   }
   // Windows is logging off or shutting down; it will not wait for a dialog.
   window.on('query-session-end', () => quitGuard.allow())
-  window.on('session-end', () => quitGuard.allow())
+  window.on('session-end', () => {
+    sessionEnding = true
+    quitGuard.allow()
+  })
   refreshAttentionBadge()
   return window
 }
@@ -210,26 +273,59 @@ async function bootstrapApplication(): Promise<void> {
   onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
   openMainWindow()
   mainWindowOpened = true
-  powerMonitor.on('shutdown', () => quitGuard.allow())
-  const dispatchAppCommand = (command: AppCommand): void => {
+  powerMonitor.on('shutdown', () => {
+    sessionEnding = true
+    quitGuard.allow()
+  })
+  const sendToWindow = (channel: 'app:command' | 'app:openConversation', value: string): void => {
     const target = BrowserWindow.getFocusedWindow() ?? appState.mainWindowRef
     if (!target || !revealWindow(target)) {
       const created = openMainWindow()
       created.webContents.once('did-finish-load', () => {
         setTimeout(() => {
-          if (!created.isDestroyed()) created.webContents.send('app:command', command)
+          if (!created.isDestroyed()) created.webContents.send(channel, value)
         }, 0)
       })
       return
     }
-    target.webContents.send('app:command', command)
+    target.webContents.send(channel, value)
   }
+  const dispatchAppCommand = (command: AppCommand): void => sendToWindow('app:command', command)
   installApplicationMenu(process.platform, PRODUCT_IDENTITY.productName, {
     'open-settings': () => dispatchAppCommand('open-settings'),
     'new-chat': () => dispatchAppCommand('new-chat'),
     'open-project': () => dispatchAppCommand('open-project'),
     'check-for-updates': () => void appUpdateService?.check()
   })
+  const updates = appUpdateService
+  const installUpdate = (): void => void updates.install()
+  systemTray = new SystemTray({
+    platform: process.platform,
+    productName: PRODUCT_IDENTITY.productName,
+    iconPath: appIcon,
+    snapshot: () => ({
+      workingCount: activeAgentConversationCount(),
+      waiting: waitingConversations(),
+      update: updates.getState()
+    }),
+    actions: {
+      open: showMainWindow,
+      newChat: () => dispatchAppCommand('new-chat'),
+      openConversation: (id) => sendToWindow('app:openConversation', id),
+      openSettings: () => dispatchAppCommand('open-settings'),
+      checkForUpdates: () => void updates.check(),
+      // Restarting stops working agents, so it asks first like any other quit.
+      installUpdate: () => {
+        if (!quitGuard.intercept(installUpdate)) installUpdate()
+      },
+      openRelease: () => void updates.openRelease(),
+      quit: () => app.quit()
+    }
+  })
+  syncSystemTray()
+  onSettingsSaved(syncSystemTray)
+  onAgentActivity(() => systemTray?.refresh())
+  updates.subscribe(() => systemTray?.refresh())
   appUpdateService.start()
 
   app.on('activate', showMainWindow)
@@ -251,6 +347,9 @@ if (ownsSingleInstance) {
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit()
   })
+
+  // Windows otherwise leaves a dead icon in the notification area until the pointer passes over it.
+  app.on('will-quit', () => systemTray?.destroy())
 
   app.on('before-quit', (event) => {
     if (shutdownReady) {

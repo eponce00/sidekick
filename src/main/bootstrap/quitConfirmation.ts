@@ -20,8 +20,9 @@ export async function confirmQuitWithActiveRuns(
     message: quitConfirmationMessage(count),
     detail: 'Quitting stops their agents. Work saved so far is kept.'
   }
+  // Quitting from the tray leaves the window hidden; a dialog attached to it would be too.
   const { response } =
-    parent && !parent.isDestroyed()
+    parent && !parent.isDestroyed() && parent.isVisible()
       ? await dialog.showMessageBox(parent, options)
       : await dialog.showMessageBox(options)
   return response === 0

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({ dialog: { showMessageBox: vi.fn() } }))
+const dialog = vi.hoisted(() => ({ showMessageBox: vi.fn() }))
+vi.mock('electron', () => ({ dialog }))
 
-import { QuitGuard, quitConfirmationMessage } from './quitConfirmation'
+import type { BrowserWindow } from 'electron'
+import { confirmQuitWithActiveRuns, QuitGuard, quitConfirmationMessage } from './quitConfirmation'
 
 function deferred(): { promise: Promise<boolean>; resolve: (value: boolean) => void } {
   let resolve!: (value: boolean) => void
@@ -20,6 +22,27 @@ describe('quitConfirmationMessage', () => {
   it('names how many conversations are working', () => {
     expect(quitConfirmationMessage(1)).toBe('1 conversation is still working. Quit anyway?')
     expect(quitConfirmationMessage(3)).toBe('3 conversations are still working. Quit anyway?')
+  })
+})
+
+describe('confirmQuitWithActiveRuns', () => {
+  function window(visible: boolean): BrowserWindow {
+    return { isDestroyed: () => false, isVisible: () => visible } as unknown as BrowserWindow
+  }
+
+  it('attaches the dialog to a visible window', async () => {
+    dialog.showMessageBox.mockResolvedValueOnce({ response: 0 })
+    const parent = window(true)
+    await expect(confirmQuitWithActiveRuns(1, parent)).resolves.toBe(true)
+    expect(dialog.showMessageBox).toHaveBeenLastCalledWith(parent, expect.any(Object))
+  })
+
+  it('shows the dialog on its own when the window is hidden in the tray', async () => {
+    dialog.showMessageBox.mockResolvedValueOnce({ response: 1 })
+    await expect(confirmQuitWithActiveRuns(2, window(false))).resolves.toBe(false)
+    expect(dialog.showMessageBox).toHaveBeenLastCalledWith(
+      expect.objectContaining({ message: quitConfirmationMessage(2) })
+    )
   })
 })
 
