@@ -51,7 +51,7 @@ import {
   saveComposerDraft,
   type ComposerDraft
 } from './services/composerDrafts'
-import { useConversationAttention } from './hooks/useConversationAttention'
+import { useSessionStatuses } from './hooks/useSessionStatuses'
 import { attentionNotificationBody, shouldNotifyAttention } from './utils/conversationAttention'
 import type { ConversationAttentionAlert } from '../../shared/conversationAttention'
 import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardShortcuts'
@@ -318,10 +318,8 @@ function App(): React.JSX.Element {
   const [chatRollbackHash, setChatRollbackHash] = useState<string | null>(null)
   const [isReady, setIsReady] = useState(false)
   const {
-    busyConversationIds,
     currentConversationIdRef,
     currentConversationBusy: isAgentBusy,
-    hasActiveConversationRuns,
     mountedConversationIds,
     conversationPanelKeys,
     draftPanelKey,
@@ -734,7 +732,7 @@ function App(): React.JSX.Element {
   }
 
   const handleDeleteConversation = async (id: string): Promise<void> => {
-    if (busyConversationIds.has(id)) return
+    if (runningConversationIds.has(id)) return
     await window.api.conversations.delete(id)
     deleteComposerDraft(id)
     setConversations((prev) => prev.filter((c) => c.id !== id))
@@ -747,7 +745,7 @@ function App(): React.JSX.Element {
   }
 
   const handleDeleteAllConversations = async (): Promise<void> => {
-    if (hasActiveConversationRuns) return
+    if (runningConversationIds.size > 0) return
     try {
       for (const conv of conversations) {
         await window.api.conversations.delete(conv.id)
@@ -808,7 +806,7 @@ function App(): React.JSX.Element {
   // database, so it stays available while the conversation is still running.
   // Forking from the tip would copy the in-flight message, so that still waits.
   const forkBlockedByRun = (conversationId: string, messageId?: string): boolean =>
-    !messageId && busyConversationIds.has(conversationId)
+    !messageId && runningConversationIds.has(conversationId)
 
   const handleForkConversation = (id: string, messageId?: string): void => {
     if (forkBlockedByRun(id, messageId)) return
@@ -1060,7 +1058,7 @@ function App(): React.JSX.Element {
     : []
 
   const handleMoveConversation = async (input: MoveConversationInput): Promise<void> => {
-    if (busyConversationIds.has(input.conversationId)) return
+    if (runningConversationIds.has(input.conversationId)) return
     await window.api.projects.moveConversation(input)
     if (input.conversationId === currentConversationId) {
       await activateProjectWorkspace(input.projectId)
@@ -1096,7 +1094,8 @@ function App(): React.JSX.Element {
   const handleRemoveProject = async (id: string): Promise<void> => {
     if (
       conversations.some(
-        (conversation) => conversation.project_id === id && busyConversationIds.has(conversation.id)
+        (conversation) =>
+          conversation.project_id === id && runningConversationIds.has(conversation.id)
       )
     )
       return
@@ -1157,7 +1156,10 @@ function App(): React.JSX.Element {
       settings.notificationsEnabled
     ]
   )
-  const waitingConversationIds = useConversationAttention(handleAttentionAlert)
+  // Main owns every chat's state, including runs no panel here started.
+  const sessionStatuses = useSessionStatuses(handleAttentionAlert)
+  const runningConversationIds = sessionStatuses.active
+  const waitingConversationIds = sessionStatuses.waiting
   const refreshConversationsForSchedules = useCallback(() => {
     void window.api.conversations
       .list()
@@ -1174,13 +1176,6 @@ function App(): React.JSX.Element {
     () => new Map(schedules.map(({ id, name }) => [id, name])),
     [schedules]
   )
-  // A scheduled run works in the main process, often in a chat no panel has open.
-  const sidebarBusyConversationIds = useMemo(() => {
-    const scheduled = schedules.flatMap(({ activeRun }) =>
-      activeRun && !activeRun.phase.startsWith('awaiting') ? [activeRun.conversationId] : []
-    )
-    return scheduled.length ? new Set([...busyConversationIds, ...scheduled]) : busyConversationIds
-  }, [busyConversationIds, schedules])
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
@@ -1212,7 +1207,7 @@ function App(): React.JSX.Element {
     enabled: isReady,
     model: selectedPinnedModel,
     fastModelName: fastModelName !== currentModelName ? fastModelName : undefined,
-    isAgentBusy: hasActiveConversationRuns,
+    isAgentBusy: runningConversationIds.size > 0,
     onTitleApplied: (conversationId, title, source = 'generated') => {
       setConversations((current) =>
         current.map((conversation) =>
@@ -1487,7 +1482,7 @@ function App(): React.JSX.Element {
           currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
           platform={platform}
-          busyConversationIds={sidebarBusyConversationIds}
+          busyConversationIds={runningConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}

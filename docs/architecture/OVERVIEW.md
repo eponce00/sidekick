@@ -294,9 +294,21 @@ cannot complete one. It reports a completion in the conversation as an app-autho
 
 `ScheduleService` starts saved prompts on a schedule. Each run is a new conversation started
 through the same engine request as a chat the user sends, so the kernel, permission mode, and
-attention tracking are unchanged; a run that needs approval waits for the user. Missed runs
+chat status are unchanged; a run that needs approval waits for the user. Missed runs
 collapse into one late run, and a schedule holds one active run at a time. See
 [Scheduled runs](SCHEDULES.md).
+
+### Chat status
+
+`SessionStatusService` in the main process computes each chat's state: `working` while a chat or
+research run prepares or runs, `waiting` while it is paused on an approval or question, `done`
+until a finished reply is read, `failed` or `stopped` after its last run ended that way, and
+`idle` otherwise. A chat that started others also carries their most urgent state. It follows run
+events (skipping streamed output) and the runtime's preparation hook, and reads stored runs at
+startup, so states are right before any window opens and for runs no chat panel started. The
+sidebar, the taskbar and Dock badge, the tray, and attention notifications all read it through
+`sessions:statuses` and `sessions:changed`; the renderer's panel registry only decides which
+panels stay mounted.
 
 ### Plan mode
 

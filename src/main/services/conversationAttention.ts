@@ -15,7 +15,10 @@ export interface AttentionRunIdentity {
  * sessions have their own surface and are left out.
  */
 export class ConversationAttentionTracker {
-  private readonly pending = new Map<string, { runId: string; conversationId: string }>()
+  private readonly pending = new Map<
+    string,
+    { runId: string; conversationId: string; kind: 'approval' | 'question' }
+  >()
 
   constructor(
     private readonly runIdentity: (runId: string) => AttentionRunIdentity | null,
@@ -35,15 +38,9 @@ export class ConversationAttentionTracker {
       const run = this.runIdentity(event.runId)
       if (!run || run.surface === 'collaboration') return
       const alreadyWaiting = this.isWaiting(run.threadId)
-      this.pending.set(interactionId, { runId: event.runId, conversationId: run.threadId })
-      this.emit(
-        alreadyWaiting
-          ? undefined
-          : {
-              conversationId: run.threadId,
-              reason: event.payload.kind === 'question' ? 'question' : 'approval'
-            }
-      )
+      const kind = event.payload.kind === 'question' ? 'question' : 'approval'
+      this.pending.set(interactionId, { runId: event.runId, conversationId: run.threadId, kind })
+      this.emit(alreadyWaiting ? undefined : { conversationId: run.threadId, reason: kind })
       return
     }
     if (event.type === 'permission.resolved' || event.type === 'question.resolved') {
@@ -67,10 +64,15 @@ export class ConversationAttentionTracker {
   }
 
   private isWaiting(conversationId: string): boolean {
+    return this.waitingReason(conversationId) !== null
+  }
+
+  /** What the conversation's oldest open request asks of the user, or null. */
+  waitingReason(conversationId: string): 'approval' | 'question' | null {
     for (const entry of this.pending.values()) {
-      if (entry.conversationId === conversationId) return true
+      if (entry.conversationId === conversationId) return entry.kind
     }
-    return false
+    return null
   }
 
   private emit(alert?: ConversationAttentionAlert): void {

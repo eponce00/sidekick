@@ -19,6 +19,7 @@ import { validateMessageContextAttachments } from '../../shared/messageContextAt
 import type { ForkConversationInput } from '../../shared/projects'
 import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
+import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -287,6 +288,7 @@ export function registerDatabaseHandlers(): void {
     const result = db
       .prepare('UPDATE conversations SET unread_completion_at = NULL WHERE id = ?')
       .run(id)
+    refreshSessionStatuses([id])
     return { success: result.changes === 1 }
   })
 
@@ -388,6 +390,7 @@ export function registerDatabaseHandlers(): void {
     )?.project_id
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+    refreshSessionStatuses([id])
     // A worktree its last chat leaves behind goes too, when nothing in it would be lost.
     const worktreeCleanup =
       projectId && worktrees.isManagedProject(projectId)
@@ -399,6 +402,11 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle('conversations:deleteAll', async () => {
     db.prepare('DELETE FROM messages').run()
     db.prepare('DELETE FROM conversations').run()
+    refreshSessionStatuses(
+      sessionStatusService()
+        ?.statuses()
+        .map(({ conversationId }) => conversationId) ?? []
+    )
     return { success: true }
   })
 

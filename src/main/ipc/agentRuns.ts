@@ -23,8 +23,6 @@ import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
-import { ConversationAttentionTracker } from '../services/conversationAttention'
-import { applyAttentionBadge } from '../services/attentionBadge'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -34,20 +32,7 @@ import {
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
-const activityListeners = new Set<() => void>()
-
-function notifyActivity(): void {
-  for (const listener of activityListeners) listener()
-}
-
-const attention = new ConversationAttentionTracker(
-  (runId) => coordinator?.store.get(runId) ?? null,
-  (state) => {
-    applyAttentionBadge(state.waitingConversationIds.length)
-    publishDesktopEvent('agentRuns:attention', state)
-    notifyActivity()
-  }
-)
+const preparationObservers = new Set<(threadId: string) => void>()
 
 const runEventObservers = new Set<
   (event: import('../../shared/agentRuntime').AgentRunEvent) => void
@@ -61,13 +46,23 @@ export function observeAgentRunEvents(
   return () => runEventObservers.delete(observer)
 }
 
-function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
-  try {
-    attention.observe(event)
-  } catch (error) {
-    // Attention is a convenience; it must never interrupt the durable event stream.
-    console.warn('[Attention] Could not follow a run event:', error)
+/** Lets a service hear when a run starts or stops preparing, which publishes no run event. */
+export function observeAgentRunPreparations(observer: (threadId: string) => void): () => void {
+  preparationObservers.add(observer)
+  return () => preparationObservers.delete(observer)
+}
+
+function publishPreparation(threadId: string): void {
+  for (const observer of preparationObservers) {
+    try {
+      observer(threadId)
+    } catch (error) {
+      console.warn('[AgentRuntime] A preparation observer failed:', error)
+    }
   }
+}
+
+function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
   for (const observer of runEventObservers) {
     try {
       observer(event)
@@ -76,7 +71,6 @@ function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void
     }
   }
   publishDesktopEvent('agentRuns:event', { event })
-  notifyActivity()
 }
 
 function publishGoal(goal: import('../../shared/conversationGoals').ConversationGoal): void {
@@ -92,10 +86,16 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       publishGoal,
       {
         pdfOutputRoot: app.getPath('downloads'),
-        publishTerminal: (event) => publishDesktopEvent('terminal:event', event)
+        publishTerminal: (event) => publishDesktopEvent('terminal:event', event),
+        onPreparationChange: publishPreparation
       }
     )
   }
+  return coordinator
+}
+
+/** The runtime if it has started; reading status must not start it. */
+export function existingAgentRuntimeCoordinator(): AgentRuntimeCoordinator | null {
   return coordinator
 }
 
@@ -521,7 +521,6 @@ export function registerAgentRunHandlers(): void {
       input: { runId: input.runId, admissionId: input.admissionId }
     })
   })
-  ipcMain.handle('agentRuns:attention', () => attention.state())
   ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
     return admissions.list(conversationId)
@@ -608,15 +607,4 @@ export function hasActiveAgentWork(): boolean {
 
 export function activeAgentConversationCount(): number {
   return coordinator?.activeThreadIds().length ?? 0
-}
-
-/** Conversations paused on an approval or a question. */
-export function waitingAgentConversationIds(): string[] {
-  return attention.state().waitingConversationIds
-}
-
-/** Called after any run event, so a listener can re-read the counts above. */
-export function onAgentActivity(listener: () => void): () => void {
-  activityListeners.add(listener)
-  return () => activityListeners.delete(listener)
 }

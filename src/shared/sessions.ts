@@ -214,6 +214,8 @@ export interface SessionsChangedEvent {
   conversationIds: string[]
   /** Present for `status`: the new statuses of those chats. */
   statuses?: SessionStatus[]
+  /** Present for `status` when a chat has just begun to wait on the user or its run failed. */
+  alerts?: import('./conversationAttention').ConversationAttentionAlert[]
 }
 
 export interface SessionsAPI {

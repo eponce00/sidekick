@@ -13,12 +13,8 @@ import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { shutdownCollaboration } from './ipc/collaboration'
-import {
-  activeAgentConversationCount,
-  onAgentActivity,
-  shutdownAgentRuntime,
-  waitingAgentConversationIds
-} from './ipc/agentRuns'
+import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
+import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
@@ -148,8 +144,13 @@ function syncSystemTray(): void {
   }
 }
 
+function workingConversationCount(): number {
+  const counts = sessionStatusService()?.counts()
+  return counts ? counts.working + counts.queued : 0
+}
+
 function waitingConversations(): TraySnapshot['waiting'] {
-  const ids = waitingAgentConversationIds()
+  const ids = sessionStatusService()?.waitingConversationIds() ?? []
   if (!ids.length || !appState.db?.open) return []
   const titleOf = appState.db.prepare('SELECT title FROM conversations WHERE id = ?')
   return ids.map((id) => ({
@@ -306,7 +307,7 @@ async function bootstrapApplication(): Promise<void> {
     productName: PRODUCT_IDENTITY.productName,
     iconPath: appIcon,
     snapshot: () => ({
-      workingCount: activeAgentConversationCount(),
+      workingCount: workingConversationCount(),
       waiting: waitingConversations(),
       update: updates.getState()
     }),
@@ -326,7 +327,7 @@ async function bootstrapApplication(): Promise<void> {
   })
   syncSystemTray()
   onSettingsSaved(syncSystemTray)
-  onAgentActivity(() => systemTray?.refresh())
+  sessionStatusService()?.onChange(() => systemTray?.refresh())
   updates.subscribe(() => systemTray?.refresh())
   appUpdateService.start()
   startScheduler()
