@@ -1,6 +1,12 @@
 import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
-import { previewSessionConversations, previewSessionsApi } from './sessionsPreview'
+import {
+  previewSessionConversations,
+  previewSessionProjects,
+  previewSessionsApi,
+  previewSessionTranscripts,
+  previewSessionWorktrees
+} from './sessionsPreview'
 import type {
   CollaborationAgentSessionMessage,
   CollaborationGroup,
@@ -258,7 +264,8 @@ const previewProjects = [
     updated_at: Date.now() - 90_000,
     conversation_count: 0,
     last_activity_at: Date.now() - 90_000
-  }
+  },
+  ...previewSessionProjects
 ]
 
 previewConversations.push({
@@ -334,7 +341,8 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
       merged: true
     },
     blockers: []
-  }
+  },
+  ...previewSessionWorktrees
 ]
 
 const previewWorktreesApi: WorktreesAPI = {
@@ -1083,7 +1091,9 @@ export function installBrowserApiMock(): void {
       delete: async () => ({ success: true }),
       deleteAll: async () => ({ success: true }),
       getMessages: async (conversationId) =>
-        conversationId === 'preview-1' ? previewMessages : [],
+        conversationId === 'preview-1'
+          ? previewMessages
+          : ((previewSessionTranscripts[conversationId] ?? []) as typeof previewMessages),
       getLatestCompaction: async () => null,
       saveCompaction: async (input) => ({
         id: `preview-compaction-${Date.now()}`,

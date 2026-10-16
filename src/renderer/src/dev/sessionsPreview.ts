@@ -1,4 +1,6 @@
 import type { ProjectConversation } from '../../../shared/projects'
+import type { TodoItem } from '../../../shared/types'
+import type { ManagedWorktreeSummary } from '../../../shared/worktrees'
 import {
   SESSION_LIMITS,
   countSessionStates,
@@ -52,6 +54,10 @@ const workers: PreviewWorker[] = [
 ]
 
 const workerId = (handle: string): string => `preview-worker-${handle}`
+const workerProjectId = (handle: string): string => `preview-worker-project-${handle}`
+const sourceName = (worker: PreviewWorker): string => worker.projectName ?? 'sidekick-demo'
+const worktreeName = (worker: PreviewWorker): string =>
+  `${sourceName(worker)} · sidekick/${worker.handle}`
 
 /** A manager chat with five workers, one of them in another project. */
 export const previewSessionConversations: ProjectConversation[] = [
@@ -73,11 +79,12 @@ export const previewSessionConversations: ProjectConversation[] = [
       title: worker.title,
       created_at: minutes(80 - index),
       updated_at: minutes(10 - index),
-      project_id: worker.projectId ?? 'preview-project-1',
+      // Each worker works in its own worktree, which is a project of its own.
+      project_id: workerProjectId(worker.handle),
       sidebar_order: 4 + index,
       project_context_version: 0,
       home_workspace_root: `${worker.root ?? WORKTREES}\\${worker.handle}`,
-      home_project_name: worker.projectName ?? 'sidekick-demo',
+      home_project_name: worktreeName(worker),
       unread_completion_at: worker.state === 'done' ? minutes(4) : null,
       started_by_kind: 'session',
       started_by_conversation_id: MANAGER_ID,
@@ -87,6 +94,163 @@ export const previewSessionConversations: ProjectConversation[] = [
     })
   )
 ]
+
+/** The worktree projects the preview workers work in. */
+export const previewSessionProjects = workers.map((worker, index) => ({
+  id: workerProjectId(worker.handle),
+  name: worktreeName(worker),
+  folder_path: `${WORKTREES}\\${worker.handle}`,
+  is_pinned: 0,
+  created_at: minutes(80 - index),
+  updated_at: minutes(10 - index),
+  conversation_count: 1,
+  last_activity_at: minutes(10 - index)
+}))
+
+const branchStatus: Record<string, { ahead: number; changedFiles: number }> = {
+  'question-card': { ahead: 1, changedFiles: 0 },
+  'thinking-toggle': { ahead: 2, changedFiles: 0 },
+  'settings-polish': { ahead: 4, changedFiles: 0 },
+  schedules: { ahead: 3, changedFiles: 4 },
+  'api-contract': { ahead: 1, changedFiles: 2 }
+}
+
+export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((worker, index) => ({
+  id: `preview-worker-worktree-${worker.handle}`,
+  projectId: workerProjectId(worker.handle),
+  projectName: worktreeName(worker),
+  folderPath: `${WORKTREES}\\${worker.handle}`,
+  worktreeRoot: `${WORKTREES}\\${worker.handle}`,
+  sourceProjectId: worker.projectId ?? 'preview-project-1',
+  sourceProjectName: sourceName(worker),
+  branch: `sidekick/${worker.handle}`,
+  baseRef: 'main',
+  createdAt: minutes(80 - index),
+  lastUsedAt: minutes(10 - index),
+  owners: [
+    {
+      kind: 'chat',
+      id: workerId(worker.handle),
+      title: worker.title,
+      running: worker.state === 'working'
+    }
+  ],
+  status: {
+    currentBranch: `sidekick/${worker.handle}`,
+    ahead: branchStatus[worker.handle].ahead,
+    behind: 0,
+    changedFiles: branchStatus[worker.handle].changedFiles,
+    merged: false
+  },
+  blockers: []
+}))
+
+// The manager writes the design itself; every other step waits on the chat doing it.
+const todoList: TodoItem[] = [
+  {
+    id: 1,
+    title: 'Look at tray, dev-instance and component setup',
+    description: '',
+    status: 'completed'
+  },
+  ...workers.map(
+    (worker, index): TodoItem => ({
+      id: index + 2,
+      title: worker.title,
+      description: '',
+      status: 'not-started',
+      sessionId: workerId(worker.handle)
+    })
+  ),
+  { id: 7, title: 'Write up the design', description: '', status: 'in-progress' }
+]
+
+/** Transcripts for the manager and one worker, so both chats show their family rows. */
+export const previewSessionTranscripts: Record<string, unknown[]> = {
+  [MANAGER_ID]: [
+    {
+      id: 'preview-manager-message-1',
+      conversation_id: MANAGER_ID,
+      role: 'user',
+      content:
+        'Split the Cline review into parallel chats: question card, thinking toggle, settings polish and schedules here, plus the contract tests in sidekick-api. Report back when they are done.',
+      timestamp: minutes(82)
+    },
+    {
+      id: 'preview-manager-message-2',
+      runId: 'preview-manager-run-1',
+      conversation_id: MANAGER_ID,
+      role: 'agent',
+      content: "Five chats are running. I'll fold their results into the design once they report.",
+      timestamp: minutes(81)
+    },
+    {
+      id: 'preview-manager-message-3',
+      runId: 'preview-manager-run-2',
+      conversation_id: MANAGER_ID,
+      role: 'agent',
+      content:
+        'question-card and settings-polish are done; both changed only their own files. Waiting on the rest.',
+      segments: [
+        {
+          type: 'tool' as const,
+          tool: {
+            id: 'preview-manager-todos',
+            name: 'manage_todo_list',
+            title: 'Update the task list',
+            command: 'manage_todo_list',
+            status: 'success' as const,
+            accessLevel: 'auto' as const,
+            approvalStatus: 'auto' as const,
+            input: { operation: 'write', todoList },
+            data: { todoList }
+          }
+        },
+        {
+          type: 'text' as const,
+          content:
+            'question-card and settings-polish are done; both changed only their own files. Waiting on the rest.'
+        }
+      ],
+      timestamp: minutes(14)
+    }
+  ],
+  [workerId('schedules')]: [
+    {
+      id: 'preview-worker-message-1',
+      runId: 'preview-worker-run-1',
+      conversation_id: workerId('schedules'),
+      role: 'agent',
+      content:
+        'The scheduler, its migration and the dialog are in place. Running the focused tests before reporting.',
+      timestamp: minutes(75)
+    },
+    {
+      id: 'preview-worker-message-2',
+      runId: 'preview-worker-run-2',
+      conversation_id: workerId('schedules'),
+      role: 'agent',
+      content: 'Running the scheduler tests.',
+      segments: [
+        { type: 'text' as const, content: 'Running the scheduler tests.' },
+        {
+          type: 'interaction' as const,
+          interaction: {
+            id: 'preview-worker-approval',
+            kind: 'permission' as const,
+            status: 'pending' as const,
+            request: {
+              title: 'Run a command?',
+              arguments: { command: 'npx vitest run src/main/services/scheduler' },
+              chatScope: 'this exact command'
+            }
+          }
+        }
+      ],
+      timestamp: minutes(3)
+    }
+  ]
+}
 
 const conversationById = new Map(previewSessionConversations.map((row) => [row.id, row]))
 const states = new Map<string, { state: SessionState; since: number; reason?: string }>([
