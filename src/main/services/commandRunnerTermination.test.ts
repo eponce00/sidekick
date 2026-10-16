@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('child_process', () => ({ spawn: mocks.spawn }))
 vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
+  writeFileSync: vi.fn(),
+  rmSync: vi.fn(),
   createWriteStream: () => ({ write: vi.fn(), end: (done: () => void) => done() })
 }))
 
