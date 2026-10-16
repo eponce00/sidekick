@@ -414,6 +414,40 @@ describe('AgentInteractionCard question workflow', () => {
     expect(container.textContent).toContain('Denied and stopped')
   })
 
+  it('shows a proposed settings change as before and after, ignoring malformed previews', async () => {
+    const permission = (id: string, preview: unknown) => ({
+      id,
+      kind: 'permission' as const,
+      status: 'pending' as const,
+      request: { title: 'Change a SideKick setting?', preview }
+    })
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={permission('diff', {
+            summary: 'Let the agent search the web.',
+            changes: [{ label: 'webSearchEnabled', before: 'false', after: 'true' }]
+          })}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('dt')?.textContent).toBe('webSearchEnabled')
+    expect(container.querySelector('del')?.textContent).toBe('false')
+    expect(container.querySelector('ins')?.textContent).toBe('true')
+    expect(container.textContent).toContain('Let the agent search the web.')
+
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={permission('bad', { changes: [{ label: 1, before: {}, after: null }] })}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.agent-interaction-preview')).toBeNull()
+  })
+
   it('shows the recorded decision, reading older responses as allow once or deny', async () => {
     const resolved = (response: Record<string, unknown>) => ({
       id: `permission-${JSON.stringify(response)}`,

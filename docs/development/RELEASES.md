@@ -141,6 +141,24 @@ npm run validate:release -- --version 0.6.0 --platform windows dist
 npm run validate:release -- --version 0.6.0 --platform linux dist
 ```
 
+## Command line
+
+The packages carry the [`sidekick` command](../user-guide/COMMAND_LINE.md) without a second
+runtime or a paid signing step. The command is `out/main/cli.js` inside `app.asar`, run by the app's
+own executable with `ELECTRON_RUN_AS_NODE`, so the `RunAsNode` Electron fuse must stay enabled while
+the command depends on it.
+
+- **Windows.** `build/cli/win` is copied to `bin` beside `SideKick.exe` (`sidekick.cmd`, plus a
+  POSIX `sidekick` for Git Bash). `build/installer.nsh` adds `bin` to the current user's PATH on
+  install and removes it on uninstall, but not when the old uninstaller runs during an update. The
+  edit goes through the installed app's runtime (`__windows-path`), keeps the registry value's type,
+  and never writes after a read it could not parse. `.gitattributes` keeps the `.cmd` and `.nsh`
+  files in CRLF.
+- **macOS and Linux.** Nothing is installed by the package. **Settings → Integrations → Command
+  line** writes `~/.local/bin/sidekick`, which finds the running app through the profile's
+  `control/cli-runtime` file.
+- **Microsoft Store.** The Store package has no installer script, so it has no command on PATH.
+
 ## Microsoft Store package
 
 The Store route needs no certificate: Microsoft signs the package it distributes, and Store

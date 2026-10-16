@@ -55,6 +55,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   animation frames. A fix must keep every capture fresh, proven by repeated smoke runs on all three
   platforms.
 
+- Qualify the `sidekick` command on clean installs of every platform and close the other
+  [configuration CLI](CONFIGURATION_CLI.md) gaps.
+
 ## Later work
 
 - Optional operating-system isolation for high-risk command workloads.

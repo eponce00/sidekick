@@ -12,6 +12,7 @@ import { registerAgentRunHandlers } from './agentRuns'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
+import { registerCommandLineHandlers } from './commandLine'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -31,4 +32,5 @@ export function registerAllHandlers(): void {
   registerSupportHandlers()
   registerCollaborationHandlers()
   registerAgentRunHandlers()
+  registerCommandLineHandlers()
 }

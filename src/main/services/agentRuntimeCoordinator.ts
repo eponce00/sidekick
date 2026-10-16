@@ -69,6 +69,7 @@ import type {
 import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
+import { mainProcessMcpTrust } from './mcpServerTrust'
 import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
@@ -133,7 +134,7 @@ export class AgentRuntimeCoordinator {
   readonly goals: ConversationGoalStore
   private readonly messages: AgentMessageMaterializer
   private readonly admissions: PromptAdmissionStore
-  private readonly mcp = new McpClientManager()
+  private readonly mcp = new McpClientManager(undefined, undefined, undefined, mainProcessMcpTrust)
   readonly commands: CommandService
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()

@@ -3,7 +3,14 @@ import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
-  main: {},
+  main: {
+    build: {
+      rollupOptions: {
+        // The `sidekick` CLI runs under plain Node (or the app's runtime as Node), never Electron.
+        input: { index: resolve('src/main/index.ts'), cli: resolve('src/cli/main.ts') }
+      }
+    }
+  },
   preload: {},
   renderer: {
     resolve: {

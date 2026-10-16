@@ -1,5 +1,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import {
+  getDefaultEnvironment,
+  StdioClientTransport
+} from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
   UnauthorizedError,
@@ -28,6 +31,22 @@ export interface McpConnectionAdapter {
 
 export interface McpConnectionOptions {
   authProvider?: OAuthClientProvider
+  /** Extra variables for a local server, decrypted just before it starts. */
+  environment?: Record<string, string>
+}
+
+/** Decides which servers may run; see mcpServerTrust for the main process's policy. */
+export interface McpServerTrust {
+  isApproved(config: McpServerConfig): boolean
+  /** Changes whenever anything that decides what the server runs changes, secrets included. */
+  identity(config: McpServerConfig): string
+  environment(config: McpServerConfig): Record<string, string>
+}
+
+const TRUST_EVERYTHING: McpServerTrust = {
+  isApproved: () => true,
+  identity: (config) => JSON.stringify(config),
+  environment: () => ({})
 }
 
 export type McpConnectionFactory = (
@@ -43,7 +62,7 @@ interface Connection {
 interface ConnectionFailure {
   config: McpServerConfig
   error: string
-  status: Extract<McpServerStatus['status'], 'needs_auth' | 'error'>
+  status: Extract<McpServerStatus['status'], 'needs_auth' | 'needs_approval' | 'error'>
 }
 
 export interface McpCallOptions {
@@ -58,10 +77,6 @@ const CLOSE_TIMEOUT_MS = 3_000
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function sameConfig(left: McpServerConfig, right: McpServerConfig): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 function failureStatus(error: unknown): ConnectionFailure['status'] {
@@ -117,11 +132,18 @@ function mapTools(client: Client, config: McpServerConfig): McpConnectionAdapter
   }
 }
 
-function stdioConnection(config: McpStdioServerConfig): McpConnectionAdapter {
+function stdioConnection(
+  config: McpStdioServerConfig,
+  environment: Record<string, string> = {}
+): McpConnectionAdapter {
   const transport = new StdioClientTransport({
     command: config.command,
     args: config.args,
     cwd: config.cwd,
+    // The SDK replaces the whole environment when one is given; keep its safe defaults.
+    env: Object.keys(environment).length
+      ? { ...getDefaultEnvironment(), ...environment }
+      : undefined,
     stderr: 'pipe'
   })
   const client = new Client({ name: 'sidekick-desktop', version: packageMetadata.version })
@@ -168,7 +190,7 @@ export function createMcpConnection(
   if (validationError) throw new Error(`${config.name}: ${validationError}`)
   return config.transport === 'streamable-http'
     ? streamableHttpConnection(config, options)
-    : stdioConnection(config)
+    : stdioConnection(config, options.environment)
 }
 
 export class McpClientManager {
@@ -182,8 +204,14 @@ export class McpClientManager {
     private readonly createConnection: McpConnectionFactory = createMcpConnection,
     private readonly createOAuthSessions: () => McpOAuthSessionStore = () =>
       new McpOAuthSessionStore(createConnectorCredentialStore()),
-    private readonly openExternal: (url: string) => Promise<void> = (url) => shell.openExternal(url)
+    private readonly openExternal: (url: string) => Promise<void> = (url) =>
+      shell.openExternal(url),
+    private readonly trust: McpServerTrust = TRUST_EVERYTHING
   ) {}
+
+  private sameConfig(left: McpServerConfig, right: McpServerConfig): boolean {
+    return this.trust.identity(left) === this.trust.identity(right)
+  }
 
   private oauth(): McpOAuthSessionStore {
     this.oauthSessions ??= this.createOAuthSessions()
@@ -215,13 +243,21 @@ export class McpClientManager {
     }
     for (const [id, connection] of this.connections) {
       const next = enabled.get(id)
-      if (!next || !sameConfig(next, connection.config)) {
+      if (!next || !this.sameConfig(next, connection.config) || !this.trust.isApproved(next)) {
         await this.closeConnection(connection.adapter)
         this.connections.delete(id)
       }
     }
     for (const config of enabled.values()) {
       if (this.connections.has(config.id)) continue
+      if (!this.trust.isApproved(config)) {
+        this.connectionErrors.set(config.id, {
+          config,
+          error: 'This connector is new or changed. Approve it in Settings before it runs.',
+          status: 'needs_approval'
+        })
+        continue
+      }
       let authProvider: OAuthClientProvider | undefined
       if (config.transport === 'streamable-http' && config.authentication === 'oauth') {
         authProvider = await this.oauth().providerForExistingSession(config)
@@ -234,7 +270,10 @@ export class McpClientManager {
           continue
         }
       }
-      const adapter = this.createConnection(config, { authProvider })
+      const adapter = this.createConnection(config, {
+        authProvider,
+        environment: this.trust.environment(config)
+      })
       try {
         await withDeadline(
           adapter.connect(),
@@ -260,6 +299,9 @@ export class McpClientManager {
     if (!config) throw new Error(`Unknown MCP connector: ${serverId}`)
     if (config.transport !== 'streamable-http' || config.authentication !== 'oauth') {
       throw new Error(`MCP connector ${config.name} does not use OAuth.`)
+    }
+    if (!this.trust.isApproved(config)) {
+      throw new Error(`Approve MCP connector ${config.name} in Settings before signing in.`)
     }
     const existing = this.connections.get(serverId)
     if (existing) {

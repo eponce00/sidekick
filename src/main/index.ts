@@ -36,9 +36,12 @@ import { VoiceModelStore } from './services/voice/voiceModels'
 import { confirmQuitWithActiveRuns, QuitGuard } from './bootstrap/quitConfirmation'
 import { refreshAttentionBadge } from './services/attentionBadge'
 import { isBrowserParkingWindow } from './services/browserViewHost'
+import { startControlEndpoint } from './control/controlService'
+import { seedMcpApprovals } from './services/mcpServerTrust'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
+let stopControlEndpoint: (() => Promise<void>) | null = null
 let applicationShutdown: Promise<void> | null = null
 let shutdownReady = false
 let quitAfterShutdownRequested = false
@@ -58,6 +61,7 @@ function prepareApplicationShutdown(): Promise<void> {
   voiceService?.dispose()
   shutdownCollaboration()
   applicationShutdown = Promise.allSettled([
+    stopControlEndpoint?.(),
     shutdownAgentRuntime(),
     closeMcpConnections(),
     shutdownWorktreeSetup()
@@ -180,6 +184,7 @@ async function bootstrapApplication(): Promise<void> {
   app.on('browser-window-created', (_, window) => optimizer.watchWindowShortcuts(window))
   ipcMain.on('ping', () => console.log('pong'))
 
+  seedMcpApprovals()
   registerAllHandlers()
   appUpdateService = new AppUpdateService({
     beforeQuit: async () => {
@@ -233,6 +238,14 @@ async function bootstrapApplication(): Promise<void> {
   })
   startWorkspaceWatcher(workspacePath)
   appUpdateService.start()
+  // Only the instance holding the single-instance lock gets here, so one endpoint serves the
+  // profile; a second launch just raises this window.
+  startControlEndpoint()
+    .then((stop) => {
+      if (applicationShutdown) void stop()
+      else stopControlEndpoint = stop
+    })
+    .catch((error: unknown) => console.error('[Control] The sidekick CLI is unavailable:', error))
 
   app.on('activate', showMainWindow)
 }

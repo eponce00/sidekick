@@ -60,7 +60,16 @@ const api = {
   settings: {
     selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),
-    load: () => ipcRenderer.invoke('settings:load')
+    load: () => ipcRenderer.invoke('settings:load'),
+    onChanged: (callback: () => void) => {
+      const listener = (): void => callback()
+      ipcRenderer.on('settings:changed', listener)
+      return () => ipcRenderer.removeListener('settings:changed', listener)
+    }
+  },
+  commandLine: {
+    status: () => ipcRenderer.invoke('commandLine:status'),
+    install: () => ipcRenderer.invoke('commandLine:install')
   },
   memory: {
     get: (workspaceRoot?: string) => ipcRenderer.invoke('memory:get', workspaceRoot),
@@ -276,6 +285,7 @@ const api = {
   mcp: {
     listTools: () => ipcRenderer.invoke('mcp:listTools'),
     authenticate: (serverId: string) => ipcRenderer.invoke('mcp:authenticate', serverId),
+    approve: (serverId: string) => ipcRenderer.invoke('mcp:approve', serverId),
     disconnect: (serverId: string) => ipcRenderer.invoke('mcp:disconnect', serverId)
   },
   permissions: {
@@ -331,6 +341,13 @@ const api = {
       }
       ipcRenderer.on('app:openConversation', listener)
       return () => ipcRenderer.removeListener('app:openConversation', listener)
+    },
+    onOpenProviderKey: (callback: (providerInstanceId: string) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: unknown): void => {
+        if (typeof id === 'string' && id) callback(id)
+      }
+      ipcRenderer.on('app:openProviderKey', listener)
+      return () => ipcRenderer.removeListener('app:openProviderKey', listener)
     }
   },
   appUpdates: {

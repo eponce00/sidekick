@@ -7,10 +7,17 @@ import {
   migrateLegacyProviderInstances,
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
-import { getStore } from './state'
+import { appState, getStore } from './state'
 import { validateOfficeInterpreter } from '../services/officeHelperService'
 import { randomUUID } from 'node:crypto'
 import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
+import {
+  approveMcpServers,
+  changedMcpServers,
+  isMcpServerApproved,
+  MCP_ENV_SECRETS_KEY,
+  retainedMcpEnvironment
+} from '../services/mcpServerTrust'
 
 const CREDENTIAL_STORAGE_ERROR =
   'Secure credential storage is unavailable. Unlock or enable your operating system keychain or password manager, then try again. Settings without new credentials can still be saved.'
@@ -26,7 +33,7 @@ function encryptCredential(secret: string): string {
 }
 
 const SECRET_KEYS = ['openRouterApiKey', 'ollamaCloudApiKey', 'lmStudioApiKey'] as const
-type SettingsRecord = Record<string, unknown> & {
+export type SettingsRecord = Record<string, unknown> & {
   __encryptedSecrets?: Record<string, string>
   __encryptedProviderSecrets?: Record<string, string>
 }
@@ -114,6 +121,7 @@ export function protectSettings(value: unknown, existingValue?: unknown): unknow
     }
   }
   settings.__encryptedProviderSecrets = providerSecrets
+  settings[MCP_ENV_SECRETS_KEY] = retainedMcpEnvironment(existing, settings.mcpServers)
   return settings
 }
 
@@ -124,6 +132,8 @@ export function revealSettings(value: unknown): unknown {
   const providerSecrets = settings.__encryptedProviderSecrets
   delete settings.__encryptedSecrets
   delete settings.__encryptedProviderSecrets
+  // MCP server environments are decrypted only when a server starts.
+  delete settings[MCP_ENV_SECRETS_KEY]
   if (!isSecureCredentialStorageAvailable()) {
     // Never expose old plaintext fallback values while secure storage is locked.
     for (const key of SECRET_KEYS) {
@@ -222,6 +232,7 @@ export function publicSettings(value: unknown): unknown {
   const settings = { ...(value as SettingsRecord) }
   delete settings.__encryptedSecrets
   delete settings.__encryptedProviderSecrets
+  delete settings[MCP_ENV_SECRETS_KEY]
   for (const key of SECRET_KEYS) {
     const secret = settings[key]
     settings[`${key}Configured`] =
@@ -265,33 +276,63 @@ function asSettingsRecord(value: unknown): SettingsRecord {
   return value as SettingsRecord
 }
 
-function mcpSummary(value: unknown): string {
-  if (!Array.isArray(value) || value.length === 0) return 'No MCP servers configured.'
-  return value
-    .slice(0, 20)
-    .map((item) => {
-      const server = item as Partial<McpServerConfig> & Record<string, unknown>
-      const args = Array.isArray(server.args) ? server.args.join(' ') : ''
-      const target =
-        server.transport === 'streamable-http' || server.url
-          ? server.url || '(no URL)'
-          : `${server.command || '(no command)'}${args ? ` ${args}` : ''}`
-      return `${server.enabled === false ? '[disabled]' : '[enabled]'} ${server.name || server.id || 'unnamed'}: ${target}`
-    })
-    .join('\n')
-    .slice(0, 3_000)
+// The approval dialog lists at most this many servers; the rest are asked about separately.
+const MAX_SERVERS_PER_APPROVAL = 8
+
+/**
+ * Enabled servers this save adds, edits, or switches on that are not approved in their current
+ * form. Servers left untouched are not swept into an unrelated save; they keep waiting for their
+ * own "Review and allow".
+ */
+export function mcpServersNeedingApproval(
+  previous: SettingsRecord,
+  next: SettingsRecord
+): McpServerConfig[] {
+  const changed = new Set(changedMcpServers(previous.mcpServers, next.mcpServers).map((s) => s.id))
+  const wasEnabled = new Set(
+    (Array.isArray(previous.mcpServers) ? (previous.mcpServers as McpServerConfig[]) : [])
+      .filter((server) => server && server.enabled !== false)
+      .map((server) => server.id)
+  )
+  return (Array.isArray(next.mcpServers) ? (next.mcpServers as McpServerConfig[]) : [])
+    .filter(
+      (server) =>
+        server &&
+        typeof server.id === 'string' &&
+        server.enabled !== false &&
+        (changed.has(server.id) || (!wasEnabled.has(server.id) && !isMcpServerApproved(server)))
+    )
+    .slice(0, MAX_SERVERS_PER_APPROVAL)
+}
+
+/** Everything that decides what a server runs or contacts; environment values never appear. */
+export function describeMcpServer(server: McpServerConfig): string {
+  const lines = [`${server.name || server.id} (${server.id})`]
+  if (server.transport === 'streamable-http') {
+    lines.push(`  URL: ${server.url}`, `  Sign-in: ${server.authentication}`)
+  } else {
+    lines.push(`  Command: ${server.command}`)
+    if (server.args?.length) lines.push(`  Arguments: ${JSON.stringify(server.args)}`)
+    if (server.cwd) lines.push(`  Working folder: ${server.cwd}`)
+    if (server.envKeys?.length) {
+      lines.push(`  Environment: ${server.envKeys.join(', ')} (values hidden)`)
+    }
+  }
+  if (server.approvalMode === 'reads-auto') lines.push('  Read-only tools run without asking')
+  return lines.join('\n').slice(0, 1_500)
 }
 
 export async function confirmSensitiveSettingsChange(
   previous: SettingsRecord,
   next: SettingsRecord,
-  sender: WebContents
+  sender: WebContents | null,
+  requester?: string
 ): Promise<boolean> {
   const enablingFullAccess =
     normalizePermissionMode(previous.commandPermissionMode) !== 'full-access' &&
     normalizePermissionMode(next.commandPermissionMode) === 'full-access'
-  const mcpChanged =
-    JSON.stringify(previous.mcpServers ?? []) !== JSON.stringify(next.mcpServers ?? [])
+  const mcpServers = mcpServersNeedingApproval(previous, next)
+  const mcpChanged = mcpServers.length > 0
   const disablingShellIsolation =
     previous.shellIsolation === 'docker' && next.shellIsolation !== 'docker'
   const officeInterpreterChanged =
@@ -301,6 +342,7 @@ export async function confirmSensitiveSettingsChange(
     return true
 
   const reasons = [
+    requester ? `Requested by ${requester}, not from the Settings window.` : null,
     officeInterpreterChanged
       ? 'The selected Office Python executable will run trusted bundled read-only helpers with your account permissions in host mode. Only choose an interpreter you trust. No dependencies will be installed.'
       : null,
@@ -311,7 +353,7 @@ export async function confirmSensitiveSettingsChange(
       ? 'Full access lets in-scope agent operations run without approval prompts.'
       : null,
     mcpChanged
-      ? `MCP connector configuration changed. Local connectors may launch processes; remote connectors communicate with the listed HTTPS endpoint.\n\n${mcpSummary(next.mcpServers)}`
+      ? `These MCP connectors are new or changed. Local connectors launch processes with your account's permissions; remote connectors send requests to the listed endpoint. SideKick asks again whenever one changes.\n\n${mcpServers.map(describeMcpServer).join('\n\n')}`
       : null
   ]
     .filter(Boolean)
@@ -326,7 +368,8 @@ export async function confirmSensitiveSettingsChange(
     cancelId: 0,
     noLink: true
   }
-  const parent = BrowserWindow.fromWebContents(sender)
+  const window = sender ? BrowserWindow.fromWebContents(sender) : appState.mainWindowRef
+  const parent = window && !window.isDestroyed() ? window : null
   const result = parent
     ? await dialog.showMessageBox(parent, options)
     : await dialog.showMessageBox(options)
@@ -339,6 +382,10 @@ const settingsSavedListeners = new Set<(settings: SettingsRecord) => void>()
 export function onSettingsSaved(listener: (settings: SettingsRecord) => void): () => void {
   settingsSavedListeners.add(listener)
   return () => settingsSavedListeners.delete(listener)
+}
+
+export function notifySettingsSaved(settings: SettingsRecord): void {
+  for (const listener of settingsSavedListeners) listener(settings)
 }
 
 export function registerSettingsHandlers(): void {
@@ -371,11 +418,13 @@ export function registerSettingsHandlers(): void {
         previous.shellIsolation !== next.shellIsolation
           ? randomUUID()
           : previous.officeHelperConfigurationId
+      const approvedServers = mcpServersNeedingApproval(previous, next)
       if (!(await confirmSensitiveSettingsChange(previous, next, event.sender))) {
         return { success: false, error: 'Settings change cancelled' }
       }
       store.set('settings', protectSettings(next, store.get('settings', {})))
-      for (const listener of settingsSavedListeners) listener(next)
+      if (approvedServers.length) approveMcpServers(approvedServers)
+      notifySettingsSaved(next)
       return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }

@@ -64,6 +64,15 @@ import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { registerCoreToolHandlers } from './agentCoreToolHandlers'
 import { registerWebToolHandlers } from './agentWebToolHandlers'
 import { registerConversationToolHandlers } from './agentConversationToolHandlers'
+import {
+  PROVIDER_REQUEST_KEY_TOOL,
+  SETTINGS_PROPOSE_CHANGE_TOOL,
+  SETTINGS_READ_TOOL
+} from '../../shared/appSettingsTools'
+import {
+  registerSettingsToolHandlers,
+  type AppSettingsToolAccess
+} from './agentSettingsToolHandlers'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -389,6 +398,7 @@ export function collaborationCommandScopeError(
 export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
   private artifactInspector?: ArtifactInspectorLike
+  private appSettings?: AppSettingsToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -421,6 +431,11 @@ export class AgentToolRuntime {
   /** Lets create_artifact render what it made and show the model the result. */
   setArtifactInspector(inspector: ArtifactInspectorLike): void {
     this.artifactInspector = inspector
+  }
+
+  /** Lets the agent read and propose changes to SideKick's own settings. */
+  setAppSettings(access: AppSettingsToolAccess): void {
+    this.appSettings = access
   }
 
   async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
@@ -465,6 +480,7 @@ export class AgentToolRuntime {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs)
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
+    if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
       officeHelpersAvailable: () => officeSession?.available() ?? false,
@@ -615,6 +631,7 @@ export class AgentToolRuntime {
         },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,
+        approvalPreview: (name, args) => handlers.preview(name, args),
         ...(this.browser
           ? {
               reserveBrowserHumanTakeover: (conversationId: string) =>
@@ -629,6 +646,11 @@ export class AgentToolRuntime {
 
   private title(name: string, args: Record<string, unknown>): string {
     if (name === 'shell') return stringArg(args, 'title', 'Run command')
+    if (name === SETTINGS_PROPOSE_CHANGE_TOOL) {
+      return `Change SideKick setting ${stringArg(args, 'key')}`.trim()
+    }
+    if (name === SETTINGS_READ_TOOL) return 'Read SideKick settings'
+    if (name === PROVIDER_REQUEST_KEY_TOOL) return 'Ask for a provider key in Settings'
     if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {
       return `${stringArg(args, 'operation', 'Inspect code').replaceAll('_', ' ')} ${stringArg(args, 'file_path')}`.trim()

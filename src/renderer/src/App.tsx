@@ -148,6 +148,19 @@ function App(): React.JSX.Element {
     () => window.api.app.onOpenConversation((id) => openConversationHandlerRef.current(id)),
     []
   )
+  // SideKick's agent asks the user to type a provider key into Settings, never into the chat.
+  const [providerKeyRequest, setProviderKeyRequest] = useState<{ id: string; at: number } | null>(
+    null
+  )
+  useEffect(
+    () =>
+      window.api.app.onOpenProviderKey((id) => {
+        setProviderKeyRequest({ id, at: Date.now() })
+        setSettingsInitialSection('providers')
+        setIsSettingsOpen(true)
+      }),
+    []
+  )
   const [pinnedModels, setPinnedModels] = useState<PinnedModel[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -517,6 +530,27 @@ function App(): React.JSX.Element {
     }
     return result
   }
+
+  // The `sidekick` CLI can change settings while this window is open. Adopt them so a later
+  // save from here does not write the old values back.
+  useEffect(
+    () =>
+      window.api.settings.onChanged(() => {
+        void window.api.settings.load().then((saved) => {
+          if (!saved) return
+          const next = normalizeSettings(
+            syncLegacyProviderSettings({ ...DEFAULT_SETTINGS, ...saved })
+          )
+          setSettings(next)
+          const configured = pinnedModelsFromProviderInstances(next.providerInstances || [])
+          setPinnedModels(configured)
+          if (configured.some((model) => model.id === next.selectedModel)) {
+            setSelectedModel(next.selectedModel || '')
+          }
+        })
+      }),
+    []
+  )
 
   const handleModelChange = (modelId: string): void => {
     setSelectedModel(modelId)
@@ -1512,6 +1546,7 @@ function App(): React.JSX.Element {
           onSave={handleSaveSettings}
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
+          providerKeyRequest={providerKeyRequest}
         />
       )}
     </div>
