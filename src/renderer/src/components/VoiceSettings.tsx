@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Play, Square } from 'lucide-react'
+import { useCallback, useEffect, useId, useState } from 'react'
+import {
+  Activity,
+  AudioLines,
+  CircleAlert,
+  Download,
+  Keyboard,
+  Languages,
+  MessagesSquare,
+  Mic,
+  Play,
+  Square,
+  UserRound,
+  Volume2
+} from 'lucide-react'
 import {
   SPEECH_LANGUAGES,
   SPEECH_VOICES,
@@ -16,6 +29,7 @@ import {
 import { speechPlayer } from '../services/voice/speechPlayer'
 import { updateVoicePreferences, useVoicePreferences } from '../services/voice/voicePreferences'
 import { voiceShortcutLabel } from '../services/voice/voiceShortcut'
+import { SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
 
 type Device = { deviceId: string; label: string }
 
@@ -66,14 +80,40 @@ function useAudioDevices(kind: 'audioinput' | 'audiooutput'): [Device[], () => v
 }
 
 /**
- * Voice settings for this machine: the devices it listens and speaks through,
- * and how replies sound. Choices apply at once; defaults follow the system and
+ * The Voice section of Settings. The switch is a saved setting; the device, voice, and language
+ * choices below it belong to this machine and apply at once. Defaults follow the system and
  * detect the language.
  */
-export function VoiceSettings(): React.JSX.Element {
+export function VoiceSettings({
+  enabled,
+  onEnabledChange
+}: {
+  enabled: boolean
+  onEnabledChange: (enabled: boolean) => void
+}): React.JSX.Element {
+  return (
+    <SettingsSection
+      icon={AudioLines}
+      title="Voice"
+      description="Dictate messages and have replies read aloud. Speech never leaves this device."
+    >
+      <ToggleField
+        icon={AudioLines}
+        label="Dictation and read-aloud"
+        hint="Downloads about 820 MB of speech models in the background: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) and Supertone Supertonic 3."
+        checked={enabled}
+        onChange={onEnabledChange}
+      />
+      {enabled && <VoiceDeviceRows />}
+    </SettingsSection>
+  )
+}
+
+function VoiceDeviceRows(): React.JSX.Element {
   const voice = useVoiceState()
   const preferences = useVoicePreferences()
   const playback = useSpeechPlayback()
+  const id = useId()
   const [microphones, refreshMicrophones] = useAudioDevices('audioinput')
   const [speakers, refreshSpeakers] = useAudioDevices('audiooutput')
   const [testing, setTesting] = useState<MicrophoneCapture | null>(null)
@@ -143,17 +183,25 @@ export function VoiceSettings(): React.JSX.Element {
         settingUp('Read aloud', voice.models.speech)
       ].filter(Boolean)
     : []
+  const hearing = level > 0.01
 
   return (
-    <div className="voice-settings">
+    <>
       {pending.length > 0 && (
-        <p className="voice-settings-status">Setting up · {pending.join(' · ')}</p>
+        <p className="settings-note voice-settings-status" role="status">
+          <Download size={14} aria-hidden="true" />
+          <span>Setting up · {pending.join(' · ')}</span>
+        </p>
       )}
-      <div className="voice-settings-grid">
-        <label className="modern-field">
-          <span>Microphone</span>
-          <div className="voice-settings-row">
+      <SettingsRow
+        icon={Mic}
+        label="Microphone"
+        description="Dictation listens here."
+        controlId={`${id}-microphone`}
+        control={
+          <span className="voice-device-control">
             <select
+              id={`${id}-microphone`}
               value={preferences.inputDeviceId}
               onChange={(event) => chooseMicrophone(event.target.value)}
             >
@@ -166,28 +214,41 @@ export function VoiceSettings(): React.JSX.Element {
             </select>
             <button
               type="button"
-              className="voice-settings-button"
+              className="settings-secondary-action"
               onClick={() =>
                 testing ? setTesting(null) : void testMicrophone(preferences.inputDeviceId)
               }
+              aria-label={testing ? 'Stop microphone test' : 'Test microphone'}
             >
+              {testing ? (
+                <Square size={11} fill="currentColor" aria-hidden="true" />
+              ) : (
+                <Activity size={14} aria-hidden="true" />
+              )}
               {testing ? 'Stop' : 'Test'}
             </button>
-          </div>
-          {testing && (
-            <span className="voice-settings-meter-row">
-              <span className="voice-settings-meter" aria-label="Input level">
-                <span style={{ width: `${Math.round(level * 100)}%` }} />
-              </span>
-              {level > 0.01 ? 'Hearing you' : 'Say something…'}
+          </span>
+        }
+      >
+        {testing && (
+          <span className={`voice-settings-meter-row${hearing ? ' hearing' : ''}`}>
+            <span className="voice-settings-meter" aria-label="Input level">
+              <span style={{ width: `${Math.round(level * 100)}%` }} />
             </span>
-          )}
-        </label>
+            {hearing ? 'Hearing you' : 'Say something…'}
+          </span>
+        )}
+      </SettingsRow>
 
-        <label className="modern-field">
-          <span>Speaker</span>
-          <div className="voice-settings-row">
+      <SettingsRow
+        icon={Volume2}
+        label="Speaker"
+        description="Replies are read aloud here."
+        controlId={`${id}-speaker`}
+        control={
+          <span className="voice-device-control">
             <select
+              id={`${id}-speaker`}
               value={preferences.outputDeviceId}
               onChange={(event) => updateVoicePreferences({ outputDeviceId: event.target.value })}
             >
@@ -200,20 +261,31 @@ export function VoiceSettings(): React.JSX.Element {
             </select>
             <button
               type="button"
-              className="voice-settings-button"
+              className="settings-secondary-action"
               onClick={playSample}
               disabled={voice?.models.speech.status !== 'ready'}
               aria-label={sampleActive ? 'Stop sample' : 'Play a sample'}
             >
-              {sampleActive ? <Square size={10} fill="currentColor" /> : <Play size={11} />}
+              {sampleActive ? (
+                <Square size={11} fill="currentColor" aria-hidden="true" />
+              ) : (
+                <Play size={13} aria-hidden="true" />
+              )}
               {sampleActive ? 'Stop' : 'Sample'}
             </button>
-          </div>
-        </label>
+          </span>
+        }
+      />
 
-        <label className="modern-field">
-          <span>Voice</span>
+      <SettingsRow
+        icon={UserRound}
+        label="Voice"
+        description="One of ten. Device, voice, and language choices apply right away on this machine."
+        controlId={`${id}-voice`}
+        control={
           <select
+            id={`${id}-voice`}
+            className="voice-wide-select"
             value={preferences.voice}
             onChange={(event) => updateVoicePreferences({ voice: Number(event.target.value) })}
           >
@@ -223,11 +295,18 @@ export function VoiceSettings(): React.JSX.Element {
               </option>
             ))}
           </select>
-        </label>
+        }
+      />
 
-        <label className="modern-field">
-          <span>Read-aloud language</span>
+      <SettingsRow
+        icon={Languages}
+        label="Read-aloud language"
+        description="Detected from each message unless you choose one."
+        controlId={`${id}-language`}
+        control={
           <select
+            id={`${id}-language`}
+            className="voice-wide-select"
             value={preferences.language}
             onChange={(event) =>
               updateVoicePreferences({
@@ -242,24 +321,29 @@ export function VoiceSettings(): React.JSX.Element {
               </option>
             ))}
           </select>
-        </label>
-      </div>
-      <label className="voice-settings-check">
-        <input
-          type="checkbox"
-          checked={preferences.readRepliesAloud}
-          onChange={(event) => updateVoicePreferences({ readRepliesAloud: event.target.checked })}
-        />
-        <span>
-          <strong>Talk back and forth</strong>
-          With the mic on, read each reply aloud, then listen again.
-        </span>
-      </label>
-      <p className="voice-settings-hint">
-        Turn the mic on and off with {voiceShortcutLabel()}. Dictation detects the language you
-        speak, among 25 European languages. These choices apply right away.
-      </p>
-      {notice && <p className="voice-settings-error">{notice}</p>}
-    </div>
+        }
+      />
+
+      <ToggleField
+        icon={MessagesSquare}
+        label="Talk back and forth"
+        hint="With the mic on, read each reply aloud, then listen again."
+        checked={preferences.readRepliesAloud}
+        onChange={(readRepliesAloud) => updateVoicePreferences({ readRepliesAloud })}
+      />
+
+      <SettingsRow
+        icon={Keyboard}
+        label="Mic shortcut"
+        description="Turns the mic on and off. Dictation detects the language you speak, among 25 European languages."
+        control={<kbd className="settings-kbd">{voiceShortcutLabel()}</kbd>}
+      />
+      {notice && (
+        <p className="settings-note error" role="alert">
+          <CircleAlert size={14} aria-hidden="true" />
+          {notice}
+        </p>
+      )}
+    </>
   )
 }

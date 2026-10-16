@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AlertCircle, ExternalLink, Info, RefreshCw } from 'lucide-react'
 import type { AppUpdateState } from '../../../shared/appUpdates'
+import { SettingsRow } from './SettingsLayout'
 import './AppUpdateControls.css'
 
 function useAppUpdateState(): AppUpdateState | null {
@@ -119,34 +120,44 @@ export function AppUpdateToast(): React.JSX.Element | null {
 
 export function AppUpdateSettings(): React.JSX.Element {
   const state = useAppUpdateState()
-  if (!state) return <div className="app-update-settings">Loading release status…</div>
+  if (!state) {
+    return <SettingsRow label="SideKick" description="Loading release status…" />
+  }
   const action = primaryAction(state)
   const busy = ['checking', 'downloading', 'installing'].includes(state.status)
 
   return (
-    <div className="app-update-settings">
-      <div>
-        <strong>SideKick {state.currentVersion}</strong>
-        <span>{updateStatus(state)}</span>
-      </div>
-      <div className="app-update-settings-actions">
-        {action ? (
-          <button className="primary" type="button" onClick={() => void action.run()}>
+    <SettingsRow
+      className="app-update-settings"
+      label={`SideKick ${state.currentVersion}`}
+      description={updateStatus(state)}
+      control={
+        action ? (
+          <button
+            className="settings-primary-action"
+            type="button"
+            onClick={() => void action.run()}
+          >
             <action.icon size={14} aria-hidden="true" />
             {action.label}
           </button>
         ) : (
           <button
             type="button"
+            className="settings-secondary-action"
             disabled={busy || state.status === 'disabled'}
             onClick={() => void window.api.appUpdates.check()}
           >
-            <RefreshCw size={14} aria-hidden="true" />
+            <RefreshCw
+              size={14}
+              aria-hidden="true"
+              className={state.status === 'checking' ? 'icon-spin' : undefined}
+            />
             {state.status === 'checking' ? 'Checking…' : 'Check now'}
           </button>
-        )}
-      </div>
-    </div>
+        )
+      }
+    />
   )
 }
 
