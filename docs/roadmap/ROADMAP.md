@@ -30,6 +30,8 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   current command permission and project-containment boundaries.
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
+- Let a session start, message and receive reports from worker sessions, and fold group chat into
+  that model, as proposed in [Multi-agent sessions](MULTI_AGENT.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit
   fork ancestry, compaction replacements, writer ownership, and replay policy for interrupted
   operations.
