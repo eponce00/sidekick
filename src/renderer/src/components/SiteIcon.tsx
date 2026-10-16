@@ -3,16 +3,6 @@ import { Globe } from 'lucide-react'
 
 const iconCache = new Map<string, Promise<string | null>>()
 
-export function hostnameOf(url: string): string | null {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
-    return parsed.hostname.replace(/^www\./, '')
-  } catch {
-    return null
-  }
-}
-
 function originOf(url: string): string | null {
   try {
     const parsed = new URL(url)

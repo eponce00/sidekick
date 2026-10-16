@@ -710,7 +710,12 @@ function ActivityPanel({
         {isPinned ? (
           <div className="activity-content">
             {shownTab === 'files' && viewedFile && (
-              <WorkspaceFileViewer request={viewedFile} onBack={() => setViewedFile(null)} />
+              <WorkspaceFileViewer
+                key={`${viewedFile.workspaceRoot}
+${viewedFile.filePath}`}
+                request={viewedFile}
+                onBack={() => setViewedFile(null)}
+              />
             )}
 
             {shownTab === 'files' && !viewedFile && (
