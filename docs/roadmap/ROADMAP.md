@@ -30,6 +30,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   current command permission and project-containment boundaries.
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
+- Finish worktree isolation for parallel agents: schedule and manager-agent policies, group
+  participants, archive cleanup, snapshots before forced removal, and the other items in
+  [Worktrees for parallel agents](WORKTREES.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit
   fork ancestry, compaction replacements, writer ownership, and replay policy for interrupted
   operations.

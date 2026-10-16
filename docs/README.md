@@ -44,6 +44,8 @@ behavior, and the development guide when testing or publishing it.
 ## Roadmap
 
 - [Roadmap](roadmap/ROADMAP.md) — incomplete work and release readiness.
+- [Worktrees for parallel agents](roadmap/WORKTREES.md) — how other harnesses isolate agents, and
+  the worktree work still open.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
 

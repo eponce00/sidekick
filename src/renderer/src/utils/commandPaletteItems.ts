@@ -21,6 +21,7 @@ export interface CommandPaletteActions {
   nextConversation: () => void
   openConversation: (conversationId: string) => void
   openProjectConversations: (projectId: string) => void
+  manageWorktrees: () => void
 }
 
 export interface CommandPaletteContext {
@@ -65,6 +66,13 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       keywords: 'folder workspace',
       shortcut: label('open-project'),
       run: actions.openProject
+    },
+    {
+      id: 'action:manage-worktrees',
+      group: 'actions',
+      title: 'Manage worktrees',
+      keywords: 'git branch isolate parallel agents remove sync',
+      run: actions.manageWorktrees
     },
     {
       id: 'action:open-settings',
