@@ -10,6 +10,7 @@ import {
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
+  type AgentApprovalPreview,
   type AgentRunEvent,
   type AgentRunPhase,
   type AgentToolCall,
@@ -109,6 +110,11 @@ export interface AgentKernelToolRouter {
   ) => Promise<unknown>
   title?: (name: string, args: Record<string, unknown>) => string
   safeArguments?: (name: string, args: Record<string, unknown>) => Record<string, unknown>
+  /** What an approval would change, shown on the approval card. */
+  approvalPreview?: (
+    name: string,
+    args: Record<string, unknown>
+  ) => Promise<AgentApprovalPreview | undefined>
   reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
   releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
 }
@@ -386,8 +392,10 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
-    'collaboration_send',
-    'collaboration_claim_complete'
+    // The sessions handler shows its own start card when the permission mode asks for one.
+    'start_session',
+    'send_message',
+    'stop_session'
   ].includes(name)
 }
 
@@ -647,6 +655,20 @@ export class AgentRunKernel {
     })
   }
 
+  /**
+   * Lets a tool handler pause its run on a durable question to the user, such as the card that
+   * confirms starting chats. The run resumes its tool once the user answers or the run stops.
+   */
+  async requestUserDecision(
+    runId: string,
+    request: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<PendingAgentInteraction> {
+    const interaction = await this.suspendForInteraction(runId, 'question', request, signal)
+    if (!signal.aborted) this.transition(runId, 'executing_tool')
+    return interaction
+  }
+
   private async executeAskUser(
     runId: string,
     title: string,
@@ -809,7 +831,7 @@ export class AgentRunKernel {
         title,
         data: { entered: true, plannerModel: transition.model },
         modelContent: `<sidekick_plan_mode trust="app-policy">
-The user approved Plan mode. The runtime has removed all project mutations, shell commands, MCP calls, artifacts, collaboration writes, and child agents. Explore with the currently available read-only tools, ask focused questions when needed, and finish by calling present_plan with a verifiable contract. Do not implement yet.
+The user approved Plan mode. The runtime has removed all project mutations, shell commands, MCP calls, artifacts, and child agents. Explore with the currently available read-only tools, ask focused questions when needed, and finish by calling present_plan with a verifiable contract. Do not implement yet.
 </sidekick_plan_mode>`,
         startedAt
       })
@@ -962,9 +984,15 @@ The user approved this exact plan revision. Act capabilities are now available a
     signal: AbortSignal
   ): Promise<'approved' | 'denied' | 'denied_stop'> {
     const catalog = currentCatalog(input)
-    if (!toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
-    const requestedAccess = toolRequestedAccess(catalog, call.name, call.arguments)
-    const decision = resolvePermissionPolicy(input.permissionMode, requestedAccess)
+    // Tools that change SideKick itself ask every time, even in full access.
+    const alwaysAsk = getAgentToolEntry(catalog, call.name)?.approval === 'always'
+    if (!alwaysAsk && !toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
+    const requestedAccess = alwaysAsk
+      ? 'confirm'
+      : toolRequestedAccess(catalog, call.name, call.arguments)
+    const decision = alwaysAsk
+      ? { effectiveAccess: 'confirm' as const }
+      : resolvePermissionPolicy(input.permissionMode, requestedAccess)
     const safeArguments =
       input.toolRouter.safeArguments?.(call.name, call.arguments) ?? call.arguments
     if (decision.effectiveAccess === 'auto') {
@@ -981,7 +1009,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       })
       return 'approved'
     }
-    const scope = agentPermissionScope(call.name, call.arguments)
+    const scope = alwaysAsk ? null : agentPermissionScope(call.name, call.arguments)
     const grants = this.chatGrants.get(input.threadId)
     if (scope && grants && scope.keys.every((key) => grants.has(key))) {
       this.append(input.id, 'permission.resolved', {
@@ -999,6 +1027,9 @@ The user approved this exact plan revision. Act capabilities are now available a
       })
       return 'approved'
     }
+    const preview = await input.toolRouter
+      .approvalPreview?.(call.name, call.arguments)
+      .catch(() => undefined)
     const interaction = await this.suspendForInteraction(
       input.id,
       'permission',
@@ -1009,7 +1040,8 @@ The user approved this exact plan revision. Act capabilities are now available a
         requestedAccess,
         mode: input.permissionMode,
         arguments: safeArguments,
-        ...(scope ? { chatScope: scope.label } : {})
+        ...(scope ? { chatScope: scope.label } : {}),
+        ...(preview ? { preview } : {})
       },
       signal
     )

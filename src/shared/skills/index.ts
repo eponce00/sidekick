@@ -6,6 +6,7 @@ import docxRaw from './definitions/docx.skill.md?raw'
 import pptxRaw from './definitions/pptx.skill.md?raw'
 import xlsxRaw from './definitions/xlsx.skill.md?raw'
 import locationResearchRaw from './definitions/location-research.skill.md?raw'
+import sidekickConfigRaw from './definitions/sidekick-config.skill.md?raw'
 
 export type { Skill, SkillActivationScope, SkillInvocation } from './types'
 export { getSkillRuntimeGuidance } from './runtimeGuidance'
@@ -62,7 +63,8 @@ export const ALL_SKILLS: readonly Skill[] = [
   parseSkillMarkdown(pdfRaw),
   parseSkillMarkdown(docxRaw),
   parseSkillMarkdown(pptxRaw),
-  parseSkillMarkdown(xlsxRaw)
+  parseSkillMarkdown(xlsxRaw),
+  parseSkillMarkdown(sidekickConfigRaw)
 ]
 
 export function getSkillById(id: string): Skill | undefined {

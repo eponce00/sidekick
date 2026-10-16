@@ -11,29 +11,15 @@ import type {
 import type { AgentRunEvent, AgentRunSnapshot, StartAgentRunInput } from '../../shared/agentRuntime'
 import { agentRunProfile, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolCatalog'
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
-import { normalizeToolCallLimit } from '../../shared/agentLimits'
-import { agentPermissionDecision, normalizePermissionMode } from '../../shared/permissions'
-import { resolveMaxOutputTokens } from '../../shared/contextBudget'
-import { refreshProviderTargetMetadata } from '../../shared/providerInstances'
-import type { ProviderInstance } from '../../shared/settings'
+import { agentPermissionDecision } from '../../shared/permissions'
 import type { ProviderSettings } from '../../shared/settings'
-import {
-  providerDefinition,
-  providerKindForTransport,
-  type ProviderKind
-} from '../../shared/providerRegistry'
+import { providerKindForTransport, type ProviderKind } from '../../shared/providerRegistry'
 import { abortablePromise } from './abortablePromise'
 import { classifyAgentKernelFailure } from './agentKernelFailure'
-import {
-  capabilitiesFromTools,
-  createPromptModelProfile,
-  PromptComposer
-} from '../../shared/prompts'
-import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerRuntime'
-import { resolveProviderContext } from '../providers/providerRuntime'
+import type { ProviderChatMessage } from '../../shared/providerRuntime'
 import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
-import { SubAgentSlots } from './subAgentSlots'
+import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
 import { CheckpointTitleStore } from './checkpointTitleStore'
@@ -41,12 +27,14 @@ import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
   ConversationRunPreparer,
   steeredProviderMessage,
+  type ConversationSessionTools,
   type PreparedConversationAgentRun
 } from './conversationRunPreparer'
 import { PromptAdmissionStore } from './promptAdmissionStore'
 import {
   AgentRunKernel,
   type AgentKernelRunResult,
+  type AgentRunSteer,
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
@@ -61,18 +49,19 @@ import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
-import type {
-  AgentChildRunLauncher,
-  AgentCollaborationToolHandler,
-  ArtifactBuildResult
-} from './agentToolRuntime'
-import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import type { AgentChildRunLauncher, ArtifactBuildResult } from './agentToolRuntime'
 import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
+import { mainProcessMcpTrust } from './mcpServerTrust'
 import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { ArtifactInspector } from './artifactInspector'
+import { ProjectStore } from './projectStore'
+import { WorkspaceOccupancy } from './workspaceOccupancy'
+import type { WorkspaceOccupant } from '../../shared/worktrees'
+import { globalRunSlots, providerRunsAtOnce, type QueuedRun } from '../../shared/runSlots'
+import { providerKindForInstance } from '../../shared/providerRegistry'
 import type {
   ConversationGoal,
   CreateConversationGoalInput,
@@ -93,30 +82,11 @@ interface PreparingRun {
   goalId?: string
 }
 
-export interface CollaborationKernelRunInput {
-  id: string
-  threadId: string
-  workspaceRoot: string
-  target: ProviderTarget
-  messages: ProviderChatMessage[]
-  projectInstructions: { content: string; sources: readonly string[] }
-  projectMemory?: string
-  collaborationInstructions: string
-  maxToolRounds?: number
-  collaboration: AgentCollaborationToolHandler
-  beforeModelStep?: (
-    messages: ProviderChatMessage[],
-    signal: AbortSignal,
-    toolRounds: number
-  ) => Promise<ProviderChatMessage[]>
-  onEvent?: (event: AgentRunEvent) => void
-  onWorkspaceWillMutate?: () => Promise<void>
-}
-
 // A sub-agent answers one bounded question; 80 rounds let one run for an hour.
 const SUB_AGENT_TOOL_ROUNDS = 25
-// Beyond this a provider's KV cache cannot hold every sub-agent's prompt anyway.
-const MAX_SUB_AGENTS_AT_ONCE = 4
+// A run waiting on these gives its run slots back until its next model step.
+const SLOT_FREE_TOOLS: ReadonlySet<string> = new Set(['wait'])
+const SLOT_FREE_PHASES: ReadonlySet<string> = new Set(['awaiting_permission', 'awaiting_user'])
 // An artifact that still has a defect after three fixes needs the agent, not a fourth try.
 const ARTIFACT_BUILDER_FIXES = 3
 
@@ -133,7 +103,7 @@ export class AgentRuntimeCoordinator {
   readonly goals: ConversationGoalStore
   private readonly messages: AgentMessageMaterializer
   private readonly admissions: PromptAdmissionStore
-  private readonly mcp = new McpClientManager()
+  private readonly mcp = new McpClientManager(undefined, undefined, undefined, mainProcessMcpTrust)
   readonly commands: CommandService
   private readonly outputs: ToolOutputStore
   private readonly activeConversations = new Map<string, ActiveConversationRun>()
@@ -143,7 +113,18 @@ export class AgentRuntimeCoordinator {
   private readonly publishExternal: (event: AgentRunEvent) => void
   private readonly settings: () => ProviderSettings
   private readonly skillAssetsPath: () => string
-  private readonly subAgentSlots = new SubAgentSlots()
+  /** Runs interrupted before this time were already interrupted when SideKick last closed. */
+  readonly startedAt = Date.now()
+  /** Global and per-provider run slots, shared by every kind of run. */
+  readonly runSlots = new RunSlots(() => globalRunSlots(this.settings()))
+  private readonly leases = new Map<string, RunLease>()
+  private readonly occupancy = new WorkspaceOccupancy()
+  /** Gives each conversation run its family role, capability ceiling and chat tools. */
+  private sessionTools: ConversationSessionTools | undefined
+  /** Messages from other chats waiting for a conversation, taken in before its first step. */
+  private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
+    null
+  private readonly onPreparationChange?: (threadId: string) => void
 
   constructor(
     private readonly db: Database.Database,
@@ -156,9 +137,12 @@ export class AgentRuntimeCoordinator {
       pdfOutputRoot?: string
       /** Where every agent command's terminal output and state is published. */
       publishTerminal?: (event: TerminalSessionEvent) => void
+      /** A run began or ended preparing; preparation publishes no run event of its own. */
+      onPreparationChange?: (threadId: string) => void
     } = {}
   ) {
     this.publishExternal = publish
+    this.onPreparationChange = options.onPreparationChange
     this.settings = options.settings ?? (() => loadStoredSettings() as unknown as ProviderSettings)
     this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
@@ -250,6 +234,13 @@ export class AgentRuntimeCoordinator {
   }
 
   private publishEvent(event: AgentRunEvent): void {
+    const lease = this.leases.get(event.runId)
+    if (
+      lease?.held &&
+      ((event.type === 'run.phase' && SLOT_FREE_PHASES.has(String(event.payload.phase))) ||
+        (event.type === 'tool.running' && SLOT_FREE_TOOLS.has(String(event.payload.name))))
+    )
+      lease.suspend()
     this.publishExternal(event)
     for (const observer of this.observers.get(event.runId) ?? []) observer(event)
   }
@@ -273,12 +264,14 @@ export class AgentRuntimeCoordinator {
     })
     const preparation = { identity, controller: new AbortController(), done, finish }
     this.preparations.set(identity.id, preparation)
+    this.onPreparationChange?.(identity.threadId)
     return preparation
   }
 
   private finishPreparation(preparation: PreparingRun): void {
     if (this.preparations.get(preparation.identity.id) === preparation) {
       this.preparations.delete(preparation.identity.id)
+      this.onPreparationChange?.(preparation.identity.threadId)
     }
     preparation.finish()
   }
@@ -295,17 +288,23 @@ export class AgentRuntimeCoordinator {
   }
 
   private cancelPreparation(preparation: PreparingRun): AgentRunSnapshot {
-    const { identity } = preparation
     preparation.controller.abort()
+    return this.settlePreparation(preparation)
+  }
+
+  /** Records a run that ended before it started: cancelled, or failed with `error`. */
+  private settlePreparation(preparation: PreparingRun, error?: unknown): AgentRunSnapshot {
+    const { identity } = preparation
     const existing = this.store.get(identity.id)
     if (existing) return existing
-    const failure = classifyAgentKernelFailure(undefined, true)
+    const cancelled = error === undefined
+    const failure = classifyAgentKernelFailure(error, cancelled)
     this.db.transaction(() => {
       this.store.start(identity)
       this.store.transition(
         identity.id,
-        'cancelled',
-        `${identity.id}:preparation-cancelled`,
+        failure.phase,
+        `${identity.id}:preparation-${cancelled ? 'cancelled' : 'failed'}`,
         failure.error
       )
       if (identity.outputMessageId) {
@@ -336,152 +335,147 @@ export class AgentRuntimeCoordinator {
     return this.store.get(identity.id)!
   }
 
-  async runCollaborationParticipant(
-    input: CollaborationKernelRunInput
-  ): Promise<AgentKernelRunResult> {
-    const preparation = this.beginPreparation({
-      id: input.id,
-      threadId: input.threadId,
-      workspaceRoot: input.workspaceRoot,
-      provider: input.target.providerKind,
-      model: input.target.model,
-      profile: { surface: 'collaboration', executionMode: 'act', capabilities: [] }
-    })
-    const { signal } = preparation.controller
-    try {
-      if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
-      const currentSettings = this.settings()
-      const configuredThreshold = Number(currentSettings.autoCompactThreshold)
-      const configuredInstances = Array.isArray(currentSettings.providerInstances)
-        ? (currentSettings.providerInstances as ProviderInstance[])
-        : []
-      const target = refreshProviderTargetMetadata(input.target, configuredInstances)
-      const resolved = await resolveProviderContext(target, signal)
-      signal.throwIfAborted()
-      const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
-      const maxOutputTokens = resolveMaxOutputTokens(contextLength, target.maxOutputTokens)
-      const session = await this.awaitPreparation(
-        this.tools.createSession({
-          permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
-          runId: input.id,
-          surface: 'collaboration',
-          workspaceRoot: input.workspaceRoot,
-          editingDialect: editingDialectForTarget(target),
-          webSearchEnabled: currentSettings.webSearchEnabled !== false,
-          collaboration: input.collaboration,
-          instructionScopeId: input.id,
-          onWorkspaceWillMutate: input.onWorkspaceWillMutate
-        }),
-        preparation
-      )
-      signal.throwIfAborted()
-      const catalog = session.catalog()
-      const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
-      const provider = providerDefinition(input.target.providerKind).transport
-      const composed = new PromptComposer().compose({
-        platform:
-          process.platform === 'win32'
-            ? 'windows'
-            : process.platform === 'darwin'
-              ? 'macos'
-              : 'linux',
-        capabilities: capabilitiesFromTools(getAgentToolDefinitions(catalog)),
-        permissionMode,
-        model: createPromptModelProfile({
-          id: `${target.providerKind}:${target.model}`,
-          name: target.model,
-          provider,
-          providerKind: target.providerKind,
-          providerModelId: target.model
-        }),
-        project: {
-          workspaceRoot: input.workspaceRoot,
-          instructions: input.projectInstructions.content,
-          instructionSources: input.projectInstructions.sources,
-          memory: input.projectMemory ?? ''
-        },
-        currentDate: new Intl.DateTimeFormat('en-US', {
-          weekday: 'long',
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        }).format(new Date()),
-        toolRoundLimit: normalizeToolCallLimit(
-          input.maxToolRounds ?? currentSettings.toolCallLimit
-        ),
-        activeSkillIds: [],
-        skillAssetsPath: this.skillAssetsPath()
-      })
-      const messages: ProviderChatMessage[] = [
-        {
-          role: 'system',
-          content: `${composed.content}\n\n## Collaboration role\n${input.collaborationInstructions}`
-        },
-        ...(composed.projectInstructionsMessage
-          ? [{ role: 'user' as const, content: composed.projectInstructionsMessage }]
-          : []),
-        ...input.messages
-      ]
-      signal.throwIfAborted()
-      const run = this.kernel.start({
-        id: input.id,
-        threadId: input.threadId,
-        profile: agentRunProfile(catalog),
-        provider: target.providerKind,
-        model: target.model,
-        workspaceRoot: input.workspaceRoot,
-        promptContext: {
-          version: 'sidekick-collaboration-kernel-v1',
-          contextLength,
-          contextReliable: resolved.reliable
-        },
-        catalog: session.catalog,
-        messages,
-        request: {
-          target: { ...target, contextLength },
-          maxOutputTokens,
-          purpose: 'conversation',
-          temperature: 0.2
-        },
-        maxToolRounds: normalizeToolCallLimit(input.maxToolRounds ?? currentSettings.toolCallLimit),
-        permissionMode,
-        toolRouter: session.router,
-        verificationController: session.verificationController,
-        beforeModelStep: input.beforeModelStep,
-        contextManager: new AgentContextManager({
-          target: { ...target, contextLength },
-          contextLength,
-          maxOutputTokens,
-          threshold: Math.max(
-            0.5,
-            Math.min(0.95, Number.isFinite(configuredThreshold) ? configuredThreshold : 0.8)
-          ),
-          enabled: currentSettings.autoCompactEnabled !== false
-        })
-      })
-      this.finishPreparation(preparation)
-      if (signal.aborted) this.kernel.stop(input.id)
-      return await run
-    } catch (error) {
-      if (!signal.aborted) throw error
-      this.cancelPreparation(preparation)
-      return {
-        runId: input.id,
-        phase: 'cancelled',
-        content: '',
-        thinking: '',
-        messages: [],
-        toolRounds: 0,
-        error: 'Agent run cancelled'
-      }
-    } finally {
-      this.finishPreparation(preparation)
-      this.observers.delete(input.id)
-      clearWorkspaceInstructionScope(input.id)
+  private threadTitle(threadId: string): string | null {
+    const row = this.db.prepare('SELECT title FROM conversations WHERE id = ?').get(threadId) as
+      | { title: string }
+      | undefined
+    return row?.title ?? null
+  }
+
+  private slotTarget(target: {
+    providerInstanceId?: string
+    providerKind?: string
+    model?: string
+  }): { key: string; limit: number } {
+    const instances = this.settings().providerInstances ?? []
+    const instance = target.providerInstanceId
+      ? instances.find(({ id }) => id === target.providerInstanceId)
+      : instances.find(
+          (candidate) =>
+            candidate.enabled && providerKindForInstance(candidate) === target.providerKind
+        )
+    return {
+      key: instance?.id ?? `${target.providerKind ?? 'provider'}:${target.model ?? 'model'}`,
+      limit: providerRunsAtOnce(instance)
     }
   }
 
-  async startConversation(input: StartConversationAgentRunInput): Promise<AgentRunSnapshot> {
+  /** Waits for a global and a provider slot. The lease is released when the run ends. */
+  private async acquireRunSlot(
+    runId: string,
+    conversationId: string | null,
+    target: { providerInstanceId?: string; providerKind?: string; model?: string },
+    signal: AbortSignal,
+    onQueued?: () => void
+  ): Promise<RunLease> {
+    const { key, limit } = this.slotTarget(target)
+    const lease = await this.runSlots.acquire({
+      runId,
+      conversationId,
+      providerKey: key,
+      providerLimit: limit,
+      signal,
+      onQueued
+    })
+    this.leases.set(runId, lease)
+    return lease
+  }
+
+  private releaseRunSlot(runId: string): void {
+    this.leases.get(runId)?.release()
+    this.leases.delete(runId)
+  }
+
+  /** Shows a run that gave its slots back as queued until it gets them again. */
+  private markPhase(runId: string, phase: 'queued' | 'streaming'): void {
+    try {
+      const before = this.store.get(runId)?.lastSequence ?? 0
+      this.store.transition(runId, phase, randomUUID())
+      for (const event of this.store.listEvents(runId, before)) this.publishEvent(event)
+    } catch (error) {
+      // A run stopped while it waited is already terminal; there is nothing to show.
+      if (this.store.get(runId)?.phase === phase)
+        console.warn('[RunSlots] Phase change failed:', error)
+    }
+  }
+
+  /** Before each model step: a run that gave its slots back takes them again, waiting if needed. */
+  private withRunSlot(
+    runId: string,
+    next?: StartAgentKernelRunInput['beforeModelStep']
+  ): NonNullable<StartAgentKernelRunInput['beforeModelStep']> {
+    return async (messages, signal, toolRounds) => {
+      const lease = this.leases.get(runId)
+      if (lease && !lease.held) {
+        let queued = false
+        await lease.resume(signal, () => {
+          queued = true
+          this.markPhase(runId, 'queued')
+        })
+        if (queued) this.markPhase(runId, 'streaming')
+      }
+      return next ? next(messages, signal, toolRounds) : []
+    }
+  }
+
+  /** Runs waiting for a slot, oldest first. */
+  queuedRuns(): QueuedRun[] {
+    return this.runSlots.queued()
+  }
+
+  /** Called whenever a run joins or leaves the slot queue. Returns the unsubscribe function. */
+  onRunQueueChange(listener: () => void): () => void {
+    return this.runSlots.subscribe(listener)
+  }
+
+  /** Writing runs in this folder, or in one inside or around it. */
+  folderOccupants(folder: string): WorkspaceOccupant[] {
+    return this.occupancy.occupants(folder, '')
+  }
+
+  /** Other writing runs in the folder this conversation would work in. */
+  workspaceOccupants(conversationId: string): WorkspaceOccupant[] {
+    const root = new ProjectStore(this.db).getConversationContext(conversationId).workspaceRoot
+    return root ? this.occupancy.occupants(root, conversationId) : []
+  }
+
+  /** Starts a run and resolves once it is working, after any wait for a run slot. */
+  startConversation(input: StartConversationAgentRunInput): Promise<AgentRunSnapshot> {
+    return this.startConversationRun(input, {})
+  }
+
+  /**
+   * For runs started in the main process (chats other chats start, scheduled runs): resolves as
+   * soon as the run is admitted, working or waiting for a slot, so the caller never blocks behind
+   * the queue. It rejects only when the run is refused, as for a busy folder. A later failure to
+   * start is recorded on the run, so the chat shows it.
+   */
+  async startConversationInBackground(
+    input: StartConversationAgentRunInput
+  ): Promise<{ queued: boolean }> {
+    let admitted = false
+    let resolveAdmission!: (queued: boolean) => void
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const run = this.startConversationRun(input, {
+      onAdmitted: (queued) => {
+        admitted = true
+        resolveAdmission(queued)
+      },
+      recordFailure: true
+    })
+    run.catch((error) => {
+      if (admitted) console.warn('[AgentRuntime] A background run could not start:', error)
+    })
+    const queued = await Promise.race([admission, run.then(() => false)])
+    return { queued }
+  }
+
+  private async startConversationRun(
+    input: StartConversationAgentRunInput,
+    hooks: { onAdmitted?: (queued: boolean) => void; recordFailure?: boolean }
+  ): Promise<AgentRunSnapshot> {
     if (!input.id || !input.conversationId || !input.assistantMessageId) {
       throw new Error('Invalid conversation run identity')
     }
@@ -497,24 +491,67 @@ export class AgentRuntimeCoordinator {
     ) {
       throw new Error('This interrupted reply can no longer be continued')
     }
-    const preparation = this.beginPreparation({
-      id: input.id,
-      threadId: input.conversationId,
-      outputMessageId: input.assistantMessageId,
-      provider: input.model.providerKind ?? providerKindForTransport(input.model.provider),
-      model: input.model.providerModelId || input.model.name,
-      profile: {
-        surface: input.mode === 'research' ? 'research' : 'conversation',
-        executionMode: input.mode === 'plan' ? 'plan' : 'act',
-        capabilities: []
-      }
-    })
+    // Research only reads. Every other run may write, so it must not join a folder where another
+    // agent is writing unless the caller explicitly chose to share it.
+    const writtenRoot =
+      input.mode === 'research'
+        ? null
+        : new ProjectStore(this.db).getConversationContext(input.conversationId).workspaceRoot
+    const releaseWorkspace = writtenRoot
+      ? this.occupancy.admit(
+          {
+            runId: input.id,
+            conversationId: input.conversationId,
+            title: this.threadTitle(input.conversationId) ?? 'Another chat',
+            workspaceRoot: writtenRoot
+          },
+          input.workspaceSharing
+        )
+      : () => undefined
+    let preparation: PreparingRun
+    try {
+      preparation = this.beginPreparation({
+        id: input.id,
+        threadId: input.conversationId,
+        outputMessageId: input.assistantMessageId,
+        provider: input.model.providerKind ?? providerKindForTransport(input.model.provider),
+        model: input.model.providerModelId || input.model.name,
+        profile: {
+          surface: input.mode === 'research' ? 'research' : 'conversation',
+          executionMode: input.mode === 'plan' ? 'plan' : 'act',
+          capabilities: []
+        }
+      })
+    } catch (error) {
+      releaseWorkspace()
+      throw error
+    }
     const { signal } = preparation.controller
     let kernelStarted = false
     try {
       if (!input.mode || input.mode === 'conversation') {
         preparation.goalId = this.goals.runnable(input.conversationId)?.id
       }
+      let queued = false
+      await this.awaitPreparation(
+        this.acquireRunSlot(
+          input.id,
+          input.conversationId,
+          {
+            providerInstanceId: input.model.providerInstanceId,
+            providerKind:
+              input.model.providerKind ?? providerKindForTransport(input.model.provider),
+            model: input.model.providerModelId || input.model.name
+          },
+          signal,
+          () => {
+            queued = true
+            hooks.onAdmitted?.(true)
+          }
+        ),
+        preparation
+      )
+      if (!queued) hooks.onAdmitted?.(false)
       const capture = { promise: null as Promise<string | null> | null }
       let workspaceRoot: string | null = null
       const ensureCapture = async (): Promise<void> => {
@@ -538,7 +575,8 @@ export class AgentRuntimeCoordinator {
           this.tools,
           this.goals,
           this.settings,
-          this.skillAssetsPath
+          this.skillAssetsPath,
+          this.sessionTools
         ).prepare(input, ensureCapture, signal),
         preparation
       )
@@ -548,11 +586,18 @@ export class AgentRuntimeCoordinator {
       }
       workspaceRoot = prepared.workspaceRoot
       this.activeConversations.set(input.id, { input, prepared, capture })
+      const inbox =
+        input.mode === 'research'
+          ? []
+          : (this.conversationInbox?.(input.conversationId, input.id) ?? [])
       const run = this.kernel.start({
         ...prepared.kernelInput,
-        beforeModelStep: this.withBackgroundNotices(
-          input.conversationId,
-          prepared.kernelInput.beforeModelStep
+        ...(inbox.length
+          ? { initialSteers: [...(prepared.kernelInput.initialSteers ?? []), ...inbox] }
+          : {}),
+        beforeModelStep: this.withRunSlot(
+          input.id,
+          this.withBackgroundNotices(input.conversationId, prepared.kernelInput.beforeModelStep)
         )
       })
       kernelStarted = true
@@ -563,15 +608,23 @@ export class AgentRuntimeCoordinator {
         .then((result) => this.finalizeConversation(input.id, result))
         .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
         .finally(() => {
+          releaseWorkspace()
+          this.releaseRunSlot(input.id)
           void this.tools.browser?.resetAgentViewports(input.conversationId).catch(() => undefined)
         })
       return this.store.get(input.id)!
     } catch (error) {
       if (signal.aborted) return this.cancelPreparation(preparation)
+      // Nobody waits on a background start, so its chat has to show why it did not run.
+      if (hooks.recordFailure) this.settlePreparation(preparation, error)
       throw error
     } finally {
       this.finishPreparation(preparation)
-      if (!kernelStarted) this.activeConversations.delete(input.id)
+      if (!kernelStarted) {
+        releaseWorkspace()
+        this.releaseRunSlot(input.id)
+        this.activeConversations.delete(input.id)
+      }
       if (!this.activeConversations.has(input.id)) clearWorkspaceInstructionScope(input.id)
     }
   }
@@ -739,24 +792,25 @@ export class AgentRuntimeCoordinator {
     const parent = this.activeConversations.get(parentContext.runId)
     if (!parent) throw new Error('Parent run is no longer active')
     parentContext.signal.throwIfAborted()
-    const parentInput = parent.prepared.kernelInput
-    const target = parentInput.request.target
-    const instance = this.settings().providerInstances?.find(
-      ({ id }) => id === target.providerInstanceId
-    )
-    const release = await this.subAgentSlots.acquire(
-      target.providerInstanceId ?? `${target.providerKind}:${target.model}`,
-      Math.min(MAX_SUB_AGENTS_AT_ONCE, Math.max(1, Math.floor(instance?.subAgentsAtOnce ?? 1))),
-      parentContext.signal,
-      () =>
+    const target = parent.prepared.kernelInput.request.target
+    // The parent waits for its sub-agent, so it gives its slots back until its next model step.
+    // Holding them would deadlock a provider that serves one run at a time.
+    this.leases.get(parentContext.runId)?.suspend()
+    const lease = await this.runSlots.acquire({
+      runId: `${parentContext.runId}:subagent:${randomUUID()}`,
+      conversationId: parentContext.conversationId ?? null,
+      providerKey: this.slotTarget(target).key,
+      providerLimit: this.slotTarget(target).limit,
+      signal: parentContext.signal,
+      onQueued: () =>
         this.recordSubAgentEvent(parentContext, 'subagent.queued', 'queued', {
           toolCallId: parentContext.toolCallId
         })
-    )
+    })
     try {
       return await this.runChild(task, context, parentContext, parent)
     } finally {
-      release()
+      lease.release()
     }
   }
 
@@ -767,6 +821,34 @@ export class AgentRuntimeCoordinator {
    * it then fixes what the review shows, or says the artifact is right.
    */
   private async buildArtifact(
+    first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    }
+  ): Promise<ArtifactBuildResult> {
+    const parent = this.activeConversations.get(parentContext.runId)
+    if (!parent) throw new Error('Parent run is no longer active')
+    const target = parent.prepared.kernelInput.request.target
+    this.leases.get(parentContext.runId)?.suspend()
+    const lease = await this.runSlots.acquire({
+      runId: `${parentContext.runId}:artifact:${randomUUID()}`,
+      conversationId: parentContext.conversationId ?? null,
+      providerKey: this.slotTarget(target).key,
+      providerLimit: this.slotTarget(target).limit,
+      signal: parentContext.signal
+    })
+    try {
+      return await this.runArtifactBuilder(first, parentContext)
+    } finally {
+      lease.release()
+    }
+  }
+
+  private async runArtifactBuilder(
     first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
     parentContext: {
       runId: string
@@ -1112,6 +1194,36 @@ export class AgentRuntimeCoordinator {
     return { accepted }
   }
 
+  setSessionTools(tools: ConversationSessionTools | undefined): void {
+    this.sessionTools = tools
+  }
+
+  /** Pauses a run on a durable question to the user, for tools that confirm their own work. */
+  requestUserDecision(
+    runId: string,
+    request: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<import('../../shared/agentRuntime').PendingAgentInteraction> {
+    return this.kernel.requestUserDecision(runId, request, signal)
+  }
+
+  setConversationInbox(
+    inbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null
+  ): void {
+    this.conversationInbox = inbox
+  }
+
+  /** Hands a message from another chat to the conversation's running run, ending a wait in it. */
+  steerConversation(conversationId: string, steer: AgentRunSteer): boolean {
+    for (const [runId, active] of this.activeConversations) {
+      if (active.input.conversationId !== conversationId) continue
+      const accepted = this.kernel.steer(runId, steer)
+      if (accepted) this.tools.notifyUserMessage(runId)
+      return accepted
+    }
+    return false
+  }
+
   resolveInteraction(input: ResolveAgentInteractionInput): void {
     const interaction = this.kernel.resolveInteraction(
       input.interactionId,
@@ -1167,7 +1279,7 @@ export class AgentRuntimeCoordinator {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
   }
 
-  /** Conversations (or group sessions) with a run being prepared or executing.
+  /** Conversations with a run being prepared or executing.
    * A sub-agent shares its parent's thread, so it is not counted twice. */
   activeThreadIds(): string[] {
     const threads = new Set<string>()

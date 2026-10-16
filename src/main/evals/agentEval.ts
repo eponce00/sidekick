@@ -6,7 +6,6 @@ export type AgentEvalCategory =
   | 'projects'
   | 'visual'
   | 'planning'
-  | 'collaboration'
 
 export interface AgentEvalScenarioDefinition {
   name: string

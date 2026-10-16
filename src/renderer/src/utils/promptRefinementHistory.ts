@@ -10,11 +10,6 @@ export interface PromptRefinementHistorySelection {
   historyTruncated: boolean
 }
 
-function speakerForMessage(message: Message): string {
-  if (message.role === 'user') return message.senderLabel?.trim() || 'You'
-  return message.senderLabel?.trim() || message.peerLabel?.trim() || 'Assistant'
-}
-
 function textForMessage(message: Message): string {
   const direct = message.content.trim()
   if (direct) return direct
@@ -54,7 +49,7 @@ export function selectPromptRefinementHistory(
     return [
       {
         role: message.role === 'user' ? ('user' as const) : ('assistant' as const),
-        speaker: speakerForMessage(message),
+        speaker: message.role === 'user' ? 'You' : 'Assistant',
         content
       }
     ]

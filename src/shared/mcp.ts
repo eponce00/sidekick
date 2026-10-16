@@ -1,6 +1,9 @@
 import type { McpServerConfig, McpToolInfo, ToolRisk } from './types'
 import { findMcpConnectorCatalogEntry } from './connectorCatalog'
 
+export const MCP_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/
+export const MAX_MCP_ENV_KEYS = 32
+
 export function isSecureMcpUrl(value: string): boolean {
   try {
     const url = new URL(value)
@@ -22,6 +25,16 @@ export function validateMcpServerConfig(config: McpServerConfig): string | null 
     if (!config.command.trim()) return 'Command is required for a local server.'
     if (config.args && !config.args.every((arg) => typeof arg === 'string')) {
       return 'Every command argument must be text.'
+    }
+    if (config.envKeys !== undefined) {
+      if (
+        !Array.isArray(config.envKeys) ||
+        config.envKeys.length > MAX_MCP_ENV_KEYS ||
+        !config.envKeys.every((key) => typeof key === 'string' && MCP_ENV_KEY.test(key)) ||
+        new Set(config.envKeys).size !== config.envKeys.length
+      ) {
+        return 'Environment variable names must be unique letters, digits, and underscores.'
+      }
     }
     return null
   }

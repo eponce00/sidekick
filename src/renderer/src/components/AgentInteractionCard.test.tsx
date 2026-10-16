@@ -108,17 +108,21 @@ describe('AgentInteractionCard question workflow', () => {
     }
 
     await render(false)
-    expect(container.querySelector('.agent-question-options')?.getAttribute('role')).toBe(
-      'radiogroup'
-    )
+    // Choosing a single answer sends it, so the choices are buttons rather
+    // than radios, which arrow keys would select as they move.
+    expect(container.querySelector('[role="checkbox"]')).toBeNull()
     expect(container.querySelector('.agent-question-hint')).toBeNull()
 
     await render(true)
-    expect(container.querySelector('.agent-question-options')?.getAttribute('role')).toBe('group')
+    expect(container.querySelectorAll('[role="checkbox"]')).toHaveLength(2)
     expect(container.querySelector('.agent-question-options')?.classList.contains('is-multi')).toBe(
       true
     )
     expect(container.textContent).toContain('Choose any that apply')
+    // The choices are named by the question they answer.
+    const group = container.querySelector('.agent-question-options')!
+    const prompt = document.getElementById(group.getAttribute('aria-labelledby')!)
+    expect(prompt?.textContent).toBe('Which panels?')
   })
 
   it('pages through multi-select questions and submits selected values', async () => {
@@ -163,9 +167,14 @@ describe('AgentInteractionCard question workflow', () => {
       option('Files').click()
       option('Web').click()
     })
-    expect(option('Files').getAttribute('aria-pressed')).toBe('true')
+    expect(option('Files').getAttribute('aria-checked')).toBe('true')
     await act(async () => option('Next').click())
-    expect(container.textContent).toContain('Question 2 of 2')
+    expect(container.querySelector('section')?.getAttribute('aria-label')).toBe(
+      'Question 2 of 2 from the agent'
+    )
+    expect(container.querySelector('.agent-question-progress')?.textContent).toBe('2 of 2')
+    // Focus follows to the new question instead of dropping to the page.
+    expect(document.activeElement?.textContent).toContain('Compact')
     // The second question takes one answer, so choosing it is the answer and
     // there is no separate confirmation to press.
     expect(
@@ -279,12 +288,139 @@ describe('AgentInteractionCard question workflow', () => {
         />
       )
     )
-    expect(container.textContent).toContain('Answered')
+    // Answered, the card folds to one row: what was asked, then what was chosen.
+    const row = container.querySelector('.agent-question-answered') as HTMLButtonElement
+    expect(row.textContent).toContain('2 questions')
+    expect(row.textContent).toContain('Zed · Skipped')
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.agent-question-summary')).toBeNull()
+    expect(container.querySelector('input')).toBeNull()
+
+    await act(async () => row.click())
+    expect(row.getAttribute('aria-expanded')).toBe('true')
     const summary = container.querySelector('.agent-question-summary') as HTMLElement
-    expect(summary.textContent).toContain('Editor')
+    expect(row.getAttribute('aria-controls')).toBe(summary.id)
+    expect(summary.textContent).toContain('Which editor?')
     expect(summary.textContent).toContain('Zed')
     // A question that was passed over reads as passed over rather than blank.
-    expect(summary.textContent).toContain('Skipped')
+    expect(summary.querySelector('.is-skipped')?.textContent).toBe('Skipped')
+  })
+
+  it('names a single answered question by its header, and says when it was cancelled', async () => {
+    const question = {
+      id: 'scope',
+      header: 'Delete scope',
+      question: 'What should be deleted?',
+      options: [{ label: 'Everything, all of it' }, { label: 'Only drafts' }]
+    }
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'question-4',
+            kind: 'question',
+            status: 'resolved',
+            request: { questions: [question] },
+            response: { scope: 'Everything, all of it' }
+          }}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    const row = (): HTMLButtonElement =>
+      container.querySelector('.agent-question-answered') as HTMLButtonElement
+    expect(row().getAttribute('aria-label')).toBe('Delete scope, answered: Everything, all of it')
+    expect(row().querySelector('.agent-question-answered-label')?.textContent).toBe('Delete scope')
+    expect(row().querySelector('.agent-question-answered-value')?.textContent).toBe(
+      'Everything, all of it'
+    )
+
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'question-5',
+            kind: 'question',
+            status: 'cancelled',
+            request: { questions: [question] }
+          }}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(row().getAttribute('aria-label')).toBe('Delete scope, cancelled')
+    await act(async () => row().click())
+    expect(container.querySelector('.agent-question-summary dd')?.textContent).toBe('Not answered')
+  })
+
+  it('answers from the keyboard: arrows move between choices and a digit picks one', async () => {
+    const resolve = vi.fn()
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'question-6',
+            kind: 'question',
+            status: 'pending',
+            request: {
+              questions: [
+                {
+                  id: 'size',
+                  question: 'Which size?',
+                  options: [{ label: 'Small' }, { label: 'Medium' }, { label: 'Large' }]
+                }
+              ]
+            }
+          }}
+          onResolve={resolve}
+        />
+      )
+    )
+    const options = [...container.querySelectorAll<HTMLButtonElement>('.agent-question-option')]
+    const input = container.querySelector('input') as HTMLInputElement
+    const press = (target: Element, key: string): void => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    }
+    // Nothing else had focus, so the first choice takes it.
+    expect(document.activeElement).toBe(options[0])
+    expect(
+      options.map((option) => option.querySelector('.agent-question-mark')?.textContent)
+    ).toEqual(['1', '2', '3'])
+
+    await act(async () => press(options[0], 'ArrowDown'))
+    expect(document.activeElement).toBe(options[1])
+    await act(async () => press(options[1], 'ArrowUp'))
+    await act(async () => press(options[0], 'ArrowUp'))
+    expect(document.activeElement).toBe(input)
+    // In the field a digit is text, and ArrowUp returns to the choices.
+    await act(async () => press(input, '2'))
+    expect(resolve).not.toHaveBeenCalled()
+    await act(async () => press(input, 'ArrowUp'))
+    expect(document.activeElement).toBe(options[2])
+
+    await act(async () => press(options[2], '2'))
+    expect(resolve).toHaveBeenCalledWith('question-6', { size: 'Medium' })
+  })
+
+  it('leaves focus where the user is typing when a question arrives', async () => {
+    const draft = document.createElement('textarea')
+    document.body.appendChild(draft)
+    draft.focus()
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'question-7',
+            kind: 'question',
+            status: 'pending',
+            request: { questions: [{ id: 'name', question: 'Name it' }] }
+          }}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(document.activeElement).toBe(draft)
+    draft.remove()
   })
 
   it('opens the exact suspended browser session and resumes after verification clears', async () => {
@@ -412,6 +548,40 @@ describe('AgentInteractionCard question workflow', () => {
     await act(async () => stop.click())
     expect(onResolve).toHaveBeenLastCalledWith('plain', { approved: false, decision: 'deny_stop' })
     expect(container.textContent).toContain('Denied and stopped')
+  })
+
+  it('shows a proposed settings change as before and after, ignoring malformed previews', async () => {
+    const permission = (id: string, preview: unknown) => ({
+      id,
+      kind: 'permission' as const,
+      status: 'pending' as const,
+      request: { title: 'Change a SideKick setting?', preview }
+    })
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={permission('diff', {
+            summary: 'Let the agent search the web.',
+            changes: [{ label: 'webSearchEnabled', before: 'false', after: 'true' }]
+          })}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('dt')?.textContent).toBe('webSearchEnabled')
+    expect(container.querySelector('del')?.textContent).toBe('false')
+    expect(container.querySelector('ins')?.textContent).toBe('true')
+    expect(container.textContent).toContain('Let the agent search the web.')
+
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={permission('bad', { changes: [{ label: 1, before: {}, after: null }] })}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('.agent-interaction-preview')).toBeNull()
   })
 
   it('shows the recorded decision, reading older responses as allow once or deny', async () => {

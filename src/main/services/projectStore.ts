@@ -260,6 +260,63 @@ export class ProjectStore {
     })()
   }
 
+  /**
+   * Moves a chat that has no messages and has never run into another project, such as its own new
+   * worktree. A chat with history keeps its folder; it forks instead.
+   */
+  rehomeFreshConversation(conversationId: string, projectId: string): ProjectConversation {
+    return this.db.transaction(() => {
+      const current = this.db
+        .prepare('SELECT * FROM conversations WHERE id = ?')
+        .get(conversationId) as ProjectConversation | undefined
+      if (!current) throw new Error('Conversation not found')
+      const destination = this.get(projectId)
+      if (!destination) throw new Error('Project not found')
+      const hasHistory =
+        this.db
+          .prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1')
+          .get(conversationId) ||
+        this.db.prepare('SELECT 1 FROM agent_runs WHERE thread_id = ? LIMIT 1').get(conversationId)
+      if (hasHistory) throw new Error('Only a chat without messages can move to a new worktree')
+      const sourceProject = current.project_id ? this.get(current.project_id) : undefined
+      this.db
+        .prepare(
+          `UPDATE conversations
+           SET project_id = ?, project_context_version = project_context_version + 1,
+               home_workspace_root = ?, home_project_name = ?
+           WHERE id = ?`
+        )
+        .run(projectId, destination.folder_path, destination.name, conversationId)
+      this.rewriteOrder(projectId, [
+        conversationId,
+        ...this.listConversationPlacement(projectId)
+          .filter(({ id }) => id !== conversationId)
+          .map(({ id }) => id)
+      ])
+      if (current.project_id && current.project_id !== projectId) {
+        this.rewriteOrder(
+          current.project_id,
+          this.listConversationPlacement(current.project_id).map(({ id }) => id)
+        )
+      }
+      this.insertTransition({
+        id: randomUUID(),
+        conversationId,
+        fromProjectId: current.project_id,
+        toProjectId: projectId,
+        fromProjectName: sourceProject?.name ?? null,
+        toProjectName: destination.name,
+        fromWorkspaceRoot: sourceProject?.folder_path ?? null,
+        toWorkspaceRoot: destination.folder_path,
+        movedAt: Date.now()
+      })
+      this.touch(projectId)
+      return this.db
+        .prepare('SELECT * FROM conversations WHERE id = ?')
+        .get(conversationId) as ProjectConversation
+    })()
+  }
+
   remove(id: string): void {
     this.db.transaction(() => {
       const project = this.get(id)
@@ -269,89 +326,6 @@ export class ProjectStore {
         projectConversations.some(({ id: conversationId }) => this.hasActiveRun(conversationId))
       ) {
         throw new Error('Stop active runs before removing this project')
-      }
-
-      const collaborationParticipants = this.db
-        .prepare(
-          `SELECT p.id, p.group_id, p.label, project.name AS project_name
-           FROM collaboration_participants p
-           JOIN projects project ON project.id = p.project_id
-           WHERE p.project_id = ?`
-        )
-        .all(id) as Array<{
-        id: string
-        group_id: string
-        label: string
-        project_name: string
-      }>
-      if (collaborationParticipants.length) {
-        const groupIds = [...new Set(collaborationParticipants.map(({ group_id }) => group_id))]
-        const placeholders = groupIds.map(() => '?').join(', ')
-        const activeGroupMission = this.db
-          .prepare(
-            `SELECT 1 FROM collaboration_missions
-             WHERE group_id IN (${placeholders}) AND status IN ('queued', 'running') LIMIT 1`
-          )
-          .get(...groupIds)
-        if (activeGroupMission) {
-          throw new Error('Stop active group missions before removing this project')
-        }
-
-        const eventRows = this.db.prepare(
-          'SELECT id, payload_json FROM collaboration_events WHERE actor_participant_id = ?'
-        )
-        const updateEvent = this.db.prepare(
-          'UPDATE collaboration_events SET payload_json = ? WHERE id = ?'
-        )
-        for (const participant of collaborationParticipants) {
-          const events = eventRows.all(participant.id) as Array<{
-            id: string
-            payload_json: string
-          }>
-          for (const event of events) {
-            let payload: Record<string, unknown> = {}
-            try {
-              payload = JSON.parse(event.payload_json) as Record<string, unknown>
-            } catch {
-              // Preserve the event and add the actor snapshot below.
-            }
-            updateEvent.run(
-              JSON.stringify({
-                ...payload,
-                metadata: {
-                  ...(payload.metadata && typeof payload.metadata === 'object'
-                    ? (payload.metadata as Record<string, unknown>)
-                    : {}),
-                  actorLabel: participant.label,
-                  projectName: participant.project_name
-                }
-              }),
-              event.id
-            )
-          }
-        }
-        const archivedAt = Date.now()
-        this.db
-          .prepare(
-            `UPDATE collaboration_groups SET status = 'archived', updated_at = ?
-             WHERE id IN (${placeholders})`
-          )
-          .run(archivedAt, ...groupIds)
-        this.db
-          .prepare(
-            `UPDATE collaboration_missions
-             SET status = 'stopped', updated_at = ?, completed_at = COALESCE(completed_at, ?)
-             WHERE group_id IN (${placeholders}) AND status = 'paused'`
-          )
-          .run(archivedAt, archivedAt, ...groupIds)
-        this.db
-          .prepare(
-            `UPDATE collaboration_participants
-             SET status = 'removed', removed_at = COALESCE(removed_at, ?)
-             WHERE group_id IN (${placeholders})`
-          )
-          .run(archivedAt, ...groupIds)
-        this.db.prepare('DELETE FROM collaboration_participants WHERE project_id = ?').run(id)
       }
 
       const standalone = this.listConversationPlacement(null)
@@ -404,7 +378,7 @@ export class ProjectStore {
     conversationIds.forEach((conversationId, index) => update.run(index, conversationId, projectId))
   }
 
-  private hasActiveRun(conversationId: string): boolean {
+  hasActiveRun(conversationId: string): boolean {
     const activePhases = [
       'queued',
       'streaming',

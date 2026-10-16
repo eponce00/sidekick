@@ -1,7 +1,7 @@
 import type { AgentToolDefinition } from './agentToolDefinitions'
 import type { ToolRisk } from './types'
 
-export const AGENT_RUN_SURFACES = ['conversation', 'collaboration', 'subagent', 'research'] as const
+export const AGENT_RUN_SURFACES = ['conversation', 'subagent', 'research'] as const
 
 export type AgentRunSurface = (typeof AGENT_RUN_SURFACES)[number]
 
@@ -24,11 +24,12 @@ export const AGENT_CAPABILITIES = [
   'todo',
   'artifacts',
   'subagents',
-  'collaboration',
   'goal',
   'plan',
   'tool.output',
-  'browser'
+  'browser',
+  'settings',
+  'sessions'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
@@ -85,6 +86,17 @@ export interface AgentToolCatalogEntry {
   concurrency: AgentToolConcurrency
   /** Owns human presentation so the renderer never has to infer semantics from command text. */
   presentation: AgentToolPresentationDefinition
+  /**
+   * `always`: ask before every call whatever the permission mode, with no chat-wide grant. For
+   * tools that change SideKick itself, where full access must not mean silent consent.
+   */
+  approval?: 'always'
+}
+
+/** A before-and-after view of what an approval would change, shown on the approval card. */
+export interface AgentApprovalPreview {
+  summary?: string
+  changes: Array<{ label: string; before: string; after: string }>
 }
 
 export interface AgentRunProfile {

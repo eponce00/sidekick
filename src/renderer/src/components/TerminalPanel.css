@@ -21,7 +21,8 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 8px;
+  min-height: 30px;
+  padding: 4px 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -69,26 +70,11 @@
   background: var(--error);
 }
 
-.terminal-panel-item-text {
-  display: grid;
-  min-width: 0;
-}
-
-.terminal-panel-item-title,
-.terminal-panel-item-text code {
+.terminal-panel-item-title {
   overflow: hidden;
+  font-size: var(--text-sm);
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.terminal-panel-item-title {
-  font-size: var(--text-sm);
-}
-
-.terminal-panel-item-text code {
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
 }
 
 .terminal-panel-item-meta {
@@ -104,104 +90,94 @@
   min-height: 0;
 }
 
-.terminal-panel-toolbar {
+.terminal-panel-header {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px 6px;
-  font-size: var(--text-xs);
+  gap: 2px;
+  padding: 8px 8px 0 12px;
 }
 
-.terminal-panel-state {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-
-.terminal-panel-state.is-waiting_for_input {
-  color: var(--warning);
-}
-
-.terminal-panel-state.is-failed,
-.terminal-panel-state.is-timed_out {
-  color: var(--error);
-}
-
-.terminal-panel-cwd {
+.terminal-panel-command {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-muted);
+  color: var(--text-primary);
   font-family: var(--font-mono);
+  font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
-.terminal-panel-toolbar button,
-.terminal-panel-input button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xs);
+.terminal-panel-command span {
+  margin-right: 7px;
+  color: var(--accent);
+}
+
+.terminal-panel-header button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
+  color: var(--text-muted);
   cursor: pointer;
 }
 
-.terminal-panel-toolbar button:hover,
-.terminal-panel-input button:hover {
-  background: var(--surface-2);
+.terminal-panel-header button:hover {
+  background: var(--surface-3);
   color: var(--text-primary);
 }
 
-.terminal-panel-toolbar button.is-danger:hover {
+.terminal-panel-header button.is-danger:hover {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
 }
 
-.terminal-panel-toolbar button:focus-visible,
+.terminal-panel-header button:focus-visible,
 .terminal-panel-input button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
-.terminal-panel-command {
+.terminal-panel-status {
   display: flex;
-  gap: 8px;
-  margin: 0 10px 6px;
-  padding: 6px 9px;
-  overflow-x: auto;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre;
-}
-
-.terminal-panel-command span {
-  color: var(--accent);
-}
-
-.terminal-panel-hint {
-  margin: 0 10px 6px;
-  padding: 6px 9px;
-  border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--warning) 12%, var(--surface-1));
-  color: var(--text-primary);
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 12px 8px;
+  color: var(--text-secondary);
   font-size: var(--text-xs);
 }
 
+.terminal-panel-status.is-waiting_for_input {
+  color: var(--warning);
+}
+
+.terminal-panel-status.is-failed,
+.terminal-panel-status.is-timed_out {
+  color: var(--error);
+}
+
+.terminal-panel-cwd {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  color: var(--text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The terminal is the content: it fills the panel edge to edge, without a frame of its own. */
 .terminal-panel-screen {
   flex: 1;
   min-height: 120px;
-  margin: 0 10px 10px;
-  padding: 6px 0 6px 8px;
+  padding: 8px 0 8px 12px;
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-top: 1px solid var(--border-subtle);
   background: var(--surface-1);
 }
 
@@ -212,7 +188,27 @@
 .terminal-panel-input {
   display: flex;
   gap: 6px;
-  margin: 0 10px 10px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.terminal-panel-input button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.terminal-panel-input button:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
 }
 
 .terminal-panel-input input {
@@ -239,4 +235,8 @@
 
 .terminal-panel-empty strong {
   color: var(--text-primary);
+}
+
+.terminal-panel-item.is-waiting_for_input .terminal-panel-item-meta {
+  color: var(--warning);
 }

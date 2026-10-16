@@ -61,7 +61,6 @@ describe('useConversationPanelRegistry', () => {
 
     expect(registry.mountedConversationIds).toEqual(['b', 'a'])
     expect(registry.currentConversationBusy).toBe(false)
-    expect(registry.hasActiveConversationRuns).toBe(true)
   })
 
   it('releases a completed background panel after the queue hand-off window', async () => {

@@ -1,6 +1,5 @@
-import { app, ipcMain } from 'electron'
+import { ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
-import { join } from 'path'
 import { getDb } from './state'
 import { resolveKnownWorkspace } from './workspaceUtils'
 import { ConversationCompactionStore } from '../services/conversationCompactionStore'
@@ -18,8 +17,9 @@ import {
 import { validateMessageImages } from '../../shared/messageImages'
 import { validateMessageContextAttachments } from '../../shared/messageContextAttachments'
 import type { ForkConversationInput } from '../../shared/projects'
-import { ManagedWorktreeService } from '../services/managedWorktreeService'
 import { setupCreatedWorktree } from './worktreeSetup'
+import { getManagedWorktrees } from './worktrees'
+import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -37,7 +37,7 @@ export function registerDatabaseHandlers(): void {
   const db = getDb()
   const compactions = new ConversationCompactionStore(db)
   const conversationTitles = new ConversationTitleStore(db)
-  const worktrees = new ManagedWorktreeService(db, join(app.getPath('userData'), 'worktrees'))
+  const worktrees = getManagedWorktrees()
 
   ipcMain.handle('conversations:list', async () => {
     const stmt = db.prepare(
@@ -288,6 +288,7 @@ export function registerDatabaseHandlers(): void {
     const result = db
       .prepare('UPDATE conversations SET unread_completion_at = NULL WHERE id = ?')
       .run(id)
+    refreshSessionStatuses([id])
     return { success: result.changes === 1 }
   })
 
@@ -382,14 +383,30 @@ export function registerDatabaseHandlers(): void {
   )
 
   ipcMain.handle('conversations:delete', async (_, id: string) => {
+    const projectId = (
+      db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(id) as
+        | { project_id: string | null }
+        | undefined
+    )?.project_id
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
-    return { success: true }
+    refreshSessionStatuses([id])
+    // A worktree its last chat leaves behind goes too, when nothing in it would be lost.
+    const worktreeCleanup =
+      projectId && worktrees.isManagedProject(projectId)
+        ? await worktrees.removeIfUnused(projectId)
+        : null
+    return { success: true, ...(worktreeCleanup ? { worktreeCleanup } : {}) }
   })
 
   ipcMain.handle('conversations:deleteAll', async () => {
     db.prepare('DELETE FROM messages').run()
     db.prepare('DELETE FROM conversations').run()
+    refreshSessionStatuses(
+      sessionStatusService()
+        ?.statuses()
+        .map(({ conversationId }) => conversationId) ?? []
+    )
     return { success: true }
   })
 

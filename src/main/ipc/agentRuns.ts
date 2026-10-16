@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
 import {
   BROWSER_DEVICE_PRESETS,
   BROWSER_RESPONSIVE_DEVICE,
@@ -23,8 +24,6 @@ import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
-import { ConversationAttentionTracker } from '../services/conversationAttention'
-import { applyAttentionBadge } from '../services/attentionBadge'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -34,21 +33,43 @@ import {
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
+const preparationObservers = new Set<(threadId: string) => void>()
 
-const attention = new ConversationAttentionTracker(
-  (runId) => coordinator?.store.get(runId) ?? null,
-  (state) => {
-    applyAttentionBadge(state.waitingConversationIds.length)
-    publishDesktopEvent('agentRuns:attention', state)
+const runEventObservers = new Set<
+  (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+>()
+
+/** Lets another main-process service follow run events, such as the scheduler. */
+export function observeAgentRunEvents(
+  observer: (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+): () => void {
+  runEventObservers.add(observer)
+  return () => runEventObservers.delete(observer)
+}
+
+/** Lets a service hear when a run starts or stops preparing, which publishes no run event. */
+export function observeAgentRunPreparations(observer: (threadId: string) => void): () => void {
+  preparationObservers.add(observer)
+  return () => preparationObservers.delete(observer)
+}
+
+function publishPreparation(threadId: string): void {
+  for (const observer of preparationObservers) {
+    try {
+      observer(threadId)
+    } catch (error) {
+      console.warn('[AgentRuntime] A preparation observer failed:', error)
+    }
   }
-)
+}
 
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
-  try {
-    attention.observe(event)
-  } catch (error) {
-    // Attention is a convenience; it must never interrupt the durable event stream.
-    console.warn('[Attention] Could not follow a run event:', error)
+  for (const observer of runEventObservers) {
+    try {
+      observer(event)
+    } catch (error) {
+      console.warn('[AgentRuntime] A run event observer failed:', error)
+    }
   }
   publishDesktopEvent('agentRuns:event', { event })
 }
@@ -66,10 +87,20 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       publishGoal,
       {
         pdfOutputRoot: app.getPath('downloads'),
-        publishTerminal: (event) => publishDesktopEvent('terminal:event', event)
+        publishTerminal: (event) => publishDesktopEvent('terminal:event', event),
+        onPreparationChange: publishPreparation
       }
     )
+    coordinator.tools.setAppSettings({
+      control: createAppControlHandlers("SideKick's agent"),
+      openProviderKeyPrompt
+    })
   }
+  return coordinator
+}
+
+/** The runtime if it has started; reading status must not start it. */
+export function existingAgentRuntimeCoordinator(): AgentRuntimeCoordinator | null {
   return coordinator
 }
 
@@ -80,6 +111,29 @@ function getAgentEngineClient(): AgentEngineClient {
     )
   }
   return engineClient
+}
+
+/** Starts a conversation run on the same engine path the renderer's chat uses. */
+export function startConversationRun(
+  input: StartConversationAgentRunInput
+): Promise<import('../../shared/agentRuntime').AgentRunSnapshot> {
+  return getAgentEngineClient().request<import('../../shared/agentRuntime').AgentRunSnapshot>({
+    type: 'run.startConversation',
+    input
+  })
+}
+
+/**
+ * Starts a run from the main process and returns once it is admitted, working or waiting for a
+ * run slot. A later failure to start is recorded on the run.
+ */
+export function startConversationInBackground(
+  input: StartConversationAgentRunInput
+): Promise<{ queued: boolean }> {
+  return getAgentEngineClient().request<{ queued: boolean }>({
+    type: 'run.startConversationInBackground',
+    input
+  })
 }
 
 function validId(value: unknown): value is string {
@@ -185,7 +239,8 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
     typeof input.model.name !== 'string' ||
     typeof input.model.provider !== 'string' ||
     (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode)) ||
-    (input.continuesRunId !== undefined && !validId(input.continuesRunId))
+    (input.continuesRunId !== undefined && !validId(input.continuesRunId)) ||
+    (input.workspaceSharing !== undefined && input.workspaceSharing !== 'allow')
   ) {
     throw new Error('Invalid conversation agent run request')
   }
@@ -428,6 +483,13 @@ export function registerAgentRunHandlers(): void {
       input: validateStart(raw)
     })
   }))
+  ipcMain.handle('agentRuns:workspaceOccupants', (_event, conversationId: unknown) => {
+    if (!validId(conversationId)) throw new Error('Invalid conversation ID')
+    return engine.request<import('../../shared/worktrees').WorkspaceOccupant[]>({
+      type: 'workspace.occupants',
+      conversationId
+    })
+  })
   ipcMain.handle('agentRuns:stop', async (_event, runId: string) => ({
     stopped:
       typeof runId === 'string' && (await engine.request<boolean>({ type: 'run.stop', runId }))
@@ -477,7 +539,6 @@ export function registerAgentRunHandlers(): void {
       input: { runId: input.runId, admissionId: input.admissionId }
     })
   })
-  ipcMain.handle('agentRuns:attention', () => attention.state())
   ipcMain.handle('agentRuns:admissionsList', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
     return admissions.list(conversationId)

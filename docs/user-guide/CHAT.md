@@ -9,8 +9,21 @@
   your message instead.
 - **Queue:** a message added to the queue waits for the reply to finish and is sent next.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
-  counted on the taskbar or dock icon, and announced by a notification when SideKick is not in
-  front. A failed reply is announced the same way.
+  counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
+  when SideKick is not in front. A failed reply is announced the same way. See
+  [Working in the background](BACKGROUND.md).
+
+## Questions from the agent
+
+When the agent needs a decision, it asks in the reply, one question at a time, with numbered
+choices and a field for an answer of your own.
+
+- **Answer:** click a choice, or press its number. Arrow keys move between the choices and the
+  field. A question that takes several answers has square marks and a **Next** or **Send answers**
+  button.
+- **Skip** passes over one question; **Cancel** dismisses all of them without answering.
+- **Once answered,** the question folds to one line showing what was asked and what you chose.
+  Select it to see every question and answer.
 
 ## Checked changes
 
@@ -63,6 +76,11 @@ of its report.
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
+- **Thinking:** for a model whose reasoning can be switched (Ollama, Ollama Cloud, and OpenRouter),
+  the brain button beside the model turns it on or off. It is tinted while on. Off asks the model
+  to skip reasoning, which some models cannot do: gpt-oss models on Ollama reason briefly instead,
+  and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
+  each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
 
 ## Going back
 

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
-import {
-  createCatalogMcpConfig,
-  MCP_CONNECTOR_CATALOG
-} from '../../../shared/connectorCatalog'
+import { Boxes, CircleAlert, Info, Plug, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { createCatalogMcpConfig, MCP_CONNECTOR_CATALOG } from '../../../shared/connectorCatalog'
 import { validateMcpServerConfig } from '../../../shared/mcp'
 import type { McpServerConfig, McpServerStatus } from '../../../shared/types'
+import { SettingsEmptyState, SettingsSection, SettingsSwitch } from './SettingsLayout'
 import './McpServerSettings.css'
 
 interface McpServerSettingsProps {
   servers: McpServerConfig[]
   onChange: (servers: McpServerConfig[]) => void
+  /** Why Save was refused, shown under the servers. */
+  validationError?: string | null
 }
 
 function newServer(index: number): McpServerConfig {
@@ -27,7 +27,8 @@ function newServer(index: number): McpServerConfig {
 
 export function McpServerSettings({
   servers,
-  onChange
+  onChange,
+  validationError: saveValidationError
 }: McpServerSettingsProps): React.JSX.Element {
   const [statuses, setStatuses] = useState<McpServerStatus[]>([])
   const [checking, setChecking] = useState(false)
@@ -43,16 +44,25 @@ export function McpServerSettings({
     }
   }, [])
 
-  const runAuthAction = async (serverId: string, action: 'connect' | 'disconnect'): Promise<void> => {
+  const runAuthAction = async (
+    serverId: string,
+    action: 'connect' | 'disconnect' | 'approve'
+  ): Promise<void> => {
     setActingOn(serverId)
     setActionError(null)
     try {
       const result =
         action === 'connect'
           ? await window.api.mcp.authenticate(serverId)
-          : await window.api.mcp.disconnect(serverId)
+          : action === 'approve'
+            ? await window.api.mcp.approve(serverId)
+            : await window.api.mcp.disconnect(serverId)
       setStatuses(result.statuses)
-      if (!result.ok) setActionError(result.error ?? `Could not ${action} this connector.`)
+      // A cancelled approval is not an error; the status still says it needs approval.
+      if (!result.ok && result.error) setActionError(result.error)
+      else if (!result.ok && action !== 'approve') {
+        setActionError(`Could not ${action} this connector.`)
+      }
     } finally {
       setActingOn(null)
     }
@@ -62,17 +72,36 @@ export function McpServerSettings({
     void refreshStatuses()
   }, [refreshStatuses])
 
-  const update = (
-    index: number,
-    updater: (server: McpServerConfig) => McpServerConfig
-  ): void => {
-    onChange(
-      servers.map((server, itemIndex) => (itemIndex === index ? updater(server) : server))
-    )
+  const update = (index: number, updater: (server: McpServerConfig) => McpServerConfig): void => {
+    onChange(servers.map((server, itemIndex) => (itemIndex === index ? updater(server) : server)))
   }
 
   return (
-    <div className="mcp-server-settings">
+    <SettingsSection
+      icon={Boxes}
+      title="MCP servers"
+      description="External MCP server commands run as local processes."
+      actions={
+        <>
+          <button
+            type="button"
+            className="settings-ghost-action is-small"
+            onClick={() => void refreshStatuses()}
+            disabled={checking}
+          >
+            <RefreshCw size={14} className={checking ? 'icon-spin' : ''} aria-hidden="true" />
+            Check saved servers
+          </button>
+          <button
+            type="button"
+            className="settings-secondary-action is-small"
+            onClick={() => onChange([...servers, newServer(servers.length)])}
+          >
+            <Plus size={14} aria-hidden="true" /> Custom connector
+          </button>
+        </>
+      }
+    >
       <div className="mcp-catalog">
         <span className="mcp-catalog-label">Quick add</span>
         <div className="mcp-catalog-options">
@@ -82,15 +111,17 @@ export function McpServerSettings({
               key={connector.id}
               onClick={() => onChange([...servers, createCatalogMcpConfig(connector.id, servers)])}
             >
-              <Plus size={12} /> {connector.name}
+              <Plus size={12} aria-hidden="true" /> {connector.name}
             </button>
           ))}
         </div>
       </div>
       {servers.length === 0 && (
-        <div className="mcp-empty">
-          No MCP servers configured. SideKick works normally without them.
-        </div>
+        <SettingsEmptyState
+          icon={Plug}
+          title="No MCP servers yet"
+          description="SideKick works normally without them. Add an official connector above, or a custom connector for any local or remote MCP server."
+        />
       )}
       {servers.map((server, index) => {
         const validId = /^[a-zA-Z0-9_-]+$/.test(server.id)
@@ -100,59 +131,71 @@ export function McpServerSettings({
         return (
           <div className="mcp-server-card" key={`${server.id}-${index}`}>
             <div className="mcp-server-header">
-              <label className="mcp-enabled">
-                <input
-                  type="checkbox"
-                  checked={server.enabled !== false}
-                  onChange={(event) =>
-                    update(index, (current) => ({ ...current, enabled: event.target.checked }))
-                  }
-                />
-                Enabled
-              </label>
+              <SettingsSwitch
+                checked={server.enabled !== false}
+                label={`Enable ${server.name || 'this server'}`}
+                onChange={(enabled) => update(index, (current) => ({ ...current, enabled }))}
+              />
+              <strong className="mcp-server-name">{server.name || 'Untitled server'}</strong>
               {server.transport === 'streamable-http' && server.catalogId && (
                 <span className="mcp-official-badge">Official</span>
               )}
               {status && (
                 <span className={`mcp-status mcp-status-${status.status}`} title={status.error}>
+                  <i aria-hidden="true" />
                   {status.status === 'connected'
                     ? `Connected · ${status.toolCount} tools`
                     : status.status === 'needs_auth'
                       ? 'Sign-in required'
-                      : status.status === 'disabled'
-                        ? 'Disabled'
-                        : 'Connection error'}
+                      : status.status === 'needs_approval'
+                        ? 'Needs approval'
+                        : status.status === 'disabled'
+                          ? 'Disabled'
+                          : 'Connection error'}
                 </span>
               )}
-              {oauth && status?.status === 'needs_auth' && server.enabled && (
+              <span className="mcp-server-actions">
+                {status?.status === 'needs_approval' && server.enabled && (
+                  <button
+                    type="button"
+                    className="settings-primary-action is-small"
+                    disabled={actingOn === server.id}
+                    onClick={() => void runAuthAction(server.id, 'approve')}
+                    title="Review exactly what this connector runs, then allow it"
+                  >
+                    {actingOn === server.id ? 'Waiting…' : 'Review and allow'}
+                  </button>
+                )}
+                {oauth && status?.status === 'needs_auth' && server.enabled && (
+                  <button
+                    type="button"
+                    className="settings-primary-action is-small"
+                    disabled={actingOn === server.id}
+                    onClick={() => void runAuthAction(server.id, 'connect')}
+                  >
+                    {actingOn === server.id ? 'Opening…' : 'Connect'}
+                  </button>
+                )}
+                {oauth && status?.status === 'connected' && (
+                  <button
+                    type="button"
+                    className="settings-secondary-action is-small"
+                    disabled={actingOn === server.id}
+                    onClick={() => void runAuthAction(server.id, 'disconnect')}
+                  >
+                    Disconnect
+                  </button>
+                )}
                 <button
                   type="button"
-                  className="mcp-auth-action"
-                  disabled={actingOn === server.id}
-                  onClick={() => void runAuthAction(server.id, 'connect')}
+                  className="settings-ghost-action is-small is-icon settings-remove-action"
+                  onClick={() => onChange(servers.filter((_, itemIndex) => itemIndex !== index))}
+                  aria-label={`Remove ${server.name}`}
+                  title="Remove server"
                 >
-                  {actingOn === server.id ? 'Opening…' : 'Connect'}
+                  <Trash2 size={14} />
                 </button>
-              )}
-              {oauth && status?.status === 'connected' && (
-                <button
-                  type="button"
-                  className="mcp-auth-action"
-                  disabled={actingOn === server.id}
-                  onClick={() => void runAuthAction(server.id, 'disconnect')}
-                >
-                  Disconnect
-                </button>
-              )}
-              <button
-                type="button"
-                className="mcp-remove"
-                onClick={() => onChange(servers.filter((_, itemIndex) => itemIndex !== index))}
-                aria-label={`Remove ${server.name}`}
-                title="Remove server"
-              >
-                <Trash2 size={14} />
-              </button>
+              </span>
             </div>
             <div className="mcp-server-grid">
               <label>
@@ -245,9 +288,7 @@ export function McpServerSettings({
                           current.transport === 'stdio'
                             ? {
                                 ...current,
-                                args: event.target.value
-                                  .split('\n')
-                                  .filter((arg) => arg.length > 0)
+                                args: event.target.value.split('\n').filter((arg) => arg.length > 0)
                               }
                             : current
                         )
@@ -269,6 +310,12 @@ export function McpServerSettings({
                       placeholder="/path/to/server"
                     />
                   </label>
+                  {server.envKeys?.length ? (
+                    <p className="mcp-wide mcp-env-note">
+                      Environment: {server.envKeys.join(', ')}. Values are stored encrypted and
+                      never shown; change them with <code>sidekick mcp add --replace</code>.
+                    </p>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -310,32 +357,26 @@ export function McpServerSettings({
                 </>
               )}
             </div>
-            {validationError && <span className="field-error">{validationError}</span>}
+            {validationError && (
+              <p className="settings-note error mcp-server-error">
+                <CircleAlert size={14} aria-hidden="true" />
+                {validationError}
+              </p>
+            )}
           </div>
         )
       })}
-      <div className="mcp-actions">
-        <button
-          type="button"
-          className="settings-primary-action"
-          onClick={() => onChange([...servers, newServer(servers.length)])}
-        >
-          <Plus size={14} /> Custom connector
-        </button>
-        <button
-          type="button"
-          className="settings-secondary-action"
-          onClick={() => void refreshStatuses()}
-          disabled={checking}
-        >
-          <RefreshCw size={14} className={checking ? 'icon-spin' : ''} /> Check saved servers
-        </button>
-      </div>
-      {actionError && <span className="field-error">{actionError}</span>}
-      <span className="field-hint">
+      {[saveValidationError, actionError].filter(Boolean).map((message) => (
+        <p key={message} className="settings-note error" role="alert">
+          <CircleAlert size={14} aria-hidden="true" />
+          {message}
+        </p>
+      ))}
+      <p className="settings-note">
+        <Info size={14} aria-hidden="true" />
         Remote connectors require HTTPS except on this Mac. Authentication is detected safely; OAuth
         sign-in will use the encrypted connector vault.
-      </span>
-    </div>
+      </p>
+    </SettingsSection>
   )
 }

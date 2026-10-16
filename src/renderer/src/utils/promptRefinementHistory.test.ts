@@ -10,12 +10,7 @@ describe('selectPromptRefinementHistory', () => {
   it('keeps recent visible conversation text with useful speaker labels', () => {
     const result = selectPromptRefinementHistory([
       message({ id: '1', role: 'user', content: 'Build the initial dashboard.' }),
-      message({
-        id: '2',
-        role: 'agent',
-        peerLabel: 'Data agent',
-        content: 'The official dataset is ready.'
-      }),
+      message({ id: '2', role: 'agent', content: 'The official dataset is ready.' }),
       message({ id: '3', role: 'system', content: 'Saved project history.' }),
       message({
         id: '4',
@@ -47,7 +42,7 @@ describe('selectPromptRefinementHistory', () => {
         }),
         expect.objectContaining({
           role: 'assistant',
-          speaker: 'Data agent',
+          speaker: 'Assistant',
           content: 'The official dataset is ready.'
         }),
         expect.objectContaining({ role: 'user', speaker: 'You', content: 'Now fix the map.' })

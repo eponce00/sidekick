@@ -7,10 +7,12 @@ import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
 import type { SettingsSection } from './components/SettingsModal'
 import ContextIndicator from './components/ContextIndicator'
-import GroupChatPanel from './components/GroupChatPanel'
-import GroupSetupDialog from './components/GroupSetupDialog'
+import SchedulesDialog from './components/SchedulesDialog'
+import { useSchedules } from './hooks/useSchedules'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
+import { WorktreesDialog } from './components/WorktreesDialog'
+import { useManagedWorktrees } from './hooks/useManagedWorktrees'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
@@ -27,7 +29,6 @@ import {
   syncLegacyProviderSettings
 } from '../../shared/providerInstances'
 import type { PinnedModel } from './types/models.types'
-import type { CollaborationGroup, CreateCollaborationGroupInput } from '../../shared/collaboration'
 import {
   DEFAULT_TOOL_CALL_LIMIT,
   TOOL_CALL_LIMIT_POLICY_VERSION,
@@ -38,12 +39,15 @@ import {
 import { resolveFastModel } from './utils/fastModel'
 import { isPlaceholderConversationTitle } from './utils/chatPanelHelpers'
 import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
-import type { GroupAgentContextSnapshot } from './utils/groupAgentContext'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
-import { deleteComposerDraft } from './services/composerDrafts'
-import { useConversationAttention } from './hooks/useConversationAttention'
+import {
+  deleteComposerDraft,
+  saveComposerDraft,
+  type ComposerDraft
+} from './services/composerDrafts'
+import { useSessionStatuses } from './hooks/useSessionStatuses'
 import { attentionNotificationBody, shouldNotifyAttention } from './utils/conversationAttention'
 import type { ConversationAttentionAlert } from '../../shared/conversationAttention'
 import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardShortcuts'
@@ -100,20 +104,6 @@ function getPreviewTheme(): 'dark' | 'light' | null {
 
 const previewTheme = getPreviewTheme()
 
-function getPreviewGroupId(): string | null {
-  const params = new URLSearchParams(window.location.search)
-  return params.has('ui-preview') && params.get('view') === 'group' ? 'preview-group-1' : null
-}
-
-const previewGroupId = getPreviewGroupId()
-
-function getPreviewGroupSessionId(): string | null {
-  const params = new URLSearchParams(window.location.search)
-  return params.has('ui-preview') && params.get('view') === 'group' ? params.get('session') : null
-}
-
-const previewGroupSessionId = getPreviewGroupSessionId()
-
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
@@ -148,10 +138,22 @@ function App(): React.JSX.Element {
     () => window.api.app.onOpenConversation((id) => openConversationHandlerRef.current(id)),
     []
   )
+  // SideKick's agent asks the user to type a provider key into Settings, never into the chat.
+  const [providerKeyRequest, setProviderKeyRequest] = useState<{ id: string; at: number } | null>(
+    null
+  )
+  useEffect(
+    () =>
+      window.api.app.onOpenProviderKey((id) => {
+        setProviderKeyRequest({ id, at: Date.now() })
+        setSettingsInitialSection('providers')
+        setIsSettingsOpen(true)
+      }),
+    []
+  )
   const [pinnedModels, setPinnedModels] = useState<PinnedModel[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const [pendingFork, setPendingFork] = useState<{
     conversationId: string
@@ -159,21 +161,14 @@ function App(): React.JSX.Element {
   } | null>(null)
   const [forkBusy, setForkBusy] = useState(false)
   const [forkError, setForkError] = useState<string | null>(null)
-  const [currentGroupId, setCurrentGroupId] = useState<string | null>(previewGroupId)
-  const [currentGroupSessionId, setCurrentGroupSessionId] = useState<string | null>(
-    previewGroupSessionId
+  const { worktrees, refreshWorktrees } = useManagedWorktrees()
+  const [worktreesDialog, setWorktreesDialog] = useState<{ focusProjectId: string | null } | null>(
+    null
   )
-  const currentGroupIdRef = useRef(currentGroupId)
-  const currentGroupSessionIdRef = useRef(currentGroupSessionId)
-  useEffect(() => {
-    currentGroupIdRef.current = currentGroupId
-    currentGroupSessionIdRef.current = currentGroupSessionId
-  }, [currentGroupId, currentGroupSessionId])
   const currentConversation = conversations.find(
     (conversation) => conversation.id === currentConversationId
   )
-  const [groupAgentContext, setGroupAgentContext] = useState<GroupAgentContextSnapshot | null>(null)
-  const [isGroupSetupOpen, setIsGroupSetupOpen] = useState(false)
+  const [isSchedulesOpen, setIsSchedulesOpen] = useState(false)
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
   >({})
@@ -224,7 +219,7 @@ function App(): React.JSX.Element {
     viewportWidth,
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
-    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelOpen: effectiveActivityPanelPinned,
     panelWidth: activityPanelWidth
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
@@ -232,7 +227,7 @@ function App(): React.JSX.Element {
     viewportWidth,
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
-    panelOpen: !currentGroupId && effectiveActivityPanelPinned,
+    panelOpen: effectiveActivityPanelPinned,
     panelWidth: activityPanelWidth
   }).sidebarAutoCollapsed
   useEffect(() => {
@@ -305,10 +300,8 @@ function App(): React.JSX.Element {
   const [chatRollbackHash, setChatRollbackHash] = useState<string | null>(null)
   const [isReady, setIsReady] = useState(false)
   const {
-    busyConversationIds,
     currentConversationIdRef,
     currentConversationBusy: isAgentBusy,
-    hasActiveConversationRuns,
     mountedConversationIds,
     conversationPanelKeys,
     draftPanelKey,
@@ -366,15 +359,13 @@ function App(): React.JSX.Element {
           }
         }
 
-        const [conversationsList, projectsList, groupsList] = await Promise.all([
+        const [conversationsList, projectsList] = await Promise.all([
           window.api.conversations.list(),
           window.api.projects.list(),
-          window.api.collaboration.listGroups(),
           window.api.workspace.setPath(null)
         ])
         setConversations(conversationsList)
         setProjects(projectsList)
-        setGroups(groupsList)
 
         // Local data is ready — show the app immediately
         setIsReady(true)
@@ -394,56 +385,6 @@ function App(): React.JSX.Element {
 
     loadData()
   }, [])
-
-  useEffect(
-    () =>
-      window.api.collaboration.onChanged(() => {
-        void window.api.collaboration.listGroups().then((nextGroups) => {
-          const openGroupId = currentGroupIdRef.current
-          const openSessionId = currentGroupSessionIdRef.current
-          if (!openGroupId) {
-            setGroups(nextGroups)
-            return
-          }
-          setGroups(
-            nextGroups.map((group) => {
-              if (group.id !== openGroupId) return group
-              if (openSessionId) {
-                const openSession = group.agentSessions.find(
-                  (session) => session.id === openSessionId
-                )
-                if (!openSession?.unreadCompletionAt) return group
-                void window.api.collaboration.markAgentSessionRead(openSessionId)
-                return {
-                  ...group,
-                  agentSessions: group.agentSessions.map((session) =>
-                    session.id === openSessionId
-                      ? { ...session, unreadCompletionAt: null }
-                      : session
-                  )
-                }
-              }
-              if (
-                !group.unreadCompletionAt &&
-                !group.agentSessions.some((session) => session.unreadCompletionAt)
-              ) {
-                return group
-              }
-              void window.api.collaboration.markGroupRead(openGroupId)
-              return {
-                ...group,
-                unreadCompletionAt: null,
-                agentSessions: group.agentSessions.map((session) => ({
-                  ...session,
-                  unreadCompletionAt: null
-                }))
-              }
-            })
-          )
-        })
-      }),
-    []
-  )
 
   useEffect(
     () =>
@@ -518,6 +459,27 @@ function App(): React.JSX.Element {
     return result
   }
 
+  // The `sidekick` CLI can change settings while this window is open. Adopt them so a later
+  // save from here does not write the old values back.
+  useEffect(
+    () =>
+      window.api.settings.onChanged(() => {
+        void window.api.settings.load().then((saved) => {
+          if (!saved) return
+          const next = normalizeSettings(
+            syncLegacyProviderSettings({ ...DEFAULT_SETTINGS, ...saved })
+          )
+          setSettings(next)
+          const configured = pinnedModelsFromProviderInstances(next.providerInstances || [])
+          setPinnedModels(configured)
+          if (configured.some((model) => model.id === next.selectedModel)) {
+            setSelectedModel(next.selectedModel || '')
+          }
+        })
+      }),
+    []
+  )
+
   const handleModelChange = (modelId: string): void => {
     setSelectedModel(modelId)
     const updatedSettings = { ...settings, selectedModel: modelId }
@@ -574,7 +536,18 @@ function App(): React.JSX.Element {
 
   const refreshProjects = useCallback(async (): Promise<void> => {
     setProjects(await window.api.projects.list())
-  }, [])
+    // A project can be a worktree that was just created or removed.
+    void refreshWorktrees()
+  }, [refreshWorktrees])
+
+  const worktreeByProjectId = useMemo(
+    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree])),
+    [worktrees]
+  )
+  const worktreeSources = useMemo(
+    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree.sourceProjectId])),
+    [worktrees]
+  )
 
   const markConversationRead = useCallback((id: string): void => {
     setConversations((current) =>
@@ -583,40 +556,6 @@ function App(): React.JSX.Element {
       )
     )
     void window.api.conversations.markRead(id)
-  }, [])
-
-  const markGroupRead = useCallback((id: string): void => {
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === id
-          ? {
-              ...group,
-              unreadCompletionAt: null,
-              agentSessions: group.agentSessions.map((session) => ({
-                ...session,
-                unreadCompletionAt: null
-              }))
-            }
-          : group
-      )
-    )
-    void window.api.collaboration.markGroupRead(id)
-  }, [])
-
-  const markGroupSessionRead = useCallback((groupId: string, sessionId: string): void => {
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === groupId
-          ? {
-              ...group,
-              agentSessions: group.agentSessions.map((session) =>
-                session.id === sessionId ? { ...session, unreadCompletionAt: null } : session
-              )
-            }
-          : group
-      )
-    )
-    void window.api.collaboration.markAgentSessionRead(sessionId)
   }, [])
 
   const handleNewConversation = async (projectId: string | null = null): Promise<void> => {
@@ -628,9 +567,6 @@ function App(): React.JSX.Element {
     )
     setConversations((prev) => [newConv, ...prev])
     setCurrentConversationId(newConv.id)
-    setCurrentGroupId(null)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
     setTokenCounts({ current: 0, max: 4096 })
     setConversationCost(0)
     void refreshProjects()
@@ -641,80 +577,12 @@ function App(): React.JSX.Element {
     markConversationRead(id)
     await activateProjectWorkspace(conversation?.project_id)
     setCurrentConversationId(id)
-    setCurrentGroupId(null)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
     restoreTokenCounts(id)
     setConversationCost(0)
   }
 
-  const handleSelectGroup = async (id: string): Promise<void> => {
-    markGroupRead(id)
-    setCurrentConversationId(null)
-    setCurrentGroupId(id)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
-    await window.api.workspace.setPath(null)
-  }
-
-  const handleSelectGroupSession = async (groupId: string, sessionId: string): Promise<void> => {
-    const session = groups
-      .find((group) => group.id === groupId)
-      ?.agentSessions.find((candidate) => candidate.id === sessionId)
-    markGroupSessionRead(groupId, sessionId)
-    setCurrentConversationId(null)
-    setCurrentGroupId(groupId)
-    setCurrentGroupSessionId(sessionId)
-    setGroupAgentContext(null)
-    await activateProjectWorkspace(session?.projectId ?? null)
-  }
-
-  const handleRenameGroupSession = async (id: string, title: string): Promise<void> => {
-    const updated = await window.api.collaboration.updateAgentSession(id, { title })
-    setGroups((current) =>
-      current.map((group) =>
-        group.id === updated.groupId
-          ? {
-              ...group,
-              agentSessions: group.agentSessions.map((session) =>
-                session.id === updated.id ? updated : session
-              )
-            }
-          : group
-      )
-    )
-  }
-
-  const handleRenameGroup = async (id: string, title: string): Promise<void> => {
-    const updated = await window.api.collaboration.updateGroup(id, { title })
-    setGroups((current) =>
-      current.map((group) => (group.id === updated.id ? { ...group, ...updated } : group))
-    )
-  }
-
-  const handleCreateGroup = async (input: CreateCollaborationGroupInput): Promise<void> => {
-    const detail = await window.api.collaboration.createGroup(input)
-    setGroups(await window.api.collaboration.listGroups())
-    setCurrentConversationId(null)
-    setCurrentGroupId(detail.group.id)
-    setCurrentGroupSessionId(null)
-    setGroupAgentContext(null)
-    setIsGroupSetupOpen(false)
-    await window.api.workspace.setPath(null)
-  }
-
-  const handleDeleteGroup = async (id: string): Promise<void> => {
-    await window.api.collaboration.deleteGroup(id)
-    setGroups((current) => current.filter((group) => group.id !== id))
-    if (currentGroupId === id) {
-      setCurrentGroupId(null)
-      setCurrentGroupSessionId(null)
-      setGroupAgentContext(null)
-    }
-  }
-
   const handleDeleteConversation = async (id: string): Promise<void> => {
-    if (busyConversationIds.has(id)) return
+    if (runningConversationIds.has(id)) return
     await window.api.conversations.delete(id)
     deleteComposerDraft(id)
     setConversations((prev) => prev.filter((c) => c.id !== id))
@@ -727,7 +595,7 @@ function App(): React.JSX.Element {
   }
 
   const handleDeleteAllConversations = async (): Promise<void> => {
-    if (hasActiveConversationRuns) return
+    if (runningConversationIds.size > 0) return
     try {
       for (const conv of conversations) {
         await window.api.conversations.delete(conv.id)
@@ -788,7 +656,7 @@ function App(): React.JSX.Element {
   // database, so it stays available while the conversation is still running.
   // Forking from the tip would copy the in-flight message, so that still waits.
   const forkBlockedByRun = (conversationId: string, messageId?: string): boolean =>
-    !messageId && busyConversationIds.has(conversationId)
+    !messageId && runningConversationIds.has(conversationId)
 
   const handleForkConversation = (id: string, messageId?: string): void => {
     if (forkBlockedByRun(id, messageId)) return
@@ -817,6 +685,61 @@ function App(): React.JSX.Element {
     } finally {
       setForkBusy(false)
     }
+  }
+
+  const handleStartInWorktree = async (
+    conversationId: string,
+    options: { branchName?: string; baseRef?: string }
+  ): Promise<void> => {
+    const result = await window.api.worktrees.createForConversation({ conversationId, ...options })
+    if (currentConversationIdRef.current === conversationId) {
+      await window.api.workspace.setPath(result.project.folder_path)
+    }
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId
+          ? { ...conversation, ...result.conversation }
+          : conversation
+      )
+    )
+    setProjects(await window.api.projects.list())
+    await refreshWorktrees()
+  }
+
+  const handleForkIntoWorktree = async (
+    conversationId: string,
+    draft: ComposerDraft
+  ): Promise<void> => {
+    const forked = await window.api.conversations.fork({
+      sourceId: conversationId,
+      workspaceMode: 'worktree'
+    })
+    // The fork's composer opens with the message that could not be sent here.
+    saveComposerDraft(forked.id, draft)
+    await window.api.workspace.setPath(forked.home_workspace_root ?? null)
+    setProjects(await window.api.projects.list())
+    setConversations((prev) => [forked, ...prev])
+    setCurrentConversationId(forked.id)
+    await refreshWorktrees()
+  }
+
+  const handleWorktreesRemoved = async (): Promise<void> => {
+    const [listedConversations, listedProjects] = await Promise.all([
+      window.api.conversations.list(),
+      window.api.projects.list()
+    ])
+    setConversations(listedConversations)
+    setProjects(listedProjects)
+    await refreshWorktrees()
+    const current = listedConversations.find(({ id }) => id === currentConversationIdRef.current)
+    if (current && !current.project_id) await window.api.workspace.setPath(null)
+  }
+
+  const openWorktreeProject = (projectId: string): void => {
+    setWorktreesDialog(null)
+    const latest = latestProjectConversationId(conversations, projectId)
+    if (latest) void handleSelectConversation(latest)
+    else void handleNewConversation(projectId)
   }
 
   const handleConversationCreated = async (id: string, title: string): Promise<void> => {
@@ -904,7 +827,7 @@ function App(): React.JSX.Element {
     setIsSettingsOpen(true)
   }
   const showAdjacentConversation = (direction: 1 | -1): void => {
-    const shown = currentGroupId ? null : currentConversationId
+    const shown = currentConversationId
     const target = adjacentConversationId(sidebarOrderRef.current, shown, direction)
     if (target && target !== shown) void handleSelectConversation(target)
   }
@@ -952,16 +875,14 @@ function App(): React.JSX.Element {
         conversations,
         projects,
         sidebarOrder: sidebarOrderRef.current,
-        currentConversationId: currentGroupId ? null : currentConversationId,
+        currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
-        browserPanelOpen: currentGroupId
-          ? null
-          : effectiveActivityPanelPinned && activityTabRef.current === 'browser',
+        browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
         voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
         theme,
         actions: {
           newChat: () => void handleNewConversation(null),
-          newGroupChat: () => setIsGroupSetupOpen(true),
+          openSchedules: () => setIsSchedulesOpen(true),
           openProject: () => void handleOpenProject(false),
           openSettings,
           toggleSidebar,
@@ -976,13 +897,15 @@ function App(): React.JSX.Element {
             const latest = latestProjectConversationId(conversations, projectId)
             if (latest) void handleSelectConversation(latest)
             else void handleNewConversation(projectId)
-          }
+          },
+          manageWorktrees: () =>
+            setWorktreesDialog({ focusProjectId: currentConversation?.project_id ?? null })
         }
       })
     : []
 
   const handleMoveConversation = async (input: MoveConversationInput): Promise<void> => {
-    if (busyConversationIds.has(input.conversationId)) return
+    if (runningConversationIds.has(input.conversationId)) return
     await window.api.projects.moveConversation(input)
     if (input.conversationId === currentConversationId) {
       await activateProjectWorkspace(input.projectId)
@@ -1018,7 +941,8 @@ function App(): React.JSX.Element {
   const handleRemoveProject = async (id: string): Promise<void> => {
     if (
       conversations.some(
-        (conversation) => conversation.project_id === id && busyConversationIds.has(conversation.id)
+        (conversation) =>
+          conversation.project_id === id && runningConversationIds.has(conversation.id)
       )
     )
       return
@@ -1061,7 +985,7 @@ function App(): React.JSX.Element {
       const notify = shouldNotifyAttention({
         notificationsEnabled: settings.notificationsEnabled ?? true,
         appFocused: document.hasFocus(),
-        shownConversationId: currentGroupIdRef.current ? null : currentConversationIdRef.current,
+        shownConversationId: currentConversationIdRef.current,
         conversationId: alert.conversationId
       })
       if (!notify) return
@@ -1079,7 +1003,37 @@ function App(): React.JSX.Element {
       settings.notificationsEnabled
     ]
   )
-  const waitingConversationIds = useConversationAttention(handleAttentionAlert)
+  // Main owns every chat's state, including runs no panel here started.
+  const sessionStatuses = useSessionStatuses(handleAttentionAlert)
+  const runningConversationIds = sessionStatuses.active
+  const waitingConversationIds = sessionStatuses.waiting
+  const refreshConversationsForSchedules = useCallback(() => {
+    void window.api.conversations
+      .list()
+      .then((list) => {
+        setConversations(list)
+        // A run that finished in the chat on screen has been read, whichever event came first.
+        const shown = list.find(({ id }) => id === currentConversationIdRef.current)
+        if (shown?.unread_completion_at) markConversationRead(shown.id)
+      })
+      .catch((error) => console.error('[Schedules] Could not refresh chats', error))
+  }, [currentConversationIdRef, markConversationRead])
+  const { schedules } = useSchedules(refreshConversationsForSchedules)
+  // Chats another chat starts are created in the main process, often in a new worktree project,
+  // so the lists here learn about them from the family change rather than from a user action.
+  useEffect(
+    () =>
+      window.api.sessions.onChanged((change) => {
+        if (change.kind !== 'family') return
+        refreshConversationsForSchedules()
+        void refreshProjects()
+      }),
+    [refreshConversationsForSchedules, refreshProjects]
+  )
+  const scheduleNames = useMemo(
+    () => new Map(schedules.map(({ id, name }) => [id, name])),
+    [schedules]
+  )
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
@@ -1111,7 +1065,7 @@ function App(): React.JSX.Element {
     enabled: isReady,
     model: selectedPinnedModel,
     fastModelName: fastModelName !== currentModelName ? fastModelName : undefined,
-    isAgentBusy: hasActiveConversationRuns,
+    isAgentBusy: runningConversationIds.size > 0,
     onTitleApplied: (conversationId, title, source = 'generated') => {
       setConversations((current) =>
         current.map((conversation) =>
@@ -1127,10 +1081,6 @@ function App(): React.JSX.Element {
       )
     }
   })
-  const currentGroup = groups.find((group) => group.id === currentGroupId)
-  const currentGroupSession = currentGroup?.agentSessions.find(
-    (session) => session.id === currentGroupSessionId
-  )
   const unreadConversationIds = useMemo(
     () =>
       new Set(
@@ -1141,11 +1091,9 @@ function App(): React.JSX.Element {
     [conversations]
   )
   const activeProject = projectById(currentConversation?.project_id)
-  const titleBarContext = currentGroupId
-    ? currentGroupSession?.title || currentGroup?.title || 'Group chat'
-    : currentConversationId
-      ? currentConversation?.title || 'Conversation'
-      : null
+  const titleBarContext = currentConversationId
+    ? currentConversation?.title || 'Conversation'
+    : null
   const historyWorkspaceFolder =
     activeProject?.folder_path ?? currentConversation?.home_workspace_root ?? null
   const historyReadOnly = !activeProject && Boolean(currentConversation?.home_workspace_root)
@@ -1195,6 +1143,12 @@ function App(): React.JSX.Element {
           welcomeSuggestions={visible ? welcomeSuggestions : []}
           workspaceFolder={panelProject?.folder_path ?? null}
           projectName={panelProject?.name ?? null}
+          projectId={panelProject?.id ?? null}
+          worktree={panelProject ? (worktreeByProjectId.get(panelProject.id) ?? null) : null}
+          onStartInWorktree={handleStartInWorktree}
+          onForkIntoWorktree={handleForkIntoWorktree}
+          onManageWorktrees={() => setWorktreesDialog({ focusProjectId: panelProject?.id ?? null })}
+          onOpenConversation={(id) => void handleSelectConversation(id)}
           onOpenProject={() => handleOpenProject(true)}
           onUpdateConversationTitle={handleUpdateConversationTitle}
           onConversationTitleApplied={handleConversationTitleApplied}
@@ -1299,27 +1253,15 @@ function App(): React.JSX.Element {
         </div>
         <div className="title-bar-right">
           <div className="title-bar-actions">
-            {!currentGroupId && (
-              <ContextIndicator
-                currentTokens={tokenCounts.current}
-                maxTokens={tokenCounts.max}
-                selectedModel={selectedModel}
-                model={selectedPinnedModel}
-                autoCompactEnabled={settings.autoCompactEnabled ?? true}
-                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-                conversationCost={conversationCost}
-              />
-            )}
-            {currentGroupSession && groupAgentContext?.sessionId === currentGroupSession.id && (
-              <ContextIndicator
-                currentTokens={groupAgentContext.currentTokens}
-                maxTokens={groupAgentContext.maxTokens}
-                selectedModel={groupAgentContext.selectedModel}
-                model={groupAgentContext.model}
-                autoCompactEnabled={settings.autoCompactEnabled ?? true}
-                autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              />
-            )}
+            <ContextIndicator
+              currentTokens={tokenCounts.current}
+              maxTokens={tokenCounts.max}
+              selectedModel={selectedModel}
+              model={selectedPinnedModel}
+              autoCompactEnabled={settings.autoCompactEnabled ?? true}
+              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
+              conversationCost={conversationCost}
+            />
             <button
               className="theme-toggle-button"
               onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
@@ -1373,114 +1315,100 @@ function App(): React.JSX.Element {
 
       <main className="app-main">
         <Sidebar
+          sessionStatuses={sessionStatuses.byId}
+          worktreeSources={worktreeSources}
           conversations={conversations}
           projects={projects}
-          groups={groups}
           currentConversationId={currentConversationId}
-          currentGroupId={currentGroupId}
-          currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
           platform={platform}
-          busyConversationIds={busyConversationIds}
+          busyConversationIds={runningConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}
-          onSelectGroup={(id) => void handleSelectGroup(id)}
-          onSelectGroupSession={(groupId, sessionId) =>
-            void handleSelectGroupSession(groupId, sessionId)
-          }
           onToggleCollapsed={toggleSidebar}
           onNewConversation={(projectId) => void handleNewConversation(projectId)}
-          onNewGroup={() => setIsGroupSetupOpen(true)}
           onOpenProject={() => void handleOpenProject(false)}
           onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
           onDeleteConversation={handleDeleteConversation}
-          onDeleteGroup={(id) => void handleDeleteGroup(id)}
           onDeleteAllConversations={handleDeleteAllConversations}
           onForkConversation={handleForkConversation}
           onRenameConversation={handleUpdateConversationTitle}
-          onRenameGroup={(id, title) => void handleRenameGroup(id, title)}
-          onRenameGroupSession={(id, title) => void handleRenameGroupSession(id, title)}
           onMoveConversation={(input) => void handleMoveConversation(input)}
           onRenameProject={(id, name) => void handleRenameProject(id, name)}
           onToggleConversationPin={(id, pinned) => void handleToggleConversationPin(id, pinned)}
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
           onVisibleConversationOrderChange={handleSidebarOrderChange}
+          scheduleNames={scheduleNames}
+          onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
         <div className="conversation-panel-stack">
-          {currentGroupId && (
-            <GroupChatPanel
-              groupId={currentGroupId}
-              focusedSessionId={currentGroupSessionId}
-              onFocusSession={(sessionId) => {
-                setGroupAgentContext(null)
-                setCurrentGroupSessionId(sessionId)
-                if (sessionId) markGroupSessionRead(currentGroupId!, sessionId)
-              }}
-              pinnedModels={pinnedModels}
-              autoCompactEnabled={settings.autoCompactEnabled ?? true}
-              autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
-              onFocusedSessionContextChange={setGroupAgentContext}
-              onOpenModelSearch={() => {
-                setSettingsInitialSection('providers')
-                setIsSettingsOpen(true)
-              }}
-            />
-          )}
-          {!currentGroupId &&
-            !currentConversationId &&
-            renderConversationPanel(null, draftPanelKey, true)}
+          {!currentConversationId && renderConversationPanel(null, draftPanelKey, true)}
           {mountedConversationIds.map((id) => {
             const conversation = conversations.find((candidate) => candidate.id === id)
             if (!conversation) return null
             return renderConversationPanel(
               conversation,
               conversationPanelKeys[id] ?? `conversation:${id}`,
-              !currentGroupId && currentConversationId === id
+              currentConversationId === id
             )
           })}
         </div>
-        {!currentGroupId && (
-          <ActivityPanel
-            isPinned={effectiveActivityPanelPinned}
-            conversationId={currentConversationId}
-            onTogglePin={toggleActivityPanel}
-            tabRequest={activityTabRequest}
-            onActiveTabChange={handleActivityTabChange}
-            maxWidth={layout.panelMaxWidth}
-            onWidthChange={setActivityPanelWidth}
-            focusChainTodos={
-              currentConversationId
-                ? focusChainTodosByConversation[currentConversationId] || []
-                : []
-            }
-            workspaceFolder={activeProject?.folder_path ?? null}
-            historyWorkspaceFolder={historyWorkspaceFolder}
-            historyReadOnly={historyReadOnly}
-            checkpointVersion={checkpointVersion}
-            restoredHash={restoredHash}
-            onGoToCheckpoint={(hash) => {
-              setCheckpointVersion((v) => v + 1)
-              setRestoredHash(hash)
-              setChatRollbackHash(hash)
-            }}
-            titleModel={selectedPinnedModel}
-            fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
-            isAgentBusy={isAgentBusy}
-          />
-        )}
+        <ActivityPanel
+          isPinned={effectiveActivityPanelPinned}
+          conversationId={currentConversationId}
+          onTogglePin={toggleActivityPanel}
+          tabRequest={activityTabRequest}
+          onActiveTabChange={handleActivityTabChange}
+          maxWidth={layout.panelMaxWidth}
+          onWidthChange={setActivityPanelWidth}
+          onOpenConversation={(id) => void handleSelectConversation(id)}
+          focusChainTodos={
+            currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
+          }
+          workspaceFolder={activeProject?.folder_path ?? null}
+          historyWorkspaceFolder={historyWorkspaceFolder}
+          historyReadOnly={historyReadOnly}
+          checkpointVersion={checkpointVersion}
+          restoredHash={restoredHash}
+          onGoToCheckpoint={(hash) => {
+            setCheckpointVersion((v) => v + 1)
+            setRestoredHash(hash)
+            setChatRollbackHash(hash)
+          }}
+          titleModel={selectedPinnedModel}
+          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          isAgentBusy={isAgentBusy}
+        />
       </main>
 
-      <GroupSetupDialog
-        isOpen={isGroupSetupOpen}
-        projects={projects}
-        models={pinnedModels}
-        selectedModelId={selectedModel}
-        onCancel={() => setIsGroupSetupOpen(false)}
-        onCreate={handleCreateGroup}
-      />
+      {isSchedulesOpen && (
+        <SchedulesDialog
+          isOpen
+          schedules={schedules}
+          projects={projects}
+          models={pinnedModels}
+          defaultModelId={selectedModel}
+          defaultProjectId={currentConversation?.project_id ?? null}
+          permissionMode={normalizePermissionMode(settings.commandPermissionMode)}
+          onClose={() => setIsSchedulesOpen(false)}
+          onOpenConversation={(id) => {
+            setIsSchedulesOpen(false)
+            void handleSelectConversation(id)
+          }}
+        />
+      )}
 
+      <WorktreesDialog
+        isOpen={worktreesDialog !== null}
+        worktrees={worktrees}
+        focusProjectId={worktreesDialog?.focusProjectId}
+        onClose={() => setWorktreesDialog(null)}
+        onRefresh={refreshWorktrees}
+        onOpenProject={openWorktreeProject}
+        onRemoved={handleWorktreesRemoved}
+      />
       <ForkConversationDialog
         isOpen={pendingFork !== null}
         canUseWorktree={Boolean(
@@ -1512,6 +1440,7 @@ function App(): React.JSX.Element {
           onSave={handleSaveSettings}
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
+          providerKeyRequest={providerKeyRequest}
         />
       )}
     </div>

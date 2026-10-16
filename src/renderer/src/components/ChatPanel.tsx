@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
@@ -23,6 +23,14 @@ import { useConversationActions } from '../hooks/useConversationActions'
 import { loadTerminalSessions } from '../utils/terminalSessionStore'
 import { useConversationGoal } from '../hooks/useConversationGoal'
 import { MessageItem } from './MessageItem'
+import { memberName, memberState, useSessionFamily } from '../hooks/useSessionFamily'
+import { sessionTimeline, type SessionTimelineRow } from '../utils/sessionTimeline'
+import { latestRunTodos } from '../utils/runTodos'
+import { FamilyStrip, ReceivedMessagesRow, StartedChatsRow } from './ManagerChatRows'
+import { SessionTodoList } from './SessionTodoList'
+import { BriefCard, SessionMessageRow, WorkerBanner, WorkerChatHeader } from './WorkerChatParts'
+import { workerWorkplace } from '../utils/sessionLabels'
+import { WorkerChatContext } from './sessionChatContext'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
@@ -70,6 +78,17 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
+import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
+import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
+import type { ComposerDraft } from '../services/composerDrafts'
+import {
+  suggestWorktreeBranch,
+  workspaceBusyDisplayMessage,
+  type ManagedWorktreeSummary,
+  type WorkInChoice,
+  type WorkspaceOccupant
+} from '../../../shared/worktrees'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -84,6 +103,17 @@ interface ChatPanelProps {
   welcomeSuggestions: readonly WelcomeSuggestion[]
   workspaceFolder: string | null
   projectName: string | null
+  projectId?: string | null
+  /** Set when the chat's project is one of SideKick's worktrees. */
+  worktree?: ManagedWorktreeSummary | null
+  /** Moves a chat that has not sent anything yet into its own new worktree. */
+  onStartInWorktree?: (
+    conversationId: string,
+    options: { branchName?: string; baseRef?: string }
+  ) => Promise<void>
+  /** Forks a chat with history into a new worktree, carrying the unsent message along. */
+  onForkIntoWorktree?: (conversationId: string, draft: ComposerDraft) => Promise<void>
+  onManageWorktrees?: () => void
   onOpenProject: () => Promise<void> | void
   onUpdateConversationTitle: (
     id: string,
@@ -118,6 +148,8 @@ interface ChatPanelProps {
   /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
   chatRollbackHash?: string | null
   onChatRollbackConsumed?: () => void
+  /** Opens another chat, as when a worker's chip or its manager's breadcrumb is clicked. */
+  onOpenConversation?: (conversationId: string) => void
 }
 
 /** What a new conversation is named from: the typed text, else what was pasted or attached. */
@@ -141,6 +173,11 @@ function ChatPanel({
   welcomeSuggestions,
   workspaceFolder,
   projectName,
+  projectId = null,
+  worktree = null,
+  onStartInWorktree,
+  onForkIntoWorktree,
+  onManageWorktrees,
   onOpenProject,
   onUpdateConversationTitle,
   onConversationTitleApplied,
@@ -163,7 +200,8 @@ function ChatPanel({
   onToggleOpenRouterThinking,
   onCheckpointCreated,
   chatRollbackHash,
-  onChatRollbackConsumed
+  onChatRollbackConsumed,
+  onOpenConversation
 }: ChatPanelProps): React.JSX.Element {
   const { messages, setMessages, messagesRef, skipNextLoadRef } = useConversationMessages({
     conversationId,
@@ -181,6 +219,22 @@ function ChatPanel({
   const forkConversationRef = useRef(onForkConversation)
   forkConversationRef.current = onForkConversation
   const forkMessage = useCallback((messageId: string) => forkConversationRef.current(messageId), [])
+
+  // Where the chat works. A project chat chooses before its first message; afterwards a run that
+  // would join a folder another agent is writing in asks first.
+  const [workIn, setWorkIn] = useState<WorkInChoice>(storedWorkInChoice)
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreeBase, setWorktreeBase] = useState('')
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [busyPrompt, setBusyPrompt] = useState<{
+    occupants: WorkspaceOccupant[]
+    hasHistory: boolean
+    resolve: (choice: WorkspaceBusyChoice) => Promise<boolean>
+  } | null>(null)
+  const [busyPromptWorking, setBusyPromptWorking] = useState(false)
+  const [busyPromptError, setBusyPromptError] = useState<string | null>(null)
+  const workspaceCheckRef = useRef(false)
+  const shareNextRunRef = useRef(false)
 
   // A sub-agent opened from its row covers the chat until Back or Esc.
   const [openSubAgent, setOpenSubAgent] = useState<SubAgentTarget | null>(null)
@@ -793,6 +847,8 @@ function ChatPanel({
     let completed = false
     let failed = false
     let leftRunningReply = false
+    const shareFolder = shareNextRunRef.current
+    shareNextRunRef.current = false
     try {
       const finalPhase = await startRun({
         id: crypto.randomUUID(),
@@ -802,6 +858,7 @@ function ChatPanel({
         plannerModel: selectedPlanningModel,
         mode: runMode,
         ...(continuesRunId ? { continuesRunId } : {}),
+        ...(shareFolder ? { workspaceSharing: 'allow' as const } : {}),
         userLocation
       })
       completed = true
@@ -863,7 +920,9 @@ function ChatPanel({
         leftRunningReply = true
         setMessages((previous) => previous.filter((item) => item.id !== assistantMessageId))
       } else {
-        const message = error instanceof Error ? error.message : 'Agent run failed'
+        const message = workspaceBusyDisplayMessage(
+          error instanceof Error ? error.message : 'Agent run failed'
+        )
         setMessages((previous) =>
           previous.map((item) =>
             item.id === assistantMessageId ? { ...item, content: `Error: ${message}` } : item
@@ -977,8 +1036,109 @@ function ChatPanel({
     }
   }
 
+  const startInWorktree = async (targetConversationId: string): Promise<void> => {
+    if (!onStartInWorktree) throw new Error('Worktrees are not available here')
+    await onStartInWorktree(targetConversationId, {
+      branchName:
+        worktreeBranch.trim() ||
+        suggestWorktreeBranch(createFallbackConversationTitle(inputValue || 'New chat')),
+      ...(worktreeBase ? { baseRef: worktreeBase } : {})
+    })
+  }
+
+  /**
+   * Settles where the next run works before the message is sent: a new worktree when the chat
+   * chose one, and the user's call when another agent is already writing in the folder. The
+   * runtime enforces the same rule; asking here keeps the message unsent until it is settled.
+   */
+  const prepareWorkspace = async (): Promise<boolean> => {
+    if (!conversationId || !projectId) return true
+    const fresh = messagesRef.current.length === 0
+    const choosing = fresh && !worktree
+    if (choosing && workIn === 'worktree') {
+      setWorkspaceError(null)
+      try {
+        await startInWorktree(conversationId)
+        rememberWorkInChoice('worktree')
+        return true
+      } catch (error) {
+        setWorkspaceError(error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+    if (choosing) rememberWorkInChoice('folder')
+    if (!goalArmed && nextRunMode === 'research') return true
+    const occupants = await window.api.agentRuns
+      .workspaceOccupants(conversationId)
+      .catch(() => [] as WorkspaceOccupant[])
+    if (!occupants.length) return true
+    return new Promise<boolean>((settle) => {
+      setBusyPromptError(null)
+      setBusyPrompt({
+        occupants,
+        hasHistory: !fresh,
+        resolve: async (choice) => {
+          if (choice === 'cancel') {
+            settle(false)
+            return true
+          }
+          if (choice === 'share') {
+            shareNextRunRef.current = true
+            settle(true)
+            return true
+          }
+          if (fresh) {
+            await startInWorktree(conversationId)
+            settle(true)
+            return true
+          }
+          if (!onForkIntoWorktree) throw new Error('Worktrees are not available here')
+          await onForkIntoWorktree(conversationId, {
+            text: inputValue,
+            images: attachedImages,
+            attachments: attachedContext
+          })
+          setInputValue('')
+          setAttachedImages([])
+          setAttachedContext([])
+          settle(false)
+          return true
+        }
+      })
+    })
+  }
+
+  const chooseBusyPromptOption = async (choice: WorkspaceBusyChoice): Promise<void> => {
+    if (!busyPrompt || busyPromptWorking) return
+    setBusyPromptWorking(true)
+    setBusyPromptError(null)
+    try {
+      if (await busyPrompt.resolve(choice)) setBusyPrompt(null)
+    } catch (error) {
+      setBusyPromptError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusyPromptWorking(false)
+    }
+  }
+
   const handleSubmit = (): void => {
     if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (!isLoading && conversationId && projectId) {
+      if (workspaceCheckRef.current) return
+      workspaceCheckRef.current = true
+      void prepareWorkspace()
+        .then((ready) => {
+          if (ready) submitMessage()
+        })
+        .finally(() => {
+          workspaceCheckRef.current = false
+        })
+      return
+    }
+    submitMessage()
+  }
+
+  const submitMessage = (): void => {
     // What was dictated so far is in the box and goes with the message; with
     // voice on, the mic pauses until the reply has been read aloud.
     endDictation()
@@ -1191,6 +1351,90 @@ function ChatPanel({
   // }
 
   const visibleMessages = messages.filter((msg) => !msg.hidden)
+
+  // Chats this one started, or the chat that started it, woven into the transcript by time.
+  const sessionFamily = useSessionFamily(conversationId)
+  const { family: chatFamily, role: familyRole, self: familySelf } = sessionFamily
+  const familyMembers = useMemo(
+    () =>
+      new Map(
+        chatFamily
+          ? [chatFamily.manager, ...chatFamily.workers].map((member) => [
+              member.conversationId,
+              member
+            ])
+          : []
+      ),
+    [chatFamily]
+  )
+  const familyRows = useMemo(
+    () =>
+      conversationId
+        ? sessionTimeline(
+            conversationId,
+            familyRole,
+            sessionFamily.messages,
+            messages.filter((msg) => !msg.hidden).map((msg) => msg.timestamp)
+          )
+        : new Map<number, SessionTimelineRow[]>(),
+    [conversationId, familyRole, sessionFamily.messages, messages]
+  )
+  const runTodos = useMemo(
+    () => (familyRole === 'manager' ? latestRunTodos(messages) : []),
+    [familyRole, messages]
+  )
+  const openChat = useCallback((id: string): void => onOpenConversation?.(id), [onOpenConversation])
+  const workerIdentity = useMemo(
+    () =>
+      familyRole === 'worker' && familySelf && chatFamily
+        ? {
+            workerName: memberName(familySelf),
+            managerTitle: chatFamily.manager.title,
+            workplace: workerWorkplace(familySelf, worktree)
+          }
+        : null,
+    [familyRole, familySelf, chatFamily, worktree]
+  )
+  const familyContext = {
+    members: familyMembers,
+    statuses: sessionFamily.statuses,
+    manager: chatFamily?.manager ?? null,
+    onOpenChat: openChat
+  }
+  const renderFamilyRow = (row: SessionTimelineRow): React.JSX.Element | null => {
+    switch (row.kind) {
+      case 'started':
+        return <StartedChatsRow key={row.key} briefs={row.briefs} {...familyContext} />
+      case 'received':
+        return <ReceivedMessagesRow key={row.key} messages={row.messages} {...familyContext} />
+      case 'brief':
+        return (
+          <BriefCard
+            key={row.key}
+            brief={row.message}
+            managerTitle={chatFamily?.manager.title ?? 'its manager'}
+          />
+        )
+      case 'message':
+        return (
+          <SessionMessageRow
+            key={row.key}
+            message={row.message}
+            sender={
+              row.message.fromConversationId
+                ? familyMembers.get(row.message.fromConversationId)
+                : undefined
+            }
+            onOpenChat={openChat}
+          />
+        )
+    }
+  }
+  const renderFamilyRows = (gap: number): React.JSX.Element | null => {
+    const rows = familyRows.get(gap)
+    if (!rows?.length) return null
+    return <div className="family-timeline">{rows.map(renderFamilyRow)}</div>
+  }
   const promptRefinementHistory = useMemo(() => selectPromptRefinementHistory(messages), [messages])
   const getPromptHistory = useCallback(
     () => buildPromptHistoryEntries(messagesRef.current),
@@ -1244,9 +1488,27 @@ function ChatPanel({
 
   const panel = (
     <div className="chat-panel">
+      {familyRole === 'worker' && familySelf && chatFamily && (
+        <div className="worker-top">
+          <WorkerChatHeader
+            worker={familySelf}
+            manager={chatFamily.manager}
+            state={memberState(familySelf, sessionFamily.statuses)}
+            reason={sessionFamily.statuses.get(familySelf.conversationId)?.reason}
+            worktree={worktree}
+            onOpenChat={openChat}
+            onStop={() => window.api.sessions.stop(familySelf.conversationId)}
+          />
+          <WorkerBanner
+            manager={chatFamily.manager}
+            reportsToManager={Boolean(familySelf.reportToConversationId)}
+            onOpenChat={openChat}
+          />
+        </div>
+      )}
       {/* Messages Area */}
       <div className="messages-container" ref={messagesContainerRef}>
-        {messages.length === 0 ? (
+        {messages.length === 0 && !familyRows.size ? (
           <div className="empty-state">
             <h2>{workspaceFolder ? projectName || 'Your project' : 'What’s next?'}</h2>
             {pinnedModels.length === 0 && (
@@ -1286,18 +1548,79 @@ function ChatPanel({
                       className="virtual-message-row"
                       style={{ transform: `translateY(${virtualRow.start}px)` }}
                     >
+                      {virtualRow.index === 0 && renderFamilyRows(0)}
                       {renderMessage(msg, virtualRow.index)}
+                      {renderFamilyRows(virtualRow.index + 1)}
                     </div>
                   )
                 })}
               </div>
             ) : (
-              visibleMessages.map(renderMessage)
+              <>
+                {renderFamilyRows(0)}
+                {visibleMessages.map((msg, index) => (
+                  <Fragment key={msg.id}>
+                    {renderMessage(msg, index)}
+                    {renderFamilyRows(index + 1)}
+                  </Fragment>
+                ))}
+              </>
+            )}
+            {runTodos.length > 0 && (
+              <div className="family-timeline">
+                <SessionTodoList
+                  todos={runTodos}
+                  members={familyMembers}
+                  statuses={sessionFamily.statuses}
+                  manager={chatFamily?.manager ?? null}
+                  onOpenChat={openChat}
+                />
+              </div>
             )}
             <div ref={messagesEndRef} />
           </>
         )}
       </div>
+
+      {familyRole === 'manager' && chatFamily && (
+        <FamilyStrip
+          workers={chatFamily.workers}
+          statuses={sessionFamily.statuses}
+          onStopAll={async (ids) => {
+            await Promise.all(ids.map((id) => window.api.sessions.stop(id)))
+          }}
+        />
+      )}
+      <WorkspaceBar
+        projectId={projectId}
+        worktree={worktree}
+        canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
+        workIn={workIn}
+        branchName={worktreeBranch}
+        branchPlaceholder={
+          inputValue.trim()
+            ? suggestWorktreeBranch(createFallbackConversationTitle(inputValue))
+            : 'Named from your first message'
+        }
+        baseRef={worktreeBase}
+        error={workspaceError}
+        onWorkInChange={(choice) => {
+          setWorkIn(choice)
+          setWorkspaceError(null)
+        }}
+        onBranchNameChange={setWorktreeBranch}
+        onBaseRefChange={setWorktreeBase}
+        onManageWorktrees={() => onManageWorktrees?.()}
+      />
+      <WorkspaceBusyDialog
+        isOpen={Boolean(busyPrompt)}
+        occupants={busyPrompt?.occupants ?? []}
+        hasHistory={busyPrompt?.hasHistory ?? false}
+        canUseWorktree={Boolean(onStartInWorktree) && Boolean(projectId)}
+        busy={busyPromptWorking}
+        error={busyPromptError}
+        onChoose={(choice) => void chooseBusyPromptOption(choice)}
+      />
 
       {/* Input Area */}
       <ChatInput
@@ -1485,7 +1808,9 @@ function ChatPanel({
 
   return (
     <ReviewCommentSinkContext.Provider value={addReviewComment}>
-      <SubAgentNavigation.Provider value={setOpenSubAgent}>{panel}</SubAgentNavigation.Provider>
+      <SubAgentNavigation.Provider value={setOpenSubAgent}>
+        <WorkerChatContext.Provider value={workerIdentity}>{panel}</WorkerChatContext.Provider>
+      </SubAgentNavigation.Provider>
     </ReviewCommentSinkContext.Provider>
   )
 }

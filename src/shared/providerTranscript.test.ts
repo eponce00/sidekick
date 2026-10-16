@@ -5,12 +5,12 @@ describe('validateProviderTranscript', () => {
   it('coalesces system instructions into the first provider message', () => {
     const result = validateProviderTranscript([
       { role: 'system', content: 'Core policy' },
-      { role: 'system', content: 'Collaboration policy' },
+      { role: 'system', content: 'Project policy' },
       { role: 'user', content: 'Build it' }
     ])
 
     expect(result.messages).toEqual([
-      { role: 'system', content: 'Core policy\n\nCollaboration policy' },
+      { role: 'system', content: 'Core policy\n\nProject policy' },
       { role: 'user', content: 'Build it' }
     ])
     expect(result.repairs[0]?.kind).toBe('coalesced_system_messages')

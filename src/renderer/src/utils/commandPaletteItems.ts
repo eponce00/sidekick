@@ -9,7 +9,7 @@ import type { CommandPaletteItem } from './commandPalette'
 
 export interface CommandPaletteActions {
   newChat: () => void
-  newGroupChat: () => void
+  openSchedules: () => void
   openProject: () => void
   openSettings: () => void
   toggleSidebar: () => void
@@ -21,6 +21,7 @@ export interface CommandPaletteActions {
   nextConversation: () => void
   openConversation: (conversationId: string) => void
   openProjectConversations: (projectId: string) => void
+  manageWorktrees: () => void
 }
 
 export interface CommandPaletteContext {
@@ -31,8 +32,7 @@ export interface CommandPaletteContext {
   sidebarOrder: readonly string[]
   currentConversationId: string | null
   sidebarCollapsed: boolean
-  /** Null when the browser panel is not available, as in a group chat. */
-  browserPanelOpen: boolean | null
+  browserPanelOpen: boolean
   /** Null when voice is off in Settings or unavailable on this machine. */
   voiceOn: boolean | null
   theme: 'dark' | 'light'
@@ -52,11 +52,11 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       run: actions.newChat
     },
     {
-      id: 'action:new-group-chat',
+      id: 'action:open-schedules',
       group: 'actions',
-      title: 'New group chat',
-      keywords: 'agents collaboration team',
-      run: actions.newGroupChat
+      title: 'Schedules',
+      keywords: 'schedule routine recurring automation cron timer',
+      run: actions.openSchedules
     },
     {
       id: 'action:open-project',
@@ -65,6 +65,13 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       keywords: 'folder workspace',
       shortcut: label('open-project'),
       run: actions.openProject
+    },
+    {
+      id: 'action:manage-worktrees',
+      group: 'actions',
+      title: 'Manage worktrees',
+      keywords: 'git branch isolate parallel agents remove sync',
+      run: actions.manageWorktrees
     },
     {
       id: 'action:open-settings',
@@ -82,15 +89,13 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       run: actions.toggleSidebar
     }
   ]
-  if (context.browserPanelOpen !== null) {
-    items.push({
-      id: 'action:toggle-browser-panel',
-      group: 'actions',
-      title: context.browserPanelOpen ? 'Hide browser panel' : 'Show browser panel',
-      keywords: 'toggle browser web activity panel',
-      run: actions.toggleBrowserPanel
-    })
-  }
+  items.push({
+    id: 'action:toggle-browser-panel',
+    group: 'actions',
+    title: context.browserPanelOpen ? 'Hide browser panel' : 'Show browser panel',
+    keywords: 'toggle browser web activity panel',
+    run: actions.toggleBrowserPanel
+  })
   if (context.voiceOn !== null) {
     items.push({
       id: 'action:toggle-voice',

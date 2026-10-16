@@ -26,4 +26,12 @@ export interface Conversation {
   unread_completion_at?: number | null
   forked_from_conversation_id?: string | null
   forked_from_message_id?: string | null
+  schedule_id?: string | null
+  schedule_run_number?: number | null
+  started_by_kind?: import('../../../shared/sessions').SessionStarterKind
+  started_by_conversation_id?: string | null
+  report_to_conversation_id?: string | null
+  session_handle?: string | null
+  work_in?: import('../../../shared/sessions').SessionWorkIn | null
+  archived_at?: number | null
 }

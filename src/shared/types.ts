@@ -83,6 +83,11 @@ export interface McpStdioServerConfig extends McpServerConfigBase {
   command: string
   args?: string[]
   cwd?: string
+  /**
+   * Names of environment variables SideKick sets for this server. Their values are stored
+   * encrypted by the main process and never reach the renderer or any command's output.
+   */
+  envKeys?: string[]
 }
 
 export interface McpHttpServerConfig extends McpServerConfigBase {
@@ -117,7 +122,14 @@ export interface McpToolInfo {
 export interface McpServerStatus {
   serverId: string
   serverName: string
-  status: 'disabled' | 'connecting' | 'needs_auth' | 'connected' | 'degraded' | 'error'
+  status:
+    | 'disabled'
+    | 'connecting'
+    | 'needs_auth'
+    | 'needs_approval'
+    | 'connected'
+    | 'degraded'
+    | 'error'
   toolCount: number
   error?: string
 }
@@ -162,6 +174,8 @@ export interface TodoItem {
   title: string
   description: string
   status: 'not-started' | 'in-progress' | 'completed'
+  /** The worker chat doing this step, shown as a chip with its live state. */
+  sessionId?: string
 }
 
 export interface FocusChain {

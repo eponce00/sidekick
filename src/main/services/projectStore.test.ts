@@ -2,7 +2,6 @@ import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { ProjectStore } from './projectStore'
-import { CollaborationStore } from './collaborationStore'
 
 describe('ProjectStore', () => {
   let db: Database.Database
@@ -144,54 +143,5 @@ describe('ProjectStore', () => {
         .prepare('SELECT project_id, home_workspace_root FROM conversations WHERE id = ?')
         .get('conversation-1')
     ).toEqual({ project_id: null, home_workspace_root: project.folder_path })
-  })
-
-  it('archives affected groups and preserves agent identity when a project is removed', () => {
-    const first = store.create('/tmp/sidekick-project-a', 'Desktop')
-    const second = store.create('/tmp/sidekick-project-b', 'API')
-    const collaboration = new CollaborationStore(db)
-    const detail = collaboration.createGroup({
-      title: 'Release',
-      participants: [
-        {
-          projectId: first.id,
-          providerTarget: { providerKind: 'ollama', model: 'first' }
-        },
-        {
-          projectId: second.id,
-          providerTarget: { providerKind: 'ollama', model: 'second' }
-        }
-      ]
-    })
-    const participant = detail.participants.find(({ projectId }) => projectId === first.id)!
-    const { mission } = collaboration.sendUserMessage({
-      groupId: detail.group.id,
-      text: 'Coordinate the release'
-    })
-    const event = collaboration.appendAgentEvent({
-      groupId: detail.group.id,
-      missionId: mission.id,
-      participantId: participant.id,
-      kind: 'agent_message',
-      payload: { text: 'Finished the desktop work' }
-    })
-
-    expect(() => store.remove(first.id)).toThrow('Stop active group missions')
-    collaboration.updateMission(mission.id, { status: 'stopped' })
-    store.remove(first.id)
-
-    expect(collaboration.getGroup(detail.group.id)?.status).toBe('archived')
-    expect(collaboration.listEvents(detail.group.id).find(({ id }) => id === event.id)).toEqual(
-      expect.objectContaining({
-        actorParticipantId: null,
-        payload: expect.objectContaining({
-          metadata: expect.objectContaining({
-            actorLabel: 'Desktop agent',
-            projectName: 'Desktop'
-          })
-        })
-      })
-    )
-    expect(store.get(first.id)).toBeUndefined()
   })
 })

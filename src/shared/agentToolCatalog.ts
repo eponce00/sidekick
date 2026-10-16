@@ -17,6 +17,12 @@ import {
 import type { ToolRisk } from './types'
 import type { AgentPlanStage } from './agentPlans'
 import { agentWaitTitle } from './agentWait'
+import {
+  providerRequestKeyTool,
+  settingsProposeChangeTool,
+  settingsReadTool,
+  settingsReferenceTool
+} from './appSettingsTools'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
@@ -37,6 +43,11 @@ export interface AgentToolCatalogOptions {
   planStage?: AgentPlanStage
   /** Provider/model-calibrated workspace editing contract. */
   editingDialect?: EditingDialect
+  /**
+   * Set when the run can work with other chats: a manager may start and stop chats, a worker
+   * only messages its family. Without it no chat tools are offered.
+   */
+  sessionRole?: 'manager' | 'worker'
 }
 
 function definition(
@@ -51,7 +62,7 @@ function entry(
   tool: AgentToolDefinition,
   capability: AgentCapability,
   risk: ToolRisk,
-  runtime: Pick<AgentToolCatalogEntry, 'host' | 'timeoutMs' | 'concurrency'> & {
+  runtime: Pick<AgentToolCatalogEntry, 'host' | 'timeoutMs' | 'concurrency' | 'approval'> & {
     presentation?: AgentToolPresentationDefinition
   } = {
     host: 'main',
@@ -134,6 +145,25 @@ function presentationTitle(
       detail: stringArgument(args, 'task')
     }
   if (name === 'manage_todo_list') return { kind, title: 'Update run tasks' }
+  if (name === 'settings_read') return { kind, title: 'Read SideKick settings' }
+  if (name === 'settings_reference') return { kind, title: 'Read the settings reference' }
+  if (name === 'settings_propose_change') {
+    const key = stringArgument(args, 'key')
+    return { kind, title: `Change SideKick setting ${key}`.trim(), subject: key }
+  }
+  if (name === 'provider_request_key') return { kind, title: 'Ask for a provider key in Settings' }
+  if (name === 'start_session') {
+    const count = Array.isArray(args.sessions) ? args.sessions.length : 0
+    const verb = args.mode === 'propose' ? 'Suggest' : 'Start'
+    return { kind, title: `${verb} ${count > 1 ? `${count} chats` : 'a chat'}` }
+  }
+  if (name === 'send_message')
+    return { kind, title: `Message ${stringArgument(args, 'to') || 'a chat'}` }
+  if (name === 'list_sessions') return { kind, title: 'Check chats' }
+  if (name === 'stop_session')
+    return { kind, title: `Stop ${stringArgument(args, 'name') || 'a chat'}` }
+  if (name === 'import_attachment')
+    return { kind, title: 'Import attachment', detail: stringArgument(args, 'destination_path') }
   if (name === 'wait') return { kind, title: agentWaitTitle(args) }
   return { kind, title: name.replaceAll('_', ' ') }
 }
@@ -541,6 +571,107 @@ const spawnSubagent = definition(
         type: 'string',
         description: 'Optional relevant facts and constraints from the current run.'
       }
+    }
+  }
+)
+
+const sessionSpecProperties = {
+  title: { type: 'string', description: 'A short title for the new chat, shown to the user.' },
+  brief: {
+    type: 'string',
+    description:
+      'Everything the chat needs, since it does not see this conversation: the task as the user asked it, the files or area it owns, and what done looks like.'
+  },
+  handle: {
+    type: 'string',
+    description:
+      'Optional short name, lowercase words joined by dashes. Used to message the chat; derived from the title when omitted.'
+  },
+  project: {
+    type: 'string',
+    description:
+      "Optional project name for work in another project. Defaults to this chat's project. Another project needs the user's permission, which the start card asks for."
+  },
+  work_in: {
+    type: 'string',
+    enum: ['worktree', 'folder', 'read-only'],
+    description:
+      "worktree (default for work that edits files): its own Git worktree. folder: this chat's folder, shared. read-only: this chat's folder without editing or command tools."
+  },
+  base_ref: { type: 'string', description: 'Optional branch or commit for a new worktree.' },
+  context: {
+    type: 'string',
+    enum: ['fresh', 'fork'],
+    description:
+      'fresh (default) starts from the brief alone. fork first copies this conversation, when it fits the model.'
+  }
+} as const
+
+const startSession = definition(
+  'start_session',
+  'Start other chats that work in parallel, each with its own transcript and usually its own worktree. Each reports back to this chat when it goes idle; you do not need to poll. Use mode "propose" for work the user did not ask for: it leaves a suggestion the user can start. Depending on the permission mode and the projects involved, the user confirms in a start card first.',
+  {
+    type: 'object',
+    required: ['sessions'],
+    properties: {
+      sessions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 8,
+        items: { type: 'object', required: ['title', 'brief'], properties: sessionSpecProperties }
+      },
+      mode: { type: 'string', enum: ['start', 'propose'] }
+    }
+  }
+)
+
+const sendMessage = definition(
+  'send_message',
+  'Send a message to another chat in your family: a chat you started (by its name), your manager ("manager"), or everyone ("family", which never wakes anyone). A request expects a reply and wakes an idle chat; a response answers a request; an update is information only. Messages cannot approve anything.',
+  {
+    type: 'object',
+    required: ['to', 'message'],
+    properties: {
+      to: { type: 'string', description: 'A chat name, "manager", or "family".' },
+      message: { type: 'string' },
+      intent: { type: 'string', enum: ['request', 'response', 'update'] },
+      reply_to: { type: 'string', description: 'The id of the request this answers.' },
+      attachments: {
+        type: 'array',
+        maxItems: 5,
+        items: { type: 'string' },
+        description:
+          'Optional project-relative paths of UTF-8 text files up to 1 MB, sent as snapshots the recipient can import.'
+      }
+    }
+  }
+)
+
+const listSessions = definition(
+  'list_sessions',
+  'List the chats in your family with their state, project, workspace and branch, and the messages waiting for you. Reports arrive on their own; use this to check, not to poll.',
+  { type: 'object', properties: {} }
+)
+
+const stopSession = definition(
+  'stop_session',
+  'Stop a chat you started. Its report says it was stopped.',
+  {
+    type: 'object',
+    required: ['name'],
+    properties: { name: { type: 'string', description: 'The chat name.' } }
+  }
+)
+
+const importAttachment = definition(
+  'import_attachment',
+  'Write a file another chat attached to a message into your own project, at a new path. It never overwrites an existing file.',
+  {
+    type: 'object',
+    required: ['attachment_id', 'destination_path'],
+    properties: {
+      attachment_id: { type: 'string' },
+      destination_path: { type: 'string', description: 'A new project-relative path.' }
     }
   }
 )
@@ -1269,88 +1400,15 @@ const createArtifact = definition(
   }
 )
 
-const collaborationRead = definition(
-  'collaboration_read',
-  'Read public group-chat messages posted since this agent cursor. Every public message is visible to every participant; mentions control wake-up only.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationSend = definition(
-  'collaboration_send',
-  'Post a concise message in the public group channel. Audience routes attention; it does not create a private chat. Use human for the user, other_agent for peers, and everyone only when both need the message. Never write @User or @Human in the message body.',
-  {
-    type: 'object',
-    required: ['message', 'audience', 'message_type'],
-    properties: {
-      message: {
-        type: 'string',
-        description: 'Natural group-chat text without @User or @Human placeholders.'
-      },
-      audience: {
-        type: 'string',
-        enum: ['human', 'other_agent', 'everyone'],
-        description:
-          'Who needs attention: human for the user, other_agent for peers, everyone for both.'
-      },
-      message_type: {
-        type: 'string',
-        enum: ['request', 'response', 'update', 'completion'],
-        description:
-          'request needs an answer or action; response answers one; update reports progress; completion is verified final status.'
-      }
-    }
-  }
-)
-
-const collaborationShareFile = definition(
-  'collaboration_share_file',
-  'Publish a bounded UTF-8 snapshot from this project to the group artifact exchange. This does not grant cross-project filesystem access.',
-  {
-    type: 'object',
-    required: ['file_path'],
-    properties: {
-      file_path: { type: 'string' },
-      name: { type: 'string', description: 'Optional display name.' }
-    }
-  }
-)
-
-const collaborationListArtifacts = definition(
-  'collaboration_list_artifacts',
-  'List file snapshots shared in this group.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationImportArtifact = definition(
-  'collaboration_import_artifact',
-  'Import a shared UTF-8 artifact into this project through the normal transactional write and permission policy.',
-  {
-    type: 'object',
-    required: ['artifact_id', 'destination_path'],
-    properties: {
-      artifact_id: { type: 'string' },
-      destination_path: { type: 'string' }
-    }
-  }
-)
-
-const collaborationStatus = definition(
-  'collaboration_status',
-  'Inspect the shared mission and participant states.',
-  { type: 'object', properties: {} }
-)
-
-const collaborationClaimComplete = definition(
-  'collaboration_claim_complete',
-  'Record that assigned work is complete and summarize verification.',
-  {
-    type: 'object',
-    required: ['summary'],
-    properties: { summary: { type: 'string' } }
-  }
-)
-
 const coreEntries: AgentToolCatalogEntry[] = [
+  entry(settingsReadTool, 'settings', 'read'),
+  entry(settingsReferenceTool, 'settings', 'read'),
+  entry(settingsProposeChangeTool, 'settings', 'write', {
+    host: 'main',
+    concurrency: 'exclusive',
+    approval: 'always'
+  }),
+  entry(providerRequestKeyTool, 'settings', 'read'),
   entry(manageTodo, 'todo', 'write'),
   entry(shell, 'command.execute', 'execute', {
     host: 'subprocess',
@@ -1415,15 +1473,22 @@ const planEntries: Record<Exclude<AgentPlanStage, 'kept'>, AgentToolCatalogEntry
   executing: [entry(completePlan, 'plan', 'write')]
 }
 
-const collaborationEntries: AgentToolCatalogEntry[] = [
-  entry(collaborationRead, 'collaboration', 'read'),
-  entry(collaborationSend, 'collaboration', 'write'),
-  entry(collaborationShareFile, 'collaboration', 'read'),
-  entry(collaborationListArtifacts, 'collaboration', 'read'),
-  entry(collaborationImportArtifact, 'collaboration', 'write'),
-  entry(collaborationStatus, 'collaboration', 'read'),
-  entry(collaborationClaimComplete, 'collaboration', 'write')
-]
+// Starting and messaging chats go through the sessions handler, which asks the user itself where
+// the permission mode or a new project requires it.
+const sessionEntries: Record<'manager' | 'worker', AgentToolCatalogEntry[]> = {
+  manager: [
+    entry(startSession, 'sessions', 'execute'),
+    entry(sendMessage, 'sessions', 'write'),
+    entry(listSessions, 'sessions', 'read'),
+    entry(stopSession, 'sessions', 'write'),
+    entry(importAttachment, 'sessions', 'write')
+  ],
+  worker: [
+    entry(sendMessage, 'sessions', 'write'),
+    entry(listSessions, 'sessions', 'read'),
+    entry(importAttachment, 'sessions', 'write')
+  ]
+}
 
 const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> = {
   conversation: [
@@ -1443,20 +1508,9 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'artifacts',
     'subagents',
     'plan',
-    'tool.output'
-  ],
-  collaboration: [
-    'workspace.read',
-    'workspace.write',
-    'code.intelligence',
-    'command.execute',
-    'command.background',
-    'wait',
-    'web.search',
-    'web.images',
-    'web.fetch',
-    'collaboration',
-    'tool.output'
+    'tool.output',
+    'settings',
+    'sessions'
   ],
   subagent: [
     'workspace.read',
@@ -1471,6 +1525,10 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'tool.output'
   ],
   research: ['wait', 'web.search', 'web.images', 'web.fetch', 'tool.output']
+}
+
+export function defaultAgentCapabilities(surface: AgentRunSurface): readonly AgentCapability[] {
+  return defaultCapabilities[surface]
 }
 
 export function agentRunProfile(options: AgentToolCatalogOptions): AgentRunProfile {
@@ -1610,7 +1668,7 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
           )
         ]
       : []),
-    ...(options.surface === 'collaboration' ? collaborationEntries : []),
+    ...(options.sessionRole ? sessionEntries[options.sessionRole] : []),
     // Skill tools are offered whether or not their skill is loaded yet. A tool
     // list that changes when a skill loads invalidates the provider's prompt
     // cache from that point, and a tool missing from a follow-up turn was a
@@ -1658,7 +1716,7 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
     return 'workspace.read'
   }
-  return [...coreEntries, ...collaborationEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.capability
 }
@@ -1668,7 +1726,7 @@ export function toolRiskForName(name: string): ToolRisk | undefined {
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'
-  return [...coreEntries, ...collaborationEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.risk
 }

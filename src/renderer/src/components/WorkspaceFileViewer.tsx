@@ -36,8 +36,8 @@ export function WorkspaceFileViewer({
   const directory = request.filePath.slice(0, request.filePath.length - fileName.length)
 
   useEffect(() => {
+    // ActivityPanel keys the viewer by file, so each file starts from the loading state.
     let cancelled = false
-    setState({ kind: 'loading' })
     const load = async (): Promise<void> => {
       if (IMAGE_EXTENSIONS.has(extension)) {
         const result = await window.api.workspace.readImage(request.workspaceRoot, request.filePath)

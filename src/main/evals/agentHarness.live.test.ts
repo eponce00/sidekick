@@ -3,8 +3,7 @@ import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join, resolve } from 'path'
 import { randomUUID } from 'crypto'
-import { fileURLToPath, pathToFileURL } from 'url'
-import type { WebContents } from 'electron'
+import { fileURLToPath } from 'url'
 import {
   completeOpenAICompatibleChat,
   fetchOpenAICompatibleModels,
@@ -14,17 +13,9 @@ import {
 import { streamOpenAICompatibleChat } from '../providers/openAIStreamingClient'
 import { executeWorkspaceMutation } from '../services/workspaceMutationService'
 import { ProjectStore } from '../services/projectStore'
-import { CollaborationStore } from '../services/collaborationStore'
-import { CollaborationSupervisor } from '../services/collaborationSupervisor'
-import type { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
-import { configureCheckpointStorageRoot } from '../services/checkpoints'
 import { loadWorkspaceRules } from '../services/workspaceRules'
 import { workspaceToolDefinitions } from '../../shared/agentToolDefinitions'
-import type {
-  ProviderStreamChunk,
-  ProviderTarget,
-  ProviderToolCall
-} from '../../shared/providerRuntime'
+import type { ProviderStreamChunk, ProviderToolCall } from '../../shared/providerRuntime'
 import type { ProviderKind } from '../../shared/providerRegistry'
 import {
   editingDialectForModel,
@@ -50,7 +41,7 @@ const enabled = process.env.SIDEKICK_AGENT_EVAL_RUN === '1' && Boolean(apiKey)
 const suite = process.env.SIDEKICK_AGENT_EVAL_SUITE?.trim() || 'full'
 const liveDescribe = enabled ? describe.sequential : describe.skip
 const extendedIt = suite === 'full' || suite === 'visual' ? it : it.skip
-const scenarioVersion = '2026-09-05.1'
+const scenarioVersion = '2026-10-16.1'
 const scenarios = [
   { name: 'model-discovery', category: 'provider', weight: 2 },
   { name: 'completion', category: 'provider', weight: 4 },
@@ -63,9 +54,7 @@ const scenarios = [
   { name: 'svg-controller-create', category: 'visual', weight: 10 },
   { name: 'svg-controller-revise', category: 'visual', weight: 12 },
   { name: 'ambiguous-stale-edit-recovery', category: 'recovery', weight: 12 },
-  { name: 'plan-contract-tool-loop', category: 'planning', weight: 10 },
-  { name: 'group-artifact-collaboration', category: 'collaboration', weight: 12 },
-  { name: 'group-follow-up-collaboration', category: 'collaboration', weight: 12 }
+  { name: 'plan-contract-tool-loop', category: 'planning', weight: 10 }
 ] satisfies AgentEvalScenarioDefinition[]
 const plannedScenarios =
   suite === 'verification'
@@ -167,21 +156,6 @@ function objectArguments(call: ProviderToolCall): Record<string, unknown> {
     throw new Error('The model returned non-object tool arguments')
   }
   return parsed as Record<string, unknown>
-}
-
-async function waitFor<T>(
-  read: () => T,
-  settled: (value: T) => boolean,
-  timeoutMs: number
-): Promise<T> {
-  const deadline = Date.now() + timeoutMs
-  let value = read()
-  while (!settled(value) && Date.now() < deadline) {
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 250))
-    value = read()
-  }
-  if (!settled(value)) throw new Error(`Scenario did not settle within ${timeoutMs} ms`)
-  return value
 }
 
 function assertMutationTools(toolNames: string[]): void {
@@ -1190,221 +1164,5 @@ liveDescribe('provider-neutral production agent harness', () => {
       }
     },
     420_000
-  )
-
-  extendedIt(
-    'runs two project agents through an artifact handoff and a persistent follow-up mission',
-    async () => {
-      const scenarioRoot = await fs.mkdtemp(join(tmpdir(), 'sidekick-llm-group-eval-'))
-      const dataRoot = join(scenarioRoot, 'data-project')
-      const webRoot = join(scenarioRoot, 'web-project')
-      const harness = new AgentScenarioHarness(join(scenarioRoot, 'runtime'), {
-        endpoint,
-        model,
-        headers,
-        providerKind,
-        maxOutputTokens: 8_192
-      })
-      let supervisor: CollaborationSupervisor | undefined
-      try {
-        await Promise.all([
-          copyEvalFixture(join(fixtureRoot, 'group-data'), dataRoot),
-          copyEvalFixture(join(fixtureRoot, 'group-web'), webRoot),
-          harness.initialize()
-        ])
-        configureCheckpointStorageRoot(join(scenarioRoot, 'history'))
-        const projects = new ProjectStore(harness.db)
-        const dataProject = projects.create(dataRoot, 'Data')
-        const webProject = projects.create(webRoot, 'Webpage')
-        const store = new CollaborationStore(harness.db)
-        const target: ProviderTarget = {
-          providerKind,
-          model,
-          contextLength: 180_000,
-          maxOutputTokens: 8_192,
-          editingDialect: editingDialectForModel({ providerKind, model })
-        }
-        const detail = store.createGroup({
-          title: 'Population artifact evaluation',
-          participants: [
-            { projectId: dataProject.id, label: 'Data agent', providerTarget: target },
-            { projectId: webProject.id, label: 'Webpage agent', providerTarget: target }
-          ]
-        })
-        supervisor = new CollaborationSupervisor(
-          store,
-          harness.collaborationRuntime() as unknown as AgentRuntimeCoordinator,
-          () => undefined,
-          { toolCallLimit: () => 80 }
-        )
-        const started = store.sendUserMessage({
-          groupId: detail.group.id,
-          text: `Complete this small integration as a real two-agent collaboration.
-
-Data agent: read AGENTS.md and source/population.csv, create dist/population.json as a JSON array of {year, population} number objects, share that file to the Webpage agent with collaboration_share_file, send a concise public handoff, then claim completion only after the artifact is shared.
-
-Webpage agent: read AGENTS.md, wait for or read the Data agent handoff, import the shared artifact with collaboration_import_artifact, use its exact three rows to update src/dashboard.js, run npm test, report the verified result publicly, then claim completion.
-
-Both agents: take ownership publicly before private work, never access the other project folder directly, use artifact transport for the cross-project file, answer peer requests, and do not stop until your own work is verified.`
-        })
-
-        await measured(
-          'group-artifact-collaboration',
-          async () => {
-            supervisor!.start(started.mission.id, {} as WebContents)
-            const finalMission = await waitFor(
-              () => store.getMission(started.mission.id),
-              (mission) =>
-                mission !== null &&
-                ['completed', 'failed', 'paused', 'stopped'].includes(mission.status),
-              720_000
-            )
-            expect(finalMission?.status, finalMission?.error || 'Mission did not complete').toBe(
-              'completed'
-            )
-            const participantRuns = store.listParticipantRuns(started.mission.id)
-            expect(participantRuns).toHaveLength(2)
-            expect(participantRuns.every((run) => run.status === 'completed')).toBe(true)
-            const artifacts = store.listArtifacts(detail.group.id)
-            expect(artifacts.length).toBeGreaterThanOrEqual(1)
-            const data = JSON.parse(
-              await fs.readFile(join(dataRoot, 'dist/population.json'), 'utf8')
-            ) as Array<{ year: number; population: number }>
-            expect(data).toEqual([
-              { year: 2022, population: 11_210_000 },
-              { year: 2023, population: 11_090_000 },
-              { year: 2024, population: 10_980_000 }
-            ])
-            const dashboardUrl = `${pathToFileURL(join(webRoot, 'src/dashboard.js')).href}?eval=${Date.now()}`
-            const dashboard = (await import(dashboardUrl)) as {
-              populationRows: Array<{ year: number; population: number }>
-              latestPopulation: () => number | null
-            }
-            expect(dashboard.populationRows).toEqual(data)
-            expect(dashboard.latestPopulation()).toBe(10_980_000)
-            const events = store.listMissionEvents(started.mission.id)
-            const publicAgentMessages = events.filter(
-              (event) => event.actorType === 'agent' && event.kind === 'peer_message'
-            )
-            expect(new Set(publicAgentMessages.map((event) => event.actorParticipantId)).size).toBe(
-              2
-            )
-            const sessions = store.listAgentSessions(detail.group.id)
-            const toolNames = sessions.flatMap((session) =>
-              store
-                .listRecentAgentSessionMessages(session.id, 2_000)
-                .flatMap((message) => message.toolCalls.map((call) => call.function.name))
-            )
-            expect(toolNames).toContain('collaboration_share_file')
-            expect(toolNames).toContain('collaboration_import_artifact')
-            expect(toolNames).toContain('collaboration_claim_complete')
-            expect(toolNames).toContain('shell')
-            enrichMetric('group-artifact-collaboration', {
-              details: {
-                participants: participantRuns.map((run) => run.status),
-                publicAgentMessages: publicAgentMessages.length,
-                artifacts: artifacts.length,
-                tools: [...new Set(toolNames)],
-                verifiedRows: data.length
-              }
-            })
-          },
-          'collaboration'
-        )
-
-        const initialArtifactCount = store.listArtifacts(detail.group.id).length
-        const initialSessionIds = store
-          .listAgentSessions(detail.group.id)
-          .map((session) => session.id)
-          .sort()
-        const followUp = store.sendUserMessage({
-          groupId: detail.group.id,
-          text: `Follow-up integration on the same group and existing project state.
-
-Data agent: add the exact row 2025,10850000 to source/population.csv without changing the existing rows, regenerate dist/population.json with all four rows, share the updated artifact, send a public handoff, and claim completion only after verifying the file.
-
-Webpage agent: acknowledge the follow-up publicly, import the newly shared artifact, update src/dashboard.js to use all four rows, update test/verify.mjs to verify four rows and latestPopulation() === 10850000, run npm test, report the verified result publicly, and claim completion.
-
-Both agents: treat this as a new mission continuing the durable private sessions. Coordinate through the group, preserve the first mission's work, never access the peer workspace directly, and finish only after the updated integration is verified.`
-        })
-
-        await measured(
-          'group-follow-up-collaboration',
-          async () => {
-            expect(followUp.mission.id).not.toBe(started.mission.id)
-            supervisor!.start(followUp.mission.id, {} as WebContents)
-            const finalMission = await waitFor(
-              () => store.getMission(followUp.mission.id),
-              (mission) =>
-                mission !== null &&
-                ['completed', 'failed', 'paused', 'stopped'].includes(mission.status),
-              720_000
-            )
-            expect(finalMission?.status, finalMission?.error || 'Follow-up did not complete').toBe(
-              'completed'
-            )
-            const participantRuns = store.listParticipantRuns(followUp.mission.id)
-            expect(participantRuns).toHaveLength(2)
-            expect(participantRuns.every((run) => run.status === 'completed')).toBe(true)
-            const artifacts = store.listArtifacts(detail.group.id)
-            expect(artifacts.length).toBeGreaterThan(initialArtifactCount)
-            const data = JSON.parse(
-              await fs.readFile(join(dataRoot, 'dist/population.json'), 'utf8')
-            ) as Array<{ year: number; population: number }>
-            expect(data).toEqual([
-              { year: 2022, population: 11_210_000 },
-              { year: 2023, population: 11_090_000 },
-              { year: 2024, population: 10_980_000 },
-              { year: 2025, population: 10_850_000 }
-            ])
-            const dashboardUrl = `${pathToFileURL(join(webRoot, 'src/dashboard.js')).href}?eval=${Date.now()}`
-            const dashboard = (await import(dashboardUrl)) as {
-              populationRows: Array<{ year: number; population: number }>
-              latestPopulation: () => number | null
-            }
-            expect(dashboard.populationRows).toEqual(data)
-            expect(dashboard.latestPopulation()).toBe(10_850_000)
-            const events = store.listMissionEvents(followUp.mission.id)
-            const publicAgentMessages = events.filter(
-              (event) => event.actorType === 'agent' && event.kind === 'peer_message'
-            )
-            expect(new Set(publicAgentMessages.map((event) => event.actorParticipantId)).size).toBe(
-              2
-            )
-            const finalSessionIds = store
-              .listAgentSessions(detail.group.id)
-              .map((session) => session.id)
-              .sort()
-            expect(finalSessionIds).toEqual(initialSessionIds)
-            const toolNames = store.listAgentSessions(detail.group.id).flatMap((session) =>
-              store
-                .listRecentAgentSessionMessages(session.id, 4_000)
-                .filter((message) => message.missionId === followUp.mission.id)
-                .flatMap((message) => message.toolCalls.map((call) => call.function.name))
-            )
-            expect(toolNames).toContain('collaboration_share_file')
-            expect(toolNames).toContain('collaboration_import_artifact')
-            expect(toolNames).toContain('collaboration_claim_complete')
-            expect(toolNames).toContain('shell')
-            enrichMetric('group-follow-up-collaboration', {
-              details: {
-                participants: participantRuns.map((run) => run.status),
-                publicAgentMessages: publicAgentMessages.length,
-                artifactDelta: artifacts.length - initialArtifactCount,
-                durableSessionsReused: true,
-                tools: [...new Set(toolNames)],
-                verifiedRows: data.length
-              }
-            })
-          },
-          'collaboration'
-        )
-      } finally {
-        supervisor?.shutdown()
-        await harness.close()
-        await fs.rm(scenarioRoot, { recursive: true, force: true })
-      }
-    },
-    780_000
   )
 })

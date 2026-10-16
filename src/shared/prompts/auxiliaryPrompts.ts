@@ -3,7 +3,7 @@ export interface AuxiliaryPromptMessage {
   content: string
 }
 
-export type PromptRefinementSurface = 'conversation' | 'project' | 'group' | 'group-agent'
+export type PromptRefinementSurface = 'conversation' | 'project'
 
 export interface PromptRefinementHistoryItem {
   role: 'user' | 'assistant'
@@ -14,8 +14,6 @@ export interface PromptRefinementHistoryItem {
 export interface PromptRefinementContext {
   surface: PromptRefinementSurface
   projectName?: string
-  groupTitle?: string
-  recipientLabels?: string[]
   activeObjective?: string
   recentHistory?: PromptRefinementHistoryItem[]
   historyTruncated?: boolean
@@ -92,11 +90,7 @@ const PROMPT_REFINEMENT_SURFACE_GUIDANCE: Record<PromptRefinementSurface, string
   conversation:
     'This is a direct conversation. Add useful specificity and verification criteria only when the task benefits from them.',
   project:
-    'This conversation is attached to a project. Clarify intended changes, relevant project constraints, deliverables, and validation when applicable.',
-  group:
-    'This is a shared multi-agent channel. Make the goal, division of responsibility, coordination updates, handoffs, shared artifacts, and completion criteria explicit when they help the agents collaborate.',
-  'group-agent':
-    'This addresses one project agent that also participates in a group. Clarify that agent’s responsibility, expected coordination with peers, deliverables, and completion criteria when applicable.'
+    'This conversation is attached to a project. Clarify intended changes, relevant project constraints, deliverables, and validation when applicable.'
 }
 
 export function createPromptRefinementMessages(
@@ -105,14 +99,7 @@ export function createPromptRefinementMessages(
 ): AuxiliaryPromptMessage[] {
   const contextLines = [
     `Surface: ${context.surface}`,
-    context.projectName?.trim() ? `Project: ${context.projectName.trim()}` : '',
-    context.groupTitle?.trim() ? `Group: ${context.groupTitle.trim()}` : '',
-    context.recipientLabels?.length
-      ? `Recipients: ${context.recipientLabels
-          .map((label) => label.trim())
-          .filter(Boolean)
-          .join(', ')}`
-      : ''
+    context.projectName?.trim() ? `Project: ${context.projectName.trim()}` : ''
   ]
     .filter(Boolean)
     .join('\n')

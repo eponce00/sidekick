@@ -61,7 +61,7 @@ describe('calculateRequestBudget', () => {
     expect(budget.shouldCompact).toBe(true)
   })
 
-  it('uses the same configured output budget for regular and collaboration runs', () => {
+  it('uses the configured output budget, with a default when none is set', () => {
     expect(resolveMaxOutputTokens(180_000, 32_000)).toBe(32_000)
     expect(resolveMaxOutputTokens(180_000, 16_000)).toBe(16_000)
     expect(resolveMaxOutputTokens(180_000)).toBe(32_768)

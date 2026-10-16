@@ -7,11 +7,16 @@ import { registerMcpHandlers } from './mcp'
 import { registerPermissionHandlers } from './permissions'
 import { registerProjectHandlers } from './projects'
 import { registerProviderRuntimeHandlers } from './providerRuntime'
-import { registerCollaborationHandlers } from './collaboration'
 import { registerAgentRunHandlers } from './agentRuns'
+import { registerSessionStatusHandlers } from './sessionStatus'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
+import { registerCommandLineHandlers } from './commandLine'
+import { registerScheduleHandlers } from './schedules'
+import { registerSessionHandlers } from './sessions'
+import { registerPullRequestHandlers } from './pullRequests'
+import { registerWorktreeHandlers } from './worktrees'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -23,12 +28,17 @@ export function registerAllHandlers(): void {
   registerSettingsHandlers()
   registerDatabaseHandlers()
   registerProjectHandlers()
+  registerWorktreeHandlers()
   registerWorkspaceHandlers()
   registerCheckpointHandlers()
   registerMcpHandlers()
   registerPermissionHandlers()
   registerBrowserNetworkHandlers()
+  registerPullRequestHandlers()
   registerSupportHandlers()
-  registerCollaborationHandlers()
   registerAgentRunHandlers()
+  registerSessionStatusHandlers()
+  registerCommandLineHandlers()
+  registerScheduleHandlers()
+  registerSessionHandlers()
 }

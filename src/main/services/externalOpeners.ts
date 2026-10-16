@@ -1,6 +1,7 @@
 import { app, type NativeImage } from 'electron'
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
+import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { promisify } from 'util'
 
@@ -166,4 +167,16 @@ export async function discoverExternalOpeners(): Promise<ExternalOpener[]> {
     })
   )
   return results.filter((result): result is ExternalOpener => result !== null)
+}
+
+/** The system file manager's own icon, for the "Show in File Explorer" item. */
+export async function fileManagerIcon(): Promise<NativeImage | undefined> {
+  const source =
+    process.platform === 'win32'
+      ? join(process.env.WINDIR || 'C:\\Windows', 'explorer.exe')
+      : process.platform === 'darwin'
+        ? '/System/Library/CoreServices/Finder.app'
+        : // A directory gets the desktop theme's folder icon.
+          homedir()
+  return app.getFileIcon(source, { size: 'small' }).catch(() => undefined)
 }

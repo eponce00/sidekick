@@ -11,6 +11,20 @@ function event(
 }
 
 describe('projectAgentRunEvents', () => {
+  it('shows a message steered in from another chat only through the chat, not as the user', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'run.steered', {
+        kind: 'session_message',
+        messageId: 'report-1',
+        content: '<sidekick_chat_message intent="report">Done.</sidekick_chat_message>'
+      }),
+      event(2, 'run.steered', { messageId: 'user-1', content: 'Also check the docs.' })
+    ])
+    expect(
+      projection.segments.filter(({ type }) => type === 'steer').map(({ steer }) => steer?.id)
+    ).toEqual(['user-1'])
+  })
+
   it('preserves per-request timing and does not carry cache telemetry into an unreported turn', () => {
     const projection = projectAgentRunEvents([
       event(1, 'usage.updated', {

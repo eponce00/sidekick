@@ -64,6 +64,15 @@ import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { registerCoreToolHandlers } from './agentCoreToolHandlers'
 import { registerWebToolHandlers } from './agentWebToolHandlers'
 import { registerConversationToolHandlers } from './agentConversationToolHandlers'
+import {
+  PROVIDER_REQUEST_KEY_TOOL,
+  SETTINGS_PROPOSE_CHANGE_TOOL,
+  SETTINGS_READ_TOOL
+} from '../../shared/appSettingsTools'
+import {
+  registerSettingsToolHandlers,
+  type AppSettingsToolAccess
+} from './agentSettingsToolHandlers'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -75,13 +84,23 @@ import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agent
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { nestedPowerShellHint } from './shellCommandHints'
 
-export interface AgentCollaborationToolHandler {
+/** Starts, messages and lists other chats for a conversation run; see SessionService. */
+export interface AgentSessionToolHandler {
+  role: 'manager' | 'worker'
   execute(
     name: string,
     args: Record<string, unknown>,
     context: AgentToolExecutionContext
   ): Promise<unknown>
 }
+
+export const SESSION_TOOL_NAMES = [
+  'start_session',
+  'send_message',
+  'list_sessions',
+  'stop_session',
+  'import_attachment'
+] as const
 
 export interface AgentGoalToolHandler {
   execute(args: Record<string, unknown>, context: AgentToolExecutionContext): Promise<unknown>
@@ -142,7 +161,7 @@ export interface AgentToolRuntimeSessionInput {
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
   mcpConfigs?: readonly McpServerConfig[]
-  collaboration?: AgentCollaborationToolHandler
+  sessions?: AgentSessionToolHandler
   goal?: AgentGoalToolHandler
   plan?: AgentPlanToolHandler
   instructionScopeId?: string
@@ -333,62 +352,10 @@ export function safeToolArguments(
   )
 }
 
-function comparablePath(path: string): string {
-  const normalized = path.replace(/\\([ !"#$&'()*,:;<=>?@[\]^`{|}~])/g, '$1').replaceAll('\\', '/')
-  return process.platform === 'win32' || process.platform === 'darwin'
-    ? normalized.toLowerCase()
-    : normalized
-}
-
-/**
- * Rejects obvious shell paths that accidentally cross a collaboration
- * participant's project boundary. This is defense in depth, not an OS sandbox:
- * unrestricted host commands can use indirection that text inspection cannot
- * prove safe. Permission/audit UI must not describe this guard as confinement.
- */
-export function collaborationCommandScopeError(
-  command: string,
-  workspaceRoot: string
-): string | null {
-  const normalizedCommand = command.trim()
-  if (
-    /(^|[\s;&|()])(?:cd\s+)?\.\.(?:[\\/]|(?=$|[\s;&|()]))/.test(normalizedCommand) ||
-    /\$\{?WORKSPACE_FOLDER\}?[\\/]\.\./i.test(normalizedCommand) ||
-    /dirname\s+(?:["']?\$\{?WORKSPACE_FOLDER\}?)/i.test(normalizedCommand)
-  ) {
-    return 'Collaboration commands cannot traverse above the assigned project root.'
-  }
-
-  const root = comparablePath(workspaceRoot).replace(/[\\/]$/, '')
-  const pathBoundary = String.raw`(?:^|[\s;&|(<>'"\x60=])`
-  const pathEnd = String.raw`(?:[\\/]|(?=$|[\s;&|()<>'"\x60]))`
-  const locationAliases = new RegExp(
-    `${pathBoundary}(?:~(?=${pathEnd})|\\$(?:\\{)?(?:HOME|USERPROFILE|TMPDIR|TEMP|TMP)(?:\\})?(?=${pathEnd})|%(?:USERPROFILE|TEMP|TMP)%|\\$env:(?:USERPROFILE|TEMP|TMP)(?=${pathEnd}))`,
-    'i'
-  )
-  if (locationAliases.test(normalizedCommand)) {
-    return 'Collaboration commands cannot access paths outside the assigned project root. Use collaboration_share_file and collaboration_import_artifact for cross-project handoffs.'
-  }
-  const unixPaths = new RegExp(`${pathBoundary}(/(?:(?:\\\\.)|[^\\s;&|<>'"\\x60])+)`, 'g')
-  const windowsPaths = new RegExp(
-    `${pathBoundary}([A-Za-z]:[\\\\/](?:(?:\\\\.)|[^\\s;&|<>'"\\x60])+)`,
-    'g'
-  )
-  const absoluteCandidates = [
-    ...[...normalizedCommand.matchAll(unixPaths)].map((match) => match[1]),
-    ...[...normalizedCommand.matchAll(windowsPaths)].map((match) => match[1])
-  ].map((path) => comparablePath(path).replace(/[),]+$/, ''))
-  const outside = absoluteCandidates.find(
-    (candidate) => candidate !== root && !candidate.startsWith(`${root}/`)
-  )
-  return outside
-    ? 'Collaboration commands cannot access paths outside the assigned project root. Use collaboration_share_file and collaboration_import_artifact for cross-project handoffs.'
-    : null
-}
-
 export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
   private artifactInspector?: ArtifactInspectorLike
+  private appSettings?: AppSettingsToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -421,6 +388,11 @@ export class AgentToolRuntime {
   /** Lets create_artifact render what it made and show the model the result. */
   setArtifactInspector(inspector: ArtifactInspectorLike): void {
     this.artifactInspector = inspector
+  }
+
+  /** Lets the agent read and propose changes to SideKick's own settings. */
+  setAppSettings(access: AppSettingsToolAccess): void {
+    this.appSettings = access
   }
 
   async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
@@ -465,6 +437,7 @@ export class AgentToolRuntime {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs)
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
+    if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
       officeHelpersAvailable: () => officeSession?.available() ?? false,
@@ -566,23 +539,14 @@ export class AgentToolRuntime {
       ({ name, arguments: args, context }) =>
         this.execute(input, readReceipts, sessionState, name, args, context)
     )
-    if (input.collaboration) {
-      handlers.register(
-        [
-          'collaboration_read',
-          'collaboration_send',
-          'collaboration_share_file',
-          'collaboration_list_artifacts',
-          'collaboration_import_artifact',
-          'collaboration_status',
-          'collaboration_claim_complete'
-        ],
-        ({ name, arguments: args, context }) =>
-          this.execute(input, readReceipts, sessionState, name, args, context)
+    if (input.sessions) {
+      handlers.register([...SESSION_TOOL_NAMES], ({ name, arguments: args, context }) =>
+        this.execute(input, readReceipts, sessionState, name, args, context)
       )
     }
     const catalog = (): AgentToolCatalogOptions => ({
       surface: input.surface,
+      sessionRole: input.sessions?.role,
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
@@ -615,6 +579,7 @@ export class AgentToolRuntime {
         },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,
+        approvalPreview: (name, args) => handlers.preview(name, args),
         ...(this.browser
           ? {
               reserveBrowserHumanTakeover: (conversationId: string) =>
@@ -629,6 +594,11 @@ export class AgentToolRuntime {
 
   private title(name: string, args: Record<string, unknown>): string {
     if (name === 'shell') return stringArg(args, 'title', 'Run command')
+    if (name === SETTINGS_PROPOSE_CHANGE_TOOL) {
+      return `Change SideKick setting ${stringArg(args, 'key')}`.trim()
+    }
+    if (name === SETTINGS_READ_TOOL) return 'Read SideKick settings'
+    if (name === PROVIDER_REQUEST_KEY_TOOL) return 'Ask for a provider key in Settings'
     if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {
       return `${stringArg(args, 'operation', 'Inspect code').replaceAll('_', ' ')} ${stringArg(args, 'file_path')}`.trim()
@@ -974,17 +944,6 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
-      const scopeError =
-        input.surface === 'collaboration'
-          ? collaborationCommandScopeError(command, workspaceRoot)
-          : null
-      if (scopeError) {
-        return toolExecutionFailed({
-          title,
-          code: 'workspace_scope',
-          message: scopeError
-        })
-      }
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
       if (instructions.retryRequired) {
         return this.success(
@@ -1189,9 +1148,12 @@ export class AgentToolRuntime {
         read ? commandReadContent(read) : JSON.stringify({ sent: true, taskId })
       )
     }
-    if (name.startsWith('collaboration_') && input.collaboration) {
-      if (name === 'collaboration_import_artifact') readReceipts.clear()
-      return this.success(title, await input.collaboration.execute(name, args, context))
+    if (input.sessions && (SESSION_TOOL_NAMES as readonly string[]).includes(name)) {
+      if (name === 'import_attachment') {
+        await input.onWorkspaceWillMutate?.()
+        readReceipts.clear()
+      }
+      return this.success(title, await input.sessions.execute(name, args, context))
     }
     return toolExecutionFailed({
       title,

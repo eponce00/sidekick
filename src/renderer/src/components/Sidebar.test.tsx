@@ -3,7 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../types/app.types'
+import type { Conversation, Project } from '../types/app.types'
 import Sidebar from './Sidebar'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -39,29 +39,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={[]}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={onNewConversation}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -81,7 +72,6 @@ describe('Sidebar chat section', () => {
   })
 
   it('creates from each section heading, and keeps the rest in the header menu', async () => {
-    const onNewGroup = vi.fn()
     const onOpenProject = vi.fn()
     const onOpenCommandPalette = vi.fn()
     const project = (id: string, name: string): Project => ({
@@ -97,29 +87,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={[]}
           projects={[project('p1', 'alpha'), project('p2', 'beta')]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={onNewGroup}
           onOpenProject={onOpenProject}
           onOpenCommandPalette={onOpenCommandPalette}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -134,8 +115,6 @@ describe('Sidebar chat section', () => {
       await act(async () => element!.click())
     }
 
-    await click('button[aria-label="New group chat"]')
-    expect(onNewGroup).toHaveBeenCalledOnce()
     await click('button[aria-label="Open a folder as a project"]')
     expect(onOpenProject).toHaveBeenCalledOnce()
 
@@ -169,29 +148,20 @@ describe('Sidebar chat section', () => {
             }
           ]}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={onDeleteConversation}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -243,29 +213,20 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={conversations}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set(['working-chat'])}
           unreadConversationIds={new Set(['working-chat', 'unread-chat'])}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -300,30 +261,21 @@ describe('Sidebar chat section', () => {
         <Sidebar
           conversations={conversations}
           projects={[]}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set(['waiting-chat', 'working-chat'])}
           unreadConversationIds={new Set()}
           waitingConversationIds={new Set(['waiting-chat'])}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -373,29 +325,20 @@ describe('Sidebar chat section', () => {
             created_at: 1,
             updated_at: 1
           }))}
-          groups={[]}
           currentConversationId={null}
-          currentGroupId={null}
-          currentGroupSessionId={null}
           isCollapsed={false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           onSelectConversation={vi.fn()}
-          onSelectGroup={vi.fn()}
-          onSelectGroupSession={vi.fn()}
           onToggleCollapsed={vi.fn()}
           onNewConversation={vi.fn()}
-          onNewGroup={vi.fn()}
           onOpenProject={vi.fn()}
           onOpenCommandPalette={vi.fn()}
           platform="windows"
           onDeleteConversation={vi.fn()}
-          onDeleteGroup={vi.fn()}
           onDeleteAllConversations={vi.fn()}
           onForkConversation={vi.fn()}
           onRenameConversation={vi.fn()}
-          onRenameGroup={vi.fn()}
-          onRenameGroupSession={vi.fn()}
           onMoveConversation={vi.fn()}
           onRenameProject={vi.fn()}
           onToggleConversationPin={vi.fn()}
@@ -429,5 +372,191 @@ describe('Sidebar chat section', () => {
 
     await act(async () => toggle('Chats').click())
     expect(onOrder).toHaveBeenLastCalledWith(['loose'])
+  })
+
+  describe('views and filters', () => {
+    const chat = (id: string, projectId: string | null, updatedAt: number): Conversation => ({
+      id,
+      title: id,
+      created_at: 1,
+      updated_at: updatedAt,
+      project_id: projectId,
+      sidebar_order: 0,
+      project_context_version: 0,
+      home_workspace_root: null,
+      home_project_name: null
+    })
+    const project = (id: string): Project => ({
+      id,
+      name: `${id} folder`,
+      folder_path: `/${id}`,
+      is_pinned: 0,
+      created_at: 1,
+      updated_at: 1
+    })
+    const renderSidebar = async (
+      props: Pick<
+        React.ComponentProps<typeof Sidebar>,
+        'conversations' | 'projects' | 'busyConversationIds' | 'waitingConversationIds'
+      > & { onOrder?: (ids: string[]) => void }
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <Sidebar
+            {...props}
+            currentConversationId={null}
+            isCollapsed={false}
+            unreadConversationIds={new Set()}
+            onSelectConversation={vi.fn()}
+            onToggleCollapsed={vi.fn()}
+            onNewConversation={vi.fn()}
+            onOpenProject={vi.fn()}
+            onOpenCommandPalette={vi.fn()}
+            platform="windows"
+            onDeleteConversation={vi.fn()}
+            onDeleteAllConversations={vi.fn()}
+            onForkConversation={vi.fn()}
+            onRenameConversation={vi.fn()}
+            onMoveConversation={vi.fn()}
+            onRenameProject={vi.fn()}
+            onToggleConversationPin={vi.fn()}
+            onToggleProjectPin={vi.fn()}
+            onRemoveProject={vi.fn()}
+            onVisibleConversationOrderChange={props.onOrder}
+          />
+        )
+      })
+    }
+    const click = async (selector: string): Promise<void> => {
+      const element = container.querySelector<HTMLElement>(selector)
+      expect(element, selector).not.toBeNull()
+      await act(async () => element!.click())
+    }
+
+    it('shows only chats waiting on the user, even inside a closed project', async () => {
+      vi.mocked(window.localStorage.getItem).mockImplementation((key: string) =>
+        key === 'collapsedProjectIds' ? JSON.stringify(['closed']) : null
+      )
+      const onOrder = vi.fn()
+      await renderSidebar({
+        conversations: [
+          chat('waiting-in-closed', 'closed', 3),
+          chat('working-loose', null, 2),
+          chat('idle-loose', null, 1)
+        ],
+        projects: [project('closed')],
+        busyConversationIds: new Set(['waiting-in-closed', 'working-loose']),
+        waitingConversationIds: new Set(['waiting-in-closed']),
+        onOrder
+      })
+
+      // The closed project hides the waiting chat, so the filter button counts it.
+      expect(container.textContent).not.toContain('waiting-in-closed')
+      expect(container.querySelector('.sidebar-filter-badge')?.textContent).toBe('1')
+
+      await click('button[aria-label="Filter chats"]')
+      const options = [...container.querySelectorAll('[role="menuitemradio"]')]
+      expect(options.map((option) => option.textContent)).toEqual([
+        'All chats',
+        'Needs attention1',
+        'Working1',
+        'Unread0'
+      ])
+      await act(async () => (options[1] as HTMLButtonElement).click())
+
+      expect(container.textContent).toContain('waiting-in-closed')
+      expect(container.textContent).not.toContain('working-loose')
+      expect(container.textContent).not.toContain('idle-loose')
+      expect(container.querySelector('.sidebar-filter-chip')?.textContent).toBe('Needs attention')
+      expect(container.querySelector('.sidebar-filter-badge')).toBeNull()
+      expect(onOrder).toHaveBeenLastCalledWith(['waiting-in-closed'])
+      // A filter is never remembered across launches.
+      expect(window.localStorage.setItem).not.toHaveBeenCalledWith(
+        expect.stringMatching(/filter/i),
+        expect.anything()
+      )
+
+      await click('button[aria-label="Show all chats"]')
+      expect(container.querySelector('.sidebar-filter-chip')).toBeNull()
+      expect(container.textContent).toContain('idle-loose')
+      expect(container.textContent).not.toContain('waiting-in-closed')
+    })
+
+    it('says so when nothing matches a filter', async () => {
+      await renderSidebar({
+        conversations: [chat('idle', null, 1)],
+        projects: [],
+        busyConversationIds: new Set()
+      })
+      await click('button[aria-label="Filter chats"]')
+      const unread = [
+        ...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')
+      ].find((option) => option.textContent?.startsWith('Unread'))!
+      await act(async () => unread.click())
+      expect(container.querySelector('.conversation-list')?.textContent).toBe('No unread replies')
+    })
+
+    it('lists chats across folders by recent activity and remembers the view', async () => {
+      // Midday, so "a second ago" is always still today.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(new Date(2026, 9, 16, 12))
+      const now = Date.now()
+      const onOrder = vi.fn()
+      await renderSidebar({
+        conversations: [
+          chat('older-in-a', 'a', now - 10 * 86_400_000),
+          chat('loose-now', null, now),
+          chat('in-b-now', 'b', now - 1_000)
+        ],
+        projects: [project('a'), project('b')],
+        busyConversationIds: new Set(),
+        onOrder
+      })
+      expect(onOrder).toHaveBeenLastCalledWith(['older-in-a', 'in-b-now', 'loose-now'])
+
+      // One button flips between the layouts and shows the one in use.
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'folders'
+      )
+      await click('.sidebar-view-toggle')
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('aria-label')).toBe(
+        'Listed by recent activity, switch to folders'
+      )
+      expect(
+        [...container.querySelectorAll('.sidebar-section-label')].map((label) => label.textContent)
+      ).toEqual(['Today', 'Older'])
+      expect(onOrder).toHaveBeenLastCalledWith(['loose-now', 'in-b-now', 'older-in-a'])
+      // The project heading is gone, so each row names its folder.
+      expect(container.textContent).toContain('in-b-nowb folder')
+      // Time decides the order here, so rows cannot be dragged into one.
+      expect(
+        [...container.querySelectorAll('.conversation-item')].every(
+          (row) => row.getAttribute('draggable') === 'false'
+        )
+      ).toBe(true)
+      expect(window.localStorage.setItem).toHaveBeenCalledWith('sidebarView', 'recent')
+
+      await click('.sidebar-view-toggle')
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'folders'
+      )
+      expect(onOrder).toHaveBeenLastCalledWith(['older-in-a', 'in-b-now', 'loose-now'])
+      await click('.sidebar-view-toggle')
+
+      await act(async () => root.unmount())
+      root = createRoot(container)
+      vi.mocked(window.localStorage.getItem).mockImplementation((key: string) =>
+        key === 'sidebarView' ? 'recent' : null
+      )
+      await renderSidebar({
+        conversations: [chat('loose-now', null, now)],
+        projects: [],
+        busyConversationIds: new Set()
+      })
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'recent'
+      )
+      vi.useRealTimers()
+    })
   })
 })

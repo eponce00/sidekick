@@ -31,7 +31,7 @@ const project: Project = {
 function actions(): CommandPaletteActions {
   return {
     newChat: vi.fn(),
-    newGroupChat: vi.fn(),
+    openSchedules: vi.fn(),
     openProject: vi.fn(),
     openSettings: vi.fn(),
     toggleSidebar: vi.fn(),
@@ -42,7 +42,8 @@ function actions(): CommandPaletteActions {
     previousConversation: vi.fn(),
     nextConversation: vi.fn(),
     openConversation: vi.fn(),
-    openProjectConversations: vi.fn()
+    openProjectConversations: vi.fn(),
+    manageWorktrees: vi.fn()
   }
 }
 
@@ -83,12 +84,9 @@ describe('buildCommandPaletteItems', () => {
     expect(items.find(({ id }) => id === 'conversation:a')?.shortcut).toBe('⌘1')
   })
 
-  it('leaves out voice and the browser panel where they are unavailable', () => {
-    const ids = buildCommandPaletteItems(context({ voiceOn: null, browserPanelOpen: null })).map(
-      ({ id }) => id
-    )
+  it('leaves out voice where it is unavailable', () => {
+    const ids = buildCommandPaletteItems(context({ voiceOn: null })).map(({ id }) => id)
     expect(ids).not.toContain('action:toggle-voice')
-    expect(ids).not.toContain('action:toggle-browser-panel')
   })
 
   it('lists conversations with their jump key, project, and recency, and opens them', () => {

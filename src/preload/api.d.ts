@@ -15,6 +15,13 @@ interface SettingsAPI {
   selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
   save: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
   load: () => Promise<PublicProviderSettings | null>
+  /** Settings were changed outside this window, such as by the `sidekick` CLI. */
+  onChanged: (callback: () => void) => () => void
+}
+
+interface CommandLineAPI {
+  status: () => Promise<import('../shared/commandLineTool').CommandLineToolStatus>
+  install: () => Promise<import('../shared/commandLineTool').CommandLineToolInstallResult>
 }
 
 interface ProvidersAPI {
@@ -86,7 +93,10 @@ interface ConversationsAPI {
     input: import('../shared/conversationTitles').ConversationTitleBackfillIdentity
   ) => Promise<{ preserved: boolean }>
   markRead: (id: string) => Promise<{ success: boolean }>
-  delete: (id: string) => Promise<{ success: boolean }>
+  delete: (id: string) => Promise<{
+    success: boolean
+    worktreeCleanup?: import('../shared/worktrees').RemoveManagedWorktreeResult
+  }>
   deleteAll: () => Promise<{ success: boolean }>
   getMessages: (
     conversationId: string
@@ -130,6 +140,10 @@ interface AgentRunsAPI {
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>
   stop: (runId: string) => Promise<{ stopped: boolean }>
+  /** Other agents writing in the folder this conversation works in. */
+  workspaceOccupants: (
+    conversationId: string
+  ) => Promise<import('../shared/worktrees').WorkspaceOccupant[]>
   events: (
     runId: string,
     afterSequence?: number
@@ -159,16 +173,13 @@ interface AgentRunsAPI {
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
   ) => () => void
-  /** Conversations paused on the user's approval or answer. */
-  attention: () => Promise<import('../shared/conversationAttention').ConversationAttentionState>
-  onAttention: (
-    callback: (state: import('../shared/conversationAttention').ConversationAttentionState) => void
-  ) => () => void
 }
 
 interface McpAPI {
   listTools: () => Promise<import('../shared/types').McpListResult>
   authenticate: (serverId: string) => Promise<import('../shared/types').McpListResult>
+  /** Shows the stored connector in a native dialog and records approval of exactly that content. */
+  approve: (serverId: string) => Promise<import('../shared/types').McpListResult>
   disconnect: (serverId: string) => Promise<import('../shared/types').McpListResult>
 }
 
@@ -205,6 +216,8 @@ interface AppAPI {
   getIconPath: () => Promise<string>
   onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => () => void
   onOpenConversation: (callback: (conversationId: string) => void) => () => void
+  /** SideKick's agent asked the user to enter a provider's key in Settings. */
+  onOpenProviderKey: (callback: (providerInstanceId: string) => void) => () => void
 }
 
 interface ClipboardAPI {
@@ -365,89 +378,28 @@ interface WorkspaceAPI {
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
-  onFilesChanged: (callback: () => void) => () => void
-}
-
-interface CollaborationAPI {
-  listGroups: () => Promise<import('../shared/collaboration').CollaborationGroup[]>
-  getGroup: (
-    id: string
-  ) => Promise<import('../shared/collaboration').CollaborationGroupDetail | null>
-  getAgentSession: (
-    id: string
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSession | null>
-  updateAgentSession: (
-    id: string,
-    input: import('../shared/collaboration').UpdateCollaborationAgentSessionInput
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSession>
-  markGroupRead: (id: string) => Promise<{ success: boolean }>
-  markAgentSessionRead: (id: string) => Promise<{ success: boolean }>
-  listAgentSessionMessages: (
-    sessionId: string,
-    afterCreatedAt?: number
-  ) => Promise<import('../shared/collaboration').CollaborationAgentSessionMessage[]>
-  listEvents: (
-    groupId: string,
-    afterSeq?: number
-  ) => Promise<import('../shared/collaboration').CollaborationEvent[]>
-  createGroup: (
-    input: import('../shared/collaboration').CreateCollaborationGroupInput
-  ) => Promise<import('../shared/collaboration').CollaborationGroupDetail>
-  updateGroup: (
-    id: string,
-    input: import('../shared/collaboration').UpdateCollaborationGroupInput
-  ) => Promise<import('../shared/collaboration').CollaborationGroup>
-  deleteGroup: (id: string) => Promise<void>
-  addParticipant: (
-    input: import('../shared/collaboration').AddCollaborationParticipantInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant>
-  removeParticipant: (groupId: string, participantId: string) => Promise<void>
-  updateParticipant: (
-    participantId: string,
-    input: import('../shared/collaboration').UpdateCollaborationParticipantInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant>
-  updateParticipants: (
-    input: import('../shared/collaboration').UpdateCollaborationParticipantsInput
-  ) => Promise<import('../shared/collaboration').CollaborationParticipant[]>
-  sendMessage: (input: import('../shared/collaboration').SendCollaborationMessageInput) => Promise<{
-    event: import('../shared/collaboration').CollaborationEvent
-    mission: import('../shared/collaboration').CollaborationMission
-  }>
-  rewriteMessage: (
-    input: import('../shared/collaboration').RewriteCollaborationMessageInput
-  ) => Promise<import('../shared/collaboration').RewriteCollaborationMessageResult>
-  pauseMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  resumeMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  stopMission: (
-    missionId: string
-  ) => Promise<import('../shared/collaboration').CollaborationMission>
-  stopParticipant: (
-    missionId: string,
-    participantId: string
-  ) => Promise<import('../shared/collaboration').CollaborationParticipantRun>
-  onChanged: (
-    callback: (change: import('../shared/collaboration').CollaborationChangedEvent) => void
-  ) => () => void
+  /** Calls back when files under the folder change; returns the function that stops watching. */
+  watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
 
 export interface DesktopApi {
   providers: ProvidersAPI
   settings: SettingsAPI
+  commandLine: CommandLineAPI
   memory: MemoryAPI
   pinnedModels: PinnedModelsAPI
   conversations: ConversationsAPI
   projects: ProjectsAPI
+  worktrees: import('../shared/worktrees').WorktreesAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
+  schedules: import('../shared/schedules').SchedulesAPI
+  sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
-  collaboration: CollaborationAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI

@@ -2,8 +2,8 @@
 
 SideKick `0.6.0` is in active development. The current codebase includes the local-first desktop
 runtime, provider connections, agent tools, projects, permissions, plan mode, persistent goals,
-research, native visual browser automation, conversation forks, managed worktrees, two-agent
-project collaboration, private workspace recovery, packaging, and a guarded public-release
+research, native visual browser automation, conversation forks, managed worktrees, chats that
+start and coordinate other chats, private workspace recovery, packaging, and a guarded public-release
 notification path. Release availability is tracked on the canonical
 [GitHub Releases page](https://github.com/eponce00/sidekick/releases).
 
@@ -30,6 +30,12 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   current command permission and project-containment boundaries.
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
+- Finish chats that start other chats ([current behavior](../user-guide/CHATS_THAT_WORK_TOGETHER.md)):
+  Archive and Resume buttons for worker chats (the main process already supports both), an optional
+  token or cost budget per family that pauses it when reached, and a Merge into base action for a
+  finished worker.
+- Finish worktree isolation for parallel agents: cleanup on archive, snapshots before forced
+  removal, and the other items in [Worktrees for parallel agents](WORKTREES.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit
   fork ancestry, compaction replacements, writer ownership, and replay policy for interrupted
   operations.
@@ -40,13 +46,16 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Expand protocol and visual contract suites so prompt/tool schemas, reconnect baselines, tool
   cards, diffs, approvals, and narrow layouts are reviewed as stable harness behavior.
 - Refine curated project memory with explicit sources, review, deletion, and prompt-budget controls.
-- Continue adversarial testing of provider dialect recovery, project symlinks, collaboration
-  conflicts, prompt injection, release validation, and crash recovery.
+- Continue adversarial testing of provider dialect recovery, project symlinks, conflicts
+  between chats, prompt injection, release validation, and crash recovery.
 - Ask OpenAI-compatible servers for schema-constrained tool arguments (`strict: true`) where they
   support it, as vLLM does, so a local model cannot send arguments its tool schema forbids. About
   one call in a thousand from a local model is still refused and retried today. It must stay
   optional per provider and be qualified for stability and speed first: the reference vLLM server
   recorded GPU faults during schema-constrained requests.
+- Extend schedules with a time limit per run, several weekdays or a custom cron expression per
+  schedule, one-time runs, an end date, and the run's outcome summarized in the schedule list. See
+  [Scheduled runs](../architecture/SCHEDULES.md) for the current design.
 - Let a parked browser page idle. Its parking window stays shown with background throttling off, so
   an animated page keeps painting with no one watching, and the shown window keeps SideKick running
   after its main window closes. Hiding parked pages between tool operations made a screenshot taken
@@ -54,6 +63,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   on Windows, and on Linux every time, even when hiding was delayed or the capture waited for
   animation frames. A fix must keep every capture fresh, proven by repeated smoke runs on all three
   platforms.
+
+- Qualify the `sidekick` command on clean installs of every platform and close the other
+  [configuration CLI](CONFIGURATION_CLI.md) gaps.
 
 ## Later work
 

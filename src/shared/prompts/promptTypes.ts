@@ -3,7 +3,7 @@ import type { ModelProvider, PinnedModel } from '../models'
 import type { ProviderKind } from '../providerRegistry'
 import type { ConversationProjectTransition } from '../projects'
 
-export const AGENT_PROMPT_VERSION = 'sidekick-agent-v9'
+export const AGENT_PROMPT_VERSION = 'sidekick-agent-v10'
 
 export type HostPlatform = 'windows' | 'macos' | 'linux'
 export type ModelFamily =
@@ -33,6 +33,10 @@ export interface PromptCapabilities {
   commands: boolean
   backgroundCommands: boolean
   subagents: boolean
+  /** The run can start other chats (it is a manager). */
+  startSessions: boolean
+  /** The run can message other chats in its family; without `startSessions`, it is a worker. */
+  sessionMessages: boolean
   skills: boolean
   webSearch: boolean
   webFetch: boolean

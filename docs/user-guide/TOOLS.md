@@ -6,17 +6,19 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 
 ## Core catalog
 
-| Capability      | Tools                                                                                                   | Availability                                                             |
-| --------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Work tracking   | `manage_todo_list`                                                                                      | Conversation and Plan runs                                               |
-| Commands        | `shell`, `list_background_tasks`, `cancel_background_task`, `read_command_output`, `send_command_input` | Project-bound conversation, collaboration, and child-agent runs          |
-| Coordination    | `wait`                                                                                                  | All agent profiles                                                       |
-| Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                          |
-| Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                          |
-| Human input     | `ask_user`                                                                                              | All interactive agent profiles                                           |
-| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                       |
-| Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, collaboration, child-agent, and research runs when enabled |
-| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                          |
+| Capability      | Tools                                                                                                   | Availability                                                           |
+| --------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Work tracking   | `manage_todo_list`                                                                                      | Conversation and Plan runs                                             |
+| Commands        | `shell`, `list_background_tasks`, `cancel_background_task`, `read_command_output`, `send_command_input` | Project-bound conversation and child-agent runs                        |
+| Coordination    | `wait`                                                                                                  | All agent profiles                                                     |
+| Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                        |
+| Other chats     | `start_session`, `stop_session`, `send_message`, `list_sessions`, `import_attachment`                   | Conversation runs, not planning; workers only message, list and import |
+| Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                        |
+| SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first               |
+| Human input     | `ask_user`                                                                                              | All interactive agent profiles                                         |
+| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                     |
+| Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, child-agent, and research runs when enabled              |
+| Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                        |
 
 Project-bound runs can also receive the bounded `read` tool and the file editor the model was
 trained on: `apply_patch` for OpenAI models, `Edit`/`Write` for Claude, search-and-replace for Grok,
@@ -43,8 +45,10 @@ isolation always uses pipes.
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
   stopped it and goes on. Background stops the agent waiting on it while it keeps running.
-- **The Terminal tab.** The side panel lists the conversation's commands with their state and run
-  time. Select one to see all of its output in a terminal view, copy it, stop it, or type into it.
+- **The Terminal tab.** The side panel lists the conversation's commands by title, each with a
+  status dot and its run time, or **Needs input** while it waits for an answer. Select one to see
+  its command, status, and folder above all of its output in a terminal view; the buttons beside
+  the command copy the output, move it to the background, or stop it, and you can type into it.
 - **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
@@ -83,14 +87,10 @@ chat.
   artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
   appears as the agent made it.
 - User-configured MCP servers add their advertised tools after schema normalization.
-- A group-agent run adds `collaboration_read`, `collaboration_send`,
-  `collaboration_share_file`, `collaboration_list_artifacts`,
-  `collaboration_import_artifact`, `collaboration_status`, and
-  `collaboration_claim_complete`.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
-mutations, MCP, artifacts, collaboration writes, and child agents remain unavailable even when the
+mutations, MCP, artifacts, starting or messaging other chats, and child agents remain unavailable even when the
 global policy is Full access.
 
 ## Execution guarantees

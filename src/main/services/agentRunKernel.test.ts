@@ -2053,7 +2053,7 @@ describe('AgentRunKernel', () => {
     expect(providerRequest?.messages[1].content).toContain('interrupted')
   })
 
-  it('injects external collaboration messages before the next provider step', async () => {
+  it('injects external messages before the next provider step', async () => {
     const requests: ProviderChatRequest[] = []
     const sampler = sequence(
       async (request) => {
@@ -2267,6 +2267,47 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
       expect.arrayContaining(['permission.requested', 'permission.resolved'])
     )
+  })
+
+  it('asks before every SideKick settings change even with full access, showing the diff', async () => {
+    const propose = (id: string): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'settings_propose_change',
+              arguments: { key: 'webSearchEnabled', value: 'false' }
+            }
+          }
+        ]
+      })
+    const sampler = sequence(propose('set-1'), propose('set-2'), sampledTurn({ content: 'Done' }))
+    const preview = {
+      summary: 'Let the agent search the web.',
+      changes: [{ label: 'webSearchEnabled', before: 'true', after: 'false' }]
+    }
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      approvalPreview: vi.fn(async () => preview)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const first = store.listPendingInteractions('run-1')[0]
+    expect(first.request).toMatchObject({ requestedAccess: 'confirm', preview })
+    // A chat-wide grant would let later changes through silently.
+    expect(first.request.chatScope).toBeUndefined()
+    kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const second = store.listPendingInteractions('run-1')[0]
+    expect(second.request.toolCallId).toBe('set-2')
+    kernel.resolveInteraction(second.id, { approved: false, decision: 'deny' })
+
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(1)
   })
 
   it('stops asking for the same command in the same chat after "Allow for this chat"', async () => {

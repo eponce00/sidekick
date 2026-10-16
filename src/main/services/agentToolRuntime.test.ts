@@ -5,11 +5,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import type { ToolExecutionResult } from '../../shared/agentRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
-import {
-  AgentToolRuntime,
-  collaborationCommandScopeError,
-  safeToolArguments
-} from './agentToolRuntime'
+import { AgentToolRuntime, safeToolArguments } from './agentToolRuntime'
 import { CommandService } from './commandService'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore } from './toolOutputStore'
@@ -534,55 +530,6 @@ describe('AgentToolRuntime file receipts', () => {
     })
   })
 
-  it('keeps collaboration shell commands inside their immutable project root', async () => {
-    const workspace = await temporaryRoot('sidekick-collaboration-workspace-')
-    const data = await temporaryRoot('sidekick-collaboration-data-')
-    const db = new Database(':memory:')
-    applyDatabaseSchema(db)
-    const runtime = new AgentToolRuntime(
-      db,
-      new WorkspaceReadService(),
-      new CommandService(db, join(data, 'commands')),
-      new ToolOutputStore(join(data, 'outputs')),
-      new McpClientManager()
-    )
-    const session = await runtime.createSession({
-      runId: 'collaboration-run',
-      surface: 'collaboration',
-      workspaceRoot: workspace,
-      webSearchEnabled: false
-    })
-    const context = {
-      runId: 'collaboration-run',
-      workspaceRoot: workspace,
-      signal: new AbortController().signal
-    }
-
-    await expect(
-      session.router.execute(
-        'shell',
-        {
-          title: 'Read peer data directly',
-          command: 'cat /Users/example/peer-project/private.csv',
-          accessLevel: 'auto'
-        },
-        context
-      )
-    ).resolves.toMatchObject({ status: 'error', error: { code: 'workspace_scope' } })
-
-    await expect(
-      session.router.execute(
-        'shell',
-        {
-          title: 'Leave project root',
-          command: 'cd .. && mv project renamed-project',
-          accessLevel: 'auto'
-        },
-        context
-      )
-    ).resolves.toMatchObject({ status: 'error', error: { code: 'workspace_scope' } })
-  })
-
   it('passes the trusted full-access mode to external image reads in a real tool session', async () => {
     const workspace = await temporaryRoot('sidekick-image-mode-project-')
     const data = await temporaryRoot('sidekick-image-mode-external-')
@@ -742,55 +689,4 @@ describe('AgentToolRuntime file receipts', () => {
       expect(result.modelContent).toContain('Run the PowerShell directly')
     }
   )
-})
-
-describe('collaboration command scope', () => {
-  const root = '/Users/developer/Documents/Agent Projects/Webpage'
-
-  it('does not mistake http and https URLs for Windows drive paths', () => {
-    expect(collaborationCommandScopeError('curl -s http://localhost:3000 | head -20', root)).toBe(
-      null
-    )
-    expect(collaborationCommandScopeError('curl https://example.com/home/report.json', root)).toBe(
-      null
-    )
-  })
-
-  it('rejects absolute paths outside the collaboration project', () => {
-    expect(
-      collaborationCommandScopeError('cat /Users/developer/Documents/Data/private.csv', root)
-    ).toContain('outside the assigned project root')
-    expect(collaborationCommandScopeError('type C:\\Users\\Peer\\private.csv', root)).toContain(
-      'outside the assigned project root'
-    )
-    expect(collaborationCommandScopeError('cat /etc/passwd', root)).toContain(
-      'outside the assigned project root'
-    )
-    expect(collaborationCommandScopeError('cp report.csv /tmp/report.csv', root)).toContain(
-      'outside the assigned project root'
-    )
-  })
-
-  it('rejects common shell aliases for locations outside the project', () => {
-    for (const command of [
-      'cat ~/.ssh/config',
-      'find $HOME -name credentials',
-      'ls ${TMPDIR}',
-      'type %USERPROFILE%\\.ssh\\config',
-      'Get-Content $env:USERPROFILE\\.ssh\\config'
-    ]) {
-      expect(collaborationCommandScopeError(command, root), command).toContain(
-        'outside the assigned project root'
-      )
-    }
-  })
-
-  it('allows explicit absolute paths that remain under the assigned root', () => {
-    expect(
-      collaborationCommandScopeError(
-        'cat /Users/developer/Documents/Agent\\ Projects/Webpage/report.csv',
-        root
-      )
-    ).toBeNull()
-  })
 })

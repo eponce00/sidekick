@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
+import { WorkspaceOccupancy } from '../services/workspaceOccupancy'
+import { RunSlots } from '../services/runSlots'
 import { ConversationRunPreparer } from '../services/conversationRunPreparer'
 import { AgentRunStore } from '../services/agentRunStore'
 import { AgentMessageMaterializer } from '../services/agentMessageMaterializer'
 import { openApplicationDatabase } from '../bootstrap/database'
 import { resolveProviderContext } from './providerRuntime'
-import { AgentRunKernel } from '../services/agentRunKernel'
 import { ConversationGoalStore } from '../services/conversationGoalStore'
 import type { PreparedConversationAgentRun } from '../services/conversationRunPreparer'
 
@@ -40,16 +41,6 @@ const target = {
   providerKind: 'openai-compatible' as const,
   providerInstanceId: 'fixture',
   model: 'fixture'
-}
-const collaborationInput = {
-  id: 'fixture-run',
-  threadId: 'fixture-thread',
-  workspaceRoot: 'fixture-workspace',
-  target,
-  messages: [],
-  projectInstructions: { content: '', sources: [] },
-  collaborationInstructions: '',
-  collaboration: { execute: vi.fn() }
 }
 const conversationInput: StartConversationAgentRunInput = {
   id: 'fixture-run',
@@ -89,6 +80,9 @@ function fixture() {
     commands: { cancelAll: vi.fn() },
     mcp: { close: vi.fn(async () => {}) },
     goals: new ConversationGoalStore(db),
+    occupancy: new WorkspaceOccupancy(),
+    runSlots: new RunSlots(() => 4),
+    leases: new Map(),
     skillAssetsPath: () => 'fixture-assets'
   })
   return { coordinator, db, store, kernel, tools, publish }
@@ -126,29 +120,6 @@ function contextOnlyPreparation() {
 }
 
 describe('provider context discovery before kernel registration', () => {
-  it('stops pending collaboration discovery durably and prevents delayed session/model setup', async () => {
-    const { coordinator, store, kernel, tools } = fixture()
-    const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
-    await network.started
-    expect(network.fetch.mock.calls[0][1]?.signal).toBeInstanceOf(AbortSignal)
-    expect(coordinator.hasActiveRuns()).toBe(true)
-    expect(coordinator.stop('fixture-run')).toBe(true)
-    expect(coordinator.stop('fixture-run')).toBe(true)
-    expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    expect(await pending).toMatchObject({ phase: 'cancelled', toolRounds: 0, messages: [] })
-    network.release()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    expect(tools.createSession).not.toHaveBeenCalled()
-    expect(kernel.start).not.toHaveBeenCalled()
-    expect(store.listAllEvents('fixture-run').map((event) => event.type)).toEqual([
-      'run.started',
-      'run.completed'
-    ])
-    expect(coordinator.hasActiveRuns()).toBe(false)
-    expect(coordinator.stop('fixture-run')).toBe(false)
-  })
-
   it('materializes one cancelled conversation and rejects overlapping preparation', async () => {
     const { coordinator, store, db, kernel } = fixture()
     const network = deferredFetch()
@@ -179,7 +150,8 @@ describe('provider context discovery before kernel registration', () => {
       throw new Error('synthetic observer failure')
     })
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     expect(() => coordinator.stop('fixture-run')).toThrow('synthetic observer failure')
     expect(await pending).toMatchObject({ phase: 'cancelled' })
@@ -191,14 +163,15 @@ describe('provider context discovery before kernel registration', () => {
   it('shutdown cancels pending discovery without waiting for a signal-ignoring fetch', async () => {
     const { coordinator, tools } = fixture()
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     await coordinator.close()
     expect(await pending).toMatchObject({ phase: 'cancelled' })
     expect(tools.close).toHaveBeenCalledOnce()
     expect(coordinator.hasActiveRuns()).toBe(false)
     await expect(
-      coordinator.runCollaborationParticipant({ ...collaborationInput, id: 'after-close' })
+      coordinator.startConversation({ ...conversationInput, id: 'after-close' })
     ).rejects.toThrow('closing')
     network.release()
   })
@@ -219,102 +192,20 @@ describe('provider context discovery before kernel registration', () => {
     expect(coordinator.hasActiveRuns()).toBe(false)
   })
 
-  it('transfers a synchronous stop during kernel registration to the newly active kernel', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    const sampler = vi.fn().mockRejectedValue(new Error('model must not run'))
-    const kernel = new AgentRunKernel(store, undefined, sampler, (event) => {
-      if (event.type === 'run.started') expect(coordinator.stop(event.runId)).toBe(true)
-    })
-    Object.assign(coordinator, { kernel })
-    const result = await coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect(result.phase).toBe('cancelled')
-    expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.completed')
-    ).toHaveLength(1)
-    expect(sampler).not.toHaveBeenCalled()
-    expect(coordinator.hasActiveRuns()).toBe(false)
-  })
-
-  it('hands ordinary preparation to the kernel without duplicate run records or model turns', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    const sampler = vi.fn(async () => ({
-      result: { ok: true },
-      turn: {
-        content: 'Synthetic completion',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 10, completionTokens: 2, doneReason: 'stop' }
-      }
-    }))
-    Object.assign(coordinator, { kernel: new AgentRunKernel(store, undefined, sampler) })
-    const result = await coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect(result.phase).toBe('completed')
-    expect(sampler).toHaveBeenCalledOnce()
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.started')
-    ).toHaveLength(1)
-    expect(
-      store.listAllEvents('fixture-run').filter((event) => event.type === 'run.completed')
-    ).toHaveLength(1)
-    expect(coordinator.hasActiveRuns()).toBe(false)
-  })
-
   it('shutdown completes cleanup before surfacing cancellation observer failure', async () => {
     const { coordinator, tools, publish } = fixture()
     publish.mockImplementation(() => {
       throw new Error('synthetic observer failure')
     })
     const network = deferredFetch()
-    const pending = coordinator.runCollaborationParticipant(collaborationInput)
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
     await network.started
     await expect(coordinator.close()).rejects.toThrow('synthetic observer failure')
     expect(await pending).toMatchObject({ phase: 'cancelled' })
     expect(tools.close).toHaveBeenCalledOnce()
     expect(coordinator.hasActiveRuns()).toBe(false)
     network.release()
-  })
-
-  it('drains a synchronous shutdown at kernel registration before closing tools', async () => {
-    const { coordinator, store, tools } = fixture()
-    tools.createSession.mockResolvedValue({
-      catalog: () => ({ surface: 'collaboration', capabilities: [], webSearchEnabled: false }),
-      router: { execute: vi.fn() }
-    })
-    tools.close.mockImplementation(async () => {
-      expect(store.get('fixture-run')?.phase).toBe('cancelled')
-    })
-    let closed: Promise<void> | undefined
-    const sampler = vi.fn().mockRejectedValue(new Error('model must not run'))
-    Object.assign(coordinator, {
-      kernel: new AgentRunKernel(store, undefined, sampler, (event) => {
-        if (event.type === 'run.started') closed = coordinator.close()
-      })
-    })
-    const pending = coordinator.runCollaborationParticipant({
-      ...collaborationInput,
-      target: { ...target, contextLength: 32_768 }
-    })
-    expect((await pending).phase).toBe('cancelled')
-    expect(closed).toBeDefined()
-    await closed
-    expect(tools.close).toHaveBeenCalledOnce()
-    expect(sampler).not.toHaveBeenCalled()
   })
 
   it('passes cancellation through the real conversation preparer context-discovery awaits', async () => {
@@ -394,4 +285,159 @@ describe('provider context discovery before kernel registration', () => {
       expect(network.fetch).toHaveBeenCalledOnce()
     }
   )
+})
+
+describe('workspace guard at run start', () => {
+  function inSharedProject(db: ReturnType<typeof openApplicationDatabase>): void {
+    db.exec(`
+      INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+        VALUES ('shared-project', 'Shared', '${process.cwd().replaceAll("'", "''")}', 1, 1);
+      UPDATE conversations SET project_id = 'shared-project' WHERE id = 'fixture-thread';
+      INSERT INTO conversations (id, title, created_at, updated_at, project_id)
+        VALUES ('other-thread', 'Other chat', 1, 1, 'shared-project'),
+               ('third-thread', 'Third chat', 1, 1, 'shared-project');
+    `)
+  }
+  const other = {
+    ...conversationInput,
+    id: 'other-run',
+    conversationId: 'other-thread',
+    assistantMessageId: 'other-message'
+  }
+
+  it('refuses a second writer in a busy folder until it is free or shared', async () => {
+    const { coordinator, db } = fixture()
+    inSharedProject(db)
+    const network = deferredFetch()
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
+    await network.started
+
+    expect(coordinator.workspaceOccupants('other-thread').map(({ title }) => title)).toEqual([
+      'Fixture'
+    ])
+    await expect(coordinator.startConversation(other)).rejects.toThrow(
+      'Another agent is already working in this folder (“Fixture”)'
+    )
+    const research = coordinator.startConversation({ ...other, id: 'research', mode: 'research' })
+    const shared = coordinator.startConversation({
+      ...other,
+      id: 'shared',
+      conversationId: 'third-thread',
+      assistantMessageId: 'third-message',
+      workspaceSharing: 'allow'
+    })
+    // Both got past the guard and are now waiting on the provider like the first run.
+    coordinator.stop('research')
+    coordinator.stop('shared')
+    coordinator.stop('fixture-run')
+    for (const run of [pending, research, shared])
+      await expect(run).resolves.toMatchObject({ phase: 'cancelled' })
+    network.release()
+
+    expect(coordinator.workspaceOccupants('other-thread')).toEqual([])
+  })
+
+  it('frees the folder when preparation fails', async () => {
+    const { coordinator, db } = fixture()
+    inSharedProject(db)
+    vi.spyOn(ConversationRunPreparer.prototype, 'prepare').mockRejectedValue(
+      new Error('synthetic preparation failure')
+    )
+    await expect(coordinator.startConversation(conversationInput)).rejects.toThrow(
+      'synthetic preparation failure'
+    )
+    expect(coordinator.workspaceOccupants('other-thread')).toEqual([])
+  })
+})
+
+describe('run slots at run start', () => {
+  function withOneSlot() {
+    const created = fixture()
+    created.db.exec(
+      "INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('other-thread', 'Other', 1, 1)"
+    )
+    Object.assign(created.coordinator, { runSlots: new RunSlots(() => 1) })
+    return created
+  }
+  const other = {
+    ...conversationInput,
+    id: 'other-run',
+    conversationId: 'other-thread',
+    assistantMessageId: 'other-message'
+  }
+
+  it('queues a second run until the first frees its slot', async () => {
+    const { coordinator } = withOneSlot()
+    const network = deferredFetch()
+    const prepare = contextOnlyPreparation()
+    const first = coordinator.startConversation(conversationInput)
+    await network.started
+    const second = coordinator.startConversation(other)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(
+      coordinator.queuedRuns().map(({ runId, conversationId }) => [runId, conversationId])
+    ).toEqual([['other-run', 'other-thread']])
+    expect(prepare).toHaveBeenCalledTimes(1)
+
+    coordinator.stop('fixture-run')
+    await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(coordinator.queuedRuns()).toEqual([])
+    expect(prepare).toHaveBeenCalledTimes(2)
+    coordinator.stop('other-run')
+    await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
+    network.release()
+  })
+
+  it('returns at once from a background start that has to wait, and can be stopped while queued', async () => {
+    const { coordinator, store } = withOneSlot()
+    const network = deferredFetch()
+    contextOnlyPreparation()
+    const first = coordinator.startConversation(conversationInput)
+    await network.started
+    await expect(coordinator.startConversationInBackground(other)).resolves.toEqual({
+      queued: true
+    })
+    expect(coordinator.stop('other-run')).toBe(true)
+    expect(store.get('other-run')?.phase).toBe('cancelled')
+    coordinator.stop('fixture-run')
+    await first
+    network.release()
+  })
+
+  it('records why a background start failed on the run itself', async () => {
+    const { coordinator, store } = withOneSlot()
+    vi.spyOn(ConversationRunPreparer.prototype, 'prepare').mockRejectedValue(
+      new Error('synthetic preparation failure')
+    )
+    await coordinator.startConversationInBackground(other).catch(() => undefined)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(store.get('other-run')).toMatchObject({
+      phase: 'failed',
+      error: { message: 'synthetic preparation failure' }
+    })
+    expect(coordinator.runSlots.inUse().global).toBe(0)
+  })
+
+  it('gives the slot back while a run waits for approval', async () => {
+    const { coordinator } = withOneSlot()
+    const lease = await coordinator.runSlots.acquire({
+      runId: 'waiting-run',
+      providerKey: 'fixture',
+      providerLimit: 1,
+      signal: new AbortController().signal
+    })
+    ;(coordinator as unknown as { leases: Map<string, unknown> }).leases.set('waiting-run', lease)
+    ;(coordinator as unknown as { publishEvent: (event: unknown) => void }).publishEvent({
+      id: 'event',
+      runId: 'waiting-run',
+      sequence: 1,
+      type: 'run.phase',
+      payload: { phase: 'awaiting_permission' },
+      timestamp: 1
+    })
+    expect(lease.held).toBe(false)
+    expect(coordinator.runSlots.inUse().global).toBe(0)
+  })
 })
