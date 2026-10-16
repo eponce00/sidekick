@@ -27,6 +27,7 @@ function updateStatus(state: AppUpdateState): string {
   switch (state.status) {
     case 'disabled':
       if (state.reason === 'development') return 'Release checks are available in packaged builds.'
+      if (state.reason === 'store') return 'The Microsoft Store keeps SideKick up to date.'
       return 'Release checks are not available on this platform.'
     case 'checking':
       return 'Checking for releases…'
