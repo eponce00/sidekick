@@ -13,7 +13,23 @@ const EXPECTED_BRAND_ASSET_HASHES = new Map([
   ['build/icon.svg', '83271a158063c4301745e5ec3d62faef5270f629b52fdffc3375d77bd7fc4f09'],
   ['build/icon.icns', '9ef53e406637a7232ff50b33d48c61942fcda89ee2e163e36f0e7e01faccb7c2'],
   ['build/icon.ico', '95a0e5eca4b6c880ca2e233bc1c3cb5d033c05f70966a421eb44ade7d87a2e0b'],
-  ['resources/icon.png', 'a33d94be784307b96cecb34984ea0c2b1c4bc291ee69220bd4140648f5ab936e']
+  ['resources/icon.png', 'a33d94be784307b96cecb34984ea0c2b1c4bc291ee69220bd4140648f5ab936e'],
+  // Microsoft Store tiles, rendered by scripts/generate-store-assets.cjs.
+  ['build/appx/LargeTile.png', '20b21d515c2353153d47a6b82aae2a603600a8a4d94febb8eda91a065a1d2f5c'],
+  ['build/appx/SmallTile.png', '1240de6c1c8cae347bfc450c887f98754d367782535877f4d4545c3470bf98ab'],
+  [
+    'build/appx/Square150x150Logo.png',
+    '1232af930732a5223369fe4202b2cc394cd406e3c8d6acd7494cb072382b5118'
+  ],
+  [
+    'build/appx/Square44x44Logo.png',
+    '1aec91b10113792a754afc143063e49f9ee8cbe7c7c11fda31f453ba7d6e1901'
+  ],
+  ['build/appx/StoreLogo.png', '04987e8505d45808242df770f05ed4b8dbaf6ec203e8d954ecac71bfaa23d63b'],
+  [
+    'build/appx/Wide310x150Logo.png',
+    'd9a1cfcaa63dba54c5e4d3d23cdac9de82defae1ec2fb62611f636cd03cc4142'
+  ]
 ])
 
 const RETIRED_ELECTRON_ICON_HASHES = new Set([
@@ -44,6 +60,11 @@ test('normalizes irrelevant vector line endings before hashing', () => {
 test('uses deterministic platform derivatives of one SideKick vector master', () => {
   assert.equal(builder.mac.icon, 'build/icon.icns')
   assert.equal(builder.win.icon, 'build/icon.ico')
+  // Without its own tiles, the Store package would show Electron's default artwork.
+  const { STORE_ASSETS } = require('./generate-store-assets.cjs')
+  for (const { name } of STORE_ASSETS) {
+    assert.ok(EXPECTED_BRAND_ASSET_HASHES.has(`build/appx/${name}`), `${name} must be pinned`)
+  }
 
   const svg = readFileSync(masterIconPath, 'utf8')
   assert.match(svg, /<svg\b/)

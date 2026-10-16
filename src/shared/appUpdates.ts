@@ -6,7 +6,7 @@ export interface AppUpdateInfo {
   releaseUrl: string
 }
 
-export type AppUpdateDisabledReason = 'development' | 'unsupported-platform'
+export type AppUpdateDisabledReason = 'development' | 'unsupported-platform' | 'store'
 
 interface AppUpdateStateBase {
   currentVersion: string
