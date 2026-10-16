@@ -9,6 +9,7 @@ import { registerProjectHandlers } from './projects'
 import { registerProviderRuntimeHandlers } from './providerRuntime'
 import { registerCollaborationHandlers } from './collaboration'
 import { registerAgentRunHandlers } from './agentRuns'
+import { registerSessionStatusHandlers } from './sessionStatus'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
@@ -36,5 +37,6 @@ export function registerAllHandlers(): void {
   registerSupportHandlers()
   registerCollaborationHandlers()
   registerAgentRunHandlers()
+  registerSessionStatusHandlers()
   registerScheduleHandlers()
 }

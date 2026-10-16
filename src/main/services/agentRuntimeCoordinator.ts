@@ -148,6 +148,7 @@ export class AgentRuntimeCoordinator {
   private readonly skillAssetsPath: () => string
   private readonly subAgentSlots = new SubAgentSlots()
   private readonly occupancy = new WorkspaceOccupancy()
+  private readonly onPreparationChange?: (threadId: string) => void
 
   constructor(
     private readonly db: Database.Database,
@@ -160,9 +161,12 @@ export class AgentRuntimeCoordinator {
       pdfOutputRoot?: string
       /** Where every agent command's terminal output and state is published. */
       publishTerminal?: (event: TerminalSessionEvent) => void
+      /** A run began or ended preparing; preparation publishes no run event of its own. */
+      onPreparationChange?: (threadId: string) => void
     } = {}
   ) {
     this.publishExternal = publish
+    this.onPreparationChange = options.onPreparationChange
     this.settings = options.settings ?? (() => loadStoredSettings() as unknown as ProviderSettings)
     this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
@@ -277,12 +281,14 @@ export class AgentRuntimeCoordinator {
     })
     const preparation = { identity, controller: new AbortController(), done, finish }
     this.preparations.set(identity.id, preparation)
+    this.onPreparationChange?.(identity.threadId)
     return preparation
   }
 
   private finishPreparation(preparation: PreparingRun): void {
     if (this.preparations.get(preparation.identity.id) === preparation) {
       this.preparations.delete(preparation.identity.id)
+      this.onPreparationChange?.(preparation.identity.threadId)
     }
     preparation.finish()
   }
@@ -1227,6 +1233,19 @@ export class AgentRuntimeCoordinator {
     for (const runId of this.kernel.activeRunIds()) {
       const threadId = this.store.get(runId)?.threadId
       if (threadId) threads.add(threadId)
+    }
+    return [...threads]
+  }
+
+  /** Chats with a chat or research run being prepared or executing, leaving out group sessions. */
+  activeConversationIds(): string[] {
+    const threads = new Set<string>()
+    for (const { identity } of this.preparations.values()) {
+      if (identity.profile.surface !== 'collaboration') threads.add(identity.threadId)
+    }
+    for (const runId of this.kernel.activeRunIds()) {
+      const run = this.store.get(runId)
+      if (run && run.surface !== 'collaboration') threads.add(run.threadId)
     }
     return [...threads]
   }

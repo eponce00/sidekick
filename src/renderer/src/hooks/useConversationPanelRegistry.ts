@@ -3,11 +3,13 @@ import type { Conversation } from '../types/app.types'
 
 const RUN_RELEASE_DELAY_MS = 150
 
+/**
+ * Which chat panels stay mounted. Whether a chat is running is the main process's status
+ * service's to say; a panel's own busy flag only keeps its controller alive while it streams.
+ */
 export interface ConversationPanelRegistry {
-  busyConversationIds: ReadonlySet<string>
   currentConversationIdRef: React.MutableRefObject<string | null>
   currentConversationBusy: boolean
-  hasActiveConversationRuns: boolean
   mountedConversationIds: string[]
   conversationPanelKeys: Readonly<Record<string, string>>
   draftPanelKey: string
@@ -115,12 +117,10 @@ export function useConversationPanelRegistry(
   }, [busyConversationIds, conversations, currentConversationId])
 
   return {
-    busyConversationIds,
     currentConversationIdRef,
     currentConversationBusy: Boolean(
       currentConversationId && busyConversationIds.has(currentConversationId)
     ),
-    hasActiveConversationRuns: busyConversationIds.size > 0,
     mountedConversationIds,
     conversationPanelKeys,
     draftPanelKey,

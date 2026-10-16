@@ -54,8 +54,8 @@ an unanswered approval would only add more waiting chats. Different schedules ru
 A scheduled run has no permission input of its own. `ConversationRunPreparer` applies the
 permission mode from Settings, exactly as for a chat the user started, and each run is a new
 conversation, so no chat-scoped grant carries over from an earlier run. Where the mode requires
-approval, the kernel suspends on its durable interaction. The existing attention tracker then
-marks the chat as waiting, sets the taskbar badge, and lets the renderer notify. Nothing answers
+approval, the kernel suspends on its durable interaction. The chat status service then marks the
+chat as waiting, sets the taskbar badge, and lets the renderer notify. Nothing answers
 the interaction for the user, and a run that waits holds off the schedule's next occurrence.
 
 Cline instead auto-approves every tool in scheduled runs and disables questions. SideKick keeps
