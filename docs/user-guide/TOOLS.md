@@ -87,14 +87,10 @@ chat.
   artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
   appears as the agent made it.
 - User-configured MCP servers add their advertised tools after schema normalization.
-- A group-agent run adds `collaboration_read`, `collaboration_send`,
-  `collaboration_share_file`, `collaboration_list_artifacts`,
-  `collaboration_import_artifact`, `collaboration_status`, and
-  `collaboration_claim_complete`.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
-mutations, MCP, artifacts, collaboration writes, and child agents remain unavailable even when the
+mutations, MCP, artifacts, starting or messaging other chats, and child agents remain unavailable even when the
 global policy is Full access.
 
 ## Execution guarantees

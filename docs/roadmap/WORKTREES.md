@@ -5,8 +5,8 @@ file keeps only the reasoning and the work that is still open.
 
 ## Problem
 
-Several agents can work in one folder at once: two chats in the same project, a scheduled run, a
-group participant, or a chat started by another agent. They read stale files, overwrite each
+Several agents can work in one folder at once: two chats in the same project, a scheduled run, or
+a chat started by another agent. They read stale files, overwrite each
 other's edits and mix unrelated changes into one diff. SideKick already had managed Git worktrees,
 but only for "fork into a new worktree", with no way to see, sync or remove them, and nothing
 stopped a second run from writing into a busy folder.
@@ -58,7 +58,7 @@ removal. The renderer only asks for those operations by identity; it never passe
   check is in `AgentRuntimeCoordinator.startConversation`, so every caller (chat, schedule,
   agent-started chat) is covered, not only the composer.
 - **Inventory.** The management view lists each worktree with its branch, base, commits ahead and
-  behind, uncommitted files, the chats and group participants that use it, and disk use.
+  behind, uncommitted files, the chats that use it, and disk use.
 - **Sync with base.** Merges the base branch into a clean, idle worktree. A conflict aborts the merge
   and reports the conflicting files, so the worktree is never left half-merged.
 - **Removal.** Safe removal keeps the existing refusals (running, in use, modified, unmerged, not a

@@ -32,11 +32,10 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   isolation can be enforced as one architecture rather than ad hoc scripts.
 - Finish chats that start other chats ([current behavior](../user-guide/CHATS_THAT_WORK_TOGETHER.md)):
   Archive and Resume buttons for worker chats (the main process already supports both), an optional
-  token or cost budget per family that pauses it when reached, a Merge into base action for a finished worker, and letting a schedule decide
-  whether its runs may start chats.
-- Finish worktree isolation for parallel agents: schedule and manager-agent policies, group
-  participants, archive cleanup, snapshots before forced removal, and the other items in
-  [Worktrees for parallel agents](WORKTREES.md).
+  token or cost budget per family that pauses it when reached, and a Merge into base action for a
+  finished worker.
+- Finish worktree isolation for parallel agents: cleanup on archive, snapshots before forced
+  removal, and the other items in [Worktrees for parallel agents](WORKTREES.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit
   fork ancestry, compaction replacements, writer ownership, and replay policy for interrupted
   operations.
