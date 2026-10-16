@@ -13,6 +13,7 @@ import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
 import { registerScheduleHandlers } from './schedules'
+import { registerSessionHandlers } from './sessions'
 import { registerPullRequestHandlers } from './pullRequests'
 import { registerWorktreeHandlers } from './worktrees'
 
@@ -37,4 +38,5 @@ export function registerAllHandlers(): void {
   registerCollaborationHandlers()
   registerAgentRunHandlers()
   registerScheduleHandlers()
+  registerSessionHandlers()
 }
