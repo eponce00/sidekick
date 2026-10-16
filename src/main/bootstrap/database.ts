@@ -103,7 +103,26 @@ const REQUIRED_COLUMNS = [
   },
   // The schedule that created a chat, and its run number, so the sidebar can group the runs.
   { table: 'conversations', column: 'schedule_id', definition: 'TEXT' },
-  { table: 'conversations', column: 'schedule_run_number', definition: 'INTEGER' }
+  { table: 'conversations', column: 'schedule_run_number', definition: 'INTEGER' },
+  // Family links for chats that other chats start. Deleting a manager detaches its workers.
+  {
+    table: 'conversations',
+    column: 'started_by_kind',
+    definition: "TEXT NOT NULL DEFAULT 'user'"
+  },
+  {
+    table: 'conversations',
+    column: 'started_by_conversation_id',
+    definition: 'TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+  },
+  {
+    table: 'conversations',
+    column: 'report_to_conversation_id',
+    definition: 'TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+  },
+  { table: 'conversations', column: 'session_handle', definition: 'TEXT' },
+  { table: 'conversations', column: 'work_in', definition: 'TEXT' },
+  { table: 'conversations', column: 'archived_at', definition: 'INTEGER' }
 ] as const
 
 const SCHEDULE_TABLES = `
@@ -152,6 +171,77 @@ const SCHEDULE_TABLES = `
 
   CREATE INDEX IF NOT EXISTS idx_schedule_runs_agent_run
     ON schedule_runs(agent_run_id);
+`
+
+const SESSION_TABLES = `
+  CREATE INDEX IF NOT EXISTS idx_conversations_started_by
+    ON conversations(started_by_conversation_id);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_session_handle
+    ON conversations(started_by_conversation_id, session_handle)
+    WHERE started_by_conversation_id IS NOT NULL AND session_handle IS NOT NULL;
+
+  CREATE TABLE IF NOT EXISTS session_attachments (
+    id TEXT PRIMARY KEY,
+    sender_conversation_id TEXT,
+    name TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (sender_conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS session_messages (
+    id TEXT PRIMARY KEY,
+    from_conversation_id TEXT,
+    to_conversation_id TEXT NOT NULL,
+    intent TEXT NOT NULL
+      CHECK (intent IN ('brief', 'request', 'response', 'update', 'report', 'status')),
+    body TEXT NOT NULL,
+    attachments_json TEXT NOT NULL DEFAULT '[]',
+    reply_to_message_id TEXT,
+    created_at INTEGER NOT NULL,
+    delivered_run_id TEXT,
+    delivered_at INTEGER,
+    read_at INTEGER,
+    FOREIGN KEY (from_conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
+    FOREIGN KEY (to_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (reply_to_message_id) REFERENCES session_messages(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_messages_inbox
+    ON session_messages(to_conversation_id, delivered_at, created_at);
+
+  CREATE INDEX IF NOT EXISTS idx_session_messages_sender
+    ON session_messages(from_conversation_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS session_proposals (
+    id TEXT PRIMARY KEY,
+    proposer_conversation_id TEXT NOT NULL,
+    spec_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open', 'started', 'dismissed', 'expired')),
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    resolved_at INTEGER,
+    started_conversation_id TEXT,
+    FOREIGN KEY (proposer_conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (started_conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_session_proposals_proposer
+    ON session_proposals(proposer_conversation_id, status, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS session_project_grants (
+    conversation_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    granted_at INTEGER NOT NULL,
+    revoked_at INTEGER,
+    PRIMARY KEY (conversation_id, project_id),
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  );
 `
 
 function ensureRequiredColumns(db: Database.Database): void {
@@ -331,6 +421,16 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     apply: (db) => {
       ensureRequiredColumns(db)
     }
+  },
+  {
+    id: '20261016_003_sessions',
+    description: 'link chats that other chats start, with their messages, proposals and grants',
+    contentId:
+      'v1|required-conversation-session-columns|session-messages-attachments-proposals-grants',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec(SESSION_TABLES)
+    }
   }
 ]
 
@@ -467,6 +567,12 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       forked_from_message_id TEXT,
       schedule_id TEXT,
       schedule_run_number INTEGER,
+      started_by_kind TEXT NOT NULL DEFAULT 'user',
+      started_by_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+      report_to_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+      session_handle TEXT,
+      work_in TEXT,
+      archived_at INTEGER,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     );
 

@@ -162,6 +162,8 @@ export interface TodoItem {
   title: string
   description: string
   status: 'not-started' | 'in-progress' | 'completed'
+  /** The worker chat doing this step, shown as a chip with its live state. */
+  sessionId?: string
 }
 
 export interface FocusChain {
