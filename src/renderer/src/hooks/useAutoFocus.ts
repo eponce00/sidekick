@@ -3,6 +3,14 @@
 import { useEffect, RefObject } from 'react'
 
 /**
+ * An open modal owns the keyboard. Taking focus back would send what the user types there, such
+ * as an API key in Settings, into the chat composer instead.
+ */
+function modalIsOpen(): boolean {
+  return document.querySelector('[aria-modal="true"]') !== null
+}
+
+/**
  * Hook that automatically focuses an input element when conditions are met
  * Handles focus after conversation changes, loading completes, etc.
  *
@@ -28,6 +36,7 @@ export function useAutoFocus(
     if (isLoading || isEditing) return
 
     const focusInput = (): void => {
+      if (modalIsOpen()) return
       if (inputRef.current) {
         inputRef.current.focus()
       } else {
@@ -43,7 +52,7 @@ export function useAutoFocus(
   // Focus when window regains focus
   useEffect(() => {
     const handleWindowFocus = (): void => {
-      if (!isLoading && !isEditing) {
+      if (!isLoading && !isEditing && !modalIsOpen()) {
         inputRef.current?.focus()
       }
     }
