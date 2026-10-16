@@ -290,6 +290,14 @@ permission, question, cancellation, provider, and checkpoint behavior therefore 
 The renderer can create, pause, resume, and clear goals through a narrow preload API, but it
 cannot complete one. It reports a completion in the conversation as an app-authored notice. See [Persistent conversation goals](PERSISTENT_GOALS.md).
 
+### Scheduled runs
+
+`ScheduleService` starts saved prompts on a schedule. Each run is a new conversation started
+through the same engine request as a chat the user sends, so the kernel, permission mode, and
+attention tracking are unchanged; a run that needs approval waits for the user. Missed runs
+collapse into one late run, and a schedule holds one active run at a time. See
+[Scheduled runs](SCHEDULES.md).
+
 ### Plan mode
 
 Plan mode is an orthogonal phase inside the same conversation run. `AgentPlanService` persists the

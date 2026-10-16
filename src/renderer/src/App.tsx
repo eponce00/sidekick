@@ -8,6 +8,8 @@ import { applyAccentPalette } from './components/SettingsModal'
 import type { SettingsSection } from './components/SettingsModal'
 import ContextIndicator from './components/ContextIndicator'
 import GroupChatPanel from './components/GroupChatPanel'
+import SchedulesDialog from './components/SchedulesDialog'
+import { useSchedules } from './hooks/useSchedules'
 import GroupSetupDialog from './components/GroupSetupDialog'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
@@ -174,6 +176,7 @@ function App(): React.JSX.Element {
   )
   const [groupAgentContext, setGroupAgentContext] = useState<GroupAgentContextSnapshot | null>(null)
   const [isGroupSetupOpen, setIsGroupSetupOpen] = useState(false)
+  const [isSchedulesOpen, setIsSchedulesOpen] = useState(false)
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
   >({})
@@ -962,6 +965,7 @@ function App(): React.JSX.Element {
         actions: {
           newChat: () => void handleNewConversation(null),
           newGroupChat: () => setIsGroupSetupOpen(true),
+          openSchedules: () => setIsSchedulesOpen(true),
           openProject: () => void handleOpenProject(false),
           openSettings,
           toggleSidebar,
@@ -1080,6 +1084,29 @@ function App(): React.JSX.Element {
     ]
   )
   const waitingConversationIds = useConversationAttention(handleAttentionAlert)
+  const refreshConversationsForSchedules = useCallback(() => {
+    void window.api.conversations
+      .list()
+      .then((list) => {
+        setConversations(list)
+        // A run that finished in the chat on screen has been read, whichever event came first.
+        const shown = list.find(({ id }) => id === currentConversationIdRef.current)
+        if (shown?.unread_completion_at) markConversationRead(shown.id)
+      })
+      .catch((error) => console.error('[Schedules] Could not refresh chats', error))
+  }, [currentConversationIdRef, markConversationRead])
+  const { schedules } = useSchedules(refreshConversationsForSchedules)
+  const scheduleNames = useMemo(
+    () => new Map(schedules.map(({ id, name }) => [id, name])),
+    [schedules]
+  )
+  // A scheduled run works in the main process, often in a chat no panel has open.
+  const sidebarBusyConversationIds = useMemo(() => {
+    const scheduled = schedules.flatMap(({ activeRun }) =>
+      activeRun && !activeRun.phase.startsWith('awaiting') ? [activeRun.conversationId] : []
+    )
+    return scheduled.length ? new Set([...busyConversationIds, ...scheduled]) : busyConversationIds
+  }, [busyConversationIds, schedules])
 
   const handleConversationResponseComplete = useCallback(
     (conversationId: string | null, message: string): void => {
@@ -1381,7 +1408,7 @@ function App(): React.JSX.Element {
           currentGroupSessionId={currentGroupSessionId}
           isCollapsed={effectiveSidebarCollapsed}
           platform={platform}
-          busyConversationIds={busyConversationIds}
+          busyConversationIds={sidebarBusyConversationIds}
           unreadConversationIds={unreadConversationIds}
           waitingConversationIds={waitingConversationIds}
           onSelectConversation={handleSelectConversation}
@@ -1407,6 +1434,8 @@ function App(): React.JSX.Element {
           onToggleProjectPin={(id, pinned) => void handleToggleProjectPin(id, pinned)}
           onRemoveProject={(id) => void handleRemoveProject(id)}
           onVisibleConversationOrderChange={handleSidebarOrderChange}
+          scheduleNames={scheduleNames}
+          onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
         <div className="conversation-panel-stack">
           {currentGroupId && (
@@ -1480,6 +1509,22 @@ function App(): React.JSX.Element {
         onCancel={() => setIsGroupSetupOpen(false)}
         onCreate={handleCreateGroup}
       />
+
+      {isSchedulesOpen && (
+        <SchedulesDialog
+          isOpen
+          schedules={schedules}
+          projects={projects}
+          models={pinnedModels}
+          defaultModelId={selectedModel}
+          defaultProjectId={currentConversation?.project_id ?? null}
+          onClose={() => setIsSchedulesOpen(false)}
+          onOpenConversation={(id) => {
+            setIsSchedulesOpen(false)
+            void handleSelectConversation(id)
+          }}
+        />
+      )}
 
       <ForkConversationDialog
         isOpen={pendingFork !== null}

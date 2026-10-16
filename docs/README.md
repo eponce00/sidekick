@@ -18,6 +18,7 @@ behavior, and the development guide when testing or publishing it.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
+- [Schedules](user-guide/SCHEDULES.md) — run a saved prompt hourly, daily, on weekdays, or weekly.
 
 ## Architecture
 
@@ -26,6 +27,7 @@ behavior, and the development guide when testing or publishing it.
 - [Prompt and context](architecture/PROMPT_AND_CONTEXT.md) — trusted instructions and compaction.
 - [Workspace verification](architecture/VERIFICATION.md) — revision-bound evidence and completion guards.
 - [Persistent goals](architecture/PERSISTENT_GOALS.md) — durable multi-run objectives.
+- [Scheduled runs](architecture/SCHEDULES.md) — the scheduler, missed runs, overlap, and approvals.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
 
 ## Development and operations

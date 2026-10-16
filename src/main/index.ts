@@ -30,6 +30,7 @@ import { AppUpdateService } from './services/appUpdateService'
 import { isolatedE2EUserDataPath } from './bootstrap/applicationData'
 import { revealWindow } from './bootstrap/windowActivation'
 import { registerVoiceHandlers } from './ipc/voice'
+import { startScheduler, stopScheduler } from './ipc/schedules'
 import { onSettingsSaved } from './ipc/settings'
 import { VoiceService } from './services/voice/voiceService'
 import { VoiceModelStore } from './services/voice/voiceModels'
@@ -55,6 +56,7 @@ function closeApplicationDatabase(): void {
 function prepareApplicationShutdown(): Promise<void> {
   if (applicationShutdown) return applicationShutdown
   appUpdateService?.stop()
+  stopScheduler()
   voiceService?.dispose()
   shutdownCollaboration()
   applicationShutdown = Promise.allSettled([
@@ -233,6 +235,7 @@ async function bootstrapApplication(): Promise<void> {
   })
   startWorkspaceWatcher(workspacePath)
   appUpdateService.start()
+  startScheduler()
 
   app.on('activate', showMainWindow)
 }

@@ -25,6 +25,9 @@ export interface ProjectConversation {
   forked_from_message_id?: string | null
   title_source?: import('./conversationTitles').ConversationTitleSource
   title_version?: number
+  /** The schedule that created this chat, and which of its runs it is. */
+  schedule_id?: string | null
+  schedule_run_number?: number | null
 }
 
 export interface ForkConversationInput {
