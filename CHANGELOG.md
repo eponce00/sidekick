@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.14.0 — 2026-10-16
+
+- Let a chat start other chats that work for it. Each worker chat gets its own worktree of the
+  project, works on its own, can message the chat that started it, and reports back when it is
+  done. Workers are listed under their chat in the sidebar with their state, and the chat that
+  started them shows them in its task list and a Chats tab. A chat asks before starting others
+  unless it has full access, and never gets more access than you gave it. Group chats are now
+  such a family: an existing group opens as a chat with its project agents as workers. See
+  [Chats that work together](docs/user-guide/CHATS_THAT_WORK_TOGETHER.md).
+- Run a saved prompt on a schedule: hourly, daily, on weekdays, or weekly, in a project you choose,
+  with the access you allow it. A schedule's runs are grouped in the sidebar.
+- Keep SideKick running from the tray when its window closes, so agents and schedules go on
+  working. The tray menu opens SideKick or a new chat, lists chats waiting on you, and quits.
+- Choose whether a new project chat works in the project folder or in a worktree of its own, and
+  manage worktrees: see their branch and changes, sync them with their base, and remove them
+  safely. SideKick refuses to start a second writing agent in a folder another is working in, and
+  offers a worktree instead. Chats beyond four at once wait in a queue.
+- See the branch's GitHub pull request under the message box: draft, ready, in a merge queue or
+  merged, with its checks. Click it to open the pull request.
+- List chats by folder or by recent activity, and filter them to the ones that need you, are
+  working, or have an unread reply. The filter button counts chats waiting on you.
+- Configure SideKick from a terminal or another agent with the `sidekick` command: read and change
+  settings, add MCP servers, store a provider key from standard input, and check setup with
+  `sidekick doctor`. SideKick's own agent can help configure it too, asking before every change and
+  never seeing your keys. See [Command line](docs/user-guide/COMMAND_LINE.md).
+- Answer the agent's questions from a compact card that folds to one line once answered.
+- Turn model thinking on and off with one brain button that keeps its place.
+- Find every setting in consistent sections, with icons and aligned controls, and see when
+  changes are unsaved.
+- Read the Terminal tab more easily: one row per command, and one header with the command and its
+  actions.
+- See new and changed files in the Files panel without refreshing, and find **Show in File
+  Explorer** right after **Open in VS Code**.
+
 ## 0.13.0 — 2026-10-15
 
 - Run the agent's Windows commands without `powershell -EncodedCommand`, a pattern antivirus
