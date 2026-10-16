@@ -1474,6 +1474,7 @@ function App(): React.JSX.Element {
 
       <main className="app-main">
         <Sidebar
+          sessionStatuses={sessionStatuses.byId}
           conversations={conversations}
           projects={projects}
           groups={groups}
