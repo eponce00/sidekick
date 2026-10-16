@@ -1266,14 +1266,31 @@ body[data-theme='light'] .message-user .message-action:hover {
 }
 
 .agent-work-live-thinking {
-  display: block;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   padding: 3px 0;
   color: var(--text-muted);
   font-size: var(--content-text-secondary);
   font-style: italic;
+}
+
+.thinking-step-text {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Same slot as a tool row's kind icon, so reasoning and tool steps line up in one column. */
+.thinking-step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: var(--text-muted);
 }
 
 @keyframes agent-work-step-in {
@@ -1532,6 +1549,28 @@ body[data-theme='light'] .message-user .message-action:hover {
 
 .actions-toggle .toggle-icon.expanded {
   transform: rotate(90deg);
+}
+
+/* A reasoning step sits among tool rows: same width, icon column, and trailing chevron. */
+.thinking-step-toggle {
+  width: 100%;
+  min-height: 22px;
+  gap: 7px;
+  padding: 1px 2px;
+  border-radius: var(--radius-sm);
+}
+
+.thinking-step-toggle:hover {
+  background: var(--surface-2);
+}
+
+.thinking-step-toggle .actions-summary {
+  min-width: 0;
+  max-width: none;
+}
+
+.thinking-step-toggle .toggle-icon {
+  flex: 0 0 auto;
 }
 
 .actions-summary {
@@ -2970,6 +3009,40 @@ body[data-theme='light'] .message-user .message-action:hover {
   color: var(--accent);
 }
 
+/* Reasoning toggle: the same round icon button as its neighbours. Each state sets its own hover,
+   so pointing at it never makes "on" look like "off". */
+.composer-thinking-toggle {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-fast),
+    color var(--duration-fast);
+}
+
+.composer-thinking-toggle:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.composer-thinking-toggle.is-on {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.composer-thinking-toggle.is-on:hover {
+  background: var(--accent-muted);
+  color: var(--accent);
+}
+
 .input-toolbar {
   display: flex;
   align-items: center;
@@ -3320,21 +3393,6 @@ body[data-theme='light'] .message-user .message-action:hover {
   background: transparent;
   font-size: var(--text-xs);
   line-height: 1;
-}
-
-button.composer-status {
-  padding: 5px 4px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-button.composer-status:hover {
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
-
-.composer-status-active {
-  color: var(--accent);
 }
 
 .composer-status-warning {
@@ -3958,6 +4016,10 @@ body[data-theme='light'] .tool-approval-command {
 }
 .verification-step-thinking {
   font-style: italic;
+}
+.verification-step-thinking .thinking-step-icon {
+  margin-right: 6px;
+  vertical-align: -3px;
 }
 .verification-dot {
   width: 5px;

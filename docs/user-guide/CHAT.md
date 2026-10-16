@@ -63,6 +63,11 @@ of its report.
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
+- **Thinking:** for a model whose reasoning can be switched (Ollama, Ollama Cloud, and OpenRouter),
+  the brain button beside the model turns it on or off. It is tinted while on. Off asks the model
+  to skip reasoning, which some models cannot do: gpt-oss models on Ollama reason briefly instead,
+  and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
+  each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
 
 ## Going back
 
