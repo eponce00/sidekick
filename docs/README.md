@@ -44,6 +44,7 @@ behavior, and the development guide when testing or publishing it.
 ## Roadmap
 
 - [Roadmap](roadmap/ROADMAP.md) — incomplete work and release readiness.
+- [Multi-agent sessions](roadmap/MULTI_AGENT.md) — proposal: worker sessions, messaging and reports, replacing group chat.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
 
