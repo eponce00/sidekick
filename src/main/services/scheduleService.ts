@@ -2,7 +2,11 @@ import { randomUUID } from 'crypto'
 import type { AgentRunPhase } from '../../shared/agentRuntime'
 import type { PinnedModel } from '../../shared/models'
 import {
-  ACTIVE_SCHEDULED_RUN_PHASES,
+  PERMISSION_MODE_LABELS,
+  permissionModeWithin,
+  type PermissionMode
+} from '../../shared/permissions'
+import {
   nextScheduleOccurrence,
   SCHEDULE_MISSED_AFTER_MS,
   type Schedule,
@@ -55,22 +59,32 @@ export interface ScheduleServiceOptions {
   clearTimer?: (timer: unknown) => void
   /** Lets startup settle before missed runs catch up. */
   startDelayMs?: number
+  /** The user's permission setting, which a schedule's ceiling may narrow but never widen. */
+  permissionMode?: () => PermissionMode
+  /**
+   * A scheduled chat finished with nothing left running in its family. No manager chat is
+   * watching it, so the user hears about it.
+   */
+  onFinished?: (notice: ScheduledRunFinishedNotice) => void
 }
 
-const ACTIVE_PHASES: ReadonlySet<AgentRunPhase> = new Set(ACTIVE_SCHEDULED_RUN_PHASES)
+export interface ScheduledRunFinishedNotice {
+  scheduleId: string
+  conversationId: string
+  title: string
+  reply: string
+}
 
 /** A long timer drifts across sleep, so the scheduler wakes at least this often to compare clocks. */
 const MAX_TIMER_MS = 60_000
 /** Bounds the count of missed occurrences after a very long absence. */
 const MAX_COUNTED_MISSES = 10_000
 
-function overlapReason(phase: AgentRunPhase): string {
-  if (phase === 'awaiting_permission') {
-    return 'Skipped: the previous run is still waiting for your approval.'
-  }
-  if (phase === 'awaiting_user')
-    return 'Skipped: the previous run is still waiting for your answer.'
-  return 'Skipped: the previous run is still working.'
+function overlapReason(phase: AgentRunPhase, worker: boolean): string {
+  const who = worker ? 'a chat the previous run started' : 'the previous run'
+  if (phase === 'awaiting_permission') return `Skipped: ${who} is still waiting for your approval.`
+  if (phase === 'awaiting_user') return `Skipped: ${who} is still waiting for your answer.`
+  return `Skipped: ${who} is still working.`
 }
 
 /**
@@ -86,10 +100,14 @@ export class ScheduleService {
   private readonly setTimer: (callback: () => void, delayMs: number) => unknown
   private readonly clearTimer: (timer: unknown) => void
   private readonly startDelayMs: number
+  private readonly permissionMode?: () => PermissionMode
+  private readonly onFinished?: (notice: ScheduledRunFinishedNotice) => void
   private timer: unknown = null
   private running = false
   private readonly launching = new Set<string>()
   private ticking: Promise<void> | null = null
+  /** Runs already announced as finished, so a repeated event says it once. */
+  private readonly notified = new Set<string>()
 
   constructor(options: ScheduleServiceOptions) {
     this.store = options.store
@@ -100,6 +118,8 @@ export class ScheduleService {
     this.clearTimer =
       options.clearTimer ?? ((timer) => clearTimeout(timer as ReturnType<typeof setTimeout>))
     this.startDelayMs = options.startDelayMs ?? 5_000
+    this.permissionMode = options.permissionMode
+    this.onFinished = options.onFinished
   }
 
   start(): void {
@@ -127,9 +147,29 @@ export class ScheduleService {
     return this.store.runs(id)
   }
 
+  /**
+   * The ceiling a saved schedule keeps: the one asked for, or the setting's mode. It may not be
+   * looser than the setting when it is chosen; a ceiling saved earlier stays as it was.
+   */
+  private ceiling(input: ScheduleInput, current?: Schedule): PermissionMode | null {
+    const setting = this.permissionMode?.()
+    const requested = input.permissionCeiling ?? (current ? current.permissionCeiling : setting)
+    if (!requested || !setting) return requested ?? null
+    if (requested !== current?.permissionCeiling && !permissionModeWithin(requested, setting)) {
+      throw new Error(
+        `A schedule cannot allow more than your permission setting, ${PERMISSION_MODE_LABELS[setting]}. Choose a stricter level, or change the setting first.`
+      )
+    }
+    return requested
+  }
+
   create(input: ScheduleInput): Schedule {
     const now = this.now()
-    const schedule = this.store.create(input, nextScheduleOccurrence(input, now), now)
+    const schedule = this.store.create(
+      { ...input, permissionCeiling: this.ceiling(input) },
+      nextScheduleOccurrence(input, now),
+      now
+    )
     this.changed()
     return schedule
   }
@@ -139,7 +179,7 @@ export class ScheduleService {
     const now = this.now()
     const schedule = this.store.update(
       id,
-      input,
+      { ...input, permissionCeiling: this.ceiling(input, current) },
       current.enabled ? nextScheduleOccurrence(input, now) : null,
       now
     )
@@ -180,9 +220,40 @@ export class ScheduleService {
    * phases itself, because they happen before it hears that the run exists.
    */
   agentRunChanged(agentRunId: string, ended: boolean): void {
-    const run = this.store.runForAgentRun(agentRunId)
-    if (!run) return
-    this.changed(ended ? run.conversationId : undefined)
+    const found = this.store.runForAgentRun(agentRunId)
+    if (!found) return
+    this.changed(ended ? found.conversationId : undefined)
+  }
+
+  /**
+   * Called once a run's reply is saved. When a scheduled chat finishes and none of the chats it
+   * started is still going, the user is told; until then its workers' reports wake it again.
+   */
+  agentRunFinalized(agentRunId: string): void {
+    if (this.notified.has(agentRunId)) return
+    const found = this.store.runForAgentRun(agentRunId)
+    if (!found?.root || !found.run.conversationId) return
+    const reply = this.store.reply(agentRunId)
+    if (reply?.phase !== 'completed') return
+    if (this.store.activeFamilyMember(found.run.conversationId)) return
+    const schedule = this.store.get(found.run.scheduleId)
+    if (!schedule) return
+    this.notified.add(agentRunId)
+    const workers = found.run.workers?.length ?? 0
+    try {
+      this.onFinished?.({
+        scheduleId: schedule.id,
+        conversationId: found.run.conversationId,
+        title: `${schedule.name} · Run ${found.run.runNumber ?? ''}`.trim(),
+        reply:
+          reply.content.trim() ||
+          (workers
+            ? `Finished with ${workers} chat${workers === 1 ? '' : 's'} it started.`
+            : 'Finished.')
+      })
+    } catch (error) {
+      console.warn('[Schedules] Could not announce a finished run:', error)
+    }
   }
 
   /** Starts every due schedule. Concurrent calls share one pass. */
@@ -280,10 +351,12 @@ export class ScheduleService {
     // One chat at a time per schedule. Queuing behind an unanswered approval would only stack
     // up more waiting chats.
     if (this.launching.has(schedule.id)) return skip('Skipped: the previous run is still starting.')
+    // The previous run's family counts as one run: the chats it started may still be working.
     const previous = this.store.latestStartedRun(schedule.id)
-    if (previous?.agentPhase && ACTIVE_PHASES.has(previous.agentPhase)) {
-      return skip(overlapReason(previous.agentPhase))
-    }
+    const active = previous?.conversationId
+      ? this.store.activeFamilyMember(previous.conversationId)
+      : null
+    if (active) return skip(overlapReason(active.phase, active.worker))
     if (previous?.agentRunId && this.launcher.isRunQueued?.(previous.agentRunId)) {
       return skip('Skipped: the previous run is still waiting for a free run slot.')
     }

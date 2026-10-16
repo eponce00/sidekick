@@ -1,6 +1,9 @@
-import { BrowserWindow, ipcMain, powerMonitor } from 'electron'
+import { BrowserWindow, ipcMain, Notification, powerMonitor } from 'electron'
+import icon from '../../../resources/icon.png?asset'
+import { normalizeDesktopNotificationBody } from '../../shared/desktopNotifications'
+import { normalizePermissionMode } from '../../shared/permissions'
 import { validateScheduleInput } from '../../shared/schedules'
-import { ScheduleService } from '../services/scheduleService'
+import { ScheduleService, type ScheduledRunFinishedNotice } from '../services/scheduleService'
 import { ScheduleStore } from '../services/scheduleStore'
 import { createScheduledConversationLauncher } from '../services/scheduledConversationLauncher'
 import type { ProviderSettings } from '../../shared/settings'
@@ -15,7 +18,30 @@ import { getDb } from './state'
 import { getManagedWorktrees } from './worktrees'
 
 let service: ScheduleService | null = null
+/** Shows the main window, opening it again if it was closed, on the given chat. */
+let openConversation: ((conversationId: string) => void) | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
+
+/**
+ * A scheduled chat that finished has no manager chat to report to, so it reports to the user,
+ * unless they are looking at SideKick already; the chat's unread dot says it either way.
+ */
+function announceFinished(notice: ScheduledRunFinishedNotice): void {
+  const settings = loadStoredSettings() as unknown as ProviderSettings
+  if (settings.notificationsEnabled === false || !Notification.isSupported()) return
+  if (BrowserWindow.getFocusedWindow()) return
+  const notification = new Notification({
+    title: notice.title,
+    body: normalizeDesktopNotificationBody(notice.reply),
+    silent: settings.notificationSoundEnabled !== true,
+    icon: process.platform === 'darwin' ? undefined : icon
+  })
+  notification.on('click', () => openConversation?.(notice.conversationId))
+  notification.on('failed', (_event, error) => {
+    console.warn('[Schedules] Native notification failed:', error)
+  })
+  notification.show()
+}
 
 function validId(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 200) {
@@ -48,13 +74,19 @@ export function registerScheduleHandlers(): void {
         discard: (projectId) => getManagedWorktrees().discardFreshProject(projectId)
       }
     }),
-    onChange: (change) => publishDesktopEvent('schedules:changed', change)
+    onChange: (change) => publishDesktopEvent('schedules:changed', change),
+    permissionMode: () =>
+      normalizePermissionMode(
+        (loadStoredSettings() as unknown as ProviderSettings).commandPermissionMode
+      ),
+    onFinished: announceFinished
   })
   const schedules = service
   observeAgentRunEvents((event) => {
     if (event.type === 'run.phase' || event.type === 'run.completed') {
       schedules.agentRunChanged(event.runId, event.type === 'run.completed')
     }
+    if (event.type === 'run.finalized') schedules.agentRunFinalized(event.runId)
   })
 
   ipcMain.handle('schedules:list', () => schedules.list())
@@ -75,7 +107,8 @@ export function registerScheduleHandlers(): void {
 }
 
 /** Starts the timer once the runtime has recovered runs interrupted by the last exit. */
-export function startScheduler(): void {
+export function startScheduler(options: { openConversation?: (id: string) => void } = {}): void {
+  openConversation = options.openConversation ?? null
   if (!service) return
   // Recovery marks runs left over from a crash as interrupted, so they do not look active.
   getAgentRuntimeCoordinator()

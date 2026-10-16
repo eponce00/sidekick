@@ -35,6 +35,8 @@ export interface ProjectConversation {
   session_handle?: string | null
   work_in?: import('./sessions').SessionWorkIn | null
   archived_at?: number | null
+  /** The most this chat may do without asking; stricter than the setting. See `effectivePermissionMode`. */
+  permission_ceiling?: import('./permissions').PermissionMode | null
 }
 
 export interface ForkConversationInput {

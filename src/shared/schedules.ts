@@ -1,4 +1,5 @@
 import type { AgentRunPhase } from './agentRuntime'
+import { isPermissionMode, type PermissionMode } from './permissions'
 
 export const SCHEDULE_CADENCES = ['hourly', 'daily', 'weekdays', 'weekly'] as const
 
@@ -24,6 +25,13 @@ export interface ScheduleInput extends ScheduleTiming {
   modelId: string
   /** Run once when SideKick was closed or asleep at the scheduled time. */
   catchUp: boolean
+  /**
+   * The most a run, and any chat it starts, may do without asking: stored when the schedule is
+   * saved, never looser than the user's setting then, and made stricter by the setting at run
+   * time. Omitted on input, it is the setting's current mode. Null on schedules saved before
+   * ceilings existed, which follow the setting.
+   */
+  permissionCeiling?: PermissionMode | null
 }
 
 export interface UpdateScheduleInput extends ScheduleInput {
@@ -76,7 +84,16 @@ export interface ScheduleRun {
   reason?: string
   conversationId?: string
   agentRunId?: string
-  /** The agent run's current phase, while its chat exists. */
+  /** The phase of the chat's latest agent run, while the chat exists. */
+  agentPhase?: AgentRunPhase
+  /** The chats this run's chat started, in the order it started them. */
+  workers?: ScheduleRunWorker[]
+}
+
+export interface ScheduleRunWorker {
+  conversationId: string
+  handle: string | null
+  title: string
   agentPhase?: AgentRunPhase
 }
 
@@ -206,6 +223,9 @@ export function validateScheduleInput(raw: unknown): ScheduleInput {
   if (typeof value.modelId !== 'string' || !value.modelId || value.modelId.length > 500) {
     throw new Error('Choose a model.')
   }
+  if (value.permissionCeiling != null && !isPermissionMode(value.permissionCeiling)) {
+    throw new Error('Choose what a run may do without asking.')
+  }
   const projectId = value.projectId
   if (
     projectId !== null &&
@@ -222,6 +242,9 @@ export function validateScheduleInput(raw: unknown): ScheduleInput {
     hour: value.hour,
     minute: value.minute,
     weekday: value.weekday,
-    catchUp: value.catchUp !== false
+    catchUp: value.catchUp !== false,
+    ...(isPermissionMode(value.permissionCeiling)
+      ? { permissionCeiling: value.permissionCeiling }
+      : {})
   }
 }

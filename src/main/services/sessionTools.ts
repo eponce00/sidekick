@@ -3,7 +3,7 @@ import { promises as fs } from 'fs'
 import { basename } from 'path'
 import type { PendingAgentInteraction } from '../../shared/agentRuntime'
 import { defaultAgentCapabilities } from '../../shared/agentToolCatalog'
-import type { PermissionMode } from '../../shared/permissions'
+import { effectivePermissionMode, type PermissionMode } from '../../shared/permissions'
 import {
   AGENT_SESSION_MESSAGE_INTENTS,
   SESSION_LIMITS,
@@ -145,9 +145,12 @@ async function startSessions(
     sessions: specs
   })
   // Decision: full access starts chats at once; any other mode, or a project this chat may not
-  // use yet, asks the user first.
-  const ask =
-    options.permissionMode() !== 'full-access' || rows.some(({ needsGrant }) => needsGrant)
+  // use yet, asks the user first. A scheduled chat's ceiling counts, so it asks while unattended.
+  const mode = effectivePermissionMode(
+    options.permissionMode(),
+    service.store.conversation(conversationId)?.permission_ceiling
+  )
+  const ask = mode !== 'full-access' || rows.some(({ needsGrant }) => needsGrant)
   let approved = specs
   if (ask) {
     const request: StartSessionsCardRequest = {

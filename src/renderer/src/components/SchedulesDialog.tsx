@@ -13,6 +13,11 @@ import {
   Zap
 } from 'lucide-react'
 import type { PinnedModel } from '../../../shared/models'
+import {
+  PERMISSION_MODE_LABELS,
+  permissionModeWithin,
+  type PermissionMode
+} from '../../../shared/permissions'
 import type { Project } from '../../../shared/projects'
 import {
   describeScheduleTiming,
@@ -24,7 +29,7 @@ import {
   type ScheduleRun
 } from '../../../shared/schedules'
 import { useModalDialog } from '../hooks/useModalDialog'
-import { formatScheduleTime, scheduleRunStatus } from '../utils/scheduleDisplay'
+import { agentPhaseStatus, formatScheduleTime, scheduleRunStatus } from '../utils/scheduleDisplay'
 import { SCHEDULE_TEMPLATES, type ScheduleTemplate } from '../utils/scheduleTemplates'
 import ConfirmDialog from './ConfirmDialog'
 import './SchedulesDialog.css'
@@ -37,6 +42,8 @@ interface SchedulesDialogProps {
   /** The chat's current model, offered first for a new schedule. */
   defaultModelId: string
   defaultProjectId: string | null
+  /** The user's permission setting; a schedule may ask for more approvals, never fewer. */
+  permissionMode: PermissionMode
   onClose: () => void
   onOpenConversation: (conversationId: string) => void
 }
@@ -52,12 +59,17 @@ type Editing =
   | { mode: 'create'; draft: ScheduleInput }
   | { mode: 'edit'; id: string; draft: ScheduleInput }
 
-function blankDraft(modelId: string, projectId: string | null): ScheduleInput {
+function blankDraft(
+  modelId: string,
+  projectId: string | null,
+  permissionCeiling: PermissionMode
+): ScheduleInput {
   return {
     name: '',
     prompt: '',
     projectId,
     modelId,
+    permissionCeiling,
     cadence: 'weekdays',
     hour: 9,
     minute: 0,
@@ -68,8 +80,22 @@ function blankDraft(modelId: string, projectId: string | null): ScheduleInput {
 
 function draftFromSchedule(schedule: Schedule): ScheduleInput {
   const { name, prompt, projectId, modelId, cadence, hour, minute, weekday, catchUp } = schedule
-  return { name, prompt, projectId, modelId, cadence, hour, minute, weekday, catchUp }
+  return {
+    name,
+    prompt,
+    projectId,
+    modelId,
+    cadence,
+    hour,
+    minute,
+    weekday,
+    catchUp,
+    // Schedules saved before ceilings existed keep following the setting.
+    ...(schedule.permissionCeiling ? { permissionCeiling: schedule.permissionCeiling } : {})
+  }
 }
+
+const PERMISSION_MODES: readonly PermissionMode[] = ['always-ask', 'sensitive-only', 'full-access']
 
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
@@ -84,6 +110,7 @@ export default function SchedulesDialog({
   models,
   defaultModelId,
   defaultProjectId,
+  permissionMode,
   onClose,
   onOpenConversation
 }: SchedulesDialogProps): React.JSX.Element | null {
@@ -102,7 +129,11 @@ export default function SchedulesDialog({
 
   const startCreate = (template?: ScheduleTemplate): void => {
     setError('')
-    const draft = blankDraft(fallbackModelId, defaultProjectId ?? projects[0]?.id ?? null)
+    const draft = blankDraft(
+      fallbackModelId,
+      defaultProjectId ?? projects[0]?.id ?? null,
+      permissionMode
+    )
     setEditing({
       mode: 'create',
       draft: template
@@ -177,6 +208,12 @@ export default function SchedulesDialog({
             initial={editing.draft}
             projects={projects}
             models={models}
+            permissionMode={permissionMode}
+            savedCeiling={
+              editing.mode === 'edit'
+                ? (schedules.find(({ id }) => id === editing.id)?.permissionCeiling ?? null)
+                : null
+            }
             submitLabel={editing.mode === 'create' ? 'Create schedule' : 'Save changes'}
             onCancel={() => {
               setError('')
@@ -455,6 +492,39 @@ function ScheduleCard({
                     <span />
                   )}
                   {item.reason && <span className="schedule-run-reason">{item.reason}</span>}
+                  {item.workers?.length ? (
+                    <ul
+                      className="schedule-run-workers"
+                      aria-label={`Chats run ${item.runNumber ?? ''} started`}
+                    >
+                      {item.workers.map((worker) => {
+                        const workerStatus = agentPhaseStatus(worker.agentPhase)
+                        return (
+                          <li key={worker.conversationId}>
+                            <span
+                              className={`schedule-run-dot ${workerStatus.tone}`}
+                              aria-hidden="true"
+                            />
+                            <span className="schedule-run-worker-name" title={worker.title}>
+                              {worker.handle ?? worker.title}
+                            </span>
+                            <span className={`schedule-run-status ${workerStatus.tone}`}>
+                              {workerStatus.label}
+                            </span>
+                            <button
+                              type="button"
+                              className="schedule-run-open"
+                              onClick={() => onOpenConversation(worker.conversationId)}
+                              aria-label={`Open ${worker.handle ?? worker.title}`}
+                              title="Open chat"
+                            >
+                              <MessageSquare size={13} />
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  ) : null}
                 </li>
               )
             })
@@ -469,6 +539,8 @@ function ScheduleEditor({
   initial,
   projects,
   models,
+  permissionMode,
+  savedCeiling,
   submitLabel,
   onCancel,
   onSubmit
@@ -476,6 +548,9 @@ function ScheduleEditor({
   initial: ScheduleInput
   projects: Project[]
   models: PinnedModel[]
+  permissionMode: PermissionMode
+  /** A ceiling saved earlier, kept even when the setting has since become stricter. */
+  savedCeiling: PermissionMode | null
   submitLabel: string
   onCancel: () => void
   onSubmit: (draft: ScheduleInput) => Promise<void>
@@ -488,6 +563,11 @@ function ScheduleEditor({
   const modelMissing = !models.some(({ id }) => id === draft.modelId)
   const canSave = draft.name.trim() && draft.prompt.trim() && !modelMissing && !saving
   const summary = useMemo(() => describeScheduleTiming(draft), [draft])
+  // A schedule may ask for more than the setting, never for less.
+  const ceilings = PERMISSION_MODES.filter(
+    (mode) => permissionModeWithin(mode, permissionMode) || mode === savedCeiling
+  )
+  const ceiling = draft.permissionCeiling ?? null
 
   return (
     <form
@@ -615,6 +695,22 @@ function ScheduleEditor({
             </label>
           )}
         </div>
+        <label>
+          <span>Without asking, runs may</span>
+          <select
+            value={ceiling ?? ''}
+            onChange={(event) =>
+              set('permissionCeiling', (event.target.value || null) as PermissionMode | null)
+            }
+          >
+            {!ceiling && <option value="">Follow my permission setting</option>}
+            {ceilings.map((mode) => (
+              <option key={mode} value={mode}>
+                {PERMISSION_MODE_LABELS[mode]}
+              </option>
+            ))}
+          </select>
+        </label>
         <label className="schedules-checkbox">
           <input
             type="checkbox"
@@ -627,8 +723,8 @@ function ScheduleEditor({
         </label>
         <p className="schedules-editor-note">
           {summary}, in this computer&apos;s time zone. Each run opens a new chat and asks for
-          approval exactly as your permission setting does; a run that is waiting for you holds off
-          the next one.
+          approval as this limit says, and never asks for less than your permission setting. Chats a
+          run starts get the same limit. A run that is waiting for you holds off the next one.
         </p>
       </div>
       <footer>

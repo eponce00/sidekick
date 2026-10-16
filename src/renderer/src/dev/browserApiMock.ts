@@ -169,12 +169,13 @@ const previewSchedules: Schedule[] = [
     name: 'Morning repository check',
     prompt: 'Summarize what changed in this repository since yesterday and flag anything risky.',
     projectId: 'preview-project-1',
-    modelId: 'ollama:qwen3:8b',
+    modelId: 'ollama:ollama-local/qwen3:8b',
     cadence: 'weekdays',
     hour: 9,
     minute: 0,
     weekday: 1,
     catchUp: true,
+    permissionCeiling: 'sensitive-only',
     enabled: true,
     nextRunAt: nextScheduleOccurrence(
       { cadence: 'weekdays', hour: 9, minute: 0, weekday: 1 },
@@ -198,7 +199,15 @@ const previewScheduleRuns: ScheduleRun[] = [
     trigger: 'schedule',
     late: false,
     conversationId: 'preview-scheduled-2',
-    agentPhase: 'completed'
+    agentPhase: 'completed',
+    workers: [
+      {
+        conversationId: 'preview-scheduled-2',
+        handle: 'dependency-audit',
+        title: 'Audit the new dependencies',
+        agentPhase: 'completed'
+      }
+    ]
   },
   {
     id: 'preview-schedule-run-1',

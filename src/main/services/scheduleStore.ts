@@ -1,13 +1,15 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { AgentRunPhase } from '../../shared/agentRuntime'
+import { isPermissionMode } from '../../shared/permissions'
 import {
   ACTIVE_SCHEDULED_RUN_PHASES,
   type Schedule,
   type ScheduleCadence,
   type ScheduleInput,
   type ScheduleRun,
-  type ScheduleRunOutcome
+  type ScheduleRunOutcome,
+  type ScheduleRunWorker
 } from '../../shared/schedules'
 
 interface ScheduleRow {
@@ -26,6 +28,7 @@ interface ScheduleRow {
   next_run_at: number | null
   last_run_at: number | null
   run_count: number
+  permission_ceiling: string | null
   created_at: number
   updated_at: number
 }
@@ -62,6 +65,7 @@ function toSchedule(row: ScheduleRow): Schedule {
     nextRunAt: row.next_run_at,
     ...(row.last_run_at ? { lastRunAt: row.last_run_at } : {}),
     runCount: row.run_count,
+    permissionCeiling: isPermissionMode(row.permission_ceiling) ? row.permission_ceiling : null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -100,6 +104,31 @@ export interface RecordScheduleRunInput {
 /** Kept per schedule; older skipped and failed rows say little once newer ones exist. */
 const RUN_HISTORY_LIMIT = 200
 
+/** A chat's latest agent run: after reports wake a scheduled chat, it is no longer the first. */
+const LATEST_RUN_ID = (conversationColumn: string): string =>
+  `(SELECT id FROM agent_runs WHERE thread_id = ${conversationColumn}
+    ORDER BY started_at DESC, rowid DESC LIMIT 1)`
+
+const RUN_SELECT = `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
+  LEFT JOIN agent_runs a ON a.id = COALESCE(${LATEST_RUN_ID('r.conversation_id')}, r.agent_run_id)`
+
+/** A family member whose latest run is still going, which holds off the next occurrence. */
+export interface ActiveFamilyMember {
+  conversationId: string
+  agentRunId: string
+  phase: AgentRunPhase
+  worker: boolean
+}
+
+/** Most blocking first: a family waiting on the user says so before one that is just working. */
+const BLOCKING_ORDER: readonly AgentRunPhase[] = [
+  'awaiting_permission',
+  'awaiting_user',
+  ...ACTIVE_SCHEDULED_RUN_PHASES.filter(
+    (phase) => phase !== 'awaiting_permission' && phase !== 'awaiting_user'
+  )
+]
+
 export class ScheduleStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -120,16 +149,14 @@ export class ScheduleStore {
 
   private withActiveRun(schedule: Schedule): Schedule {
     const latest = this.latestStartedRun(schedule.id)
-    return latest?.conversationId &&
-      latest.agentRunId &&
-      latest.agentPhase &&
-      ACTIVE_SCHEDULED_RUN_PHASES.includes(latest.agentPhase)
+    const active = latest?.conversationId ? this.activeFamilyMember(latest.conversationId) : null
+    return active
       ? {
           ...schedule,
           activeRun: {
-            conversationId: latest.conversationId,
-            agentRunId: latest.agentRunId,
-            phase: latest.agentPhase
+            conversationId: active.conversationId,
+            agentRunId: active.agentRunId,
+            phase: active.phase
           }
         }
       : schedule
@@ -141,8 +168,8 @@ export class ScheduleStore {
       .prepare(
         `INSERT INTO schedules
          (id, name, prompt, project_id, model_id, cadence, hour, minute, weekday, catch_up,
-          enabled, next_run_at, run_count, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?)`
+          enabled, next_run_at, run_count, permission_ceiling, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`
       )
       .run(
         id,
@@ -156,6 +183,7 @@ export class ScheduleStore {
         input.weekday,
         input.catchUp ? 1 : 0,
         nextRunAt,
+        input.permissionCeiling ?? null,
         now,
         now
       )
@@ -168,7 +196,8 @@ export class ScheduleStore {
       .prepare(
         `UPDATE schedules
          SET name = ?, prompt = ?, project_id = ?, model_id = ?, cadence = ?, hour = ?,
-             minute = ?, weekday = ?, catch_up = ?, next_run_at = ?, updated_at = ?
+             minute = ?, weekday = ?, catch_up = ?, next_run_at = ?, permission_ceiling = ?,
+             updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -182,6 +211,7 @@ export class ScheduleStore {
         input.weekday,
         input.catchUp ? 1 : 0,
         nextRunAt,
+        input.permissionCeiling ?? null,
         now,
         id
       )
@@ -326,46 +356,140 @@ export class ScheduleStore {
   getRun(id: string): ScheduleRun | undefined {
     const row = this.db
       .prepare(
-        `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
-         LEFT JOIN agent_runs a ON a.id = r.agent_run_id
+        `${RUN_SELECT}
          WHERE r.id = ?`
       )
       .get(id) as ScheduleRunRow | undefined
-    return row ? toRun(row) : undefined
+    return row ? this.withWorkers(toRun(row)) : undefined
   }
 
   runs(scheduleId: string, limit = 50): ScheduleRun[] {
     return (
       this.db
         .prepare(
-          `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
-           LEFT JOIN agent_runs a ON a.id = r.agent_run_id
+          `${RUN_SELECT}
            WHERE r.schedule_id = ?
            ORDER BY r.created_at DESC, r.rowid DESC
            LIMIT ?`
         )
         .all(scheduleId, Math.max(1, Math.min(RUN_HISTORY_LIMIT, limit))) as ScheduleRunRow[]
-    ).map(toRun)
+    ).map((row) => this.withWorkers(toRun(row)))
   }
 
-  /** The schedule run that started this agent run, if a schedule started it. */
-  runForAgentRun(agentRunId: string): ScheduleRun | undefined {
+  /**
+   * The schedule run whose family an agent run belongs to: the run of a scheduled chat, or of a
+   * chat that a scheduled chat started.
+   */
+  runForAgentRun(
+    agentRunId: string
+  ): { run: ScheduleRun; conversationId: string; root: boolean } | undefined {
+    const thread = this.db
+      .prepare(
+        `SELECT a.thread_id, c.started_by_conversation_id FROM agent_runs a
+         LEFT JOIN conversations c ON c.id = a.thread_id
+         WHERE a.id = ?`
+      )
+      .get(agentRunId) as
+      | { thread_id: string; started_by_conversation_id: string | null }
+      | undefined
+    if (!thread) return undefined
+    const rootId = thread.started_by_conversation_id ?? thread.thread_id
     const row = this.db
       .prepare(
-        `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
-         LEFT JOIN agent_runs a ON a.id = r.agent_run_id
-         WHERE r.agent_run_id = ?`
+        `${RUN_SELECT}
+         WHERE r.conversation_id = ? AND r.outcome = 'started'
+         ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1`
       )
-      .get(agentRunId) as ScheduleRunRow | undefined
-    return row ? toRun(row) : undefined
+      .get(rootId) as ScheduleRunRow | undefined
+    if (!row) return undefined
+    return {
+      run: this.withWorkers(toRun(row)),
+      conversationId: thread.thread_id,
+      root: rootId === thread.thread_id
+    }
+  }
+
+  /** The chats a scheduled chat started, oldest first, with their latest run's phase. */
+  workers(conversationId: string): ScheduleRunWorker[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT c.id, c.session_handle, c.title,
+                  (SELECT phase FROM agent_runs WHERE id = ${LATEST_RUN_ID('c.id')}) AS phase
+           FROM conversations c
+           WHERE c.started_by_conversation_id = ? AND c.archived_at IS NULL
+           ORDER BY c.created_at ASC, c.rowid ASC`
+        )
+        .all(conversationId) as Array<{
+        id: string
+        session_handle: string | null
+        title: string
+        phase: AgentRunPhase | null
+      }>
+    ).map((row) => ({
+      conversationId: row.id,
+      handle: row.session_handle,
+      title: row.title,
+      ...(row.phase ? { agentPhase: row.phase } : {})
+    }))
+  }
+
+  private withWorkers(run: ScheduleRun): ScheduleRun {
+    if (!run.conversationId) return run
+    const workers = this.workers(run.conversationId)
+    return workers.length ? { ...run, workers } : run
+  }
+
+  /**
+   * The member of a scheduled chat's family whose latest run blocks the most, or null when the
+   * whole family is idle. The family counts as one run: its chat may be finished while the chats
+   * it started still work and will wake it again.
+   */
+  activeFamilyMember(conversationId: string): ActiveFamilyMember | null {
+    const members = this.db
+      .prepare(
+        `SELECT c.id, c.id != ? AS worker, a.id AS run_id, a.phase
+         FROM conversations c
+         JOIN agent_runs a ON a.id = ${LATEST_RUN_ID('c.id')}
+         WHERE c.id = ? OR (c.started_by_conversation_id = ? AND c.archived_at IS NULL)`
+      )
+      .all(conversationId, conversationId, conversationId) as Array<{
+      id: string
+      worker: number
+      run_id: string
+      phase: AgentRunPhase
+    }>
+    let best: ActiveFamilyMember | null = null
+    for (const member of members) {
+      const rank = BLOCKING_ORDER.indexOf(member.phase)
+      if (rank < 0) continue
+      if (best && BLOCKING_ORDER.indexOf(best.phase) <= rank) continue
+      best = {
+        conversationId: member.id,
+        agentRunId: member.run_id,
+        phase: member.phase,
+        worker: member.worker === 1
+      }
+    }
+    return best
+  }
+
+  /** A finished run's reply, for the notice that a scheduled chat is done. */
+  reply(agentRunId: string): { phase: AgentRunPhase; content: string } | undefined {
+    return this.db
+      .prepare(
+        `SELECT a.phase, COALESCE(m.content, '') AS content FROM agent_runs a
+         LEFT JOIN messages m ON m.run_id = a.id AND m.role != 'user'
+         WHERE a.id = ?`
+      )
+      .get(agentRunId) as { phase: AgentRunPhase; content: string } | undefined
   }
 
   /** The most recent run that started a chat, which decides whether the next one may start. */
   latestStartedRun(scheduleId: string): ScheduleRun | undefined {
     const row = this.db
       .prepare(
-        `SELECT r.*, a.phase AS agent_phase FROM schedule_runs r
-         LEFT JOIN agent_runs a ON a.id = r.agent_run_id
+        `${RUN_SELECT}
          WHERE r.schedule_id = ? AND r.outcome = 'started'
          ORDER BY r.created_at DESC, r.rowid DESC
          LIMIT 1`

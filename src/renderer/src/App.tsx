@@ -1386,6 +1386,7 @@ function App(): React.JSX.Element {
           models={pinnedModels}
           defaultModelId={selectedModel}
           defaultProjectId={currentConversation?.project_id ?? null}
+          permissionMode={normalizePermissionMode(settings.commandPermissionMode)}
           onClose={() => setIsSchedulesOpen(false)}
           onOpenConversation={(id) => {
             setIsSchedulesOpen(false)

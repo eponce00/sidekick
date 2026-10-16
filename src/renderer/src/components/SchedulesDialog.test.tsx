@@ -5,7 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PinnedModel } from '../../../shared/models'
 import type { Project } from '../../../shared/projects'
-import type { Schedule } from '../../../shared/schedules'
+import type { PermissionMode } from '../../../shared/permissions'
+import type { Schedule, ScheduleRun } from '../../../shared/schedules'
 import SchedulesDialog from './SchedulesDialog'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -70,7 +71,11 @@ describe('SchedulesDialog', () => {
     container.remove()
   })
 
-  const render = async (schedules: Schedule[]): Promise<void> => {
+  const render = async (
+    schedules: Schedule[],
+    permissionMode: PermissionMode = 'full-access',
+    onOpenConversation = vi.fn()
+  ): Promise<void> => {
     await act(async () => {
       root.render(
         <SchedulesDialog
@@ -80,8 +85,9 @@ describe('SchedulesDialog', () => {
           models={models}
           defaultModelId="ollama:local/qwen"
           defaultProjectId="p1"
+          permissionMode={permissionMode}
           onClose={vi.fn()}
-          onOpenConversation={vi.fn()}
+          onOpenConversation={onOpenConversation}
         />
       )
     })
@@ -111,9 +117,55 @@ describe('SchedulesDialog', () => {
         minute: 0,
         projectId: 'p1',
         modelId: 'ollama:local/qwen',
-        catchUp: true
+        catchUp: true,
+        permissionCeiling: 'full-access'
       })
     )
+  })
+
+  it('offers only limits at least as strict as the permission setting', async () => {
+    await render([], 'sensitive-only')
+    await act(async () => button('New schedule').click())
+    const select = [...container.querySelectorAll('label')]
+      .find((label) => label.textContent?.startsWith('Without asking, runs may'))!
+      .querySelector('select')!
+    expect(select.value).toBe('sensitive-only')
+    expect([...select.options].map((option) => option.value)).toEqual([
+      'always-ask',
+      'sensitive-only'
+    ])
+  })
+
+  it('lists the chats a run started under the run, and opens one', async () => {
+    const run: ScheduleRun = {
+      id: 'r1',
+      scheduleId: 's1',
+      runNumber: 1,
+      scheduledFor: 1,
+      startedAt: 1,
+      outcome: 'started',
+      trigger: 'schedule',
+      late: false,
+      conversationId: 'chat-1',
+      agentPhase: 'completed',
+      workers: [
+        {
+          conversationId: 'w1',
+          handle: 'docs-check',
+          title: 'Check docs',
+          agentPhase: 'awaiting_permission'
+        }
+      ]
+    }
+    api.runs.mockResolvedValue([run])
+    const onOpenConversation = vi.fn()
+    await render([schedule], 'full-access', onOpenConversation)
+    await act(async () => button('Runs (0)').click())
+    const workers = container.querySelector('.schedule-run-workers')!
+    expect(workers.textContent).toContain('docs-check')
+    expect(workers.textContent).toContain('Waiting for your approval')
+    await act(async () => button('Open docs-check').click())
+    expect(onOpenConversation).toHaveBeenCalledWith('w1')
   })
 
   it('switches presets, and asks only for the minute when hourly', async () => {
