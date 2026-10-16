@@ -41,6 +41,7 @@ import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
   ConversationRunPreparer,
   steeredProviderMessage,
+  type ConversationSessionTools,
   type PreparedConversationAgentRun
 } from './conversationRunPreparer'
 import { PromptAdmissionStore } from './promptAdmissionStore'
@@ -149,6 +150,8 @@ export class AgentRuntimeCoordinator {
   private readonly skillAssetsPath: () => string
   private readonly subAgentSlots = new SubAgentSlots()
   private readonly occupancy = new WorkspaceOccupancy()
+  /** Gives each conversation run its family role, capability ceiling and chat tools. */
+  private sessionTools: ConversationSessionTools | undefined
   /** Messages from other chats waiting for a conversation, taken in before its first step. */
   private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
     null
@@ -590,7 +593,8 @@ export class AgentRuntimeCoordinator {
           this.tools,
           this.goals,
           this.settings,
-          this.skillAssetsPath
+          this.skillAssetsPath,
+          this.sessionTools
         ).prepare(input, ensureCapture, signal),
         preparation
       )
@@ -1173,6 +1177,19 @@ export class AgentRuntimeCoordinator {
     // A wait in the run ends, so the message is read now rather than after it.
     if (accepted) this.tools.notifyUserMessage(input.runId)
     return { accepted }
+  }
+
+  setSessionTools(tools: ConversationSessionTools | undefined): void {
+    this.sessionTools = tools
+  }
+
+  /** Pauses a run on a durable question to the user, for tools that confirm their own work. */
+  requestUserDecision(
+    runId: string,
+    request: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<import('../../shared/agentRuntime').PendingAgentInteraction> {
+    return this.kernel.requestUserDecision(runId, request, signal)
   }
 
   setConversationInbox(

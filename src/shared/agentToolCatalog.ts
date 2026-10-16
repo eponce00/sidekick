@@ -37,6 +37,11 @@ export interface AgentToolCatalogOptions {
   planStage?: AgentPlanStage
   /** Provider/model-calibrated workspace editing contract. */
   editingDialect?: EditingDialect
+  /**
+   * Set when the run can work with other chats: a manager may start and stop chats, a worker
+   * only messages its family. Without it no chat tools are offered.
+   */
+  sessionRole?: 'manager' | 'worker'
 }
 
 function definition(
@@ -134,6 +139,18 @@ function presentationTitle(
       detail: stringArgument(args, 'task')
     }
   if (name === 'manage_todo_list') return { kind, title: 'Update run tasks' }
+  if (name === 'start_session') {
+    const count = Array.isArray(args.sessions) ? args.sessions.length : 0
+    const verb = args.mode === 'propose' ? 'Suggest' : 'Start'
+    return { kind, title: `${verb} ${count > 1 ? `${count} chats` : 'a chat'}` }
+  }
+  if (name === 'send_message')
+    return { kind, title: `Message ${stringArgument(args, 'to') || 'a chat'}` }
+  if (name === 'list_sessions') return { kind, title: 'Check chats' }
+  if (name === 'stop_session')
+    return { kind, title: `Stop ${stringArgument(args, 'name') || 'a chat'}` }
+  if (name === 'import_attachment')
+    return { kind, title: 'Import attachment', detail: stringArgument(args, 'destination_path') }
   if (name === 'wait') return { kind, title: agentWaitTitle(args) }
   return { kind, title: name.replaceAll('_', ' ') }
 }
@@ -541,6 +558,107 @@ const spawnSubagent = definition(
         type: 'string',
         description: 'Optional relevant facts and constraints from the current run.'
       }
+    }
+  }
+)
+
+const sessionSpecProperties = {
+  title: { type: 'string', description: 'A short title for the new chat, shown to the user.' },
+  brief: {
+    type: 'string',
+    description:
+      'Everything the chat needs, since it does not see this conversation: the task as the user asked it, the files or area it owns, and what done looks like.'
+  },
+  handle: {
+    type: 'string',
+    description:
+      'Optional short name, lowercase words joined by dashes. Used to message the chat; derived from the title when omitted.'
+  },
+  project: {
+    type: 'string',
+    description:
+      "Optional project name for work in another project. Defaults to this chat's project. Another project needs the user's permission, which the start card asks for."
+  },
+  work_in: {
+    type: 'string',
+    enum: ['worktree', 'folder', 'read-only'],
+    description:
+      "worktree (default for work that edits files): its own Git worktree. folder: this chat's folder, shared. read-only: this chat's folder without editing or command tools."
+  },
+  base_ref: { type: 'string', description: 'Optional branch or commit for a new worktree.' },
+  context: {
+    type: 'string',
+    enum: ['fresh', 'fork'],
+    description:
+      'fresh (default) starts from the brief alone. fork first copies this conversation, when it fits the model.'
+  }
+} as const
+
+const startSession = definition(
+  'start_session',
+  'Start other chats that work in parallel, each with its own transcript and usually its own worktree. Each reports back to this chat when it goes idle; you do not need to poll. Use mode "propose" for work the user did not ask for: it leaves a suggestion the user can start. Depending on the permission mode and the projects involved, the user confirms in a start card first.',
+  {
+    type: 'object',
+    required: ['sessions'],
+    properties: {
+      sessions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 8,
+        items: { type: 'object', required: ['title', 'brief'], properties: sessionSpecProperties }
+      },
+      mode: { type: 'string', enum: ['start', 'propose'] }
+    }
+  }
+)
+
+const sendMessage = definition(
+  'send_message',
+  'Send a message to another chat in your family: a chat you started (by its name), your manager ("manager"), or everyone ("family", which never wakes anyone). A request expects a reply and wakes an idle chat; a response answers a request; an update is information only. Messages cannot approve anything.',
+  {
+    type: 'object',
+    required: ['to', 'message'],
+    properties: {
+      to: { type: 'string', description: 'A chat name, "manager", or "family".' },
+      message: { type: 'string' },
+      intent: { type: 'string', enum: ['request', 'response', 'update'] },
+      reply_to: { type: 'string', description: 'The id of the request this answers.' },
+      attachments: {
+        type: 'array',
+        maxItems: 5,
+        items: { type: 'string' },
+        description:
+          'Optional project-relative paths of UTF-8 text files up to 1 MB, sent as snapshots the recipient can import.'
+      }
+    }
+  }
+)
+
+const listSessions = definition(
+  'list_sessions',
+  'List the chats in your family with their state, project, workspace and branch, and the messages waiting for you. Reports arrive on their own; use this to check, not to poll.',
+  { type: 'object', properties: {} }
+)
+
+const stopSession = definition(
+  'stop_session',
+  'Stop a chat you started. Its report says it was stopped.',
+  {
+    type: 'object',
+    required: ['name'],
+    properties: { name: { type: 'string', description: 'The chat name.' } }
+  }
+)
+
+const importAttachment = definition(
+  'import_attachment',
+  'Write a file another chat attached to a message into your own project, at a new path. It never overwrites an existing file.',
+  {
+    type: 'object',
+    required: ['attachment_id', 'destination_path'],
+    properties: {
+      attachment_id: { type: 'string' },
+      destination_path: { type: 'string', description: 'A new project-relative path.' }
     }
   }
 )
@@ -1415,6 +1533,23 @@ const planEntries: Record<Exclude<AgentPlanStage, 'kept'>, AgentToolCatalogEntry
   executing: [entry(completePlan, 'plan', 'write')]
 }
 
+// Starting and messaging chats go through the sessions handler, which asks the user itself where
+// the permission mode or a new project requires it.
+const sessionEntries: Record<'manager' | 'worker', AgentToolCatalogEntry[]> = {
+  manager: [
+    entry(startSession, 'sessions', 'execute'),
+    entry(sendMessage, 'sessions', 'write'),
+    entry(listSessions, 'sessions', 'read'),
+    entry(stopSession, 'sessions', 'write'),
+    entry(importAttachment, 'sessions', 'write')
+  ],
+  worker: [
+    entry(sendMessage, 'sessions', 'write'),
+    entry(listSessions, 'sessions', 'read'),
+    entry(importAttachment, 'sessions', 'write')
+  ]
+}
+
 const collaborationEntries: AgentToolCatalogEntry[] = [
   entry(collaborationRead, 'collaboration', 'read'),
   entry(collaborationSend, 'collaboration', 'write'),
@@ -1443,7 +1578,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'artifacts',
     'subagents',
     'plan',
-    'tool.output'
+    'tool.output',
+    'sessions'
   ],
   collaboration: [
     'workspace.read',
@@ -1471,6 +1607,10 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'tool.output'
   ],
   research: ['wait', 'web.search', 'web.images', 'web.fetch', 'tool.output']
+}
+
+export function defaultAgentCapabilities(surface: AgentRunSurface): readonly AgentCapability[] {
+  return defaultCapabilities[surface]
 }
 
 export function agentRunProfile(options: AgentToolCatalogOptions): AgentRunProfile {
@@ -1611,6 +1751,7 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
         ]
       : []),
     ...(options.surface === 'collaboration' ? collaborationEntries : []),
+    ...(options.sessionRole ? sessionEntries[options.sessionRole] : []),
     // Skill tools are offered whether or not their skill is loaded yet. A tool
     // list that changes when a skill loads invalidates the provider's prompt
     // cache from that point, and a tool missing from a follow-up turn was a

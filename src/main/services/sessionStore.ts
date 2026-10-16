@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { ProjectConversation } from '../../shared/projects'
+import { ProjectStore } from './projectStore'
 import {
   SESSION_LIMITS,
   type SessionAttachment,
@@ -116,6 +117,22 @@ export class SessionStore {
       (this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as
         | ProjectConversation
         | undefined) ?? null
+    )
+  }
+
+  projects(): Array<{ id: string; name: string }> {
+    return this.db
+      .prepare('SELECT id, name FROM projects ORDER BY name COLLATE NOCASE')
+      .all() as Array<{
+      id: string
+      name: string
+    }>
+  }
+
+  /** The folder a chat works in, from its project, or undefined for a chat without one. */
+  workspaceRoot(conversationId: string): string | undefined {
+    return (
+      new ProjectStore(this.db).getConversationContext(conversationId).workspaceRoot ?? undefined
     )
   }
 
@@ -291,6 +308,44 @@ export class SessionStore {
           createdAt: row.created_at
         }
       : null
+  }
+
+  insertAttachment(input: {
+    senderConversationId: string
+    name: string
+    sourcePath: string
+    content: string
+    sha256: string
+  }): SessionAttachment {
+    const id = randomUUID()
+    this.db
+      .prepare(
+        `INSERT INTO session_attachments
+         (id, sender_conversation_id, name, source_path, content, byte_size, sha256, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        input.senderConversationId,
+        input.name,
+        input.sourcePath,
+        input.content,
+        Buffer.byteLength(input.content, 'utf8'),
+        input.sha256,
+        this.now()
+      )
+    return this.attachment(id)!
+  }
+
+  /** An attachment sent to this chat with a message, or null when it was not. */
+  attachmentFor(conversationId: string, attachmentId: string): SessionAttachment | null {
+    const rows = this.db
+      .prepare('SELECT attachments_json FROM session_messages WHERE to_conversation_id = ?')
+      .all(conversationId) as Array<{ attachments_json: string }>
+    const received = rows.some(({ attachments_json }) =>
+      parseAttachments(attachments_json).some(({ id }) => id === attachmentId)
+    )
+    return received ? this.attachment(attachmentId) : null
   }
 
   insertProposal(proposerConversationId: string, spec: StartSessionSpec): SessionProposal {

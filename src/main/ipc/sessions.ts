@@ -7,7 +7,9 @@ import {
   type StartSessionSpec,
   type StartSessionsInput
 } from '../../shared/sessions'
+import { normalizePermissionMode } from '../../shared/permissions'
 import { SessionService } from '../services/sessionService'
+import { createSessionTools } from '../services/sessionTools'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
   getAgentRuntimeCoordinator,
@@ -122,6 +124,17 @@ export function registerSessionHandlers(): void {
   service = sessions
   coordinator.setConversationInbox((conversationId, runId) =>
     sessions.pendingSteers(conversationId, runId)
+  )
+  coordinator.setSessionTools(
+    createSessionTools({
+      service: sessions,
+      permissionMode: () =>
+        normalizePermissionMode(
+          (loadStoredSettings() as unknown as ProviderSettings).commandPermissionMode
+        ),
+      requestUserDecision: (runId, request, signal) =>
+        coordinator.requestUserDecision(runId, request, signal)
+    })
   )
   observeAgentRunEvents((event) => sessions.observe(event))
 

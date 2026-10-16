@@ -31,7 +31,11 @@ import { beginWorkspaceInstructionScope } from './workspaceRules'
 import { ProjectStore } from './projectStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import { AgentContextManager, type AgentCompactionRecord } from './agentContextManager'
-import type { AgentToolRuntime, AgentToolRuntimeSession } from './agentToolRuntime'
+import type {
+  AgentSessionToolHandler,
+  AgentToolRuntime,
+  AgentToolRuntimeSession
+} from './agentToolRuntime'
 import type { StartAgentKernelRunInput } from './agentRunKernel'
 import { ConversationGoalStore, executeGoalUpdate } from './conversationGoalStore'
 import type { ConversationGoal } from '../../shared/conversationGoals'
@@ -46,7 +50,11 @@ import {
   isProjectContextAttachment,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
-import { normalizeToolResultMedia, type ToolResultMediaAttachment } from '../../shared/agentRuntime'
+import {
+  normalizeToolResultMedia,
+  type AgentCapability,
+  type ToolResultMediaAttachment
+} from '../../shared/agentRuntime'
 
 export interface MessageRow {
   id: string
@@ -560,13 +568,26 @@ function modelTarget(model: PinnedModel): ProviderTarget {
   }
 }
 
+/** A conversation run's place among chats that start other chats. */
+export interface ConversationSessionBinding {
+  /** The ordinary capabilities, capped for a worker; see `sessionRunCapabilities`. */
+  capabilities: AgentCapability[]
+  handler: AgentSessionToolHandler
+}
+
+export type ConversationSessionTools = (
+  conversationId: string,
+  runId: string
+) => ConversationSessionBinding | null
+
 export class ConversationRunPreparer {
   constructor(
     private readonly db: Database.Database,
     private readonly tools: AgentToolRuntime,
     private readonly goals: ConversationGoalStore,
     private readonly settings: () => ProviderSettings,
-    private readonly skillAssetsPath: () => string
+    private readonly skillAssetsPath: () => string,
+    private readonly sessionTools?: ConversationSessionTools
   ) {}
 
   async prepare(
@@ -629,6 +650,10 @@ export class ConversationRunPreparer {
             initialPlanStage
           )
         : null
+    const sessions =
+      surface === 'conversation' && input.model.supportsTools !== false
+        ? (this.sessionTools?.(input.conversationId, input.id) ?? null)
+        : null
     const toolSession = await this.tools.createSession({
       permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
       runId: input.id,
@@ -641,7 +666,8 @@ export class ConversationRunPreparer {
       // "Add a chart to it" right after an artifact is the same work: the
       // web-artifacts guidance is already in history and need not be reloaded.
       artifactContinuation: previousReplyMadeArtifact(this.db, input.conversationId),
-      capabilities: input.model.supportsTools === false ? [] : undefined,
+      capabilities: input.model.supportsTools === false ? [] : sessions?.capabilities,
+      sessions: sessions?.handler,
       persistentSkillIds: activeSkillIds,
       mcpConfigs: currentSettings.mcpServers,
       instructionScopeId: input.id,

@@ -1,0 +1,165 @@
+/* The card that asks before an agent starts chats, and the cards for chats it suggested. */
+
+.start-sessions-description {
+  margin: 0 0 var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+.start-sessions-rows {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.start-sessions-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--text-sm);
+}
+
+.start-sessions-row.is-header {
+  padding: var(--space-2) 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.start-sessions-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.start-sessions-name strong {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.start-sessions-name span,
+.start-sessions-model {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.start-sessions-row select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.start-sessions-row select:disabled {
+  opacity: 0.6;
+}
+
+.start-sessions-actions {
+  align-items: center;
+}
+
+.start-sessions-note {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 640px) {
+  .start-sessions-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .start-sessions-row.is-header {
+    display: none;
+  }
+}
+
+.session-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.session-proposal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-secondary);
+}
+
+.session-proposal-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.session-proposal-text strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.session-proposal-text span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-proposal-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.session-proposal-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 4px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.session-proposal-actions button.agent-interaction-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.session-proposal-status {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.session-proposal:not(.is-open) {
+  opacity: 0.75;
+}
+
+.session-proposal-error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-sm);
+}

@@ -387,7 +387,11 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'complete_plan',
     'create_artifact',
     'collaboration_send',
-    'collaboration_claim_complete'
+    'collaboration_claim_complete',
+    // The sessions handler shows its own start card when the permission mode asks for one.
+    'start_session',
+    'send_message',
+    'stop_session'
   ].includes(name)
 }
 
@@ -645,6 +649,20 @@ export class AgentRunKernel {
       if (event) this.publish(event)
       if (signal.aborted) abort()
     })
+  }
+
+  /**
+   * Lets a tool handler pause its run on a durable question to the user, such as the card that
+   * confirms starting chats. The run resumes its tool once the user answers or the run stops.
+   */
+  async requestUserDecision(
+    runId: string,
+    request: Record<string, unknown>,
+    signal: AbortSignal
+  ): Promise<PendingAgentInteraction> {
+    const interaction = await this.suspendForInteraction(runId, 'question', request, signal)
+    if (!signal.aborted) this.transition(runId, 'executing_tool')
+    return interaction
   }
 
   private async executeAskUser(

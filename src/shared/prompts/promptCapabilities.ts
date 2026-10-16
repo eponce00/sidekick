@@ -19,6 +19,8 @@ export function capabilitiesFromTools(tools: readonly AgentToolDefinition[]): Pr
       'send_command_input'
     ),
     subagents: names.has('spawn_subagent'),
+    startSessions: names.has('start_session'),
+    sessionMessages: names.has('send_message'),
     skills: names.has('use_skill'),
     webSearch: names.has('web_search'),
     webFetch: names.has('web_fetch'),

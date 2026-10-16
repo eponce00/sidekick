@@ -3,6 +3,7 @@
  * another is a worker, the starter is its manager, and the two form a family. The user interface
  * keeps saying "chat". Design: docs/roadmap/MULTI_AGENT.md.
  */
+import type { AgentCapability } from './agentRuntime'
 import type { ProjectConversation } from './projects'
 
 /** What a session is doing, computed in the main process for every chat. */
@@ -182,6 +183,36 @@ export interface StartSessionsInput {
   mode?: 'start' | 'propose'
 }
 
+/** One row of the card that asks the user before chats start. */
+export interface StartSessionCardRow {
+  title: string
+  handle: string
+  brief: string
+  projectId: string | null
+  projectName: string | null
+  workIn: SessionWorkIn
+  modelId: string
+  modelName: string
+  context: 'fresh' | 'fork'
+  /** The project is not this chat's own and the user has not allowed it yet. */
+  needsGrant: boolean
+}
+
+/** The `question` interaction a run waits on while the user reviews chats to start. */
+export interface StartSessionsCardRequest {
+  intent: 'start_sessions'
+  managerConversationId: string
+  sessions: StartSessionCardRow[]
+  /** Projects the user may pick for a row. */
+  projects: Array<{ id: string; name: string }>
+}
+
+export interface StartSessionsCardResponse {
+  action: 'start' | 'cancel'
+  /** The user's changes, by row index. */
+  sessions?: Array<{ projectId?: string | null; workIn?: SessionWorkIn }>
+}
+
 export interface StartSessionsResult {
   started: SessionFamilyMember[]
   proposals: SessionProposal[]
@@ -258,6 +289,37 @@ export function sessionLinkFromConversation(conversation: ProjectConversation): 
     workIn: workIn && SESSION_WORK_IN.includes(workIn) ? workIn : null,
     archivedAt: conversation.archived_at ?? null
   }
+}
+
+/** What a chat may do with other chats: start and stop them, or only message its family. */
+export type SessionRole = 'manager' | 'worker'
+
+/** Capabilities a read-only worker never gets: anything that edits files or runs programs. */
+const READ_ONLY_EXCLUDED: readonly AgentCapability[] = [
+  'workspace.write',
+  'command.execute',
+  'command.background',
+  'mcp',
+  'browser',
+  'artifacts',
+  'subagents'
+]
+
+/**
+ * The capabilities a chat's run may use, never more than `base`, the ordinary set for its surface.
+ * A worker is capped by its starter: it cannot start chats (so families stay one level deep),
+ * and a read-only worker loses every tool that edits or executes.
+ */
+export function sessionRunCapabilities(
+  base: readonly AgentCapability[],
+  link: Pick<SessionLink, 'startedByConversationId' | 'workIn'>
+): { capabilities: AgentCapability[]; role: SessionRole } {
+  const role: SessionRole = link.startedByConversationId ? 'worker' : 'manager'
+  const capabilities =
+    link.startedByConversationId && link.workIn === 'read-only'
+      ? base.filter((capability) => !READ_ONLY_EXCLUDED.includes(capability))
+      : [...base]
+  return { capabilities, role }
 }
 
 /** Most urgent first: what a collapsed family shows on its manager's row. */
