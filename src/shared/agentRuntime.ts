@@ -28,7 +28,8 @@ export const AGENT_CAPABILITIES = [
   'goal',
   'plan',
   'tool.output',
-  'browser'
+  'browser',
+  'settings'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
@@ -85,6 +86,17 @@ export interface AgentToolCatalogEntry {
   concurrency: AgentToolConcurrency
   /** Owns human presentation so the renderer never has to infer semantics from command text. */
   presentation: AgentToolPresentationDefinition
+  /**
+   * `always`: ask before every call whatever the permission mode, with no chat-wide grant. For
+   * tools that change SideKick itself, where full access must not mean silent consent.
+   */
+  approval?: 'always'
+}
+
+/** A before-and-after view of what an approval would change, shown on the approval card. */
+export interface AgentApprovalPreview {
+  summary?: string
+  changes: Array<{ label: string; before: string; after: string }>
 }
 
 export interface AgentRunProfile {

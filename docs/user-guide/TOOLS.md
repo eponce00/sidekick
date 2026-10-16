@@ -13,6 +13,7 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 | Coordination    | `wait`                                                                                                  | All agent profiles                                                       |
 | Delegation      | `spawn_subagent`                                                                                        | Project-bound conversation runs                                          |
 | Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                          |
+| SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first                 |
 | Human input     | `ask_user`                                                                                              | All interactive agent profiles                                           |
 | Retained output | `read_tool_output`                                                                                      | All agent profiles                                                       |
 | Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, collaboration, child-agent, and research runs when enabled |

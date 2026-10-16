@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
 import {
   BROWSER_DEVICE_PRESETS,
   BROWSER_RESPONSIVE_DEVICE,
@@ -90,6 +91,10 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
         onPreparationChange: publishPreparation
       }
     )
+    coordinator.tools.setAppSettings({
+      control: createAppControlHandlers("SideKick's agent"),
+      openProviderKeyPrompt
+    })
   }
   return coordinator
 }

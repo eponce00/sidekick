@@ -46,7 +46,7 @@ export function McpServerSettings({
 
   const runAuthAction = async (
     serverId: string,
-    action: 'connect' | 'disconnect'
+    action: 'connect' | 'disconnect' | 'approve'
   ): Promise<void> => {
     setActingOn(serverId)
     setActionError(null)
@@ -54,9 +54,15 @@ export function McpServerSettings({
       const result =
         action === 'connect'
           ? await window.api.mcp.authenticate(serverId)
-          : await window.api.mcp.disconnect(serverId)
+          : action === 'approve'
+            ? await window.api.mcp.approve(serverId)
+            : await window.api.mcp.disconnect(serverId)
       setStatuses(result.statuses)
-      if (!result.ok) setActionError(result.error ?? `Could not ${action} this connector.`)
+      // A cancelled approval is not an error; the status still says it needs approval.
+      if (!result.ok && result.error) setActionError(result.error)
+      else if (!result.ok && action !== 'approve') {
+        setActionError(`Could not ${action} this connector.`)
+      }
     } finally {
       setActingOn(null)
     }
@@ -141,12 +147,25 @@ export function McpServerSettings({
                     ? `Connected · ${status.toolCount} tools`
                     : status.status === 'needs_auth'
                       ? 'Sign-in required'
-                      : status.status === 'disabled'
-                        ? 'Disabled'
-                        : 'Connection error'}
+                      : status.status === 'needs_approval'
+                        ? 'Needs approval'
+                        : status.status === 'disabled'
+                          ? 'Disabled'
+                          : 'Connection error'}
                 </span>
               )}
               <span className="mcp-server-actions">
+                {status?.status === 'needs_approval' && server.enabled && (
+                  <button
+                    type="button"
+                    className="settings-primary-action is-small"
+                    disabled={actingOn === server.id}
+                    onClick={() => void runAuthAction(server.id, 'approve')}
+                    title="Review exactly what this connector runs, then allow it"
+                  >
+                    {actingOn === server.id ? 'Waiting…' : 'Review and allow'}
+                  </button>
+                )}
                 {oauth && status?.status === 'needs_auth' && server.enabled && (
                   <button
                     type="button"
@@ -291,6 +310,12 @@ export function McpServerSettings({
                       placeholder="/path/to/server"
                     />
                   </label>
+                  {server.envKeys?.length ? (
+                    <p className="mcp-wide mcp-env-note">
+                      Environment: {server.envKeys.join(', ')}. Values are stored encrypted and
+                      never shown; change them with <code>sidekick mcp add --replace</code>.
+                    </p>
+                  ) : null}
                 </>
               ) : (
                 <>

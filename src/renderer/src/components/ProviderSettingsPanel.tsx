@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Check,
   ChevronRight,
@@ -28,6 +28,7 @@ import {
   providerDefinitionForInstance,
   type ProviderDefinition
 } from '../../../shared/providerRegistry'
+import { createProviderInstance } from '../../../shared/providerInstances'
 import { getModelDisplayInfo } from '../../../shared/modelDisplay'
 import { testProviderConnection as checkProviderConnection } from '../services/providers/providerDiscovery'
 import { ProviderIcon } from './ProviderIcon'
@@ -37,19 +38,18 @@ import { SettingsEmptyState, SettingsPageHeader } from './SettingsLayout'
 interface Props {
   instances: ProviderInstance[]
   onChange: (instances: ProviderInstance[]) => void
+  /** Selects an instance and focuses its key field; each request has a fresh `at`. */
+  keyRequest?: { id: string; at: number } | null
 }
 
 function createInstance(template: ProviderDefinition, ordinal: number): ProviderInstance {
   return {
-    id: `${template.type}-${crypto.randomUUID().slice(0, 8)}`,
-    name: ordinal > 1 ? `${template.name} ${ordinal}` : template.name,
-    type: template.type,
-    preset: template.preset,
-    enabled: true,
-    baseUrl: template.defaultBaseUrl,
-    apiKey: '',
-    modelSource: template.capabilities.discovery === 'manual' ? 'manual' : 'discover',
-    models: []
+    ...createProviderInstance(
+      template,
+      `${template.type}-${crypto.randomUUID().slice(0, 8)}`,
+      ordinal > 1 ? `${template.name} ${ordinal}` : template.name
+    ),
+    apiKey: ''
   }
 }
 
@@ -58,9 +58,28 @@ function providerDescription(instance: ProviderInstance): string {
   return `${shown} model${shown === 1 ? '' : 's'} shown · ${instance.baseUrl}`
 }
 
-export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX.Element {
-  const [selectedId, setSelectedId] = useState<string | null>(instances[0]?.id ?? null)
+export function ProviderSettingsPanel({
+  instances,
+  onChange,
+  keyRequest = null
+}: Props): React.JSX.Element {
+  const [selectedId, setSelectedId] = useState<string | null>(
+    (keyRequest && instances.some((instance) => instance.id === keyRequest.id)
+      ? keyRequest.id
+      : instances[0]?.id) ?? null
+  )
   const [showAdd, setShowAdd] = useState(instances.length === 0)
+  const keyInputRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (!keyRequest || !instances.some((instance) => instance.id === keyRequest.id)) return
+    setSelectedId(keyRequest.id)
+    setShowAdd(false)
+    // Focus after the selected instance's fields render.
+    const timer = window.setTimeout(() => keyInputRef.current?.focus(), 0)
+    return () => window.clearTimeout(timer)
+    // Only a new request moves the selection; editing instances must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyRequest])
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [statusMessage, setStatusMessage] = useState('')
   const [manualModel, setManualModel] = useState('')
@@ -295,6 +314,7 @@ export function ProviderSettingsPanel({ instances, onChange }: Props): React.JSX
                       </em>
                     </span>
                     <input
+                      ref={keyInputRef}
                       type="password"
                       value={selected.apiKey || ''}
                       onChange={(event) => updateSelected({ apiKey: event.target.value })}

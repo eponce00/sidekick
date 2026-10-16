@@ -20,6 +20,7 @@ behavior, and the development guide when testing or publishing it.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
 - [Working in the background](user-guide/BACKGROUND.md) — keep agents working from the tray or Dock, and quit.
 - [Schedules](user-guide/SCHEDULES.md) — run a saved prompt hourly, daily, on weekdays, or weekly.
+- [Command line](user-guide/COMMAND_LINE.md) — inspect and configure SideKick from a terminal or another agent without handling keys.
 
 ## Architecture
 
@@ -30,6 +31,7 @@ behavior, and the development guide when testing or publishing it.
 - [Persistent goals](architecture/PERSISTENT_GOALS.md) — durable multi-run objectives.
 - [Scheduled runs](architecture/SCHEDULES.md) — the scheduler, missed runs, overlap, and approvals.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
+- [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
 
 ## Development and operations
 
@@ -52,6 +54,7 @@ behavior, and the development guide when testing or publishing it.
   the worktree work still open.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
+- [Configuration CLI](roadmap/CONFIGURATION_CLI.md) — remaining packaging and qualification work for the command line.
 
 Roadmap documents describe intent, not current behavior. A planned feature belongs there until its
 implementation, tests, and user documentation land together.

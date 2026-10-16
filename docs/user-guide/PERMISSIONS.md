@@ -18,15 +18,17 @@ The stricter modes are available per conversation from the composer and in Setti
 
 ## Operation matrix
 
-| Operation                       | Default request          | Trusted enforcement                                                    |
-| ------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
-| Agent shell command             | Agent-selected           | Kernel policy before canonical command service                         |
-| Agent workspace mutation        | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation |
-| Agent MCP tool call             | Confirm                  | Kernel policy before internal MCP dispatch                             |
-| Agent/child/collaboration tools | Shared catalog policy    | Same kernel suspension and result envelope                             |
-| Checkpoint restore/rewind/reset | Confirm                  | Exact broker grant consumed before private-History mutation            |
-| User file deletion              | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin          |
-| External browser navigation     | Auto                     | Main-window policy before opening                                      |
+| Operation                         | Default request          | Trusted enforcement                                                                 |
+| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
+| Agent shell command               | Agent-selected           | Kernel policy before canonical command service                                      |
+| Agent workspace mutation          | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation              |
+| Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
+| Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
+| MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |
+| Agent/child/collaboration tools   | Shared catalog policy    | Same kernel suspension and result envelope                                          |
+| Checkpoint restore/rewind/reset   | Confirm                  | Exact broker grant consumed before private-History mutation                         |
+| User file deletion                | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin                       |
+| External browser navigation       | Auto                     | Main-window policy before opening                                                   |
 
 ## Answering an approval
 
@@ -43,6 +45,19 @@ request that reaches anything more still asks. Grants last until SideKick restar
 other conversations, and are recorded in the audit, including the requests they covered. A
 conversation waiting on an approval is marked in the sidebar, counted on the taskbar or dock icon,
 and announced by a notification when SideKick is not in front.
+
+## Changes to SideKick itself
+
+When SideKick's agent proposes changing one of SideKick's settings, the approval shows the current
+and proposed value and asks every time, even in Full access, and **Allow for this chat** is not
+offered. Changes that weaken security, such as switching to Full access, also show SideKick's own
+dialog. The agent cannot read or set API keys; it opens a provider's key field in Settings for you
+to type into.
+
+MCP connectors are approved by what they run, not by name. A connector you add, or one whose
+command, arguments, folder, environment, URL, or read auto-approval changes by any means, shows
+**Needs approval** in **Settings → Integrations** and does not start until you choose **Review and
+allow** and confirm what it runs. The [command line](COMMAND_LINE.md) follows the same rules.
 
 ## Binding
 

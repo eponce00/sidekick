@@ -13,6 +13,7 @@ import type {
   CollaborationGroupDetail
 } from '../../../shared/collaboration'
 import type { ProjectConversation } from '../../../shared/projects'
+import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
 import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
 import type {
   ConversationGoal,
@@ -24,6 +25,14 @@ import {
   type ScheduleRun,
   type SchedulesChangedEvent
 } from '../../../shared/schedules'
+
+const previewCommandLineStatus: CommandLineToolStatus = {
+  mode: 'shell-script',
+  installed: false,
+  location: '~/.local/bin/sidekick',
+  onPath: null,
+  hint: 'If `sidekick` is not found, add ~/.local/bin to PATH in your shell profile.'
+}
 
 const previewSettings = {
   openRouterApiKeyConfigured: false,
@@ -1021,7 +1030,12 @@ export function installBrowserApiMock(): void {
     settings: {
       selectOfficeInterpreter: async () => ({ canceled: true }),
       save: async () => ({ success: true }),
-      load: async () => previewSettings
+      load: async () => previewSettings,
+      onChanged: () => () => undefined
+    },
+    commandLine: {
+      status: async () => previewCommandLineStatus,
+      install: async () => ({ ok: true, status: previewCommandLineStatus })
     },
     memory: {
       get: async () => ({ ok: true, content: '', updatedAt: null }),
@@ -1490,6 +1504,7 @@ export function installBrowserApiMock(): void {
     mcp: {
       listTools: async () => ({ ok: true, tools: [], statuses: [] }),
       authenticate: async () => ({ ok: true, tools: [], statuses: [] }),
+      approve: async () => ({ ok: true, tools: [], statuses: [] }),
       disconnect: async () => ({ ok: true, tools: [], statuses: [] })
     },
     permissions: {
@@ -1523,7 +1538,8 @@ export function installBrowserApiMock(): void {
       platform: 'windows',
       getIconPath: async () => '',
       onCommand: () => () => undefined,
-      onOpenConversation: () => () => undefined
+      onOpenConversation: () => () => undefined,
+      onOpenProviderKey: () => () => undefined
     },
     appUpdates: {
       install: async () => ({

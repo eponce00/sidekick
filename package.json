@@ -71,6 +71,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "node scripts/run-dev.cjs",
+    "sidekick": "node out/main/cli.js --dev",
     "build": "npm run typecheck && electron-vite build",
     "install:electron": "install-electron --no",
     "postinstall": "npm run install:electron && electron-builder install-app-deps",

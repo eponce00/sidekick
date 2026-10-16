@@ -13,6 +13,7 @@ import { registerSessionStatusHandlers } from './sessionStatus'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
+import { registerCommandLineHandlers } from './commandLine'
 import { registerScheduleHandlers } from './schedules'
 import { registerSessionHandlers } from './sessions'
 import { registerPullRequestHandlers } from './pullRequests'
@@ -39,6 +40,7 @@ export function registerAllHandlers(): void {
   registerCollaborationHandlers()
   registerAgentRunHandlers()
   registerSessionStatusHandlers()
+  registerCommandLineHandlers()
   registerScheduleHandlers()
   registerSessionHandlers()
 }

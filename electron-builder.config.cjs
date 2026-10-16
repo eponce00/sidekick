@@ -45,6 +45,8 @@ module.exports = {
   win: {
     executableName: identity.productName,
     icon: 'build/icon.ico',
+    // `bin` beside the executable holds the `sidekick` command; the installer puts it on PATH.
+    extraFiles: [{ from: 'build/cli/win', to: 'bin' }],
     target: [
       {
         target: 'nsis',
@@ -59,7 +61,8 @@ module.exports = {
     createDesktopShortcut: 'always',
     // Shown on a first install only; an update skips it. Code signing through SignPath
     // Foundation requires the privacy terms to be shown during installation.
-    license: 'build/installer-notice.txt'
+    license: 'build/installer-notice.txt',
+    include: 'build/installer.nsh'
   },
   // The Microsoft Store package. Partner Center assigns the identity and publisher when the app
   // name is reserved; `npm run build:store` reads them from the environment. The Store signs the

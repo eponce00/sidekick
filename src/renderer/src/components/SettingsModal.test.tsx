@@ -19,7 +19,17 @@ beforeEach(() => {
         getState: async () => ({ status: 'idle', currentVersion: '1.0.0' }),
         onState: () => () => undefined
       },
-      mcp: { listTools: async () => ({ statuses: [] }) }
+      mcp: { listTools: async () => ({ statuses: [] }) },
+      commandLine: {
+        status: async () => ({
+          mode: 'development',
+          installed: true,
+          location: '',
+          onPath: null,
+          hint: 'Run npm run sidekick.'
+        }),
+        install: vi.fn()
+      }
     }
   })
   container = document.createElement('div')

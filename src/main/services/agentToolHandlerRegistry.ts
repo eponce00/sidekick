@@ -1,4 +1,8 @@
-import { toolExecutionFailed, type ToolExecutionResult } from '../../shared/agentRuntime'
+import {
+  toolExecutionFailed,
+  type AgentApprovalPreview,
+  type ToolExecutionResult
+} from '../../shared/agentRuntime'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 
 export interface AgentToolHandlerInput {
@@ -10,21 +14,40 @@ export interface AgentToolHandlerInput {
 
 export type AgentToolHandler = (input: AgentToolHandlerInput) => Promise<ToolExecutionResult>
 
+/** Describes what an approved call would change, for the approval card. */
+export type AgentToolApprovalPreview = (
+  args: Record<string, unknown>
+) => Promise<AgentApprovalPreview | undefined>
+
 /** Scoped registry used by one run; registrations are explicit and duplicate names fail closed. */
 export class AgentToolHandlerRegistry {
   private readonly handlers = new Map<string, AgentToolHandler>()
+  private readonly previews = new Map<string, AgentToolApprovalPreview>()
 
-  register(names: string | readonly string[], handler: AgentToolHandler): () => void {
+  register(
+    names: string | readonly string[],
+    handler: AgentToolHandler,
+    options: { preview?: AgentToolApprovalPreview } = {}
+  ): () => void {
     const registered = typeof names === 'string' ? [names] : [...names]
     for (const name of registered) {
       if (this.handlers.has(name)) throw new Error(`Duplicate agent tool handler: ${name}`)
     }
-    for (const name of registered) this.handlers.set(name, handler)
+    for (const name of registered) {
+      this.handlers.set(name, handler)
+      if (options.preview) this.previews.set(name, options.preview)
+    }
     return () => {
       for (const name of registered) {
-        if (this.handlers.get(name) === handler) this.handlers.delete(name)
+        if (this.handlers.get(name) !== handler) continue
+        this.handlers.delete(name)
+        this.previews.delete(name)
       }
     }
+  }
+
+  preview(name: string, args: Record<string, unknown>): Promise<AgentApprovalPreview | undefined> {
+    return this.previews.get(name)?.(args) ?? Promise.resolve(undefined)
   }
 
   has(name: string): boolean {

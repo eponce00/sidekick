@@ -252,3 +252,69 @@ describe('MCP provider tool identities', () => {
     expect(spaced).not.toBe(underscored)
   })
 })
+
+describe('McpClientManager content-bound approval', () => {
+  function trust(approved: Set<string>) {
+    return {
+      isApproved: (server: McpServerConfig) => approved.has(JSON.stringify(server)),
+      identity: (server: McpServerConfig) => JSON.stringify(server),
+      environment: () => ({ TOKEN: 'decrypted-value' })
+    }
+  }
+
+  it('never starts a server whose current content was not approved', async () => {
+    const factory = vi.fn(() => adapter())
+    const manager = new McpClientManager(factory, undefined, undefined, trust(new Set()))
+    await manager.sync([config()])
+    expect(factory).not.toHaveBeenCalled()
+    await expect(manager.listTools()).resolves.toMatchObject({
+      statuses: [{ serverId: 'server-one', status: 'needs_approval' }]
+    })
+  })
+
+  it('stops a running server when its content changes, and waits for approval again', async () => {
+    const original = config()
+    const running = adapter()
+    const factory = vi.fn(() => running)
+    const approved = new Set([JSON.stringify(original)])
+    const manager = new McpClientManager(factory, undefined, undefined, trust(approved))
+    await manager.sync([original])
+    expect(factory).toHaveBeenCalledTimes(1)
+
+    await manager.sync([config({ args: ['--evil'] })])
+    expect(running.close).toHaveBeenCalled()
+    expect(factory).toHaveBeenCalledTimes(1)
+    await expect(manager.listTools()).resolves.toMatchObject({
+      statuses: [{ serverId: 'server-one', status: 'needs_approval' }]
+    })
+  })
+
+  it('stops a running server whose approval was withdrawn', async () => {
+    const original = config()
+    const running = adapter()
+    const approved = new Set([JSON.stringify(original)])
+    const manager = new McpClientManager(() => running, undefined, undefined, trust(approved))
+    await manager.sync([original])
+    approved.clear()
+    await manager.sync([original])
+    expect(running.close).toHaveBeenCalled()
+  })
+
+  it('hands the decrypted environment to the connection only', async () => {
+    const original = config({ envKeys: ['TOKEN'] })
+    const factory = vi.fn(() => adapter())
+    const manager = new McpClientManager(
+      factory,
+      undefined,
+      undefined,
+      trust(new Set([JSON.stringify(original)]))
+    )
+    await manager.sync([original])
+    expect(factory).toHaveBeenCalledWith(original, {
+      authProvider: undefined,
+      environment: { TOKEN: 'decrypted-value' }
+    })
+    const listed = await manager.listTools()
+    expect(JSON.stringify(listed)).not.toContain('decrypted-value')
+  })
+})

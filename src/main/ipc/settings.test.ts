@@ -16,7 +16,10 @@ const {
   storeSet: vi.fn()
 }))
 
-vi.mock('./state', () => ({ getStore: () => ({ get: storeGet, set: storeSet }) }))
+vi.mock('./state', () => ({
+  appState: { mainWindowRef: null },
+  getStore: () => ({ get: storeGet, set: storeSet })
+}))
 
 vi.mock('electron', () => ({
   BrowserWindow: { fromWebContents: vi.fn() },
@@ -35,8 +38,10 @@ import {
   publicSettings,
   revealSettings,
   confirmSensitiveSettingsChange,
+  mcpServersNeedingApproval,
   registerSettingsHandlers
 } from './settings'
+import { mcpServerFingerprint } from '../services/mcpServerTrust'
 import { dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
 
@@ -388,5 +393,104 @@ describe('provider secret persistence', () => {
     expect(value.openRouterApiKeyConfigured).toBe(true)
     expect(value.providerInstances[0]).not.toHaveProperty('apiKey')
     expect(value.providerInstances[0].apiKeyConfigured).toBe(true)
+  })
+})
+
+describe('MCP server environment values', () => {
+  const server = {
+    id: 'files',
+    name: 'Files',
+    transport: 'stdio',
+    command: 'npx',
+    envKeys: ['TOKEN'],
+    approvalMode: 'prompt',
+    enabled: true
+  }
+  const stored = {
+    mcpServers: [server],
+    __encryptedMcpEnv: { files: { TOKEN: encoded('real') } }
+  }
+
+  it('keeps stored values on save and ignores any a renderer supplies', () => {
+    isEncryptionAvailable.mockReturnValue(true)
+    getSelectedStorageBackend.mockReturnValue('gnome_libsecret')
+    const saved = protectSettings(
+      {
+        mcpServers: [server, { ...server, id: 'planted', envKeys: ['TOKEN'] }],
+        __encryptedMcpEnv: { files: { TOKEN: encoded('forged') }, planted: { TOKEN: 'x' } }
+      },
+      stored
+    ) as Record<string, unknown>
+    expect(saved.__encryptedMcpEnv).toEqual({ files: { TOKEN: encoded('real') } })
+  })
+
+  it('drops values for removed servers and names', () => {
+    const saved = protectSettings({ mcpServers: [{ ...server, envKeys: [] }] }, stored) as Record<
+      string,
+      unknown
+    >
+    expect(saved.__encryptedMcpEnv).toEqual({})
+  })
+
+  it('never sends encrypted values to the renderer', () => {
+    isEncryptionAvailable.mockReturnValue(true)
+    getSelectedStorageBackend.mockReturnValue('gnome_libsecret')
+    expect(JSON.stringify(publicSettings(revealSettings(stored)))).not.toContain(
+      '__encryptedMcpEnv'
+    )
+    expect(JSON.stringify(publicSettings(stored))).not.toContain(encoded('real'))
+  })
+})
+
+describe('MCP servers that a save must ask about', () => {
+  const server = {
+    id: 'files',
+    name: 'Files',
+    transport: 'stdio' as const,
+    command: 'npx',
+    approvalMode: 'prompt' as const,
+    enabled: true
+  }
+  function approve(...servers: Array<typeof server>): void {
+    const fingerprints = Object.fromEntries(
+      servers.map((item) => [item.id, mcpServerFingerprint(item, {})])
+    )
+    storeGet.mockImplementation((key: string, fallback?: unknown) =>
+      key === 'mcpApprovals' ? { version: 1, fingerprints } : key === 'settings' ? {} : fallback
+    )
+  }
+
+  it('leaves an untouched unapproved server out of an unrelated save', () => {
+    approve()
+    expect(
+      mcpServersNeedingApproval(
+        { mcpServers: [server], webSearchEnabled: true },
+        { mcpServers: [server], webSearchEnabled: false }
+      )
+    ).toEqual([])
+  })
+
+  it('asks about an edited server even when its old form was approved', () => {
+    approve(server)
+    const edited = { ...server, args: ['--evil'] }
+    expect(mcpServersNeedingApproval({ mcpServers: [server] }, { mcpServers: [edited] })).toEqual([
+      edited
+    ])
+  })
+
+  it('asks when an unapproved server is switched on, but not an approved one', () => {
+    approve(server)
+    const other = { ...server, id: 'other', command: 'node' }
+    expect(
+      mcpServersNeedingApproval(
+        {
+          mcpServers: [
+            { ...server, enabled: false },
+            { ...other, enabled: false }
+          ]
+        },
+        { mcpServers: [server, other] }
+      )
+    ).toEqual([other])
   })
 })

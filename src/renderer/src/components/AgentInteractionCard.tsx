@@ -12,6 +12,7 @@ import {
   X
 } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
+import type { AgentApprovalPreview } from '../../../shared/agentRuntime'
 import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
 import { useWorkerChatIdentity } from './sessionChatContext'
 
@@ -113,6 +114,27 @@ function questionsFrom(interaction: Interaction): Question[] {
       typeof (question as Question).question === 'string'
     )
   )
+}
+
+/** Reads the before-and-after view a tool attached to its approval request, if any. */
+function approvalPreview(value: unknown): AgentApprovalPreview | null {
+  if (!value || typeof value !== 'object') return null
+  const preview = value as Partial<AgentApprovalPreview>
+  if (!Array.isArray(preview.changes)) return null
+  const changes = preview.changes
+    .filter(
+      (change) =>
+        change &&
+        typeof change.label === 'string' &&
+        typeof change.before === 'string' &&
+        typeof change.after === 'string'
+    )
+    .slice(0, 10)
+  if (!changes.length) return null
+  return {
+    ...(typeof preview.summary === 'string' ? { summary: preview.summary.slice(0, 600) } : {}),
+    changes
+  }
 }
 
 function answerText(given: unknown): string | null {
@@ -276,6 +298,7 @@ export default function AgentInteractionCard({
     const detail = interaction.request.arguments
       ? JSON.stringify(interaction.request.arguments, null, 2).slice(0, 3_000)
       : ''
+    const preview = approvalPreview(interaction.request.preview)
     // Only requests the runtime could scope offer a chat-wide approval.
     const chatScope =
       typeof interaction.request.chatScope === 'string' ? interaction.request.chatScope : ''
@@ -320,6 +343,23 @@ export default function AgentInteractionCard({
             <strong>{workerIdentity.workerName}</strong>
             <span>worker of {workerIdentity.managerTitle}</span>
             {workerIdentity.workplace && <span>in {workerIdentity.workplace}</span>}
+          </div>
+        )}
+        {preview && pending && !resolving && (
+          <div className="agent-interaction-preview">
+            {preview.summary && <p>{preview.summary}</p>}
+            <dl>
+              {preview.changes.map((change) => (
+                <div key={change.label} className="agent-interaction-change">
+                  <dt>{change.label}</dt>
+                  <dd>
+                    <del aria-label="Current value">{change.before}</del>
+                    <span aria-hidden="true">→</span>
+                    <ins aria-label="Proposed value">{change.after}</ins>
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </div>
         )}
         {detail && pending && !resolving && (

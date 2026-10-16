@@ -9,8 +9,57 @@ import type {
 import {
   providerDefinition,
   providerDefinitionForInstance,
+  type ProviderDefinition,
   type ProviderKind
 } from './providerRegistry'
+
+/** A new, empty instance of a provider type, as the Settings window and the CLI create one. */
+export function createProviderInstance(
+  template: ProviderDefinition,
+  id: string,
+  name: string = template.name
+): ProviderInstance {
+  return {
+    id,
+    name,
+    type: template.type,
+    preset: template.preset,
+    enabled: true,
+    baseUrl: template.defaultBaseUrl,
+    modelSource: template.capabilities.discovery === 'manual' ? 'manual' : 'discover',
+    models: []
+  }
+}
+
+/**
+ * Checks a provider base URL. Credentials in the URL are refused because they would be stored
+ * and shown in plain text; use `sidekick auth set` for keys.
+ */
+export function validateProviderBaseUrl(value: string): string | null {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return 'Base URL must be a full http:// or https:// address.'
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return 'Base URL must use http:// or https://.'
+  }
+  if (url.username || url.password) {
+    return 'Base URL must not contain a user name or password; store keys with sidekick auth set.'
+  }
+  return null
+}
+
+/** Whether requests to this URL leave the computer unencrypted. */
+export function providerUrlIsUnencryptedRemote(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  } catch {
+    return false
+  }
+}
 
 export function transportForProviderType(type: ProviderInstanceType): ModelProvider {
   const kind: ProviderKind = type === 'openai-compatible' ? 'openai-compatible' : type

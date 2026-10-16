@@ -41,6 +41,7 @@ import {
 import { normalizeToolCallLimit } from '../../../shared/agentLimits'
 import { validateMcpServerConfig } from '../../../shared/mcp'
 import { ACCENT_PALETTES, applyAccentPalette } from '../constants/accentPalettes'
+import { CommandLineToolSettings } from './CommandLineToolSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
@@ -64,6 +65,8 @@ interface SettingsModalProps {
   onSave: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
   onClose: () => void
   initialSection?: SettingsSection
+  /** Shows a provider's key field, when SideKick's agent asked the user for a key. */
+  providerKeyRequest?: { id: string; at: number } | null
 }
 
 const SETTINGS_ICONS = {
@@ -83,7 +86,8 @@ function SettingsModal({
   settings: initialSettings,
   onSave,
   onClose,
-  initialSection = 'providers'
+  initialSection = 'providers',
+  providerKeyRequest = null
 }: SettingsModalProps): React.JSX.Element {
   const [settings, setSettings] = useState<ProviderSettings>(initialSettings)
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
@@ -91,6 +95,9 @@ function SettingsModal({
   // Set by the version button; the Updates card only exists once General renders.
   const [revealUpdates, setRevealUpdates] = useState(false)
   const [mcpValidationError, setMcpValidationError] = useState<string | null>(null)
+  useEffect(() => {
+    if (providerKeyRequest) setActiveSection('providers')
+  }, [providerKeyRequest])
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
@@ -197,6 +204,7 @@ function SettingsModal({
         <ProviderSettingsPanel
           instances={settings.providerInstances || []}
           onChange={(providerInstances) => setSettings({ ...settings, providerInstances })}
+          keyRequest={providerKeyRequest}
         />
       )
     }
@@ -668,13 +676,14 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Integrations"
-            description="Connect and manage external MCP tool servers."
+            description="Connect external MCP tool servers and the sidekick command."
           />
           <McpServerSettings
             servers={settings.mcpServers || []}
             onChange={(mcpServers) => setSettings({ ...settings, mcpServers })}
             validationError={mcpValidationError}
           />
+          <CommandLineToolSettings />
         </div>
       )
     }

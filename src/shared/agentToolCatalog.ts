@@ -17,6 +17,12 @@ import {
 import type { ToolRisk } from './types'
 import type { AgentPlanStage } from './agentPlans'
 import { agentWaitTitle } from './agentWait'
+import {
+  providerRequestKeyTool,
+  settingsProposeChangeTool,
+  settingsReadTool,
+  settingsReferenceTool
+} from './appSettingsTools'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
@@ -51,7 +57,7 @@ function entry(
   tool: AgentToolDefinition,
   capability: AgentCapability,
   risk: ToolRisk,
-  runtime: Pick<AgentToolCatalogEntry, 'host' | 'timeoutMs' | 'concurrency'> & {
+  runtime: Pick<AgentToolCatalogEntry, 'host' | 'timeoutMs' | 'concurrency' | 'approval'> & {
     presentation?: AgentToolPresentationDefinition
   } = {
     host: 'main',
@@ -134,6 +140,13 @@ function presentationTitle(
       detail: stringArgument(args, 'task')
     }
   if (name === 'manage_todo_list') return { kind, title: 'Update run tasks' }
+  if (name === 'settings_read') return { kind, title: 'Read SideKick settings' }
+  if (name === 'settings_reference') return { kind, title: 'Read the settings reference' }
+  if (name === 'settings_propose_change') {
+    const key = stringArgument(args, 'key')
+    return { kind, title: `Change SideKick setting ${key}`.trim(), subject: key }
+  }
+  if (name === 'provider_request_key') return { kind, title: 'Ask for a provider key in Settings' }
   if (name === 'wait') return { kind, title: agentWaitTitle(args) }
   return { kind, title: name.replaceAll('_', ' ') }
 }
@@ -1351,6 +1364,14 @@ const collaborationClaimComplete = definition(
 )
 
 const coreEntries: AgentToolCatalogEntry[] = [
+  entry(settingsReadTool, 'settings', 'read'),
+  entry(settingsReferenceTool, 'settings', 'read'),
+  entry(settingsProposeChangeTool, 'settings', 'write', {
+    host: 'main',
+    concurrency: 'exclusive',
+    approval: 'always'
+  }),
+  entry(providerRequestKeyTool, 'settings', 'read'),
   entry(manageTodo, 'todo', 'write'),
   entry(shell, 'command.execute', 'execute', {
     host: 'subprocess',
@@ -1443,7 +1464,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'artifacts',
     'subagents',
     'plan',
-    'tool.output'
+    'tool.output',
+    'settings'
   ],
   collaboration: [
     'workspace.read',

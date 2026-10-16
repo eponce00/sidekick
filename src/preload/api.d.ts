@@ -15,6 +15,13 @@ interface SettingsAPI {
   selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
   save: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
   load: () => Promise<PublicProviderSettings | null>
+  /** Settings were changed outside this window, such as by the `sidekick` CLI. */
+  onChanged: (callback: () => void) => () => void
+}
+
+interface CommandLineAPI {
+  status: () => Promise<import('../shared/commandLineTool').CommandLineToolStatus>
+  install: () => Promise<import('../shared/commandLineTool').CommandLineToolInstallResult>
 }
 
 interface ProvidersAPI {
@@ -171,6 +178,8 @@ interface AgentRunsAPI {
 interface McpAPI {
   listTools: () => Promise<import('../shared/types').McpListResult>
   authenticate: (serverId: string) => Promise<import('../shared/types').McpListResult>
+  /** Shows the stored connector in a native dialog and records approval of exactly that content. */
+  approve: (serverId: string) => Promise<import('../shared/types').McpListResult>
   disconnect: (serverId: string) => Promise<import('../shared/types').McpListResult>
 }
 
@@ -207,6 +216,8 @@ interface AppAPI {
   getIconPath: () => Promise<string>
   onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => () => void
   onOpenConversation: (callback: (conversationId: string) => void) => () => void
+  /** SideKick's agent asked the user to enter a provider's key in Settings. */
+  onOpenProviderKey: (callback: (providerInstanceId: string) => void) => () => void
 }
 
 interface ClipboardAPI {
@@ -440,6 +451,7 @@ interface CollaborationAPI {
 export interface DesktopApi {
   providers: ProvidersAPI
   settings: SettingsAPI
+  commandLine: CommandLineAPI
   memory: MemoryAPI
   pinnedModels: PinnedModelsAPI
   conversations: ConversationsAPI
