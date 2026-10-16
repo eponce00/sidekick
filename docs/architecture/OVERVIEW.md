@@ -463,6 +463,25 @@ fixed read-only `git` and `gh` argument lists, refusing any other shape. GitHub 
 rate limits are cached there, so a missing CLI is not spawned on every poll. Links in the line open
 through the main window's external-navigation policy.
 
+### Worktrees and parallel agents
+
+`src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
+a chat that has not started (`createForConversation`, also the entry point for main-process callers
+such as agent-started chats), inventory with Git state, owners and disk use, merging the base into a
+clean idle worktree, and removal. It acts only on folders it can prove it created: the exact
+storage shape under the private `worktrees` folder, the recorded branch, and registration in
+`git worktree list`. Forced removal deletes links inside the worktree as links before
+`git worktree remove --force`, so a junction to a shared install never loses its target.
+
+`src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
+`AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a
+folder that is the same as, inside, or contains a busy one, unless the start input says
+`workspaceSharing: 'allow'`. Research runs read only and are not guarded; group participants are
+recorded so chats are warned about them. The renderer asks first through
+`agentRuns.workspaceOccupants`, but the refusal in the runtime is the enforcement. See the
+[worktree design note](../roadmap/WORKTREES.md) for the comparison with other harnesses and the
+open work.
+
 ## Built-in SideKick Search
 
 `src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and page reading (Markdown conversion, Readability for the main article, and a digest bounded by what the agent asked for) use the same internal capability.

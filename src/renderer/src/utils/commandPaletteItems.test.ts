@@ -43,7 +43,8 @@ function actions(): CommandPaletteActions {
     previousConversation: vi.fn(),
     nextConversation: vi.fn(),
     openConversation: vi.fn(),
-    openProjectConversations: vi.fn()
+    openProjectConversations: vi.fn(),
+    manageWorktrees: vi.fn()
   }
 }
 

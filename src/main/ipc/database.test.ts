@@ -23,11 +23,12 @@ vi.mock('electron', () => ({
 
 vi.mock('./state', () => ({ getDb: () => mocks.db }))
 vi.mock('./workspaceUtils', () => ({ resolveKnownWorkspace: vi.fn() }))
-vi.mock('../services/managedWorktreeService', () => ({
-  ManagedWorktreeService: class {
-    create = mocks.createWorktree
-    discardFreshProject = mocks.discardFreshProject
-  }
+vi.mock('./worktrees', () => ({
+  getManagedWorktrees: () => ({
+    create: mocks.createWorktree,
+    discardFreshProject: mocks.discardFreshProject,
+    isManagedProject: () => false
+  })
 }))
 vi.mock('./worktreeSetup', () => ({ setupCreatedWorktree: mocks.setupCreatedWorktree }))
 

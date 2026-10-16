@@ -49,6 +49,7 @@ const REQUIRED_COLUMNS = [
     definition: 'INTEGER'
   },
   { table: 'messages', column: 'checkpoint_workspace_root', definition: 'TEXT' },
+  { table: 'managed_worktrees', column: 'base_ref', definition: 'TEXT' },
   {
     table: 'messages',
     column: 'run_mode',
@@ -322,6 +323,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       ensureRequiredColumns(db)
       db.exec(SCHEDULE_TABLES)
     }
+  },
+  {
+    id: '20261016_002_worktree_base_ref',
+    description: 'record the branch or commit each managed worktree started from',
+    contentId: 'v1|required-managed-worktree-base-ref-column',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+    }
   }
 ]
 
@@ -468,6 +477,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       repository_root TEXT NOT NULL,
       worktree_root TEXT NOT NULL UNIQUE,
       branch TEXT NOT NULL UNIQUE,
+      base_ref TEXT,
       created_at INTEGER NOT NULL,
       last_used_at INTEGER NOT NULL
     );

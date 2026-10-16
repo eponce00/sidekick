@@ -14,6 +14,7 @@ import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
 import { registerScheduleHandlers } from './schedules'
 import { registerPullRequestHandlers } from './pullRequests'
+import { registerWorktreeHandlers } from './worktrees'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -25,6 +26,7 @@ export function registerAllHandlers(): void {
   registerSettingsHandlers()
   registerDatabaseHandlers()
   registerProjectHandlers()
+  registerWorktreeHandlers()
   registerWorkspaceHandlers()
   registerCheckpointHandlers()
   registerMcpHandlers()
