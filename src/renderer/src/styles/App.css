@@ -58,6 +58,8 @@
   --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
   --error-bg: var(--color-error-subtle);
   --color-folder: #d4a82f;
+  /* GitHub's merged and merge-queue purple. */
+  --color-merged: #a98bf5;
 
   /* — Color: Messages — */
   --message-user-bg: var(--surface-3);
@@ -160,6 +162,7 @@ body[data-theme='light'] {
   --color-error-fill: #b83a3a;
   --color-success-fill: #1f6e48;
   --color-folder: #b08a1f;
+  --color-merged: #7048c8;
 
   --message-user-bg: var(--surface-3);
   --message-user-text: var(--text-primary);

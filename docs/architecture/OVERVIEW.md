@@ -457,6 +457,12 @@ and a freshly loaded `AGENTS.override.md`/`AGENTS.md` instruction chain. The sid
 with nested conversations and keeps standalone chats in a separate section. See
 [Projects](../user-guide/PROJECTS.md) for persistence, movement, and instruction-discovery behavior.
 
+The composer's pull request line asks `pullRequests:getStatus` with a folder only. The main process
+checks it with the known-workspace resolver, then `src/main/services/pullRequestStatus.ts` runs
+fixed read-only `git` and `gh` argument lists, refusing any other shape. GitHub CLI availability and
+rate limits are cached there, so a missing CLI is not spawned on every poll. Links in the line open
+through the main window's external-navigation policy.
+
 ## Built-in SideKick Search
 
 `src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and page reading (Markdown conversion, Readability for the main article, and a digest bounded by what the agent asked for) use the same internal capability.

@@ -309,6 +309,10 @@ const api = {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
     revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
   },
+  pullRequests: {
+    getStatus: (workspaceRoot: string) =>
+      ipcRenderer.invoke('pullRequests:getStatus', workspaceRoot)
+  },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
     maximize: () => ipcRenderer.send('window:maximize'),

@@ -1,4 +1,5 @@
 import { previewTerminalApi } from './terminalPreview'
+import { previewPullRequestsApi } from './pullRequestPreview'
 import type {
   CollaborationAgentSessionMessage,
   CollaborationGroup,
@@ -1299,6 +1300,7 @@ export function installBrowserApiMock(): void {
         return [...previewBrowserNetwork]
       }
     },
+    pullRequests: previewPullRequestsApi(),
     window: {
       minimize: () => {},
       maximize: () => {},
