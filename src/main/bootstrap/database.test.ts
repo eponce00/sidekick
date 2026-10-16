@@ -43,6 +43,95 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('adds family links, messages, proposals and grants to an installed database', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-sessions-'))
+    let disk: Database.Database | undefined
+    try {
+      // A chat table from before families: every link column arrives through ALTER TABLE.
+      const path = join(root, 'app.db')
+      disk = new Database(path)
+      disk.exec(`
+        CREATE TABLE conversations (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        INSERT INTO conversations VALUES ('manager', 'Manager', 1, 1);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      const columns = (
+        disk.prepare('PRAGMA table_info(conversations)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).toEqual(
+        expect.arrayContaining([
+          'started_by_kind',
+          'started_by_conversation_id',
+          'report_to_conversation_id',
+          'session_handle',
+          'work_in',
+          'archived_at'
+        ])
+      )
+      expect(
+        disk.prepare("SELECT started_by_kind FROM conversations WHERE id = 'manager'").get()
+      ).toEqual({ started_by_kind: 'user' })
+      expect(
+        disk
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'session_%' ORDER BY name"
+          )
+          .all()
+      ).toEqual([
+        { name: 'session_attachments' },
+        { name: 'session_messages' },
+        { name: 'session_project_grants' },
+        { name: 'session_proposals' }
+      ])
+
+      const addWorker = disk.prepare(`
+        INSERT INTO conversations
+          (id, title, created_at, updated_at, started_by_kind, started_by_conversation_id,
+           report_to_conversation_id, session_handle, work_in)
+        VALUES (?, ?, 2, 2, 'session', 'manager', 'manager', ?, 'worktree')
+      `)
+      addWorker.run('worker-1', 'Schedules', 'schedules')
+      expect(() => addWorker.run('worker-2', 'Schedules again', 'schedules')).toThrow(/UNIQUE/)
+      disk
+        .prepare(
+          `INSERT INTO session_messages (id, from_conversation_id, to_conversation_id, intent, body, created_at)
+           VALUES ('report-1', 'worker-1', 'manager', 'report', 'Done.', 3)`
+        )
+        .run()
+      expect(() =>
+        disk!
+          .prepare(
+            `INSERT INTO session_messages (id, to_conversation_id, intent, body, created_at)
+             VALUES ('bad', 'manager', 'approve', 'Approve it', 4)`
+          )
+          .run()
+      ).toThrow(/CHECK/)
+
+      // Deleting a manager detaches its workers; messages addressed to it go with it.
+      disk.prepare("DELETE FROM conversations WHERE id = 'manager'").run()
+      expect(
+        disk
+          .prepare(
+            "SELECT started_by_conversation_id, report_to_conversation_id FROM conversations WHERE id = 'worker-1'"
+          )
+          .get()
+      ).toEqual({ started_by_conversation_id: null, report_to_conversation_id: null })
+      expect(disk.prepare('SELECT count(*) AS count FROM session_messages').get()).toEqual({
+        count: 0
+      })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('adds schedules and the schedule columns on chats to an installed database', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-schedules-'))
     let disk: Database.Database | undefined
@@ -106,7 +195,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 11
+        count: 12
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -241,7 +330,8 @@ describe('database schema migrations', () => {
       { id: '20260923_001_message_notice_tone', checksum_length: 64 },
       { id: '20260923_002_message_goal_origin', checksum_length: 64 },
       { id: '20261016_001_schedules', checksum_length: 64 },
-      { id: '20261016_002_worktree_base_ref', checksum_length: 64 }
+      { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
+      { id: '20261016_003_sessions', checksum_length: 64 }
     ])
     expect(
       db

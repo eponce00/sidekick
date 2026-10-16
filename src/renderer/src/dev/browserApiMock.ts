@@ -1,5 +1,6 @@
 import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
+import { previewSessionConversations, previewSessionsApi } from './sessionsPreview'
 import type {
   CollaborationAgentSessionMessage,
   CollaborationGroup,
@@ -145,9 +146,11 @@ const previewConversations: ProjectConversation[] = [
       home_workspace_root: 'C:\\Projects\\sidekick-demo',
       home_project_name: 'sidekick-demo',
       schedule_id: 'preview-schedule-1',
-      schedule_run_number: run
+      schedule_run_number: run,
+      started_by_kind: 'schedule'
     })
-  )
+  ),
+  ...previewSessionConversations
 ]
 
 const previewSchedules: Schedule[] = [
@@ -1305,6 +1308,7 @@ export function installBrowserApiMock(): void {
       onAttention: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    sessions: previewSessionsApi(),
     schedules: {
       list: async () => [...previewSchedules],
       create: async (input) => {

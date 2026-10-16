@@ -253,6 +253,41 @@ const api = {
       return () => ipcRenderer.removeListener('schedules:changed', listener)
     }
   },
+  sessions: {
+    statuses: () => ipcRenderer.invoke('sessions:statuses'),
+    family: (conversationId: string) => ipcRenderer.invoke('sessions:family', conversationId),
+    messages: (conversationId: string, options?: { limit?: number; beforeCreatedAt?: number }) =>
+      ipcRenderer.invoke('sessions:messages', conversationId, options),
+    markMessagesRead: (conversationId: string) =>
+      ipcRenderer.invoke('sessions:markMessagesRead', conversationId),
+    attachment: (id: string) => ipcRenderer.invoke('sessions:attachment', id),
+    start: (input: import('../shared/sessions').StartSessionsInput) =>
+      ipcRenderer.invoke('sessions:start', input),
+    proposals: (conversationId: string) => ipcRenderer.invoke('sessions:proposals', conversationId),
+    startProposal: (
+      id: string,
+      overrides?: Partial<import('../shared/sessions').StartSessionSpec>
+    ) => ipcRenderer.invoke('sessions:startProposal', id, overrides),
+    dismissProposal: (id: string) => ipcRenderer.invoke('sessions:dismissProposal', id),
+    stop: (conversationId: string) => ipcRenderer.invoke('sessions:stop', conversationId),
+    archive: (conversationId: string, options?: { family?: boolean }) =>
+      ipcRenderer.invoke('sessions:archive', conversationId, options),
+    unarchive: (conversationId: string) => ipcRenderer.invoke('sessions:unarchive', conversationId),
+    detach: (conversationId: string) => ipcRenderer.invoke('sessions:detach', conversationId),
+    grants: (conversationId: string) => ipcRenderer.invoke('sessions:grants', conversationId),
+    grantProject: (conversationId: string, projectId: string) =>
+      ipcRenderer.invoke('sessions:grantProject', conversationId, projectId),
+    revokeProject: (conversationId: string, projectId: string) =>
+      ipcRenderer.invoke('sessions:revokeProject', conversationId, projectId),
+    onChanged: (callback: (change: import('../shared/sessions').SessionsChangedEvent) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/sessions').SessionsChangedEvent
+      ): void => callback(change)
+      ipcRenderer.on('sessions:changed', listener)
+      return () => ipcRenderer.removeListener('sessions:changed', listener)
+    }
+  },
   collaboration: {
     listGroups: () => ipcRenderer.invoke('collaboration:listGroups'),
     getGroup: (id: string) => ipcRenderer.invoke('collaboration:getGroup', id),
