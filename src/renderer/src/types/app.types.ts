@@ -26,4 +26,6 @@ export interface Conversation {
   unread_completion_at?: number | null
   forked_from_conversation_id?: string | null
   forked_from_message_id?: string | null
+  schedule_id?: string | null
+  schedule_run_number?: number | null
 }

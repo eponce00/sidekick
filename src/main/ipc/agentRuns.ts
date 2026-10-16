@@ -49,12 +49,31 @@ const attention = new ConversationAttentionTracker(
   }
 )
 
+const runEventObservers = new Set<
+  (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+>()
+
+/** Lets another main-process service follow run events, such as the scheduler. */
+export function observeAgentRunEvents(
+  observer: (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+): () => void {
+  runEventObservers.add(observer)
+  return () => runEventObservers.delete(observer)
+}
+
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
   try {
     attention.observe(event)
   } catch (error) {
     // Attention is a convenience; it must never interrupt the durable event stream.
     console.warn('[Attention] Could not follow a run event:', error)
+  }
+  for (const observer of runEventObservers) {
+    try {
+      observer(event)
+    } catch (error) {
+      console.warn('[AgentRuntime] A run event observer failed:', error)
+    }
   }
   publishDesktopEvent('agentRuns:event', { event })
   notifyActivity()
@@ -87,6 +106,16 @@ function getAgentEngineClient(): AgentEngineClient {
     )
   }
   return engineClient
+}
+
+/** Starts a conversation run on the same engine path the renderer's chat uses. */
+export function startConversationRun(
+  input: StartConversationAgentRunInput
+): Promise<import('../../shared/agentRuntime').AgentRunSnapshot> {
+  return getAgentEngineClient().request<import('../../shared/agentRuntime').AgentRunSnapshot>({
+    type: 'run.startConversation',
+    input
+  })
 }
 
 function validId(value: unknown): value is string {

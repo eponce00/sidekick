@@ -9,6 +9,12 @@ import type {
   ConversationGoal,
   ConversationGoalChangedEvent
 } from '../../../shared/conversationGoals'
+import {
+  nextScheduleOccurrence,
+  type Schedule,
+  type ScheduleRun,
+  type SchedulesChangedEvent
+} from '../../../shared/schedules'
 
 const previewSettings = {
   openRouterApiKeyConfigured: false,
@@ -124,8 +130,95 @@ const previewConversations: ProjectConversation[] = [
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
     home_project_name: 'sidekick-demo'
+  },
+  ...[2, 1].map(
+    (run): ProjectConversation => ({
+      id: `preview-scheduled-${run}`,
+      title: `Morning repository check · Run ${run}`,
+      created_at: Date.now() - (3 - run) * 86_400_000,
+      updated_at: Date.now() - (3 - run) * 86_400_000,
+      project_id: 'preview-project-1',
+      sidebar_order: 2,
+      project_context_version: 0,
+      home_workspace_root: 'C:\\Projects\\sidekick-demo',
+      home_project_name: 'sidekick-demo',
+      schedule_id: 'preview-schedule-1',
+      schedule_run_number: run
+    })
+  )
+]
+
+const previewSchedules: Schedule[] = [
+  {
+    id: 'preview-schedule-1',
+    name: 'Morning repository check',
+    prompt: 'Summarize what changed in this repository since yesterday and flag anything risky.',
+    projectId: 'preview-project-1',
+    modelId: 'ollama:qwen3:8b',
+    cadence: 'weekdays',
+    hour: 9,
+    minute: 0,
+    weekday: 1,
+    catchUp: true,
+    enabled: true,
+    nextRunAt: nextScheduleOccurrence(
+      { cadence: 'weekdays', hour: 9, minute: 0, weekday: 1 },
+      Date.now()
+    ),
+    lastRunAt: Date.now() - 86_400_000,
+    runCount: 2,
+    createdAt: Date.now() - 3 * 86_400_000,
+    updatedAt: Date.now() - 86_400_000
   }
 ]
+
+const previewScheduleRuns: ScheduleRun[] = [
+  {
+    id: 'preview-schedule-run-2',
+    scheduleId: 'preview-schedule-1',
+    runNumber: 2,
+    scheduledFor: Date.now() - 86_400_000,
+    startedAt: Date.now() - 86_400_000,
+    outcome: 'started',
+    trigger: 'schedule',
+    late: false,
+    conversationId: 'preview-scheduled-2',
+    agentPhase: 'completed'
+  },
+  {
+    id: 'preview-schedule-run-1',
+    scheduleId: 'preview-schedule-1',
+    runNumber: 1,
+    scheduledFor: Date.now() - 2 * 86_400_000 - 3_600_000,
+    startedAt: Date.now() - 2 * 86_400_000,
+    outcome: 'started',
+    trigger: 'schedule',
+    late: true,
+    reason: 'Started late: SideKick was closed or the computer was asleep.',
+    conversationId: 'preview-scheduled-1',
+    agentPhase: 'completed'
+  }
+]
+
+const previewScheduleListeners = new Set<(change: SchedulesChangedEvent) => void>()
+
+function previewSchedule(id: string): Schedule {
+  const schedule = previewSchedules.find((candidate) => candidate.id === id)
+  if (!schedule) throw new Error('Schedule not found')
+  return schedule
+}
+
+function publishPreviewSchedules(): void {
+  for (const listener of previewScheduleListeners) listener({ schedules: [...previewSchedules] })
+}
+
+function changePreviewSchedule(id: string, change: Partial<Schedule>): Schedule {
+  const index = previewSchedules.findIndex((candidate) => candidate.id === id)
+  if (index < 0) throw new Error('Schedule not found')
+  previewSchedules[index] = { ...previewSchedules[index], ...change, updatedAt: Date.now() }
+  publishPreviewSchedules()
+  return previewSchedules[index]
+}
 
 const previewCreatedConversations: ProjectConversation[] = []
 
@@ -997,6 +1090,59 @@ export function installBrowserApiMock(): void {
       onAttention: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    schedules: {
+      list: async () => [...previewSchedules],
+      create: async (input) => {
+        const schedule: Schedule = {
+          ...input,
+          id: crypto.randomUUID(),
+          enabled: true,
+          nextRunAt: nextScheduleOccurrence(input, Date.now()),
+          runCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+        previewSchedules.push(schedule)
+        publishPreviewSchedules()
+        return schedule
+      },
+      update: async ({ id, ...input }) =>
+        changePreviewSchedule(id, {
+          ...input,
+          nextRunAt: previewSchedule(id).enabled ? nextScheduleOccurrence(input, Date.now()) : null
+        }),
+      pause: async (id) => changePreviewSchedule(id, { enabled: false, nextRunAt: null }),
+      resume: async (id) =>
+        changePreviewSchedule(id, {
+          enabled: true,
+          pausedReason: undefined,
+          nextRunAt: nextScheduleOccurrence(previewSchedule(id), Date.now())
+        }),
+      delete: async (id) => {
+        const index = previewSchedules.findIndex((candidate) => candidate.id === id)
+        if (index >= 0) previewSchedules.splice(index, 1)
+        publishPreviewSchedules()
+        return { success: index >= 0 }
+      },
+      runNow: async (id) => {
+        const run: ScheduleRun = {
+          id: crypto.randomUUID(),
+          scheduleId: id,
+          scheduledFor: Date.now(),
+          outcome: 'skipped',
+          trigger: 'manual',
+          late: false,
+          reason: 'The preview does not start agent runs.'
+        }
+        previewScheduleRuns.unshift(run)
+        return run
+      },
+      runs: async (id) => previewScheduleRuns.filter((run) => run.scheduleId === id),
+      onChanged: (callback) => {
+        previewScheduleListeners.add(callback)
+        return () => previewScheduleListeners.delete(callback)
+      }
+    },
     conversationGoals: {
       current: async (conversationId) =>
         previewGoal?.conversationId === conversationId ? previewGoal : null,

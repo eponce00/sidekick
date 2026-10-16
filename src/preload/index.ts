@@ -218,6 +218,28 @@ const api = {
       return () => ipcRenderer.removeListener('conversationGoals:changed', listener)
     }
   },
+  schedules: {
+    list: () => ipcRenderer.invoke('schedules:list'),
+    create: (input: import('../shared/schedules').ScheduleInput) =>
+      ipcRenderer.invoke('schedules:create', input),
+    update: (input: import('../shared/schedules').UpdateScheduleInput) =>
+      ipcRenderer.invoke('schedules:update', input),
+    pause: (id: string) => ipcRenderer.invoke('schedules:pause', id),
+    resume: (id: string) => ipcRenderer.invoke('schedules:resume', id),
+    delete: (id: string) => ipcRenderer.invoke('schedules:delete', id),
+    runNow: (id: string) => ipcRenderer.invoke('schedules:runNow', id),
+    runs: (id: string) => ipcRenderer.invoke('schedules:runs', id),
+    onChanged: (
+      callback: (change: import('../shared/schedules').SchedulesChangedEvent) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/schedules').SchedulesChangedEvent
+      ): void => callback(change)
+      ipcRenderer.on('schedules:changed', listener)
+      return () => ipcRenderer.removeListener('schedules:changed', listener)
+    }
+  },
   collaboration: {
     listGroups: () => ipcRenderer.invoke('collaboration:listGroups'),
     getGroup: (id: string) => ipcRenderer.invoke('collaboration:getGroup', id),

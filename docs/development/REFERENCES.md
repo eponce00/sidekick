@@ -11,7 +11,7 @@ research inputs, not runtime dependencies or vendored source.
 | Codex        | [openai/codex](https://github.com/openai/codex)                                 | agent loop, approvals, configuration, project instructions |
 | OpenCode     | [anomalyco/opencode](https://github.com/anomalyco/opencode)                     | sessions, tools, provider abstraction, desktop UX          |
 | DeepSeek     | [deepseek-ai/deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) | agent loop, tool guards, plugin boundaries                 |
-| Cline        | [cline/cline](https://github.com/cline/cline)                                   | Plan/Act UX, MCP, checkpoints, provider settings           |
+| Cline        | [cline/cline](https://github.com/cline/cline)                                   | Plan/Act UX, MCP, checkpoints, providers, scheduled runs   |
 | Pi           | [badlogic/pi-mono](https://github.com/badlogic/pi-mono)                         | compact agent loop, tool filtering, extensions             |
 | Hermes Agent | [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent)       | skills, memory, tool orchestration                         |
 | Claude Code  | [anthropics/claude-code](https://github.com/anthropics/claude-code)             | command UX, hooks, permissions, project configuration      |

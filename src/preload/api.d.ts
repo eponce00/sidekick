@@ -444,6 +444,7 @@ export interface DesktopApi {
   projects: ProjectsAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
+  schedules: import('../shared/schedules').SchedulesAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
   collaboration: CollaborationAPI
   mcp: McpAPI

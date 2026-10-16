@@ -32,6 +32,7 @@ function actions(): CommandPaletteActions {
   return {
     newChat: vi.fn(),
     newGroupChat: vi.fn(),
+    openSchedules: vi.fn(),
     openProject: vi.fn(),
     openSettings: vi.fn(),
     toggleSidebar: vi.fn(),

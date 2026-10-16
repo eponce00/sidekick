@@ -19,6 +19,7 @@ behavior, and the development guide when testing or publishing it.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
 - [Working in the background](user-guide/BACKGROUND.md) — keep agents working from the tray or Dock, and quit.
+- [Schedules](user-guide/SCHEDULES.md) — run a saved prompt hourly, daily, on weekdays, or weekly.
 
 ## Architecture
 
@@ -27,6 +28,7 @@ behavior, and the development guide when testing or publishing it.
 - [Prompt and context](architecture/PROMPT_AND_CONTEXT.md) — trusted instructions and compaction.
 - [Workspace verification](architecture/VERIFICATION.md) — revision-bound evidence and completion guards.
 - [Persistent goals](architecture/PERSISTENT_GOALS.md) — durable multi-run objectives.
+- [Scheduled runs](architecture/SCHEDULES.md) — the scheduler, missed runs, overlap, and approvals.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
 
 ## Development and operations

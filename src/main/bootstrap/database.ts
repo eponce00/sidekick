@@ -99,8 +99,59 @@ const REQUIRED_COLUMNS = [
     table: 'messages',
     column: 'starts_goal',
     definition: 'INTEGER NOT NULL DEFAULT 0'
-  }
+  },
+  // The schedule that created a chat, and its run number, so the sidebar can group the runs.
+  { table: 'conversations', column: 'schedule_id', definition: 'TEXT' },
+  { table: 'conversations', column: 'schedule_run_number', definition: 'INTEGER' }
 ] as const
+
+const SCHEDULE_TABLES = `
+  CREATE TABLE IF NOT EXISTS schedules (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    project_id TEXT,
+    model_id TEXT NOT NULL,
+    cadence TEXT NOT NULL CHECK (cadence IN ('hourly', 'daily', 'weekdays', 'weekly')),
+    hour INTEGER NOT NULL,
+    minute INTEGER NOT NULL,
+    weekday INTEGER NOT NULL,
+    catch_up INTEGER NOT NULL DEFAULT 1,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    paused_reason TEXT,
+    next_run_at INTEGER,
+    last_run_at INTEGER,
+    run_count INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS schedule_runs (
+    id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL,
+    run_number INTEGER,
+    scheduled_for INTEGER NOT NULL,
+    started_at INTEGER,
+    outcome TEXT NOT NULL CHECK (outcome IN ('started', 'skipped', 'failed')),
+    trigger TEXT NOT NULL CHECK (trigger IN ('schedule', 'manual')),
+    late INTEGER NOT NULL DEFAULT 0,
+    reason TEXT,
+    conversation_id TEXT,
+    agent_run_id TEXT,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE CASCADE,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_schedule_runs_schedule
+    ON schedule_runs(schedule_id, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_schedules_due
+    ON schedules(enabled, next_run_at);
+
+  CREATE INDEX IF NOT EXISTS idx_schedule_runs_agent_run
+    ON schedule_runs(agent_run_id);
+`
 
 function ensureRequiredColumns(db: Database.Database): void {
   const columnsByTable = new Map<string, Set<string>>()
@@ -262,6 +313,15 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     apply: (db) => {
       ensureRequiredColumns(db)
     }
+  },
+  {
+    id: '20261016_001_schedules',
+    description: 'store schedules, their runs, and the schedule that created each chat',
+    contentId: 'v1|schedules-and-schedule-runs-tables|required-conversation-schedule-columns',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec(SCHEDULE_TABLES)
+    }
   }
 ]
 
@@ -396,6 +456,8 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       unread_completion_at INTEGER,
       forked_from_conversation_id TEXT,
       forked_from_message_id TEXT,
+      schedule_id TEXT,
+      schedule_run_number INTEGER,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     );
 
@@ -825,6 +887,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_collaboration_artifacts_group
       ON collaboration_artifacts(group_id, created_at DESC);
   `)
+  db.exec(SCHEDULE_TABLES)
 
   applyVersionedMigrations(db)
 

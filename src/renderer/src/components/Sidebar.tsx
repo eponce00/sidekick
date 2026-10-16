@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CalendarClock,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
@@ -50,6 +51,8 @@ import {
 import { shortcutLabel } from '../../../shared/keyboardShortcuts'
 import type { DesktopPlatform } from '../../../shared/platform'
 import ConfirmDialog from './ConfirmDialog'
+import ScheduledRunGroupRow from './ScheduledRunGroupRow'
+import { groupScheduledConversations } from '../utils/scheduledRunGroups'
 import './Sidebar.css'
 
 interface SidebarProps {
@@ -88,6 +91,9 @@ interface SidebarProps {
   onRemoveProject: (id: string) => void
   /** The conversations as listed, top to bottom, for keyboard navigation. */
   onVisibleConversationOrderChange?: (conversationIds: string[]) => void
+  /** Schedule names by id, for the rows that group each schedule's runs. */
+  scheduleNames?: ReadonlyMap<string, string>
+  onOpenSchedules?: () => void
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
@@ -132,7 +138,9 @@ function Sidebar({
   onToggleConversationPin,
   onToggleProjectPin,
   onRemoveProject,
-  onVisibleConversationOrderChange
+  onVisibleConversationOrderChange,
+  scheduleNames,
+  onOpenSchedules
 }: SidebarProps): React.JSX.Element {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [deleteGroupConfirm, setDeleteGroupConfirm] = useState<string | null>(null)
@@ -510,7 +518,7 @@ function Sidebar({
 
   const renderConversation = (
     conversation: Conversation,
-    options: { nested?: boolean; showProject?: boolean } = {}
+    options: { nested?: boolean; showProject?: boolean; title?: string } = {}
   ): React.JSX.Element => {
     const isConversationBusy = busyConversationIds.has(conversation.id)
     const runStatus = statusById.get(conversation.id) ?? null
@@ -588,7 +596,7 @@ function Sidebar({
               onDoubleClick={() => beginConversationRename(conversation)}
               title={`${conversation.title} — double-click to rename`}
             >
-              <span className="conversation-title">{conversation.title}</span>
+              <span className="conversation-title">{options.title ?? conversation.title}</span>
               {options.showProject && conversation.project_id && (
                 <span className="conversation-metadata">
                   {projectNameById.get(conversation.project_id)}
@@ -738,6 +746,30 @@ function Sidebar({
     )
   }
 
+  // A schedule's chats share one row, so its runs do not crowd out the user's own chats.
+  const renderConversationList = (
+    list: Conversation[],
+    options: { nested?: boolean; showProject?: boolean } = {}
+  ): React.JSX.Element[] =>
+    groupScheduledConversations(list, scheduleNames).map((entry) =>
+      entry.kind === 'conversation' ? (
+        renderConversation(entry.conversation, options)
+      ) : (
+        <ScheduledRunGroupRow
+          key={`schedule:${entry.group.scheduleId}`}
+          group={entry.group}
+          currentConversationId={currentConversationId}
+          nested={options.nested}
+          waiting={waitingConversationIds}
+          busy={busyConversationIds}
+          unread={unreadConversationIds}
+          renderConversation={(conversation, title) =>
+            renderConversation(conversation, { nested: true, title })
+          }
+        />
+      )
+    )
+
   const sectionHeading = (
     section: SidebarSection,
     label: string,
@@ -778,6 +810,17 @@ function Sidebar({
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
+            {onOpenSchedules && (
+              <button
+                type="button"
+                className="sidebar-icon-btn"
+                onClick={onOpenSchedules}
+                title="Schedules"
+                aria-label="Schedules"
+              >
+                <CalendarClock size={15} />
+              </button>
+            )}
             {!isCollapsed && (conversations.length > 0 || activeGroups.length > 0 || filtering) && (
               <>
                 <div className="sidebar-view-switch" role="group" aria-label="List chats">
@@ -1187,9 +1230,7 @@ function Sidebar({
                 recentGroups.map((group) => (
                   <section className="sidebar-section recent-section" key={group.bucket}>
                     <div className="sidebar-section-label">{group.label}</div>
-                    {group.conversations.map((conversation) =>
-                      renderConversation(conversation, { showProject: true })
-                    )}
+                    {renderConversationList(group.conversations, { showProject: true })}
                   </section>
                 ))
               ) : (
@@ -1372,9 +1413,7 @@ function Sidebar({
                               </div>
                               {!isProjectCollapsed && (
                                 <div className="project-conversations">
-                                  {projectConversations.map((conversation) =>
-                                    renderConversation(conversation, { nested: true })
-                                  )}
+                                  {renderConversationList(projectConversations, { nested: true })}
                                   {projectAgentSessions.map(({ group, session }) => {
                                     const sessionStatus = agentSessionStatus(session)
                                     return (
@@ -1539,7 +1578,7 @@ function Sidebar({
                         </button>
                       </div>
                       {isSectionCollapsed('chats') ? null : standaloneMatches.length > 0 ? (
-                        standaloneMatches.map((conversation) => renderConversation(conversation))
+                        renderConversationList(standaloneMatches)
                       ) : (
                         <div className="empty-conversations compact">
                           <Folder size={15} />

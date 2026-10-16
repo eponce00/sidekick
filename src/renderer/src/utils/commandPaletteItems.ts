@@ -10,6 +10,7 @@ import type { CommandPaletteItem } from './commandPalette'
 export interface CommandPaletteActions {
   newChat: () => void
   newGroupChat: () => void
+  openSchedules: () => void
   openProject: () => void
   openSettings: () => void
   toggleSidebar: () => void
@@ -57,6 +58,13 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       title: 'New group chat',
       keywords: 'agents collaboration team',
       run: actions.newGroupChat
+    },
+    {
+      id: 'action:open-schedules',
+      group: 'actions',
+      title: 'Schedules',
+      keywords: 'schedule routine recurring automation cron timer',
+      run: actions.openSchedules
     },
     {
       id: 'action:open-project',

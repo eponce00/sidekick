@@ -49,6 +49,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   one call in a thousand from a local model is still refused and retried today. It must stay
   optional per provider and be qualified for stability and speed first: the reference vLLM server
   recorded GPU faults during schema-constrained requests.
+- Extend schedules with a time limit per run, several weekdays or a custom cron expression per
+  schedule, one-time runs, an end date, and the run's outcome summarized in the schedule list. See
+  [Scheduled runs](../architecture/SCHEDULES.md) for the current design.
 - Let a parked browser page idle. Its parking window stays shown with background throttling off, so
   an animated page keeps painting with no one watching, and the shown window keeps SideKick running
   after its main window closes. Hiding parked pages between tool operations made a screenshot taken
