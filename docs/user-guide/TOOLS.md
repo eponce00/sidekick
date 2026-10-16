@@ -43,8 +43,10 @@ isolation always uses pipes.
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
   stopped it and goes on. Background stops the agent waiting on it while it keeps running.
-- **The Terminal tab.** The side panel lists the conversation's commands with their state and run
-  time. Select one to see all of its output in a terminal view, copy it, stop it, or type into it.
+- **The Terminal tab.** The side panel lists the conversation's commands by title, each with a
+  status dot and its run time, or **Needs input** while it waits for an answer. Select one to see
+  its command, status, and folder above all of its output in a terminal view; the buttons beside
+  the command copy the output, move it to the background, or stop it, and you can type into it.
 - **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
