@@ -367,7 +367,7 @@ export class AgentRuntimeCoordinator {
           surface: 'collaboration',
           workspaceRoot: input.workspaceRoot,
           editingDialect: editingDialectForTarget(target),
-          webSearchEnabled: true,
+          webSearchEnabled: currentSettings.webSearchEnabled !== false,
           collaboration: input.collaboration,
           instructionScopeId: input.id,
           onWorkspaceWillMutate: input.onWorkspaceWillMutate
@@ -940,7 +940,7 @@ export class AgentRuntimeCoordinator {
       surface: 'subagent',
       workspaceRoot: parentContext.workspaceRoot,
       editingDialect: editingDialectForTarget(target),
-      webSearchEnabled: true,
+      webSearchEnabled: this.settings().webSearchEnabled !== false,
       instructionScopeId: id,
       onWorkspaceWillMutate: parent.prepared.onWorkspaceWillMutate
     })

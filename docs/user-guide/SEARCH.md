@@ -2,6 +2,8 @@
 
 SideKick Search is the app's built-in, keyless search capability. It does not require a container, a separately running search server, an account, or a paid search API.
 
+It is on by default. **Settings → General → Web search** turns it off, which removes the agent's web search, image search, and page-reading tools; the browser panel still works.
+
 ## How it works
 
 For text queries, the Electron main process sends ordinary browser-style requests directly to three public search surfaces in parallel:

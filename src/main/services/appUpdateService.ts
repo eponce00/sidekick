@@ -32,6 +32,8 @@ interface AppUpdateServiceOptions {
   downloadUpdate?: typeof downloadAppUpdate | null
   installUpdate?: typeof installAppUpdate
   beforeQuit?: () => Promise<void>
+  /** Whether the startup and periodic checks run; a check the user asks for always does. */
+  automaticChecks?: () => boolean
 }
 
 function stableVersion(value: string): [number, number, number] | null {
@@ -128,6 +130,7 @@ export class AppUpdateService {
   private readonly downloadUpdate: typeof downloadAppUpdate | null
   private readonly installUpdate: typeof installAppUpdate
   private readonly beforeQuit: () => Promise<void>
+  private readonly automaticChecks?: () => boolean
   private controller = new AbortController()
   private installing = false
   private initialCheckTimer: ReturnType<typeof setTimeout> | null = null
@@ -145,6 +148,7 @@ export class AppUpdateService {
       options.downloadUpdate === undefined ? downloadAppUpdate : options.downloadUpdate
     this.installUpdate = options.installUpdate ?? installAppUpdate
     this.beforeQuit = options.beforeQuit ?? (async () => undefined)
+    this.automaticChecks = options.automaticChecks
     log.initialize()
     log.transports.file.level = 'info'
   }
@@ -167,6 +171,7 @@ export class AppUpdateService {
   }
 
   check(userInitiated = true): Promise<AppUpdateState> {
+    if (!userInitiated && this.automaticChecks?.() === false) return Promise.resolve(this.state)
     if (this.state.status === 'disabled') return Promise.resolve(this.state)
     if (this.state.status === 'ready' || this.installing) return Promise.resolve(this.state)
     if (this.checkPromise) return this.checkPromise

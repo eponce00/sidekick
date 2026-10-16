@@ -17,7 +17,11 @@ jobs:
   windows:
     name: Build Windows x64
     runs-on: windows-latest
-    timeout-minutes: 40
+    # Signing waits for a maintainer to approve the request in SignPath.
+    timeout-minutes: 100
+    env:
+      # Tagged releases are signed once the SignPath Foundation project is configured.
+      SIGN_WINDOWS: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -45,7 +49,7 @@ jobs:
       - run: npm run test:docs
       - run: npm test
       - run: npm run test:release
-      - name: Build unsigned Windows community artifacts
+      - name: Build Windows community artifacts
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run build:win
@@ -56,16 +60,52 @@ jobs:
       - run: npm run test:native-browser-fixtures
       - run: npm run validate:package -- dist/win-unpacked/resources
       - run: npm run smoke:packaged:windows
-      - name: Verify the community installer is intentionally unsigned
+      - name: Upload the unsigned installer for signing
+        if: env.SIGN_WINDOWS == 'true'
+        id: unsigned-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-Windows-x64-unsigned
+          path: dist/SideKick-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the installer through SignPath Foundation
+        if: env.SIGN_WINDOWS == 'true'
+        uses: SignPath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist-signed
+      - name: Replace the installer with its signed copy
+        if: env.SIGN_WINDOWS == 'true'
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem dist-signed -File -Recurse -Filter 'SideKick-*-windows-x64-setup.exe')
+          if ($signed.Count -ne 1) { throw 'Expected exactly one signed Windows installer.' }
+          Copy-Item -LiteralPath $signed[0].FullName -Destination (Join-Path dist $signed[0].Name) -Force
+      - name: Verify the installer signature
         shell: pwsh
         run: |
           $files = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-setup.exe')
           if ($files.Count -ne 1) { throw 'Expected exactly one Windows NSIS installer.' }
           $signature = Get-AuthenticodeSignature -FilePath $files[0].FullName
-          if ($signature.Status -ne 'NotSigned') {
+          if ($env:SIGN_WINDOWS -eq 'true') {
+            if ($signature.Status -ne 'Valid') {
+              throw "Expected a valid Authenticode signature, received: $($signature.Status)"
+            }
+            if ($signature.SignerCertificate.Subject -notmatch 'SignPath Foundation') {
+              throw "Unexpected signer: $($signature.SignerCertificate.Subject)"
+            }
+            Write-Host "Verified the SignPath Foundation signature on $($files[0].Name)."
+          } elseif ($signature.Status -ne 'NotSigned') {
             throw "Expected an unsigned community installer, received: $($signature.Status)"
+          } else {
+            Write-Host "Verified that $($files[0].Name) is unsigned; SignPath signing is not configured."
           }
-          Write-Host "Verified that $($files[0].Name) is intentionally unsigned."
       - name: Validate Windows community installer
         shell: pwsh
         run: |
@@ -296,8 +336,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_SIGNED: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
         run: |
           version="$(node -p "require('./package.json').version")"
+          if [ "$WINDOWS_SIGNED" = 'true' ]; then
+            windows_trust='The Windows installer is signed by SignPath Foundation, which provides free code signing to open-source projects.'
+          else
+            windows_trust='The Windows installer is unsigned.'
+          fi
           cat > release-notes.md <<EOF
           Free SideKick community packages built from \`$GITHUB_REPOSITORY@$GITHUB_SHA\`.
 
@@ -317,7 +363,7 @@ jobs:
 
           ## Trust
 
-          The macOS packages are ad-hoc signed and not notarized; the Windows installer is unsigned. Linux uses a self-contained AppImage and does not require a paid signing service. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestation before installing.
+          The macOS packages are ad-hoc signed and not notarized. $windows_trust Linux uses a self-contained AppImage and does not require a paid signing service. Verify \`SHA256SUMS.txt\` and the GitHub artifact attestation before installing. Read the [code signing policy](https://github.com/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/docs/development/CODE_SIGNING.md).
           EOF
           gh release create "$GITHUB_REF_NAME" release-artifacts/* \
             --repo "$GITHUB_REPOSITORY" \

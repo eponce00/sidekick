@@ -636,7 +636,7 @@ export class ConversationRunPreparer {
       // The model that executes the work edits files with the contract it was trained on.
       editingDialect: editingDialectForTarget(executionTarget),
       workspaceRoot: workspaceRoot ?? undefined,
-      webSearchEnabled: true,
+      webSearchEnabled: currentSettings.webSearchEnabled !== false,
       browserEnabled: input.model.supportsVision !== false,
       // "Add a chart to it" right after an artifact is the same work: the
       // web-artifacts guidance is already in history and need not be reloaded.
