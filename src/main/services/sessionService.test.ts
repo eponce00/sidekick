@@ -451,3 +451,63 @@ describe('proposals', () => {
     expect(() => service.dismissProposal(proposals[0].id)).toThrow(/no longer open/)
   })
 })
+
+describe('restart recovery', () => {
+  it('lists interrupted workers and never resumes them on its own', async () => {
+    const [first, second] = await startWorkers('Port schedules', 'Write docs')
+    // As the runtime's restart recovery does: active runs become interrupted.
+    for (const worker of [first, second]) {
+      const run = runtime.latestRun(worker.conversationId)!
+      Object.assign(run, { phase: 'interrupted', completedAt: Date.now() })
+    }
+    const before = runtime.started.length
+    service.recoverAfterRestart(0)
+    await service.idle()
+    expect(runtime.started).toHaveLength(before)
+
+    expect(
+      service.interrupted(MANAGER).map(({ handle, canResume }) => [handle, canResume])
+    ).toEqual(
+      expect.arrayContaining([
+        ['port-schedules', true],
+        ['write-docs', true]
+      ])
+    )
+    expect(service.state(first.conversationId)).toBe('failed')
+    expect(service.interrupted('someone-else')).toEqual([])
+  })
+
+  it('tells the manager once, without waking it', async () => {
+    const [worker] = await startWorkers('Port schedules')
+    Object.assign(runtime.latestRun(worker.conversationId)!, {
+      phase: 'interrupted',
+      completedAt: Date.now()
+    })
+    const managerRuns = runsOf(MANAGER).length
+    service.recoverAfterRestart(0)
+    await service.idle()
+    const notes = service
+      .messages(MANAGER)
+      .filter(({ intent, toConversationId }) => intent === 'status' && toConversationId === MANAGER)
+    expect(notes).toHaveLength(1)
+    expect(notes[0].body).toContain('port-schedules')
+    expect(notes[0].body).toContain('will not resume on its own')
+    expect(runsOf(MANAGER)).toHaveLength(managerRuns)
+
+    // A worker interrupted before this start was already reported last time.
+    service.recoverAfterRestart(Date.now() + 1_000)
+    expect(service.messages(MANAGER).filter(({ intent }) => intent === 'status')).toHaveLength(1)
+  })
+
+  it('resumes an interrupted worker by continuing its run', async () => {
+    const [worker] = await startWorkers('Port schedules')
+    const interrupted = runtime.latestRun(worker.conversationId)!
+    Object.assign(interrupted, { phase: 'interrupted', completedAt: Date.now() })
+    const result = await service.resume(worker.conversationId)
+    const resumed = runsOf(worker.conversationId).at(-1)!
+    expect(resumed).toMatchObject({ id: result.runId, continuesRunId: interrupted.id })
+    expect(resumed.workspaceSharing).toBeUndefined()
+    expect(service.state(worker.conversationId)).toBe('working')
+    await expect(service.resume(worker.conversationId)).rejects.toThrow('no interrupted run')
+  })
+})

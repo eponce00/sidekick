@@ -210,6 +210,10 @@ export class ManagedWorktreeService {
       .get(projectId) as ManagedWorktreeRow | undefined
   }
 
+  branchForProject(projectId: string): string | null {
+    return this.rowForProject(projectId)?.branch ?? null
+  }
+
   isManagedProject(projectId: string): boolean {
     return Boolean(this.rowForProject(projectId))
   }

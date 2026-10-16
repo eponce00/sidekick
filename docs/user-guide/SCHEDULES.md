@@ -45,6 +45,16 @@ carries on.
 A schedule runs one chat at a time. When its next time comes while the previous run is still
 working or waiting for you, that time is skipped, and its runs list says why.
 
+## When another agent is working in the project folder
+
+A scheduled run never writes into a folder where another chat's agent is writing. If the project is
+a Git repository, the run starts in a new worktree instead, and its history says so with the branch
+name. Otherwise the run is skipped, and its history says it was skipped because the folder was busy.
+Worktree setup hooks need your approval, so they do not run for a scheduled run's worktree.
+
+When every run slot is in use, a scheduled run waits its turn and shows as queued. The next
+occurrence is skipped while the previous run still waits for a slot.
+
 ## When SideKick is closed or the computer sleeps
 
 Schedules run only while SideKick is running. A time that passes while SideKick is closed or the

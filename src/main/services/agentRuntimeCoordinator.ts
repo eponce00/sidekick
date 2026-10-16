@@ -33,7 +33,7 @@ import type { ProviderChatMessage, ProviderTarget } from '../../shared/providerR
 import { resolveProviderContext } from '../providers/providerRuntime'
 import { editingDialectForTarget } from '../../shared/workspaceMutations'
 import { loadStoredSettings } from '../ipc/settings'
-import { SubAgentSlots } from './subAgentSlots'
+import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
 import { CheckpointTitleStore } from './checkpointTitleStore'
@@ -77,6 +77,8 @@ import { ArtifactInspector } from './artifactInspector'
 import { ProjectStore } from './projectStore'
 import { WorkspaceOccupancy } from './workspaceOccupancy'
 import type { WorkspaceOccupant } from '../../shared/worktrees'
+import { globalRunSlots, providerRunsAtOnce, type QueuedRun } from '../../shared/runSlots'
+import { providerKindForInstance } from '../../shared/providerRegistry'
 import type {
   ConversationGoal,
   CreateConversationGoalInput,
@@ -119,8 +121,9 @@ export interface CollaborationKernelRunInput {
 
 // A sub-agent answers one bounded question; 80 rounds let one run for an hour.
 const SUB_AGENT_TOOL_ROUNDS = 25
-// Beyond this a provider's KV cache cannot hold every sub-agent's prompt anyway.
-const MAX_SUB_AGENTS_AT_ONCE = 4
+// A run waiting on these gives its run slots back until its next model step.
+const SLOT_FREE_TOOLS: ReadonlySet<string> = new Set(['wait'])
+const SLOT_FREE_PHASES: ReadonlySet<string> = new Set(['awaiting_permission', 'awaiting_user'])
 // An artifact that still has a defect after three fixes needs the agent, not a fourth try.
 const ARTIFACT_BUILDER_FIXES = 3
 
@@ -147,7 +150,11 @@ export class AgentRuntimeCoordinator {
   private readonly publishExternal: (event: AgentRunEvent) => void
   private readonly settings: () => ProviderSettings
   private readonly skillAssetsPath: () => string
-  private readonly subAgentSlots = new SubAgentSlots()
+  /** Runs interrupted before this time were already interrupted when SideKick last closed. */
+  readonly startedAt = Date.now()
+  /** Global and per-provider run slots, shared by every kind of run. */
+  readonly runSlots = new RunSlots(() => globalRunSlots(this.settings()))
+  private readonly leases = new Map<string, RunLease>()
   private readonly occupancy = new WorkspaceOccupancy()
   /** Messages from other chats waiting for a conversation, taken in before its first step. */
   private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
@@ -258,6 +265,13 @@ export class AgentRuntimeCoordinator {
   }
 
   private publishEvent(event: AgentRunEvent): void {
+    const lease = this.leases.get(event.runId)
+    if (
+      lease?.held &&
+      ((event.type === 'run.phase' && SLOT_FREE_PHASES.has(String(event.payload.phase))) ||
+        (event.type === 'tool.running' && SLOT_FREE_TOOLS.has(String(event.payload.name))))
+    )
+      lease.suspend()
     this.publishExternal(event)
     for (const observer of this.observers.get(event.runId) ?? []) observer(event)
   }
@@ -303,17 +317,23 @@ export class AgentRuntimeCoordinator {
   }
 
   private cancelPreparation(preparation: PreparingRun): AgentRunSnapshot {
-    const { identity } = preparation
     preparation.controller.abort()
+    return this.settlePreparation(preparation)
+  }
+
+  /** Records a run that ended before it started: cancelled, or failed with `error`. */
+  private settlePreparation(preparation: PreparingRun, error?: unknown): AgentRunSnapshot {
+    const { identity } = preparation
     const existing = this.store.get(identity.id)
     if (existing) return existing
-    const failure = classifyAgentKernelFailure(undefined, true)
+    const cancelled = error === undefined
+    const failure = classifyAgentKernelFailure(error, cancelled)
     this.db.transaction(() => {
       this.store.start(identity)
       this.store.transition(
         identity.id,
-        'cancelled',
-        `${identity.id}:preparation-cancelled`,
+        failure.phase,
+        `${identity.id}:preparation-${cancelled ? 'cancelled' : 'failed'}`,
         failure.error
       )
       if (identity.outputMessageId) {
@@ -365,6 +385,10 @@ export class AgentRuntimeCoordinator {
     })
     try {
       if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
+      await this.awaitPreparation(
+        this.acquireRunSlot(input.id, input.threadId, input.target, signal),
+        preparation
+      )
       const currentSettings = this.settings()
       const configuredThreshold = Number(currentSettings.autoCompactThreshold)
       const configuredInstances = Array.isArray(currentSettings.providerInstances)
@@ -462,7 +486,7 @@ export class AgentRuntimeCoordinator {
         permissionMode,
         toolRouter: session.router,
         verificationController: session.verificationController,
-        beforeModelStep: input.beforeModelStep,
+        beforeModelStep: this.withRunSlot(input.id, input.beforeModelStep),
         contextManager: new AgentContextManager({
           target: { ...target, contextLength },
           contextLength,
@@ -491,6 +515,7 @@ export class AgentRuntimeCoordinator {
       }
     } finally {
       releaseWorkspace()
+      this.releaseRunSlot(input.id)
       this.finishPreparation(preparation)
       this.observers.delete(input.id)
       clearWorkspaceInstructionScope(input.id)
@@ -504,13 +529,140 @@ export class AgentRuntimeCoordinator {
     return row?.title ?? null
   }
 
+  private slotTarget(target: {
+    providerInstanceId?: string
+    providerKind?: string
+    model?: string
+  }): { key: string; limit: number } {
+    const instances = this.settings().providerInstances ?? []
+    const instance = target.providerInstanceId
+      ? instances.find(({ id }) => id === target.providerInstanceId)
+      : instances.find(
+          (candidate) =>
+            candidate.enabled && providerKindForInstance(candidate) === target.providerKind
+        )
+    return {
+      key: instance?.id ?? `${target.providerKind ?? 'provider'}:${target.model ?? 'model'}`,
+      limit: providerRunsAtOnce(instance)
+    }
+  }
+
+  /** Waits for a global and a provider slot. The lease is released when the run ends. */
+  private async acquireRunSlot(
+    runId: string,
+    conversationId: string | null,
+    target: { providerInstanceId?: string; providerKind?: string; model?: string },
+    signal: AbortSignal,
+    onQueued?: () => void
+  ): Promise<RunLease> {
+    const { key, limit } = this.slotTarget(target)
+    const lease = await this.runSlots.acquire({
+      runId,
+      conversationId,
+      providerKey: key,
+      providerLimit: limit,
+      signal,
+      onQueued
+    })
+    this.leases.set(runId, lease)
+    return lease
+  }
+
+  private releaseRunSlot(runId: string): void {
+    this.leases.get(runId)?.release()
+    this.leases.delete(runId)
+  }
+
+  /** Shows a run that gave its slots back as queued until it gets them again. */
+  private markPhase(runId: string, phase: 'queued' | 'streaming'): void {
+    try {
+      const before = this.store.get(runId)?.lastSequence ?? 0
+      this.store.transition(runId, phase, randomUUID())
+      for (const event of this.store.listEvents(runId, before)) this.publishEvent(event)
+    } catch (error) {
+      // A run stopped while it waited is already terminal; there is nothing to show.
+      if (this.store.get(runId)?.phase === phase)
+        console.warn('[RunSlots] Phase change failed:', error)
+    }
+  }
+
+  /** Before each model step: a run that gave its slots back takes them again, waiting if needed. */
+  private withRunSlot(
+    runId: string,
+    next?: StartAgentKernelRunInput['beforeModelStep']
+  ): NonNullable<StartAgentKernelRunInput['beforeModelStep']> {
+    return async (messages, signal, toolRounds) => {
+      const lease = this.leases.get(runId)
+      if (lease && !lease.held) {
+        let queued = false
+        await lease.resume(signal, () => {
+          queued = true
+          this.markPhase(runId, 'queued')
+        })
+        if (queued) this.markPhase(runId, 'streaming')
+      }
+      return next ? next(messages, signal, toolRounds) : []
+    }
+  }
+
+  /** Runs waiting for a slot, oldest first. */
+  queuedRuns(): QueuedRun[] {
+    return this.runSlots.queued()
+  }
+
+  /** Called whenever a run joins or leaves the slot queue. Returns the unsubscribe function. */
+  onRunQueueChange(listener: () => void): () => void {
+    return this.runSlots.subscribe(listener)
+  }
+
+  /** Writing runs in this folder, or in one inside or around it. */
+  folderOccupants(folder: string): WorkspaceOccupant[] {
+    return this.occupancy.occupants(folder, '')
+  }
+
   /** Other writing runs in the folder this conversation would work in. */
   workspaceOccupants(conversationId: string): WorkspaceOccupant[] {
     const root = new ProjectStore(this.db).getConversationContext(conversationId).workspaceRoot
     return root ? this.occupancy.occupants(root, conversationId) : []
   }
 
-  async startConversation(input: StartConversationAgentRunInput): Promise<AgentRunSnapshot> {
+  /** Starts a run and resolves once it is working, after any wait for a run slot. */
+  startConversation(input: StartConversationAgentRunInput): Promise<AgentRunSnapshot> {
+    return this.startConversationRun(input, {})
+  }
+
+  /**
+   * For runs started in the main process (chats other chats start, scheduled runs): resolves as
+   * soon as the run is admitted, working or waiting for a slot, so the caller never blocks behind
+   * the queue. It rejects only when the run is refused, as for a busy folder. A later failure to
+   * start is recorded on the run, so the chat shows it.
+   */
+  async startConversationInBackground(
+    input: StartConversationAgentRunInput
+  ): Promise<{ queued: boolean }> {
+    let admitted = false
+    let resolveAdmission!: (queued: boolean) => void
+    const admission = new Promise<boolean>((resolve) => {
+      resolveAdmission = resolve
+    })
+    const run = this.startConversationRun(input, {
+      onAdmitted: (queued) => {
+        admitted = true
+        resolveAdmission(queued)
+      },
+      recordFailure: true
+    })
+    run.catch((error) => {
+      if (admitted) console.warn('[AgentRuntime] A background run could not start:', error)
+    })
+    const queued = await Promise.race([admission, run.then(() => false)])
+    return { queued }
+  }
+
+  private async startConversationRun(
+    input: StartConversationAgentRunInput,
+    hooks: { onAdmitted?: (queued: boolean) => void; recordFailure?: boolean }
+  ): Promise<AgentRunSnapshot> {
     if (!input.id || !input.conversationId || !input.assistantMessageId) {
       throw new Error('Invalid conversation run identity')
     }
@@ -567,6 +719,26 @@ export class AgentRuntimeCoordinator {
       if (!input.mode || input.mode === 'conversation') {
         preparation.goalId = this.goals.runnable(input.conversationId)?.id
       }
+      let queued = false
+      await this.awaitPreparation(
+        this.acquireRunSlot(
+          input.id,
+          input.conversationId,
+          {
+            providerInstanceId: input.model.providerInstanceId,
+            providerKind:
+              input.model.providerKind ?? providerKindForTransport(input.model.provider),
+            model: input.model.providerModelId || input.model.name
+          },
+          signal,
+          () => {
+            queued = true
+            hooks.onAdmitted?.(true)
+          }
+        ),
+        preparation
+      )
+      if (!queued) hooks.onAdmitted?.(false)
       const capture = { promise: null as Promise<string | null> | null }
       let workspaceRoot: string | null = null
       const ensureCapture = async (): Promise<void> => {
@@ -609,9 +781,9 @@ export class AgentRuntimeCoordinator {
         ...(inbox.length
           ? { initialSteers: [...(prepared.kernelInput.initialSteers ?? []), ...inbox] }
           : {}),
-        beforeModelStep: this.withBackgroundNotices(
-          input.conversationId,
-          prepared.kernelInput.beforeModelStep
+        beforeModelStep: this.withRunSlot(
+          input.id,
+          this.withBackgroundNotices(input.conversationId, prepared.kernelInput.beforeModelStep)
         )
       })
       kernelStarted = true
@@ -623,16 +795,20 @@ export class AgentRuntimeCoordinator {
         .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
         .finally(() => {
           releaseWorkspace()
+          this.releaseRunSlot(input.id)
           void this.tools.browser?.resetAgentViewports(input.conversationId).catch(() => undefined)
         })
       return this.store.get(input.id)!
     } catch (error) {
       if (signal.aborted) return this.cancelPreparation(preparation)
+      // Nobody waits on a background start, so its chat has to show why it did not run.
+      if (hooks.recordFailure) this.settlePreparation(preparation, error)
       throw error
     } finally {
       this.finishPreparation(preparation)
       if (!kernelStarted) {
         releaseWorkspace()
+        this.releaseRunSlot(input.id)
         this.activeConversations.delete(input.id)
       }
       if (!this.activeConversations.has(input.id)) clearWorkspaceInstructionScope(input.id)
@@ -802,24 +978,25 @@ export class AgentRuntimeCoordinator {
     const parent = this.activeConversations.get(parentContext.runId)
     if (!parent) throw new Error('Parent run is no longer active')
     parentContext.signal.throwIfAborted()
-    const parentInput = parent.prepared.kernelInput
-    const target = parentInput.request.target
-    const instance = this.settings().providerInstances?.find(
-      ({ id }) => id === target.providerInstanceId
-    )
-    const release = await this.subAgentSlots.acquire(
-      target.providerInstanceId ?? `${target.providerKind}:${target.model}`,
-      Math.min(MAX_SUB_AGENTS_AT_ONCE, Math.max(1, Math.floor(instance?.subAgentsAtOnce ?? 1))),
-      parentContext.signal,
-      () =>
+    const target = parent.prepared.kernelInput.request.target
+    // The parent waits for its sub-agent, so it gives its slots back until its next model step.
+    // Holding them would deadlock a provider that serves one run at a time.
+    this.leases.get(parentContext.runId)?.suspend()
+    const lease = await this.runSlots.acquire({
+      runId: `${parentContext.runId}:subagent:${randomUUID()}`,
+      conversationId: parentContext.conversationId ?? null,
+      providerKey: this.slotTarget(target).key,
+      providerLimit: this.slotTarget(target).limit,
+      signal: parentContext.signal,
+      onQueued: () =>
         this.recordSubAgentEvent(parentContext, 'subagent.queued', 'queued', {
           toolCallId: parentContext.toolCallId
         })
-    )
+    })
     try {
       return await this.runChild(task, context, parentContext, parent)
     } finally {
-      release()
+      lease.release()
     }
   }
 
@@ -830,6 +1007,34 @@ export class AgentRuntimeCoordinator {
    * it then fixes what the review shows, or says the artifact is right.
    */
   private async buildArtifact(
+    first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
+    parentContext: {
+      runId: string
+      toolCallId?: string
+      conversationId?: string
+      workspaceRoot?: string
+      signal: AbortSignal
+    }
+  ): Promise<ArtifactBuildResult> {
+    const parent = this.activeConversations.get(parentContext.runId)
+    if (!parent) throw new Error('Parent run is no longer active')
+    const target = parent.prepared.kernelInput.request.target
+    this.leases.get(parentContext.runId)?.suspend()
+    const lease = await this.runSlots.acquire({
+      runId: `${parentContext.runId}:artifact:${randomUUID()}`,
+      conversationId: parentContext.conversationId ?? null,
+      providerKey: this.slotTarget(target).key,
+      providerLimit: this.slotTarget(target).limit,
+      signal: parentContext.signal
+    })
+    try {
+      return await this.runArtifactBuilder(first, parentContext)
+    } finally {
+      lease.release()
+    }
+  }
+
+  private async runArtifactBuilder(
     first: Parameters<AgentChildRunLauncher['buildArtifact']>[0],
     parentContext: {
       runId: string

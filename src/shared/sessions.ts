@@ -216,6 +216,21 @@ export interface SessionsChangedEvent {
   statuses?: SessionStatus[]
 }
 
+/**
+ * A chat another chat started whose last run was interrupted, as when SideKick closed while it
+ * worked. Nothing resumes on its own; the user resumes it from its chat or the Chats tab.
+ */
+export interface InterruptedSession {
+  conversationId: string
+  title: string
+  handle: string | null
+  managerConversationId: string | null
+  runId: string
+  interruptedAt: number
+  /** The run can continue from where it stopped. False once a later run has started. */
+  canResume: boolean
+}
+
 export interface SessionsAPI {
   /** Every chat's status that is not `idle`, for the sidebar, badges and the tray. */
   statuses: () => Promise<SessionStatus[]>
@@ -239,6 +254,10 @@ export interface SessionsAPI {
   unarchive: (conversationId: string) => Promise<void>
   /** Turns a worker into an ordinary chat that no longer reports. */
   detach: (conversationId: string) => Promise<void>
+  /** Interrupted chats other chats started; with a manager, only its own. */
+  interrupted: (managerConversationId?: string) => Promise<InterruptedSession[]>
+  /** Continues an interrupted chat's run where it stopped. Queued when every run slot is busy. */
+  resume: (conversationId: string) => Promise<{ runId: string; queued: boolean }>
   grants: (conversationId: string) => Promise<SessionProjectGrant[]>
   grantProject: (conversationId: string, projectId: string) => Promise<SessionProjectGrant>
   revokeProject: (conversationId: string, projectId: string) => Promise<void>

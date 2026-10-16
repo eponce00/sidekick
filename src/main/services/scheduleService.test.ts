@@ -6,6 +6,7 @@ import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import type { PinnedModel } from '../../shared/models'
 import type { ProviderSettings } from '../../shared/settings'
 import type { ScheduleInput, SchedulesChangedEvent } from '../../shared/schedules'
+import type { WorkspaceOccupant } from '../../shared/worktrees'
 import { ConversationAttentionTracker } from './conversationAttention'
 import { createScheduledConversationLauncher } from './scheduledConversationLauncher'
 import { ScheduleService } from './scheduleService'
@@ -46,7 +47,15 @@ interface Harness {
   setPhase: (agentRunId: string, phase: AgentRunPhase) => void
 }
 
-function harness(now: number): Harness {
+/** Who is writing in the project folder, whether it is a Git repository, and queued runs. */
+interface PlacementFixture {
+  occupants?: WorkspaceOccupant[]
+  git?: boolean
+  queuedRunIds?: Set<string>
+  worktreesCreated?: string[]
+}
+
+function harness(now: number, placement: PlacementFixture = {}): Harness {
   const db = new Database(':memory:')
   applyDatabaseSchema(db)
   db.prepare(
@@ -66,6 +75,21 @@ function harness(now: number): Harness {
     db,
     settings: () => settings(modelEnabled),
     now: () => clock.now,
+    folderOccupants: () => placement.occupants ?? [],
+    isRunQueued: (agentRunId) => placement.queuedRunIds?.has(agentRunId) ?? false,
+    worktrees: {
+      isGitProject: async () => placement.git ?? false,
+      create: async (projectId, title) => {
+        const id = `worktree-${(placement.worktreesCreated ??= []).length + 1}`
+        db.prepare(
+          `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+           VALUES (?, ?, ?, 1, 1)`
+        ).run(id, `demo · sidekick/${title}`, `C:/worktrees/${projectId}/${id}`)
+        placement.worktreesCreated.push(id)
+        return { projectId: id, branch: 'sidekick/morning-check' }
+      },
+      discard: async () => undefined
+    },
     startConversationRun: async (input) => {
       if (startError) throw new Error(startError)
       starts.push(input)
@@ -410,5 +434,73 @@ describe('ScheduleService permissions and overlap', () => {
     ).toEqual([{ role: 'system', notice_tone: 'error' }])
     // A provider outage is not a configuration problem, so the schedule keeps its time.
     expect(h.store.get(schedule.id)).toMatchObject({ enabled: true, nextRunAt: at(17, 9) })
+  })
+})
+
+describe('ScheduleService and a busy project folder', () => {
+  const busy: WorkspaceOccupant[] = [
+    {
+      runId: 'other-run',
+      conversationId: 'other',
+      title: 'Fix the build',
+      workspaceRoot: 'C:/demo'
+    }
+  ]
+
+  it('starts in the project folder when no other agent is writing there', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(daily())
+    const run = await h.service.runNow(schedule.id)
+    expect(run).toMatchObject({ outcome: 'started' })
+    expect(
+      h.db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(run.conversationId)
+    ).toEqual({ project_id: 'project-1' })
+  })
+
+  it('starts in a fresh worktree when the busy folder is a Git repository', async () => {
+    const fixture: PlacementFixture = { occupants: busy, git: true }
+    const h = harness(at(16, 8), fixture)
+    const schedule = h.service.create(daily())
+    const run = await h.service.runNow(schedule.id)
+    expect(run).toMatchObject({ outcome: 'started' })
+    expect(run.reason).toBe(
+      'Started in a new worktree on sidekick/morning-check because “Fix the build” was working in the project folder.'
+    )
+    expect(
+      h.db
+        .prepare('SELECT project_id, home_workspace_root FROM conversations WHERE id = ?')
+        .get(run.conversationId)
+    ).toEqual({
+      project_id: 'worktree-1',
+      home_workspace_root: 'C:/worktrees/project-1/worktree-1'
+    })
+    expect(h.starts).toHaveLength(1)
+  })
+
+  it('skips and says why when the busy folder is not a Git repository', async () => {
+    const h = harness(at(16, 8), { occupants: busy, git: false })
+    const schedule = h.service.create(daily())
+    const run = await h.service.runNow(schedule.id)
+    expect(run).toMatchObject({
+      outcome: 'skipped',
+      reason:
+        'Skipped: “Fix the build” was working in the project folder, and it is not a Git repository, so the run could not start in a separate worktree.'
+    })
+    expect(h.starts).toHaveLength(0)
+    expect(h.service.runs(schedule.id)[0]).toMatchObject({ outcome: 'skipped' })
+  })
+
+  it('skips while the previous run still waits for a free run slot', async () => {
+    const queuedRunIds = new Set<string>()
+    const h = harness(at(16, 8), { queuedRunIds })
+    const schedule = h.service.create(daily())
+    const first = await h.service.runNow(schedule.id)
+    h.db.prepare('DELETE FROM agent_runs WHERE id = ?').run(first.agentRunId)
+    queuedRunIds.add(first.agentRunId!)
+    const second = await h.service.runNow(schedule.id)
+    expect(second).toMatchObject({
+      outcome: 'skipped',
+      reason: 'Skipped: the previous run is still waiting for a free run slot.'
+    })
   })
 })

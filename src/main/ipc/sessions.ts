@@ -12,7 +12,7 @@ import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
   getAgentRuntimeCoordinator,
   observeAgentRunEvents,
-  startConversationRun
+  startConversationInBackground
 } from './agentRuns'
 import { loadStoredSettings } from './settings'
 import { getDb } from './state'
@@ -105,7 +105,10 @@ export function registerSessionHandlers(): void {
   const sessions = new SessionService({
     db: getDb(),
     runtime: {
-      startRun: startConversationRun,
+      startRun: startConversationInBackground,
+      canContinue: (runId, conversationId) => coordinator.store.canContinue(runId, conversationId),
+      isQueued: (conversationId) =>
+        coordinator.queuedRuns().some((run) => run.conversationId === conversationId),
       stopRun: (runId) => coordinator.stop(runId),
       steer: (conversationId, steer) => coordinator.steerConversation(conversationId, steer),
       latestRun: (conversationId) => coordinator.store.latest(conversationId),
@@ -124,6 +127,20 @@ export function registerSessionHandlers(): void {
     sessions.pendingSteers(conversationId, runId)
   )
   observeAgentRunEvents((event) => sessions.observe(event))
+  // Runs active when SideKick last closed were just marked interrupted; tell their managers once.
+  sessions.recoverAfterRestart(coordinator.startedAt)
+  // A chat waiting for a run slot shows as queued; tell the sidebar when that changes.
+  let queued = new Set<string>()
+  coordinator.onRunQueueChange(() => {
+    const now = new Set(
+      coordinator
+        .queuedRuns()
+        .flatMap(({ conversationId }) => (conversationId ? [conversationId] : []))
+    )
+    const changed = [...now, ...queued].filter((id) => now.has(id) !== queued.has(id))
+    queued = now
+    if (changed.length) sessions.statusChanged(changed)
+  })
 
   // `sessions:statuses` belongs to the status service.
   ipcMain.handle('sessions:family', (_event, id: unknown) => sessions.family(validId(id)))
@@ -160,6 +177,10 @@ export function registerSessionHandlers(): void {
   )
   ipcMain.handle('sessions:unarchive', (_event, id: unknown) => sessions.unarchive(validId(id)))
   ipcMain.handle('sessions:detach', (_event, id: unknown) => sessions.detach(validId(id)))
+  ipcMain.handle('sessions:interrupted', (_event, id: unknown) =>
+    sessions.interrupted(id === undefined || id === null ? undefined : validId(id))
+  )
+  ipcMain.handle('sessions:resume', (_event, id: unknown) => sessions.resume(validId(id)))
   ipcMain.handle('sessions:grants', (_event, id: unknown) => sessions.store.grants(validId(id)))
   ipcMain.handle('sessions:grantProject', (_event, id: unknown, projectId: unknown) =>
     sessions.grantProject(validId(id), validId(projectId))

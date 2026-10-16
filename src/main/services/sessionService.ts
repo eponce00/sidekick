@@ -18,6 +18,7 @@ import {
   type SessionProposal,
   type SessionState,
   type SessionWorkIn,
+  type InterruptedSession,
   type SessionsChange,
   type SessionsChangedEvent,
   type StartSessionSpec,
@@ -37,6 +38,10 @@ export interface SessionRuntime {
   steer: (conversationId: string, steer: AgentRunSteer) => boolean
   latestRun: (conversationId: string) => AgentRunSnapshot | null
   run: (runId: string) => AgentRunSnapshot | null
+  /** The chat has a run waiting for a run slot. */
+  isQueued?: (conversationId: string) => boolean
+  /** Whether this interrupted run is still the one to continue. */
+  canContinue?: (runId: string, conversationId: string) => boolean
 }
 
 export interface SessionWorktrees {
@@ -147,12 +152,116 @@ export class SessionService {
   }
 
   state(conversationId: string): SessionState {
-    if (this.starting.has(conversationId)) return 'queued'
+    if (this.starting.has(conversationId) || this.options.runtime.isQueued?.(conversationId))
+      return 'queued'
     const conversation = this.store.conversation(conversationId)
     return sessionStateFromRun(
       this.options.runtime.latestRun(conversationId),
       conversation?.unread_completion_at
     )
+  }
+
+  // Restart recovery
+
+  /** Workers whose latest run was interrupted, newest first. */
+  interrupted(managerConversationId?: string): InterruptedSession[] {
+    const rows = this.options.db
+      .prepare(
+        `SELECT * FROM conversations
+         WHERE started_by_conversation_id IS NOT NULL AND archived_at IS NULL
+           AND (? IS NULL OR started_by_conversation_id = ?)`
+      )
+      .all(managerConversationId ?? null, managerConversationId ?? null) as ProjectConversation[]
+    return rows
+      .flatMap((row) => {
+        const run = this.options.runtime.latestRun(row.id)
+        if (run?.phase !== 'interrupted') return []
+        return [
+          {
+            conversationId: row.id,
+            title: row.title,
+            handle: row.session_handle ?? null,
+            managerConversationId: row.report_to_conversation_id ?? null,
+            runId: run.id,
+            interruptedAt: run.completedAt ?? run.updatedAt,
+            canResume: this.options.runtime.canContinue?.(run.id, row.id) ?? true
+          }
+        ]
+      })
+      .sort((left, right) => right.interruptedAt - left.interruptedAt)
+  }
+
+  /** Continues an interrupted chat's run. Only the user does this; nothing resumes on its own. */
+  async resume(conversationId: string): Promise<{ runId: string; queued: boolean }> {
+    const conversation = this.requireConversation(conversationId)
+    const latest = this.options.runtime.latestRun(conversationId)
+    if (!latest || latest.phase !== 'interrupted')
+      throw new Error('This chat has no interrupted run to resume')
+    if (
+      this.options.runtime.canContinue &&
+      !this.options.runtime.canContinue(latest.id, conversationId)
+    )
+      throw new Error('This interrupted run can no longer be continued')
+    const model = this.options.resolveModel(conversationId)
+    if (!model) throw new Error('Choose an enabled model before resuming this chat')
+    const runId = randomUUID()
+    this.serviceRuns.add(runId)
+    try {
+      const { queued } =
+        ((await this.options.runtime.startRun({
+          id: runId,
+          conversationId,
+          assistantMessageId: randomUUID(),
+          model,
+          mode:
+            latest.surface === 'research'
+              ? 'research'
+              : latest.executionMode === 'plan'
+                ? 'plan'
+                : 'conversation',
+          continuesRunId: latest.id,
+          ...(this.sharesFolder(conversation.id) ? { workspaceSharing: 'allow' as const } : {})
+        })) as { queued?: boolean } | undefined) ?? {}
+      this.changed('status', [conversation.id, ...this.managerOf(conversation.id)])
+      return { runId, queued: queued === true }
+    } catch (error) {
+      this.serviceRuns.delete(runId)
+      throw error
+    }
+  }
+
+  /**
+   * After a restart: each manager gets one note listing its workers that the restart interrupted.
+   * The note waits for the manager's next run; it never wakes it.
+   */
+  recoverAfterRestart(interruptedSince: number): void {
+    const byManager = new Map<string, InterruptedSession[]>()
+    for (const worker of this.interrupted()) {
+      if (!worker.managerConversationId || worker.interruptedAt < interruptedSince) continue
+      byManager.set(worker.managerConversationId, [
+        ...(byManager.get(worker.managerConversationId) ?? []),
+        worker
+      ])
+    }
+    for (const [managerId, workers] of byManager) {
+      const names = workers.map(({ handle, title }) => handle ?? title).join(', ')
+      this.store.insertMessage({
+        fromConversationId: null,
+        toConversationId: managerId,
+        intent: 'status',
+        body: `SideKick closed while ${workers.length === 1 ? 'this chat was' : 'these chats were'} working: ${names}. ${workers.length === 1 ? 'Its run was' : 'Their runs were'} interrupted and will not resume on ${workers.length === 1 ? 'its' : 'their'} own; the user can resume ${workers.length === 1 ? 'it' : 'each one'}.`
+      })
+    }
+    if (byManager.size)
+      this.changed('messages', [
+        ...byManager.keys(),
+        ...[...byManager.values()].flat().map(({ conversationId }) => conversationId)
+      ])
+  }
+
+  /** Chats whose state changed outside a run event, such as joining the run-slot queue. */
+  statusChanged(conversationIds: string[]): void {
+    this.changed('status', conversationIds)
   }
 
   private member(conversation: ProjectConversation): SessionFamilyMember {
