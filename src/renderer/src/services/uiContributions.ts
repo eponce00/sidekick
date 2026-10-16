@@ -38,6 +38,7 @@ export type ToolViewKind =
   | 'artifact'
   | 'task'
   | 'subagent'
+  | 'session-proposals'
 
 export interface ToolViewContribution {
   matches: (tool: ToolExecution) => boolean
@@ -57,6 +58,18 @@ toolViewContributions.register({
       (tool.status === 'running' || tool.status === 'pending') &&
       typeof (tool.data as { childRunId?: unknown } | undefined)?.childRunId === 'string',
     view: 'subagent'
+  }
+})
+
+// Chats an agent suggested are choices for the user, shown as cards rather than a folded step.
+toolViewContributions.register({
+  id: 'sidekick.session-proposals-tool-view',
+  priority: 105,
+  value: {
+    matches: (tool) =>
+      tool.name === 'start_session' &&
+      Array.isArray((tool.data as { suggested?: unknown } | undefined)?.suggested),
+    view: 'session-proposals'
   }
 })
 

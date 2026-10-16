@@ -4,8 +4,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunPhase, AgentRunSnapshot } from '../../shared/agentRuntime'
 import type { PinnedModel } from '../../shared/models'
-import { SESSION_LIMITS, type SessionsChangedEvent } from '../../shared/sessions'
+import {
+  SESSION_LIMITS,
+  type SessionsChangedEvent,
+  type StartSessionsCardResponse
+} from '../../shared/sessions'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { defaultAgentCapabilities, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import type { PermissionMode } from '../../shared/permissions'
 import { applyDatabaseSchema } from '../bootstrap/database'
+import { createSessionTools } from './sessionTools'
 import type { AgentRunSteer } from './agentRunKernel'
 import { SessionService, type SessionRuntime, type SessionWorktrees } from './sessionService'
 
@@ -509,5 +519,260 @@ describe('restart recovery', () => {
     expect(resumed.workspaceSharing).toBeUndefined()
     expect(service.state(worker.conversationId)).toBe('working')
     await expect(service.resume(worker.conversationId)).rejects.toThrow('no interrupted run')
+  })
+})
+
+describe('chat tools', () => {
+  let mode: PermissionMode
+  let decisions: Array<Record<string, unknown>>
+  let answer: StartSessionsCardResponse | null
+
+  const toolsFor = (conversationId: string) =>
+    createSessionTools({
+      service,
+      permissionMode: () => mode,
+      requestUserDecision: async (runId, request) => {
+        decisions.push(request)
+        return {
+          id: randomUUID(),
+          runId,
+          kind: 'question',
+          status: answer ? 'resolved' : 'cancelled',
+          request,
+          ...(answer ? { response: answer as unknown as Record<string, unknown> } : {}),
+          createdAt: Date.now()
+        }
+      }
+    })(conversationId, 'run')!
+
+  const call = (conversationId: string, name: string, args: Record<string, unknown>) =>
+    toolsFor(conversationId).handler.execute(name, args, {
+      runId: 'run',
+      signal: new AbortController().signal
+    }) as Promise<Record<string, unknown>>
+
+  beforeEach(() => {
+    mode = 'full-access'
+    decisions = []
+    answer = null
+  })
+
+  it('gives a manager every chat tool and a worker only messaging', async () => {
+    expect(toolsFor(MANAGER).handler.role).toBe('manager')
+    const names = (options: Parameters<typeof getAgentToolDefinitions>[0]) =>
+      getAgentToolDefinitions(options).map(({ function: tool }) => tool.name)
+    expect(names({ surface: 'conversation', sessionRole: 'manager' })).toEqual(
+      expect.arrayContaining(['start_session', 'send_message', 'list_sessions', 'stop_session'])
+    )
+    const workerTools = names({ surface: 'conversation', sessionRole: 'worker' })
+    expect(workerTools).toContain('send_message')
+    expect(workerTools).not.toContain('start_session')
+    expect(names({ surface: 'conversation' })).not.toContain('send_message')
+    // Planning removes chat tools along with every other side effect.
+    expect(
+      names({ surface: 'conversation', sessionRole: 'manager', planStage: 'planning' })
+    ).not.toContain('start_session')
+
+    const [writer] = await startWorkers('Writer')
+    const binding = toolsFor(writer.conversationId)
+    expect(binding.handler.role).toBe('worker')
+    expect(binding.capabilities).toEqual([...defaultAgentCapabilities('conversation')])
+    await expect(call(writer.conversationId, 'start_session', {})).rejects.toThrow(/cannot start/)
+    await expect(call(writer.conversationId, 'stop_session', { name: 'writer' })).rejects.toThrow(
+      /Only the chat that started/
+    )
+  })
+
+  it('takes every tool that edits or executes away from a read-only worker', async () => {
+    const [reader] = (
+      await service.start(
+        {
+          managerConversationId: MANAGER,
+          sessions: [{ title: 'Reader', brief: 'Review it', workIn: 'read-only' }]
+        },
+        'user'
+      )
+    ).started
+    const { capabilities } = toolsFor(reader.conversationId)
+    const removed = defaultAgentCapabilities('conversation').filter(
+      (capability) => !capabilities.includes(capability)
+    )
+    expect(removed.sort()).toEqual(
+      [
+        'workspace.write',
+        'command.execute',
+        'command.background',
+        'mcp',
+        'browser',
+        'artifacts',
+        'subagents'
+      ].sort()
+    )
+    const tools = getAgentToolDefinitions({
+      surface: 'conversation',
+      workspaceRoot: '/repo/sidekick',
+      capabilities,
+      sessionRole: 'worker'
+    }).map(({ function: tool }) => tool.name)
+    expect(tools).toContain('read')
+    expect(tools).not.toContain('shell')
+    expect(tools).not.toContain('apply_patch')
+    expect(tools).not.toContain('spawn_subagent')
+  })
+
+  it('starts chats at once in full access, and asks first in any other mode', async () => {
+    const started = await call(MANAGER, 'start_session', {
+      sessions: [{ title: 'Quick', brief: 'Do it' }]
+    })
+    expect(decisions).toEqual([])
+    expect(started.started).toEqual([
+      expect.objectContaining({ name: 'quick', workIn: 'worktree' })
+    ])
+
+    mode = 'sensitive-only'
+    const declined = await call(MANAGER, 'start_session', {
+      sessions: [{ title: 'Asked', brief: 'Do it' }]
+    })
+    expect(declined).toMatchObject({ declined: true, started: [] })
+    expect(decisions[0]).toMatchObject({
+      intent: 'start_sessions',
+      sessions: [
+        expect.objectContaining({ handle: 'asked', workIn: 'worktree', needsGrant: false })
+      ]
+    })
+    expect(service.store.workers(MANAGER)).toHaveLength(1)
+
+    // The user changes where it works before starting it.
+    answer = { action: 'start', sessions: [{ workIn: 'read-only' }] }
+    const approved = await call(MANAGER, 'start_session', {
+      sessions: [{ title: 'Asked', brief: 'Do it' }]
+    })
+    expect(approved.started).toEqual([
+      expect.objectContaining({ name: 'asked', workIn: 'read-only' })
+    ])
+  })
+
+  it('asks for a project this chat may not use yet, even in full access', async () => {
+    answer = { action: 'start' }
+    const result = await call(MANAGER, 'start_session', {
+      sessions: [{ title: 'API', brief: 'Tests', project: 'sidekick-api', work_in: 'folder' }]
+    })
+    expect(decisions).toHaveLength(1)
+    expect(decisions[0]).toMatchObject({
+      sessions: [expect.objectContaining({ projectName: 'sidekick-api', needsGrant: true })]
+    })
+    expect(result.started).toEqual([expect.objectContaining({ project: 'sidekick-api' })])
+    expect(service.store.hasGrant(MANAGER, 'other')).toBe(true)
+    await expect(
+      call(MANAGER, 'start_session', { sessions: [{ title: 'X', brief: 'y', project: 'nope' }] })
+    ).rejects.toThrow(/No project named nope/)
+  })
+
+  it('suggests chats without starting them', async () => {
+    const result = await call(MANAGER, 'start_session', {
+      mode: 'propose',
+      sessions: [{ title: 'Flaky test', brief: 'Fix it' }]
+    })
+    expect(result).toMatchObject({ conversationId: MANAGER, suggested: [{ title: 'Flaky test' }] })
+    expect(runtime.started).toEqual([])
+    expect(decisions).toEqual([])
+  })
+
+  it('lists the family and stops a chat by name', async () => {
+    await startWorkers('Alpha', 'Beta')
+    const listed = await call(MANAGER, 'list_sessions', {})
+    expect(listed.chats).toEqual([
+      expect.objectContaining({ name: 'manager', you: true }),
+      expect.objectContaining({ name: 'alpha', state: 'working' }),
+      expect.objectContaining({ name: 'beta', state: 'working' })
+    ])
+    await call(MANAGER, 'stop_session', { name: 'alpha' })
+    await service.idle()
+    expect(service.state(service.store.workers(MANAGER)[0].id)).toBe('stopped')
+  })
+
+  it('sends a file snapshot that only the recipient can import into its own project', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-session-tools-'))
+    try {
+      const senderRoot = join(root, 'sender')
+      const receiverRoot = join(root, 'receiver')
+      await mkdir(senderRoot, { recursive: true })
+      await mkdir(receiverRoot, { recursive: true })
+      await writeFile(
+        join(senderRoot, 'contract.ts'),
+        'export type Page = { next: string | null }\n'
+      )
+      const [sender] = await startWorkers('Sender')
+      db.prepare('UPDATE projects SET folder_path = ? WHERE id = ?').run(
+        senderRoot,
+        `wt-${sender.conversationId}`
+      )
+      db.prepare('UPDATE projects SET folder_path = ? WHERE id = ?').run(receiverRoot, 'project')
+
+      const sent = await call(sender.conversationId, 'send_message', {
+        to: 'manager',
+        message: 'Here is the contract.',
+        attachments: ['contract.ts']
+      })
+      const [{ id }] = sent.attachments as Array<{ id: string }>
+      await expect(
+        call(sender.conversationId, 'import_attachment', {
+          attachment_id: id,
+          destination_path: 'x.ts'
+        })
+      ).rejects.toThrow(/No attachment/)
+      const imported = await call(MANAGER, 'import_attachment', {
+        attachment_id: id,
+        destination_path: 'shared/contract.ts'
+      })
+      expect(imported.imported).toBe(true)
+      expect(await readFile(join(receiverRoot, 'shared', 'contract.ts'), 'utf8')).toContain('Page')
+      await expect(
+        call(sender.conversationId, 'send_message', {
+          to: 'manager',
+          message: 'x',
+          attachments: ['../escape.ts']
+        })
+      ).rejects.toThrow()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('forks the conversation into a worker only when it fits the model', async () => {
+    db.prepare(
+      `INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, 'user', ?, 1)`
+    ).run('m1', MANAGER, 'The plan so far. '.repeat(10))
+    const [forked] = (
+      await service.start(
+        {
+          managerConversationId: MANAGER,
+          sessions: [{ title: 'Fork', brief: 'Go on', context: 'fork' }]
+        },
+        'user'
+      )
+    ).started
+    const copied = db
+      .prepare(
+        'SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY timestamp, rowid'
+      )
+      .all(forked.conversationId) as Array<{ role: string; content: string }>
+    expect(copied.map(({ role }) => role)).toEqual(['user', 'user'])
+    expect(copied[0].content).toContain('The plan so far.')
+    expect(copied[1].content).toBe('Go on')
+
+    // The test model has no known window, so a copy may use at most half of 32,000 tokens.
+    db.prepare(
+      `INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, 'agent', ?, 2)`
+    ).run('m2', MANAGER, 'x'.repeat(4 * 20_000))
+    await expect(
+      service.start(
+        {
+          managerConversationId: MANAGER,
+          sessions: [{ title: 'Too big', brief: 'Go on', context: 'fork' }]
+        },
+        'user'
+      )
+    ).rejects.toThrow(/too long to copy/)
   })
 })

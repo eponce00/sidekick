@@ -166,11 +166,21 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
     type: 'boolean',
     default: false,
     description: 'Play a sound with notifications.'
+  },
+  {
+    key: 'maxConcurrentRuns',
+    section: 'agent',
+    type: 'integer',
+    min: 1,
+    max: 8,
+    default: 4,
+    description: 'Chats, scheduled runs and sub-agents that may work at once; more wait in a queue.'
   }
 ]
 
 // Typed as a complete record so a new setting cannot be added without listing it here.
 const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSettings, true> = {
+  maxConcurrentRuns: true,
   shellIsolation: true,
   agentCommandTerminal: true,
   officeHelperInterpreter: true,

@@ -29,7 +29,8 @@ export const AGENT_CAPABILITIES = [
   'plan',
   'tool.output',
   'browser',
-  'settings'
+  'settings',
+  'sessions'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]

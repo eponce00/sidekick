@@ -58,6 +58,7 @@ import {
 } from '../../../shared/verification'
 import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
+import { SessionProposalsCard } from './SessionProposalsCard'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -599,7 +600,8 @@ function isDurableOutputGroup(group: GroupedSegment): boolean {
       // Delegated work is part of the reply, not a step to fold away.
       (group.segment.type === 'tool' &&
         !!group.segment.tool &&
-        resolveToolView(group.segment.tool) === 'subagent') ||
+        (resolveToolView(group.segment.tool) === 'subagent' ||
+          resolveToolView(group.segment.tool) === 'session-proposals')) ||
       // How a reply ended early (interrupted or failed) is what the reader acts on, not work to
       // fold away.
       group.segment.type === 'run_error' ||
@@ -1216,6 +1218,8 @@ function MessageItemInner({
                     // Standalone tool (pending approval or sub-agent row)
                     resolveToolView(group.segment.tool) === 'subagent' ? (
                       <SubAgentCard tool={group.segment.tool} />
+                    ) : resolveToolView(group.segment.tool) === 'session-proposals' ? (
+                      <SessionProposalsCard tool={group.segment.tool} />
                     ) : (
                       <ToolCallRow tool={group.segment.tool} />
                     )

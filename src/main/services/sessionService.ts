@@ -17,9 +17,11 @@ import {
   type SessionMessage,
   type SessionProposal,
   type SessionState,
+  type SessionAttachmentRef,
   type SessionWorkIn,
   type InterruptedSession,
   type SessionsChange,
+  type StartSessionCardRow,
   type SessionsChangedEvent,
   type StartSessionSpec,
   type StartSessionsInput,
@@ -71,7 +73,13 @@ export interface SendSessionMessageInput {
   intent: AgentSessionMessageIntent
   body: string
   replyToMessageId?: string
+  attachments?: SessionAttachmentRef[]
 }
+
+/** Without a known context window, a forked conversation may use at most this many tokens. */
+const FORK_FALLBACK_CONTEXT_TOKENS = 32_000
+/** The share of the worker model's context window a copied conversation may fill. */
+const FORK_CONTEXT_SHARE = 0.5
 
 const ACTIVE_PHASES = new Set<AgentRunPhase>([
   'queued',
@@ -114,6 +122,7 @@ interface PlannedSession {
   projectId: string | null
   workIn: SessionWorkIn
   model: PinnedModel
+  needsGrant: boolean
 }
 
 /**
@@ -327,13 +336,7 @@ export class SessionService {
         `A chat can have at most ${SESSION_LIMITS.liveWorkersPerFamily} chats it started that are not archived`
       )
     // Every chat is checked before any is created, so a bad batch starts nothing.
-    const taken = new Set(this.store.workers(manager.id, true).map((row) => row.session_handle))
-    const planned: PlannedSession[] = []
-    for (const spec of input.sessions) {
-      const plan = await this.plan(manager, spec, taken, actor)
-      taken.add(plan.handle)
-      planned.push(plan)
-    }
+    const planned = await this.planAll(manager, input.sessions, actor, false)
     const started: SessionFamilyMember[] = []
     try {
       for (const plan of planned) started.push(await this.launch(manager, plan))
@@ -341,6 +344,64 @@ export class SessionService {
       this.changed('family', [manager.id, ...started.map(({ conversationId }) => conversationId)])
     }
     return { started, proposals: [] }
+  }
+
+  private async planAll(
+    manager: ProjectConversation,
+    specs: readonly StartSessionSpec[],
+    actor: SessionActor,
+    preview: boolean
+  ): Promise<PlannedSession[]> {
+    const taken = new Set(this.store.workers(manager.id, true).map((row) => row.session_handle))
+    const planned: PlannedSession[] = []
+    for (const spec of specs) {
+      const plan = await this.plan(manager, spec, taken, actor, preview)
+      taken.add(plan.handle)
+      planned.push(plan)
+    }
+    if (!preview)
+      for (const projectId of new Set(planned.filter((p) => p.needsGrant).map((p) => p.projectId)))
+        if (projectId) this.store.grantProject(manager.id, projectId)
+    if (!preview && planned.some(({ needsGrant }) => needsGrant))
+      this.changed('grants', [manager.id])
+    return planned
+  }
+
+  /**
+   * What starting these chats would do, without doing it: the rows of the card that asks the
+   * user. Fails the same way `start` would, except that a missing project grant is reported
+   * on its row instead.
+   */
+  async previewStart(input: StartSessionsInput): Promise<StartSessionCardRow[]> {
+    const manager = this.requireConversation(input.managerConversationId)
+    if (manager.started_by_conversation_id)
+      throw new Error('A chat started by another chat cannot start chats of its own')
+    if (
+      this.store.workers(manager.id).length + input.sessions.length >
+      SESSION_LIMITS.liveWorkersPerFamily
+    )
+      throw new Error(
+        `A chat can have at most ${SESSION_LIMITS.liveWorkersPerFamily} chats it started that are not archived`
+      )
+    const planned = await this.planAll(manager, input.sessions, 'agent', true)
+    return planned.map((plan) => ({
+      title: plan.title,
+      handle: plan.handle,
+      brief: plan.brief,
+      projectId: plan.projectId,
+      projectName: plan.projectId
+        ? ((
+            this.options.db
+              .prepare('SELECT name FROM projects WHERE id = ?')
+              .get(plan.projectId) as { name: string } | undefined
+          )?.name ?? null)
+        : null,
+      workIn: plan.workIn,
+      modelId: plan.model.id,
+      modelName: plan.model.name,
+      context: plan.spec.context ?? 'fresh',
+      needsGrant: plan.needsGrant
+    }))
   }
 
   private checkText(spec: StartSessionSpec): { title: string; brief: string } {
@@ -357,11 +418,12 @@ export class SessionService {
     manager: ProjectConversation,
     spec: StartSessionSpec,
     taken: ReadonlySet<string | null | undefined>,
-    actor: SessionActor
+    actor: SessionActor,
+    preview: boolean
   ): Promise<PlannedSession> {
     const { title, brief } = this.checkText(spec)
-    if (spec.context === 'fork')
-      throw new Error('Starting a chat from a copy of this conversation is not available yet')
+    if (spec.context !== undefined && spec.context !== 'fresh' && spec.context !== 'fork')
+      throw new Error('Unknown context choice')
     const handle =
       spec.handle ??
       suggestSessionHandle(
@@ -373,15 +435,13 @@ export class SessionService {
     if (taken.has(handle)) throw new Error(`This chat already started one named ${handle}`)
 
     const projectId = spec.projectId === undefined ? manager.project_id : spec.projectId
+    let needsGrant = false
     if (projectId) {
       if (!this.options.db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId))
         throw new Error('Project not found')
-      if (projectId !== manager.project_id && !this.store.hasGrant(manager.id, projectId)) {
-        if (actor !== 'user')
-          throw new Error('This chat may not start chats in that project until you allow it')
-        this.store.grantProject(manager.id, projectId)
-        this.changed('grants', [manager.id])
-      }
+      needsGrant = projectId !== manager.project_id && !this.store.hasGrant(manager.id, projectId)
+      if (needsGrant && actor !== 'user' && !preview)
+        throw new Error('This chat may not start chats in that project until you allow it')
     }
     if (spec.workIn !== undefined && !SESSION_WORK_IN.includes(spec.workIn))
       throw new Error('Unknown workspace choice')
@@ -393,7 +453,43 @@ export class SessionService {
 
     const model = this.options.resolveModel(manager.id, spec.modelId)
     if (!model) throw new Error('Choose an enabled model for the new chat')
-    return { spec, title, handle, brief, projectId: projectId ?? null, workIn, model }
+    if (spec.context === 'fork') this.checkForkFits(manager.id, model)
+    return { spec, title, handle, brief, projectId: projectId ?? null, workIn, model, needsGrant }
+  }
+
+  /** The manager's messages a forked worker starts with. */
+  private forkedMessages(managerId: string): Array<{
+    role: string
+    content: string
+    segments: string | null
+    images: string | null
+    attachments: string | null
+    run_mode: string | null
+    timestamp: number
+  }> {
+    return this.options.db
+      .prepare(
+        `SELECT role, content, segments, images, attachments, run_mode, timestamp
+         FROM messages WHERE conversation_id = ? AND role IN ('user', 'agent')
+         ORDER BY timestamp ASC, rowid ASC`
+      )
+      .all(managerId) as ReturnType<SessionService['forkedMessages']>
+  }
+
+  /** A copied conversation must leave the worker model most of its context for the work. */
+  private checkForkFits(managerId: string, model: PinnedModel): void {
+    const characters = this.forkedMessages(managerId).reduce(
+      (total, message) => total + message.content.length,
+      0
+    )
+    // About four characters a token, as the context budget estimates elsewhere.
+    const tokens = Math.ceil(characters / 4)
+    const window = model.maxInputTokens ?? model.contextLength ?? FORK_FALLBACK_CONTEXT_TOKENS
+    const allowed = Math.floor(window * FORK_CONTEXT_SHARE)
+    if (tokens > allowed)
+      throw new Error(
+        `This conversation is too long to copy into the new chat (about ${tokens} tokens; ${model.name} can take ${allowed} for it). Start the chat fresh with a fuller brief instead.`
+      )
   }
 
   private async launch(
@@ -436,6 +532,31 @@ export class SessionService {
           conversationId: id,
           ...(plan.spec.baseRef ? { baseRef: plan.spec.baseRef } : {})
         })
+      }
+      if (plan.spec.context === 'fork') {
+        const copy = db.prepare(
+          `INSERT INTO messages
+           (id, conversation_id, role, content, segments, images, attachments, run_mode, timestamp)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        db.transaction(() => {
+          for (const message of this.forkedMessages(manager.id))
+            copy.run(
+              randomUUID(),
+              id,
+              message.role,
+              message.content,
+              message.segments,
+              message.images,
+              message.attachments,
+              message.run_mode ?? 'conversation',
+              message.timestamp
+            )
+        })()
+        db.prepare('UPDATE conversations SET forked_from_conversation_id = ? WHERE id = ?').run(
+          manager.id,
+          id
+        )
       }
       const runId = randomUUID()
       // The brief is the worker's first user message and a session message with the same id,
@@ -624,6 +745,7 @@ export class SessionService {
         toConversationId: id,
         intent,
         body,
+        attachments: input.attachments,
         replyToMessageId: input.replyToMessageId ?? null
       })
     )

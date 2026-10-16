@@ -15,6 +15,7 @@ import type { ContentSegment } from '../types/chat.types'
 import type { AgentApprovalPreview } from '../../../shared/agentRuntime'
 import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
 import { useWorkerChatIdentity } from './sessionChatContext'
+import { StartSessionsCard } from './StartSessionsCard'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
 
@@ -416,6 +417,10 @@ export default function AgentInteractionCard({
         )}
       </div>
     )
+  }
+
+  if (interaction.kind === 'question' && interaction.request.intent === 'start_sessions') {
+    return <StartSessionsCard interaction={interaction} onResolve={onResolve} />
   }
 
   if (interaction.kind === 'question' && interaction.request.intent === 'browser_takeover') {

@@ -92,6 +92,24 @@ export interface AgentCollaborationToolHandler {
   ): Promise<unknown>
 }
 
+/** Starts, messages and lists other chats for a conversation run; see SessionService. */
+export interface AgentSessionToolHandler {
+  role: 'manager' | 'worker'
+  execute(
+    name: string,
+    args: Record<string, unknown>,
+    context: AgentToolExecutionContext
+  ): Promise<unknown>
+}
+
+export const SESSION_TOOL_NAMES = [
+  'start_session',
+  'send_message',
+  'list_sessions',
+  'stop_session',
+  'import_attachment'
+] as const
+
 export interface AgentGoalToolHandler {
   execute(args: Record<string, unknown>, context: AgentToolExecutionContext): Promise<unknown>
   onTodosUpdated?(todos: TodoItem[]): void
@@ -152,6 +170,7 @@ export interface AgentToolRuntimeSessionInput {
   persistentSkillIds?: readonly string[]
   mcpConfigs?: readonly McpServerConfig[]
   collaboration?: AgentCollaborationToolHandler
+  sessions?: AgentSessionToolHandler
   goal?: AgentGoalToolHandler
   plan?: AgentPlanToolHandler
   instructionScopeId?: string
@@ -597,8 +616,14 @@ export class AgentToolRuntime {
           this.execute(input, readReceipts, sessionState, name, args, context)
       )
     }
+    if (input.sessions) {
+      handlers.register([...SESSION_TOOL_NAMES], ({ name, arguments: args, context }) =>
+        this.execute(input, readReceipts, sessionState, name, args, context)
+      )
+    }
     const catalog = (): AgentToolCatalogOptions => ({
       surface: input.surface,
+      sessionRole: input.sessions?.role,
       workspaceRoot: input.workspaceRoot,
       webSearchEnabled: input.webSearchEnabled,
       browserEnabled: input.browserEnabled === true && Boolean(this.browser),
@@ -1210,6 +1235,13 @@ export class AgentToolRuntime {
         { sent: true, taskId },
         read ? commandReadContent(read) : JSON.stringify({ sent: true, taskId })
       )
+    }
+    if (input.sessions && (SESSION_TOOL_NAMES as readonly string[]).includes(name)) {
+      if (name === 'import_attachment') {
+        await input.onWorkspaceWillMutate?.()
+        readReceipts.clear()
+      }
+      return this.success(title, await input.sessions.execute(name, args, context))
     }
     if (name.startsWith('collaboration_') && input.collaboration) {
       if (name === 'collaboration_import_artifact') readReceipts.clear()
