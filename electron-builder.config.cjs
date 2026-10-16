@@ -61,6 +61,20 @@ module.exports = {
     // Foundation requires the privacy terms to be shown during installation.
     license: 'build/installer-notice.txt'
   },
+  // The Microsoft Store package. Partner Center assigns the identity and publisher when the app
+  // name is reserved; `npm run build:store` reads them from the environment. The Store signs the
+  // package it distributes, so it is never built for or attached to a GitHub release.
+  appx: {
+    identityName: process.env.SIDEKICK_STORE_IDENTITY_NAME,
+    publisher: process.env.SIDEKICK_STORE_PUBLISHER,
+    publisherDisplayName: process.env.SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME,
+    applicationId: identity.productName,
+    displayName: identity.productName,
+    // The tile images are transparent, so Start draws them on the user's accent colour.
+    backgroundColor: 'transparent',
+    languages: ['en-US'],
+    artifactName: '${productName}-${version}-windows-x64-store.${ext}'
+  },
   mac: {
     // Explicit ad-hoc signing also works when CI disables identity discovery.
     identity: '-',

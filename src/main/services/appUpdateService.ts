@@ -109,6 +109,8 @@ async function fetchLatestGitHubRelease(): Promise<AppUpdateInfo | null> {
 
 export function updateDisabledReason(): AppUpdateDisabledReason | undefined {
   if (!app.isPackaged) return 'development'
+  // The Microsoft Store installs and updates its own package; replacing it would break it.
+  if (process.windowsStore) return 'store'
   if (!['darwin', 'linux', 'win32'].includes(process.platform)) {
     return 'unsupported-platform'
   }

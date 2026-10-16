@@ -1,0 +1,77 @@
+name: Microsoft Store package
+
+# Builds the MSIX package a maintainer submits in Partner Center. The Store signs what it
+# distributes, so this package is never attached to a GitHub release. It runs once the
+# repository has the identity Partner Center assigned when the app name was reserved.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: store-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  store:
+    name: Build Microsoft Store package
+    if: vars.SIDEKICK_STORE_IDENTITY_NAME != ''
+    runs-on: windows-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - name: Verify stable tag matches package version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ($env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Expected tag v$version, received $env:GITHUB_REF_NAME"
+          }
+      - name: Build the Store package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          SIDEKICK_STORE_IDENTITY_NAME: ${{ vars.SIDEKICK_STORE_IDENTITY_NAME }}
+          SIDEKICK_STORE_PUBLISHER: ${{ vars.SIDEKICK_STORE_PUBLISHER }}
+          SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME }}
+        run: npm run build:store
+      - name: Verify the package identity
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-store.appx')
+          if ($packages.Count -ne 1) { throw 'Expected exactly one Store package.' }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($packages[0].FullName)
+          try {
+            $entry = $zip.GetEntry('AppxManifest.xml')
+            $reader = New-Object IO.StreamReader($entry.Open())
+            [xml]$manifest = $reader.ReadToEnd()
+            $reader.Close()
+          } finally {
+            $zip.Dispose()
+          }
+          if ($manifest.Package.Identity.Name -ne $env:IDENTITY) { throw 'Package identity does not match' }
+          if ($manifest.Package.Identity.Publisher -ne $env:PUBLISHER) { throw 'Publisher does not match' }
+          Write-Host "Built $($packages[0].Name) for $env:IDENTITY."
+        env:
+          IDENTITY: ${{ vars.SIDEKICK_STORE_IDENTITY_NAME }}
+          PUBLISHER: ${{ vars.SIDEKICK_STORE_PUBLISHER }}
+      - name: Upload the Store package
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-Microsoft-Store
+          path: dist/SideKick-*-windows-x64-store.appx
+          if-no-files-found: error
+          retention-days: 30

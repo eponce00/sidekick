@@ -137,6 +137,17 @@ describe('AppUpdateService', () => {
     expect(service.getState()).toMatchObject({ status: 'disabled', reason: 'development' })
   })
 
+  it('leaves a Microsoft Store install to the Store', () => {
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    Object.defineProperty(process, 'windowsStore', { configurable: true, value: true })
+    try {
+      const service = new AppUpdateService()
+      expect(service.getState()).toMatchObject({ status: 'disabled', reason: 'store' })
+    } finally {
+      Reflect.deleteProperty(process, 'windowsStore')
+    }
+  })
+
   it('checks releases for packaged Linux builds', () => {
     Object.defineProperty(process, 'platform', { configurable: true, value: 'linux' })
     const service = new AppUpdateService()

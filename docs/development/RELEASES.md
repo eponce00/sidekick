@@ -141,6 +141,38 @@ npm run validate:release -- --version 0.6.0 --platform windows dist
 npm run validate:release -- --version 0.6.0 --platform linux dist
 ```
 
+## Microsoft Store package
+
+The Store route needs no certificate: Microsoft signs the package it distributes, and Store
+installs do not get the SmartScreen download warning. Individual developer registration in Partner
+Center is free. The package is separate from the community release: it is never attached to a
+GitHub release, and a Store install leaves updating to the Store (the in-app updater reports
+`store` and stays off).
+
+One-time setup, by the maintainer:
+
+1. Register as an individual developer in [Partner Center](https://partner.microsoft.com/dashboard)
+   and reserve the app name **SideKick**.
+2. Under **Product identity**, copy `Package/Identity/Name`, `Package/Identity/Publisher`, and
+   `Package/Properties/PublisherDisplayName` into the repository variables
+   `SIDEKICK_STORE_IDENTITY_NAME`, `SIDEKICK_STORE_PUBLISHER`, and
+   `SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME`.
+3. Fill in the Store listing: description, screenshots, age rating, and the
+   [privacy policy](../../PRIVACY.md) URL.
+
+Each release, the [Store workflow](../../.github/workflows/store.yml) builds
+`SideKick-<version>-windows-x64-store.appx` from the version tag, checks its identity, and uploads
+it as the `SideKick-Microsoft-Store` workflow artifact. Submit that file in a new Partner Center
+submission. `npm run build:store` builds the same package locally with those three variables set
+in the environment.
+
+The app runs with the `runFullTrust` capability, like any packaged desktop app. Before the first
+submission, install the package locally in Developer Mode (`Add-AppxPackage -Register` on the
+unpacked folder) and confirm that commands, terminals, the browser panel, voice models, and data in
+the packaged app's own application-data folder work; this has not been qualified yet. Its tile images in `build/appx` are
+rendered from `build/icon.svg` by `node scripts/generate-store-assets.cjs` and hash-checked with the
+other icon derivatives.
+
 ## What the tagged workflow proves
 
 A manual workflow run builds and tests packages without publishing them. A stable tag matching
