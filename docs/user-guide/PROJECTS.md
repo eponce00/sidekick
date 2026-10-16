@@ -214,7 +214,8 @@ items it holds while closed, and offers its own create action when you point at 
   remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
 
-The folder and clock buttons beside the SideKick name switch between two layouts, and SideKick
+The layout button beside the SideKick name switches between two layouts. It shows a folder while
+chats are grouped by folder and a clock while they are listed by recent activity, and SideKick
 remembers your choice:
 
 - **By folder:** the two sections above.

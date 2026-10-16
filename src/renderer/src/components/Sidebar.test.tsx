@@ -514,7 +514,14 @@ describe('Sidebar chat section', () => {
       })
       expect(onOrder).toHaveBeenLastCalledWith(['older-in-a', 'in-b-now', 'loose-now'])
 
-      await click('button[aria-label="Sort by recent activity"]')
+      // One button flips between the layouts and shows the one in use.
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'folders'
+      )
+      await click('.sidebar-view-toggle')
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('aria-label')).toBe(
+        'Listed by recent activity, switch to folders'
+      )
       expect(
         [...container.querySelectorAll('.sidebar-section-label')].map((label) => label.textContent)
       ).toEqual(['Today', 'Older'])
@@ -529,6 +536,13 @@ describe('Sidebar chat section', () => {
       ).toBe(true)
       expect(window.localStorage.setItem).toHaveBeenCalledWith('sidebarView', 'recent')
 
+      await click('.sidebar-view-toggle')
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'folders'
+      )
+      expect(onOrder).toHaveBeenLastCalledWith(['older-in-a', 'in-b-now', 'loose-now'])
+      await click('.sidebar-view-toggle')
+
       await act(async () => root.unmount())
       root = createRoot(container)
       vi.mocked(window.localStorage.getItem).mockImplementation((key: string) =>
@@ -539,11 +553,9 @@ describe('Sidebar chat section', () => {
         projects: [],
         busyConversationIds: new Set()
       })
-      expect(
-        container
-          .querySelector('button[aria-label="Sort by recent activity"]')
-          ?.getAttribute('aria-pressed')
-      ).toBe('true')
+      expect(container.querySelector('.sidebar-view-toggle')?.getAttribute('data-view')).toBe(
+        'recent'
+      )
       vi.useRealTimers()
     })
   })

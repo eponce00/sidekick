@@ -5,13 +5,13 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  Clock,
   Command,
   Folder,
   FolderInput,
   FolderOpen,
   FolderPlus,
   GitBranch,
+  History,
   ListFilter,
   MessageSquare,
   MoreHorizontal,
@@ -963,28 +963,25 @@ function Sidebar({
             )}
             {!isCollapsed && (conversations.length > 0 || filtering) && (
               <>
-                <div className="sidebar-view-switch" role="group" aria-label="List chats">
-                  <button
-                    type="button"
-                    className={view === 'folders' ? 'active' : ''}
-                    aria-pressed={view === 'folders'}
-                    onClick={() => changeView('folders')}
-                    title="Group by folder"
-                    aria-label="Group by folder"
-                  >
-                    <Folder size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    className={view === 'recent' ? 'active' : ''}
-                    aria-pressed={view === 'recent'}
-                    onClick={() => changeView('recent')}
-                    title="Sort by recent activity"
-                    aria-label="Sort by recent activity"
-                  >
-                    <Clock size={14} />
-                  </button>
-                </div>
+                {/* One button flips the layout, so the header keeps room for the name. */}
+                <button
+                  type="button"
+                  className="sidebar-icon-btn sidebar-view-toggle"
+                  data-view={view}
+                  onClick={() => changeView(view === 'folders' ? 'recent' : 'folders')}
+                  title={
+                    view === 'folders'
+                      ? 'Grouped by folder. Click to list by recent activity'
+                      : 'Listed by recent activity. Click to group by folder'
+                  }
+                  aria-label={
+                    view === 'folders'
+                      ? 'Grouped by folder, switch to recent activity'
+                      : 'Listed by recent activity, switch to folders'
+                  }
+                >
+                  {view === 'folders' ? <Folder size={15} /> : <History size={15} />}
+                </button>
                 <div className="sidebar-menu-wrap" ref={filterMenuRef}>
                   <button
                     className={`sidebar-icon-btn sidebar-filter-btn ${
