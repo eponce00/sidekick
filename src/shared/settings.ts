@@ -72,10 +72,12 @@ export interface ProviderInstance {
   models: ProviderInstanceModel[]
   fastModelId?: string
   /**
-   * How many sub-agents may run at once on this provider; one when unset.
-   * More pays off on a server that keeps several prompts cached or runs
-   * several requests together.
+   * How many runs may use this provider at once: chats, scheduled runs, chats other chats
+   * started, and sub-agents together. One for a server on this machine and four for a hosted
+   * provider when unset; see `providerRunsAtOnce`.
    */
+  runsAtOnce?: number
+  /** The earlier sub-agent-only limit. Read as `runsAtOnce` when that is unset. */
   subAgentsAtOnce?: number
   health?: ProviderInstanceHealth
 }
@@ -132,6 +134,8 @@ export interface ProviderSettings {
   ollamaThinkingEnabled?: boolean
   openRouterThinkingEnabled?: boolean
   toolCallLimit?: number
+  /** Runs that may work at once across the app; others wait in line. 1 to 8, four when unset. */
+  maxConcurrentRuns?: number
   toolCallLimitVersion?: number
   commandPermissionMode?: PermissionMode
   mcpServers?: McpServerConfig[]

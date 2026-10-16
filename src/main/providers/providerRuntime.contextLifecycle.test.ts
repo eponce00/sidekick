@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { WorkspaceOccupancy } from '../services/workspaceOccupancy'
+import { RunSlots } from '../services/runSlots'
 import { ConversationRunPreparer } from '../services/conversationRunPreparer'
 import { AgentRunStore } from '../services/agentRunStore'
 import { AgentMessageMaterializer } from '../services/agentMessageMaterializer'
@@ -91,6 +92,8 @@ function fixture() {
     mcp: { close: vi.fn(async () => {}) },
     goals: new ConversationGoalStore(db),
     occupancy: new WorkspaceOccupancy(),
+    runSlots: new RunSlots(() => 4),
+    leases: new Map(),
     skillAssetsPath: () => 'fixture-assets'
   })
   return { coordinator, db, store, kernel, tools, publish }
@@ -459,5 +462,96 @@ describe('workspace guard at run start', () => {
       'synthetic preparation failure'
     )
     expect(coordinator.workspaceOccupants('other-thread')).toEqual([])
+  })
+})
+
+describe('run slots at run start', () => {
+  function withOneSlot() {
+    const created = fixture()
+    created.db.exec(
+      "INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('other-thread', 'Other', 1, 1)"
+    )
+    Object.assign(created.coordinator, { runSlots: new RunSlots(() => 1) })
+    return created
+  }
+  const other = {
+    ...conversationInput,
+    id: 'other-run',
+    conversationId: 'other-thread',
+    assistantMessageId: 'other-message'
+  }
+
+  it('queues a second run until the first frees its slot', async () => {
+    const { coordinator } = withOneSlot()
+    const network = deferredFetch()
+    const prepare = contextOnlyPreparation()
+    const first = coordinator.startConversation(conversationInput)
+    await network.started
+    const second = coordinator.startConversation(other)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(
+      coordinator.queuedRuns().map(({ runId, conversationId }) => [runId, conversationId])
+    ).toEqual([['other-run', 'other-thread']])
+    expect(prepare).toHaveBeenCalledTimes(1)
+
+    coordinator.stop('fixture-run')
+    await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(coordinator.queuedRuns()).toEqual([])
+    expect(prepare).toHaveBeenCalledTimes(2)
+    coordinator.stop('other-run')
+    await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
+    network.release()
+  })
+
+  it('returns at once from a background start that has to wait, and can be stopped while queued', async () => {
+    const { coordinator, store } = withOneSlot()
+    const network = deferredFetch()
+    contextOnlyPreparation()
+    const first = coordinator.startConversation(conversationInput)
+    await network.started
+    await expect(coordinator.startConversationInBackground(other)).resolves.toEqual({
+      queued: true
+    })
+    expect(coordinator.stop('other-run')).toBe(true)
+    expect(store.get('other-run')?.phase).toBe('cancelled')
+    coordinator.stop('fixture-run')
+    await first
+    network.release()
+  })
+
+  it('records why a background start failed on the run itself', async () => {
+    const { coordinator, store } = withOneSlot()
+    vi.spyOn(ConversationRunPreparer.prototype, 'prepare').mockRejectedValue(
+      new Error('synthetic preparation failure')
+    )
+    await coordinator.startConversationInBackground(other).catch(() => undefined)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(store.get('other-run')).toMatchObject({
+      phase: 'failed',
+      error: { message: 'synthetic preparation failure' }
+    })
+    expect(coordinator.runSlots.inUse().global).toBe(0)
+  })
+
+  it('gives the slot back while a run waits for approval', async () => {
+    const { coordinator } = withOneSlot()
+    const lease = await coordinator.runSlots.acquire({
+      runId: 'waiting-run',
+      providerKey: 'fixture',
+      providerLimit: 1,
+      signal: new AbortController().signal
+    })
+    ;(coordinator as unknown as { leases: Map<string, unknown> }).leases.set('waiting-run', lease)
+    ;(coordinator as unknown as { publishEvent: (event: unknown) => void }).publishEvent({
+      id: 'event',
+      runId: 'waiting-run',
+      sequence: 1,
+      type: 'run.phase',
+      payload: { phase: 'awaiting_permission' },
+      timestamp: 1
+    })
+    expect(lease.held).toBe(false)
+    expect(coordinator.runSlots.inUse().global).toBe(0)
   })
 })

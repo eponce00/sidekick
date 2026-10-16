@@ -270,6 +270,9 @@ const api = {
       ipcRenderer.invoke('sessions:archive', conversationId, options),
     unarchive: (conversationId: string) => ipcRenderer.invoke('sessions:unarchive', conversationId),
     detach: (conversationId: string) => ipcRenderer.invoke('sessions:detach', conversationId),
+    interrupted: (managerConversationId?: string) =>
+      ipcRenderer.invoke('sessions:interrupted', managerConversationId),
+    resume: (conversationId: string) => ipcRenderer.invoke('sessions:resume', conversationId),
     grants: (conversationId: string) => ipcRenderer.invoke('sessions:grants', conversationId),
     grantProject: (conversationId: string, projectId: string) =>
       ipcRenderer.invoke('sessions:grantProject', conversationId, projectId),

@@ -17,8 +17,15 @@ export interface ScheduledRunLauncher {
   /** An enabled model with this id, or null when it was removed or its provider disabled. */
   resolveModel: (modelId: string) => PinnedModel | null
   projectExists: (projectId: string) => boolean
-  /** Creates the run's chat with the schedule's prompt as its first message. */
-  createConversation: (schedule: Schedule, runNumber: number) => string
+  /**
+   * Where the run works. Its project folder when no other agent is writing there; otherwise a
+   * new worktree for a Git project, or a skip with the reason. Without it, the project folder.
+   */
+  placeRun?: (schedule: Schedule) => Promise<ScheduledRunPlacement>
+  /** Creates the run's chat, in `projectId`, with the schedule's prompt as its first message. */
+  createConversation: (schedule: Schedule, runNumber: number, projectId: string | null) => string
+  /** The run was started but waits for a free run slot, so it has no phase yet. */
+  isRunQueued?: (agentRunId: string) => boolean
   /** Starts the agent run through `AgentRuntimeCoordinator`, under the user's permission mode. */
   start: (input: {
     conversationId: string
@@ -28,6 +35,16 @@ export interface ScheduledRunLauncher {
   /** Leaves an app-authored notice in the chat when its run could not start. */
   reportFailure: (conversationId: string, message: string) => void
 }
+
+export type ScheduledRunPlacement =
+  | {
+      projectId: string | null
+      /** Said in the run's history, as when it moved to a new worktree. */
+      note?: string
+      /** Undoes the placement when the run's chat could not be created. */
+      discard?: () => Promise<void>
+    }
+  | { skip: string }
 
 export interface ScheduleServiceOptions {
   store: ScheduleStore
@@ -267,6 +284,9 @@ export class ScheduleService {
     if (previous?.agentPhase && ACTIVE_PHASES.has(previous.agentPhase)) {
       return skip(overlapReason(previous.agentPhase))
     }
+    if (previous?.agentRunId && this.launcher.isRunQueued?.(previous.agentRunId)) {
+      return skip('Skipped: the previous run is still waiting for a free run slot.')
+    }
 
     const model = this.launcher.resolveModel(schedule.modelId)
     const missing = !model
@@ -284,9 +304,20 @@ export class ScheduleService {
 
     this.launching.add(schedule.id)
     try {
+      const placement = this.launcher.placeRun
+        ? await this.launcher.placeRun(schedule)
+        : { projectId: schedule.projectId }
+      if ('skip' in placement) return skip(placement.skip)
       const runNumber = this.store.claimRunNumber(schedule.id, now)
-      const conversationId = this.launcher.createConversation(schedule, runNumber)
+      let conversationId: string
+      try {
+        conversationId = this.launcher.createConversation(schedule, runNumber, placement.projectId)
+      } catch (error) {
+        await placement.discard?.().catch(() => undefined)
+        throw error
+      }
       const agentRunId = randomUUID()
+      const reason = [occurrence.reason, placement.note].filter(Boolean).join(' ')
       const run = this.store.recordRun(
         {
           ...base,
@@ -295,7 +326,7 @@ export class ScheduleService {
           startedAt: now,
           conversationId,
           agentRunId,
-          ...(occurrence.reason ? { reason: occurrence.reason } : {})
+          ...(reason ? { reason } : {})
         },
         now
       )

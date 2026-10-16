@@ -8,10 +8,11 @@ import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
   getAgentRuntimeCoordinator,
   observeAgentRunEvents,
-  startConversationRun
+  startConversationInBackground
 } from './agentRuns'
 import { loadStoredSettings } from './settings'
 import { getDb } from './state'
+import { getManagedWorktrees } from './worktrees'
 
 let service: ScheduleService | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
@@ -30,7 +31,22 @@ export function registerScheduleHandlers(): void {
     launcher: createScheduledConversationLauncher({
       db,
       settings: () => loadStoredSettings() as unknown as ProviderSettings,
-      startConversationRun
+      startConversationRun: startConversationInBackground,
+      folderOccupants: (folder) => getAgentRuntimeCoordinator().folderOccupants(folder),
+      isRunQueued: (agentRunId) =>
+        getAgentRuntimeCoordinator()
+          .queuedRuns()
+          .some(({ runId }) => runId === agentRunId),
+      worktrees: {
+        isGitProject: async (projectId) =>
+          (await getManagedWorktrees().branchOptions(projectId)).isGitRepository,
+        create: async (projectId, title) => {
+          const worktrees = getManagedWorktrees()
+          const project = await worktrees.create(projectId, title)
+          return { projectId: project.id, branch: worktrees.branchForProject(project.id) ?? '' }
+        },
+        discard: (projectId) => getManagedWorktrees().discardFreshProject(projectId)
+      }
     }),
     onChange: (change) => publishDesktopEvent('schedules:changed', change)
   })

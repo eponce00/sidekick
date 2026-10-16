@@ -123,6 +123,19 @@ export function startConversationRun(
   })
 }
 
+/**
+ * Starts a run from the main process and returns once it is admitted, working or waiting for a
+ * run slot. A later failure to start is recorded on the run.
+ */
+export function startConversationInBackground(
+  input: StartConversationAgentRunInput
+): Promise<{ queued: boolean }> {
+  return getAgentEngineClient().request<{ queued: boolean }>({
+    type: 'run.startConversationInBackground',
+    input
+  })
+}
+
 function validId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
 }

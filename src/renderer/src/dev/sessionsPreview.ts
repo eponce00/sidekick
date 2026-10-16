@@ -44,6 +44,12 @@ const workers: PreviewWorker[] = [
     reason: 'Approval: run npx vitest run src/main/services/scheduler'
   },
   {
+    handle: 'release-notes',
+    title: 'Draft the release notes',
+    state: 'failed',
+    reason: 'Interrupted when SideKick closed'
+  },
+  {
     handle: 'api-contract',
     title: 'Contract tests for /v1/projects',
     state: 'working',
@@ -548,6 +554,31 @@ export function previewSessionsApi(): SessionsAPI {
       if (!row || !managerId) return
       Object.assign(row, { started_by_conversation_id: null, report_to_conversation_id: null })
       publish({ kind: 'family', conversationIds: [managerId, conversationId] })
+    },
+    interrupted: async (managerConversationId) =>
+      [...states.entries()]
+        .filter(
+          ([id, entry]) =>
+            entry.state === 'failed' &&
+            entry.reason?.startsWith('Interrupted') &&
+            (!managerConversationId ||
+              conversationById.get(id)?.started_by_conversation_id === managerConversationId)
+        )
+        .map(([id, entry]) => {
+          const row = conversationById.get(id)!
+          return {
+            conversationId: id,
+            title: row.title,
+            handle: row.session_handle ?? null,
+            managerConversationId: row.report_to_conversation_id ?? null,
+            runId: `preview-run-${id}`,
+            interruptedAt: entry.since,
+            canResume: true
+          }
+        }),
+    resume: async (conversationId) => {
+      setState(conversationId, 'working')
+      return { runId: `preview-run-${Date.now()}`, queued: false }
     },
     grants: async (conversationId) =>
       grants.filter((grant) => grant.conversationId === conversationId),

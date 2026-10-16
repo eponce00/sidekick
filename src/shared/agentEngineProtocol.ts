@@ -28,6 +28,7 @@ export type AgentEngineCommand =
   | { type: 'goal.pause'; goalId: string }
   | { type: 'goal.resume'; goalId: string }
   | { type: 'goal.clear'; goalId: string }
+  | { type: 'run.startConversationInBackground'; input: StartConversationAgentRunInput }
   | { type: 'workspace.occupants'; conversationId: string }
   | { type: 'engine.hasActiveRuns' }
   | { type: 'engine.close' }
@@ -47,6 +48,7 @@ export type AgentEngineResult =
   | { success: true }
   | SteerConversationRunResult
   | WorkspaceOccupant[]
+  | { queued: boolean }
 
 export type AgentEngineResponse =
   | {
@@ -87,6 +89,7 @@ export function assertAgentEngineRequest(value: unknown): asserts value is Agent
     'goal.pause',
     'goal.resume',
     'goal.clear',
+    'run.startConversationInBackground',
     'workspace.occupants',
     'engine.hasActiveRuns',
     'engine.close'
