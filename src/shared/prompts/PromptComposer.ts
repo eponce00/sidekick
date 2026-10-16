@@ -87,7 +87,7 @@ function commandsSection(input: PromptComposerInput): string {
   if (!input.capabilities.commands) return ''
   const shellRules =
     input.platform === 'windows'
-      ? '- Write PowerShell syntax. Chain commands with `;`; do not assume Unix commands or Bash syntax. Short read-only Python or Node probes may use a single-quoted PowerShell here-string piped to the interpreter to avoid nested quoting. For generated scripts that create or edit files, use apply_patch to create a uniquely named project-relative script, run it, and remove only that script after verifying the result; do not embed generated task source in shell commands.'
+      ? '- Commands already run in Windows PowerShell 5.1: write PowerShell directly and never wrap it in `powershell -Command` or `pwsh -Command`, which re-parses its quotes and `$_`. Chain commands with `;`; do not assume Unix commands or Bash syntax. Short read-only Python or Node probes may use a single-quoted PowerShell here-string piped to the interpreter to avoid nested quoting. For generated scripts that create or edit files, use apply_patch to create a uniquely named project-relative script, run it, and remove only that script after verifying the result; do not embed generated task source in shell commands.'
       : '- Write Bash syntax with POSIX-style paths and commands.'
   return `## Host commands
 ${shellRules}

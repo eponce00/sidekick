@@ -701,6 +701,47 @@ describe('AgentToolRuntime file receipts', () => {
     expect(result.output?.originalEstimatedTokens).toBeGreaterThan(10_000)
     expect(result.output?.returnedEstimatedTokens).toBeLessThanOrEqual(8_192)
   })
+
+  it.skipIf(process.platform !== 'win32')(
+    'tells the model why a nested powershell -Command broke its quotes',
+    async () => {
+      const workspace = await temporaryRoot('sidekick-nested-powershell-workspace-')
+      const data = await temporaryRoot('sidekick-nested-powershell-data-')
+      const db = new Database(':memory:')
+      applyDatabaseSchema(db)
+      const runtime = new AgentToolRuntime(
+        db,
+        new WorkspaceReadService(),
+        new CommandService(db, join(data, 'commands')),
+        new ToolOutputStore(join(data, 'outputs')),
+        new McpClientManager()
+      )
+      const session = await runtime.createSession({
+        runId: 'nested-powershell-run',
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false
+      })
+      // The outer shell expands `$_` inside the double quotes, so the inner script is broken.
+      const result = (await session.router.execute(
+        'shell',
+        {
+          title: 'Nested PowerShell',
+          command: `powershell -NoProfile -Command "1..3 | Where-Object { $_ -gt 1 } | ForEach-Object { $_.Missing() }"`,
+          accessLevel: 'auto'
+        },
+        {
+          runId: 'nested-powershell-run',
+          workspaceRoot: workspace,
+          signal: new AbortController().signal
+        }
+      )) as ToolExecutionResult
+
+      expect(result.status).toBe('error')
+      expect(result.modelContent).toContain('<sidekick_command_hint')
+      expect(result.modelContent).toContain('Run the PowerShell directly')
+    }
+  )
 })
 
 describe('collaboration command scope', () => {

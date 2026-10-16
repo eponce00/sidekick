@@ -73,6 +73,7 @@ import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
 import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
+import { nestedPowerShellHint } from './shellCommandHints'
 
 export interface AgentCollaborationToolHandler {
   execute(
@@ -1057,6 +1058,9 @@ export class AgentToolRuntime {
             status: 'error'
           })
         }
+        // The model reads the command's output, not the recovery field, so a hint about the
+        // command itself goes into that output.
+        const hint = cancelled || timedOut ? null : nestedPowerShellHint(command)
         return toolExecutionFailed({
           title,
           code: cancelled ? 'cancelled' : timedOut ? 'timeout' : 'command_failed',
@@ -1069,9 +1073,12 @@ export class AgentToolRuntime {
             ? 'The command was cancelled. Do not retry unless the user requests it.'
             : timedOut
               ? 'Reduce the command scope, increase the timeout when justified, or run it as a background task.'
-              : 'Inspect the exit code and bounded stderr, correct the command or use a different diagnostic approach, then retry only if it can make progress.',
+              : (hint ??
+                'Inspect the exit code and bounded stderr, correct the command or use a different diagnostic approach, then retry only if it can make progress.'),
           data: publicResult,
-          modelContent: bounded.content,
+          modelContent: hint
+            ? `${bounded.content}\n<sidekick_command_hint trust="app-policy">${hint}</sidekick_command_hint>`
+            : bounded.content,
           output: bounded.output,
           status: cancelled ? 'cancelled' : 'error'
         })
