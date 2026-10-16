@@ -129,6 +129,32 @@ function FeatureMenuStatus({
   )
 }
 
+/** One button for both states, so turning reasoning off never moves or removes the control. */
+function ThinkingToggle({
+  enabled,
+  onToggle
+}: {
+  enabled: boolean
+  onToggle: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={`composer-thinking-toggle${enabled ? ' is-on' : ''}`}
+      onClick={onToggle}
+      aria-label="Model thinking"
+      aria-pressed={enabled}
+      title={
+        enabled
+          ? 'Thinking on: the model may reason before it answers. Click to turn off.'
+          : 'Thinking off: the model is asked to skip reasoning, though some always reason. Click to turn on.'
+      }
+    >
+      <Brain size={16} strokeWidth={1.9} aria-hidden="true" />
+    </button>
+  )
+}
+
 interface ChatInputProps {
   inputValue: string
   attachedImages: MessageImageAttachment[]
@@ -1089,31 +1115,18 @@ export function ChatInput({
                     unavailableReason={researchUnavailableReason}
                     selected={researchSelected}
                   />
-                  {thinkingAvailable && (
-                    <FeatureMenuAction
-                      label="Model thinking"
-                      description="Let the selected model use its reasoning mode"
-                      icon={<Brain size={16} />}
-                      onClick={() => runFeatureAction(onToggleThinking)}
-                      selected={thinkingEnabled}
-                    />
-                  )}
                 </section>
               </div>
             )}
           </div>
-
-          {thinkingAvailable && thinkingEnabled && (
-            <button className="composer-status composer-status-active" onClick={onToggleThinking}>
-              <Brain size={13} />
-              Thinking
-            </button>
-          )}
         </>
       }
       toolbarRight={
         <>
           <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
+          {thinkingAvailable && (
+            <ThinkingToggle enabled={thinkingEnabled} onToggle={onToggleThinking} />
+          )}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}

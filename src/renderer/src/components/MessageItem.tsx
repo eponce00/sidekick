@@ -4,6 +4,7 @@ import {
   Check,
   X,
   AlignLeft,
+  Brain,
   ChevronDown,
   ChevronRight,
   Copy,
@@ -368,7 +369,14 @@ function VerificationDetail({
               <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
             ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
               <p key={index} className={`verification-step-${step.type}`}>
-                {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
+                {step.type === 'thinking' ? (
+                  <>
+                    <ThinkingIcon />
+                    {thinkingPreview(step.content)}
+                  </>
+                ) : (
+                  step.content
+                )}
               </p>
             ) : null
           )}
@@ -429,7 +437,14 @@ function VerificationProgress({
                 <ToolExecutionCard key={index} tool={step.tool} workspaceRoot={workspaceRoot} />
               ) : (step.type === 'text' || step.type === 'thinking') && step.content ? (
                 <p key={index} className={`verification-step-${step.type}`}>
-                  {step.type === 'thinking' ? thinkingPreview(step.content) : step.content}
+                  {step.type === 'thinking' ? (
+                    <>
+                      <ThinkingIcon />
+                      {thinkingPreview(step.content)}
+                    </>
+                  ) : (
+                    step.content
+                  )}
                 </p>
               ) : null
             )}
@@ -562,8 +577,16 @@ function thinkingPreview(content: string): string {
   // render was measurable across the hundreds in a long run.
   const normalized = content.slice(0, 400).replace(/\s+/g, ' ').trim()
   if (!normalized) return 'Thinking'
-  const preview = normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
-  return `Think · ${preview}`
+  return normalized.length > 96 ? `${normalized.slice(0, 95).trimEnd()}…` : normalized
+}
+
+/** The composer's reasoning toggle uses the same brain, so the two read as one feature. */
+function ThinkingIcon(): React.JSX.Element {
+  return (
+    <span className="thinking-step-icon">
+      <Brain size={14} role="img" aria-label="Thinking" />
+    </span>
+  )
 }
 
 function isDurableOutputGroup(group: GroupedSegment): boolean {
@@ -692,7 +715,8 @@ function AgentWorkDisclosure({
             </>
           ) : (
             <span className="agent-work-live-thinking">
-              {thinkingPreview(current.content ?? '')}
+              <ThinkingIcon />
+              <span className="thinking-step-text">{thinkingPreview(current.content ?? '')}</span>
             </span>
           )}
         </div>
@@ -1059,18 +1083,21 @@ function MessageItemInner({
                         return (
                           <div key={`thinking-${segIdx}`} className="action-thinking-step">
                             <button
-                              className="actions-toggle"
+                              type="button"
+                              className="actions-toggle thinking-step-toggle"
                               onClick={() => onToggleThinking(thinkingId)}
                               aria-expanded={expandedThinking.has(thinkingId)}
                               title="Show or hide thinking"
                             >
-                              <ChevronRight
-                                size={11}
-                                className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
-                              />
+                              <ThinkingIcon />
                               <span className="actions-summary">
                                 {thinkingPreview(segment.content)}
                               </span>
+                              <ChevronRight
+                                size={11}
+                                aria-hidden="true"
+                                className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
+                              />
                             </button>
                             {expandedThinking.has(thinkingId) && (
                               <div className="actions-content">
