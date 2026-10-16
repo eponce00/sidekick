@@ -86,7 +86,10 @@ interface ConversationsAPI {
     input: import('../shared/conversationTitles').ConversationTitleBackfillIdentity
   ) => Promise<{ preserved: boolean }>
   markRead: (id: string) => Promise<{ success: boolean }>
-  delete: (id: string) => Promise<{ success: boolean }>
+  delete: (id: string) => Promise<{
+    success: boolean
+    worktreeCleanup?: import('../shared/worktrees').RemoveManagedWorktreeResult
+  }>
   deleteAll: () => Promise<{ success: boolean }>
   getMessages: (
     conversationId: string
@@ -130,6 +133,10 @@ interface AgentRunsAPI {
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>
   stop: (runId: string) => Promise<{ stopped: boolean }>
+  /** Other agents writing in the folder this conversation works in. */
+  workspaceOccupants: (
+    conversationId: string
+  ) => Promise<import('../shared/worktrees').WorkspaceOccupant[]>
   events: (
     runId: string,
     afterSequence?: number
@@ -441,6 +448,7 @@ export interface DesktopApi {
   pinnedModels: PinnedModelsAPI
   conversations: ConversationsAPI
   projects: ProjectsAPI
+  worktrees: import('../shared/worktrees').WorktreesAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI

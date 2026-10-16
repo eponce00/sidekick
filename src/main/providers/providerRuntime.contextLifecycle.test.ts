@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
+import { WorkspaceOccupancy } from '../services/workspaceOccupancy'
 import { ConversationRunPreparer } from '../services/conversationRunPreparer'
 import { AgentRunStore } from '../services/agentRunStore'
 import { AgentMessageMaterializer } from '../services/agentMessageMaterializer'
@@ -89,6 +90,7 @@ function fixture() {
     commands: { cancelAll: vi.fn() },
     mcp: { close: vi.fn(async () => {}) },
     goals: new ConversationGoalStore(db),
+    occupancy: new WorkspaceOccupancy(),
     skillAssetsPath: () => 'fixture-assets'
   })
   return { coordinator, db, store, kernel, tools, publish }
@@ -394,4 +396,68 @@ describe('provider context discovery before kernel registration', () => {
       expect(network.fetch).toHaveBeenCalledOnce()
     }
   )
+})
+
+describe('workspace guard at run start', () => {
+  function inSharedProject(db: ReturnType<typeof openApplicationDatabase>): void {
+    db.exec(`
+      INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+        VALUES ('shared-project', 'Shared', '${process.cwd().replaceAll("'", "''")}', 1, 1);
+      UPDATE conversations SET project_id = 'shared-project' WHERE id = 'fixture-thread';
+      INSERT INTO conversations (id, title, created_at, updated_at, project_id)
+        VALUES ('other-thread', 'Other chat', 1, 1, 'shared-project'),
+               ('third-thread', 'Third chat', 1, 1, 'shared-project');
+    `)
+  }
+  const other = {
+    ...conversationInput,
+    id: 'other-run',
+    conversationId: 'other-thread',
+    assistantMessageId: 'other-message'
+  }
+
+  it('refuses a second writer in a busy folder until it is free or shared', async () => {
+    const { coordinator, db } = fixture()
+    inSharedProject(db)
+    const network = deferredFetch()
+    contextOnlyPreparation()
+    const pending = coordinator.startConversation(conversationInput)
+    await network.started
+
+    expect(coordinator.workspaceOccupants('other-thread').map(({ title }) => title)).toEqual([
+      'Fixture'
+    ])
+    await expect(coordinator.startConversation(other)).rejects.toThrow(
+      'Another agent is already working in this folder (“Fixture”)'
+    )
+    const research = coordinator.startConversation({ ...other, id: 'research', mode: 'research' })
+    const shared = coordinator.startConversation({
+      ...other,
+      id: 'shared',
+      conversationId: 'third-thread',
+      assistantMessageId: 'third-message',
+      workspaceSharing: 'allow'
+    })
+    // Both got past the guard and are now waiting on the provider like the first run.
+    coordinator.stop('research')
+    coordinator.stop('shared')
+    coordinator.stop('fixture-run')
+    for (const run of [pending, research, shared])
+      await expect(run).resolves.toMatchObject({ phase: 'cancelled' })
+    network.release()
+
+    expect(coordinator.workspaceOccupants('other-thread')).toEqual([])
+  })
+
+  it('frees the folder when preparation fails', async () => {
+    const { coordinator, db } = fixture()
+    inSharedProject(db)
+    vi.spyOn(ConversationRunPreparer.prototype, 'prepare').mockRejectedValue(
+      new Error('synthetic preparation failure')
+    )
+    await expect(coordinator.startConversation(conversationInput)).rejects.toThrow(
+      'synthetic preparation failure'
+    )
+    expect(coordinator.workspaceOccupants('other-thread')).toEqual([])
+  })
 })

@@ -135,12 +135,25 @@ const api = {
     moveConversation: (input: import('../shared/projects').MoveConversationInput) =>
       ipcRenderer.invoke('projects:moveConversation', input)
   },
+  worktrees: {
+    list: () => ipcRenderer.invoke('worktrees:list'),
+    diskUsage: (id: string) => ipcRenderer.invoke('worktrees:diskUsage', id),
+    branchOptions: (projectId: string) => ipcRenderer.invoke('worktrees:branchOptions', projectId),
+    createForConversation: (input: import('../shared/worktrees').CreateConversationWorktreeInput) =>
+      ipcRenderer.invoke('worktrees:createForConversation', input),
+    remove: (input: import('../shared/worktrees').RemoveManagedWorktreeInput) =>
+      ipcRenderer.invoke('worktrees:remove', input),
+    sync: (id: string) => ipcRenderer.invoke('worktrees:sync', id),
+    reveal: (id: string) => ipcRenderer.invoke('worktrees:reveal', id)
+  },
   agentRuns: {
     browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
       ipcRenderer.invoke('agentRuns:browserWorkspace', input),
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),
+    workspaceOccupants: (conversationId: string) =>
+      ipcRenderer.invoke('agentRuns:workspaceOccupants', conversationId),
     events: (runId: string, afterSequence?: number) =>
       ipcRenderer.invoke('agentRuns:events', runId, afterSequence),
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),

@@ -18,6 +18,11 @@ export interface StartConversationAgentRunInput {
    * latest run of the conversation can be continued, and only once.
    */
   continuesRunId?: string
+  /**
+   * Run even though another agent is writing in the same folder. Without it the runtime refuses,
+   * so a caller has to choose sharing explicitly rather than overwrite another run's work.
+   */
+  workspaceSharing?: 'allow'
   userLocation?: {
     city?: string
     country?: string

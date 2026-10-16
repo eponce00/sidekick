@@ -12,6 +12,7 @@ import { registerAgentRunHandlers } from './agentRuns'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
+import { registerWorktreeHandlers } from './worktrees'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -23,6 +24,7 @@ export function registerAllHandlers(): void {
   registerSettingsHandlers()
   registerDatabaseHandlers()
   registerProjectHandlers()
+  registerWorktreeHandlers()
   registerWorkspaceHandlers()
   registerCheckpointHandlers()
   registerMcpHandlers()

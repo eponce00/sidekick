@@ -69,7 +69,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 9
+        count: 10
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -202,7 +202,8 @@ describe('database schema migrations', () => {
       { id: '20260830_003_title_backfill_attempt_versions', checksum_length: 64 },
       { id: '20260830_004_message_context_attachments', checksum_length: 64 },
       { id: '20260923_001_message_notice_tone', checksum_length: 64 },
-      { id: '20260923_002_message_goal_origin', checksum_length: 64 }
+      { id: '20260923_002_message_goal_origin', checksum_length: 64 },
+      { id: '20261016_002_worktree_base_ref', checksum_length: 64 }
     ])
     expect(
       db

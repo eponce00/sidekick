@@ -5,6 +5,7 @@ import type {
   CollaborationGroupDetail
 } from '../../../shared/collaboration'
 import type { ProjectConversation } from '../../../shared/projects'
+import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
 import type {
   ConversationGoal,
   ConversationGoalChangedEvent
@@ -141,6 +142,17 @@ const previewProjects = [
     last_activity_at: Date.now() - 120_000
   },
   {
+    id: 'preview-worktree-project-1',
+    name: 'sidekick-demo · sidekick/card-polish',
+    folder_path:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d',
+    is_pinned: 0,
+    created_at: Date.now() - 7_200_000,
+    updated_at: Date.now() - 600_000,
+    conversation_count: 1,
+    last_activity_at: Date.now() - 600_000
+  },
+  {
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
@@ -151,6 +163,171 @@ const previewProjects = [
     last_activity_at: Date.now() - 90_000
   }
 ]
+
+previewConversations.push({
+  id: 'preview-4',
+  title: 'Polish the conversation cards',
+  created_at: Date.now() - 7_200_000,
+  updated_at: Date.now() - 600_000,
+  project_id: 'preview-worktree-project-1',
+  sidebar_order: 0,
+  project_context_version: 0,
+  home_workspace_root: previewProjects[1].folder_path,
+  home_project_name: previewProjects[1].name
+})
+
+const previewWorktrees: ManagedWorktreeSummary[] = [
+  {
+    id: 'preview-worktree-1',
+    projectId: 'preview-worktree-project-1',
+    projectName: previewProjects[1].name,
+    folderPath: previewProjects[1].folder_path,
+    worktreeRoot: previewProjects[1].folder_path,
+    sourceProjectId: 'preview-project-1',
+    sourceProjectName: 'sidekick-demo',
+    branch: 'sidekick/card-polish',
+    baseRef: 'main',
+    createdAt: Date.now() - 7_200_000,
+    lastUsedAt: Date.now() - 600_000,
+    owners: [
+      { kind: 'chat', id: 'preview-4', title: 'Polish the conversation cards', running: false }
+    ],
+    status: {
+      currentBranch: 'sidekick/card-polish',
+      ahead: 3,
+      behind: 2,
+      changedFiles: 4,
+      merged: false
+    },
+    blockers: [
+      {
+        code: 'in-use',
+        message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
+        forceable: true
+      },
+      { code: 'modified', message: '4 uncommitted changes would be lost.', forceable: true },
+      {
+        code: 'unmerged',
+        message:
+          'sidekick/card-polish has 3 commits that main does not. The branch is kept unless you also delete it.',
+        forceable: true
+      }
+    ]
+  },
+  {
+    id: 'preview-worktree-2',
+    projectId: 'preview-worktree-project-2',
+    projectName: 'sidekick-demo · sidekick/release-notes',
+    folderPath:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
+    worktreeRoot:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
+    sourceProjectId: 'preview-project-1',
+    sourceProjectName: 'sidekick-demo',
+    branch: 'sidekick/release-notes',
+    baseRef: 'main',
+    createdAt: Date.now() - 90_000_000,
+    lastUsedAt: Date.now() - 80_000_000,
+    owners: [],
+    status: {
+      currentBranch: 'sidekick/release-notes',
+      ahead: 0,
+      behind: 5,
+      changedFiles: 0,
+      merged: true
+    },
+    blockers: []
+  }
+]
+
+const previewWorktreesApi: WorktreesAPI = {
+  list: async () => structuredClone(previewWorktrees),
+  diskUsage: async (id) => ({
+    id,
+    bytes: id === 'preview-worktree-1' ? 412_000_000 : 38_500_000,
+    truncated: id === 'preview-worktree-1'
+  }),
+  branchOptions: async (projectId) => ({
+    branches: ['main', 'release/0.13', 'eponce/tray-menu'],
+    currentBranch: 'main',
+    isGitRepository: projectId !== 'preview-project-2',
+    isManagedWorktree: projectId.startsWith('preview-worktree-project')
+  }),
+  createForConversation: async ({ conversationId, branchName, baseRef }) => {
+    const conversation = previewCreatedConversations.find(({ id }) => id === conversationId)
+    if (!conversation) throw new Error('Only a chat without messages can move to a new worktree')
+    const branch = branchName || 'sidekick/new-chat'
+    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\${branch.split('/').at(-1)}`
+    const project = {
+      id: `preview-worktree-project-${Date.now()}`,
+      name: `sidekick-demo · ${branch}`,
+      folder_path: folder,
+      is_pinned: 0,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      conversation_count: 1,
+      last_activity_at: Date.now()
+    }
+    previewProjects.push(project)
+    Object.assign(conversation, {
+      project_id: project.id,
+      home_workspace_root: folder,
+      home_project_name: project.name,
+      project_context_version: conversation.project_context_version + 1
+    })
+    const worktree: ManagedWorktreeSummary = {
+      id: `preview-worktree-${Date.now()}`,
+      projectId: project.id,
+      projectName: project.name,
+      folderPath: folder,
+      worktreeRoot: folder,
+      sourceProjectId: 'preview-project-1',
+      sourceProjectName: 'sidekick-demo',
+      branch,
+      baseRef: baseRef || 'main',
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
+      status: { currentBranch: branch, ahead: 0, behind: 0, changedFiles: 0, merged: true },
+      blockers: [
+        {
+          code: 'in-use',
+          message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
+          forceable: true
+        }
+      ]
+    }
+    previewWorktrees.unshift(worktree)
+    return { project, conversation, worktree }
+  },
+  remove: async ({ id, force, deleteBranch }) => {
+    const index = previewWorktrees.findIndex((worktree) => worktree.id === id)
+    if (index < 0) throw new Error('This worktree is no longer managed by SideKick')
+    const worktree = previewWorktrees[index]
+    if (worktree.blockers.length && !force) return { removed: false, blockers: worktree.blockers }
+    previewWorktrees.splice(index, 1)
+    return {
+      removed: true,
+      blockers: [],
+      ...(worktree.status?.merged || deleteBranch ? {} : { keptBranch: worktree.branch }),
+      detachedConversationIds: worktree.owners.map(({ id: ownerId }) => ownerId)
+    }
+  },
+  sync: async (id) => {
+    const worktree = previewWorktrees.find((candidate) => candidate.id === id)
+    if (!worktree?.status) return { status: 'refused', message: 'This worktree is busy' }
+    if (worktree.status.changedFiles)
+      return {
+        status: 'refused',
+        message: 'Commit or discard the uncommitted changes before syncing.'
+      }
+    if (!worktree.status.behind)
+      return { status: 'up-to-date', message: `Already up to date with ${worktree.baseRef}.` }
+    worktree.status.behind = 0
+    return { status: 'merged', message: `Merged ${worktree.baseRef} into ${worktree.branch}.` }
+  },
+  reveal: async () => undefined
+}
 
 const previewAgentSessions = [
   {
@@ -864,7 +1041,25 @@ export function installBrowserApiMock(): void {
         transition: null
       })
     },
+    worktrees: previewWorktreesApi,
     agentRuns: {
+      // "Refine the desktop experience" is treated as writing in sidekick-demo, so a new chat
+      // there shows the busy-folder prompt.
+      workspaceOccupants: async (conversationId) => {
+        const conversation = [...previewCreatedConversations, ...previewConversations].find(
+          ({ id }) => id === conversationId
+        )
+        return conversation?.project_id === 'preview-project-1' && conversationId !== 'preview-1'
+          ? [
+              {
+                runId: 'preview-run-1',
+                conversationId: 'preview-1',
+                title: 'Refine the desktop experience',
+                workspaceRoot: 'C:\\Projects\\sidekick-demo'
+              }
+            ]
+          : []
+      },
       browserWorkspace: async () => null,
       startConversation: async (input) => ({
         run: {

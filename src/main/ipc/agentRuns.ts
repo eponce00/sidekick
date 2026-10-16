@@ -185,7 +185,8 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
     typeof input.model.name !== 'string' ||
     typeof input.model.provider !== 'string' ||
     (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode)) ||
-    (input.continuesRunId !== undefined && !validId(input.continuesRunId))
+    (input.continuesRunId !== undefined && !validId(input.continuesRunId)) ||
+    (input.workspaceSharing !== undefined && input.workspaceSharing !== 'allow')
   ) {
     throw new Error('Invalid conversation agent run request')
   }
@@ -428,6 +429,13 @@ export function registerAgentRunHandlers(): void {
       input: validateStart(raw)
     })
   }))
+  ipcMain.handle('agentRuns:workspaceOccupants', (_event, conversationId: unknown) => {
+    if (!validId(conversationId)) throw new Error('Invalid conversation ID')
+    return engine.request<import('../../shared/worktrees').WorkspaceOccupant[]>({
+      type: 'workspace.occupants',
+      conversationId
+    })
+  })
   ipcMain.handle('agentRuns:stop', async (_event, runId: string) => ({
     stopped:
       typeof runId === 'string' && (await engine.request<boolean>({ type: 'run.stop', runId }))
