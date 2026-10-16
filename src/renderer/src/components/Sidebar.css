@@ -929,6 +929,91 @@
   }
 }
 
+.conversation-run-indicator.failed {
+  background: var(--color-error);
+}
+
+/* Started, waiting for a run slot. */
+.conversation-run-indicator.queued {
+  width: 8px;
+  height: 8px;
+  border: 1.5px dashed var(--accent);
+  background: transparent;
+}
+
+.conversation-run-indicator.stopped {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--text-muted);
+  background: transparent;
+}
+
+/* Chats a chat started hang under it on a thin guide line, as in Claude Code's sidebar. */
+.session-family-workers {
+  margin: 0 0 2px 15px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-color);
+}
+
+.session-family-toggle {
+  width: 18px;
+  height: 22px;
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  margin-left: -5px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.session-family-toggle:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.sidebar .session-family-toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.conversation-item.session-worker .conversation-title {
+  color: var(--text-secondary);
+}
+
+.conversation-item.session-worker.active .conversation-title,
+.conversation-item.session-worker:hover .conversation-title {
+  color: var(--text-primary);
+}
+
+/* A manager listed only because one of its chats matches the filter. */
+.conversation-item.is-context .conversation-title {
+  color: var(--text-muted);
+}
+
+/* The name claims its width first, so the project tag beside it shrinks before the name does. */
+.conversation-item.session-worker .conversation-content {
+  flex: 1 1 auto;
+}
+
+.session-project-tag {
+  min-width: 28px;
+  max-width: 96px;
+  flex: 0 1000 auto;
+  overflow: hidden;
+  padding: 1px 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .conversation-rename-input {
   height: 27px;
   padding: 0 6px;

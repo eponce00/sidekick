@@ -31,11 +31,20 @@ import type { MoveConversationInput } from '../../../shared/projects'
 import type { CollaborationGroup } from '../../../shared/collaboration'
 import { groupAgentSessionsByProject } from '../utils/projectAgentSessions'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
+import { conversationRunStatus, type ConversationRunStatus } from '../utils/conversationAttention'
 import {
-  CONVERSATION_RUN_STATUS_LABELS,
-  conversationRunStatus,
-  type ConversationRunStatus
-} from '../utils/conversationAttention'
+  SIDEBAR_DOT_LABELS,
+  dotFilterStatus,
+  expandFamilies,
+  familyDescendants,
+  familyRollUpLabel,
+  familyWorkers,
+  indexSessionFamilies,
+  mostUrgentDot,
+  sidebarDot,
+  type SidebarDot
+} from '../utils/sessionFamilies'
+import { useSessionStatuses } from '../hooks/useSessionStatuses'
 import {
   SIDEBAR_STATUS_FILTER_LABELS,
   SIDEBAR_STATUS_FILTERS,
@@ -97,6 +106,19 @@ interface SidebarProps {
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
+
+const COLLAPSED_FAMILIES_STORAGE_KEY = 'collapsedSessionFamilies'
+
+interface ConversationRowOptions {
+  nested?: boolean
+  showProject?: boolean
+  /** Replaces the title, as "Run 3" does inside a schedule's group. */
+  title?: string
+  /** A worker row under its manager. */
+  worker?: boolean
+  /** A manager shown only because a filter matched one of its workers. */
+  context?: boolean
+}
 
 const EMPTY_FILTER_MESSAGES: Record<ConversationRunStatus, string> = {
   waiting: 'Nothing needs your attention',
@@ -176,6 +198,26 @@ function Sidebar({
   }, [collapsedProjectIds])
   const allProjectsCollapsed =
     projects.length > 0 && projects.every(({ id }) => collapsedProjectIds.has(id))
+  const [collapsedFamilyIds, setCollapsedFamilyIds] = useState<Set<string>>(() => {
+    try {
+      return new Set(
+        JSON.parse(window.localStorage.getItem(COLLAPSED_FAMILIES_STORAGE_KEY) || '[]')
+      )
+    } catch {
+      return new Set()
+    }
+  })
+  const toggleFamily = (managerId: string): void =>
+    setCollapsedFamilyIds((current) => {
+      const next = new Set(current)
+      if (!next.delete(managerId)) next.add(managerId)
+      try {
+        window.localStorage.setItem(COLLAPSED_FAMILIES_STORAGE_KEY, JSON.stringify([...next]))
+      } catch {
+        // The choice still applies for this session.
+      }
+      return next
+    })
   const [collapsedSections, setCollapsedSections] = useState<Set<SidebarSection>>(() => {
     try {
       return new Set(JSON.parse(window.localStorage.getItem('collapsedSidebarSections') || '[]'))
@@ -276,42 +318,75 @@ function Sidebar({
     }
   }, [query])
 
+  // Archived chats leave the list; search still finds them.
+  const liveConversations = useMemo(
+    () => conversations.filter((conversation) => !conversation.archived_at),
+    [conversations]
+  )
+  const families = useMemo(() => indexSessionFamilies(liveConversations), [liveConversations])
+  // Workers are listed under their manager, wherever each one's project is.
+  const topLevelConversations = useMemo(
+    () => liveConversations.filter(({ id }) => !families.nestedIds.has(id)),
+    [families, liveConversations]
+  )
+
   const conversationsByProject = useMemo(() => {
     const grouped = new Map<string, Conversation[]>()
-    for (const conversation of conversations) {
+    for (const conversation of topLevelConversations) {
       if (!conversation.project_id) continue
       const group = grouped.get(conversation.project_id) || []
       group.push(conversation)
       grouped.set(conversation.project_id, group)
     }
     return grouped
-  }, [conversations])
+  }, [topLevelConversations])
 
   const standaloneConversations = useMemo(
-    () => conversations.filter((conversation) => !conversation.project_id),
-    [conversations]
+    () => topLevelConversations.filter((conversation) => !conversation.project_id),
+    [topLevelConversations]
   )
 
   const activeGroups = useMemo(() => groups.filter(({ status }) => status === 'active'), [groups])
 
+  const sessionStatuses = useSessionStatuses()
+  const dotById = useMemo(() => {
+    const dots = new Map<string, SidebarDot | null>()
+    for (const { id } of conversations) {
+      const runStatus = conversationRunStatus(id, {
+        waiting: waitingConversationIds,
+        busy: busyConversationIds,
+        unread: unreadConversationIds
+      })
+      dots.set(id, sidebarDot(runStatus, sessionStatuses.get(id)))
+    }
+    return dots
+  }, [
+    busyConversationIds,
+    conversations,
+    sessionStatuses,
+    unreadConversationIds,
+    waitingConversationIds
+  ])
   const statusById = useMemo(() => {
     const statuses = new Map<string, ConversationRunStatus | null>()
-    for (const { id } of conversations) {
-      statuses.set(
-        id,
-        conversationRunStatus(id, {
-          waiting: waitingConversationIds,
-          busy: busyConversationIds,
-          unread: unreadConversationIds
-        })
-      )
-    }
+    for (const [id, dot] of dotById) statuses.set(id, dotFilterStatus(dot))
     return statuses
-  }, [busyConversationIds, conversations, unreadConversationIds, waitingConversationIds])
+  }, [dotById])
   const conversationMatches = useCallback(
     (conversation: Conversation): boolean =>
       matchesStatusFilter(statusById.get(conversation.id) ?? null, statusFilter),
     [statusById, statusFilter]
+  )
+  // A manager is listed when it or one of its workers matches, so a match keeps its context.
+  const familyMatches = useCallback(
+    (conversation: Conversation): boolean =>
+      conversationMatches(conversation) ||
+      familyDescendants(families, conversation.id).some(conversationMatches),
+    [conversationMatches, families]
+  )
+  const isFamilyCollapsed = useCallback(
+    (managerId: string): boolean => !filtering && collapsedFamilyIds.has(managerId),
+    [collapsedFamilyIds, filtering]
   )
   // Group agent sessions are left out of a filtered list; their group's row stands for them.
   const statusCounts = useMemo(() => {
@@ -329,8 +404,8 @@ function Sidebar({
       )
     : activeGroups
   const filteredConversations = useMemo(
-    () => conversations.filter(conversationMatches),
-    [conversationMatches, conversations]
+    () => topLevelConversations.filter(familyMatches),
+    [familyMatches, topLevelConversations]
   )
   // Day headings only depend on the date, so the clock advances once, at midnight.
   const [now, setNow] = useState(() => Date.now())
@@ -340,16 +415,29 @@ function Sidebar({
     const timer = window.setTimeout(() => setNow(Date.now()), midnight.getTime() - now)
     return () => window.clearTimeout(timer)
   }, [now])
+  // A family is as recent as its latest chat, so a busy worker keeps its manager near the top.
   const recentGroups = useMemo(
-    () => groupConversationsByRecency(filteredConversations, now),
-    [filteredConversations, now]
+    () =>
+      groupConversationsByRecency(
+        filteredConversations.map((conversation) => {
+          const latest = Math.max(
+            conversation.updated_at,
+            ...familyDescendants(families, conversation.id).map(({ updated_at }) => updated_at)
+          )
+          return latest > conversation.updated_at
+            ? { ...conversation, updated_at: latest }
+            : conversation
+        }),
+        now
+      ),
+    [families, filteredConversations, now]
   )
   const standaloneMatches = filtering
-    ? standaloneConversations.filter(conversationMatches)
+    ? standaloneConversations.filter(familyMatches)
     : standaloneConversations
   const projectsWithMatches = filtering
     ? projects.filter((project) =>
-        (conversationsByProject.get(project.id) || []).some(conversationMatches)
+        (conversationsByProject.get(project.id) || []).some(familyMatches)
       )
     : projects
   // A filter shows every match, so it opens closed sections and projects.
@@ -361,38 +449,56 @@ function Sidebar({
     () => searchResults.filter(conversationMatches),
     [conversationMatches, searchResults]
   )
-  const visibleConversationOrder = useMemo(
-    () =>
-      searching
-        ? visibleSearchResults.map(({ id }) => id)
-        : isCollapsed
-          ? sidebarConversationOrder(conversations, projects)
-          : view === 'recent'
-            ? recentGroups.flatMap((group) => group.conversations.map(({ id }) => id))
-            : filtering
-              ? sidebarConversationOrder(filteredConversations, projects)
-              : sidebarConversationOrder(
-                  conversations,
-                  projects,
-                  collapsedSections.has('projects')
-                    ? new Set(projects.map(({ id }) => id))
-                    : collapsedProjectIds,
-                  collapsedSections.has('chats')
-                ),
-    [
-      collapsedProjectIds,
-      collapsedSections,
-      conversations,
-      filteredConversations,
-      filtering,
-      isCollapsed,
-      projects,
-      recentGroups,
-      searching,
-      view,
-      visibleSearchResults
-    ]
-  )
+  // Keyboard moves follow the rows as shown: each manager, then its visible workers.
+  const visibleConversationOrder = useMemo(() => {
+    if (searching) return visibleSearchResults.map(({ id }) => id)
+    if (isCollapsed) {
+      return expandFamilies(
+        sidebarConversationOrder(topLevelConversations, projects),
+        families,
+        () => false
+      )
+    }
+    const include = filtering ? conversationMatches : undefined
+    if (view === 'recent') {
+      return expandFamilies(
+        recentGroups.flatMap((group) => group.conversations.map(({ id }) => id)),
+        families,
+        isFamilyCollapsed,
+        include
+      )
+    }
+    return expandFamilies(
+      filtering
+        ? sidebarConversationOrder(filteredConversations, projects)
+        : sidebarConversationOrder(
+            topLevelConversations,
+            projects,
+            collapsedSections.has('projects')
+              ? new Set(projects.map(({ id }) => id))
+              : collapsedProjectIds,
+            collapsedSections.has('chats')
+          ),
+      families,
+      isFamilyCollapsed,
+      include
+    )
+  }, [
+    collapsedProjectIds,
+    collapsedSections,
+    conversationMatches,
+    families,
+    filteredConversations,
+    filtering,
+    isCollapsed,
+    isFamilyCollapsed,
+    projects,
+    recentGroups,
+    searching,
+    topLevelConversations,
+    view,
+    visibleSearchResults
+  ])
   useEffect(() => {
     onVisibleConversationOrderChange?.(visibleConversationOrder)
   }, [onVisibleConversationOrderChange, visibleConversationOrder])
@@ -518,15 +624,38 @@ function Sidebar({
 
   const renderConversation = (
     conversation: Conversation,
-    options: { nested?: boolean; showProject?: boolean; title?: string } = {}
+    options: ConversationRowOptions = {}
   ): React.JSX.Element => {
     const isConversationBusy = busyConversationIds.has(conversation.id)
-    const runStatus = statusById.get(conversation.id) ?? null
     const actionsMenuKey = `conversation:${conversation.id}`
+    const workers = familyWorkers(families, conversation.id)
+    const descendants = workers.length ? familyDescendants(families, conversation.id) : []
+    const familyCollapsed = workers.length > 0 && isFamilyCollapsed(conversation.id)
+    const ownDot = dotById.get(conversation.id) ?? null
+    const workerDots = descendants.map(({ id }) => dotById.get(id) ?? null)
+    // A worker that needs the user marks its manager too; a closed family shows its most urgent.
+    const dot = familyCollapsed
+      ? mostUrgentDot([ownDot, ...workerDots])
+      : workerDots.includes('waiting')
+        ? 'waiting'
+        : ownDot
+    const rollUp = workers.length ? familyRollUpLabel(workerDots) : ''
+    const manager = options.worker
+      ? conversationById.get(conversation.started_by_conversation_id ?? '')
+      : undefined
+    // A worker elsewhere stays with its manager and names its own project instead.
+    const projectTag =
+      manager && conversation.project_id && conversation.project_id !== manager.project_id
+        ? (projectNameById.get(conversation.project_id) ?? conversation.home_project_name)
+        : null
+    const label =
+      options.title ?? (options.worker && conversation.session_handle) ?? conversation.title
     return (
       <div
         key={conversation.id}
         className={`conversation-item ${options.nested ? 'nested' : ''} ${
+          options.worker ? 'session-worker' : ''
+        } ${workers.length ? 'session-manager' : ''} ${options.context ? 'is-context' : ''} ${
           currentConversationId === conversation.id ? 'active' : ''
         } ${draggingConversationId === conversation.id ? 'dragging' : ''} ${
           dropTarget?.anchorConversationId === conversation.id
@@ -536,9 +665,11 @@ function Sidebar({
             : ''
         }`}
         // Order is the user's only in the unfiltered folder view; elsewhere "Move to" remains.
+        // Workers belong to their manager's family and move with it.
         draggable={
           view === 'folders' &&
           !filtering &&
+          !options.worker &&
           !isConversationBusy &&
           renamingConversationId !== conversation.id
         }
@@ -552,7 +683,12 @@ function Sidebar({
           setDropTarget(null)
         }}
         onDragOver={(event) => {
-          if (!draggingConversationId || draggingConversationId === conversation.id) return
+          if (
+            options.worker ||
+            !draggingConversationId ||
+            draggingConversationId === conversation.id
+          )
+            return
           const dragged = conversationById.get(draggingConversationId)
           if (!dragged) return
           const allowed = canMoveToProject(dragged, conversation.project_id)
@@ -573,6 +709,19 @@ function Sidebar({
         }}
       >
         <>
+          {workers.length > 0 && (
+            <button
+              type="button"
+              className="session-family-toggle"
+              onClick={() => toggleFamily(conversation.id)}
+              disabled={filtering}
+              aria-expanded={!familyCollapsed}
+              aria-label={`${familyCollapsed ? 'Show' : 'Hide'} the chats ${conversation.title} started`}
+              title={familyCollapsed ? 'Show the chats it started' : 'Hide the chats it started'}
+            >
+              {familyCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </button>
+          )}
           {renamingConversationId === conversation.id ? (
             <div className="conversation-content">
               <input
@@ -596,7 +745,8 @@ function Sidebar({
               onDoubleClick={() => beginConversationRename(conversation)}
               title={`${conversation.title} — double-click to rename`}
             >
-              <span className="conversation-title">{options.title ?? conversation.title}</span>
+              <span className="conversation-title">{label}</span>
+              {rollUp && <span className="conversation-metadata session-roll-up">{rollUp}</span>}
               {options.showProject && conversation.project_id && (
                 <span className="conversation-metadata">
                   {projectNameById.get(conversation.project_id)}
@@ -609,11 +759,16 @@ function Sidebar({
               )}
             </button>
           )}
-          {runStatus && (
+          {projectTag && (
+            <span className="session-project-tag" title={`In ${projectTag}`}>
+              {projectTag}
+            </span>
+          )}
+          {dot && (
             <span
-              className={`conversation-run-indicator ${runStatus}`}
-              title={CONVERSATION_RUN_STATUS_LABELS[runStatus]}
-              aria-label={CONVERSATION_RUN_STATUS_LABELS[runStatus]}
+              className={`conversation-run-indicator ${dot}`}
+              title={SIDEBAR_DOT_LABELS[dot]}
+              aria-label={SIDEBAR_DOT_LABELS[dot]}
             />
           )}
           <span className="conversation-actions">
@@ -746,6 +901,40 @@ function Sidebar({
     )
   }
 
+  // A chat and, under a thin guide line, the chats it started. A filter lists only the workers
+  // it matches, with their manager kept as context.
+  const renderFamily = (
+    conversation: Conversation,
+    options: ConversationRowOptions = {}
+  ): React.JSX.Element => {
+    const workers = familyWorkers(families, conversation.id)
+    if (!workers.length) return renderConversation(conversation, options)
+    const shown = filtering
+      ? workers.filter(
+          (worker) =>
+            conversationMatches(worker) ||
+            familyDescendants(families, worker.id).some(conversationMatches)
+        )
+      : workers
+    return (
+      <div className="session-family" key={conversation.id}>
+        {renderConversation(conversation, {
+          ...options,
+          context: filtering && !conversationMatches(conversation)
+        })}
+        {!isFamilyCollapsed(conversation.id) && shown.length > 0 && (
+          <div
+            className="session-family-workers"
+            role="group"
+            aria-label={`Chats ${conversation.title} started`}
+          >
+            {shown.map((worker) => renderFamily(worker, { nested: true, worker: true }))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // A schedule's chats share one row, so its runs do not crowd out the user's own chats.
   const renderConversationList = (
     list: Conversation[],
@@ -753,7 +942,7 @@ function Sidebar({
   ): React.JSX.Element[] =>
     groupScheduledConversations(list, scheduleNames).map((entry) =>
       entry.kind === 'conversation' ? (
-        renderConversation(entry.conversation, options)
+        renderFamily(entry.conversation, options)
       ) : (
         <ScheduledRunGroupRow
           key={`schedule:${entry.group.scheduleId}`}
@@ -764,7 +953,7 @@ function Sidebar({
           busy={busyConversationIds}
           unread={unreadConversationIds}
           renderConversation={(conversation, title) =>
-            renderConversation(conversation, { nested: true, title })
+            renderFamily(conversation, { nested: true, title })
           }
         />
       )
@@ -1262,7 +1451,7 @@ function Sidebar({
                         projectsWithMatches.map((project) => {
                           const projectConversations = (
                             conversationsByProject.get(project.id) || []
-                          ).filter(conversationMatches)
+                          ).filter(familyMatches)
                           const projectAgentSessions = filtering
                             ? []
                             : agentSessionsByProject.get(project.id) || []
@@ -1460,10 +1649,8 @@ function Sidebar({
                                         {sessionStatus && (
                                           <span
                                             className={`conversation-run-indicator ${sessionStatus}`}
-                                            title={CONVERSATION_RUN_STATUS_LABELS[sessionStatus]}
-                                            aria-label={
-                                              CONVERSATION_RUN_STATUS_LABELS[sessionStatus]
-                                            }
+                                            title={SIDEBAR_DOT_LABELS[sessionStatus]}
+                                            aria-label={SIDEBAR_DOT_LABELS[sessionStatus]}
                                           />
                                         )}
                                         <span className="conversation-actions sidebar-overflow-wrap">
