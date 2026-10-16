@@ -1,15 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  Clock,
   Command,
   Folder,
   FolderInput,
   FolderOpen,
   FolderPlus,
   GitBranch,
+  ListFilter,
   MessageSquare,
   MoreHorizontal,
   PanelLeft,
@@ -20,7 +22,8 @@ import {
   Search,
   SquarePen,
   Trash2,
-  Users
+  Users,
+  X
 } from 'lucide-react'
 import type { Conversation, Project } from '../types/app.types'
 import type { MoveConversationInput } from '../../../shared/projects'
@@ -29,8 +32,21 @@ import { groupAgentSessionsByProject } from '../utils/projectAgentSessions'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
 import {
   CONVERSATION_RUN_STATUS_LABELS,
-  conversationRunStatus
+  conversationRunStatus,
+  type ConversationRunStatus
 } from '../utils/conversationAttention'
+import {
+  SIDEBAR_STATUS_FILTER_LABELS,
+  SIDEBAR_STATUS_FILTERS,
+  SIDEBAR_VIEW_STORAGE_KEY,
+  agentSessionStatus,
+  collaborationGroupStatus,
+  groupConversationsByRecency,
+  matchesStatusFilter,
+  storedSidebarView,
+  type SidebarStatusFilter,
+  type SidebarView
+} from '../utils/sidebarView'
 import { shortcutLabel } from '../../../shared/keyboardShortcuts'
 import type { DesktopPlatform } from '../../../shared/platform'
 import ConfirmDialog from './ConfirmDialog'
@@ -75,6 +91,12 @@ interface SidebarProps {
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
+
+const EMPTY_FILTER_MESSAGES: Record<ConversationRunStatus, string> = {
+  waiting: 'Nothing needs your attention',
+  working: 'No agents are working',
+  unread: 'No unread replies'
+}
 
 type SidebarSection = 'groups' | 'projects' | 'chats'
 
@@ -162,6 +184,42 @@ function Sidebar({
       if (!next.delete(section)) next.add(section)
       return next
     })
+  const [view, setView] = useState<SidebarView>(() => {
+    try {
+      return storedSidebarView(window.localStorage.getItem(SIDEBAR_VIEW_STORAGE_KEY))
+    } catch {
+      return 'folders'
+    }
+  })
+  const changeView = (next: SidebarView): void => {
+    setView(next)
+    try {
+      window.localStorage.setItem(SIDEBAR_VIEW_STORAGE_KEY, next)
+    } catch {
+      // The choice still applies for this session.
+    }
+  }
+  // Not remembered: a filter left on at the next launch would read as missing chats.
+  const [statusFilter, setStatusFilter] = useState<SidebarStatusFilter>('all')
+  const filtering = statusFilter !== 'all'
+  const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false)
+  const filterMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!isFilterMenuOpen) return
+    const closeOnOutsideClick = (event: MouseEvent): void => {
+      if (!filterMenuRef.current?.contains(event.target as Node)) setIsFilterMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setIsFilterMenuOpen(false)
+    }
+    document.addEventListener('mousedown', closeOnOutsideClick)
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsideClick)
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [isFilterMenuOpen])
 
   useEffect(() => {
     if (!isMenuOpen) return
@@ -228,29 +286,103 @@ function Sidebar({
 
   const activeGroups = useMemo(() => groups.filter(({ status }) => status === 'active'), [groups])
 
+  const statusById = useMemo(() => {
+    const statuses = new Map<string, ConversationRunStatus | null>()
+    for (const { id } of conversations) {
+      statuses.set(
+        id,
+        conversationRunStatus(id, {
+          waiting: waitingConversationIds,
+          busy: busyConversationIds,
+          unread: unreadConversationIds
+        })
+      )
+    }
+    return statuses
+  }, [busyConversationIds, conversations, unreadConversationIds, waitingConversationIds])
+  const conversationMatches = useCallback(
+    (conversation: Conversation): boolean =>
+      matchesStatusFilter(statusById.get(conversation.id) ?? null, statusFilter),
+    [statusById, statusFilter]
+  )
+  // Group agent sessions are left out of a filtered list; their group's row stands for them.
+  const statusCounts = useMemo(() => {
+    const counts: Record<ConversationRunStatus, number> = { waiting: 0, working: 0, unread: 0 }
+    for (const status of statusById.values()) if (status) counts[status] += 1
+    for (const group of activeGroups) {
+      const status = collaborationGroupStatus(group)
+      if (status) counts[status] += 1
+    }
+    return counts
+  }, [activeGroups, statusById])
+  const visibleGroups = filtering
+    ? activeGroups.filter((group) =>
+        matchesStatusFilter(collaborationGroupStatus(group), statusFilter)
+      )
+    : activeGroups
+  const filteredConversations = useMemo(
+    () => conversations.filter(conversationMatches),
+    [conversationMatches, conversations]
+  )
+  // Day headings only depend on the date, so the clock advances once, at midnight.
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const midnight = new Date(now)
+    midnight.setHours(24, 0, 0, 0)
+    const timer = window.setTimeout(() => setNow(Date.now()), midnight.getTime() - now)
+    return () => window.clearTimeout(timer)
+  }, [now])
+  const recentGroups = useMemo(
+    () => groupConversationsByRecency(filteredConversations, now),
+    [filteredConversations, now]
+  )
+  const standaloneMatches = filtering
+    ? standaloneConversations.filter(conversationMatches)
+    : standaloneConversations
+  const projectsWithMatches = filtering
+    ? projects.filter((project) =>
+        (conversationsByProject.get(project.id) || []).some(conversationMatches)
+      )
+    : projects
+  // A filter shows every match, so it opens closed sections and projects.
+  const isSectionCollapsed = (section: SidebarSection): boolean =>
+    !filtering && collapsedSections.has(section)
+
   const searching = !isCollapsed && query.trim().length > 0
+  const visibleSearchResults = useMemo(
+    () => searchResults.filter(conversationMatches),
+    [conversationMatches, searchResults]
+  )
   const visibleConversationOrder = useMemo(
     () =>
       searching
-        ? searchResults.map(({ id }) => id)
+        ? visibleSearchResults.map(({ id }) => id)
         : isCollapsed
           ? sidebarConversationOrder(conversations, projects)
-          : sidebarConversationOrder(
-              conversations,
-              projects,
-              collapsedSections.has('projects')
-                ? new Set(projects.map(({ id }) => id))
-                : collapsedProjectIds,
-              collapsedSections.has('chats')
-            ),
+          : view === 'recent'
+            ? recentGroups.flatMap((group) => group.conversations.map(({ id }) => id))
+            : filtering
+              ? sidebarConversationOrder(filteredConversations, projects)
+              : sidebarConversationOrder(
+                  conversations,
+                  projects,
+                  collapsedSections.has('projects')
+                    ? new Set(projects.map(({ id }) => id))
+                    : collapsedProjectIds,
+                  collapsedSections.has('chats')
+                ),
     [
       collapsedProjectIds,
       collapsedSections,
       conversations,
+      filteredConversations,
+      filtering,
       isCollapsed,
       projects,
-      searchResults,
-      searching
+      recentGroups,
+      searching,
+      view,
+      visibleSearchResults
     ]
   )
   useEffect(() => {
@@ -381,11 +513,7 @@ function Sidebar({
     options: { nested?: boolean; showProject?: boolean } = {}
   ): React.JSX.Element => {
     const isConversationBusy = busyConversationIds.has(conversation.id)
-    const runStatus = conversationRunStatus(conversation.id, {
-      waiting: waitingConversationIds,
-      busy: busyConversationIds,
-      unread: unreadConversationIds
-    })
+    const runStatus = statusById.get(conversation.id) ?? null
     const actionsMenuKey = `conversation:${conversation.id}`
     return (
       <div
@@ -399,7 +527,13 @@ function Sidebar({
               : 'drop-invalid'
             : ''
         }`}
-        draggable={!isConversationBusy && renamingConversationId !== conversation.id}
+        // Order is the user's only in the unfiltered folder view; elsewhere "Move to" remains.
+        draggable={
+          view === 'folders' &&
+          !filtering &&
+          !isConversationBusy &&
+          renamingConversationId !== conversation.id
+        }
         onDragStart={(event) => {
           setDraggingConversationId(conversation.id)
           event.dataTransfer.effectAllowed = 'move'
@@ -609,6 +743,7 @@ function Sidebar({
     label: string,
     count: number
   ): React.JSX.Element => {
+    if (filtering) return <span>{label}</span>
     const collapsed = collapsedSections.has(section)
     return (
       <button
@@ -643,6 +778,87 @@ function Sidebar({
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
+            {!isCollapsed && (conversations.length > 0 || activeGroups.length > 0 || filtering) && (
+              <>
+                <div className="sidebar-view-switch" role="group" aria-label="List chats">
+                  <button
+                    type="button"
+                    className={view === 'folders' ? 'active' : ''}
+                    aria-pressed={view === 'folders'}
+                    onClick={() => changeView('folders')}
+                    title="Group by folder"
+                    aria-label="Group by folder"
+                  >
+                    <Folder size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className={view === 'recent' ? 'active' : ''}
+                    aria-pressed={view === 'recent'}
+                    onClick={() => changeView('recent')}
+                    title="Sort by recent activity"
+                    aria-label="Sort by recent activity"
+                  >
+                    <Clock size={14} />
+                  </button>
+                </div>
+                <div className="sidebar-menu-wrap" ref={filterMenuRef}>
+                  <button
+                    className={`sidebar-icon-btn sidebar-filter-btn ${
+                      filtering || isFilterMenuOpen ? 'active' : ''
+                    }`}
+                    onClick={() => setIsFilterMenuOpen((current) => !current)}
+                    title={
+                      filtering
+                        ? `Showing: ${SIDEBAR_STATUS_FILTER_LABELS[statusFilter]}`
+                        : 'Filter chats'
+                    }
+                    aria-label="Filter chats"
+                    aria-haspopup="menu"
+                    aria-expanded={isFilterMenuOpen}
+                  >
+                    <ListFilter size={15} />
+                    {/* Surfaces waiting chats even inside closed projects. */}
+                    {statusCounts.waiting > 0 && statusFilter !== 'waiting' && (
+                      <span
+                        className="sidebar-filter-badge"
+                        aria-label={`${statusCounts.waiting} need attention`}
+                      >
+                        {statusCounts.waiting}
+                      </span>
+                    )}
+                  </button>
+                  {isFilterMenuOpen && (
+                    <div className="sidebar-menu sidebar-filter-menu" role="menu">
+                      {SIDEBAR_STATUS_FILTERS.map((filter) => (
+                        <button
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={statusFilter === filter}
+                          className={statusFilter === filter ? 'selected' : ''}
+                          key={filter}
+                          onClick={() => {
+                            setIsFilterMenuOpen(false)
+                            setStatusFilter(filter)
+                          }}
+                        >
+                          {filter === 'all' ? (
+                            <MessageSquare size={14} />
+                          ) : (
+                            <span
+                              className={`conversation-run-indicator ${filter}`}
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span>{SIDEBAR_STATUS_FILTER_LABELS[filter]}</span>
+                          {filter !== 'all' && <kbd>{statusCounts[filter]}</kbd>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
             <div className="sidebar-menu-wrap" ref={menuRef}>
               <button
                 className={`sidebar-icon-btn sidebar-menu-btn ${isMenuOpen ? 'active' : ''}`}
@@ -680,35 +896,35 @@ function Sidebar({
                     <span>Command palette</span>
                     <kbd>{shortcutLabel('command-palette', platform)}</kbd>
                   </button>
-                  {/* Expanded, these live on their section's heading. */}
+                  {/* Expanded, these live on their section's heading, and Recent has no Projects heading. */}
                   {isCollapsed && (
-                    <>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsMenuOpen(false)
-                          onNewGroup()
-                        }}
-                      >
-                        <Users size={15} />
-                        <span>New group chat</span>
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        onClick={() => {
-                          setIsMenuOpen(false)
-                          onOpenProject()
-                        }}
-                      >
-                        <FolderPlus size={15} />
-                        <span>Open project</span>
-                        <kbd>{shortcutLabel('open-project', platform)}</kbd>
-                      </button>
-                    </>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        onNewGroup()
+                      }}
+                    >
+                      <Users size={15} />
+                      <span>New group chat</span>
+                    </button>
                   )}
-                  {projects.length > 1 && !isCollapsed && (
+                  {(isCollapsed || view === 'recent') && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setIsMenuOpen(false)
+                        onOpenProject()
+                      }}
+                    >
+                      <FolderPlus size={15} />
+                      <span>Open project</span>
+                      <kbd>{shortcutLabel('open-project', platform)}</kbd>
+                    </button>
+                  )}
+                  {projects.length > 1 && !isCollapsed && view === 'folders' && (
                     <button
                       type="button"
                       role="menuitem"
@@ -767,6 +983,21 @@ function Sidebar({
           </label>
         )}
 
+        {!isCollapsed && filtering && (
+          <div className="sidebar-filter-chip">
+            <span className={`conversation-run-indicator ${statusFilter}`} aria-hidden="true" />
+            <span>{SIDEBAR_STATUS_FILTER_LABELS[statusFilter]}</span>
+            <button
+              type="button"
+              onClick={() => setStatusFilter('all')}
+              title="Show all chats"
+              aria-label="Show all chats"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         <div className="conversation-list">
           {isCollapsed ? (
             <nav className="collapsed-sidebar-nav" aria-label="Sidebar destinations">
@@ -810,8 +1041,8 @@ function Sidebar({
           ) : query.trim() ? (
             <section className="sidebar-section">
               <div className="sidebar-section-label">Search results</div>
-              {searchResults.length > 0 ? (
-                searchResults.map((conversation) =>
+              {visibleSearchResults.length > 0 ? (
+                visibleSearchResults.map((conversation) =>
                   renderConversation(conversation, { showProject: true })
                 )
               ) : (
@@ -820,382 +1051,285 @@ function Sidebar({
             </section>
           ) : (
             <>
-              <section className="sidebar-section groups-section">
-                <div className="sidebar-section-label sidebar-section-label-with-action">
-                  {sectionHeading('groups', 'Groups', activeGroups.length)}
-                  <button
-                    type="button"
-                    className="sidebar-section-create"
-                    onClick={onNewGroup}
-                    title="New group chat"
-                    aria-label="New group chat"
-                  >
-                    <Plus size={14} />
-                  </button>
-                </div>
-                {collapsedSections.has('groups') ? null : activeGroups.length ? (
-                  activeGroups.map((group) => (
-                    <div key={group.id} className="group-sidebar-item">
-                      <div
-                        className={`group-sidebar-row ${currentGroupId === group.id && !currentGroupSessionId ? 'active' : ''}`}
-                      >
-                        {renamingGroupId === group.id ? (
-                          <div className="group-sidebar-select">
-                            <span className="group-sidebar-icon">
-                              <Users size={14} />
-                            </span>
-                            <input
-                              className="group-rename-input"
-                              value={renameValue}
-                              autoFocus
-                              onChange={(event) => setRenameValue(event.target.value)}
-                              onBlur={finishRename}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') event.currentTarget.blur()
-                                if (event.key === 'Escape') setRenamingGroupId(null)
-                              }}
-                            />
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="group-sidebar-select"
-                            onClick={() => onSelectGroup(group.id)}
-                            onDoubleClick={() => beginGroupRename(group)}
-                            title={`${group.title} — double-click to rename`}
-                          >
-                            <span className="group-sidebar-icon">
-                              <Users size={14} />
-                            </span>
-                            <span className="group-sidebar-copy">
-                              <strong>{group.title}</strong>
-                              <small>
-                                {(group.activeMissionId || group.unreadCompletionAt) && (
-                                  <span
-                                    className={`group-live-dot ${
-                                      group.activeMissionId
-                                        ? group.activeMissionStatus === 'paused'
-                                          ? 'paused'
-                                          : 'working'
-                                        : 'unread'
-                                    }`}
-                                    title={
-                                      group.activeMissionId
-                                        ? group.activeMissionStatus === 'paused'
-                                          ? 'Agents paused'
-                                          : 'Agents working'
-                                        : 'Completed group response unread'
-                                    }
-                                  />
-                                )}
-                                {group.activeMissionStatus === 'paused'
-                                  ? 'Paused'
-                                  : group.activeMissionId
-                                    ? 'Working'
-                                    : `${group.participantCount} agents`}
-                              </small>
-                            </span>
-                          </button>
-                        )}
-                        <span className="group-sidebar-actions sidebar-overflow-wrap">
-                          <button
-                            type="button"
-                            className="group-sidebar-action"
-                            onClick={() =>
-                              setOpenActionsMenu((current) =>
-                                current === `group:${group.id}` ? null : `group:${group.id}`
-                              )
-                            }
-                            title="Group actions"
-                            aria-label={`Actions for ${group.title}`}
-                            aria-haspopup="menu"
-                            aria-expanded={openActionsMenu === `group:${group.id}`}
-                          >
-                            <MoreHorizontal size={15} />
-                          </button>
-                          {openActionsMenu === `group:${group.id}` && (
-                            <div className="sidebar-overflow-menu" role="menu">
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenActionsMenu(null)
-                                  beginGroupRename(group)
-                                }}
-                              >
-                                <Pencil size={13} /> Rename
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="danger"
-                                onClick={() => {
-                                  setOpenActionsMenu(null)
-                                  setDeleteGroupConfirm(group.id)
-                                }}
-                              >
-                                <Trash2 size={13} /> Archive
-                              </button>
-                            </div>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <button type="button" className="project-empty-action" onClick={onNewGroup}>
-                    <Users size={15} />
-                    <span>Start a group chat</span>
-                  </button>
-                )}
-              </section>
-
-              <section className="sidebar-section project-section">
-                <div className="sidebar-section-label sidebar-section-label-with-action">
-                  {sectionHeading('projects', 'Projects', projects.length)}
-                  <button
-                    type="button"
-                    className="sidebar-section-create"
-                    onClick={onOpenProject}
-                    title={`Open a folder as a project (${shortcutLabel('open-project', platform)})`}
-                    aria-label="Open a folder as a project"
-                  >
-                    <Plus size={14} />
-                  </button>
-                </div>
-                {collapsedSections.has('projects') ? null : projects.length === 0 ? (
-                  <button type="button" className="project-empty-action" onClick={onOpenProject}>
-                    <FolderPlus size={15} />
-                    <span>Open a folder as a project</span>
-                  </button>
-                ) : (
-                  projects.map((project) => {
-                    const projectConversations = conversationsByProject.get(project.id) || []
-                    const projectAgentSessions = agentSessionsByProject.get(project.id) || []
-                    const isProjectCollapsed = collapsedProjectIds.has(project.id)
-                    const hasActiveConversation =
-                      projectConversations.some(
-                        (conversation) => conversation.id === currentConversationId
-                      ) ||
-                      projectAgentSessions.some(
-                        ({ session }) => session.id === currentGroupSessionId
-                      )
-                    return (
-                      <div
-                        className={`project-group ${
-                          dropTarget?.projectId === project.id &&
-                          dropTarget.anchorConversationId === null
-                            ? dropTarget.allowed
-                              ? 'drop-zone-active'
-                              : 'drop-zone-invalid'
-                            : ''
-                        }`}
-                        key={project.id}
-                        onDragOver={(event) => setSectionDropTarget(event, project.id)}
-                        onDragLeave={(event) => {
-                          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-                            setDropTarget(null)
-                          }
-                        }}
-                        onDrop={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          if (dropTarget) finishDrop(dropTarget)
-                        }}
-                      >
+              {(!filtering || visibleGroups.length > 0) && (
+                <section className="sidebar-section groups-section">
+                  <div className="sidebar-section-label sidebar-section-label-with-action">
+                    {sectionHeading('groups', 'Groups', activeGroups.length)}
+                    <button
+                      type="button"
+                      className="sidebar-section-create"
+                      onClick={onNewGroup}
+                      title="New group chat"
+                      aria-label="New group chat"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+                  {isSectionCollapsed('groups') ? null : visibleGroups.length ? (
+                    visibleGroups.map((group) => (
+                      <div key={group.id} className="group-sidebar-item">
                         <div
-                          className={`project-row ${hasActiveConversation ? 'contains-active' : ''}`}
+                          className={`group-sidebar-row ${currentGroupId === group.id && !currentGroupSessionId ? 'active' : ''}`}
                         >
-                          <button
-                            type="button"
-                            className="project-toggle"
-                            onClick={() => toggleProject(project.id)}
-                            aria-label={`${isProjectCollapsed ? 'Expand' : 'Collapse'} ${project.name}`}
-                          >
-                            {isProjectCollapsed ? (
-                              <ChevronRight size={13} />
-                            ) : (
-                              <ChevronDown size={13} />
-                            )}
-                          </button>
-                          <FolderOpen size={15} className="project-folder-icon" />
-                          {renamingProjectId === project.id ? (
-                            <input
-                              className="project-rename-input"
-                              value={renameValue}
-                              autoFocus
-                              onChange={(event) => setRenameValue(event.target.value)}
-                              onBlur={finishRename}
-                              onKeyDown={(event) => {
-                                if (event.key === 'Enter') event.currentTarget.blur()
-                                if (event.key === 'Escape') setRenamingProjectId(null)
-                              }}
-                            />
+                          {renamingGroupId === group.id ? (
+                            <div className="group-sidebar-select">
+                              <span className="group-sidebar-icon">
+                                <Users size={14} />
+                              </span>
+                              <input
+                                className="group-rename-input"
+                                value={renameValue}
+                                autoFocus
+                                onChange={(event) => setRenameValue(event.target.value)}
+                                onBlur={finishRename}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') event.currentTarget.blur()
+                                  if (event.key === 'Escape') setRenamingGroupId(null)
+                                }}
+                              />
+                            </div>
                           ) : (
                             <button
                               type="button"
-                              className="project-name"
-                              onClick={() => toggleProject(project.id)}
-                              onDoubleClick={() => beginProjectRename(project)}
-                              title={`${project.folder_path} — double-click to rename`}
+                              className="group-sidebar-select"
+                              onClick={() => onSelectGroup(group.id)}
+                              onDoubleClick={() => beginGroupRename(group)}
+                              title={`${group.title} — double-click to rename`}
                             >
-                              {project.name}
-                            </button>
-                          )}
-                          <span className="project-actions">
-                            <button
-                              type="button"
-                              onClick={() => onNewConversation(project.id)}
-                              title={`New chat in ${project.name}`}
-                              aria-label={`New chat in ${project.name}`}
-                            >
-                              <SquarePen size={13} />
-                            </button>
-                            <span className="sidebar-overflow-wrap">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setOpenActionsMenu((current) =>
-                                    current === `project:${project.id}`
-                                      ? null
-                                      : `project:${project.id}`
-                                  )
-                                }
-                                title="Project actions"
-                                aria-label={`Actions for ${project.name}`}
-                                aria-haspopup="menu"
-                                aria-expanded={openActionsMenu === `project:${project.id}`}
-                              >
-                                <MoreHorizontal size={15} />
-                              </button>
-                              {openActionsMenu === `project:${project.id}` && (
-                                <div className="sidebar-overflow-menu" role="menu">
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setOpenActionsMenu(null)
-                                      beginProjectRename(project)
-                                    }}
-                                  >
-                                    <Pencil size={13} /> Rename
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setOpenActionsMenu(null)
-                                      onToggleProjectPin(project.id, !project.is_pinned)
-                                    }}
-                                  >
-                                    {project.is_pinned ? <PinOff size={13} /> : <Pin size={13} />}
-                                    {project.is_pinned ? 'Unpin' : 'Pin'}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="danger"
-                                    onClick={() => {
-                                      setOpenActionsMenu(null)
-                                      setRemoveProjectConfirm(project.id)
-                                    }}
-                                    disabled={(conversationsByProject.get(project.id) || []).some(
-                                      (conversation) => busyConversationIds.has(conversation.id)
-                                    )}
-                                  >
-                                    <Trash2 size={13} /> Remove project
-                                  </button>
-                                </div>
-                              )}
-                            </span>
-                          </span>
-                        </div>
-                        {!isProjectCollapsed && (
-                          <div className="project-conversations">
-                            {projectConversations.map((conversation) =>
-                              renderConversation(conversation, { nested: true })
-                            )}
-                            {projectAgentSessions.map(({ group, session }) => {
-                              const isBusy = ['queued', 'working'].includes(
-                                session.activeRunStatus || ''
-                              )
-                              const hasUnreadCompletion = Boolean(session.unreadCompletionAt)
-                              return (
-                                <div
-                                  key={session.id}
-                                  className={`conversation-item nested ${
-                                    currentGroupSessionId === session.id ? 'active' : ''
-                                  }`}
-                                >
-                                  {renamingGroupSessionId === session.id ? (
-                                    <div className="conversation-content">
-                                      <input
-                                        className="conversation-rename-input"
-                                        value={renameValue}
-                                        autoFocus
-                                        onChange={(event) => setRenameValue(event.target.value)}
-                                        onBlur={finishRename}
-                                        onKeyDown={(event) => {
-                                          if (event.key === 'Enter') event.currentTarget.blur()
-                                          if (event.key === 'Escape') {
-                                            setRenamingGroupSessionId(null)
-                                          }
-                                        }}
-                                      />
-                                    </div>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="conversation-select-button conversation-content"
-                                      onClick={() => onSelectGroupSession(group.id, session.id)}
-                                      onDoubleClick={() => beginGroupSessionRename(session)}
-                                      title={`${session.title} — double-click to rename`}
-                                    >
-                                      <span className="conversation-title">{session.title}</span>
-                                    </button>
-                                  )}
-                                  {(isBusy || hasUnreadCompletion) && (
+                              <span className="group-sidebar-icon">
+                                <Users size={14} />
+                              </span>
+                              <span className="group-sidebar-copy">
+                                <strong>{group.title}</strong>
+                                <small>
+                                  {(group.activeMissionId || group.unreadCompletionAt) && (
                                     <span
-                                      className={`conversation-run-indicator ${isBusy ? 'working' : 'unread'}`}
+                                      className={`group-live-dot ${
+                                        group.activeMissionId
+                                          ? group.activeMissionStatus === 'paused'
+                                            ? 'paused'
+                                            : 'working'
+                                          : 'unread'
+                                      }`}
                                       title={
-                                        isBusy
-                                          ? 'Agent working in background'
-                                          : 'Completed response unread'
-                                      }
-                                      aria-label={
-                                        isBusy
-                                          ? 'Agent working in background'
-                                          : 'Completed response unread'
+                                        group.activeMissionId
+                                          ? group.activeMissionStatus === 'paused'
+                                            ? 'Agents paused'
+                                            : 'Agents working'
+                                          : 'Completed group response unread'
                                       }
                                     />
                                   )}
-                                  <span className="conversation-actions sidebar-overflow-wrap">
+                                  {group.activeMissionStatus === 'paused'
+                                    ? 'Paused'
+                                    : group.activeMissionId
+                                      ? 'Working'
+                                      : `${group.participantCount} agents`}
+                                </small>
+                              </span>
+                            </button>
+                          )}
+                          <span className="group-sidebar-actions sidebar-overflow-wrap">
+                            <button
+                              type="button"
+                              className="group-sidebar-action"
+                              onClick={() =>
+                                setOpenActionsMenu((current) =>
+                                  current === `group:${group.id}` ? null : `group:${group.id}`
+                                )
+                              }
+                              title="Group actions"
+                              aria-label={`Actions for ${group.title}`}
+                              aria-haspopup="menu"
+                              aria-expanded={openActionsMenu === `group:${group.id}`}
+                            >
+                              <MoreHorizontal size={15} />
+                            </button>
+                            {openActionsMenu === `group:${group.id}` && (
+                              <div className="sidebar-overflow-menu" role="menu">
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setOpenActionsMenu(null)
+                                    beginGroupRename(group)
+                                  }}
+                                >
+                                  <Pencil size={13} /> Rename
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="danger"
+                                  onClick={() => {
+                                    setOpenActionsMenu(null)
+                                    setDeleteGroupConfirm(group.id)
+                                  }}
+                                >
+                                  <Trash2 size={13} /> Archive
+                                </button>
+                              </div>
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <button type="button" className="project-empty-action" onClick={onNewGroup}>
+                      <Users size={15} />
+                      <span>Start a group chat</span>
+                    </button>
+                  )}
+                </section>
+              )}
+
+              {view === 'recent' ? (
+                recentGroups.map((group) => (
+                  <section className="sidebar-section recent-section" key={group.bucket}>
+                    <div className="sidebar-section-label">{group.label}</div>
+                    {group.conversations.map((conversation) =>
+                      renderConversation(conversation, { showProject: true })
+                    )}
+                  </section>
+                ))
+              ) : (
+                <>
+                  {(!filtering || projectsWithMatches.length > 0) && (
+                    <section className="sidebar-section project-section">
+                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                        {sectionHeading('projects', 'Projects', projects.length)}
+                        <button
+                          type="button"
+                          className="sidebar-section-create"
+                          onClick={onOpenProject}
+                          title={`Open a folder as a project (${shortcutLabel('open-project', platform)})`}
+                          aria-label="Open a folder as a project"
+                        >
+                          <Plus size={14} />
+                        </button>
+                      </div>
+                      {isSectionCollapsed('projects') ? null : projects.length === 0 ? (
+                        <button
+                          type="button"
+                          className="project-empty-action"
+                          onClick={onOpenProject}
+                        >
+                          <FolderPlus size={15} />
+                          <span>Open a folder as a project</span>
+                        </button>
+                      ) : (
+                        projectsWithMatches.map((project) => {
+                          const projectConversations = (
+                            conversationsByProject.get(project.id) || []
+                          ).filter(conversationMatches)
+                          const projectAgentSessions = filtering
+                            ? []
+                            : agentSessionsByProject.get(project.id) || []
+                          const isProjectCollapsed =
+                            !filtering && collapsedProjectIds.has(project.id)
+                          const hasActiveConversation =
+                            projectConversations.some(
+                              (conversation) => conversation.id === currentConversationId
+                            ) ||
+                            projectAgentSessions.some(
+                              ({ session }) => session.id === currentGroupSessionId
+                            )
+                          return (
+                            <div
+                              className={`project-group ${
+                                dropTarget?.projectId === project.id &&
+                                dropTarget.anchorConversationId === null
+                                  ? dropTarget.allowed
+                                    ? 'drop-zone-active'
+                                    : 'drop-zone-invalid'
+                                  : ''
+                              }`}
+                              key={project.id}
+                              onDragOver={(event) => setSectionDropTarget(event, project.id)}
+                              onDragLeave={(event) => {
+                                if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                                  setDropTarget(null)
+                                }
+                              }}
+                              onDrop={(event) => {
+                                event.preventDefault()
+                                event.stopPropagation()
+                                if (dropTarget) finishDrop(dropTarget)
+                              }}
+                            >
+                              <div
+                                className={`project-row ${hasActiveConversation ? 'contains-active' : ''}`}
+                              >
+                                <button
+                                  type="button"
+                                  className="project-toggle"
+                                  onClick={() => toggleProject(project.id)}
+                                  aria-label={`${isProjectCollapsed ? 'Expand' : 'Collapse'} ${project.name}`}
+                                >
+                                  {isProjectCollapsed ? (
+                                    <ChevronRight size={13} />
+                                  ) : (
+                                    <ChevronDown size={13} />
+                                  )}
+                                </button>
+                                <FolderOpen size={15} className="project-folder-icon" />
+                                {renamingProjectId === project.id ? (
+                                  <input
+                                    className="project-rename-input"
+                                    value={renameValue}
+                                    autoFocus
+                                    onChange={(event) => setRenameValue(event.target.value)}
+                                    onBlur={finishRename}
+                                    onKeyDown={(event) => {
+                                      if (event.key === 'Enter') event.currentTarget.blur()
+                                      if (event.key === 'Escape') setRenamingProjectId(null)
+                                    }}
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="project-name"
+                                    onClick={() => toggleProject(project.id)}
+                                    onDoubleClick={() => beginProjectRename(project)}
+                                    title={`${project.folder_path} — double-click to rename`}
+                                  >
+                                    {project.name}
+                                  </button>
+                                )}
+                                <span className="project-actions">
+                                  <button
+                                    type="button"
+                                    onClick={() => onNewConversation(project.id)}
+                                    title={`New chat in ${project.name}`}
+                                    aria-label={`New chat in ${project.name}`}
+                                  >
+                                    <SquarePen size={13} />
+                                  </button>
+                                  <span className="sidebar-overflow-wrap">
                                     <button
                                       type="button"
-                                      className="conversation-action-button"
-                                      onClick={(event) => {
-                                        event.stopPropagation()
+                                      onClick={() =>
                                         setOpenActionsMenu((current) =>
-                                          current === `session:${session.id}`
+                                          current === `project:${project.id}`
                                             ? null
-                                            : `session:${session.id}`
+                                            : `project:${project.id}`
                                         )
-                                      }}
-                                      title="Chat actions"
-                                      aria-label={`Actions for ${session.title}`}
+                                      }
+                                      title="Project actions"
+                                      aria-label={`Actions for ${project.name}`}
                                       aria-haspopup="menu"
-                                      aria-expanded={openActionsMenu === `session:${session.id}`}
+                                      aria-expanded={openActionsMenu === `project:${project.id}`}
                                     >
                                       <MoreHorizontal size={15} />
                                     </button>
-                                    {openActionsMenu === `session:${session.id}` && (
+                                    {openActionsMenu === `project:${project.id}` && (
                                       <div className="sidebar-overflow-menu" role="menu">
                                         <button
                                           type="button"
                                           role="menuitem"
                                           onClick={() => {
                                             setOpenActionsMenu(null)
-                                            beginGroupSessionRename(session)
+                                            beginProjectRename(project)
                                           }}
                                         >
                                           <Pencil size={13} /> Rename
@@ -1205,10 +1339,15 @@ function Sidebar({
                                           role="menuitem"
                                           onClick={() => {
                                             setOpenActionsMenu(null)
-                                            onSelectGroup(group.id)
+                                            onToggleProjectPin(project.id, !project.is_pinned)
                                           }}
                                         >
-                                          <Users size={13} /> Open group
+                                          {project.is_pinned ? (
+                                            <PinOff size={13} />
+                                          ) : (
+                                            <Pin size={13} />
+                                          )}
+                                          {project.is_pinned ? 'Unpin' : 'Pin'}
                                         </button>
                                         <button
                                           type="button"
@@ -1216,74 +1355,210 @@ function Sidebar({
                                           className="danger"
                                           onClick={() => {
                                             setOpenActionsMenu(null)
-                                            setDeleteGroupConfirm(group.id)
+                                            setRemoveProjectConfirm(project.id)
                                           }}
+                                          disabled={(
+                                            conversationsByProject.get(project.id) || []
+                                          ).some((conversation) =>
+                                            busyConversationIds.has(conversation.id)
+                                          )}
                                         >
-                                          <Trash2 size={13} /> Archive group
+                                          <Trash2 size={13} /> Remove project
                                         </button>
                                       </div>
                                     )}
                                   </span>
+                                </span>
+                              </div>
+                              {!isProjectCollapsed && (
+                                <div className="project-conversations">
+                                  {projectConversations.map((conversation) =>
+                                    renderConversation(conversation, { nested: true })
+                                  )}
+                                  {projectAgentSessions.map(({ group, session }) => {
+                                    const sessionStatus = agentSessionStatus(session)
+                                    return (
+                                      <div
+                                        key={session.id}
+                                        className={`conversation-item nested ${
+                                          currentGroupSessionId === session.id ? 'active' : ''
+                                        }`}
+                                      >
+                                        {renamingGroupSessionId === session.id ? (
+                                          <div className="conversation-content">
+                                            <input
+                                              className="conversation-rename-input"
+                                              value={renameValue}
+                                              autoFocus
+                                              onChange={(event) =>
+                                                setRenameValue(event.target.value)
+                                              }
+                                              onBlur={finishRename}
+                                              onKeyDown={(event) => {
+                                                if (event.key === 'Enter')
+                                                  event.currentTarget.blur()
+                                                if (event.key === 'Escape') {
+                                                  setRenamingGroupSessionId(null)
+                                                }
+                                              }}
+                                            />
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="conversation-select-button conversation-content"
+                                            onClick={() =>
+                                              onSelectGroupSession(group.id, session.id)
+                                            }
+                                            onDoubleClick={() => beginGroupSessionRename(session)}
+                                            title={`${session.title} — double-click to rename`}
+                                          >
+                                            <span className="conversation-title">
+                                              {session.title}
+                                            </span>
+                                          </button>
+                                        )}
+                                        {sessionStatus && (
+                                          <span
+                                            className={`conversation-run-indicator ${sessionStatus}`}
+                                            title={CONVERSATION_RUN_STATUS_LABELS[sessionStatus]}
+                                            aria-label={
+                                              CONVERSATION_RUN_STATUS_LABELS[sessionStatus]
+                                            }
+                                          />
+                                        )}
+                                        <span className="conversation-actions sidebar-overflow-wrap">
+                                          <button
+                                            type="button"
+                                            className="conversation-action-button"
+                                            onClick={(event) => {
+                                              event.stopPropagation()
+                                              setOpenActionsMenu((current) =>
+                                                current === `session:${session.id}`
+                                                  ? null
+                                                  : `session:${session.id}`
+                                              )
+                                            }}
+                                            title="Chat actions"
+                                            aria-label={`Actions for ${session.title}`}
+                                            aria-haspopup="menu"
+                                            aria-expanded={
+                                              openActionsMenu === `session:${session.id}`
+                                            }
+                                          >
+                                            <MoreHorizontal size={15} />
+                                          </button>
+                                          {openActionsMenu === `session:${session.id}` && (
+                                            <div className="sidebar-overflow-menu" role="menu">
+                                              <button
+                                                type="button"
+                                                role="menuitem"
+                                                onClick={() => {
+                                                  setOpenActionsMenu(null)
+                                                  beginGroupSessionRename(session)
+                                                }}
+                                              >
+                                                <Pencil size={13} /> Rename
+                                              </button>
+                                              <button
+                                                type="button"
+                                                role="menuitem"
+                                                onClick={() => {
+                                                  setOpenActionsMenu(null)
+                                                  onSelectGroup(group.id)
+                                                }}
+                                              >
+                                                <Users size={13} /> Open group
+                                              </button>
+                                              <button
+                                                type="button"
+                                                role="menuitem"
+                                                className="danger"
+                                                onClick={() => {
+                                                  setOpenActionsMenu(null)
+                                                  setDeleteGroupConfirm(group.id)
+                                                }}
+                                              >
+                                                <Trash2 size={13} /> Archive group
+                                              </button>
+                                            </div>
+                                          )}
+                                        </span>
+                                      </div>
+                                    )
+                                  })}
+                                  {!filtering &&
+                                  projectConversations.length === 0 &&
+                                  projectAgentSessions.length === 0 ? (
+                                    <button
+                                      type="button"
+                                      className="project-new-chat-empty"
+                                      onClick={() => onNewConversation(project.id)}
+                                    >
+                                      <SquarePen size={12} /> New chat
+                                    </button>
+                                  ) : null}
                                 </div>
-                              )
-                            })}
-                            {projectConversations.length === 0 &&
-                            projectAgentSessions.length === 0 ? (
-                              <button
-                                type="button"
-                                className="project-new-chat-empty"
-                                onClick={() => onNewConversation(project.id)}
-                              >
-                                <SquarePen size={12} /> New chat
-                              </button>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })
-                )}
-              </section>
+                              )}
+                            </div>
+                          )
+                        })
+                      )}
+                    </section>
+                  )}
 
-              <section
-                className={`sidebar-section standalone-section ${
-                  dropTarget?.projectId === null && dropTarget.anchorConversationId === null
-                    ? dropTarget.allowed
-                      ? 'drop-zone-active'
-                      : 'drop-zone-invalid'
-                    : ''
-                }`}
-                onDragOver={(event) => setSectionDropTarget(event, null)}
-                onDragLeave={(event) => {
-                  if (!event.currentTarget.contains(event.relatedTarget as Node))
-                    setDropTarget(null)
-                }}
-                onDrop={(event) => {
-                  event.preventDefault()
-                  if (dropTarget) finishDrop(dropTarget)
-                }}
-              >
-                <div className="sidebar-section-label sidebar-section-label-with-action">
-                  {sectionHeading('chats', 'Chats', standaloneConversations.length)}
-                  <button
-                    type="button"
-                    className="sidebar-section-create"
-                    onClick={() => onNewConversation(null)}
-                    title="New chat"
-                    aria-label="New standalone chat"
-                  >
-                    <SquarePen size={13} />
-                  </button>
+                  {(!filtering || standaloneMatches.length > 0) && (
+                    <section
+                      className={`sidebar-section standalone-section ${
+                        dropTarget?.projectId === null && dropTarget.anchorConversationId === null
+                          ? dropTarget.allowed
+                            ? 'drop-zone-active'
+                            : 'drop-zone-invalid'
+                          : ''
+                      }`}
+                      onDragOver={(event) => setSectionDropTarget(event, null)}
+                      onDragLeave={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node))
+                          setDropTarget(null)
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        if (dropTarget) finishDrop(dropTarget)
+                      }}
+                    >
+                      <div className="sidebar-section-label sidebar-section-label-with-action">
+                        {sectionHeading('chats', 'Chats', standaloneConversations.length)}
+                        <button
+                          type="button"
+                          className="sidebar-section-create"
+                          onClick={() => onNewConversation(null)}
+                          title="New chat"
+                          aria-label="New standalone chat"
+                        >
+                          <SquarePen size={13} />
+                        </button>
+                      </div>
+                      {isSectionCollapsed('chats') ? null : standaloneMatches.length > 0 ? (
+                        standaloneMatches.map((conversation) => renderConversation(conversation))
+                      ) : (
+                        <div className="empty-conversations compact">
+                          <Folder size={15} />
+                          <span>Standalone chats appear here</span>
+                        </div>
+                      )}
+                    </section>
+                  )}
+                </>
+              )}
+
+              {filtering && filteredConversations.length === 0 && visibleGroups.length === 0 ? (
+                <div className="empty-conversations">{EMPTY_FILTER_MESSAGES[statusFilter]}</div>
+              ) : view === 'recent' && conversations.length === 0 ? (
+                <div className="empty-conversations compact">
+                  <MessageSquare size={15} />
+                  <span>Chats appear here</span>
                 </div>
-                {collapsedSections.has('chats') ? null : standaloneConversations.length > 0 ? (
-                  standaloneConversations.map((conversation) => renderConversation(conversation))
-                ) : (
-                  <div className="empty-conversations compact">
-                    <Folder size={15} />
-                    <span>Standalone chats appear here</span>
-                  </div>
-                )}
-              </section>
+              ) : null}
             </>
           )}
         </div>

@@ -126,9 +126,23 @@ items it holds while closed, and offers its own create action when you point at 
   remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
 
-The **⋯** menu beside the SideKick name holds the rest: a new chat, the command palette, collapsing
-or expanding every project at once, and clearing all chats. When the sidebar is collapsed, it also
-starts a group chat or opens a project.
+The folder and clock buttons beside the SideKick name switch between two layouts, and SideKick
+remembers your choice:
+
+- **By folder:** the three sections above.
+- **By recent activity:** every chat in one list, newest first, under Pinned, Today, Yesterday,
+  Previous 7 days, and Older. Each row names its project, and rows keep their time order, so they
+  cannot be dragged; use **Move to** instead.
+
+The filter button narrows either layout to chats that **Need attention** (waiting on an approval or
+an answer, or a group whose agents are paused), are **Working**, or have an **Unread** reply. Its
+menu counts each kind, and the button itself shows how many chats are waiting on you, even inside a
+folded project. A filter opens every section and project so nothing it matches is hidden; clear it
+with the **×** on the chip under the search box. Filters reset when SideKick restarts.
+
+The **⋯** menu holds the rest: a new chat, the command palette, collapsing or expanding every
+project at once, and clearing all chats. When the sidebar is collapsed, it also starts a group chat
+or opens a project, and in the recent-activity layout it opens a project.
 
 Search spans the sections and labels project-backed results. The title bar and composer project pill
 show the active project so folder context is never implicit.
