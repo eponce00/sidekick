@@ -35,14 +35,32 @@ import {
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
 const publishDesktopEvent = createDesktopEventPublisher(() => BrowserWindow.getAllWindows())
+const activityListeners = new Set<() => void>()
+
+function notifyActivity(): void {
+  for (const listener of activityListeners) listener()
+}
 
 const attention = new ConversationAttentionTracker(
   (runId) => coordinator?.store.get(runId) ?? null,
   (state) => {
     applyAttentionBadge(state.waitingConversationIds.length)
     publishDesktopEvent('agentRuns:attention', state)
+    notifyActivity()
   }
 )
+
+const runEventObservers = new Set<
+  (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+>()
+
+/** Lets another main-process service follow run events, such as the scheduler. */
+export function observeAgentRunEvents(
+  observer: (event: import('../../shared/agentRuntime').AgentRunEvent) => void
+): () => void {
+  runEventObservers.add(observer)
+  return () => runEventObservers.delete(observer)
+}
 
 function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void {
   try {
@@ -51,7 +69,15 @@ function publish(event: import('../../shared/agentRuntime').AgentRunEvent): void
     // Attention is a convenience; it must never interrupt the durable event stream.
     console.warn('[Attention] Could not follow a run event:', error)
   }
+  for (const observer of runEventObservers) {
+    try {
+      observer(event)
+    } catch (error) {
+      console.warn('[AgentRuntime] A run event observer failed:', error)
+    }
+  }
   publishDesktopEvent('agentRuns:event', { event })
+  notifyActivity()
 }
 
 function publishGoal(goal: import('../../shared/conversationGoals').ConversationGoal): void {
@@ -85,6 +111,16 @@ function getAgentEngineClient(): AgentEngineClient {
     )
   }
   return engineClient
+}
+
+/** Starts a conversation run on the same engine path the renderer's chat uses. */
+export function startConversationRun(
+  input: StartConversationAgentRunInput
+): Promise<import('../../shared/agentRuntime').AgentRunSnapshot> {
+  return getAgentEngineClient().request<import('../../shared/agentRuntime').AgentRunSnapshot>({
+    type: 'run.startConversation',
+    input
+  })
 }
 
 function validId(value: unknown): value is string {
@@ -190,7 +226,8 @@ function validateStart(value: unknown): StartConversationAgentRunInput {
     typeof input.model.name !== 'string' ||
     typeof input.model.provider !== 'string' ||
     (input.mode !== undefined && !['conversation', 'research', 'plan'].includes(input.mode)) ||
-    (input.continuesRunId !== undefined && !validId(input.continuesRunId))
+    (input.continuesRunId !== undefined && !validId(input.continuesRunId)) ||
+    (input.workspaceSharing !== undefined && input.workspaceSharing !== 'allow')
   ) {
     throw new Error('Invalid conversation agent run request')
   }
@@ -433,6 +470,13 @@ export function registerAgentRunHandlers(): void {
       input: validateStart(raw)
     })
   }))
+  ipcMain.handle('agentRuns:workspaceOccupants', (_event, conversationId: unknown) => {
+    if (!validId(conversationId)) throw new Error('Invalid conversation ID')
+    return engine.request<import('../../shared/worktrees').WorkspaceOccupant[]>({
+      type: 'workspace.occupants',
+      conversationId
+    })
+  })
   ipcMain.handle('agentRuns:stop', async (_event, runId: string) => ({
     stopped:
       typeof runId === 'string' && (await engine.request<boolean>({ type: 'run.stop', runId }))
@@ -569,4 +613,15 @@ export function hasActiveAgentWork(): boolean {
 
 export function activeAgentConversationCount(): number {
   return coordinator?.activeThreadIds().length ?? 0
+}
+
+/** Conversations paused on an approval or a question. */
+export function waitingAgentConversationIds(): string[] {
+  return attention.state().waitingConversationIds
+}
+
+/** Called after any run event, so a listener can re-read the counts above. */
+export function onAgentActivity(listener: () => void): () => void {
+  activityListeners.add(listener)
+  return () => activityListeners.delete(listener)
 }

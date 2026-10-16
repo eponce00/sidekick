@@ -36,6 +36,16 @@ function duration(session: TerminalSessionSummary, now: number): string {
     : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
+/** The last folder of a path, which is what tells commands apart; the full path is the tooltip. */
+function folderName(path: string): string {
+  return (
+    path
+      .replace(/[\\/]+$/, '')
+      .split(/[\\/]/)
+      .pop() || path
+  )
+}
+
 /** A terminal's colours from the app's own, so it matches the light or dark theme. */
 function terminalTheme(): NonNullable<ConstructorParameters<typeof Terminal>[0]>['theme'] {
   // The theme's colours are set on the body, where the app switches light and dark.
@@ -223,6 +233,11 @@ export function TerminalPanel({
   }
 
   const live = selected ? terminalSessionIsLive(selected.state) : false
+  const waitingAtTerminal = selected?.state === 'waiting_for_input' && selected.pty
+  const actionTitle = (label: string): { title: string; 'aria-label': string } => ({
+    title: label,
+    'aria-label': label
+  })
   return (
     <div className="terminal-panel">
       <ul className="terminal-panel-list" aria-label="Agent commands">
@@ -233,15 +248,12 @@ export function TerminalPanel({
               className={`terminal-panel-item is-${session.state}${session.id === selected?.id ? ' is-selected' : ''}`}
               onClick={() => setSelectedId(session.id)}
               aria-current={session.id === selected?.id}
+              title={`${session.command}\n${stateLabel(session)}`}
             >
               <span className="terminal-panel-item-dot" aria-hidden="true" />
-              <span className="terminal-panel-item-text">
-                <span className="terminal-panel-item-title">{session.title}</span>
-                <code>{session.command}</code>
-              </span>
+              <span className="terminal-panel-item-title">{session.title}</span>
               <span className="terminal-panel-item-meta">
-                {session.background && terminalSessionIsLive(session.state) ? 'bg · ' : ''}
-                {duration(session, now)}
+                {session.state === 'waiting_for_input' ? 'Needs input' : duration(session, now)}
               </span>
             </button>
           </li>
@@ -249,15 +261,14 @@ export function TerminalPanel({
       </ul>
       {selected && (
         <div className="terminal-panel-view">
-          <div className="terminal-panel-toolbar">
-            <span className={`terminal-panel-state is-${selected.state}`}>
-              {stateLabel(selected)}
-            </span>
-            <span className="terminal-panel-cwd" title={selected.cwd}>
-              {selected.cwd}
-            </span>
+          <div className="terminal-panel-header">
+            <code className="terminal-panel-command" title={selected.command}>
+              <span aria-hidden="true">$</span>
+              {selected.command}
+            </code>
             <button
               type="button"
+              {...actionTitle(copied ? 'Copied' : 'Copy the output')}
               onClick={() => {
                 const text = copyTextRef.current?.()
                 if (!text) return
@@ -266,41 +277,38 @@ export function TerminalPanel({
                   window.setTimeout(() => setCopied(false), 1_000)
                 })
               }}
-              title="Copy the output"
             >
-              {copied ? <Check size={12} /> : <Copy size={12} />}
-              {copied ? 'Copied' : 'Copy'}
+              {copied ? <Check size={14} /> : <Copy size={14} />}
             </button>
             {live && !selected.background && (
               <button
                 type="button"
+                {...actionTitle('Run in the background, so the agent can go on')}
                 onClick={() => void window.api.terminal.moveToBackground(selected.id)}
-                title="Let the agent go on while this keeps running"
               >
-                <ArrowDownToLine size={12} />
-                Background
+                <ArrowDownToLine size={14} />
               </button>
             )}
             {live && (
               <button
                 type="button"
                 className="is-danger"
+                {...actionTitle('Stop the command')}
                 onClick={() => void window.api.terminal.stop(selected.id)}
               >
-                <Square size={12} />
-                Stop
+                <Square size={13} />
               </button>
             )}
           </div>
-          <div className="terminal-panel-command">
-            <span aria-hidden="true">$</span>
-            <code>{selected.command}</code>
+          <div className={`terminal-panel-status is-${selected.state}`}>
+            <span>
+              {stateLabel(selected)}
+              {waitingAtTerminal && ': click the terminal and type your reply'}
+            </span>
+            <span className="terminal-panel-cwd" title={selected.cwd}>
+              {folderName(selected.cwd)}
+            </span>
           </div>
-          {selected.state === 'waiting_for_input' && selected.pty && (
-            <div className="terminal-panel-hint">
-              The command is waiting for input. Click the terminal and type your reply.
-            </div>
-          )}
           <CommandTerminal key={selected.id} session={selected} copyTextRef={copyTextRef} />
           {live && !selected.pty && <PipeInput session={selected} />}
         </div>

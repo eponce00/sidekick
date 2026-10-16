@@ -144,12 +144,25 @@ const api = {
     moveConversation: (input: import('../shared/projects').MoveConversationInput) =>
       ipcRenderer.invoke('projects:moveConversation', input)
   },
+  worktrees: {
+    list: () => ipcRenderer.invoke('worktrees:list'),
+    diskUsage: (id: string) => ipcRenderer.invoke('worktrees:diskUsage', id),
+    branchOptions: (projectId: string) => ipcRenderer.invoke('worktrees:branchOptions', projectId),
+    createForConversation: (input: import('../shared/worktrees').CreateConversationWorktreeInput) =>
+      ipcRenderer.invoke('worktrees:createForConversation', input),
+    remove: (input: import('../shared/worktrees').RemoveManagedWorktreeInput) =>
+      ipcRenderer.invoke('worktrees:remove', input),
+    sync: (id: string) => ipcRenderer.invoke('worktrees:sync', id),
+    reveal: (id: string) => ipcRenderer.invoke('worktrees:reveal', id)
+  },
   agentRuns: {
     browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
       ipcRenderer.invoke('agentRuns:browserWorkspace', input),
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),
+    workspaceOccupants: (conversationId: string) =>
+      ipcRenderer.invoke('agentRuns:workspaceOccupants', conversationId),
     events: (runId: string, afterSequence?: number) =>
       ipcRenderer.invoke('agentRuns:events', runId, afterSequence),
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),
@@ -227,6 +240,63 @@ const api = {
       return () => ipcRenderer.removeListener('conversationGoals:changed', listener)
     }
   },
+  schedules: {
+    list: () => ipcRenderer.invoke('schedules:list'),
+    create: (input: import('../shared/schedules').ScheduleInput) =>
+      ipcRenderer.invoke('schedules:create', input),
+    update: (input: import('../shared/schedules').UpdateScheduleInput) =>
+      ipcRenderer.invoke('schedules:update', input),
+    pause: (id: string) => ipcRenderer.invoke('schedules:pause', id),
+    resume: (id: string) => ipcRenderer.invoke('schedules:resume', id),
+    delete: (id: string) => ipcRenderer.invoke('schedules:delete', id),
+    runNow: (id: string) => ipcRenderer.invoke('schedules:runNow', id),
+    runs: (id: string) => ipcRenderer.invoke('schedules:runs', id),
+    onChanged: (
+      callback: (change: import('../shared/schedules').SchedulesChangedEvent) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/schedules').SchedulesChangedEvent
+      ): void => callback(change)
+      ipcRenderer.on('schedules:changed', listener)
+      return () => ipcRenderer.removeListener('schedules:changed', listener)
+    }
+  },
+  sessions: {
+    statuses: () => ipcRenderer.invoke('sessions:statuses'),
+    family: (conversationId: string) => ipcRenderer.invoke('sessions:family', conversationId),
+    messages: (conversationId: string, options?: { limit?: number; beforeCreatedAt?: number }) =>
+      ipcRenderer.invoke('sessions:messages', conversationId, options),
+    markMessagesRead: (conversationId: string) =>
+      ipcRenderer.invoke('sessions:markMessagesRead', conversationId),
+    attachment: (id: string) => ipcRenderer.invoke('sessions:attachment', id),
+    start: (input: import('../shared/sessions').StartSessionsInput) =>
+      ipcRenderer.invoke('sessions:start', input),
+    proposals: (conversationId: string) => ipcRenderer.invoke('sessions:proposals', conversationId),
+    startProposal: (
+      id: string,
+      overrides?: Partial<import('../shared/sessions').StartSessionSpec>
+    ) => ipcRenderer.invoke('sessions:startProposal', id, overrides),
+    dismissProposal: (id: string) => ipcRenderer.invoke('sessions:dismissProposal', id),
+    stop: (conversationId: string) => ipcRenderer.invoke('sessions:stop', conversationId),
+    archive: (conversationId: string, options?: { family?: boolean }) =>
+      ipcRenderer.invoke('sessions:archive', conversationId, options),
+    unarchive: (conversationId: string) => ipcRenderer.invoke('sessions:unarchive', conversationId),
+    detach: (conversationId: string) => ipcRenderer.invoke('sessions:detach', conversationId),
+    grants: (conversationId: string) => ipcRenderer.invoke('sessions:grants', conversationId),
+    grantProject: (conversationId: string, projectId: string) =>
+      ipcRenderer.invoke('sessions:grantProject', conversationId, projectId),
+    revokeProject: (conversationId: string, projectId: string) =>
+      ipcRenderer.invoke('sessions:revokeProject', conversationId, projectId),
+    onChanged: (callback: (change: import('../shared/sessions').SessionsChangedEvent) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/sessions').SessionsChangedEvent
+      ): void => callback(change)
+      ipcRenderer.on('sessions:changed', listener)
+      return () => ipcRenderer.removeListener('sessions:changed', listener)
+    }
+  },
   collaboration: {
     listGroups: () => ipcRenderer.invoke('collaboration:listGroups'),
     getGroup: (id: string) => ipcRenderer.invoke('collaboration:getGroup', id),
@@ -296,6 +366,10 @@ const api = {
   browserNetwork: {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
     revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
+  },
+  pullRequests: {
+    getStatus: (workspaceRoot: string) =>
+      ipcRenderer.invoke('pullRequests:getStatus', workspaceRoot)
   },
   window: {
     minimize: () => ipcRenderer.send('window:minimize'),
@@ -485,10 +559,26 @@ const api = {
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
     showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
       ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
-    onFilesChanged: (callback: () => void) => {
-      const listener = () => callback()
+    watchFiles: (workspaceRoot: string, callback: () => void) => {
+      let subscriptionId: string | null = null
+      let stopped = false
+      const listener = (_event: Electron.IpcRendererEvent, changedId: string): void => {
+        if (changedId === subscriptionId) callback()
+      }
       ipcRenderer.on('workspace:filesChanged', listener)
-      return () => ipcRenderer.removeListener('workspace:filesChanged', listener)
+      ipcRenderer
+        .invoke('workspace:watch', workspaceRoot)
+        .then((id: string) => {
+          if (stopped) void ipcRenderer.invoke('workspace:unwatch', id)
+          else subscriptionId = id
+        })
+        // An unknown folder simply gets no live updates.
+        .catch(() => undefined)
+      return () => {
+        stopped = true
+        ipcRenderer.removeListener('workspace:filesChanged', listener)
+        if (subscriptionId) void ipcRenderer.invoke('workspace:unwatch', subscriptionId)
+      }
     }
   }
 } satisfies DesktopApi

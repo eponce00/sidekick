@@ -125,7 +125,8 @@ describe('ChatInput add menu', () => {
     expect(menuButton('Ongoing goal').title).toContain('across messages')
     expect(menuButton('Plan first').title).toContain('before SideKick changes project files')
     expect(menuButton('Research report').title).toContain('cross-check')
-    expect(menuButton('Model thinking').title).toContain('reasoning mode')
+    // Thinking has its own toolbar toggle; a second switch here could disagree with it.
+    expect(container.querySelector('.features-menu')?.textContent).not.toContain('thinking')
 
     const instructions = container.querySelector('.features-menu-status') as HTMLDivElement
     expect(instructions.textContent?.trim()).toBe('Instruction files (AGENTS.md)')
@@ -149,8 +150,7 @@ describe('ChatInput add menu', () => {
       ['Shared project notes', 'onOpenWorkspaceMemory'],
       ['Ongoing goal', 'onToggleGoal'],
       ['Plan first', 'onTogglePlan'],
-      ['Research report', 'onToggleResearch'],
-      ['Model thinking', 'onToggleThinking']
+      ['Research report', 'onToggleResearch']
     ]
 
     for (const [label, callback] of actions) {
@@ -206,6 +206,75 @@ describe('ChatInput add menu', () => {
     expect(notes.title).toBe('Loading shared project notes…')
     expect(notes.textContent?.trim()).toBe('Shared project notes')
     expect(notes.getAttribute('aria-label')).toContain('Loading shared project notes…')
+  })
+})
+
+describe('ChatInput thinking toggle', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  const toggle = (): HTMLButtonElement | null =>
+    container.querySelector<HTMLButtonElement>('.composer-thinking-toggle')
+
+  function StatefulInput({ initial }: { initial: boolean }): React.JSX.Element {
+    const [enabled, setEnabled] = useState(initial)
+    return (
+      <ChatInput
+        {...baseProps({ isFeaturesMenuOpen: false })}
+        thinkingEnabled={enabled}
+        onToggleThinking={() => setEnabled((current) => !current)}
+      />
+    )
+  }
+
+  it('is one labelled icon button that reports its state', async () => {
+    await act(async () => root.render(<StatefulInput initial={false} />))
+    const button = toggle()!
+    expect(button.getAttribute('aria-label')).toBe('Model thinking')
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(button.title).toContain('Thinking off')
+    expect(button.textContent).toBe('')
+    expect(button.querySelector('svg.lucide-brain')).not.toBeNull()
+
+    await act(async () => button.click())
+    // The same element stays in place; only its state changes.
+    expect(toggle()).toBe(button)
+    expect(button.getAttribute('aria-pressed')).toBe('true')
+    expect(button.classList.contains('is-on')).toBe(true)
+    expect(button.title).toContain('Thinking on')
+
+    await act(async () => button.click())
+    expect(toggle()).toBe(button)
+    expect(button.getAttribute('aria-pressed')).toBe('false')
+    expect(button.classList.contains('is-on')).toBe(false)
+  })
+
+  it('looks the same when it starts on as after it is turned on', async () => {
+    await act(async () => root.render(<StatefulInput initial={true} />))
+    const firstRender = toggle()!.outerHTML
+
+    await act(async () => toggle()!.click())
+    await act(async () => toggle()!.click())
+    expect(toggle()!.outerHTML).toBe(firstRender)
+  })
+
+  it('is absent for a model without a reasoning switch', async () => {
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ thinkingAvailable: false, thinkingEnabled: true })} />)
+    )
+    expect(toggle()).toBeNull()
+    expect(container.textContent).not.toContain('Thinking')
   })
 })
 

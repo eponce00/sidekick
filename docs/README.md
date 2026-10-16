@@ -18,6 +18,8 @@ behavior, and the development guide when testing or publishing it.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
+- [Working in the background](user-guide/BACKGROUND.md) — keep agents working from the tray or Dock, and quit.
+- [Schedules](user-guide/SCHEDULES.md) — run a saved prompt hourly, daily, on weekdays, or weekly.
 - [Command line](user-guide/COMMAND_LINE.md) — inspect and configure SideKick from a terminal or another agent without handling keys.
 
 ## Architecture
@@ -27,6 +29,7 @@ behavior, and the development guide when testing or publishing it.
 - [Prompt and context](architecture/PROMPT_AND_CONTEXT.md) — trusted instructions and compaction.
 - [Workspace verification](architecture/VERIFICATION.md) — revision-bound evidence and completion guards.
 - [Persistent goals](architecture/PERSISTENT_GOALS.md) — durable multi-run objectives.
+- [Scheduled runs](architecture/SCHEDULES.md) — the scheduler, missed runs, overlap, and approvals.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
 - [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
 
@@ -46,6 +49,9 @@ behavior, and the development guide when testing or publishing it.
 ## Roadmap
 
 - [Roadmap](roadmap/ROADMAP.md) — incomplete work and release readiness.
+- [Multi-agent sessions](roadmap/MULTI_AGENT.md) — proposal: worker sessions, messaging and reports, replacing group chat.
+- [Worktrees for parallel agents](roadmap/WORKTREES.md) — how other harnesses isolate agents, and
+  the worktree work still open.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
 - [Configuration CLI](roadmap/CONFIGURATION_CLI.md) — remaining packaging and qualification work for the command line.

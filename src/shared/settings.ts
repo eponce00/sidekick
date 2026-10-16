@@ -117,6 +117,11 @@ export interface ProviderSettings {
   webSearchEnabled?: boolean
   /** Checks GitHub Releases for updates after startup and every six hours. On unless false. */
   automaticUpdateChecks?: boolean
+  /**
+   * Windows and Linux: closing the window hides SideKick to the tray, where its agents keep
+   * working. On unless false. macOS keeps its Dock behavior and ignores it.
+   */
+  closeToTray?: boolean
   manualLocation?: string
   fastModelOllama?: string
   fastModelOllamaCloud?: string

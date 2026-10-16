@@ -211,8 +211,9 @@ export function GroupWorkspacePanel({
   )
 
   useEffect(() => {
+    if (!selectedProjectFolder) return
     let refreshTimer: ReturnType<typeof setTimeout> | null = null
-    const unsubscribe = window.api.workspace.onFilesChanged(() => {
+    const unsubscribe = window.api.workspace.watchFiles(selectedProjectFolder, () => {
       if (refreshTimer) clearTimeout(refreshTimer)
       refreshTimer = setTimeout(() => setFileRefreshVersion((version) => version + 1), 200)
     })
@@ -220,7 +221,7 @@ export function GroupWorkspacePanel({
       if (refreshTimer) clearTimeout(refreshTimer)
       unsubscribe()
     }
-  }, [])
+  }, [selectedProjectFolder])
 
   useEffect(() => {
     if (!open || activeTab !== 'files' || !selectedProjectFolder) return

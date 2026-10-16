@@ -30,6 +30,11 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   current command permission and project-containment boundaries.
 - Add controlled extension points only after their provenance, permissions, updates, and failure
   isolation can be enforced as one architecture rather than ad hoc scripts.
+- Let a session start, message and receive reports from worker sessions, and fold group chat into
+  that model, as proposed in [Multi-agent sessions](MULTI_AGENT.md).
+- Finish worktree isolation for parallel agents: schedule and manager-agent policies, group
+  participants, archive cleanup, snapshots before forced removal, and the other items in
+  [Worktrees for parallel agents](WORKTREES.md).
 - Evolve the linear conversation/run lineage into a branch-aware session surface with explicit
   fork ancestry, compaction replacements, writer ownership, and replay policy for interrupted
   operations.
@@ -47,6 +52,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
   one call in a thousand from a local model is still refused and retried today. It must stay
   optional per provider and be qualified for stability and speed first: the reference vLLM server
   recorded GPU faults during schema-constrained requests.
+- Extend schedules with a time limit per run, several weekdays or a custom cron expression per
+  schedule, one-time runs, an end date, and the run's outcome summarized in the schedule list. See
+  [Scheduled runs](../architecture/SCHEDULES.md) for the current design.
 - Let a parked browser page idle. Its parking window stays shown with background throttling off, so
   an animated page keeps painting with no one watching, and the shown window keeps SideKick running
   after its main window closes. Hiding parked pages between tool operations made a screenshot taken

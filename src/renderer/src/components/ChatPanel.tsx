@@ -70,6 +70,17 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
+import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
+import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
+import type { ComposerDraft } from '../services/composerDrafts'
+import {
+  suggestWorktreeBranch,
+  workspaceBusyDisplayMessage,
+  type ManagedWorktreeSummary,
+  type WorkInChoice,
+  type WorkspaceOccupant
+} from '../../../shared/worktrees'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
@@ -84,6 +95,17 @@ interface ChatPanelProps {
   welcomeSuggestions: readonly WelcomeSuggestion[]
   workspaceFolder: string | null
   projectName: string | null
+  projectId?: string | null
+  /** Set when the chat's project is one of SideKick's worktrees. */
+  worktree?: ManagedWorktreeSummary | null
+  /** Moves a chat that has not sent anything yet into its own new worktree. */
+  onStartInWorktree?: (
+    conversationId: string,
+    options: { branchName?: string; baseRef?: string }
+  ) => Promise<void>
+  /** Forks a chat with history into a new worktree, carrying the unsent message along. */
+  onForkIntoWorktree?: (conversationId: string, draft: ComposerDraft) => Promise<void>
+  onManageWorktrees?: () => void
   onOpenProject: () => Promise<void> | void
   onUpdateConversationTitle: (
     id: string,
@@ -141,6 +163,11 @@ function ChatPanel({
   welcomeSuggestions,
   workspaceFolder,
   projectName,
+  projectId = null,
+  worktree = null,
+  onStartInWorktree,
+  onForkIntoWorktree,
+  onManageWorktrees,
   onOpenProject,
   onUpdateConversationTitle,
   onConversationTitleApplied,
@@ -181,6 +208,22 @@ function ChatPanel({
   const forkConversationRef = useRef(onForkConversation)
   forkConversationRef.current = onForkConversation
   const forkMessage = useCallback((messageId: string) => forkConversationRef.current(messageId), [])
+
+  // Where the chat works. A project chat chooses before its first message; afterwards a run that
+  // would join a folder another agent is writing in asks first.
+  const [workIn, setWorkIn] = useState<WorkInChoice>(storedWorkInChoice)
+  const [worktreeBranch, setWorktreeBranch] = useState('')
+  const [worktreeBase, setWorktreeBase] = useState('')
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null)
+  const [busyPrompt, setBusyPrompt] = useState<{
+    occupants: WorkspaceOccupant[]
+    hasHistory: boolean
+    resolve: (choice: WorkspaceBusyChoice) => Promise<boolean>
+  } | null>(null)
+  const [busyPromptWorking, setBusyPromptWorking] = useState(false)
+  const [busyPromptError, setBusyPromptError] = useState<string | null>(null)
+  const workspaceCheckRef = useRef(false)
+  const shareNextRunRef = useRef(false)
 
   // A sub-agent opened from its row covers the chat until Back or Esc.
   const [openSubAgent, setOpenSubAgent] = useState<SubAgentTarget | null>(null)
@@ -793,6 +836,8 @@ function ChatPanel({
     let completed = false
     let failed = false
     let leftRunningReply = false
+    const shareFolder = shareNextRunRef.current
+    shareNextRunRef.current = false
     try {
       const finalPhase = await startRun({
         id: crypto.randomUUID(),
@@ -802,6 +847,7 @@ function ChatPanel({
         plannerModel: selectedPlanningModel,
         mode: runMode,
         ...(continuesRunId ? { continuesRunId } : {}),
+        ...(shareFolder ? { workspaceSharing: 'allow' as const } : {}),
         userLocation
       })
       completed = true
@@ -863,7 +909,9 @@ function ChatPanel({
         leftRunningReply = true
         setMessages((previous) => previous.filter((item) => item.id !== assistantMessageId))
       } else {
-        const message = error instanceof Error ? error.message : 'Agent run failed'
+        const message = workspaceBusyDisplayMessage(
+          error instanceof Error ? error.message : 'Agent run failed'
+        )
         setMessages((previous) =>
           previous.map((item) =>
             item.id === assistantMessageId ? { ...item, content: `Error: ${message}` } : item
@@ -977,8 +1025,109 @@ function ChatPanel({
     }
   }
 
+  const startInWorktree = async (targetConversationId: string): Promise<void> => {
+    if (!onStartInWorktree) throw new Error('Worktrees are not available here')
+    await onStartInWorktree(targetConversationId, {
+      branchName:
+        worktreeBranch.trim() ||
+        suggestWorktreeBranch(createFallbackConversationTitle(inputValue || 'New chat')),
+      ...(worktreeBase ? { baseRef: worktreeBase } : {})
+    })
+  }
+
+  /**
+   * Settles where the next run works before the message is sent: a new worktree when the chat
+   * chose one, and the user's call when another agent is already writing in the folder. The
+   * runtime enforces the same rule; asking here keeps the message unsent until it is settled.
+   */
+  const prepareWorkspace = async (): Promise<boolean> => {
+    if (!conversationId || !projectId) return true
+    const fresh = messagesRef.current.length === 0
+    const choosing = fresh && !worktree
+    if (choosing && workIn === 'worktree') {
+      setWorkspaceError(null)
+      try {
+        await startInWorktree(conversationId)
+        rememberWorkInChoice('worktree')
+        return true
+      } catch (error) {
+        setWorkspaceError(error instanceof Error ? error.message : String(error))
+        return false
+      }
+    }
+    if (choosing) rememberWorkInChoice('folder')
+    if (!goalArmed && nextRunMode === 'research') return true
+    const occupants = await window.api.agentRuns
+      .workspaceOccupants(conversationId)
+      .catch(() => [] as WorkspaceOccupant[])
+    if (!occupants.length) return true
+    return new Promise<boolean>((settle) => {
+      setBusyPromptError(null)
+      setBusyPrompt({
+        occupants,
+        hasHistory: !fresh,
+        resolve: async (choice) => {
+          if (choice === 'cancel') {
+            settle(false)
+            return true
+          }
+          if (choice === 'share') {
+            shareNextRunRef.current = true
+            settle(true)
+            return true
+          }
+          if (fresh) {
+            await startInWorktree(conversationId)
+            settle(true)
+            return true
+          }
+          if (!onForkIntoWorktree) throw new Error('Worktrees are not available here')
+          await onForkIntoWorktree(conversationId, {
+            text: inputValue,
+            images: attachedImages,
+            attachments: attachedContext
+          })
+          setInputValue('')
+          setAttachedImages([])
+          setAttachedContext([])
+          settle(false)
+          return true
+        }
+      })
+    })
+  }
+
+  const chooseBusyPromptOption = async (choice: WorkspaceBusyChoice): Promise<void> => {
+    if (!busyPrompt || busyPromptWorking) return
+    setBusyPromptWorking(true)
+    setBusyPromptError(null)
+    try {
+      if (await busyPrompt.resolve(choice)) setBusyPrompt(null)
+    } catch (error) {
+      setBusyPromptError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setBusyPromptWorking(false)
+    }
+  }
+
   const handleSubmit = (): void => {
     if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (!isLoading && conversationId && projectId) {
+      if (workspaceCheckRef.current) return
+      workspaceCheckRef.current = true
+      void prepareWorkspace()
+        .then((ready) => {
+          if (ready) submitMessage()
+        })
+        .finally(() => {
+          workspaceCheckRef.current = false
+        })
+      return
+    }
+    submitMessage()
+  }
+
+  const submitMessage = (): void => {
     // What was dictated so far is in the box and goes with the message; with
     // voice on, the mic pauses until the reply has been read aloud.
     endDictation()
@@ -1298,6 +1447,37 @@ function ChatPanel({
           </>
         )}
       </div>
+
+      <WorkspaceBar
+        projectId={projectId}
+        worktree={worktree}
+        canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
+        workIn={workIn}
+        branchName={worktreeBranch}
+        branchPlaceholder={
+          inputValue.trim()
+            ? suggestWorktreeBranch(createFallbackConversationTitle(inputValue))
+            : 'Named from your first message'
+        }
+        baseRef={worktreeBase}
+        error={workspaceError}
+        onWorkInChange={(choice) => {
+          setWorkIn(choice)
+          setWorkspaceError(null)
+        }}
+        onBranchNameChange={setWorktreeBranch}
+        onBaseRefChange={setWorktreeBase}
+        onManageWorktrees={() => onManageWorktrees?.()}
+      />
+      <WorkspaceBusyDialog
+        isOpen={Boolean(busyPrompt)}
+        occupants={busyPrompt?.occupants ?? []}
+        hasHistory={busyPrompt?.hasHistory ?? false}
+        canUseWorktree={Boolean(onStartInWorktree) && Boolean(projectId)}
+        busy={busyPromptWorking}
+        error={busyPromptError}
+        onChoose={(choice) => void chooseBusyPromptOption(choice)}
+      />
 
       {/* Input Area */}
       <ChatInput

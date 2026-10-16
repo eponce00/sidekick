@@ -48,7 +48,7 @@ describe('ActivityPanel inspector', () => {
           })
         },
         workspace: {
-          onFilesChanged: vi.fn(() => () => undefined),
+          watchFiles: vi.fn(() => () => undefined),
           listFiles: vi.fn(async () => ({ ok: true, files: [] })),
           listCheckpoints: vi.fn(async () => ({ ok: true, checkpoints: [] }))
         }

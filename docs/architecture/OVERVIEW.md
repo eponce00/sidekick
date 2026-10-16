@@ -290,6 +290,14 @@ permission, question, cancellation, provider, and checkpoint behavior therefore 
 The renderer can create, pause, resume, and clear goals through a narrow preload API, but it
 cannot complete one. It reports a completion in the conversation as an app-authored notice. See [Persistent conversation goals](PERSISTENT_GOALS.md).
 
+### Scheduled runs
+
+`ScheduleService` starts saved prompts on a schedule. Each run is a new conversation started
+through the same engine request as a chat the user sends, so the kernel, permission mode, and
+attention tracking are unchanged; a run that needs approval waits for the user. Missed runs
+collapse into one late run, and a schedule holds one active run at a time. See
+[Scheduled runs](SCHEDULES.md).
+
 ### Plan mode
 
 Plan mode is an orthogonal phase inside the same conversation run. `AgentPlanService` persists the
@@ -448,6 +456,31 @@ Project conversations share folder tools, command working directory, project mem
 and a freshly loaded `AGENTS.override.md`/`AGENTS.md` instruction chain. The sidebar renders projects
 with nested conversations and keeps standalone chats in a separate section. See
 [Projects](../user-guide/PROJECTS.md) for persistence, movement, and instruction-discovery behavior.
+
+The composer's pull request line asks `pullRequests:getStatus` with a folder only. The main process
+checks it with the known-workspace resolver, then `src/main/services/pullRequestStatus.ts` runs
+fixed read-only `git` and `gh` argument lists, refusing any other shape. GitHub CLI availability and
+rate limits are cached there, so a missing CLI is not spawned on every poll. Links in the line open
+through the main window's external-navigation policy.
+
+### Worktrees and parallel agents
+
+`src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
+a chat that has not started (`createForConversation`, also the entry point for main-process callers
+such as agent-started chats), inventory with Git state, owners and disk use, merging the base into a
+clean idle worktree, and removal. It acts only on folders it can prove it created: the exact
+storage shape under the private `worktrees` folder, the recorded branch, and registration in
+`git worktree list`. Forced removal deletes links inside the worktree as links before
+`git worktree remove --force`, so a junction to a shared install never loses its target.
+
+`src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
+`AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a
+folder that is the same as, inside, or contains a busy one, unless the start input says
+`workspaceSharing: 'allow'`. Research runs read only and are not guarded; group participants are
+recorded so chats are warned about them. The renderer asks first through
+`agentRuns.workspaceOccupants`, but the refusal in the runtime is the enforcement. See the
+[worktree design note](../roadmap/WORKTREES.md) for the comparison with other harnesses and the
+open work.
 
 ## Built-in SideKick Search
 

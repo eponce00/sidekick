@@ -25,6 +25,16 @@ export interface ProjectConversation {
   forked_from_message_id?: string | null
   title_source?: import('./conversationTitles').ConversationTitleSource
   title_version?: number
+  /** The schedule that created this chat, and which of its runs it is. */
+  schedule_id?: string | null
+  schedule_run_number?: number | null
+  /** Family links for chats started by other chats; see `SessionLink` in ./sessions. */
+  started_by_kind?: import('./sessions').SessionStarterKind
+  started_by_conversation_id?: string | null
+  report_to_conversation_id?: string | null
+  session_handle?: string | null
+  work_in?: import('./sessions').SessionWorkIn | null
+  archived_at?: number | null
 }
 
 export interface ForkConversationInput {

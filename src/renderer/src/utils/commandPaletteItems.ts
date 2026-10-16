@@ -10,6 +10,7 @@ import type { CommandPaletteItem } from './commandPalette'
 export interface CommandPaletteActions {
   newChat: () => void
   newGroupChat: () => void
+  openSchedules: () => void
   openProject: () => void
   openSettings: () => void
   toggleSidebar: () => void
@@ -21,6 +22,7 @@ export interface CommandPaletteActions {
   nextConversation: () => void
   openConversation: (conversationId: string) => void
   openProjectConversations: (projectId: string) => void
+  manageWorktrees: () => void
 }
 
 export interface CommandPaletteContext {
@@ -59,12 +61,26 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
       run: actions.newGroupChat
     },
     {
+      id: 'action:open-schedules',
+      group: 'actions',
+      title: 'Schedules',
+      keywords: 'schedule routine recurring automation cron timer',
+      run: actions.openSchedules
+    },
+    {
       id: 'action:open-project',
       group: 'actions',
       title: 'Open project…',
       keywords: 'folder workspace',
       shortcut: label('open-project'),
       run: actions.openProject
+    },
+    {
+      id: 'action:manage-worktrees',
+      group: 'actions',
+      title: 'Manage worktrees',
+      keywords: 'git branch isolate parallel agents remove sync',
+      run: actions.manageWorktrees
     },
     {
       id: 'action:open-settings',

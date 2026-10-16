@@ -1,0 +1,338 @@
+/* A status line under the composer card, aligned with its rounded inner edge. */
+.pull-request-bar {
+  container: pull-request-bar / inline-size;
+  min-width: 0;
+  margin: var(--space-2) var(--space-4) 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.pull-request-bar-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 24px;
+  gap: var(--space-3);
+}
+
+.pull-request-bar-icon {
+  flex: none;
+}
+
+.pull-request-bar-icon.is-success,
+.pull-request-bar-merge.is-success {
+  color: var(--success);
+}
+
+.pull-request-bar-icon.is-warning,
+.pull-request-bar-merge.is-warning {
+  color: var(--warning);
+}
+
+.pull-request-bar-icon.is-failure,
+.pull-request-bar-merge.is-failure {
+  color: var(--error);
+}
+
+.pull-request-bar-icon.is-merged,
+.pull-request-bar-merge.is-merged {
+  color: var(--color-merged);
+}
+
+.pull-request-bar-icon.is-neutral,
+.pull-request-bar-merge.is-neutral {
+  color: var(--text-muted);
+}
+
+.pull-request-bar a {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.pull-request-bar a:hover {
+  text-decoration: underline;
+}
+
+.pull-request-bar a:focus-visible,
+.pull-request-bar button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
+.pull-request-bar-number {
+  flex: none;
+  font-weight: 600;
+}
+
+.pull-request-bar-merge {
+  flex: none;
+  white-space: nowrap;
+}
+
+.pull-request-bar-lines {
+  flex: none;
+  display: inline-flex;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pull-request-bar-lines .is-added {
+  color: var(--success);
+}
+
+.pull-request-bar-lines .is-removed {
+  color: var(--error);
+}
+
+.pull-request-bar a.pull-request-bar-create {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.pull-request-bar-branch {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  margin-left: auto;
+  gap: var(--space-1);
+  color: var(--text-muted);
+}
+
+.pull-request-bar-branch svg {
+  flex: none;
+}
+
+.pull-request-bar-branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.pull-request-bar-refresh {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.pull-request-bar-refresh:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.pull-request-bar-refresh:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.pull-request-bar-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  color: var(--warning);
+}
+
+.pull-request-bar-error span {
+  min-width: 0;
+  flex: 1;
+}
+
+.pull-request-bar-error button {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.pull-request-bar-error button:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+/* ---- CI checks ---- */
+.pull-request-checks {
+  position: relative;
+  flex: none;
+}
+
+.pull-request-checks-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.pull-request-checks-trigger:hover,
+.pull-request-checks-trigger[aria-expanded='true'] {
+  background: var(--surface-3);
+}
+
+.pull-request-checks-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.pull-request-checks-trigger.is-success .pull-request-checks-dot {
+  background: var(--success);
+}
+
+.pull-request-checks-trigger.is-pending .pull-request-checks-dot {
+  background: var(--warning);
+  animation: pull-request-checks-pulse 1.6s ease-in-out infinite;
+}
+
+.pull-request-checks-trigger.is-failure .pull-request-checks-dot {
+  background: var(--error);
+}
+
+@keyframes pull-request-checks-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pull-request-checks-trigger.is-pending .pull-request-checks-dot {
+    animation: none;
+  }
+}
+
+.pull-request-checks-card {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 6px);
+  left: 0;
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  padding: var(--space-3);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow-md);
+  color: var(--text-secondary);
+}
+
+.pull-request-checks-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-1) var(--space-2);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pull-request-checks-counts {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.pull-request-checks-list {
+  max-height: 260px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.pull-request-checks-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.pull-request-checks-list li:hover {
+  background: var(--surface-2);
+}
+
+.pull-request-checks-list li.is-success > svg {
+  color: var(--success);
+}
+
+.pull-request-checks-list li.is-failure > svg {
+  color: var(--error);
+}
+
+.pull-request-checks-list li.is-pending > svg {
+  color: var(--warning);
+}
+
+.pull-request-checks-list li.is-skipped > svg {
+  color: var(--text-muted);
+}
+
+.pull-request-checks-list a,
+.pull-request-checks-name {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-1);
+  color: var(--text-primary);
+}
+
+.pull-request-checks-list a span,
+.pull-request-checks-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pull-request-checks-list a svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.pull-request-checks-state {
+  color: var(--text-muted);
+}
+
+.pull-request-checks-empty {
+  margin: 0;
+  padding: 0 var(--space-1);
+  color: var(--text-muted);
+}
+
+/* Narrow composers drop the counts and branch before the status itself. */
+@container pull-request-bar (max-width: 420px) {
+  .pull-request-bar-lines,
+  .pull-request-bar-branch-name {
+    display: none;
+  }
+}

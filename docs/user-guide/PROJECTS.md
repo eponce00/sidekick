@@ -95,8 +95,9 @@ before retrying.
 #### After creating a worktree
 
 Worktree hooks are also added switched off. They match the
-original project's exact folder and run only when a new isolated conversation
-fork has been saved successfully. Commands execute inside the new worktree, in
+original project's exact folder and run when a chat forks into a new worktree or
+starts in one, after the chat is saved there and before its first run.
+Commands execute inside the new worktree, in
 order, with a separate native approval for each command in every permission mode.
 Skipping is the default. No repository Git hooks are discovered or enabled.
 
@@ -107,14 +108,102 @@ private output-log paths. Failure, denial, or interrupted setup preserves the
 fork and any files already changed. Inspect those files before manually retrying;
 commands are never automatically replayed. There are no automatic removal hooks.
 
-### Managed worktree cleanup
+### Worktrees
 
-Cleanup refuses in-use, modified, unmerged, or out-of-storage worktrees. It checks
-the managed path and branch before invoking non-force Git removal; there is no
-recursive-delete fallback. Failed setup preserves changed files for inspection.
-SideKick's managed worktree commands disable implicit Git hooks for that invocation
-without changing your Git configuration. This is not a sandbox for arbitrary Git
-filters or manually executed commands.
+Two agents writing in one folder overwrite each other's work. A worktree is a separate folder on its
+own Git branch, so each chat can work without touching another chat's files. SideKick keeps its
+worktrees in its private data folder, under `worktrees`, never inside your project, and each one
+appears in the sidebar as its own project named after the original project and the branch.
+
+#### Starting a chat in a worktree
+
+Before the first message of a project chat, the bar above the composer offers **Work in: This
+folder** or **New worktree**. With a new worktree you can name the branch (by default
+`sidekick/` followed by words from your first message, with a number added if that branch exists)
+and choose the branch to start from (by default the branch the project folder is on). Sending the
+first message creates the worktree, moves the chat into it and then starts the agent. SideKick
+remembers your last choice for the next new chat. Worktrees need a project inside a Git
+repository; for other folders only **This folder** is offered.
+
+A chat that already has messages keeps its folder. To move its work aside, fork it into a new
+worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
+
+Once a chat works in a worktree, the bar shows its branch, the branch it started from, and how many
+commits it is ahead of and behind that base.
+
+#### When another agent is already working in the folder
+
+If you send a message in a folder where another chat's agent is writing, SideKick asks before
+starting:
+
+- **Start in a new worktree** (a chat with no messages yet) or **Fork into a new worktree** (a chat
+  with history, which opens the fork with your message ready to send).
+- **Work here anyway**, when the two changes cannot overlap.
+
+Closing the prompt leaves the message unsent in the composer. The rule also covers folders inside or
+around the busy one, and runs started without the composer: SideKick's
+runtime refuses a second writer in a busy folder unless the run was started to share it. Research
+reports only read, so they are never held back. Group chat agents count as writers, so a chat is
+warned about them too.
+
+#### Managing worktrees
+
+**Manage** in the worktree bar, the settings icon beside **Work in**, or **Manage worktrees** in the
+command palette opens the list of SideKick's worktrees. Each shows its branch and base, commits
+ahead and behind, uncommitted changes, whether it is merged, the chats using it, its disk use
+(links are not followed), and when it was last used.
+
+- **Open** switches to the worktree's most recent chat, or starts one there.
+- **Show folder** opens the worktree in your file manager.
+- **Sync with base** merges the base branch into the worktree. It needs a clean worktree with no
+  agent running. If the merge would conflict, SideKick stops it, changes nothing, and lists the
+  conflicting files so you can resolve them yourself or ask the agent to.
+- **Remove** deletes the worktree when nothing would be lost. Otherwise it lists what would be: chats
+  that use it, uncommitted changes, and commits the base does not have. **Remove anyway** then
+  removes it, keeps those chats as detached chats with their history, and keeps the branch so its
+  commits stay recoverable unless you also tick the box to delete it.
+
+SideKick never removes a worktree while an agent is working in it, or one it cannot prove it
+created: the folder must have the exact shape SideKick uses inside its storage, be on the branch
+SideKick recorded, and be registered with Git. Removal goes through `git worktree remove`; there is
+no recursive-delete fallback. Links inside a worktree, such as a `node_modules` junction to a shared
+install, are deleted as links first, so their targets are never emptied.
+
+#### Automatic cleanup
+
+Deleting a worktree's last chat removes the worktree when it is clean and merged, together with its
+branch. Otherwise it stays in the list with the reason. Removing a worktree project from the sidebar
+does the same safe removal and says why when it refuses. When the 20-worktree limit is reached,
+SideKick removes the least recently used worktrees that can be removed safely before creating
+another; if none can, it asks you to remove some first.
+
+SideKick's worktree commands disable implicit Git hooks for that invocation without changing your
+Git configuration. This is not a sandbox for arbitrary Git filters or manually executed commands.
+
+### Pull request status
+
+A line under the composer shows the GitHub pull request for the branch checked out in the chat's
+folder, whether that is the project folder or a managed worktree:
+
+- the pull request number, which opens it in your browser
+- its state: draft, open, in a merge queue, merged, or closed
+- merge status: ready to merge, conflicts, blocked, behind the base branch, or checks failing
+- lines added and removed
+- CI checks; click the summary to list each check, and click a check to open its log
+- the branch name
+
+When the branch has no pull request, **Create PR** opens GitHub's compare form for it. Push your
+commits before you submit that form. SideKick never pushes, creates, or merges anything here; it
+only reads.
+
+Status refreshes every 30 seconds while the window is visible, when the window regains focus, and
+from the refresh button. A failed refresh keeps the last status and shows a message you can dismiss.
+
+The line needs the [GitHub CLI](https://cli.github.com/) installed and signed in with
+`gh auth login`, and an `origin` remote on github.com over HTTPS or SSH. It is hidden for the
+default branch, a detached HEAD, a folder that is not a Git repository, and other Git hosts. A
+missing or signed-out GitHub CLI also hides it; SideKick checks again about every five minutes, so
+the line appears shortly after you install or sign in to `gh`.
 
 ### Sidebar
 
@@ -126,9 +215,23 @@ items it holds while closed, and offers its own create action when you point at 
   remove actions; **+** opens a folder as a project.
 - **Chats:** standalone conversations only; the pen starts one.
 
-The **⋯** menu beside the SideKick name holds the rest: a new chat, the command palette, collapsing
-or expanding every project at once, and clearing all chats. When the sidebar is collapsed, it also
-starts a group chat or opens a project.
+The folder and clock buttons beside the SideKick name switch between two layouts, and SideKick
+remembers your choice:
+
+- **By folder:** the three sections above.
+- **By recent activity:** every chat in one list, newest first, under Pinned, Today, Yesterday,
+  Previous 7 days, and Older. Each row names its project, and rows keep their time order, so they
+  cannot be dragged; use **Move to** instead.
+
+The filter button narrows either layout to chats that **Need attention** (waiting on an approval or
+an answer, or a group whose agents are paused), are **Working**, or have an **Unread** reply. Its
+menu counts each kind, and the button itself shows how many chats are waiting on you, even inside a
+folded project. A filter opens every section and project so nothing it matches is hidden; clear it
+with the **×** on the chip under the search box. Filters reset when SideKick restarts.
+
+The **⋯** menu holds the rest: a new chat, the command palette, collapsing or expanding every
+project at once, and clearing all chats. When the sidebar is collapsed, it also starts a group chat
+or opens a project, and in the recent-activity layout it opens a project.
 
 Search spans the sections and labels project-backed results. The title bar and composer project pill
 show the active project so folder context is never implicit.

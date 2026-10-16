@@ -93,7 +93,10 @@ interface ConversationsAPI {
     input: import('../shared/conversationTitles').ConversationTitleBackfillIdentity
   ) => Promise<{ preserved: boolean }>
   markRead: (id: string) => Promise<{ success: boolean }>
-  delete: (id: string) => Promise<{ success: boolean }>
+  delete: (id: string) => Promise<{
+    success: boolean
+    worktreeCleanup?: import('../shared/worktrees').RemoveManagedWorktreeResult
+  }>
   deleteAll: () => Promise<{ success: boolean }>
   getMessages: (
     conversationId: string
@@ -137,6 +140,10 @@ interface AgentRunsAPI {
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>
   stop: (runId: string) => Promise<{ stopped: boolean }>
+  /** Other agents writing in the folder this conversation works in. */
+  workspaceOccupants: (
+    conversationId: string
+  ) => Promise<import('../shared/worktrees').WorkspaceOccupant[]>
   events: (
     runId: string,
     afterSequence?: number
@@ -376,7 +383,8 @@ interface WorkspaceAPI {
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
-  onFilesChanged: (callback: () => void) => () => void
+  /** Calls back when files under the folder change; returns the function that stops watching. */
+  watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
 
 interface CollaborationAPI {
@@ -453,13 +461,17 @@ export interface DesktopApi {
   pinnedModels: PinnedModelsAPI
   conversations: ConversationsAPI
   projects: ProjectsAPI
+  worktrees: import('../shared/worktrees').WorktreesAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
+  schedules: import('../shared/schedules').SchedulesAPI
+  sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
   collaboration: CollaborationAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI

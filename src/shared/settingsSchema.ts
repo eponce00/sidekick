@@ -129,6 +129,14 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
     description: 'Check GitHub Releases for updates after startup and every six hours.'
   },
   {
+    key: 'closeToTray',
+    section: 'general',
+    type: 'boolean',
+    default: true,
+    description:
+      'Windows and Linux: closing the window keeps SideKick in the tray so agents keep working.'
+  },
+  {
     key: 'manualLocation',
     section: 'general',
     type: 'string',
@@ -206,7 +214,8 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   toolCallLimit: true,
   toolCallLimitVersion: true,
   commandPermissionMode: true,
-  mcpServers: true
+  mcpServers: true,
+  closeToTray: true
 }
 // Encrypted credentials, written only by the main process.
 const INTERNAL_STORED_KEYS = new Set([

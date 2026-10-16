@@ -33,6 +33,7 @@ import { getModelDisplayInfo } from '../../../shared/modelDisplay'
 import { testProviderConnection as checkProviderConnection } from '../services/providers/providerDiscovery'
 import { ProviderIcon } from './ProviderIcon'
 import { filterModelsByQuery } from '../utils/modelSearch'
+import { SettingsEmptyState, SettingsPageHeader } from './SettingsLayout'
 
 interface Props {
   instances: ProviderInstance[]
@@ -189,15 +190,19 @@ export function ProviderSettingsPanel({
 
   return (
     <div className="provider-manager">
-      <div className="provider-manager-header">
-        <div>
-          <h2>Providers</h2>
-          <p>Connect only the services you use, then choose which models appear in chat.</p>
-        </div>
-        <button type="button" className="settings-primary-action" onClick={() => setShowAdd(true)}>
-          <Plus size={15} /> Add provider
-        </button>
-      </div>
+      <SettingsPageHeader
+        title="Providers"
+        description="Connect only the services you use, then choose which models appear in chat."
+        actions={
+          <button
+            type="button"
+            className="settings-primary-action"
+            onClick={() => setShowAdd(true)}
+          >
+            <Plus size={15} aria-hidden="true" /> Add provider
+          </button>
+        }
+      />
 
       <div className="provider-manager-grid">
         <aside className="provider-instance-list">
@@ -235,16 +240,20 @@ export function ProviderSettingsPanel({
         <section className="provider-detail">
           {!selected ? (
             <div className="provider-detail-empty">
-              <Server size={28} />
-              <h3>Add your first provider</h3>
-              <p>Provider options stay hidden until you connect one.</p>
-              <button
-                type="button"
-                className="settings-primary-action"
-                onClick={() => setShowAdd(true)}
-              >
-                <Plus size={15} /> Choose provider
-              </button>
+              <SettingsEmptyState
+                icon={Server}
+                title="Add your first provider"
+                description="Provider options stay hidden until you connect one."
+                action={
+                  <button
+                    type="button"
+                    className="settings-primary-action"
+                    onClick={() => setShowAdd(true)}
+                  >
+                    <Plus size={15} aria-hidden="true" /> Choose provider
+                  </button>
+                }
+              />
             </div>
           ) : (
             <>
@@ -387,6 +396,7 @@ export function ProviderSettingsPanel({
                   className="settings-secondary-action"
                   onClick={addManualModel}
                 >
+                  <Plus size={14} aria-hidden="true" />
                   Add model
                 </button>
               </div>
@@ -562,12 +572,13 @@ export function ProviderSettingsPanel({
               <div className="provider-danger-row">
                 <button
                   type="button"
+                  className="settings-danger-action is-small"
                   onClick={() => {
                     onChange(instances.filter((instance) => instance.id !== selected.id))
                     setSelectedId(null)
                   }}
                 >
-                  <Trash2 size={14} /> Remove provider
+                  <Trash2 size={14} aria-hidden="true" /> Remove provider
                 </button>
               </div>
             </>

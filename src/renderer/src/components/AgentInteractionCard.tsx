@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   Check,
   ArrowUp,
   ChevronLeft,
+  ChevronRight,
   ListChecks,
   Loader2,
+  MessageCircleQuestionMark,
   MonitorUp,
   ShieldAlert,
   X
@@ -78,8 +80,8 @@ function QuestionCompose({
     <div className="agent-question-compose field-shell">
       <input
         value={value}
-        autoFocus
         placeholder={placeholder}
+        aria-label={placeholder}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key !== 'Enter' || event.shiftKey) return
@@ -95,7 +97,7 @@ function QuestionCompose({
         aria-label="Send answer"
         title="Send answer"
       >
-        <ArrowUp size={15} strokeWidth={2.3} />
+        <ArrowUp size={13} strokeWidth={2.4} />
       </button>
     </div>
   )
@@ -134,6 +136,121 @@ function approvalPreview(value: unknown): AgentApprovalPreview | null {
   }
 }
 
+function answerText(given: unknown): string | null {
+  if (Array.isArray(given)) return given.length ? given.join(', ') : null
+  return typeof given === 'string' || typeof given === 'number' ? String(given) : null
+}
+
+/**
+ * Once answered, a question is part of the conversation's history rather than
+ * something to act on, so it folds to one row like a finished tool call: what
+ * was asked, then what the user chose. The full exchange is one click away.
+ */
+function AnsweredQuestions({
+  interaction,
+  questions
+}: {
+  interaction: Interaction
+  questions: Question[]
+}): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const detailsId = useId()
+  const cancelled = interaction.status !== 'resolved'
+  const answered = questions.map((question) => ({
+    question,
+    answer: cancelled ? null : answerText(interaction.response?.[question.id])
+  }))
+  const label =
+    questions.length === 1
+      ? questions[0].header || questions[0].question
+      : questions.length > 1
+        ? `${questions.length} questions`
+        : 'Question'
+  const value = cancelled
+    ? 'Cancelled'
+    : answered.length
+      ? answered.map(({ answer }) => answer ?? 'Skipped').join(' · ')
+      : 'Answered'
+  const expandable = questions.length > 0
+  return (
+    <div
+      className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}
+    >
+      <button
+        type="button"
+        className="agent-question-answered"
+        aria-label={`${label}, ${cancelled ? 'cancelled' : `answered: ${value}`}`}
+        aria-expanded={expandable ? expanded : undefined}
+        aria-controls={expandable && expanded ? detailsId : undefined}
+        disabled={!expandable}
+        title={`${label} → ${value}`}
+        onClick={() => setExpanded((current) => !current)}
+      >
+        <span className="agent-question-answered-icon" aria-hidden="true">
+          {cancelled ? <X size={14} /> : <MessageCircleQuestionMark size={14} />}
+        </span>
+        <span className="agent-question-answered-label">{label}</span>
+        <span className="agent-question-answered-arrow" aria-hidden="true">
+          →
+        </span>
+        <span className={`agent-question-answered-value${cancelled ? ' is-cancelled' : ''}`}>
+          {value}
+        </span>
+        {expandable && (
+          <span
+            className={`agent-question-answered-chevron${expanded ? ' is-expanded' : ''}`}
+            aria-hidden="true"
+          >
+            <ChevronRight size={14} />
+          </span>
+        )}
+      </button>
+      {expandable && expanded && (
+        <dl className="agent-question-summary" id={detailsId}>
+          {answered.map(({ question, answer }) => (
+            <div key={question.id}>
+              <dt>{question.question}</dt>
+              <dd className={answer ? '' : 'is-skipped'}>
+                {answer ?? (cancelled ? 'Not answered' : 'Skipped')}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Arrow keys walk the choices and the field below them, and a digit picks the
+ * matching choice, so a question can be answered without leaving the keyboard.
+ * A digit typed into the field stays text.
+ */
+function handleOptionKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
+  if (event.altKey || event.ctrlKey || event.metaKey) return
+  const inField = event.target instanceof HTMLInputElement
+  const stops = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>('.agent-question-option, input')
+  ]
+  const index = stops.indexOf(document.activeElement as HTMLElement)
+  const move = (to: number): void => {
+    event.preventDefault()
+    stops[(to + stops.length) % stops.length]?.focus()
+  }
+  if (event.key === 'ArrowUp' || (!inField && event.key === 'ArrowLeft')) move(index - 1)
+  else if (!inField && (event.key === 'ArrowDown' || event.key === 'ArrowRight')) move(index + 1)
+  else if (!inField && /^[1-9]$/.test(event.key)) {
+    const option =
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('.agent-question-option')[
+        Number(event.key) - 1
+      ]
+    if (!option) return
+    event.preventDefault()
+    option.focus()
+    option.click()
+  }
+}
+
 export default function AgentInteractionCard({
   interaction,
   onResolve
@@ -149,6 +266,25 @@ export default function AgentInteractionCard({
   const [takeoverError, setTakeoverError] = useState('')
   const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
+  const questionRef = useRef<HTMLDivElement>(null)
+  const questionShownRef = useRef(false)
+  const promptId = useId()
+  // Answering replaces the focused control, so focus follows to the next
+  // question. The first question takes focus only when nothing else has it,
+  // never from a message the user is typing.
+  useEffect(() => {
+    const root = questionRef.current
+    if (!pending || !root) return
+    const advanced = questionShownRef.current
+    questionShownRef.current = true
+    const active = document.activeElement
+    if (!advanced && active && active !== document.body) return
+    const target =
+      root.querySelector<HTMLElement>(
+        '.agent-question-option.selected, .agent-question-option[aria-current="true"]'
+      ) ?? root.querySelector<HTMLElement>('.agent-question-option, input')
+    target?.focus()
+  }, [pending, questionIndex])
   const [permissionSubmission, setPermissionSubmission] = useState<{
     interactionId: string
     decision: AgentPermissionDecision
@@ -569,51 +705,63 @@ export default function AgentInteractionCard({
     }
     void onResolve(interaction.id, responseFrom(next))
   }
+  if (!pending) return <AnsweredQuestions interaction={interaction} questions={questions} />
+  const multiOptions = Boolean(currentQuestion?.multiSelect && currentQuestion.options?.length)
   return (
-    <div
-      className={`agent-interaction agent-interaction-question agent-interaction-${interaction.status}`}
+    <section
+      className="agent-interaction agent-interaction-question agent-interaction-pending"
+      aria-label={
+        questions.length > 1
+          ? `Question ${questionIndex + 1} of ${questions.length} from the agent`
+          : 'Question from the agent'
+      }
     >
-      {pending && questions.length > 1 && (
-        <div className="agent-question-progress">
-          <span>
-            Question {questionIndex + 1} of {questions.length}
+      <div className="agent-question-top">
+        <span className="agent-question-kicker">
+          <MessageCircleQuestionMark size={13} aria-hidden="true" />
+          {currentQuestion?.header || 'Question'}
+        </span>
+        {questions.length > 1 && (
+          <span className="agent-question-progress" aria-hidden="true">
+            <span className="agent-question-steps">
+              {questions.map((question, index) => (
+                <i
+                  key={question.id}
+                  className={
+                    index === questionIndex ? 'active' : answers[question.id] ? 'answered' : ''
+                  }
+                />
+              ))}
+            </span>
+            {questionIndex + 1} of {questions.length}
           </span>
-          <span>
-            {questions.map((question, index) => (
-              <i
-                key={question.id}
-                className={
-                  index === questionIndex ? 'active' : answers[question.id] ? 'answered' : ''
-                }
-              />
-            ))}
-          </span>
-        </div>
-      )}
-      {pending && currentQuestion ? (
-        <div className="agent-question" key={currentQuestion.id}>
-          {currentQuestion.header && (
-            <div className="agent-question-header">{currentQuestion.header}</div>
-          )}
-          <div className="agent-question-copy">{currentQuestion.question}</div>
-          {currentQuestion.multiSelect && (currentQuestion.options?.length ?? 0) > 0 && (
-            <div className="agent-question-hint">Choose any that apply</div>
-          )}
+        )}
+      </div>
+      {currentQuestion ? (
+        <div className="agent-question" key={currentQuestion.id} ref={questionRef}>
+          <div className="agent-question-copy" id={promptId}>
+            {currentQuestion.question}
+          </div>
+          {multiOptions && <div className="agent-question-hint">Choose any that apply</div>}
           {currentQuestion.options?.length ? (
             <div
               className={`agent-question-options${currentQuestion.multiSelect ? ' is-multi' : ''}`}
-              role={currentQuestion.multiSelect ? 'group' : 'radiogroup'}
+              role="group"
+              aria-labelledby={promptId}
+              onKeyDown={handleOptionKeys}
             >
-              {currentQuestion.options.map((option) => {
+              {currentQuestion.options.map((option, index) => {
                 const selected = currentAnswer.selected.includes(option.label)
                 return (
                   <button
                     type="button"
                     key={option.label}
-                    className={selected ? 'selected' : ''}
+                    className={`agent-question-option${selected ? ' selected' : ''}`}
                     {...(currentQuestion.multiSelect
-                      ? { role: 'checkbox', 'aria-checked': selected, 'aria-pressed': selected }
-                      : {})}
+                      ? { role: 'checkbox', 'aria-checked': selected }
+                      : selected
+                        ? { 'aria-current': true }
+                        : {})}
                     onClick={() =>
                       currentQuestion.multiSelect
                         ? setQuestionAnswer(currentQuestion.id, (answer) => ({
@@ -631,11 +779,10 @@ export default function AgentInteractionCard({
                           }))
                     }
                   >
-                    {currentQuestion.multiSelect && (
-                      <span className="agent-question-mark" aria-hidden="true">
-                        {selected && <Check size={11} strokeWidth={3} />}
-                      </span>
-                    )}
+                    {/* The number is the key that picks the choice; a tick replaces it once chosen. */}
+                    <span className="agent-question-mark" aria-hidden="true">
+                      {selected ? <Check size={11} strokeWidth={3} /> : index < 9 ? index + 1 : ''}
+                    </span>
                     <span className="agent-question-option-body">
                       <span className="agent-question-option-label">
                         {option.label}
@@ -690,74 +837,48 @@ export default function AgentInteractionCard({
           )}
         </div>
       ) : null}
-      {pending ? (
-        <div className="agent-interaction-actions agent-question-navigation">
-          {questionIndex > 0 && (
-            <button type="button" onClick={() => setQuestionIndex((current) => current - 1)}>
-              <ChevronLeft size={13} /> Back
-            </button>
-          )}
-          {currentQuestion && (
-            <button
-              type="button"
-              onClick={() =>
-                commitAnswer(currentQuestion.id, (answer) => ({
-                  ...answer,
-                  selected: [],
-                  custom: '',
-                  skipped: true
-                }))
-              }
-            >
-              Skip
-            </button>
-          )}
-          {currentQuestion?.multiSelect && (
-            <button
-              type="button"
-              className="agent-interaction-primary"
-              disabled={!hasCurrentAnswer}
-              onClick={() =>
-                commitAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false }))
-              }
-            >
-              {atLastQuestion ? 'Send answers' : 'Next'}
-            </button>
-          )}
+      <div className="agent-question-footer">
+        {questionIndex > 0 && (
+          <button type="button" onClick={() => setQuestionIndex((current) => current - 1)}>
+            <ChevronLeft size={13} aria-hidden="true" /> Back
+          </button>
+        )}
+        {currentQuestion && (
           <button
             type="button"
-            className="agent-question-cancel"
-            onClick={() => onResolve(interaction.id, {}, true)}
+            onClick={() =>
+              commitAnswer(currentQuestion.id, (answer) => ({
+                ...answer,
+                selected: [],
+                custom: '',
+                skipped: true
+              }))
+            }
           >
-            Cancel
+            Skip
           </button>
-        </div>
-      ) : (
-        <>
-          <div className="agent-interaction-status">
-            {interaction.status === 'resolved' ? <Check size={12} /> : <X size={12} />}
-            {interaction.status === 'resolved' ? 'Answered' : 'Cancelled'}
-          </div>
-          {interaction.status === 'resolved' && questions.length > 0 && (
-            <dl className="agent-question-summary">
-              {questions.map((question) => {
-                const given = interaction.response?.[question.id]
-                const answer = Array.isArray(given)
-                  ? given.join(', ')
-                  : typeof given === 'string' || typeof given === 'number'
-                    ? String(given)
-                    : null
-                return (
-                  <div key={question.id}>
-                    <dt>{question.header || question.question}</dt>
-                    <dd className={answer ? '' : 'is-skipped'}>{answer ?? 'Skipped'}</dd>
-                  </div>
-                )
-              })}
-            </dl>
-          )}
-        </>
-      )}
-    </div>
+        )}
+        {currentQuestion?.multiSelect && (
+          <button
+            type="button"
+            className="agent-question-primary"
+            disabled={!hasCurrentAnswer}
+            onClick={() =>
+              commitAnswer(currentQuestion.id, (answer) => ({ ...answer, skipped: false }))
+            }
+          >
+            {atLastQuestion ? 'Send answers' : 'Next'}
+          </button>
+        )}
+        <button
+          type="button"
+          className="agent-question-cancel"
+          title="Dismiss the question without answering"
+          onClick={() => onResolve(interaction.id, {}, true)}
+        >
+          Cancel
+        </button>
+      </div>
+    </section>
   )
 }

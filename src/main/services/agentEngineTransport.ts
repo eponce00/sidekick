@@ -67,6 +67,8 @@ export class LocalAgentEngineTransport implements AgentEngineTransport {
         return this.runtime.resumeGoal(command.goalId)
       case 'goal.clear':
         return this.runtime.clearGoal(command.goalId)
+      case 'workspace.occupants':
+        return this.runtime.workspaceOccupants(command.conversationId)
       case 'engine.hasActiveRuns':
         return this.runtime.hasActiveRuns()
       case 'engine.close':

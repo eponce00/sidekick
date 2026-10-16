@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react'
+import { SquareTerminal } from 'lucide-react'
 import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
+import { SettingsRow, SettingsSection } from './SettingsLayout'
+
+function summary(status: CommandLineToolStatus): string {
+  if (status.mode === 'development') return 'Development build'
+  if (status.mode === 'unavailable') return 'Not available in this package'
+  if (!status.installed) return 'Not installed'
+  return status.onPath === false
+    ? `Installed at ${status.location}, but not on PATH`
+    : `Installed at ${status.location}`
+}
 
 /** Shows how to reach the `sidekick` command and installs it where Settings can. */
 export function CommandLineToolSettings(): React.JSX.Element {
@@ -26,47 +37,34 @@ export function CommandLineToolSettings(): React.JSX.Element {
     setInstalling(false)
   }
 
-  if (!status) return <p className="support-export-status">Checking…</p>
-
-  const summary =
-    status.mode === 'development'
-      ? 'Development build'
-      : status.mode === 'unavailable'
-        ? 'Not available in this package'
-        : status.installed
-          ? status.onPath === false
-            ? `Installed at ${status.location}, but not on PATH`
-            : `Installed at ${status.location}`
-          : 'Not installed'
-
   return (
-    <>
-      <div className="support-export-row">
-        <span>
-          <strong>sidekick command</strong>
-          <small>
-            Lets you and other agents inspect and change these settings from a terminal. It never
-            prints an API key.
-          </small>
-        </span>
-        {status.mode === 'shell-script' && (
-          <button
-            type="button"
-            className="settings-secondary-action"
-            onClick={() => void install()}
-            disabled={installing}
-          >
-            {installing ? 'Installing…' : status.installed ? 'Reinstall' : 'Install command'}
-          </button>
-        )}
-      </div>
-      <p
-        className={`support-export-status ${error ? 'error' : ''}`}
-        role="status"
-        aria-live="polite"
+    <SettingsSection
+      icon={SquareTerminal}
+      title="Command line"
+      description="Configure SideKick from a terminal or another agent. The command never prints an API key."
+    >
+      <SettingsRow
+        label="sidekick command"
+        description={status ? `${summary(status)}. ${status.hint}` : 'Checking…'}
+        control={
+          status?.mode === 'shell-script' ? (
+            <button
+              type="button"
+              className="settings-secondary-action is-small"
+              onClick={() => void install()}
+              disabled={installing}
+            >
+              {installing ? 'Installing…' : status.installed ? 'Reinstall' : 'Install command'}
+            </button>
+          ) : undefined
+        }
       >
-        {error ?? `${summary}. ${status.hint}`}
-      </p>
-    </>
+        {error && (
+          <span className="field-error" role="alert">
+            {error}
+          </span>
+        )}
+      </SettingsRow>
+    </SettingsSection>
   )
 }

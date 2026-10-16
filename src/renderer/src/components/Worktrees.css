@@ -1,0 +1,392 @@
+/* Where a chat works: the bar above the composer, the busy-folder prompt and the worktree list. */
+
+.workspace-bar-area {
+  width: min(100%, 960px);
+  margin-inline: auto;
+  padding: var(--space-2) clamp(18px, 4vw, 40px) 0;
+}
+
+.workspace-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--space-2);
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  font-size: var(--text-sm);
+}
+
+.workspace-bar-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.workspace-bar-branch {
+  overflow: hidden;
+  max-width: 320px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-bar-muted {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.workspace-bar-label {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.workspace-bar-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.workspace-bar-counts svg + svg,
+.workspace-bar-counts svg:not(:first-child) {
+  margin-left: 4px;
+}
+
+.workspace-bar-link {
+  all: unset;
+  margin-left: auto;
+  color: var(--accent);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.workspace-bar-link:hover {
+  text-decoration: underline;
+}
+
+.workspace-bar-link:focus-visible,
+.workspace-bar-icon-button:focus-visible,
+.workspace-bar-segments button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.workspace-bar-segments {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.workspace-bar-segments button {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.workspace-bar-segments button:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.workspace-bar-segments button.is-selected {
+  color: var(--text-primary);
+  background: var(--surface-4);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+
+.workspace-bar-segments button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.workspace-bar-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workspace-bar-field input,
+.workspace-bar-field select {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--input-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.workspace-bar-field input {
+  width: 220px;
+}
+
+.workspace-bar-field select {
+  max-width: 180px;
+  font-family: var(--font-sans);
+}
+
+.workspace-bar-field input:focus,
+.workspace-bar-field select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.workspace-bar-icon-button {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-left: auto;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.workspace-bar-icon-button:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.workspace-bar-error {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  font-size: var(--text-xs);
+}
+
+.fork-dialog-icon.is-warning {
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+}
+
+.workspace-busy-name {
+  color: var(--text-primary);
+}
+
+/* Worktree list */
+
+.fork-dialog.worktrees-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+}
+
+.worktrees-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.worktrees-list {
+  display: grid;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: 0 2px 2px 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.worktrees-row {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.worktrees-row.is-focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.worktrees-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px var(--space-2);
+}
+
+.worktrees-row-head .workspace-bar-branch {
+  font-size: var(--text-sm);
+}
+
+.worktrees-pill {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.worktrees-pill.is-running {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.worktrees-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.worktrees-facts > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.worktrees-facts .is-attention {
+  color: var(--color-warning);
+}
+
+.worktrees-owners {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.worktrees-notice {
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.worktrees-notice ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-family: var(--font-mono);
+}
+
+.worktrees-notice.is-info {
+  color: var(--text-secondary);
+  background: var(--surface-3);
+}
+
+.worktrees-notice.is-success {
+  color: var(--color-success);
+  background: var(--color-success-subtle);
+}
+
+.worktrees-notice.is-error {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+.worktrees-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.worktrees-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--surface-1);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.worktrees-action:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.worktrees-action.is-danger {
+  color: var(--color-error);
+}
+
+.worktrees-action.is-danger:hover:not(:disabled) {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+.worktrees-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.worktrees-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.worktrees-confirm {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-error) 45%, var(--border-color));
+  border-radius: var(--radius-sm);
+  background: var(--color-error-subtle);
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.worktrees-confirm ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.worktrees-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+
+.worktrees-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin-top: var(--space-3);
+  padding: var(--space-6) var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+.worktrees-empty strong {
+  color: var(--text-primary);
+}

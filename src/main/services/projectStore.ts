@@ -260,6 +260,63 @@ export class ProjectStore {
     })()
   }
 
+  /**
+   * Moves a chat that has no messages and has never run into another project, such as its own new
+   * worktree. A chat with history keeps its folder; it forks instead.
+   */
+  rehomeFreshConversation(conversationId: string, projectId: string): ProjectConversation {
+    return this.db.transaction(() => {
+      const current = this.db
+        .prepare('SELECT * FROM conversations WHERE id = ?')
+        .get(conversationId) as ProjectConversation | undefined
+      if (!current) throw new Error('Conversation not found')
+      const destination = this.get(projectId)
+      if (!destination) throw new Error('Project not found')
+      const hasHistory =
+        this.db
+          .prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1')
+          .get(conversationId) ||
+        this.db.prepare('SELECT 1 FROM agent_runs WHERE thread_id = ? LIMIT 1').get(conversationId)
+      if (hasHistory) throw new Error('Only a chat without messages can move to a new worktree')
+      const sourceProject = current.project_id ? this.get(current.project_id) : undefined
+      this.db
+        .prepare(
+          `UPDATE conversations
+           SET project_id = ?, project_context_version = project_context_version + 1,
+               home_workspace_root = ?, home_project_name = ?
+           WHERE id = ?`
+        )
+        .run(projectId, destination.folder_path, destination.name, conversationId)
+      this.rewriteOrder(projectId, [
+        conversationId,
+        ...this.listConversationPlacement(projectId)
+          .filter(({ id }) => id !== conversationId)
+          .map(({ id }) => id)
+      ])
+      if (current.project_id && current.project_id !== projectId) {
+        this.rewriteOrder(
+          current.project_id,
+          this.listConversationPlacement(current.project_id).map(({ id }) => id)
+        )
+      }
+      this.insertTransition({
+        id: randomUUID(),
+        conversationId,
+        fromProjectId: current.project_id,
+        toProjectId: projectId,
+        fromProjectName: sourceProject?.name ?? null,
+        toProjectName: destination.name,
+        fromWorkspaceRoot: sourceProject?.folder_path ?? null,
+        toWorkspaceRoot: destination.folder_path,
+        movedAt: Date.now()
+      })
+      this.touch(projectId)
+      return this.db
+        .prepare('SELECT * FROM conversations WHERE id = ?')
+        .get(conversationId) as ProjectConversation
+    })()
+  }
+
   remove(id: string): void {
     this.db.transaction(() => {
       const project = this.get(id)
@@ -404,7 +461,7 @@ export class ProjectStore {
     conversationIds.forEach((conversationId, index) => update.run(index, conversationId, projectId))
   }
 
-  private hasActiveRun(conversationId: string): boolean {
+  hasActiveRun(conversationId: string): boolean {
     const activePhases = [
       'queued',
       'streaming',

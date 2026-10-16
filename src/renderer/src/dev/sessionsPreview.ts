@@ -1,0 +1,417 @@
+import type { ProjectConversation } from '../../../shared/projects'
+import {
+  SESSION_LIMITS,
+  countSessionStates,
+  mostUrgentSessionState,
+  sessionLinkFromConversation,
+  suggestSessionHandle,
+  type SessionFamily,
+  type SessionFamilyMember,
+  type SessionMessage,
+  type SessionProjectGrant,
+  type SessionProposal,
+  type SessionState,
+  type SessionStatus,
+  type SessionsAPI,
+  type SessionsChangedEvent
+} from '../../../shared/sessions'
+
+const MANAGER_ID = 'preview-manager-1'
+const DEMO_ROOT = 'C:\\Projects\\sidekick-demo'
+const WORKTREES = 'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1'
+const minutes = (count: number): number => Date.now() - count * 60_000
+
+interface PreviewWorker {
+  handle: string
+  title: string
+  state: SessionState
+  reason?: string
+  projectId?: string
+  projectName?: string
+  root?: string
+}
+
+const workers: PreviewWorker[] = [
+  { handle: 'question-card', title: 'Polish the agent question card', state: 'done' },
+  { handle: 'thinking-toggle', title: 'Brain-icon thinking toggle', state: 'working' },
+  { handle: 'settings-polish', title: 'Polish the whole settings window', state: 'idle' },
+  {
+    handle: 'schedules',
+    title: "Port Cline's schedules feature",
+    state: 'waiting',
+    reason: 'Approval: run npx vitest run src/main/services/scheduler'
+  },
+  {
+    handle: 'api-contract',
+    title: 'Contract tests for /v1/projects',
+    state: 'working',
+    projectId: 'preview-project-2',
+    projectName: 'sidekick-api',
+    root: 'C:\\Projects\\sidekick-api'
+  }
+]
+
+const workerId = (handle: string): string => `preview-worker-${handle}`
+
+/** A manager chat with five workers, one of them in another project. */
+export const previewSessionConversations: ProjectConversation[] = [
+  {
+    id: MANAGER_ID,
+    title: 'Cline desktop design review',
+    created_at: minutes(90),
+    updated_at: minutes(1),
+    project_id: 'preview-project-1',
+    sidebar_order: 3,
+    project_context_version: 0,
+    home_workspace_root: DEMO_ROOT,
+    home_project_name: 'sidekick-demo',
+    started_by_kind: 'user'
+  },
+  ...workers.map(
+    (worker, index): ProjectConversation => ({
+      id: workerId(worker.handle),
+      title: worker.title,
+      created_at: minutes(80 - index),
+      updated_at: minutes(10 - index),
+      project_id: worker.projectId ?? 'preview-project-1',
+      sidebar_order: 4 + index,
+      project_context_version: 0,
+      home_workspace_root: `${worker.root ?? WORKTREES}\\${worker.handle}`,
+      home_project_name: worker.projectName ?? 'sidekick-demo',
+      unread_completion_at: worker.state === 'done' ? minutes(4) : null,
+      started_by_kind: 'session',
+      started_by_conversation_id: MANAGER_ID,
+      report_to_conversation_id: MANAGER_ID,
+      session_handle: worker.handle,
+      work_in: 'worktree'
+    })
+  )
+]
+
+const conversationById = new Map(previewSessionConversations.map((row) => [row.id, row]))
+const states = new Map<string, { state: SessionState; since: number; reason?: string }>([
+  [MANAGER_ID, { state: 'working', since: minutes(1) }],
+  ...workers.map(
+    (worker, index) =>
+      [
+        workerId(worker.handle),
+        { state: worker.state, since: minutes(6 - index), reason: worker.reason }
+      ] as const
+  )
+])
+
+let nextMessage = 0
+const message = (
+  from: string | null,
+  to: string,
+  intent: SessionMessage['intent'],
+  body: string,
+  ageMinutes: number,
+  delivered = true
+): SessionMessage => ({
+  id: `preview-session-message-${(nextMessage += 1)}`,
+  fromConversationId: from,
+  toConversationId: to,
+  intent,
+  body,
+  attachments: [],
+  replyToMessageId: null,
+  createdAt: minutes(ageMinutes),
+  deliveredRunId: delivered ? 'preview-run' : null,
+  deliveredAt: delivered ? minutes(ageMinutes) : null,
+  readAt: null
+})
+
+const messages: SessionMessage[] = [
+  ...workers.map((worker) =>
+    message(
+      MANAGER_ID,
+      workerId(worker.handle),
+      'brief',
+      `${worker.title}. Done means: the change works in the running app, focused tests pass, and hand-over notes are written. Do not commit.`,
+      80
+    )
+  ),
+  message(
+    workerId('question-card'),
+    MANAGER_ID,
+    'report',
+    'Done. Numbered options, arrow-key movement and a separated footer; 12 tests pass. Branch sidekick/question-card, 1 commit.',
+    20
+  ),
+  message(
+    workerId('settings-polish'),
+    MANAGER_ID,
+    'report',
+    'Done. Shared SettingsLayout building blocks and consistent rows across every page; 31 tests pass.',
+    15
+  ),
+  message(
+    workerId('schedules'),
+    MANAGER_ID,
+    'status',
+    'Waiting for the user to approve npx vitest run src/main/services/scheduler.',
+    3,
+    false
+  ),
+  message(
+    MANAGER_ID,
+    workerId('schedules'),
+    'update',
+    'Keep the Schedules dialog separate from Settings.',
+    12
+  ),
+  message(
+    workerId('api-contract'),
+    MANAGER_ID,
+    'request',
+    'Should /v1/projects return nextCursor as null or omit it on the last page?',
+    2,
+    false
+  )
+]
+
+const proposals: SessionProposal[] = [
+  {
+    id: 'preview-proposal-1',
+    proposerConversationId: MANAGER_ID,
+    spec: {
+      title: 'Fix the flaky scheduler clock test',
+      brief:
+        'The scheduler clock test fails about 1 in 20 runs on Windows. Find and fix the cause.',
+      workIn: 'worktree'
+    },
+    status: 'open',
+    createdAt: minutes(5),
+    expiresAt: minutes(5) + SESSION_LIMITS.proposalTtlMs,
+    resolvedAt: null,
+    startedConversationId: null
+  }
+]
+
+const grants: SessionProjectGrant[] = [
+  {
+    conversationId: MANAGER_ID,
+    projectId: 'preview-project-2',
+    grantedAt: minutes(85),
+    revokedAt: null
+  }
+]
+
+const listeners = new Set<(change: SessionsChangedEvent) => void>()
+
+function publish(change: SessionsChangedEvent): void {
+  for (const listener of listeners) listener(change)
+}
+
+function member(conversationId: string): SessionFamilyMember | null {
+  const row = conversationById.get(conversationId)
+  if (!row) return null
+  return {
+    ...sessionLinkFromConversation(row),
+    title: row.title,
+    projectId: row.project_id,
+    projectName: row.home_project_name,
+    state: states.get(row.id)?.state ?? 'idle'
+  }
+}
+
+function liveWorkers(managerId: string): SessionFamilyMember[] {
+  return previewSessionConversations
+    .filter((row) => row.started_by_conversation_id === managerId && !row.archived_at)
+    .map((row) => member(row.id)!)
+}
+
+function status(conversationId: string): SessionStatus {
+  const current = states.get(conversationId) ?? { state: 'idle' as const, since: Date.now() }
+  const family = liveWorkers(conversationId)
+  return {
+    conversationId,
+    ...current,
+    ...(family.length
+      ? {
+          family: {
+            state: mostUrgentSessionState(family.map(({ state }) => state)),
+            counts: countSessionStates(family.map(({ state }) => state))
+          }
+        }
+      : {})
+  }
+}
+
+function setState(conversationId: string, state: SessionState, reason?: string): void {
+  states.set(conversationId, { state, since: Date.now(), reason })
+  const managerId = conversationById.get(conversationId)?.started_by_conversation_id
+  const changed = managerId ? [conversationId, managerId] : [conversationId]
+  publish({ kind: 'status', conversationIds: changed, statuses: changed.map(status) })
+}
+
+function startWorker(managerId: string, spec: SessionProposal['spec']): SessionFamilyMember {
+  const manager = conversationById.get(managerId)
+  if (!manager) throw new Error('Chat not found')
+  if (liveWorkers(managerId).length >= SESSION_LIMITS.liveWorkersPerFamily)
+    throw new Error(`A chat can have at most ${SESSION_LIMITS.liveWorkersPerFamily} live workers`)
+  const handle =
+    spec.handle ??
+    suggestSessionHandle(
+      spec.title,
+      liveWorkers(managerId).map(({ handle }) => handle ?? '')
+    )
+  const row: ProjectConversation = {
+    ...manager,
+    id: `preview-worker-${Date.now()}`,
+    title: spec.title,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+    project_id: spec.projectId === undefined ? manager.project_id : spec.projectId,
+    unread_completion_at: null,
+    started_by_kind: 'session',
+    started_by_conversation_id: managerId,
+    report_to_conversation_id: managerId,
+    session_handle: handle,
+    work_in: spec.workIn ?? 'worktree',
+    archived_at: null
+  }
+  previewSessionConversations.push(row)
+  conversationById.set(row.id, row)
+  messages.push(message(managerId, row.id, 'brief', spec.brief, 0))
+  states.set(row.id, { state: 'queued', since: Date.now() })
+  publish({ kind: 'family', conversationIds: [managerId, row.id] })
+  return member(row.id)!
+}
+
+function proposal(id: string): SessionProposal {
+  const found = proposals.find((candidate) => candidate.id === id)
+  if (!found) throw new Error('Suggestion not found')
+  return found
+}
+
+/** In-memory sessions for the UI preview. Nothing runs; state changes only through these calls. */
+export function previewSessionsApi(): SessionsAPI {
+  return {
+    statuses: async () =>
+      [...states.keys()].map(status).filter((entry) => entry.state !== 'idle' || entry.family),
+    family: async (conversationId): Promise<SessionFamily | null> => {
+      const row = conversationById.get(conversationId)
+      if (!row) return null
+      const managerId = row.started_by_conversation_id ?? row.id
+      const workersOf = liveWorkers(managerId)
+      if (!workersOf.length) return null
+      return { rootConversationId: managerId, manager: member(managerId)!, workers: workersOf }
+    },
+    messages: async (conversationId, options) => {
+      const matching = messages.filter(
+        (entry) =>
+          (entry.toConversationId === conversationId ||
+            entry.fromConversationId === conversationId) &&
+          (options?.beforeCreatedAt === undefined || entry.createdAt < options.beforeCreatedAt)
+      )
+      matching.sort((left, right) => left.createdAt - right.createdAt)
+      return options?.limit ? matching.slice(-options.limit) : matching
+    },
+    markMessagesRead: async (conversationId) => {
+      for (const entry of messages)
+        if (entry.toConversationId === conversationId) entry.readAt ??= Date.now()
+      publish({ kind: 'messages', conversationIds: [conversationId] })
+    },
+    attachment: async () => null,
+    start: async (input) => {
+      if (input.mode === 'propose') {
+        const created = input.sessions.map(
+          (spec, index): SessionProposal => ({
+            id: `preview-proposal-${Date.now()}-${index}`,
+            proposerConversationId: input.managerConversationId,
+            spec,
+            status: 'open',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + SESSION_LIMITS.proposalTtlMs,
+            resolvedAt: null,
+            startedConversationId: null
+          })
+        )
+        proposals.push(...created)
+        publish({ kind: 'proposals', conversationIds: [input.managerConversationId] })
+        return { started: [], proposals: created }
+      }
+      return {
+        started: input.sessions.map((spec) => startWorker(input.managerConversationId, spec)),
+        proposals: []
+      }
+    },
+    proposals: async (conversationId) =>
+      proposals.filter((entry) => entry.proposerConversationId === conversationId),
+    startProposal: async (id, overrides) => {
+      const found = proposal(id)
+      if (found.status !== 'open') throw new Error('This suggestion is no longer open')
+      const started = startWorker(found.proposerConversationId, { ...found.spec, ...overrides })
+      Object.assign(found, {
+        status: 'started',
+        resolvedAt: Date.now(),
+        startedConversationId: started.conversationId
+      })
+      publish({ kind: 'proposals', conversationIds: [found.proposerConversationId] })
+      return started
+    },
+    dismissProposal: async (id) => {
+      const found = proposal(id)
+      Object.assign(found, { status: 'dismissed', resolvedAt: Date.now() })
+      publish({ kind: 'proposals', conversationIds: [found.proposerConversationId] })
+      return found
+    },
+    stop: async (conversationId) => setState(conversationId, 'stopped', 'Stopped by you'),
+    archive: async (conversationId, options) => {
+      const archived = [conversationId]
+      if (options?.family)
+        archived.push(
+          ...liveWorkers(conversationId)
+            .filter(({ state }) => state === 'done' || state === 'idle' || state === 'stopped')
+            .map(({ conversationId: id }) => id)
+        )
+      for (const id of archived) {
+        const row = conversationById.get(id)
+        if (row) row.archived_at = Date.now()
+      }
+      publish({ kind: 'family', conversationIds: archived })
+    },
+    unarchive: async (conversationId) => {
+      const row = conversationById.get(conversationId)
+      if (row) row.archived_at = null
+      publish({ kind: 'family', conversationIds: [conversationId] })
+    },
+    detach: async (conversationId) => {
+      const row = conversationById.get(conversationId)
+      const managerId = row?.started_by_conversation_id
+      if (!row || !managerId) return
+      Object.assign(row, { started_by_conversation_id: null, report_to_conversation_id: null })
+      publish({ kind: 'family', conversationIds: [managerId, conversationId] })
+    },
+    grants: async (conversationId) =>
+      grants.filter((grant) => grant.conversationId === conversationId),
+    grantProject: async (conversationId, projectId) => {
+      const existing = grants.find(
+        (grant) => grant.conversationId === conversationId && grant.projectId === projectId
+      )
+      const grant = existing ?? {
+        conversationId,
+        projectId,
+        grantedAt: Date.now(),
+        revokedAt: null
+      }
+      if (existing) Object.assign(existing, { grantedAt: Date.now(), revokedAt: null })
+      else grants.push(grant)
+      publish({ kind: 'grants', conversationIds: [conversationId] })
+      return grant
+    },
+    revokeProject: async (conversationId, projectId) => {
+      const grant = grants.find(
+        (entry) => entry.conversationId === conversationId && entry.projectId === projectId
+      )
+      if (grant) grant.revokedAt = Date.now()
+      publish({ kind: 'grants', conversationIds: [conversationId] })
+    },
+    onChanged: (callback) => {
+      listeners.add(callback)
+      return () => listeners.delete(callback)
+    }
+  }
+}

@@ -1,4 +1,6 @@
 import { previewTerminalApi } from './terminalPreview'
+import { previewPullRequestsApi } from './pullRequestPreview'
+import { previewSessionConversations, previewSessionsApi } from './sessionsPreview'
 import type {
   CollaborationAgentSessionMessage,
   CollaborationGroup,
@@ -6,10 +8,17 @@ import type {
 } from '../../../shared/collaboration'
 import type { ProjectConversation } from '../../../shared/projects'
 import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
+import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
 import type {
   ConversationGoal,
   ConversationGoalChangedEvent
 } from '../../../shared/conversationGoals'
+import {
+  nextScheduleOccurrence,
+  type Schedule,
+  type ScheduleRun,
+  type SchedulesChangedEvent
+} from '../../../shared/schedules'
 
 const previewCommandLineStatus: CommandLineToolStatus = {
   mode: 'shell-script',
@@ -133,8 +142,97 @@ const previewConversations: ProjectConversation[] = [
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
     home_project_name: 'sidekick-demo'
+  },
+  ...[2, 1].map(
+    (run): ProjectConversation => ({
+      id: `preview-scheduled-${run}`,
+      title: `Morning repository check · Run ${run}`,
+      created_at: Date.now() - (3 - run) * 86_400_000,
+      updated_at: Date.now() - (3 - run) * 86_400_000,
+      project_id: 'preview-project-1',
+      sidebar_order: 2,
+      project_context_version: 0,
+      home_workspace_root: 'C:\\Projects\\sidekick-demo',
+      home_project_name: 'sidekick-demo',
+      schedule_id: 'preview-schedule-1',
+      schedule_run_number: run,
+      started_by_kind: 'schedule'
+    })
+  ),
+  ...previewSessionConversations
+]
+
+const previewSchedules: Schedule[] = [
+  {
+    id: 'preview-schedule-1',
+    name: 'Morning repository check',
+    prompt: 'Summarize what changed in this repository since yesterday and flag anything risky.',
+    projectId: 'preview-project-1',
+    modelId: 'ollama:qwen3:8b',
+    cadence: 'weekdays',
+    hour: 9,
+    minute: 0,
+    weekday: 1,
+    catchUp: true,
+    enabled: true,
+    nextRunAt: nextScheduleOccurrence(
+      { cadence: 'weekdays', hour: 9, minute: 0, weekday: 1 },
+      Date.now()
+    ),
+    lastRunAt: Date.now() - 86_400_000,
+    runCount: 2,
+    createdAt: Date.now() - 3 * 86_400_000,
+    updatedAt: Date.now() - 86_400_000
   }
 ]
+
+const previewScheduleRuns: ScheduleRun[] = [
+  {
+    id: 'preview-schedule-run-2',
+    scheduleId: 'preview-schedule-1',
+    runNumber: 2,
+    scheduledFor: Date.now() - 86_400_000,
+    startedAt: Date.now() - 86_400_000,
+    outcome: 'started',
+    trigger: 'schedule',
+    late: false,
+    conversationId: 'preview-scheduled-2',
+    agentPhase: 'completed'
+  },
+  {
+    id: 'preview-schedule-run-1',
+    scheduleId: 'preview-schedule-1',
+    runNumber: 1,
+    scheduledFor: Date.now() - 2 * 86_400_000 - 3_600_000,
+    startedAt: Date.now() - 2 * 86_400_000,
+    outcome: 'started',
+    trigger: 'schedule',
+    late: true,
+    reason: 'Started late: SideKick was closed or the computer was asleep.',
+    conversationId: 'preview-scheduled-1',
+    agentPhase: 'completed'
+  }
+]
+
+const previewScheduleListeners = new Set<(change: SchedulesChangedEvent) => void>()
+
+function previewSchedule(id: string): Schedule {
+  const schedule = previewSchedules.find((candidate) => candidate.id === id)
+  if (!schedule) throw new Error('Schedule not found')
+  return schedule
+}
+
+function publishPreviewSchedules(): void {
+  for (const listener of previewScheduleListeners) listener({ schedules: [...previewSchedules] })
+}
+
+function changePreviewSchedule(id: string, change: Partial<Schedule>): Schedule {
+  const index = previewSchedules.findIndex((candidate) => candidate.id === id)
+  if (index < 0) throw new Error('Schedule not found')
+  previewSchedules[index] = { ...previewSchedules[index], ...change, updatedAt: Date.now() }
+  publishPreviewSchedules()
+  return previewSchedules[index]
+}
 
 const previewCreatedConversations: ProjectConversation[] = []
 
@@ -150,6 +248,17 @@ const previewProjects = [
     last_activity_at: Date.now() - 120_000
   },
   {
+    id: 'preview-worktree-project-1',
+    name: 'sidekick-demo · sidekick/card-polish',
+    folder_path:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d',
+    is_pinned: 0,
+    created_at: Date.now() - 7_200_000,
+    updated_at: Date.now() - 600_000,
+    conversation_count: 1,
+    last_activity_at: Date.now() - 600_000
+  },
+  {
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
@@ -160,6 +269,171 @@ const previewProjects = [
     last_activity_at: Date.now() - 90_000
   }
 ]
+
+previewConversations.push({
+  id: 'preview-4',
+  title: 'Polish the conversation cards',
+  created_at: Date.now() - 7_200_000,
+  updated_at: Date.now() - 600_000,
+  project_id: 'preview-worktree-project-1',
+  sidebar_order: 0,
+  project_context_version: 0,
+  home_workspace_root: previewProjects[1].folder_path,
+  home_project_name: previewProjects[1].name
+})
+
+const previewWorktrees: ManagedWorktreeSummary[] = [
+  {
+    id: 'preview-worktree-1',
+    projectId: 'preview-worktree-project-1',
+    projectName: previewProjects[1].name,
+    folderPath: previewProjects[1].folder_path,
+    worktreeRoot: previewProjects[1].folder_path,
+    sourceProjectId: 'preview-project-1',
+    sourceProjectName: 'sidekick-demo',
+    branch: 'sidekick/card-polish',
+    baseRef: 'main',
+    createdAt: Date.now() - 7_200_000,
+    lastUsedAt: Date.now() - 600_000,
+    owners: [
+      { kind: 'chat', id: 'preview-4', title: 'Polish the conversation cards', running: false }
+    ],
+    status: {
+      currentBranch: 'sidekick/card-polish',
+      ahead: 3,
+      behind: 2,
+      changedFiles: 4,
+      merged: false
+    },
+    blockers: [
+      {
+        code: 'in-use',
+        message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
+        forceable: true
+      },
+      { code: 'modified', message: '4 uncommitted changes would be lost.', forceable: true },
+      {
+        code: 'unmerged',
+        message:
+          'sidekick/card-polish has 3 commits that main does not. The branch is kept unless you also delete it.',
+        forceable: true
+      }
+    ]
+  },
+  {
+    id: 'preview-worktree-2',
+    projectId: 'preview-worktree-project-2',
+    projectName: 'sidekick-demo · sidekick/release-notes',
+    folderPath:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
+    worktreeRoot:
+      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
+    sourceProjectId: 'preview-project-1',
+    sourceProjectName: 'sidekick-demo',
+    branch: 'sidekick/release-notes',
+    baseRef: 'main',
+    createdAt: Date.now() - 90_000_000,
+    lastUsedAt: Date.now() - 80_000_000,
+    owners: [],
+    status: {
+      currentBranch: 'sidekick/release-notes',
+      ahead: 0,
+      behind: 5,
+      changedFiles: 0,
+      merged: true
+    },
+    blockers: []
+  }
+]
+
+const previewWorktreesApi: WorktreesAPI = {
+  list: async () => structuredClone(previewWorktrees),
+  diskUsage: async (id) => ({
+    id,
+    bytes: id === 'preview-worktree-1' ? 412_000_000 : 38_500_000,
+    truncated: id === 'preview-worktree-1'
+  }),
+  branchOptions: async (projectId) => ({
+    branches: ['main', 'release/0.13', 'eponce/tray-menu'],
+    currentBranch: 'main',
+    isGitRepository: projectId !== 'preview-project-2',
+    isManagedWorktree: projectId.startsWith('preview-worktree-project')
+  }),
+  createForConversation: async ({ conversationId, branchName, baseRef }) => {
+    const conversation = previewCreatedConversations.find(({ id }) => id === conversationId)
+    if (!conversation) throw new Error('Only a chat without messages can move to a new worktree')
+    const branch = branchName || 'sidekick/new-chat'
+    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\${branch.split('/').at(-1)}`
+    const project = {
+      id: `preview-worktree-project-${Date.now()}`,
+      name: `sidekick-demo · ${branch}`,
+      folder_path: folder,
+      is_pinned: 0,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      conversation_count: 1,
+      last_activity_at: Date.now()
+    }
+    previewProjects.push(project)
+    Object.assign(conversation, {
+      project_id: project.id,
+      home_workspace_root: folder,
+      home_project_name: project.name,
+      project_context_version: conversation.project_context_version + 1
+    })
+    const worktree: ManagedWorktreeSummary = {
+      id: `preview-worktree-${Date.now()}`,
+      projectId: project.id,
+      projectName: project.name,
+      folderPath: folder,
+      worktreeRoot: folder,
+      sourceProjectId: 'preview-project-1',
+      sourceProjectName: 'sidekick-demo',
+      branch,
+      baseRef: baseRef || 'main',
+      createdAt: Date.now(),
+      lastUsedAt: Date.now(),
+      owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
+      status: { currentBranch: branch, ahead: 0, behind: 0, changedFiles: 0, merged: true },
+      blockers: [
+        {
+          code: 'in-use',
+          message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
+          forceable: true
+        }
+      ]
+    }
+    previewWorktrees.unshift(worktree)
+    return { project, conversation, worktree }
+  },
+  remove: async ({ id, force, deleteBranch }) => {
+    const index = previewWorktrees.findIndex((worktree) => worktree.id === id)
+    if (index < 0) throw new Error('This worktree is no longer managed by SideKick')
+    const worktree = previewWorktrees[index]
+    if (worktree.blockers.length && !force) return { removed: false, blockers: worktree.blockers }
+    previewWorktrees.splice(index, 1)
+    return {
+      removed: true,
+      blockers: [],
+      ...(worktree.status?.merged || deleteBranch ? {} : { keptBranch: worktree.branch }),
+      detachedConversationIds: worktree.owners.map(({ id: ownerId }) => ownerId)
+    }
+  },
+  sync: async (id) => {
+    const worktree = previewWorktrees.find((candidate) => candidate.id === id)
+    if (!worktree?.status) return { status: 'refused', message: 'This worktree is busy' }
+    if (worktree.status.changedFiles)
+      return {
+        status: 'refused',
+        message: 'Commit or discard the uncommitted changes before syncing.'
+      }
+    if (!worktree.status.behind)
+      return { status: 'up-to-date', message: `Already up to date with ${worktree.baseRef}.` }
+    worktree.status.behind = 0
+    return { status: 'merged', message: `Merged ${worktree.baseRef} into ${worktree.branch}.` }
+  },
+  reveal: async () => undefined
+}
 
 const previewAgentSessions = [
   {
@@ -486,6 +760,25 @@ const previewMessages = [
           id: 'preview-steer-1',
           content: 'Keep the sidebar as it is; focus on the chat and the composer.',
           timestamp: Date.now() - 150_000
+        }
+      },
+      {
+        type: 'interaction' as const,
+        interaction: {
+          id: 'preview-question-answered',
+          kind: 'question' as const,
+          status: 'resolved' as const,
+          request: {
+            questions: [
+              {
+                id: 'scope',
+                header: 'Redesign scope',
+                question: 'Which parts of the interface should this pass change?',
+                options: [{ label: 'Everything, all of it' }, { label: 'Only the conversation' }]
+              }
+            ]
+          },
+          response: { scope: 'Everything, all of it' }
         }
       },
       {
@@ -878,7 +1171,25 @@ export function installBrowserApiMock(): void {
         transition: null
       })
     },
+    worktrees: previewWorktreesApi,
     agentRuns: {
+      // "Refine the desktop experience" is treated as writing in sidekick-demo, so a new chat
+      // there shows the busy-folder prompt.
+      workspaceOccupants: async (conversationId) => {
+        const conversation = [...previewCreatedConversations, ...previewConversations].find(
+          ({ id }) => id === conversationId
+        )
+        return conversation?.project_id === 'preview-project-1' && conversationId !== 'preview-1'
+          ? [
+              {
+                runId: 'preview-run-1',
+                conversationId: 'preview-1',
+                title: 'Refine the desktop experience',
+                workspaceRoot: 'C:\\Projects\\sidekick-demo'
+              }
+            ]
+          : []
+      },
       browserWorkspace: async () => null,
       startConversation: async (input) => ({
         run: {
@@ -1011,6 +1322,60 @@ export function installBrowserApiMock(): void {
       onAttention: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    sessions: previewSessionsApi(),
+    schedules: {
+      list: async () => [...previewSchedules],
+      create: async (input) => {
+        const schedule: Schedule = {
+          ...input,
+          id: crypto.randomUUID(),
+          enabled: true,
+          nextRunAt: nextScheduleOccurrence(input, Date.now()),
+          runCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+        previewSchedules.push(schedule)
+        publishPreviewSchedules()
+        return schedule
+      },
+      update: async ({ id, ...input }) =>
+        changePreviewSchedule(id, {
+          ...input,
+          nextRunAt: previewSchedule(id).enabled ? nextScheduleOccurrence(input, Date.now()) : null
+        }),
+      pause: async (id) => changePreviewSchedule(id, { enabled: false, nextRunAt: null }),
+      resume: async (id) =>
+        changePreviewSchedule(id, {
+          enabled: true,
+          pausedReason: undefined,
+          nextRunAt: nextScheduleOccurrence(previewSchedule(id), Date.now())
+        }),
+      delete: async (id) => {
+        const index = previewSchedules.findIndex((candidate) => candidate.id === id)
+        if (index >= 0) previewSchedules.splice(index, 1)
+        publishPreviewSchedules()
+        return { success: index >= 0 }
+      },
+      runNow: async (id) => {
+        const run: ScheduleRun = {
+          id: crypto.randomUUID(),
+          scheduleId: id,
+          scheduledFor: Date.now(),
+          outcome: 'skipped',
+          trigger: 'manual',
+          late: false,
+          reason: 'The preview does not start agent runs.'
+        }
+        previewScheduleRuns.unshift(run)
+        return run
+      },
+      runs: async (id) => previewScheduleRuns.filter((run) => run.scheduleId === id),
+      onChanged: (callback) => {
+        previewScheduleListeners.add(callback)
+        return () => previewScheduleListeners.delete(callback)
+      }
+    },
     conversationGoals: {
       current: async (conversationId) =>
         previewGoal?.conversationId === conversationId ? previewGoal : null,
@@ -1149,6 +1514,7 @@ export function installBrowserApiMock(): void {
         return [...previewBrowserNetwork]
       }
     },
+    pullRequests: previewPullRequestsApi(),
     window: {
       minimize: () => {},
       maximize: () => {},
@@ -1350,7 +1716,7 @@ export function installBrowserApiMock(): void {
       }),
       revealFile: async () => {},
       showPathMenu: async () => {},
-      onFilesChanged: () => () => {}
+      watchFiles: () => () => {}
     }
   }
 }

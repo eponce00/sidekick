@@ -390,13 +390,13 @@ function ActivityPanel({
     }
   }, [activeTab, fileRefreshKey, workspaceFolder])
 
-  // Auto-refresh file tree when workspace files change (main process watcher)
+  // The tree follows the folder on disk, so it never needs a manual refresh.
   useEffect(() => {
-    const unsubscribe = window.api.workspace.onFilesChanged(() => {
+    if (!workspaceFolder) return
+    return window.api.workspace.watchFiles(workspaceFolder, () => {
       setFileRefreshKey((k) => k + 1)
     })
-    return unsubscribe
-  }, [])
+  }, [workspaceFolder])
 
   useEffect(() => {
     setPendingFileDelete(null)

@@ -1,5 +1,4 @@
 import { BrowserWindow } from 'electron'
-import { watch as fsWatch } from 'fs'
 import Database from 'better-sqlite3'
 
 /**
@@ -15,9 +14,7 @@ export const appState = {
   store: null as AppStore | null,
   db: null as Database.Database | null,
   gitAvailable: false,
-  mainWindowRef: null as BrowserWindow | null,
-  workspaceWatcher: null as ReturnType<typeof fsWatch> | null,
-  watchDebounceTimer: null as ReturnType<typeof setTimeout> | null
+  mainWindowRef: null as BrowserWindow | null
 }
 
 /** Type-safe accessor — throws if store is not yet initialized. */

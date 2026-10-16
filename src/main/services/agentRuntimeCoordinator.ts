@@ -47,6 +47,7 @@ import { PromptAdmissionStore } from './promptAdmissionStore'
 import {
   AgentRunKernel,
   type AgentKernelRunResult,
+  type AgentRunSteer,
   type StartAgentKernelRunInput
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
@@ -74,6 +75,9 @@ import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { ArtifactInspector } from './artifactInspector'
+import { ProjectStore } from './projectStore'
+import { WorkspaceOccupancy } from './workspaceOccupancy'
+import type { WorkspaceOccupant } from '../../shared/worktrees'
 import type {
   ConversationGoal,
   CreateConversationGoalInput,
@@ -145,6 +149,10 @@ export class AgentRuntimeCoordinator {
   private readonly settings: () => ProviderSettings
   private readonly skillAssetsPath: () => string
   private readonly subAgentSlots = new SubAgentSlots()
+  private readonly occupancy = new WorkspaceOccupancy()
+  /** Messages from other chats waiting for a conversation, taken in before its first step. */
+  private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
+    null
 
   constructor(
     private readonly db: Database.Database,
@@ -349,6 +357,13 @@ export class AgentRuntimeCoordinator {
       profile: { surface: 'collaboration', executionMode: 'act', capabilities: [] }
     })
     const { signal } = preparation.controller
+    // Group agents coordinate among themselves, but a chat starting in their folder is warned.
+    const releaseWorkspace = this.occupancy.claim({
+      runId: input.id,
+      conversationId: input.threadId,
+      title: this.threadTitle(input.threadId) ?? 'A group chat agent',
+      workspaceRoot: input.workspaceRoot
+    })
     try {
       if (input.onEvent) this.observers.set(input.id, new Set([input.onEvent]))
       const currentSettings = this.settings()
@@ -476,10 +491,24 @@ export class AgentRuntimeCoordinator {
         error: 'Agent run cancelled'
       }
     } finally {
+      releaseWorkspace()
       this.finishPreparation(preparation)
       this.observers.delete(input.id)
       clearWorkspaceInstructionScope(input.id)
     }
+  }
+
+  private threadTitle(threadId: string): string | null {
+    const row = this.db.prepare('SELECT title FROM conversations WHERE id = ?').get(threadId) as
+      | { title: string }
+      | undefined
+    return row?.title ?? null
+  }
+
+  /** Other writing runs in the folder this conversation would work in. */
+  workspaceOccupants(conversationId: string): WorkspaceOccupant[] {
+    const root = new ProjectStore(this.db).getConversationContext(conversationId).workspaceRoot
+    return root ? this.occupancy.occupants(root, conversationId) : []
   }
 
   async startConversation(input: StartConversationAgentRunInput): Promise<AgentRunSnapshot> {
@@ -498,18 +527,41 @@ export class AgentRuntimeCoordinator {
     ) {
       throw new Error('This interrupted reply can no longer be continued')
     }
-    const preparation = this.beginPreparation({
-      id: input.id,
-      threadId: input.conversationId,
-      outputMessageId: input.assistantMessageId,
-      provider: input.model.providerKind ?? providerKindForTransport(input.model.provider),
-      model: input.model.providerModelId || input.model.name,
-      profile: {
-        surface: input.mode === 'research' ? 'research' : 'conversation',
-        executionMode: input.mode === 'plan' ? 'plan' : 'act',
-        capabilities: []
-      }
-    })
+    // Research only reads. Every other run may write, so it must not join a folder where another
+    // agent is writing unless the caller explicitly chose to share it.
+    const writtenRoot =
+      input.mode === 'research'
+        ? null
+        : new ProjectStore(this.db).getConversationContext(input.conversationId).workspaceRoot
+    const releaseWorkspace = writtenRoot
+      ? this.occupancy.admit(
+          {
+            runId: input.id,
+            conversationId: input.conversationId,
+            title: this.threadTitle(input.conversationId) ?? 'Another chat',
+            workspaceRoot: writtenRoot
+          },
+          input.workspaceSharing
+        )
+      : () => undefined
+    let preparation: PreparingRun
+    try {
+      preparation = this.beginPreparation({
+        id: input.id,
+        threadId: input.conversationId,
+        outputMessageId: input.assistantMessageId,
+        provider: input.model.providerKind ?? providerKindForTransport(input.model.provider),
+        model: input.model.providerModelId || input.model.name,
+        profile: {
+          surface: input.mode === 'research' ? 'research' : 'conversation',
+          executionMode: input.mode === 'plan' ? 'plan' : 'act',
+          capabilities: []
+        }
+      })
+    } catch (error) {
+      releaseWorkspace()
+      throw error
+    }
     const { signal } = preparation.controller
     let kernelStarted = false
     try {
@@ -549,8 +601,15 @@ export class AgentRuntimeCoordinator {
       }
       workspaceRoot = prepared.workspaceRoot
       this.activeConversations.set(input.id, { input, prepared, capture })
+      const inbox =
+        input.mode === 'research'
+          ? []
+          : (this.conversationInbox?.(input.conversationId, input.id) ?? [])
       const run = this.kernel.start({
         ...prepared.kernelInput,
+        ...(inbox.length
+          ? { initialSteers: [...(prepared.kernelInput.initialSteers ?? []), ...inbox] }
+          : {}),
         beforeModelStep: this.withBackgroundNotices(
           input.conversationId,
           prepared.kernelInput.beforeModelStep
@@ -564,6 +623,7 @@ export class AgentRuntimeCoordinator {
         .then((result) => this.finalizeConversation(input.id, result))
         .catch((error) => this.finalizeUnexpectedFailure(input.id, error))
         .finally(() => {
+          releaseWorkspace()
           void this.tools.browser?.resetAgentViewports(input.conversationId).catch(() => undefined)
         })
       return this.store.get(input.id)!
@@ -572,7 +632,10 @@ export class AgentRuntimeCoordinator {
       throw error
     } finally {
       this.finishPreparation(preparation)
-      if (!kernelStarted) this.activeConversations.delete(input.id)
+      if (!kernelStarted) {
+        releaseWorkspace()
+        this.activeConversations.delete(input.id)
+      }
       if (!this.activeConversations.has(input.id)) clearWorkspaceInstructionScope(input.id)
     }
   }
@@ -1111,6 +1174,23 @@ export class AgentRuntimeCoordinator {
     // A wait in the run ends, so the message is read now rather than after it.
     if (accepted) this.tools.notifyUserMessage(input.runId)
     return { accepted }
+  }
+
+  setConversationInbox(
+    inbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null
+  ): void {
+    this.conversationInbox = inbox
+  }
+
+  /** Hands a message from another chat to the conversation's running run, ending a wait in it. */
+  steerConversation(conversationId: string, steer: AgentRunSteer): boolean {
+    for (const [runId, active] of this.activeConversations) {
+      if (active.input.conversationId !== conversationId) continue
+      const accepted = this.kernel.steer(runId, steer)
+      if (accepted) this.tools.notifyUserMessage(runId)
+      return accepted
+    }
+    return false
   }
 
   resolveInteraction(input: ResolveAgentInteractionInput): void {

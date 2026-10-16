@@ -7,6 +7,8 @@ interface DesktopEventPayloads {
   'conversationGoals:changed': { goal: ConversationGoal }
   'agentRuns:attention': ConversationAttentionState
   'terminal:event': import('../../shared/terminalSessions').TerminalSessionEvent
+  'schedules:changed': import('../../shared/schedules').SchedulesChangedEvent
+  'sessions:changed': import('../../shared/sessions').SessionsChangedEvent
 }
 
 export interface DesktopEventWindow {

@@ -634,6 +634,14 @@ describe('MessageItem shared-channel presentation', () => {
     await act(async () => toggle.click())
     expect(container.textContent).toContain('Read the renderer')
     expect(container.textContent).toContain('I will inspect it.')
+
+    // Reasoning carries the composer toggle's brain in the tool rows' icon column.
+    const thought = container.querySelector('.thinking-step-toggle') as HTMLButtonElement
+    expect(thought.firstElementChild?.className).toBe('thinking-step-icon')
+    expect(thought.querySelector('svg.lucide-brain')?.getAttribute('aria-label')).toBe('Thinking')
+    expect(thought.querySelector('.actions-summary')?.textContent).toBe(
+      'Inspect the implementation.'
+    )
   })
 
   it('shows a steered message where it was sent, outside the folded work', async () => {

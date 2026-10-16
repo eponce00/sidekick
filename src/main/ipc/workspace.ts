@@ -10,8 +10,6 @@ import {
 import { basename, isAbsolute, join, relative } from 'path'
 import { getStore } from './state'
 import { getStoredWorkspace, resolveKnownWorkspace, assertInsideWorkspace } from './workspaceUtils'
-import { appState } from './state'
-import { watch as fsWatch } from 'fs'
 import { promises as fs } from 'fs'
 import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -28,73 +26,11 @@ import { permissionBroker } from '../services/permissionBroker'
 import { resolveSecureWorkspacePath } from '../utils/workspacePaths'
 import { WorkspaceReadService } from '../services/workspaceReadService'
 import { listSavedPrompts } from '../services/savedPrompts'
-import { discoverExternalOpeners } from '../services/externalOpeners'
+import { discoverExternalOpeners, fileManagerIcon } from '../services/externalOpeners'
+import { workspaceWatchers } from '../services/workspaceWatchers'
 import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
 
 const workspaceReads = new WorkspaceReadService()
-
-const WATCH_RETRY_BASE_DELAY_MS = 2_000
-const MAX_WATCH_RETRIES = 5
-let watchRetryTimer: ReturnType<typeof setTimeout> | null = null
-let watchRetries = 0
-
-/** A dropped watch is silent — the renderer simply stops hearing about file
- * changes. Retry a bounded number of times so a transient failure (a network
- * share blipping, a tool replacing the directory) does not cost the rest of the
- * session, while a deleted folder still gives up instead of spinning forever. */
-function scheduleWatchRetry(folderPath: string): void {
-  if (watchRetryTimer || watchRetries >= MAX_WATCH_RETRIES) return
-  watchRetries += 1
-  watchRetryTimer = setTimeout(() => {
-    watchRetryTimer = null
-    attachWorkspaceWatcher(folderPath)
-  }, WATCH_RETRY_BASE_DELAY_MS * watchRetries)
-}
-
-function attachWorkspaceWatcher(folderPath: string | null): void {
-  if (!folderPath || !appState.mainWindowRef || appState.mainWindowRef.isDestroyed()) return
-  try {
-    appState.workspaceWatcher = fsWatch(folderPath, { recursive: true }, (_eventType, filename) => {
-      const name = filename ? filename.toString() : ''
-      if (name.startsWith('.git') || name.startsWith('.git\\') || name.startsWith('.git/')) return
-      if (appState.watchDebounceTimer) clearTimeout(appState.watchDebounceTimer)
-      appState.watchDebounceTimer = setTimeout(() => {
-        appState.watchDebounceTimer = null
-        if (appState.mainWindowRef && !appState.mainWindowRef.isDestroyed()) {
-          appState.mainWindowRef.webContents.send('workspace:filesChanged')
-        }
-      }, 400)
-    })
-    appState.workspaceWatcher.on('error', (err) => {
-      console.warn('[FileWatcher] Error:', err)
-      appState.workspaceWatcher?.close()
-      appState.workspaceWatcher = null
-      scheduleWatchRetry(folderPath)
-    })
-  } catch (err) {
-    console.warn('[FileWatcher] Could not start watcher:', err)
-    scheduleWatchRetry(folderPath)
-  }
-}
-
-export function startWorkspaceWatcher(folderPath: string | null): void {
-  if (appState.workspaceWatcher) {
-    appState.workspaceWatcher.close()
-    appState.workspaceWatcher = null
-  }
-  if (appState.watchDebounceTimer) {
-    clearTimeout(appState.watchDebounceTimer)
-    appState.watchDebounceTimer = null
-  }
-  // Every explicit start gets a fresh budget: a new workspace or a recreated
-  // window must not inherit a previous folder's exhausted retries.
-  if (watchRetryTimer) {
-    clearTimeout(watchRetryTimer)
-    watchRetryTimer = null
-  }
-  watchRetries = 0
-  attachWorkspaceWatcher(folderPath)
-}
 
 export function registerWorkspaceHandlers(): void {
   // Workspace: native folder picker
@@ -249,8 +185,16 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:setPath', async (_, folderPath: string | null) => {
     getStore().set('workspacePath', folderPath)
-    startWorkspaceWatcher(folderPath)
     return { success: true }
+  })
+
+  // Each file tree watches the folder it shows; the reply is that subscription's id.
+  ipcMain.handle('workspace:watch', (event, passedRoot: string) =>
+    workspaceWatchers.subscribe(resolveKnownWorkspace(passedRoot), event.sender)
+  )
+  ipcMain.handle('workspace:unwatch', (event, subscriptionId: unknown) => {
+    if (typeof subscriptionId === 'string')
+      workspaceWatchers.unsubscribe(subscriptionId, event.sender)
   })
 
   // Workspace: search files with regex
@@ -550,7 +494,15 @@ export function registerWorkspaceHandlers(): void {
       const target = await resolveShellTarget(requestedPath, passedRoot)
       const relativePath = relative(workspaceRoot, target).replace(/\\/g, '/')
       const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
-      const openers = await discoverExternalOpeners()
+      const [openers, revealIcon] = await Promise.all([
+        discoverExternalOpeners(),
+        fileManagerIcon()
+      ])
+      const reveal = {
+        label: revealLabel,
+        icon: revealIcon,
+        click: () => shell.showItemInFolder(target)
+      }
       const editors = openers.filter((opener) => opener.kind === 'editor')
       const terminals = openers.filter((opener) => opener.kind === 'terminal')
       const launch = (opener: (typeof openers)[number]): void => {
@@ -575,6 +527,7 @@ export function registerWorkspaceHandlers(): void {
               }
             ]
           : []),
+        reveal,
         {
           label: 'Open with',
           submenu: [
@@ -607,21 +560,13 @@ export function registerWorkspaceHandlers(): void {
                   }
                 ]
               : []),
-            {
-              label: revealLabel,
-              click: () => shell.showItemInFolder(target)
-            },
+            ...(terminals.length ? [{ type: 'separator' as const }] : []),
             ...terminals.map((opener) => ({
               label: opener.label,
               icon: opener.icon,
               click: () => launch(opener)
             }))
           ]
-        },
-        { type: 'separator' },
-        {
-          label: revealLabel,
-          click: () => shell.showItemInFolder(target)
         },
         { type: 'separator' },
         {
