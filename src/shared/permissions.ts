@@ -123,6 +123,39 @@ export function normalizePermissionMode(value: unknown): PermissionMode {
   return 'full-access'
 }
 
+/** Loosest first: each mode asks for at least what the one before it asks for. */
+const PERMISSION_MODES_BY_STRICTNESS: readonly PermissionMode[] = [
+  'full-access',
+  'sensitive-only',
+  'always-ask'
+]
+
+export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
+  'full-access': 'Full access',
+  'sensitive-only': 'Ask only for sensitive actions',
+  'always-ask': 'Ask for every write or command'
+}
+
+export function isPermissionMode(value: unknown): value is PermissionMode {
+  return PERMISSION_MODES_BY_STRICTNESS.includes(value as PermissionMode)
+}
+
+/** True when `mode` asks for at least everything `limit` asks for. */
+export function permissionModeWithin(mode: PermissionMode, limit: PermissionMode): boolean {
+  return (
+    PERMISSION_MODES_BY_STRICTNESS.indexOf(mode) >= PERMISSION_MODES_BY_STRICTNESS.indexOf(limit)
+  )
+}
+
+/**
+ * The mode a run uses: the user's setting, made stricter by a chat's stored ceiling when it has
+ * one. A ceiling can only take permissions away, never add them.
+ */
+export function effectivePermissionMode(setting: unknown, ceiling: unknown): PermissionMode {
+  const mode = normalizePermissionMode(setting)
+  return isPermissionMode(ceiling) && !permissionModeWithin(mode, ceiling) ? ceiling : mode
+}
+
 /**
  * Resolve the user's global approval mode against the access level classified by the host.
  * This policy is authoritative for every sensitive operation.

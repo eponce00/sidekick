@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  effectivePermissionMode,
+  permissionModeWithin,
   browserPermissionOperation,
   checkpointPermissionOperation,
   commandPermissionOperation,
@@ -61,5 +63,22 @@ describe('command permission policy', () => {
       kind: 'browser',
       details: { action: 'navigate', target: 'https://example.com' }
     })
+  })
+})
+
+describe('effectivePermissionMode', () => {
+  it('lets a stored ceiling narrow the setting but never widen it', () => {
+    expect(effectivePermissionMode('full-access', 'always-ask')).toBe('always-ask')
+    expect(effectivePermissionMode('full-access', 'sensitive-only')).toBe('sensitive-only')
+    expect(effectivePermissionMode('sensitive-only', 'full-access')).toBe('sensitive-only')
+    expect(effectivePermissionMode('always-ask', 'sensitive-only')).toBe('always-ask')
+    expect(effectivePermissionMode('sensitive-only', null)).toBe('sensitive-only')
+    expect(effectivePermissionMode('sensitive-only', 'bypass')).toBe('sensitive-only')
+  })
+
+  it('orders modes by what they ask for', () => {
+    expect(permissionModeWithin('always-ask', 'sensitive-only')).toBe(true)
+    expect(permissionModeWithin('sensitive-only', 'sensitive-only')).toBe(true)
+    expect(permissionModeWithin('full-access', 'sensitive-only')).toBe(false)
   })
 })

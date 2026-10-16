@@ -122,7 +122,11 @@ const REQUIRED_COLUMNS = [
   },
   { table: 'conversations', column: 'session_handle', definition: 'TEXT' },
   { table: 'conversations', column: 'work_in', definition: 'TEXT' },
-  { table: 'conversations', column: 'archived_at', definition: 'INTEGER' }
+  { table: 'conversations', column: 'archived_at', definition: 'INTEGER' },
+  // The most a chat may do without asking, stricter than the user's setting. A schedule stores
+  // one, its chats copy it, and the chats they start inherit it.
+  { table: 'schedules', column: 'permission_ceiling', definition: 'TEXT' },
+  { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' }
 ] as const
 
 const SCHEDULE_TABLES = `
@@ -142,6 +146,7 @@ const SCHEDULE_TABLES = `
     next_run_at INTEGER,
     last_run_at INTEGER,
     run_count INTEGER NOT NULL DEFAULT 0,
+    permission_ceiling TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -431,6 +436,15 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       ensureRequiredColumns(db)
       db.exec(SESSION_TABLES)
     }
+  },
+  {
+    id: '20261018_001_schedule_starters',
+    description: 'mark chats a schedule created as schedule-started and store permission ceilings',
+    contentId: 'v1|required-permission-ceiling-columns|backfill-schedule-started-by-kind',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      db.exec("UPDATE conversations SET started_by_kind = 'schedule' WHERE schedule_id IS NOT NULL")
+    }
   }
 ]
 
@@ -573,6 +587,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       session_handle TEXT,
       work_in TEXT,
       archived_at INTEGER,
+      permission_ceiling TEXT,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     );
 

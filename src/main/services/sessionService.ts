@@ -509,8 +509,9 @@ export class SessionService {
       `INSERT INTO conversations
        (id, title, created_at, updated_at, project_id, title_source, sidebar_order,
         project_context_version, home_workspace_root, home_project_name, started_by_kind,
-        started_by_conversation_id, report_to_conversation_id, session_handle, work_in)
-       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?)`
+        started_by_conversation_id, report_to_conversation_id, session_handle, work_in,
+        permission_ceiling)
+       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?, ?)`
     ).run(
       id,
       plan.title,
@@ -522,7 +523,9 @@ export class SessionService {
       manager.id,
       manager.id,
       plan.handle,
-      plan.workIn
+      plan.workIn,
+      // A worker can never do more than the chat that started it.
+      manager.permission_ceiling ?? null
     )
     this.starting.add(id)
     let runStarted = false

@@ -169,6 +169,43 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('marks chats a schedule created before chats had starters as schedule-started', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-starters-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk
+        .prepare("DELETE FROM schema_migrations WHERE id = '20261018_001_schedule_starters'")
+        .run()
+      disk.exec(`
+        ALTER TABLE conversations DROP COLUMN permission_ceiling;
+        ALTER TABLE schedules DROP COLUMN permission_ceiling;
+        INSERT INTO conversations (id, title, created_at, updated_at, schedule_id, schedule_run_number)
+          VALUES ('scheduled', 'Check · Run 1', 1, 1, 'schedule-1', 1);
+        INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('mine', 'Mine', 1, 1);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(
+        disk
+          .prepare('SELECT id, started_by_kind, permission_ceiling FROM conversations ORDER BY id')
+          .all()
+      ).toEqual([
+        { id: 'mine', started_by_kind: 'user', permission_ceiling: null },
+        { id: 'scheduled', started_by_kind: 'schedule', permission_ceiling: null }
+      ])
+      const columns = (
+        disk.prepare('PRAGMA table_info(schedules)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).toContain('permission_ceiling')
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rolls back the entire schema upgrade when a later migration fails, then retries cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-fault-'))
     let disk: Database.Database | undefined
@@ -195,7 +232,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 12
+        count: 13
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -331,7 +368,8 @@ describe('database schema migrations', () => {
       { id: '20260923_002_message_goal_origin', checksum_length: 64 },
       { id: '20261016_001_schedules', checksum_length: 64 },
       { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
-      { id: '20261016_003_sessions', checksum_length: 64 }
+      { id: '20261016_003_sessions', checksum_length: 64 },
+      { id: '20261018_001_schedule_starters', checksum_length: 64 }
     ])
     expect(
       db

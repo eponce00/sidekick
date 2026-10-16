@@ -15,14 +15,17 @@ palette. Choose **New schedule**, or start from one of the suggestions, and fill
 - **Model**, from the models enabled in Provider settings.
 - **Repeat**: Hourly at a minute past the hour, Daily, Weekdays (Monday to Friday), or Weekly on
   one day, each at a time you choose.
+- **Without asking, runs may**: the most a run may do before it asks you. It starts at your
+  [permission mode](PERMISSIONS.md) and can only be stricter, such as **Ask for every write or
+  command** for a schedule you want to review step by step.
 
 Times are in the computer's time zone. A daily run stays at its time when the clocks change for
 daylight saving.
 
 Each schedule shows its next run, its last run, and what it is doing now. From its row you can
 **Run now**, **Pause** and **Resume**, **Edit**, and **Delete**. **Runs** lists every run with its
-outcome; each run that started has a chat you can open. Deleting a schedule keeps the chats it
-created.
+outcome; each run that started has a chat you can open, and the chats it started are listed
+under it with their state. Deleting a schedule keeps the chats it created.
 
 ## Chats in the sidebar
 
@@ -34,16 +37,30 @@ group.
 ## Approvals
 
 A scheduled run never gets permissions you have not granted. It follows the
-[permission mode](PERMISSIONS.md) from Settings, exactly as a chat would. Each run starts in a new
-chat, so an earlier **Allow for this chat** does not carry over.
+[permission mode](PERMISSIONS.md) from Settings, made stricter by the schedule's own limit when it
+has one. If you later make Settings stricter, runs follow Settings; making Settings looser never
+loosens a schedule. Each run starts in a new chat, so an earlier **Allow for this chat** does not
+carry over.
 
 When a run needs your approval or an answer while you are away, it waits. Nothing is approved or
 refused for you. The chat is marked as needing attention in the sidebar and on the taskbar badge,
 and you get a desktop notification if notifications are on. Answer in the chat and the run
 carries on.
 
-A schedule runs one chat at a time. When its next time comes while the previous run is still
-working or waiting for you, that time is skipped, and its runs list says why.
+A schedule runs one chat at a time. When its next time comes while the previous run, or a chat it
+started, is still working or waiting for you, that time is skipped, and its runs list says why.
+
+## Chats a scheduled run starts
+
+A scheduled run can start other chats to split up its work, as any chat can. They nest under the
+run's chat in the sidebar, follow the same limit as the run, and send their results back to it.
+Starting them follows the schedule's limit: unless it allows full access, the run asks you first
+and waits. A run starts at most eight chats, and those chats cannot start chats of their own.
+
+No chat is watching a scheduled run, so it reports to you. When the run's chat finishes and none of
+the chats it started is still working, the chat is marked unread, and you get a desktop
+notification with its answer if notifications are on and SideKick is not in front. Clicking the notification opens the chat. A
+run that fails or waits for you is announced the same way any chat's is.
 
 ## When another agent is working in the project folder
 

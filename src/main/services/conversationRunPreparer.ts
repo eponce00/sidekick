@@ -4,7 +4,7 @@ import { normalizeToolCallLimit } from '../../shared/agentLimits'
 import { projectStartCommands } from './projectHooks'
 import { imageContentType } from '../../shared/imageContent'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
-import { normalizePermissionMode } from '../../shared/permissions'
+import { effectivePermissionMode } from '../../shared/permissions'
 import { estimateProviderRequestTokens, resolveMaxOutputTokens } from '../../shared/contextBudget'
 import {
   capabilitiesFromTools,
@@ -628,9 +628,16 @@ export class ConversationRunPreparer {
         )?.content ?? '')
       : ''
     const conversation = this.db
-      .prepare('SELECT active_skills FROM conversations WHERE id = ?')
-      .get(input.conversationId) as { active_skills: string | null } | undefined
+      .prepare('SELECT active_skills, permission_ceiling FROM conversations WHERE id = ?')
+      .get(input.conversationId) as
+      | { active_skills: string | null; permission_ceiling: string | null }
+      | undefined
     if (!conversation) throw new Error('Conversation not found')
+    // A scheduled chat, and every chat it starts, may do no more than its stored ceiling.
+    const permissionMode = effectivePermissionMode(
+      currentSettings.commandPermissionMode,
+      conversation.permission_ceiling
+    )
     const activeSkillIds = parseJson<string[]>(conversation.active_skills, [])
     const executionTarget = refreshProviderTargetMetadata(
       modelTarget(input.model),
@@ -655,7 +662,7 @@ export class ConversationRunPreparer {
         ? (this.sessionTools?.(input.conversationId, input.id) ?? null)
         : null
     const toolSession = await this.tools.createSession({
-      permissionMode: normalizePermissionMode(currentSettings.commandPermissionMode),
+      permissionMode,
       runId: input.id,
       surface,
       // The model that executes the work edits files with the contract it was trained on.
@@ -691,7 +698,6 @@ export class ConversationRunPreparer {
         : undefined
     })
     signal?.throwIfAborted()
-    const permissionMode = normalizePermissionMode(currentSettings.commandPermissionMode)
     const composeRuntimePrompt = (
       model: PinnedModel,
       planStage: 'inactive' | 'planning' | 'executing'

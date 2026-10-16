@@ -335,7 +335,7 @@ async function bootstrapApplication(): Promise<void> {
   sessionStatusService()?.onChange(() => systemTray?.refresh())
   updates.subscribe(() => systemTray?.refresh())
   appUpdateService.start()
-  startScheduler()
+  startScheduler({ openConversation: (id) => sendToWindow('app:openConversation', id) })
   // Only the instance holding the single-instance lock gets here, so one endpoint serves the
   // profile; a second launch just raises this window.
   startControlEndpoint()

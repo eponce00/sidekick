@@ -118,6 +118,7 @@ const branchStatus: Record<string, { ahead: number; changedFiles: number }> = {
   'thinking-toggle': { ahead: 2, changedFiles: 0 },
   'settings-polish': { ahead: 4, changedFiles: 0 },
   schedules: { ahead: 3, changedFiles: 4 },
+  'release-notes': { ahead: 0, changedFiles: 0 },
   'api-contract': { ahead: 1, changedFiles: 2 }
 }
 

@@ -1,3 +1,4 @@
+import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import type { ScheduleRun } from '../../../shared/schedules'
 
 export type ScheduleRunTone = 'success' | 'error' | 'warning' | 'working' | 'muted'
@@ -6,7 +7,20 @@ export type ScheduleRunTone = 'success' | 'error' | 'warning' | 'working' | 'mut
 export function scheduleRunStatus(run: ScheduleRun): { label: string; tone: ScheduleRunTone } {
   if (run.outcome === 'skipped') return { label: 'Skipped', tone: 'muted' }
   if (run.outcome === 'failed') return { label: 'Did not start', tone: 'error' }
-  switch (run.agentPhase) {
+  if (!run.agentPhase) {
+    return run.conversationId
+      ? { label: 'Starting', tone: 'working' }
+      : { label: 'Chat deleted', tone: 'muted' }
+  }
+  return agentPhaseStatus(run.agentPhase)
+}
+
+/** A chat's latest run, in words and a tone for its mark. */
+export function agentPhaseStatus(phase: AgentRunPhase | undefined): {
+  label: string
+  tone: ScheduleRunTone
+} {
+  switch (phase) {
     case 'completed':
       return { label: 'Completed', tone: 'success' }
     case 'failed':
@@ -20,9 +34,7 @@ export function scheduleRunStatus(run: ScheduleRun): { label: string; tone: Sche
     case 'awaiting_user':
       return { label: 'Waiting for your answer', tone: 'warning' }
     case undefined:
-      return run.conversationId
-        ? { label: 'Starting', tone: 'working' }
-        : { label: 'Chat deleted', tone: 'muted' }
+      return { label: 'Starting', tone: 'working' }
     default:
       return { label: 'Working', tone: 'working' }
   }

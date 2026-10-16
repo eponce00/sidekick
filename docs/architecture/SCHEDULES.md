@@ -51,12 +51,25 @@ an unanswered approval would only add more waiting chats. Different schedules ru
 
 ## Authorization
 
-A scheduled run has no permission input of its own. `ConversationRunPreparer` applies the
-permission mode from Settings, exactly as for a chat the user started, and each run is a new
-conversation, so no chat-scoped grant carries over from an earlier run. Where the mode requires
+A scheduled run has no permission input of its own. A schedule stores a permission ceiling when it
+is saved, which may not be looser than the setting at that moment. Its chats are created with
+`started_by_kind = 'schedule'` and that ceiling in `conversations.permission_ceiling`, and the
+chats they start copy it. `ConversationRunPreparer` and the `start_session` tool use
+`effectivePermissionMode`: the setting, made stricter by the chat's ceiling, so a ceiling can only
+take permissions away. Each run is a new conversation, so no chat-scoped grant carries over from an
+earlier run. Where the mode requires
 approval, the kernel suspends on its durable interaction. The chat status service then marks the
 chat as waiting, sets the taskbar badge, and lets the renderer notify. Nothing answers
 the interaction for the user, and a run that waits holds off the schedule's next occurrence.
+
+A scheduled chat is a manager like any other: the family limits apply (eight live workers, workers
+cannot start chats, twenty automatic turns), and starting workers asks the user unless the
+effective mode is full access. The schedule treats a run and the chats it started as one run for
+the overlap rule. No manager chat receives the scheduled chat's own report, so when its run
+finalizes as completed with no family member still active, `ScheduleService` announces it once
+with a desktop notification that opens the chat; the run's unread mark stays as for any reply.
+Failures and waits reach the user through the status service as for any chat. The schedule's
+history lists each run's workers with their latest phase.
 
 Cline instead auto-approves every tool in scheduled runs and disables questions. SideKick keeps
 its approvals because the user, not the schedule, decides what an agent may do.

@@ -86,13 +86,14 @@ export function createScheduledConversationLauncher(
              FROM conversations WHERE project_id IS ?`
           )
           .get(projectId) as { sidebar_order: number }
-        // The schedule names its chats; a generated title would hide which run this is.
+        // The schedule names its chats; a generated title would hide which run this is. The chat
+        // keeps the schedule's permission ceiling, and the chats it starts inherit it.
         db.prepare(
           `INSERT INTO conversations
            (id, title, created_at, updated_at, project_id, title_source, title_version,
             sidebar_order, project_context_version, home_workspace_root, home_project_name,
-            schedule_id, schedule_run_number)
-           VALUES (?, ?, ?, ?, ?, 'preserved', ?, ?, 0, ?, ?, ?, ?)`
+            schedule_id, schedule_run_number, started_by_kind, permission_ceiling)
+           VALUES (?, ?, ?, ?, ?, 'preserved', ?, ?, 0, ?, ?, ?, ?, 'schedule', ?)`
         ).run(
           id,
           `${schedule.name} · Run ${runNumber}`,
@@ -104,7 +105,8 @@ export function createScheduledConversationLauncher(
           project?.folder_path ?? null,
           project?.name ?? null,
           schedule.id,
-          runNumber
+          runNumber,
+          schedule.permissionCeiling ?? null
         )
         db.prepare(
           `INSERT INTO messages (id, conversation_id, role, content, run_mode, timestamp)
