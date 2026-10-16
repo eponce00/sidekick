@@ -1301,6 +1301,7 @@ function App(): React.JSX.Element {
           onStartInWorktree={handleStartInWorktree}
           onForkIntoWorktree={handleForkIntoWorktree}
           onManageWorktrees={() => setWorktreesDialog({ focusProjectId: panelProject?.id ?? null })}
+          onOpenConversation={(id) => void handleSelectConversation(id)}
           onOpenProject={() => handleOpenProject(true)}
           onUpdateConversationTitle={handleUpdateConversationTitle}
           onConversationTitleApplied={handleConversationTitleApplied}
@@ -1558,6 +1559,7 @@ function App(): React.JSX.Element {
             onActiveTabChange={handleActivityTabChange}
             maxWidth={layout.panelMaxWidth}
             onWidthChange={setActivityPanelWidth}
+            onOpenConversation={(id) => void handleSelectConversation(id)}
             focusChainTodos={
               currentConversationId
                 ? focusChainTodosByConversation[currentConversationId] || []

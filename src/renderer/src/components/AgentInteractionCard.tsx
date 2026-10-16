@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
 import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
+import { useWorkerChatIdentity } from './sessionChatContext'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
 
@@ -244,6 +245,7 @@ export default function AgentInteractionCard({
   const [takeoverError, setTakeoverError] = useState('')
   const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
+  const workerIdentity = useWorkerChatIdentity()
   const questionRef = useRef<HTMLDivElement>(null)
   const questionShownRef = useRef(false)
   const promptId = useId()
@@ -311,6 +313,15 @@ export default function AgentInteractionCard({
           <ShieldAlert size={14} aria-hidden="true" />
           <span>{title}</span>
         </div>
+        {workerIdentity && pending && (
+          // A worker asks with its own name, its manager's and its workspace, so an approval is
+          // never given without knowing which chat wants it.
+          <div className="agent-interaction-context">
+            <strong>{workerIdentity.workerName}</strong>
+            <span>worker of {workerIdentity.managerTitle}</span>
+            {workerIdentity.workplace && <span>in {workerIdentity.workplace}</span>}
+          </div>
+        )}
         {detail && pending && !resolving && (
           <details className="agent-interaction-detail-disclosure">
             <summary>Review action details</summary>

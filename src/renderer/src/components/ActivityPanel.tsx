@@ -22,7 +22,8 @@ import {
   RefreshCw,
   RotateCcw,
   SquareTerminal,
-  Trash2
+  Trash2,
+  Workflow
 } from 'lucide-react'
 import ConfirmDialog from './ConfirmDialog'
 import { TerminalPanel } from './TerminalPanel'
@@ -54,13 +55,17 @@ import {
   subscribeWorkspaceFileView,
   type WorkspaceFileViewRequest
 } from '../utils/workspaceFileViewer'
+import { ChatsTab } from './ChatsPanel'
+import { useSessionFamily } from '../hooks/useSessionFamily'
 import './ActivityPanel.css'
 
-type ActivityTab = 'checkpoints' | 'files' | 'browser' | 'terminal'
+type ActivityTab = 'checkpoints' | 'files' | 'browser' | 'terminal' | 'chats'
 
 function storedActivityTab(): ActivityTab {
   const value = window.localStorage.getItem('activityPanelTab')
-  return value === 'checkpoints' || value === 'browser' || value === 'terminal' ? value : 'files'
+  return value === 'checkpoints' || value === 'browser' || value === 'terminal' || value === 'chats'
+    ? value
+    : 'files'
 }
 
 interface ActivityPanelProps {
@@ -87,6 +92,8 @@ interface ActivityPanelProps {
   maxWidth?: number
   /** The width the user chose, so the layout can make room for it. */
   onWidthChange?: (width: number) => void
+  /** Opens another chat, from the Chats tab. */
+  onOpenConversation?: (conversationId: string) => void
 }
 
 function ActivityPanel({
@@ -105,10 +112,16 @@ function ActivityPanel({
   tabRequest = null,
   onActiveTabChange,
   maxWidth,
-  onWidthChange
+  onWidthChange,
+  onOpenConversation
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
   const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
+  const sessionFamily = useSessionFamily(conversationId)
+  const familyRole = sessionFamily.role
+  // The Chats tab exists only for a chat with a family; elsewhere a remembered choice of it
+  // shows Files instead.
+  const shownTab: ActivityTab = activeTab === 'chats' && !familyRole ? 'files' : activeTab
   const [handledTabRequestAt, setHandledTabRequestAt] = useState(tabRequest?.at)
   if (tabRequest && tabRequest.at !== handledTabRequestAt) {
     setHandledTabRequestAt(tabRequest.at)
@@ -612,8 +625,28 @@ function ActivityPanel({
         )}
         <div className="activity-header">
           <div className="activity-tabs">
+            {familyRole && (
+              <button
+                className={`activity-tab-button ${shownTab === 'chats' ? 'active' : ''}`}
+                onClick={() => setActiveTab('chats')}
+                title={familyRole === 'manager' ? 'Chats started here' : 'This chat and its family'}
+              >
+                <span className="activity-tab-icon-wrap">
+                  <Workflow size={15} />
+                  {sessionFamily.family &&
+                    [sessionFamily.family.manager, ...sessionFamily.family.workers].some(
+                      (member) =>
+                        (sessionFamily.statuses.get(member.conversationId)?.state ??
+                          member.state) === 'waiting'
+                    ) && (
+                      <span className="browser-live-dot is-waiting" aria-label="A chat needs you" />
+                    )}
+                </span>
+                <span className="tab-label">{familyRole === 'manager' ? 'Chats' : 'Details'}</span>
+              </button>
+            )}
             <button
-              className={`activity-tab-button ${activeTab === 'files' ? 'active' : ''}`}
+              className={`activity-tab-button ${shownTab === 'files' ? 'active' : ''}`}
               onClick={() => setActiveTab('files')}
               title="Files"
             >
@@ -621,7 +654,7 @@ function ActivityPanel({
               <span className="tab-label">Files</span>
             </button>
             <button
-              className={`activity-tab-button ${activeTab === 'checkpoints' ? 'active' : ''}`}
+              className={`activity-tab-button ${shownTab === 'checkpoints' ? 'active' : ''}`}
               onClick={() => setActiveTab('checkpoints')}
               title="Advanced recovery"
               aria-label="Open advanced recovery"
@@ -630,7 +663,7 @@ function ActivityPanel({
               <span className="tab-label">Recovery</span>
             </button>
             <button
-              className={`activity-tab-button ${activeTab === 'browser' ? 'active' : ''}`}
+              className={`activity-tab-button ${shownTab === 'browser' ? 'active' : ''}`}
               onClick={() => setActiveTab('browser')}
               title="Browser activity"
               aria-label="Open browser activity"
@@ -644,7 +677,7 @@ function ActivityPanel({
               <span className="tab-label">Browser</span>
             </button>
             <button
-              className={`activity-tab-button ${activeTab === 'terminal' ? 'active' : ''}`}
+              className={`activity-tab-button ${shownTab === 'terminal' ? 'active' : ''}`}
               onClick={() => setActiveTab('terminal')}
               title="Agent commands"
               aria-label="Open the agent's terminal"
@@ -676,11 +709,11 @@ function ActivityPanel({
 
         {isPinned ? (
           <div className="activity-content">
-            {activeTab === 'files' && viewedFile && (
+            {shownTab === 'files' && viewedFile && (
               <WorkspaceFileViewer request={viewedFile} onBack={() => setViewedFile(null)} />
             )}
 
-            {activeTab === 'files' && !viewedFile && (
+            {shownTab === 'files' && !viewedFile && (
               <div className="file-explorer-wrap">
                 <div
                   className="file-explorer-header"
@@ -738,7 +771,7 @@ function ActivityPanel({
               </div>
             )}
 
-            {activeTab === 'checkpoints' && (
+            {shownTab === 'checkpoints' && (
               <div className="checkpoints-timeline-wrap">
                 {historyReadOnly && (
                   <div className="cp-readonly-banner">
@@ -932,10 +965,17 @@ function ActivityPanel({
                 )}
               </div>
             )}
-            {activeTab === 'terminal' && (
+            {shownTab === 'chats' && conversationId && (
+              <ChatsTab
+                conversationId={conversationId}
+                view={sessionFamily}
+                onOpenChat={(id) => onOpenConversation?.(id)}
+              />
+            )}
+            {shownTab === 'terminal' && (
               <TerminalPanel conversationId={conversationId} requestedSessionId={terminalRequest} />
             )}
-            <div className="activity-browser-wrap" hidden={activeTab !== 'browser'}>
+            <div className="activity-browser-wrap" hidden={shownTab !== 'browser'}>
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
@@ -946,6 +986,16 @@ function ActivityPanel({
           </div>
         ) : (
           <div className="activity-collapsed-tabs">
+            {familyRole && (
+              <button
+                className="activity-tab-vertical"
+                onClick={() => openCollapsedTab('chats')}
+                title={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
+                aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
+              >
+                <Workflow size={17} />
+              </button>
+            )}
             <button
               className="activity-tab-vertical"
               onClick={() => openCollapsedTab('files')}
