@@ -7,10 +7,11 @@ import {
   ChevronsUpDown,
   Command,
   Folder,
+  FolderGit2,
   FolderInput,
   FolderOpen,
   FolderPlus,
-  GitBranch,
+  GitFork,
   History,
   ListFilter,
   MessageSquare,
@@ -700,7 +701,7 @@ function Sidebar({
             >
               <span className="conversation-title">
                 {conversation.worktree_id && (
-                  <GitBranch
+                  <FolderGit2
                     size={12}
                     className="conversation-worktree-icon"
                     aria-label="Works in its own worktree"
@@ -808,7 +809,7 @@ function Sidebar({
                       onForkConversation(conversation.id)
                     }}
                   >
-                    <GitBranch size={13} strokeWidth={1.8} /> Fork chat
+                    <GitFork size={13} strokeWidth={1.8} /> Fork chat
                   </button>
                 </div>
               )}

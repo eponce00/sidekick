@@ -1,25 +1,25 @@
 import { Children, useState, useRef, useEffect, memo, useMemo } from 'react'
 import {
-  Loader2,
-  Check,
   AlignLeft,
   Brain,
+  Check,
   ChevronDown,
   ChevronRight,
-  Copy,
-  Pencil,
-  RotateCcw,
-  Info,
   CircleAlert,
   CircleCheck,
-  ListChecks,
-  Microscope,
-  GitBranch,
+  Copy,
+  CornerDownRight,
   FileText,
   FolderOpen,
+  GitFork,
+  Info,
+  ListChecks,
+  Loader2,
   MessageSquareText,
-  CornerDownRight,
+  Microscope,
+  Pencil,
   Play,
+  RotateCcw,
   Undo2
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
@@ -1507,7 +1507,7 @@ function MessageItemInner({
                         aria-label="Fork from this message"
                         disabled={isLoading}
                       >
-                        <GitBranch size={13} />
+                        <GitFork size={13} />
                       </button>
                     )}
                     {onRewindMessage && (
@@ -1560,7 +1560,7 @@ function MessageItemInner({
                   aria-label="Fork from this message"
                   disabled={isLoading}
                 >
-                  <GitBranch size={13} />
+                  <GitFork size={13} />
                 </button>
               )}
               {canUndoChanges && !hasChangeReview && (

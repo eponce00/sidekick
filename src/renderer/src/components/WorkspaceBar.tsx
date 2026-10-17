@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { FolderOpen, GitBranch, Settings2 } from 'lucide-react'
+import { FolderGit2, FolderOpen, Settings2 } from 'lucide-react'
 import {
   worktreeBranchLabel,
   type ManagedWorktreeSummary,
@@ -151,7 +151,7 @@ export function WorkspaceBar({
             onClick={() => onWorkInChange('worktree')}
             title="A separate copy of the project, so chats working at once do not overwrite each other"
           >
-            <GitBranch size={13} aria-hidden="true" />
+            <FolderGit2 size={13} aria-hidden="true" />
             New worktree
           </button>
         </div>
@@ -218,7 +218,7 @@ export function WorktreeChip({
       title={`Works in its own worktree, ${label}.${state} ${worktree.folderPath}`}
       aria-label={`Worktree: ${label}. Manage worktrees`}
     >
-      <GitBranch size={13} aria-hidden="true" />
+      <FolderGit2 size={13} aria-hidden="true" />
       <span>{label}</span>
     </button>
   )

@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { ExternalLink, FolderOpen, GitBranch, Loader2, Trash2, X } from 'lucide-react'
+import { ExternalLink, FolderGit2, FolderOpen, Loader2, Trash2, X } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../shared/worktrees'
 import './ForkConversationDialog.css'
@@ -106,7 +106,7 @@ export function WorktreesDialog({
       >
         <div className="fork-dialog-header">
           <span className="fork-dialog-icon">
-            <GitBranch size={18} />
+            <FolderGit2 size={18} />
           </span>
           <div>
             <h2 id={titleId}>Worktrees</h2>
@@ -122,7 +122,7 @@ export function WorktreesDialog({
 
         {worktrees.length === 0 ? (
           <div className="worktrees-empty">
-            <GitBranch size={20} aria-hidden="true" />
+            <FolderGit2 size={20} aria-hidden="true" />
             <strong>No worktrees yet</strong>
             <span>Choose “New worktree” before the first message of a project chat.</span>
           </div>
