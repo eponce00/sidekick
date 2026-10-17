@@ -14,6 +14,7 @@ import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
 import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
+import { getManagedWorktrees } from './worktrees'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
@@ -84,7 +85,9 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       {
         pdfOutputRoot: app.getPath('downloads'),
         publishTerminal: (event) => publishDesktopEvent('terminal:event', event),
-        onPreparationChange: publishPreparation
+        onPreparationChange: publishPreparation,
+        prepareWorkspace: (conversationId) =>
+          getManagedWorktrees().prepareConversation(conversationId)
       }
     )
     coordinator.tools.setAppSettings({

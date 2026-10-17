@@ -483,11 +483,14 @@ through the main window's external-navigation policy.
 
 `src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
 a chat that has not started (`createForConversation`, also the entry point for main-process callers
-such as agent-started chats), inventory with Git state, owners and disk use, merging the base into a
-clean idle worktree, and removal. It acts only on folders it can prove it created: the exact
-storage shape under the private `worktrees` folder, the recorded branch, and registration in
-`git worktree list`. Forced removal deletes links inside the worktree as links before
-`git worktree remove --force`, so a junction to a shared install never loses its target.
+such as agent-started chats), inventory with Git state and owners, setting the least recently used
+worktrees aside beyond 15 on disk, restoring one before its chat's next run (the coordinator's
+`prepareWorkspace` hook), and removal. Setting aside snapshots HEAD and every unignored file into a
+commit held by `refs/sidekick/worktrees/<id>`, built in a private index so the worktree's own index
+is untouched. It acts only on folders it can prove it created: the exact storage shape under the
+private `worktrees` folder and registration in `git worktree list`. Removal deletes links inside the
+worktree as links before `git worktree remove --force`, so a junction to a shared install never
+loses its target.
 
 `src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
 `AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a

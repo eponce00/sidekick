@@ -146,14 +146,12 @@ export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((wo
       running: worker.state === 'working'
     }
   ],
+  setAsideAt: null,
   status: {
     currentBranch: `sidekick/${worker.handle}`,
     ahead: statusOf(worker.handle).ahead,
-    behind: 0,
-    changedFiles: statusOf(worker.handle).changedFiles,
-    merged: false
-  },
-  blockers: []
+    changedFiles: statusOf(worker.handle).changedFiles
+  }
 }))
 
 // The manager writes the design itself; every other step waits on the chat doing it.

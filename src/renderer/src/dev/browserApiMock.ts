@@ -309,32 +309,13 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
     owners: [
       { kind: 'chat', id: 'preview-4', title: 'Polish the conversation cards', running: false }
     ],
-    status: {
-      currentBranch: 'sidekick/card-polish',
-      ahead: 3,
-      behind: 2,
-      changedFiles: 4,
-      merged: false
-    },
-    blockers: [
-      {
-        code: 'in-use',
-        message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
-        forceable: true
-      },
-      { code: 'modified', message: '4 uncommitted changes would be lost.', forceable: true },
-      {
-        code: 'unmerged',
-        message:
-          'sidekick/card-polish has 3 commits that main does not. The branch is kept unless you also delete it.',
-        forceable: true
-      }
-    ]
+    setAsideAt: null,
+    status: { currentBranch: 'sidekick/card-polish', ahead: 3, changedFiles: 4 }
   },
   {
     id: 'preview-worktree-2',
     projectId: 'preview-worktree-project-2',
-    projectName: 'sidekick-demo · sidekick/release-notes',
+    projectName: 'sidekick-demo · from main',
     folderPath:
       'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
     worktreeRoot:
@@ -345,26 +326,22 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
     baseRef: 'main',
     createdAt: Date.now() - 90_000_000,
     lastUsedAt: Date.now() - 80_000_000,
-    owners: [],
-    status: {
-      currentBranch: 'sidekick/release-notes',
-      ahead: 0,
-      behind: 5,
-      changedFiles: 0,
-      merged: true
-    },
-    blockers: []
+    owners: [
+      {
+        kind: 'chat',
+        id: 'preview-release-notes',
+        title: 'Draft the release notes',
+        running: false
+      }
+    ],
+    setAsideAt: Date.now() - 70_000_000,
+    status: null
   },
   ...previewSessionWorktrees
 ]
 
 const previewWorktreesApi: WorktreesAPI = {
   list: async () => structuredClone(previewWorktrees),
-  diskUsage: async (id) => ({
-    id,
-    bytes: id === 'preview-worktree-1' ? 412_000_000 : 38_500_000,
-    truncated: id === 'preview-worktree-1'
-  }),
   branchOptions: async (projectId) => ({
     branches: ['main', 'release/0.13', 'eponce/tray-menu'],
     currentBranch: 'main',
@@ -406,45 +383,19 @@ const previewWorktreesApi: WorktreesAPI = {
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
-      status: { currentBranch: null, ahead: 0, behind: 0, changedFiles: 0, merged: true },
-      blockers: [
-        {
-          code: 'in-use',
-          message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
-          forceable: true
-        }
-      ]
+      setAsideAt: null,
+      status: { currentBranch: null, ahead: 0, changedFiles: 0 }
     }
     previewWorktrees.unshift(worktree)
     return { project, conversation, worktree }
   },
-  remove: async ({ id, force, deleteBranch }) => {
+  remove: async (id) => {
     const index = previewWorktrees.findIndex((worktree) => worktree.id === id)
     if (index < 0) throw new Error('This worktree is no longer managed by SideKick')
-    const worktree = previewWorktrees[index]
-    if (worktree.blockers.length && !force) return { removed: false, blockers: worktree.blockers }
+    if (previewWorktrees[index].owners.some(({ running }) => running))
+      return { removed: false, reason: 'An agent is working in it. Stop it first.' }
     previewWorktrees.splice(index, 1)
-    return {
-      removed: true,
-      blockers: [],
-      ...(worktree.status?.merged || deleteBranch || !worktree.branch
-        ? {}
-        : { keptBranch: worktree.branch }),
-      detachedConversationIds: worktree.owners.map(({ id: ownerId }) => ownerId)
-    }
-  },
-  sync: async (id) => {
-    const worktree = previewWorktrees.find((candidate) => candidate.id === id)
-    if (!worktree?.status) return { status: 'refused', message: 'This worktree is busy' }
-    if (worktree.status.changedFiles)
-      return {
-        status: 'refused',
-        message: 'Commit or discard the uncommitted changes before syncing.'
-      }
-    if (!worktree.status.behind)
-      return { status: 'up-to-date', message: `Already up to date with ${worktree.baseRef}.` }
-    worktree.status.behind = 0
-    return { status: 'merged', message: `Merged ${worktree.baseRef} into ${worktree.branch}.` }
+    return { removed: true }
   },
   reveal: async () => undefined
 }

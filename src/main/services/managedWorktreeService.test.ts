@@ -7,7 +7,7 @@ import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { ProjectStore } from './projectStore'
-import { ManagedWorktreeService, measureDirectory } from './managedWorktreeService'
+import { ManagedWorktreeService } from './managedWorktreeService'
 
 const execFileAsync = promisify(execFile)
 
@@ -92,7 +92,8 @@ describe('ManagedWorktreeService', () => {
     expect(await git(root, ['branch', '--list'])).toBe(branchesBefore)
     const [worktree] = await service.list()
     expect(worktree.branch).toBeNull()
-    expect(worktree.status).toMatchObject({ ahead: 0, behind: 0, merged: true })
+    expect(worktree.status).toEqual({ currentBranch: null, ahead: 0, changedFiles: 0 })
+    expect(worktree.setAsideAt).toBeNull()
     expect(worktree.projectName).toMatch(/^Example · from /)
     expect(await git(root, ['status', '--porcelain'])).toBe('')
     expect(
@@ -158,13 +159,7 @@ describe('ManagedWorktreeService', () => {
     await service.create(source.id, 'Cards')
     const [worktree] = await service.list()
     expect(worktree).toMatchObject({ branch: null, baseRef: base, owners: [] })
-    expect(worktree.status).toMatchObject({
-      currentBranch: null,
-      ahead: 0,
-      behind: 0,
-      changedFiles: 0,
-      merged: true
-    })
+    expect(worktree.status).toEqual({ currentBranch: null, ahead: 0, changedFiles: 0 })
   })
 
   it('starts several detached worktrees from one base without inventing branch names', async () => {
@@ -178,91 +173,49 @@ describe('ManagedWorktreeService', () => {
     expect((await service.list()).map(({ branch }) => branch)).toEqual([null, null])
   })
 
-  it('keeps commits on no branch from being lost, and lets a branch made inside keep them', async () => {
-    const source = new ProjectStore(db).create(root, 'Example')
-    const service = new ManagedWorktreeService(db, storage)
-    const project = await service.create(source.id, 'Detached work')
-    await commitFile(project.folder_path, 'work.txt', 'work\n')
-
-    let [worktree] = await service.list()
-    expect(worktree.status).toMatchObject({ ahead: 1, merged: false })
-    expect(worktree.blockers.find(({ code }) => code === 'unmerged')?.message).toContain(
-      'commits on no branch'
-    )
-    expect(await service.remove({ id: worktree.id })).toMatchObject({ removed: false })
-
-    // The agent creates a branch when the work needs one: its commits now survive removal.
-    await git(project.folder_path, ['switch', '-c', 'agent/cards'])
-    ;[worktree] = await service.list()
-    expect(worktree.status).toMatchObject({ currentBranch: 'agent/cards', merged: true })
-    expect(worktree.blockers.map(({ code }) => code)).toEqual([])
-    const result = await service.remove({ id: worktree.id })
-    expect(result).toMatchObject({ removed: true })
-    expect(result.keptBranch).toBeUndefined()
-    expect(await git(root, ['branch', '--list', 'agent/cards'])).toContain('agent/cards')
-  })
-
-  it('reports ahead, behind, changes, owners and why removal is refused', async () => {
+  it('reports commits, changes and the chats that use it', async () => {
     const source = new ProjectStore(db).create(root, 'Example')
     const service = new ManagedWorktreeService(db, storage)
     const project = await service.create(source.id, 'Status')
     addChat(db, 'chat-1', project.id, 'Status chat')
     await commitFile(project.folder_path, 'work.txt', 'work\n')
-    await commitFile(root, 'base.txt', 'base\n')
     await writeFile(join(project.folder_path, 'draft.txt'), 'draft', 'utf8')
 
     const [worktree] = await service.list()
-    expect(worktree.status).toMatchObject({ ahead: 1, behind: 1, changedFiles: 1, merged: false })
+    expect(worktree.status).toEqual({ currentBranch: null, ahead: 1, changedFiles: 1 })
     expect(worktree.owners).toEqual([
       { kind: 'chat', id: 'chat-1', title: 'Status chat', running: false }
     ])
-    expect(worktree.blockers.map(({ code }) => code)).toEqual(['in-use', 'modified', 'unmerged'])
-    expect(await service.remove({ id: worktree.id })).toMatchObject({ removed: false })
-    expect(await readFile(join(project.folder_path, 'draft.txt'), 'utf8')).toBe('draft')
-
-    markRunning(db, 'chat-1')
-    const forced = await service.remove({ id: worktree.id, force: true })
-    expect(forced.removed).toBe(false)
-    expect(forced.blockers.find(({ code }) => code === 'running')?.forceable).toBe(false)
   })
 
-  it('force-removes after confirmation, detaches chats and keeps unmerged commits', async () => {
+  it('removes a worktree with its changes, keeps branches made in it, and detaches its chats', async () => {
     const source = new ProjectStore(db).create(root, 'Example')
     const service = new ManagedWorktreeService(db, storage)
-    const project = await service.create(source.id, 'Forced')
-    await giveLegacyBranch(db, project.folder_path, project.id, 'sidekick/forced')
+    const project = await service.create(source.id, 'Removed')
     addChat(db, 'chat-2', project.id)
+    await git(project.folder_path, ['switch', '-c', 'agent/cards'])
     await commitFile(project.folder_path, 'work.txt', 'work\n')
     await writeFile(join(project.folder_path, 'draft.txt'), 'draft', 'utf8')
     const [worktree] = await service.list()
 
-    const result = await service.remove({ id: worktree.id, force: true })
-    expect(result).toMatchObject({
-      removed: true,
-      keptBranch: worktree.branch,
-      detachedConversationIds: ['chat-2']
+    markRunning(db, 'chat-2')
+    expect(await service.remove(worktree.id)).toEqual({
+      removed: false,
+      reason: 'An agent is working in it. Stop it first.'
     })
+    expect(await readFile(join(project.folder_path, 'draft.txt'), 'utf8')).toBe('draft')
+
+    db.prepare("UPDATE agent_runs SET phase = 'completed' WHERE thread_id = 'chat-2'").run()
+    expect(await service.remove(worktree.id)).toEqual({ removed: true })
     await expect(access(project.folder_path)).rejects.toThrow()
-    expect(await git(root, ['branch', '--list', worktree.branch!])).toContain(worktree.branch)
+    // The agent's branch is the user's to merge or open a pull request from.
+    expect(await git(root, ['branch', '--list', 'agent/cards'])).toContain('agent/cards')
     expect(
       db
         .prepare('SELECT project_id, home_workspace_root FROM conversations WHERE id = ?')
         .get('chat-2')
     ).toEqual({ project_id: null, home_workspace_root: project.folder_path })
     expect(await service.list()).toEqual([])
-  })
-
-  it('deletes an unmerged branch only when asked', async () => {
-    const source = new ProjectStore(db).create(root, 'Example')
-    const service = new ManagedWorktreeService(db, storage)
-    const project = await service.create(source.id, 'Drop')
-    await giveLegacyBranch(db, project.folder_path, project.id, 'sidekick/drop')
-    await commitFile(project.folder_path, 'work.txt', 'work\n')
-    const [worktree] = await service.list()
-    const result = await service.remove({ id: worktree.id, force: true, deleteBranch: true })
-    expect(result.removed).toBe(true)
-    expect(result.keptBranch).toBeUndefined()
-    expect(await git(root, ['branch', '--list', worktree.branch!])).toBe('')
   })
 
   it('removes links inside a worktree without emptying their targets', async () => {
@@ -275,33 +228,93 @@ describe('ManagedWorktreeService', () => {
       const project = await service.create(source.id, 'Linked')
       await symlink(shared, join(project.folder_path, 'node_modules'), 'junction')
       const [worktree] = await service.list()
-      expect((await service.remove({ id: worktree.id, force: true })).removed).toBe(true)
+      expect((await service.remove(worktree.id)).removed).toBe(true)
       expect(await readFile(join(shared, 'package', 'index.js'), 'utf8')).toBe('shared')
     } finally {
       await rm(shared, { recursive: true, force: true })
     }
   })
 
-  it('merges the base into a clean worktree and aborts a conflicting merge', async () => {
+  it('sets the least recently used worktree aside and restores it exactly when its chat runs', async () => {
+    await commitFile(root, 'gone.txt', 'tracked\n')
     const source = new ProjectStore(db).create(root, 'Example')
-    const service = new ManagedWorktreeService(db, storage)
-    const project = await service.create(source.id, 'Sync')
-    const [worktree] = await service.list()
-    expect((await service.syncWithBase(worktree.id)).status).toBe('up-to-date')
+    const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+    const older = await service.create(source.id, 'Older')
+    addChat(db, 'older-chat', older.id)
+    await git(older.folder_path, ['switch', '-c', 'agent/older'])
+    await commitFile(older.folder_path, 'work.txt', 'committed\n')
+    await writeFile(join(older.folder_path, 'README.md'), 'edited\n', 'utf8')
+    await writeFile(join(older.folder_path, 'new.txt'), 'untracked\n', 'utf8')
+    await rm(join(older.folder_path, 'gone.txt'))
+    await git(older.folder_path, ['add', 'README.md'])
+    const head = await git(older.folder_path, ['rev-parse', 'HEAD'])
+    const status = await git(older.folder_path, ['status', '--porcelain', '--untracked-files=all'])
 
-    await commitFile(root, 'base.txt', 'base\n')
-    expect((await service.syncWithBase(worktree.id)).status).toBe('merged')
-    expect(await readFile(join(project.folder_path, 'base.txt'), 'utf8')).toBe('base\n')
+    const newer = await service.create(source.id, 'Newer')
+    await service.settled()
+    await expect(access(older.folder_path)).rejects.toThrow()
+    let rows = await service.list()
+    const olderRow = rows.find(({ projectId }) => projectId === older.id)!
+    expect(olderRow).toMatchObject({ branch: 'agent/older', status: null })
+    expect(olderRow.setAsideAt).toEqual(expect.any(Number))
+    expect(rows.find(({ projectId }) => projectId === newer.id)?.setAsideAt).toBeNull()
+    // Git keeps the snapshot reachable while the folder is gone.
+    expect(await git(root, ['for-each-ref', 'refs/sidekick/worktrees'])).toContain(olderRow.id)
 
-    await commitFile(root, 'README.md', 'from base\n')
-    await commitFile(project.folder_path, 'README.md', 'from worktree\n')
-    const conflict = await service.syncWithBase(worktree.id)
-    expect(conflict).toMatchObject({ status: 'conflict', conflicts: ['README.md'] })
-    expect(await git(project.folder_path, ['status', '--porcelain'])).toBe('')
-    expect(await readFile(join(project.folder_path, 'README.md'), 'utf8')).toBe('from worktree\n')
+    await service.prepareConversation('older-chat')
+    expect(await git(older.folder_path, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(await git(older.folder_path, ['branch', '--show-current'])).toBe('agent/older')
+    expect(await readFile(join(older.folder_path, 'README.md'), 'utf8')).toBe('edited\n')
+    expect(await readFile(join(older.folder_path, 'new.txt'), 'utf8')).toBe('untracked\n')
+    await expect(access(join(older.folder_path, 'gone.txt'))).rejects.toThrow()
+    // The same changes, now all unstaged.
+    const { stdout: restored } = await execFileAsync(
+      'git',
+      ['-C', older.folder_path, 'status', '--porcelain', '--untracked-files=all'],
+      { windowsHide: true }
+    )
+    expect(restored).toBe(' M README.md\n D gone.txt\n?? new.txt\n')
+    expect(status).toBe('M  README.md\n D gone.txt\n?? new.txt')
+    expect(await git(older.folder_path, ['diff', '--cached', '--name-only'])).toBe('')
+    expect(await git(root, ['for-each-ref', 'refs/sidekick/worktrees'])).not.toContain(olderRow.id)
 
-    await writeFile(join(project.folder_path, 'draft.txt'), 'draft', 'utf8')
-    expect((await service.syncWithBase(worktree.id)).status).toBe('refused')
+    // Using the older one made the newer one the least recently used.
+    await service.settled()
+    rows = await service.list()
+    expect(rows.find(({ projectId }) => projectId === older.id)?.setAsideAt).toBeNull()
+    expect(rows.find(({ projectId }) => projectId === newer.id)?.setAsideAt).toEqual(
+      expect.any(Number)
+    )
+  })
+
+  it('never sets aside a worktree whose chat is running or pinned', async () => {
+    const source = new ProjectStore(db).create(root, 'Example')
+    const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+    const running = await service.create(source.id, 'Running')
+    addChat(db, 'running-chat', running.id)
+    markRunning(db, 'running-chat')
+    const pinned = await service.create(source.id, 'Pinned')
+    addChat(db, 'pinned-chat', pinned.id)
+    db.prepare("UPDATE conversations SET is_pinned = 1 WHERE id = 'pinned-chat'").run()
+    await service.create(source.id, 'Newest')
+    await service.settled()
+    await access(running.folder_path)
+    await access(pinned.folder_path)
+    expect((await service.list()).every(({ setAsideAt }) => setAsideAt === null)).toBe(true)
+  })
+
+  it('removes a set-aside worktree and its snapshot', async () => {
+    const source = new ProjectStore(db).create(root, 'Example')
+    const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+    const older = await service.create(source.id, 'Older')
+    await writeFile(join(older.folder_path, 'draft.txt'), 'draft', 'utf8')
+    await service.create(source.id, 'Newer')
+    await service.settled()
+    const row = (await service.list()).find(({ projectId }) => projectId === older.id)!
+    expect(row.setAsideAt).toEqual(expect.any(Number))
+    expect(await service.remove(row.id)).toEqual({ removed: true })
+    expect(await git(root, ['for-each-ref', 'refs/sidekick/worktrees'])).toBe('')
+    expect(await service.list()).toHaveLength(1)
   })
 
   it('moves a chat with no messages into its own new worktree', async () => {
@@ -334,7 +347,7 @@ describe('ManagedWorktreeService', () => {
     const service = new ManagedWorktreeService(db, storage)
     addChat(db, 'gone', source.id)
     const { project } = await service.createForConversation({ conversationId: 'gone' })
-    expect((await service.removeIfUnused(project.id))?.removed).toBe(false)
+    expect(await service.removeIfUnused(project.id)).toBeNull()
     db.prepare('DELETE FROM conversations WHERE id = ?').run('gone')
     expect((await service.removeIfUnused(project.id))?.removed).toBe(true)
     await expect(access(project.folder_path)).rejects.toThrow()
@@ -353,22 +366,5 @@ describe('ManagedWorktreeService', () => {
       sourceProjectId: source.id,
       baseRef: 'sidekick/parent'
     })
-  })
-
-  it('measures disk use without following links', async () => {
-    const folder = await mkdtemp(join(tmpdir(), 'sidekick-measure-'))
-    const outside = await mkdtemp(join(tmpdir(), 'sidekick-measure-outside-'))
-    try {
-      await writeFile(join(folder, 'a.txt'), '12345', 'utf8')
-      await writeFile(join(outside, 'big.txt'), 'x'.repeat(1000), 'utf8')
-      await symlink(outside, join(folder, 'link'), 'junction')
-      expect(await measureDirectory(folder)).toEqual({ bytes: 5, truncated: false })
-      expect((await measureDirectory(folder, { entries: 1, milliseconds: 1000 })).truncated).toBe(
-        true
-      )
-    } finally {
-      await rm(folder, { recursive: true, force: true })
-      await rm(outside, { recursive: true, force: true })
-    }
   })
 })

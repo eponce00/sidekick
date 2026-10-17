@@ -383,6 +383,18 @@ describe('database schema migrations', () => {
           .prepare("SELECT name FROM sqlite_master WHERE name = 'idx_managed_worktrees_age'")
           .get()
       ).toEqual({ name: 'idx_managed_worktrees_age' })
+      // The rebuild keeps the columns that record a worktree set aside.
+      const columns = (
+        disk.prepare('PRAGMA table_info(managed_worktrees)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).toEqual(
+        expect.arrayContaining([
+          'set_aside_at',
+          'set_aside_head',
+          'set_aside_branch',
+          'snapshot_commit'
+        ])
+      )
     } finally {
       if (disk?.open) disk.close()
       await rm(root, { recursive: true, force: true })
@@ -415,7 +427,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 15
+        count: 16
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -549,7 +561,8 @@ describe('database schema migrations', () => {
       { id: '20261016_003_sessions', checksum_length: 64 },
       { id: '20261016_004_group_chats_to_chats', checksum_length: 64 },
       { id: '20261018_001_schedule_starters', checksum_length: 64 },
-      { id: '20261020_001_detached_worktrees', checksum_length: 64 }
+      { id: '20261020_001_detached_worktrees', checksum_length: 64 },
+      { id: '20261020_002_set_aside_worktrees', checksum_length: 64 }
     ])
     expect(
       db

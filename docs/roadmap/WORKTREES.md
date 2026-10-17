@@ -40,16 +40,16 @@ What SideKick takes from this:
 
 ## Design
 
-One managed-worktree service in the trusted main process owns creation, inventory, sync and
-removal. The renderer only asks for those operations by identity; it never passes paths.
+One managed-worktree service in the trusted main process owns creation, inventory, setting aside,
+restoring and removal. The renderer only asks for those operations by identity; it never passes paths.
 
 - **Storage and identity.** Worktrees live in SideKick's private data folder,
   `worktrees/<source project id>/<name>`, outside the user's checkout so editors, file watchers and
   `git status` in the original folder never see them. Each is a SideKick project linked to its
   source project, with the base it was created from. It starts detached at that base (Codex,
   OpenCode), since the base branch is usually checked out in the project folder already; the agent
-  creates a branch when the work needs one. Worktrees from before this have the branch SideKick
-  made for them, which removal still deletes or keeps as before.
+  creates a branch when the work needs one, then merges or opens a pull request from the worktree.
+  Worktrees from before this keep the branch SideKick made for them.
 - **Work in.** A new project chat chooses "This folder" or "New worktree" before its first message.
   The choice is remembered as the default. A fresh chat (no messages yet) is moved into its new
   worktree; a chat with history forks into one instead, so its history never points at the wrong
@@ -60,28 +60,33 @@ removal. The renderer only asks for those operations by identity; it never passe
   offers a new worktree, sharing, or cancel. Research runs do not write and are not guarded. The
   check is in `AgentRuntimeCoordinator.startConversation`, so every caller (chat, schedule,
   agent-started chat) is covered, not only the composer.
-- **Inventory.** The management view lists each worktree with its branch, base, commits ahead and
-  behind, uncommitted files, the chats that use it, and disk use.
-- **Sync with base.** Merges the base branch into a clean, idle worktree. A conflict aborts the merge
-  and reports the conflicting files, so the worktree is never left half-merged.
-- **Removal.** Safe removal keeps the existing refusals (running, in use, modified, unmerged, not a
-  SideKick-managed path) and explains each one. Forced removal needs a confirmation that names what
-  will be lost; chats that used the worktree are detached, never deleted, and the branch is kept
-  unless the user also asks to delete it. There is still no recursive-delete fallback; only
-  `git worktree remove` touches files.
-- **Automatic cleanup.** Deleting the last chat of a worktree removes it when safe removal allows;
-  otherwise it stays in the management view with the reason.
+- **Inventory.** The management view lists each worktree by its chat, with its project, branch,
+  last use, and whether it is working, set aside, or has changed files. Ahead/behind counts, merge
+  state, disk use and syncing with the base were dropped as more control than the list needs; the
+  agent does that Git work in the worktree.
+- **Set aside, least recently used first** (Codex). At most 15 worktrees stay on disk. Beyond that,
+  the least recently used one without a running or pinned chat is snapshotted (a commit of HEAD plus
+  every unignored file, built in a private index and held by `refs/sidekick/worktrees/<id>`) and
+  its folder removed. `AgentRuntimeCoordinator` asks the service to restore a chat's worktree
+  before every run: the same path, commit and branch, with the snapshot's files written back
+  unstaged. Housekeeping runs in the background after a worktree is created or used.
+- **Removal.** One confirmation, then `git worktree remove --force`, and the snapshot ref goes too.
+  Running chats and folders SideKick cannot prove it created are refused. Chats that used the
+  worktree are detached, never deleted; branches stay in the repository. There is no
+  recursive-delete fallback.
+- **Automatic cleanup.** Deleting the last chat of a worktree removes it.
 
 ## Open work
 
-Shipped in this pass: the service above, "Work in" for new project chats, the busy-folder prompt
-and runtime refusal, the management view, safe and forced removal, sync with base, and cleanup when
-a worktree's last chat is deleted. Still open:
+Shipped: the service above, "Work in" for new project chats, the busy-folder prompt and runtime
+refusal, the management view, setting aside and restoring, removal, and cleanup when a worktree's
+last chat is deleted. Still open:
 
 - **Archive.** Chats can be archived in the main process but not yet from the interface. Archiving
-  should remove a clean worktree as deleting does, and keep one with work until the chat is unarchived or deleted.
-- **Snapshot before forced removal** (Codex): save uncommitted changes as a stash-like commit or
-  patch so a forced removal can be undone when the chat is reopened.
+  should set its worktree aside at once, as deleting the chat removes it.
+- **Setup on restore.** Restoring does not rerun the project's worktree setup hooks, which need
+  per-command approval, so ignored files such as installed dependencies come back only when the
+  agent reinstalls them.
 - **Git worktree locks** (Claude Code): `git worktree lock` while an agent runs, so tools outside
   SideKick cannot prune a worktree in use.
 - **Fresh base by default** (Claude Code, Conductor): optionally fetch the remote default branch,
@@ -91,7 +96,7 @@ a worktree's last chat is deleted. Still open:
   and back, instead of forking without the uncommitted files.
 - **Merge back.** Merging or opening a pull request from a worktree, and then removing it, is left
   to the user or the agent; a one-click flow would pair with the Git status bar.
-- **Settings.** The worktree limit (20) and the storage folder are fixed. Claude Code and Codex
+- **Settings.** The number kept on disk (15) and the storage folder are fixed. Claude Code and Codex
   make them configurable.
 - **Per-worktree environment** (Conductor): pass the worktree path, name and a free port range to
   setup hooks so parallel dev servers do not collide.

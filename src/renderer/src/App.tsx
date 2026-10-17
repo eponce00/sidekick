@@ -544,6 +544,14 @@ function App(): React.JSX.Element {
     () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree])),
     [worktrees]
   )
+  // A chat outside any project can move into one of these; worktrees are chosen inside a project.
+  const projectChoices = useMemo(
+    () =>
+      projects
+        .filter(({ id }) => !worktreeByProjectId.has(id))
+        .map(({ id, name }) => ({ id, name })),
+    [projects, worktreeByProjectId]
+  )
   const worktreeSources = useMemo(
     () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree.sourceProjectId])),
     [worktrees]
@@ -558,7 +566,16 @@ function App(): React.JSX.Element {
     void window.api.conversations.markRead(id)
   }, [])
 
-  const handleNewConversation = async (projectId: string | null = null): Promise<void> => {
+  const handleNewConversation = async (
+    requestedProjectId: string | null = null,
+    options: { joinWorktree?: boolean } = {}
+  ): Promise<void> => {
+    // A new chat gets its own choice of folder or worktree in the project the worktree came from,
+    // instead of sharing another chat's worktree.
+    const projectId =
+      requestedProjectId && !options.joinWorktree
+        ? (worktreeSources.get(requestedProjectId) ?? requestedProjectId)
+        : requestedProjectId
     await activateProjectWorkspace(projectId)
     const newConv = await window.api.conversations.create(
       'New Conversation',
@@ -739,7 +756,7 @@ function App(): React.JSX.Element {
     setWorktreesDialog(null)
     const latest = latestProjectConversationId(conversations, projectId)
     if (latest) void handleSelectConversation(latest)
-    else void handleNewConversation(projectId)
+    else void handleNewConversation(projectId, { joinWorktree: true })
   }
 
   const handleConversationCreated = async (id: string, title: string): Promise<void> => {
@@ -1148,6 +1165,12 @@ function App(): React.JSX.Element {
           onStartInWorktree={handleStartInWorktree}
           onForkIntoWorktree={handleForkIntoWorktree}
           onManageWorktrees={() => setWorktreesDialog({ focusProjectId: panelProject?.id ?? null })}
+          projectChoices={projectChoices}
+          onChooseProject={(projectId) =>
+            panelConversationId
+              ? handleMoveConversation({ conversationId: panelConversationId, projectId })
+              : handleNewConversation(projectId)
+          }
           onOpenConversation={(id) => void handleSelectConversation(id)}
           onOpenProject={() => handleOpenProject(true)}
           onUpdateConversationTitle={handleUpdateConversationTitle}

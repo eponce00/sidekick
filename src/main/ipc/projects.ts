@@ -33,17 +33,8 @@ export function registerProjectHandlers(): void {
     const worktrees = getManagedWorktrees()
     if (typeof id === 'string' && worktrees.isManagedProject(id)) {
       const worktree = (await worktrees.list()).find(({ projectId }) => projectId === id)
-      const result = worktree
-        ? await worktrees.remove({ id: worktree.id })
-        : { removed: false, blockers: [] }
-      if (!result.removed)
-        throw new Error(
-          `This worktree was kept: ${result.blockers.map(({ message }) => message).join(' ')}${
-            result.blockers.every(({ forceable }) => forceable)
-              ? ' Use Manage worktrees to remove it anyway.'
-              : ''
-          }`
-        )
+      const result = worktree ? await worktrees.remove(worktree.id) : { removed: true }
+      if (!result.removed) throw new Error(`This worktree was kept. ${result.reason ?? ''}`.trim())
       return { success: true }
     }
     store.remove(id)

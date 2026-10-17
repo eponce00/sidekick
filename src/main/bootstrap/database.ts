@@ -45,6 +45,10 @@ const REQUIRED_COLUMNS = [
   { table: 'conversations', column: 'forked_from_message_id', definition: 'TEXT' },
   { table: 'messages', column: 'checkpoint_workspace_root', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'base_ref', definition: 'TEXT' },
+  { table: 'managed_worktrees', column: 'set_aside_at', definition: 'INTEGER' },
+  { table: 'managed_worktrees', column: 'set_aside_head', definition: 'TEXT' },
+  { table: 'managed_worktrees', column: 'set_aside_branch', definition: 'TEXT' },
+  { table: 'managed_worktrees', column: 'snapshot_commit', definition: 'TEXT' },
   {
     table: 'messages',
     column: 'run_mode',
@@ -458,6 +462,14 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       ensureRequiredColumns(db)
       allowDetachedWorktrees(db)
     }
+  },
+  {
+    id: '20261020_002_set_aside_worktrees',
+    description: 'record managed worktrees set aside with a snapshot to keep the list short',
+    contentId: 'v1|required-managed-worktree-set-aside-columns',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+    }
   }
 ]
 
@@ -483,13 +495,18 @@ function allowDetachedWorktrees(db: Database.Database): void {
       branch TEXT UNIQUE,
       base_ref TEXT,
       created_at INTEGER NOT NULL,
-      last_used_at INTEGER NOT NULL
+      last_used_at INTEGER NOT NULL,
+      set_aside_at INTEGER,
+      set_aside_head TEXT,
+      set_aside_branch TEXT,
+      snapshot_commit TEXT
     );
     INSERT INTO managed_worktrees_detachable
       (id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
-       created_at, last_used_at)
+       created_at, last_used_at, set_aside_at, set_aside_head, set_aside_branch, snapshot_commit)
       SELECT id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
-             created_at, last_used_at
+             created_at, last_used_at, set_aside_at, set_aside_head, set_aside_branch,
+             snapshot_commit
       FROM managed_worktrees;
     DROP TABLE managed_worktrees;
     ALTER TABLE managed_worktrees_detachable RENAME TO managed_worktrees;
@@ -650,7 +667,11 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       branch TEXT UNIQUE,
       base_ref TEXT,
       created_at INTEGER NOT NULL,
-      last_used_at INTEGER NOT NULL
+      last_used_at INTEGER NOT NULL,
+      set_aside_at INTEGER,
+      set_aside_head TEXT,
+      set_aside_branch TEXT,
+      snapshot_commit TEXT
     );
 
     CREATE TABLE IF NOT EXISTS messages (

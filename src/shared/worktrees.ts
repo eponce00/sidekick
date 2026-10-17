@@ -10,21 +10,6 @@ export interface ManagedWorktreeOwner {
   running: boolean
 }
 
-export type WorktreeRemovalBlockerCode =
-  | 'running'
-  | 'in-use'
-  | 'modified'
-  | 'unmerged'
-  | 'missing'
-  | 'unmanaged'
-
-export interface WorktreeRemovalBlocker {
-  code: WorktreeRemovalBlockerCode
-  message: string
-  /** Forced removal can override this blocker after confirmation. */
-  forceable: boolean
-}
-
 export interface ManagedWorktreeSummary {
   id: string
   projectId: string
@@ -34,38 +19,31 @@ export interface ManagedWorktreeSummary {
   worktreeRoot: string
   sourceProjectId: string
   sourceProjectName: string | null
-  /** The branch SideKick created for it; null when it started detached at its base. */
+  /**
+   * The branch it was on when set aside, or the one SideKick created for worktrees made before
+   * they started detached. The live branch is in `status`.
+   */
   branch: string | null
   /** The branch or commit this worktree started from; null for worktrees from before bases were recorded. */
   baseRef: string | null
   createdAt: number
   lastUsedAt: number
+  /**
+   * When SideKick set it aside to keep the number of worktrees on disk down; null while its folder
+   * is on disk. Its chat's next run brings it back as it was.
+   */
+  setAsideAt: number | null
   owners: ManagedWorktreeOwner[]
-  /** Null when the folder is gone or Git could not read it. */
+  /** Null when it is set aside, its folder is gone, or Git could not read it. */
   status: ManagedWorktreeGitStatus | null
-  blockers: WorktreeRemovalBlocker[]
 }
 
 export interface ManagedWorktreeGitStatus {
   currentBranch: string | null
   /** Commits in the worktree that its base does not have. */
   ahead: number | null
-  /** Commits on the base that the worktree does not have. */
-  behind: number | null
   /** Uncommitted entries reported by `git status --porcelain`, untracked files included. */
   changedFiles: number
-  /**
-   * Removing it loses no commits: they are all in its base or the source checkout's HEAD, or, for
-   * a detached worktree, on some branch.
-   */
-  merged: boolean
-}
-
-export interface ManagedWorktreeDiskUsage {
-  id: string
-  bytes: number
-  /** The walk stopped at its file or time budget, so `bytes` is a lower bound. */
-  truncated: boolean
 }
 
 export interface WorktreeBranchOptions {
@@ -90,26 +68,11 @@ export interface CreateConversationWorktreeResult {
   worktree: ManagedWorktreeSummary
 }
 
-export interface RemoveManagedWorktreeInput {
-  id: string
-  /** Discard uncommitted changes and detach the chats that use it. Never overrides a running agent. */
-  force?: boolean
-  /** Also delete the branch, even when it has commits its base does not. Only with `force`. */
-  deleteBranch?: boolean
-}
-
 export interface RemoveManagedWorktreeResult {
   removed: boolean
-  blockers: WorktreeRemovalBlocker[]
-  /** The branch was left in the repository so its commits stay recoverable. */
-  keptBranch?: string
-  detachedConversationIds?: string[]
+  /** Why it was kept, when it was. */
+  reason?: string
 }
-
-export type SyncManagedWorktreeResult =
-  | { status: 'up-to-date' | 'merged'; message: string }
-  | { status: 'conflict'; message: string; conflicts: string[] }
-  | { status: 'refused'; message: string }
 
 /** Another run that is writing in the same folder, or in a folder that contains or is inside it. */
 export interface WorkspaceOccupant {
@@ -175,12 +138,10 @@ export function worktreeSlug(title: string): string {
 
 export interface WorktreesAPI {
   list: () => Promise<ManagedWorktreeSummary[]>
-  diskUsage: (id: string) => Promise<ManagedWorktreeDiskUsage>
   branchOptions: (projectId: string) => Promise<WorktreeBranchOptions>
   createForConversation: (
     input: CreateConversationWorktreeInput
   ) => Promise<CreateConversationWorktreeResult>
-  remove: (input: RemoveManagedWorktreeInput) => Promise<RemoveManagedWorktreeResult>
-  sync: (id: string) => Promise<SyncManagedWorktreeResult>
+  remove: (id: string) => Promise<RemoveManagedWorktreeResult>
   reveal: (id: string) => Promise<void>
 }

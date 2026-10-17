@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from 'react'
-import { ArrowDown, ArrowUp, FolderOpen, GitBranch, Settings2 } from 'lucide-react'
+import { FolderOpen, GitBranch, Settings2 } from 'lucide-react'
 import {
   worktreeBranchLabel,
   type ManagedWorktreeSummary,
@@ -21,6 +21,11 @@ interface WorkspaceBarProps {
   onWorkInChange: (choice: WorkInChoice) => void
   onBaseRefChange: (ref: string) => void
   onManageWorktrees: () => void
+  /** Reports whether the project can have worktrees, once that is known. */
+  onWorktreesAvailableChange?: (available: boolean) => void
+  /** Projects a chat outside any project can move into before its first message. */
+  projectChoices?: ReadonlyArray<{ id: string; name: string }>
+  onChooseProject?: (projectId: string) => void
 }
 
 /**
@@ -37,10 +42,14 @@ export function WorkspaceBar({
   error,
   onWorkInChange,
   onBaseRefChange,
-  onManageWorktrees
+  onManageWorktrees,
+  onWorktreesAvailableChange,
+  projectChoices = [],
+  onChooseProject
 }: WorkspaceBarProps): React.JSX.Element | null {
   const [options, setOptions] = useState<WorktreeBranchOptions | null>(null)
   const baseId = useId()
+  const projectSelectId = useId()
   const choosing = canChoose && Boolean(projectId) && !worktree
 
   useEffect(() => {
@@ -49,7 +58,9 @@ export function WorkspaceBar({
     void window.api.worktrees
       .branchOptions(projectId)
       .then((result) => {
-        if (!cancelled) setOptions(result)
+        if (cancelled) return
+        setOptions(result)
+        onWorktreesAvailableChange?.(result.isGitRepository)
       })
       .catch(() => {
         if (!cancelled) setOptions(null)
@@ -57,10 +68,9 @@ export function WorkspaceBar({
     return () => {
       cancelled = true
     }
-  }, [choosing, projectId])
+  }, [choosing, projectId, onWorktreesAvailableChange])
 
   if (worktree) {
-    const status = worktree.status
     return (
       <div className="workspace-bar-area">
         <div className="workspace-bar" role="status" aria-label="Where this chat works">
@@ -74,15 +84,12 @@ export function WorkspaceBar({
               ? `worktree from ${worktree.baseRef}`
               : 'worktree'}
           </span>
-          {status && (status.ahead || status.behind) ? (
+          {worktree.setAsideAt ? (
             <span
-              className="workspace-bar-counts"
-              title={`${status.ahead ?? 0} commits ahead of and ${status.behind ?? 0} behind ${worktree.baseRef ?? 'its base'}`}
+              className="workspace-bar-muted"
+              title="SideKick set this worktree aside to keep the number on disk down. It comes back as it was when you send a message."
             >
-              <ArrowUp size={12} aria-hidden="true" />
-              {status.ahead ?? 0}
-              <ArrowDown size={12} aria-hidden="true" />
-              {status.behind ?? 0}
+              · set aside until you send
             </span>
           ) : null}
           <button type="button" className="workspace-bar-link" onClick={onManageWorktrees}>
@@ -93,9 +100,59 @@ export function WorkspaceBar({
     )
   }
 
+  // A chat outside any project has no folder to copy, so it picks a project first.
+  if (canChoose && !projectId && onChooseProject && projectChoices.length) {
+    return (
+      <div className="workspace-bar-area">
+        <div className="workspace-bar is-choosing">
+          <span className="workspace-bar-label">Work in</span>
+          <label className="workspace-bar-field is-base" htmlFor={projectSelectId}>
+            <FolderOpen size={12} className="workspace-bar-muted" aria-hidden="true" />
+            <select
+              id={projectSelectId}
+              value=""
+              disabled={disabled}
+              onChange={(event) => {
+                if (event.target.value) onChooseProject(event.target.value)
+              }}
+              aria-label="Project"
+            >
+              <option value="">No project</option>
+              {projectChoices.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="workspace-bar-muted">
+            Choose a project to work in its folder or a new worktree
+          </span>
+        </div>
+        {error && (
+          <div className="workspace-bar-error" role="alert">
+            {error}
+          </div>
+        )}
+      </div>
+    )
+  }
   if (!choosing) return null
-  const gitAvailable = options?.isGitRepository !== false
-  const effectiveChoice = gitAvailable ? workIn : 'folder'
+  // A folder without Git has no worktrees to offer; say so instead of showing a dead button.
+  if (options?.isGitRepository === false) {
+    return (
+      <div className="workspace-bar-area">
+        <div className="workspace-bar" role="status" aria-label="Where this chat works">
+          <FolderOpen size={14} className="workspace-bar-icon" aria-hidden="true" />
+          <span>This folder</span>
+          <span className="workspace-bar-muted">
+            Not a Git repository, so new worktrees are not available
+          </span>
+        </div>
+      </div>
+    )
+  }
+  const effectiveChoice = workIn
 
   return (
     <div className="workspace-bar-area">
@@ -119,13 +176,9 @@ export function WorkspaceBar({
             role="radio"
             aria-checked={effectiveChoice === 'worktree'}
             className={effectiveChoice === 'worktree' ? 'is-selected' : ''}
-            disabled={disabled || !gitAvailable}
+            disabled={disabled}
             onClick={() => onWorkInChange('worktree')}
-            title={
-              gitAvailable
-                ? 'A separate folder on its own branch, so other agents cannot overwrite this work'
-                : 'Worktrees need a Git repository'
-            }
+            title="A separate copy of the project, so chats working at once do not overwrite each other"
           >
             <GitBranch size={13} aria-hidden="true" />
             New worktree

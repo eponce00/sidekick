@@ -110,6 +110,9 @@ interface ChatPanelProps {
   /** Forks a chat with history into a new worktree, carrying the unsent message along. */
   onForkIntoWorktree?: (conversationId: string, draft: ComposerDraft) => Promise<void>
   onManageWorktrees?: () => void
+  /** Projects a chat outside any project can move into before its first message. */
+  projectChoices?: ReadonlyArray<{ id: string; name: string }>
+  onChooseProject?: (projectId: string) => Promise<void>
   onOpenProject: () => Promise<void> | void
   onUpdateConversationTitle: (
     id: string,
@@ -174,6 +177,8 @@ function ChatPanel({
   onStartInWorktree,
   onForkIntoWorktree,
   onManageWorktrees,
+  projectChoices,
+  onChooseProject,
   onOpenProject,
   onUpdateConversationTitle,
   onConversationTitleApplied,
@@ -219,6 +224,8 @@ function ChatPanel({
   // Where the chat works. A project chat chooses before its first message; afterwards a run that
   // would join a folder another agent is writing in asks first.
   const [workIn, setWorkIn] = useState<WorkInChoice>(storedWorkInChoice)
+  // A folder without Git keeps the remembered choice but works in the folder.
+  const [worktreesAvailable, setWorktreesAvailable] = useState(true)
   const [worktreeBase, setWorktreeBase] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [busyPrompt, setBusyPrompt] = useState<{
@@ -1045,7 +1052,7 @@ function ChatPanel({
     if (!conversationId || !projectId) return true
     const fresh = messagesRef.current.length === 0
     const choosing = fresh && !worktree
-    if (choosing && workIn === 'worktree') {
+    if (choosing && workIn === 'worktree' && worktreesAvailable) {
       setWorkspaceError(null)
       try {
         await startInWorktree(conversationId)
@@ -1056,7 +1063,7 @@ function ChatPanel({
         return false
       }
     }
-    if (choosing) rememberWorkInChoice('folder')
+    if (choosing && worktreesAvailable) rememberWorkInChoice('folder')
     if (!goalArmed && nextRunMode === 'research') return true
     const occupants = await window.api.agentRuns
       .workspaceOccupants(conversationId)
@@ -1584,7 +1591,7 @@ function ChatPanel({
       <WorkspaceBar
         projectId={projectId}
         worktree={worktree}
-        canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
+        canChoose={(Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading}
         workIn={workIn}
         baseRef={worktreeBase}
         error={workspaceError}
@@ -1594,6 +1601,17 @@ function ChatPanel({
         }}
         onBaseRefChange={setWorktreeBase}
         onManageWorktrees={() => onManageWorktrees?.()}
+        onWorktreesAvailableChange={setWorktreesAvailable}
+        projectChoices={projectChoices}
+        onChooseProject={
+          onChooseProject &&
+          ((id) => {
+            setWorkspaceError(null)
+            onChooseProject(id).catch((error: unknown) =>
+              setWorkspaceError(error instanceof Error ? error.message : String(error))
+            )
+          })
+        }
       />
       <WorkspaceBusyDialog
         isOpen={Boolean(busyPrompt)}
