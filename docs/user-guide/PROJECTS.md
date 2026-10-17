@@ -98,7 +98,7 @@ Worktree hooks are also added switched off. They match the
 original project's exact folder and run when a chat forks into a new worktree or
 starts in one, after the chat is saved there and before its first run.
 Commands execute inside the new worktree, in
-order, with a separate native approval for each command in every permission mode.
+order, with a separate approval for each command in every permission mode.
 Skipping is the default. No repository Git hooks are discovered or enabled.
 
 Each command has a two-minute limit and uses the selected host or Docker shell;

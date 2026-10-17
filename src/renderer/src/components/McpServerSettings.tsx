@@ -81,7 +81,7 @@ export function McpServerSettings({
     <SettingsSection
       icon={Boxes}
       title="MCP servers"
-      description="External MCP server commands run as local processes."
+      description="Connectors give the agent tools from other apps and services. Local ones run as programs on this computer."
       actions={
         <>
           <button
@@ -121,7 +121,7 @@ export function McpServerSettings({
         <SettingsEmptyState
           icon={Plug}
           title="No MCP servers yet"
-          description="SideKick works normally without them. Add an official connector above, or a custom connector for any local or remote MCP server."
+          description="SideKick works without them. Add an official connector above, or your own for any MCP server."
         />
       )}
       {servers.map((server, index) => {

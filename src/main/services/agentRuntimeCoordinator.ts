@@ -163,7 +163,8 @@ export class AgentRuntimeCoordinator {
       () => this.settings().shellIsolation === 'docker',
       {
         terminals: new TerminalSessionStore(options.publishTerminal),
-        terminalEnabled: () => this.settings().agentCommandTerminal !== false
+        // A terminal where one can start; the runner falls back to pipes on its own.
+        terminalEnabled: () => true
       }
     )
     this.browser = new NativeBrowserSessionService({

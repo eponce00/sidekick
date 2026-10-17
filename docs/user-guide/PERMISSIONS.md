@@ -6,11 +6,11 @@ interaction. User-initiated destructive UI actions use an exact main-process bro
 
 ## Modes
 
-| Mode                           | Requested `auto`                  | Requested `confirm`               |
-| ------------------------------ | --------------------------------- | --------------------------------- |
-| Full access                    | Automatic                         | Automatic                         |
-| Ask only for sensitive actions | Automatic                         | Durable user approval interaction |
-| Ask for every write or command | Durable user approval interaction | Durable user approval interaction |
+| Mode                               | Requested `auto`                  | Requested `confirm`               |
+| ---------------------------------- | --------------------------------- | --------------------------------- |
+| Full access                        | Automatic                         | Automatic                         |
+| Ask for sensitive actions          | Automatic                         | Durable user approval interaction |
+| Ask before every change or command | Durable user approval interaction | Durable user approval interaction |
 
 Full access is the default. It removes approval prompts for in-scope work but does not erase the
 host's original safety classification: audit records retain both requested and effective access.
@@ -79,9 +79,9 @@ mismatched operations are rejected.
 
 ## Optional isolated shell
 
-Settings → Agent → Permissions offers **Isolated Linux container (no network)**.
-This is opt-in; the default remains host execution. Switching back to host execution
-requires a native confirmation. Isolation applies to shell commands, including project
+Settings → Agent → Permissions → **Where commands run** offers **In a Docker container**, a
+Linux container with no network. This is opt-in; the default remains **On this computer**.
+Switching back to this computer requires a trusted confirmation. Isolation applies to shell commands, including project
 start hooks, not to browser, language-server, MCP, or other host processes.
 
 Install Docker with a local Linux-container daemon and explicitly pull the pinned image:
@@ -108,4 +108,4 @@ Kernel decisions live in `agent_run_events`; broker authorization/consumption re
 settings store. Settings projects the latest 500 entries from both authoritative sources into one
 chronological audit. Each row includes operation kind/title, requested/effective access, active
 mode, a safe operation fingerprint, outcome, timestamp, and failure reason when applicable. The
-latest records are under Settings → Agent → Permissions → **Authorization audit**.
+latest records are under Settings → Agent → Permissions → **Recent approvals**.

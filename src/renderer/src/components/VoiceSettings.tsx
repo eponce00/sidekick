@@ -101,7 +101,7 @@ export function VoiceSettings({
       <ToggleField
         icon={AudioLines}
         label="Dictation and read-aloud"
-        hint="Downloads about 820 MB of speech models in the background: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) and Supertone Supertonic 3."
+        hint="Downloads about 820 MB of speech models once, in the background: NVIDIA Parakeet (CC BY 4.0) and Supertone Supertonic."
         checked={enabled}
         onChange={onEnabledChange}
       />
@@ -281,7 +281,7 @@ function VoiceDeviceRows(): React.JSX.Element {
       <SettingsRow
         icon={UserRound}
         label="Voice"
-        description="One of ten. Device, voice, and language choices apply right away on this machine."
+        description="Changes here apply right away."
         controlId={`${id}-voice`}
         control={
           <Select
@@ -336,7 +336,7 @@ function VoiceDeviceRows(): React.JSX.Element {
       <SettingsRow
         icon={Keyboard}
         label="Mic shortcut"
-        description="Turns the mic on and off. Dictation detects the language you speak, among 25 European languages."
+        description="Turns the mic on and off. Dictation understands 25 European languages."
         control={<kbd className="settings-kbd">{voiceShortcutLabel()}</kbd>}
       />
       {notice && (

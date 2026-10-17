@@ -16,8 +16,8 @@ palette. Choose **New schedule**, or start from one of the suggestions, and fill
 - **Repeat**: Hourly at a minute past the hour, Daily, Weekdays (Monday to Friday), or Weekly on
   one day, each at a time you choose.
 - **Without asking, runs may**: the most a run may do before it asks you. It starts at your
-  [permission mode](PERMISSIONS.md) and can only be stricter, such as **Ask for every write or
-  command** for a schedule you want to review step by step.
+  [permission mode](PERMISSIONS.md) and can only be stricter, such as **Ask before every change
+  or command** for a schedule you want to review step by step.
 
 Times are in the computer's time zone. A daily run stays at its time when the clocks change for
 daylight saving.

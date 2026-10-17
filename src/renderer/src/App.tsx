@@ -78,7 +78,6 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   lmStudioApiKey: '',
   llamaCppEndpoint: 'http://localhost:8080/v1',
   focusChainEnabled: true,
-  focusChainReminderInterval: 15,
   autoCompactEnabled: true,
   autoCompactThreshold: 0.8,
   notificationsEnabled: true,
