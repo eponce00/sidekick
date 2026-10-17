@@ -230,14 +230,19 @@ export function Select({
 
   // Close when the user clicks elsewhere, scrolls the page under the list, or resizes the window.
   useEffect(() => {
-    if (!open) return
+    if (!open || !placement) return
     const outside = (event: PointerEvent): void => {
       const target = event.target as Node
       if (triggerRef.current?.contains(target) || listRef.current?.contains(target)) return
       close(false)
     }
     const scrolled = (event: Event): void => {
-      if (listRef.current?.contains(event.target as Node)) return
+      if (listRef.current?.contains(event.target as Node) || !triggerRef.current) return
+      // A scroll event arrives a frame late, so the one from scrolling the button into view to
+      // open it can land after the list opened. Close only once the button has really moved.
+      const moved = placeList(triggerRef.current)
+      if (Math.abs(moved.top - placement.top) < 1 && Math.abs(moved.left - placement.left) < 1)
+        return
       close(false)
     }
     const resized = (): void => close(false)
@@ -251,7 +256,7 @@ export function Select({
       window.removeEventListener('resize', resized)
       window.removeEventListener('blur', resized)
     }
-  }, [open, close])
+  }, [open, placement, close])
 
   // Keep the active option in view as the keys move through a long list.
   useLayoutEffect(() => {

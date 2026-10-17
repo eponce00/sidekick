@@ -116,4 +116,21 @@ describe('Select', () => {
     })
     expect(list()).toBeNull()
   })
+
+  it('stays open through a late scroll event, and closes once the page really scrolls', async () => {
+    const trigger = await render('apple')
+    let top = 100
+    trigger.getBoundingClientRect = () => new DOMRect(20, top, 120, 28)
+    await act(async () => trigger.click())
+    // The scroll that brought the button into view reports only after the list opened.
+    await act(async () => {
+      document.body.dispatchEvent(new Event('scroll'))
+    })
+    expect(list()).not.toBeNull()
+    top = 60
+    await act(async () => {
+      document.body.dispatchEvent(new Event('scroll'))
+    })
+    expect(list()).toBeNull()
+  })
 })
