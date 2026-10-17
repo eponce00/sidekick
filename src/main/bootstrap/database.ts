@@ -449,8 +449,54 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
       ensureRequiredColumns(db)
       db.exec("UPDATE conversations SET started_by_kind = 'schedule' WHERE schedule_id IS NOT NULL")
     }
+  },
+  {
+    id: '20261020_001_detached_worktrees',
+    description: 'let a managed worktree start detached, with no branch of its own',
+    contentId: 'v1|rebuild-managed-worktrees-with-nullable-branch',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      allowDetachedWorktrees(db)
+    }
   }
 ]
+
+/**
+ * SQLite cannot drop a NOT NULL constraint in place, so the table is rebuilt with every row kept.
+ * A fresh database already has the nullable column and is left alone.
+ */
+function allowDetachedWorktrees(db: Database.Database): void {
+  const branch = (
+    db.prepare('PRAGMA table_info(managed_worktrees)').all() as Array<{
+      name: string
+      notnull: number
+    }>
+  ).find(({ name }) => name === 'branch')
+  if (!branch?.notnull) return
+  db.exec(`
+    CREATE TABLE managed_worktrees_detachable (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL UNIQUE,
+      source_project_id TEXT NOT NULL,
+      repository_root TEXT NOT NULL,
+      worktree_root TEXT NOT NULL UNIQUE,
+      branch TEXT UNIQUE,
+      base_ref TEXT,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL
+    );
+    INSERT INTO managed_worktrees_detachable
+      (id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
+       created_at, last_used_at)
+      SELECT id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
+             created_at, last_used_at
+      FROM managed_worktrees;
+    DROP TABLE managed_worktrees;
+    ALTER TABLE managed_worktrees_detachable RENAME TO managed_worktrees;
+    CREATE INDEX IF NOT EXISTS idx_managed_worktrees_age
+      ON managed_worktrees(last_used_at ASC, created_at ASC);
+  `)
+}
 
 function migrationChecksum(migration: SchemaMigration): string {
   return createHash('sha256')
@@ -601,7 +647,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       source_project_id TEXT NOT NULL,
       repository_root TEXT NOT NULL,
       worktree_root TEXT NOT NULL UNIQUE,
-      branch TEXT NOT NULL UNIQUE,
+      branch TEXT UNIQUE,
       base_ref TEXT,
       created_at INTEGER NOT NULL,
       last_used_at INTEGER NOT NULL

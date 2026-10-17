@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from 'react'
 import { ArrowDown, ArrowUp, FolderOpen, GitBranch, Settings2 } from 'lucide-react'
-import type {
-  ManagedWorktreeSummary,
-  WorkInChoice,
-  WorktreeBranchOptions
+import {
+  worktreeBranchLabel,
+  type ManagedWorktreeSummary,
+  type WorkInChoice,
+  type WorktreeBranchOptions
 } from '../../../shared/worktrees'
 import './Worktrees.css'
 
@@ -15,7 +16,6 @@ interface WorkspaceBarProps {
   canChoose: boolean
   workIn: WorkInChoice
   branchName: string
-  branchPlaceholder: string
   baseRef: string
   disabled?: boolean
   error?: string | null
@@ -35,7 +35,6 @@ export function WorkspaceBar({
   canChoose,
   workIn,
   branchName,
-  branchPlaceholder,
   baseRef,
   disabled,
   error,
@@ -72,10 +71,13 @@ export function WorkspaceBar({
         <div className="workspace-bar" role="status" aria-label="Where this chat works">
           <GitBranch size={14} className="workspace-bar-icon" aria-hidden="true" />
           <span className="workspace-bar-branch" title={worktree.worktreeRoot}>
-            {worktree.branch}
+            {worktreeBranchLabel(worktree)}
           </span>
           <span className="workspace-bar-muted">
-            worktree{worktree.baseRef ? ` from ${worktree.baseRef}` : ''}
+            {/* A detached worktree's label already names its base. */}
+            {(worktree.status?.currentBranch ?? worktree.branch) && worktree.baseRef
+              ? `worktree from ${worktree.baseRef}`
+              : 'worktree'}
           </span>
           {status && (status.ahead || status.behind) ? (
             <span
@@ -136,19 +138,6 @@ export function WorkspaceBar({
         </div>
         {effectiveChoice === 'worktree' && (
           <>
-            <label className="workspace-bar-field" htmlFor={branchId}>
-              <GitBranch size={12} className="workspace-bar-muted" aria-hidden="true" />
-              <input
-                id={branchId}
-                aria-label="Branch name"
-                value={branchName}
-                placeholder={branchPlaceholder}
-                spellCheck={false}
-                disabled={disabled}
-                onChange={(event) => onBranchNameChange(event.target.value)}
-                title="Branch name. Leave empty to name it from your first message."
-              />
-            </label>
             <label className="workspace-bar-field is-base" htmlFor={baseId}>
               <span className="workspace-bar-muted">from</span>
               <select
@@ -167,6 +156,21 @@ export function WorkspaceBar({
                     </option>
                   ))}
               </select>
+            </label>
+            {/* Optional: without a name the worktree is a detached copy of the base, and the agent
+                creates a branch when the work needs one. */}
+            <label className="workspace-bar-field" htmlFor={branchId}>
+              <GitBranch size={12} className="workspace-bar-muted" aria-hidden="true" />
+              <input
+                id={branchId}
+                aria-label="New branch (optional)"
+                value={branchName}
+                placeholder="New branch (optional)"
+                spellCheck={false}
+                disabled={disabled}
+                onChange={(event) => onBranchNameChange(event.target.value)}
+                title="Leave empty to work on a copy of the base with no branch of its own. The agent can create a branch when the work needs one."
+              />
             </label>
           </>
         )}

@@ -3,8 +3,6 @@ import type { Project, ProjectConversation } from './projects'
 /** Where a new project chat does its work before its first message. */
 export type WorkInChoice = 'folder' | 'worktree'
 
-export const WORKTREE_BRANCH_PREFIX = 'sidekick/'
-
 export interface ManagedWorktreeOwner {
   kind: 'chat'
   id: string
@@ -36,7 +34,8 @@ export interface ManagedWorktreeSummary {
   worktreeRoot: string
   sourceProjectId: string
   sourceProjectName: string | null
-  branch: string
+  /** The branch SideKick created for it; null when it started detached at its base. */
+  branch: string | null
   /** The branch or commit this worktree started from; null for worktrees from before bases were recorded. */
   baseRef: string | null
   createdAt: number
@@ -49,13 +48,16 @@ export interface ManagedWorktreeSummary {
 
 export interface ManagedWorktreeGitStatus {
   currentBranch: string | null
-  /** Commits on the branch that its base does not have. */
+  /** Commits in the worktree that its base does not have. */
   ahead: number | null
-  /** Commits on the base that the branch does not have. */
+  /** Commits on the base that the worktree does not have. */
   behind: number | null
   /** Uncommitted entries reported by `git status --porcelain`, untracked files included. */
   changedFiles: number
-  /** The branch is fully contained in its base or in the source checkout's HEAD. */
+  /**
+   * Removing it loses no commits: they are all in its base or the source checkout's HEAD, or, for
+   * a detached worktree, on some branch.
+   */
   merged: boolean
 }
 
@@ -78,7 +80,10 @@ export interface WorktreeBranchOptions {
 
 export interface CreateConversationWorktreeInput {
   conversationId: string
-  /** Full branch name; defaults to `sidekick/<chat-slug>`. */
+  /**
+   * A branch to create for the worktree. Without one it starts detached at its base, and the agent
+   * or the user creates a branch when the work needs one.
+   */
   branchName?: string
   /** Branch or commit to start from; defaults to the source checkout's HEAD. */
   baseRef?: string
@@ -147,6 +152,20 @@ export function workspaceBusyDisplayMessage(message: string): string {
   return (index < 0 ? message : message.slice(0, index)).trim()
 }
 
+/**
+ * What a worktree is on, for display: the branch checked out in it now (one the agent made, too),
+ * else the branch SideKick created, else the base it is a detached copy of.
+ */
+export function worktreeBranchLabel(
+  worktree: Pick<ManagedWorktreeSummary, 'branch' | 'baseRef' | 'status'>
+): string {
+  const branch = worktree.status?.currentBranch ?? worktree.branch
+  if (branch) return branch
+  const base = worktree.baseRef
+  const shortBase = base && /^[0-9a-f]{40}$/.test(base) ? base.slice(0, 7) : base
+  return shortBase ? `detached from ${shortBase}` : 'detached'
+}
+
 export function worktreeSlug(title: string): string {
   const slug = title
     .toLowerCase()
@@ -157,10 +176,6 @@ export function worktreeSlug(title: string): string {
   const cut = slug.slice(0, 33)
   const boundary = cut.lastIndexOf('-')
   return (boundary > 8 ? cut.slice(0, boundary) : slug.slice(0, 32)).replace(/-$/, '')
-}
-
-export function suggestWorktreeBranch(title: string): string {
-  return `${WORKTREE_BRANCH_PREFIX}${worktreeSlug(title)}`
 }
 
 /**

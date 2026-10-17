@@ -118,18 +118,21 @@ appears in the sidebar as its own project named after the original project and t
 #### Starting a chat in a worktree
 
 Before the first message of a project chat, the bar above the composer offers **Work in: This
-folder** or **New worktree**. With a new worktree you can name the branch (by default
-`sidekick/` followed by words from your first message, with a number added if that branch exists)
-and choose the branch to start from (by default the branch the project folder is on). Sending the
-first message creates the worktree, moves the chat into it and then starts the agent. SideKick
+folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
+or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
+be checked out in only one folder, and the project folder already has it. The agent creates a
+branch when the work needs one, for example to commit or open a pull request. To start on a branch
+of your own instead, type its name in **New branch (optional)**. Sending the first message creates
+the worktree, moves the chat into it and then starts the agent. SideKick
 remembers your last choice for the next new chat. Worktrees need a project inside a Git
 repository; for other folders only **This folder** is offered.
 
 A chat that already has messages keeps its folder. To move its work aside, fork it into a new
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
-Once a chat works in a worktree, the bar shows its branch, the branch it started from, and how many
-commits it is ahead of and behind that base.
+Once a chat works in a worktree, the bar shows its branch, or "detached from main" until it has
+one, and how many commits it is ahead of and behind its base. Removing a worktree whose commits are
+on no branch asks first, since those commits would be lost; a branch made inside it keeps them.
 
 #### When another agent is already working in the folder
 

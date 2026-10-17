@@ -31,11 +31,11 @@ What happens next depends on the [permission mode](PERMISSIONS.md):
 
 Where a worker works:
 
-| Choice                     | Meaning                                                                                       |
-| -------------------------- | --------------------------------------------------------------------------------------------- |
-| **New worktree** (default) | Its own managed worktree and branch, so its edits never mix with other chats' edits.          |
-| **This folder, shared**    | The manager's folder. Choosing it is the decision to share the folder with the other writers. |
-| **This folder, read-only** | The manager's folder, without tools that edit files, run commands, or use the browser.        |
+| Choice                     | Meaning                                                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **New worktree** (default) | Its own managed worktree, starting from the base without a branch of its own, so its edits never mix with other chats' edits. It creates a branch when its work needs one. |
+| **This folder, shared**    | The manager's folder. Choosing it is the decision to share the folder with the other writers.                                                                              |
+| **This folder, read-only** | The manager's folder, without tools that edit files, run commands, or use the browser.                                                                                     |
 
 Worktrees are managed as described in [Projects](PROJECTS.md). For work you did not ask for, the
 agent suggests a chat instead of starting it: a dashed card with **Start** and **Dismiss**.

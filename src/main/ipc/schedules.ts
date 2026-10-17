@@ -69,7 +69,10 @@ export function registerScheduleHandlers(): void {
         create: async (projectId, title) => {
           const worktrees = getManagedWorktrees()
           const project = await worktrees.create(projectId, title)
-          return { projectId: project.id, branch: worktrees.branchForProject(project.id) ?? '' }
+          return {
+            projectId: project.id,
+            location: worktrees.locationForProject(project.id) ?? 'from the project'
+          }
         },
         discard: (projectId) => getManagedWorktrees().discardFreshProject(projectId)
       }

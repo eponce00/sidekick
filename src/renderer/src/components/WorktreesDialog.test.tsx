@@ -150,7 +150,6 @@ describe('worktree UI', () => {
           canChoose={false}
           workIn="folder"
           branchName=""
-          branchPlaceholder=""
           baseRef=""
           onWorkInChange={vi.fn()}
           onBranchNameChange={vi.fn()}
@@ -163,6 +162,31 @@ describe('worktree UI', () => {
     expect(container.textContent).toContain('worktree from main')
   })
 
+  it('names a detached worktree by the base it copies', async () => {
+    await act(async () => {
+      root.render(
+        <WorkspaceBar
+          projectId="project-wt-1"
+          worktree={{
+            ...changed,
+            branch: null,
+            status: changed.status && { ...changed.status, currentBranch: null }
+          }}
+          canChoose={false}
+          workIn="folder"
+          branchName=""
+          baseRef=""
+          onWorkInChange={vi.fn()}
+          onBranchNameChange={vi.fn()}
+          onBaseRefChange={vi.fn()}
+          onManageWorktrees={vi.fn()}
+        />
+      )
+    })
+    expect(container.querySelector('.workspace-bar-branch')?.textContent).toBe('detached from main')
+    expect(container.querySelector('.workspace-bar-muted')?.textContent).toBe('worktree')
+  })
+
   it('lets a new project chat choose a worktree and its base', async () => {
     const onWorkInChange = vi.fn()
     await act(async () => {
@@ -173,7 +197,6 @@ describe('worktree UI', () => {
           canChoose
           workIn="worktree"
           branchName=""
-          branchPlaceholder="sidekick/fix-it"
           baseRef=""
           onWorkInChange={onWorkInChange}
           onBranchNameChange={vi.fn()}
@@ -183,7 +206,8 @@ describe('worktree UI', () => {
       )
     })
     expect(api.branchOptions).toHaveBeenCalledWith('p')
-    expect(container.querySelector('input')?.placeholder).toBe('sidekick/fix-it')
+    // The branch is optional and never named from the message.
+    expect(container.querySelector('input')?.placeholder).toBe('New branch (optional)')
     const options = [...container.querySelectorAll('option')].map((option) => option.textContent)
     expect(options).toEqual(['main', 'release'])
     await act(async () => button(container, 'This folder').click())
@@ -205,7 +229,6 @@ describe('worktree UI', () => {
           canChoose
           workIn="worktree"
           branchName=""
-          branchPlaceholder=""
           baseRef=""
           onWorkInChange={vi.fn()}
           onBranchNameChange={vi.fn()}

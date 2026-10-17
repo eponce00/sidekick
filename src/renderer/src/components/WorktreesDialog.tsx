@@ -14,10 +14,11 @@ import {
   X
 } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
-import type {
-  ManagedWorktreeDiskUsage,
-  ManagedWorktreeSummary,
-  WorktreeRemovalBlocker
+import {
+  worktreeBranchLabel,
+  type ManagedWorktreeDiskUsage,
+  type ManagedWorktreeSummary,
+  type WorktreeRemovalBlocker
 } from '../../../shared/worktrees'
 import './ForkConversationDialog.css'
 import './Worktrees.css'
@@ -256,7 +257,7 @@ export function WorktreesDialog({
                   <div className="worktrees-row-head">
                     <GitBranch size={15} className="workspace-bar-icon" aria-hidden="true" />
                     <span className="workspace-bar-branch" title={worktree.worktreeRoot}>
-                      {worktree.branch}
+                      {worktreeBranchLabel(worktree)}
                     </span>
                     <span className="workspace-bar-muted">
                       {worktree.sourceProjectName ?? 'Removed project'}
@@ -268,11 +269,11 @@ export function WorktreesDialog({
                   <div className="worktrees-facts">
                     {status ? (
                       <>
-                        <span title={`Commits ${worktree.branch} has that its base does not`}>
+                        <span title="Commits in this worktree that its base does not have">
                           <ArrowUp size={12} aria-hidden="true" />
                           {status.ahead ?? '?'} ahead
                         </span>
-                        <span title="Commits on the base that this branch does not have">
+                        <span title="Commits on the base that this worktree does not have">
                           <ArrowDown size={12} aria-hidden="true" />
                           {status.behind ?? '?'} behind
                         </span>
@@ -333,7 +334,7 @@ export function WorktreesDialog({
                           <li key={blocker.code}>{blocker.message}</li>
                         ))}
                       </ul>
-                      {unmerged && (
+                      {unmerged && worktree.branch && (
                         <label className="worktrees-checkbox">
                           <input
                             type="checkbox"
@@ -402,7 +403,7 @@ export function WorktreesDialog({
                           title={
                             running
                               ? 'Wait for the agent to finish'
-                              : `Merge ${worktree.baseRef ?? 'the base'} into ${worktree.branch}`
+                              : `Merge ${worktree.baseRef ?? 'the base'} into ${worktree.branch ?? 'this worktree'}`
                           }
                           onClick={() => void sync(worktree)}
                         >

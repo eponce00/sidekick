@@ -13,7 +13,7 @@ import {
   type SessionMessage,
   type SessionState
 } from '../../../shared/sessions'
-import type { ManagedWorktreeSummary } from '../../../shared/worktrees'
+import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../shared/worktrees'
 import { memberName } from '../hooks/useSessionFamily'
 import { sessionStateLabel } from '../utils/sessionLabels'
 import { SessionStateDot } from './SessionChip'
@@ -40,7 +40,7 @@ export function WorkerChatHeader({
   onOpenChat: (conversationId: string) => void
   onStop: () => void | Promise<void>
 }): React.JSX.Element {
-  const branch = worktree?.branch
+  const branch = worktree ? worktreeBranchLabel(worktree) : undefined
   return (
     <header className="worker-header">
       <div className="worker-header-main">

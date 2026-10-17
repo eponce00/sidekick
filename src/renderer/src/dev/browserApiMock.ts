@@ -427,7 +427,9 @@ const previewWorktreesApi: WorktreesAPI = {
     return {
       removed: true,
       blockers: [],
-      ...(worktree.status?.merged || deleteBranch ? {} : { keptBranch: worktree.branch }),
+      ...(worktree.status?.merged || deleteBranch || !worktree.branch
+        ? {}
+        : { keptBranch: worktree.branch }),
       detachedConversationIds: worktree.owners.map(({ id: ownerId }) => ownerId)
     }
   },

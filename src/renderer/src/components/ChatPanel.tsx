@@ -83,7 +83,6 @@ import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDi
 import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
 import type { ComposerDraft } from '../services/composerDrafts'
 import {
-  suggestWorktreeBranch,
   workspaceBusyDisplayMessage,
   type ManagedWorktreeSummary,
   type WorkInChoice,
@@ -1038,10 +1037,9 @@ function ChatPanel({
 
   const startInWorktree = async (targetConversationId: string): Promise<void> => {
     if (!onStartInWorktree) throw new Error('Worktrees are not available here')
+    // No name, no branch: the worktree starts detached at its base.
     await onStartInWorktree(targetConversationId, {
-      branchName:
-        worktreeBranch.trim() ||
-        suggestWorktreeBranch(createFallbackConversationTitle(inputValue || 'New chat')),
+      ...(worktreeBranch.trim() ? { branchName: worktreeBranch.trim() } : {}),
       ...(worktreeBase ? { baseRef: worktreeBase } : {})
     })
   }
@@ -1597,11 +1595,6 @@ function ChatPanel({
         canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
         workIn={workIn}
         branchName={worktreeBranch}
-        branchPlaceholder={
-          inputValue.trim()
-            ? suggestWorktreeBranch(createFallbackConversationTitle(inputValue))
-            : 'Named from your first message'
-        }
         baseRef={worktreeBase}
         error={workspaceError}
         onWorkInChange={(choice) => {

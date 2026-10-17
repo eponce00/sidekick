@@ -1,15 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   parseWorkspaceBusyMessage,
-  suggestWorktreeBranch,
   workspaceBusyMessage,
   worktreeBranchProblem,
   worktreeSlug
 } from './worktrees'
 
 describe('worktree names', () => {
-  it('names a branch from a chat title, cutting long titles at a word boundary', () => {
-    expect(suggestWorktreeBranch('Fix the cards!')).toBe('sidekick/fix-the-cards')
+  it('names a worktree folder from a chat title, cutting long titles at a word boundary', () => {
+    expect(worktreeSlug('Fix the cards!')).toBe('fix-the-cards')
     expect(worktreeSlug('Add keyboard shortcuts to the sidebar please')).toBe(
       'add-keyboard-shortcuts-to-the'
     )

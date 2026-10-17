@@ -338,6 +338,57 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('lets an installed database record worktrees with no branch, keeping existing ones', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-detached-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk
+        .prepare("DELETE FROM schema_migrations WHERE id = '20261020_001_detached_worktrees'")
+        .run()
+      // The table as 0.14.0 created it: every worktree had to have a branch.
+      disk.exec(`
+        DROP TABLE managed_worktrees;
+        CREATE TABLE managed_worktrees (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL UNIQUE,
+          source_project_id TEXT NOT NULL,
+          repository_root TEXT NOT NULL,
+          worktree_root TEXT NOT NULL UNIQUE,
+          branch TEXT NOT NULL UNIQUE,
+          base_ref TEXT,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL
+        );
+        INSERT INTO managed_worktrees VALUES
+          ('kept', 'p-kept', 'p-source', '/repo', '/wt/kept', 'sidekick/kept', 'main', 1, 2);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(disk.prepare('SELECT id, branch, base_ref FROM managed_worktrees').all()).toEqual([
+        { id: 'kept', branch: 'sidekick/kept', base_ref: 'main' }
+      ])
+      const insert = disk.prepare(
+        `INSERT INTO managed_worktrees
+         (id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
+          created_at, last_used_at) VALUES (?, ?, 'p-source', '/repo', ?, NULL, 'main', 3, 3)`
+      )
+      // Two detached worktrees at once: the unique branch rule ignores missing branches.
+      insert.run('a', 'p-a', '/wt/a')
+      insert.run('b', 'p-b', '/wt/b')
+      expect(
+        disk
+          .prepare("SELECT name FROM sqlite_master WHERE name = 'idx_managed_worktrees_age'")
+          .get()
+      ).toEqual({ name: 'idx_managed_worktrees_age' })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rolls back the entire schema upgrade when a later migration fails, then retries cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-fault-'))
     let disk: Database.Database | undefined
@@ -364,7 +415,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 14
+        count: 15
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -497,7 +548,8 @@ describe('database schema migrations', () => {
       { id: '20261016_002_worktree_base_ref', checksum_length: 64 },
       { id: '20261016_003_sessions', checksum_length: 64 },
       { id: '20261016_004_group_chats_to_chats', checksum_length: 64 },
-      { id: '20261018_001_schedule_starters', checksum_length: 64 }
+      { id: '20261018_001_schedule_starters', checksum_length: 64 },
+      { id: '20261020_001_detached_worktrees', checksum_length: 64 }
     ])
     expect(
       db

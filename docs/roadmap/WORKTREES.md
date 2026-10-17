@@ -46,7 +46,9 @@ removal. The renderer only asks for those operations by identity; it never passe
 - **Storage and identity.** Worktrees live in SideKick's private data folder,
   `worktrees/<source project id>/<name>`, outside the user's checkout so editors, file watchers and
   `git status` in the original folder never see them. Each is a SideKick project linked to its
-  source project, with a branch (default `sidekick/<chat-slug>`) and the base it was created from.
+  source project, with the base it was created from. It starts detached at that base (Codex,
+  OpenCode), since the base branch is usually checked out in the project folder already; a branch
+  is created only when the user names one, and otherwise by the agent when the work needs it.
 - **Work in.** A new project chat chooses "This folder" or "New worktree" before its first message.
   The choice is remembered as the default. A fresh chat (no messages yet) is moved into its new
   worktree; a chat with history forks into one instead, so its history never points at the wrong
@@ -88,8 +90,8 @@ a worktree's last chat is deleted. Still open:
   and back, instead of forking without the uncommitted files.
 - **Merge back.** Merging or opening a pull request from a worktree, and then removing it, is left
   to the user or the agent; a one-click flow would pair with the Git status bar.
-- **Settings.** The branch prefix (`sidekick/`), the worktree limit (20) and the storage folder are
-  fixed. Claude Code and Codex make them configurable.
+- **Settings.** The worktree limit (20) and the storage folder are fixed. Claude Code and Codex
+  make them configurable.
 - **Per-worktree environment** (Conductor): pass the worktree path, name and a free port range to
   setup hooks so parallel dev servers do not collide.
 - **Concurrent writes inside one worktree.** "Work here anyway" relies on the transactional mutation

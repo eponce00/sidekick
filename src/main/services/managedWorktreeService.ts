@@ -6,7 +6,6 @@ import { promisify } from 'util'
 import type Database from 'better-sqlite3'
 import type { Project, ProjectConversation } from '../../shared/projects'
 import {
-  suggestWorktreeBranch,
   worktreeBranchProblem,
   worktreeSlug,
   type CreateConversationWorktreeInput,
@@ -36,7 +35,8 @@ interface ManagedWorktreeRow {
   source_project_id: string
   repository_root: string
   worktree_root: string
-  branch: string
+  /** The branch SideKick created for it; null when it started detached at its base. */
+  branch: string | null
   base_ref: string | null
   created_at: number
   last_used_at: number
@@ -95,6 +95,12 @@ function errorText(error: unknown): string {
 /** A branch or commit given by the user, never an option Git could misread. */
 function validRef(ref: string): boolean {
   return /^[A-Za-z0-9._/@^~-]{1,200}$/.test(ref) && !ref.startsWith('-')
+}
+
+/** A branch name as it is, a commit as its short form. */
+function shortRef(ref: string | null): string {
+  if (!ref) return 'its start'
+  return /^[0-9a-f]{40}$/.test(ref) ? ref.slice(0, 7) : ref
 }
 
 const blocker = (
@@ -214,6 +220,13 @@ export class ManagedWorktreeService {
     return this.rowForProject(projectId)?.branch ?? null
   }
 
+  /** Where a worktree started, for messages: its branch, or the base it is a detached copy of. */
+  locationForProject(projectId: string): string | null {
+    const row = this.rowForProject(projectId)
+    if (!row) return null
+    return row.branch ? `on ${row.branch}` : `detached from ${shortRef(row.base_ref)}`
+  }
+
   isManagedProject(projectId: string): boolean {
     return Boolean(this.rowForProject(projectId))
   }
@@ -264,10 +277,12 @@ export class ManagedWorktreeService {
     target: string
   ): Promise<ManagedWorktreeGitStatus | null> {
     try {
-      const [currentBranch, porcelain] = await Promise.all([
+      const [currentBranch, porcelain, head] = await Promise.all([
         git(target, ['branch', '--show-current']),
-        git(target, ['status', '--porcelain'])
+        git(target, ['status', '--porcelain']),
+        git(target, ['rev-parse', 'HEAD'])
       ])
+      // Compared by commit, so a worktree reads the same with or without a branch of its own.
       const base = row.base_ref ?? 'HEAD'
       let ahead: number | null = null
       let behind: number | null = null
@@ -276,7 +291,7 @@ export class ManagedWorktreeService {
           'rev-list',
           '--left-right',
           '--count',
-          `${base}...${row.branch}`
+          `${base}...${head}`
         ])
         const [left, right] = counts.split(/\s+/).map(Number)
         behind = Number.isFinite(left) ? left : null
@@ -284,20 +299,23 @@ export class ManagedWorktreeService {
       } catch {
         // A deleted base still lets the rest of the status load.
       }
-      const merged =
-        (await gitSucceeds(row.repository_root, [
-          'merge-base',
-          '--is-ancestor',
-          row.branch,
-          base
-        ])) ||
+      const inBase =
+        (await gitSucceeds(row.repository_root, ['merge-base', '--is-ancestor', head, base])) ||
         (base !== 'HEAD' &&
-          (await gitSucceeds(row.repository_root, [
-            'merge-base',
-            '--is-ancestor',
-            row.branch,
-            'HEAD'
-          ])))
+          (await gitSucceeds(row.repository_root, ['merge-base', '--is-ancestor', head, 'HEAD'])))
+      // A detached worktree loses only commits that no branch holds; a branch made inside it
+      // later, by the agent or by hand, keeps its commits after the worktree goes.
+      const merged =
+        inBase ||
+        (!row.branch &&
+          (await git(row.repository_root, [
+            'rev-list',
+            '--count',
+            head,
+            '--not',
+            '--branches',
+            '--remotes'
+          ]).catch(() => '1')) === '0')
       return {
         currentBranch: currentBranch || null,
         ahead,
@@ -352,7 +370,8 @@ export class ManagedWorktreeService {
       blockers.push(blocker('unmanaged', 'Git could not read this worktree.', false))
       return { row, owners, status, blockers, managedTarget: null }
     }
-    if (status.currentBranch !== row.branch)
+    // A detached worktree may gain a branch later; only a branch SideKick made must stay checked out.
+    if (row.branch && status.currentBranch !== row.branch)
       blockers.push(
         blocker(
           'unmanaged',
@@ -381,7 +400,9 @@ export class ManagedWorktreeService {
       blockers.push(
         blocker(
           'unmerged',
-          `${row.branch} has ${status.ahead ?? 'some'} ${status.ahead === 1 ? 'commit' : 'commits'} that ${row.base_ref ?? 'the source checkout'} does not. The branch is kept unless you also delete it.`,
+          row.branch
+            ? `${row.branch} has ${status.ahead ?? 'some'} ${status.ahead === 1 ? 'commit' : 'commits'} that ${row.base_ref ?? 'the source checkout'} does not. The branch is kept unless you also delete it.`
+            : 'It has commits on no branch, which removing would lose. Create a branch in it to keep them.',
           true
         )
       )
@@ -491,29 +512,23 @@ export class ManagedWorktreeService {
     return gitSucceeds(repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
   }
 
-  /** A name the user typed must be free; a suggested one gets a numeric suffix instead. */
-  private async resolveBranchName(
-    repositoryRoot: string,
-    requested: string,
-    suggested: boolean
-  ): Promise<string> {
+  /** A branch name someone asked for must be valid and not taken. */
+  private async resolveBranchName(repositoryRoot: string, requested: string): Promise<string> {
     const problem = worktreeBranchProblem(requested)
     if (problem) throw new Error(problem)
-    const base = requested.trim()
-    if (!(await gitSucceeds(repositoryRoot, ['check-ref-format', '--branch', base])))
+    const name = requested.trim()
+    if (!(await gitSucceeds(repositoryRoot, ['check-ref-format', '--branch', name])))
       throw new Error('That is not a valid Git branch name')
-    if (!(await this.branchExists(repositoryRoot, base))) return base
-    if (!suggested) throw new Error(`A branch named ${base} already exists`)
-    for (let suffix = 2; suffix < 100; suffix++) {
-      const candidate = `${base}-${suffix}`
-      if (!(await this.branchExists(repositoryRoot, candidate))) return candidate
-    }
-    throw new Error(`Could not find a free branch name like ${base}`)
+    if (await this.branchExists(repositoryRoot, name))
+      throw new Error(`A branch named ${name} already exists`)
+    return name
   }
 
   /**
-   * Creates a SideKick worktree for a project. A project that is itself a SideKick worktree
-   * starts its new worktree from its own branch but is stored under its source project.
+   * Creates a SideKick worktree for a project. Without a branch name it starts detached at its
+   * base, as Codex and OpenCode do: the base branch stays checked out where it is, and the agent
+   * or the user creates a branch only when the work needs one. A project that is itself a
+   * SideKick worktree starts its new worktree from its own commit but is stored under its source.
    */
   async create(
     sourceProjectId: string,
@@ -570,12 +585,11 @@ export class ManagedWorktreeService {
     }
 
     const id = randomUUID()
-    const branch = await this.resolveBranchName(
-      repositoryRoot,
-      options.branchName ?? suggestWorktreeBranch(conversationTitle),
-      options.branchName === undefined
-    )
-    const name = `${worktreeSlug(branch.split('/').at(-1) ?? branch)}-${id.slice(0, 8)}`
+    const branch = options.branchName?.trim()
+      ? await this.resolveBranchName(repositoryRoot, options.branchName)
+      : null
+    const folderLabel = branch ? (branch.split('/').at(-1) ?? branch) : conversationTitle
+    const name = `${worktreeSlug(folderLabel)}-${id.slice(0, 8)}`
     const worktreeRoot = join(this.storageRoot, rootProjectId, name)
     const projectFolder = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
     await fs.mkdir(join(this.storageRoot, rootProjectId), { recursive: true })
@@ -594,9 +608,17 @@ export class ManagedWorktreeService {
     let created = false
 
     try {
-      await git(repositoryRoot, ['worktree', 'add', '-b', branch, worktreeRoot, baseRef])
+      await git(
+        repositoryRoot,
+        branch
+          ? ['worktree', 'add', '-b', branch, worktreeRoot, baseRef]
+          : ['worktree', 'add', '--detach', worktreeRoot, baseRef]
+      )
       created = true
-      const project = this.projects.create(projectFolder, `${source.name} · ${branch}`)
+      const project = this.projects.create(
+        projectFolder,
+        `${source.name} · ${branch ?? `from ${shortRef(baseRef)}`}`
+      )
       const now = Date.now()
       this.db
         .prepare(
@@ -613,7 +635,7 @@ export class ManagedWorktreeService {
       if (created) {
         try {
           await git(repositoryRoot, ['worktree', 'remove', worktreeRoot])
-          await git(repositoryRoot, ['branch', '-d', branch])
+          if (branch) await git(repositoryRoot, ['branch', '-d', branch])
         } catch {
           /* Preserve files and refs for manual recovery. */
         }
@@ -721,16 +743,20 @@ export class ManagedWorktreeService {
         ])
       }
 
+      // Only a branch SideKick created is its to delete; a detached worktree has none.
       let keptBranch: string | undefined
+      const branch = row.branch
       const merged = assessment.status?.merged ?? false
-      if (merged) {
-        await git(row.repository_root, ['branch', '-d', row.branch]).catch(() => {
-          keptBranch = row.branch
+      if (!branch) {
+        // Nothing to delete.
+      } else if (merged) {
+        await git(row.repository_root, ['branch', '-d', branch]).catch(() => {
+          keptBranch = branch
         })
       } else if (options.force && options.deleteBranch && !missing) {
-        await git(row.repository_root, ['branch', '-D', row.branch])
+        await git(row.repository_root, ['branch', '-D', branch])
       } else {
-        keptBranch = row.branch
+        keptBranch = branch
       }
 
       // The files are gone; chats that used them stay as detached chats with their history.
@@ -780,7 +806,10 @@ export class ManagedWorktreeService {
         return { status: 'up-to-date', message: `Already up to date with ${base}.` }
       try {
         await git(target, ['merge', '--no-edit', base])
-        return { status: 'merged', message: `Merged ${base} into ${row.branch}.` }
+        return {
+          status: 'merged',
+          message: `Merged ${base} into ${row.branch ?? 'the worktree'}.`
+        }
       } catch (error) {
         const conflicts = (
           await git(target, ['diff', '--name-only', '--diff-filter=U']).catch(() => '')

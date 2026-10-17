@@ -19,8 +19,8 @@ export interface ScheduledConversationLauncherOptions {
   isRunQueued?: (agentRunId: string) => boolean
   worktrees?: {
     isGitProject: (projectId: string) => Promise<boolean>
-    /** A new worktree project of `projectId` and its branch. */
-    create: (projectId: string, title: string) => Promise<{ projectId: string; branch: string }>
+    /** A new worktree project of `projectId`, and where it starts ("detached from main"). */
+    create: (projectId: string, title: string) => Promise<{ projectId: string; location: string }>
     discard: (projectId: string) => Promise<void>
   }
   now?: () => number
@@ -51,7 +51,7 @@ async function placeScheduledRun(
   const created = await worktrees.create(schedule.projectId, schedule.name)
   return {
     projectId: created.projectId,
-    note: `Started in a new worktree on ${created.branch} because ${who} working in the project folder.`,
+    note: `Started in a new worktree, ${created.location}, because ${who} working in the project folder.`,
     discard: () => worktrees.discard(created.projectId)
   }
 }

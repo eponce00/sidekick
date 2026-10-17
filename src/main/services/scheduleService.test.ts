@@ -86,7 +86,7 @@ function harness(now: number, placement: PlacementFixture = {}): Harness {
            VALUES (?, ?, ?, 1, 1)`
         ).run(id, `demo · sidekick/${title}`, `C:/worktrees/${projectId}/${id}`)
         placement.worktreesCreated.push(id)
-        return { projectId: id, branch: 'sidekick/morning-check' }
+        return { projectId: id, location: 'detached from main' }
       },
       discard: async () => undefined
     },
@@ -464,7 +464,7 @@ describe('ScheduleService and a busy project folder', () => {
     const run = await h.service.runNow(schedule.id)
     expect(run).toMatchObject({ outcome: 'started' })
     expect(run.reason).toBe(
-      'Started in a new worktree on sidekick/morning-check because “Fix the build” was working in the project folder.'
+      'Started in a new worktree, detached from main, because “Fix the build” was working in the project folder.'
     )
     expect(
       h.db
