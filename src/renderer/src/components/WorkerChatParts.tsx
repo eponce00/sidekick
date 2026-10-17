@@ -1,12 +1,5 @@
 import { useId, useState } from 'react'
-import {
-  ArrowLeft,
-  ChevronRight,
-  CircleStop,
-  GitBranch,
-  MessageSquare,
-  Workflow
-} from 'lucide-react'
+import { ArrowLeft, ChevronRight, CircleStop, GitBranch, MessageSquare } from 'lucide-react'
 import {
   sessionIsActive,
   type SessionFamilyMember,
@@ -17,11 +10,12 @@ import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../share
 import { memberName } from '../hooks/useSessionFamily'
 import { sessionStateLabel } from '../utils/sessionLabels'
 import { SessionStateDot } from './SessionChip'
+import { MessageMarkdown } from './MessageMarkdown'
 import './ChatFamily.css'
 
 /**
- * The top of a worker chat: the way back to its manager, what it is called, how it stands, and
- * where it works.
+ * The top of a worker chat, on one line: the way back to its manager, what it is called, how it
+ * stands, and where it works. Where its reports go is in the back button's tooltip.
  */
 export function WorkerChatHeader({
   worker,
@@ -29,6 +23,7 @@ export function WorkerChatHeader({
   state,
   reason,
   worktree,
+  reportsToManager = true,
   onOpenChat,
   onStop
 }: {
@@ -37,95 +32,69 @@ export function WorkerChatHeader({
   state: SessionState
   reason?: string
   worktree?: ManagedWorktreeSummary | null
+  reportsToManager?: boolean
   onOpenChat: (conversationId: string) => void
   onStop: () => void | Promise<void>
 }): React.JSX.Element {
   const branch = worktree ? worktreeBranchLabel(worktree) : undefined
   return (
     <header className="worker-header">
-      <div className="worker-header-main">
-        <nav aria-label="Chat family" className="worker-breadcrumb">
-          <button type="button" onClick={() => onOpenChat(manager.conversationId)}>
-            <ArrowLeft size={13} aria-hidden="true" />
-            {manager.title}
-          </button>
-          <span aria-hidden="true">/</span>
-        </nav>
-        <div className="worker-header-title">
-          <h2>{memberName(worker)}</h2>
-          <span
-            className={`worker-state worker-state-${state}`}
-            title={reason}
-            aria-label={`State: ${sessionStateLabel(state)}${reason ? `. ${reason}` : ''}`}
-          >
-            <SessionStateDot state={state} />
-            {sessionStateLabel(state)}
-          </span>
-        </div>
-        <div className="worker-header-meta">
-          <span className="worker-header-task">{worker.title}</span>
-          {branch && (
-            <span className="worker-header-branch">
-              <GitBranch size={12} aria-hidden="true" />
-              {branch}
-              {worktree?.sourceProjectName && (
-                <span className="family-row-muted">
-                  {' '}
-                  (worktree of {worktree.sourceProjectName})
-                </span>
-              )}
-            </span>
-          )}
-        </div>
-      </div>
-      {sessionIsActive(state) && (
-        <button type="button" className="worker-header-stop" onClick={() => void onStop()}>
-          <CircleStop size={14} aria-hidden="true" /> Stop
-        </button>
-      )}
-    </header>
-  )
-}
-
-/** Says who started this chat, where its reports go, and that typing here reaches only it. */
-export function WorkerBanner({
-  manager,
-  reportsToManager,
-  onOpenChat
-}: {
-  manager: SessionFamilyMember
-  reportsToManager: boolean
-  onOpenChat: (conversationId: string) => void
-}): React.JSX.Element {
-  return (
-    <div className="worker-banner" role="note">
-      <Workflow size={14} aria-hidden="true" />
-      <p>
-        Started by{' '}
+      <nav aria-label="Chat family" className="worker-breadcrumb">
         <button
           type="button"
-          className="family-link"
           onClick={() => onOpenChat(manager.conversationId)}
+          title={`Back to ${manager.title}. ${
+            reportsToManager
+              ? 'This chat sends its last message there when it goes idle; what you type here stays here.'
+              : 'This chat no longer reports there.'
+          }`}
         >
-          {manager.title}
+          <ArrowLeft size={14} aria-hidden="true" />
+          <span>{manager.title}</span>
         </button>
-        .{' '}
-        {reportsToManager
-          ? 'When this chat goes idle, its last message is sent there.'
-          : 'This chat no longer reports there.'}{' '}
-        What you type here goes to this chat only.
-      </p>
-    </div>
+        <ChevronRight size={13} aria-hidden="true" className="worker-breadcrumb-separator" />
+      </nav>
+      <h2 title={worker.title}>{memberName(worker)}</h2>
+      <span
+        className={`worker-state worker-state-${state}`}
+        title={reason}
+        aria-label={`State: ${sessionStateLabel(state)}${reason ? `. ${reason}` : ''}`}
+      >
+        <SessionStateDot state={state} />
+        {sessionStateLabel(state)}
+      </span>
+      {!reportsToManager && <span className="worker-header-detached">Not reporting</span>}
+      <span className="worker-header-end">
+        {branch && (
+          <span
+            className="worker-header-branch"
+            title={
+              worktree?.sourceProjectName ? `Worktree of ${worktree.sourceProjectName}` : undefined
+            }
+          >
+            <GitBranch size={12} aria-hidden="true" />
+            {branch}
+          </span>
+        )}
+        {sessionIsActive(state) && (
+          <button type="button" className="worker-header-stop" onClick={() => void onStop()}>
+            <CircleStop size={13} aria-hidden="true" /> Stop
+          </button>
+        )}
+      </span>
+    </header>
   )
 }
 
 /** A worker's first message, written by its manager: a task, not something the user said. */
 export function BriefCard({
   brief,
-  managerTitle
+  managerTitle,
+  workspaceRoot
 }: {
   brief: SessionMessage
   managerTitle: string
+  workspaceRoot?: string | null
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(true)
   const bodyId = useId()
@@ -149,8 +118,8 @@ export function BriefCard({
         />
       </button>
       {expanded && (
-        <div className="family-brief-body" id={bodyId}>
-          {brief.body}
+        <div className="family-brief-body message-content" id={bodyId}>
+          <MessageMarkdown content={brief.body} workspaceRoot={workspaceRoot} />
         </div>
       )}
     </section>

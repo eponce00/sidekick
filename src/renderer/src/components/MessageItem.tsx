@@ -651,7 +651,7 @@ function AgentWorkDisclosure({
     .filter(Boolean)
     .join(' · ')
   // The time is at the foot of a working reply and in the footer of a finished one.
-  const label = activityLabel || (isLoading ? 'Thinking' : 'Thought process')
+  const label = activityLabel || (segments ? 'Steps' : isLoading ? 'Thinking' : 'Thought process')
   const contentId = `${messageId}-agent-work`
   // The newest step, replaced by the next as the agent works; the whole list is one click away.
   const currentIndex =

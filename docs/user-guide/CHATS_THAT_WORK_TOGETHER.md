@@ -52,9 +52,10 @@ Suggestions expire after a week.
   A strip above the composer counts the workers by state and offers **Stop all**.
 - **Chats tab.** The inspector lists every worker with its state, branch, commits ahead and changed
   files, and buttons to open, message or stop it.
-- **Worker chat.** A breadcrumb leads back to the manager, a banner says who started it and where
-  its reports go, and the brief shows as a card. The **Details** tab shows the whole family, so you
-  can move between its chats.
+- **Worker chat.** One line at the top leads back to the manager and shows the worker's name,
+  state and branch, with **Stop** while it works; pointing at the way back says where its reports
+  go. The brief opens the chat as a card from the manager. The **Details** tab shows the whole
+  family, so you can move between its chats.
 
 ## Messages and reports
 

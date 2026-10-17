@@ -24,11 +24,11 @@ import { loadTerminalSessions } from '../utils/terminalSessionStore'
 import { useConversationGoal } from '../hooks/useConversationGoal'
 import { MessageItem } from './MessageItem'
 import { memberName, memberState, useSessionFamily } from '../hooks/useSessionFamily'
-import { sessionTimeline, type SessionTimelineRow } from '../utils/sessionTimeline'
+import { sessionTimeline, workerBriefIds, type SessionTimelineRow } from '../utils/sessionTimeline'
 import { latestRunTodos } from '../utils/runTodos'
 import { FamilyStrip, ReceivedMessagesRow, StartedChatsRow } from './ManagerChatRows'
 import { SessionTodoList } from './SessionTodoList'
-import { BriefCard, SessionMessageRow, WorkerBanner, WorkerChatHeader } from './WorkerChatParts'
+import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
 import { workerWorkplace } from '../utils/sessionLabels'
 import { WorkerChatContext } from './sessionChatContext'
 import { ChatInput } from './ChatInput'
@@ -1454,8 +1454,6 @@ function ChatPanel({
   //   return undefined
   // }
 
-  const visibleMessages = messages.filter((msg) => !msg.hidden)
-
   // Chats this one started, or the chat that started it, woven into the transcript by time.
   const sessionFamily = useSessionFamily(conversationId)
   const { family: chatFamily, role: familyRole, self: familySelf } = sessionFamily
@@ -1471,6 +1469,17 @@ function ChatPanel({
       ),
     [chatFamily]
   )
+  const briefIds = useMemo(
+    () =>
+      conversationId
+        ? workerBriefIds(conversationId, familyRole, sessionFamily.messages)
+        : new Set<string>(),
+    [familyRole, sessionFamily.messages, conversationId]
+  )
+  const visibleMessages = useMemo(
+    () => messages.filter((msg) => !msg.hidden && !briefIds.has(msg.id)),
+    [messages, briefIds]
+  )
   const familyRows = useMemo(
     () =>
       conversationId
@@ -1478,10 +1487,10 @@ function ChatPanel({
             conversationId,
             familyRole,
             sessionFamily.messages,
-            messages.filter((msg) => !msg.hidden).map((msg) => msg.timestamp)
+            visibleMessages.map((msg) => msg.timestamp)
           )
         : new Map<number, SessionTimelineRow[]>(),
-    [conversationId, familyRole, sessionFamily.messages, messages]
+    [conversationId, familyRole, sessionFamily.messages, visibleMessages]
   )
   const runTodos = useMemo(
     () => (familyRole === 'manager' ? latestRunTodos(messages) : []),
@@ -1517,6 +1526,7 @@ function ChatPanel({
             key={row.key}
             brief={row.message}
             managerTitle={chatFamily?.manager.title ?? 'its manager'}
+            workspaceRoot={workspaceFolder}
           />
         )
       case 'message':
@@ -1646,13 +1656,9 @@ function ChatPanel({
             state={memberState(familySelf, sessionFamily.statuses)}
             reason={sessionFamily.statuses.get(familySelf.conversationId)?.reason}
             worktree={worktree}
-            onOpenChat={openChat}
-            onStop={() => window.api.sessions.stop(familySelf.conversationId)}
-          />
-          <WorkerBanner
-            manager={chatFamily.manager}
             reportsToManager={Boolean(familySelf.reportToConversationId)}
             onOpenChat={openChat}
+            onStop={() => window.api.sessions.stop(familySelf.conversationId)}
           />
         </div>
       )}
