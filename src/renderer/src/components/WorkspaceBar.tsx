@@ -29,8 +29,8 @@ interface WorkspaceBarProps {
 }
 
 /**
- * Says where a chat works: its worktree and branch, or, before the first message of a project
- * chat, a choice between the project folder and a new worktree.
+ * Before the first message of a project chat, the choice between the project folder and a new
+ * worktree. Once the chat works in a worktree, `WorktreeChip` in the composer says so instead.
  */
 export function WorkspaceBar({
   projectId,
@@ -69,36 +69,6 @@ export function WorkspaceBar({
       cancelled = true
     }
   }, [choosing, projectId, onWorktreesAvailableChange])
-
-  if (worktree) {
-    return (
-      <div className="workspace-bar-area">
-        <div className="workspace-bar" role="status" aria-label="Where this chat works">
-          <GitBranch size={14} className="workspace-bar-icon" aria-hidden="true" />
-          <span className="workspace-bar-branch" title={worktree.worktreeRoot}>
-            {worktreeBranchLabel(worktree)}
-          </span>
-          <span className="workspace-bar-muted">
-            {/* A detached worktree's label already names its base. */}
-            {(worktree.status?.currentBranch ?? worktree.branch) && worktree.baseRef
-              ? `worktree from ${worktree.baseRef}`
-              : 'worktree'}
-          </span>
-          {worktree.setAsideAt ? (
-            <span
-              className="workspace-bar-muted"
-              title="SideKick set this worktree aside to keep the number on disk down. It comes back as it was when you send a message."
-            >
-              · set aside until you send
-            </span>
-          ) : null}
-          <button type="button" className="workspace-bar-link" onClick={onManageWorktrees}>
-            Manage
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   // A chat outside any project has no folder to copy, so it picks a project first.
   if (canChoose && !projectId && onChooseProject && projectChoices.length) {
@@ -223,5 +193,32 @@ export function WorkspaceBar({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A quiet mark in the composer for a chat that works in its own worktree: its branch, or the base
+ * it is a copy of. It opens the worktree list.
+ */
+export function WorktreeChip({
+  worktree,
+  onManage
+}: {
+  worktree: ManagedWorktreeSummary
+  onManage: () => void
+}): React.JSX.Element {
+  const label = worktreeBranchLabel(worktree)
+  const state = worktree.setAsideAt ? ' It is set aside and comes back when you send.' : ''
+  return (
+    <button
+      type="button"
+      className="composer-worktree-chip"
+      onClick={onManage}
+      title={`Works in its own worktree, ${label}.${state} ${worktree.folderPath}`}
+      aria-label={`Worktree: ${label}. Manage worktrees`}
+    >
+      <GitBranch size={13} aria-hidden="true" />
+      <span>{label}</span>
+    </button>
   )
 }

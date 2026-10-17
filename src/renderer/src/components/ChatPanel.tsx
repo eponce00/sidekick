@@ -78,7 +78,7 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
-import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
 import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
 import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
 import type { ComposerDraft } from '../services/composerDrafts'
@@ -1718,6 +1718,11 @@ function ChatPanel({
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
         workspaceFolder={workspaceFolder}
+        toolbarExtra={
+          worktree ? (
+            <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />
+          ) : null
+        }
         workspaceMemoryAvailable={workspaceMemoryLoadedFor === workspaceFolder}
         workspaceMemoryUnavailableReason={
           workspaceMemoryLoadedFor === workspaceFolder

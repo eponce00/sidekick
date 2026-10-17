@@ -132,8 +132,8 @@ Every new chat in a project gets the same choice, so two chats never share a wor
 A chat that already has messages keeps its folder. To move its work aside, fork it into a new
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
-Once a chat works in a worktree, the bar shows its branch, or "detached from main" until it has
-one.
+Once a chat works in a worktree, the Work in bar goes away. A small branch label in the
+composer's bottom row shows its branch, or "detached from main" until it has one.
 
 #### Finishing the work
 
@@ -168,8 +168,8 @@ installed dependencies, are not kept, so the agent may need to reinstall them.
 
 #### Managing worktrees
 
-**Manage** in the worktree bar, the settings icon beside **Work in**, or **Manage worktrees** in the
-command palette opens the list. Each row shows the chat, the project and branch, and when it was
+The branch label in the composer, the settings icon beside **Work in**, or **Manage worktrees** in
+the command palette opens the list. Each row shows the chat, the project and branch, and when it was
 last used, marked **Working**, **Set aside**, or with its number of changed files.
 
 - **Open its chat** switches to the chat, or starts one in the worktree.

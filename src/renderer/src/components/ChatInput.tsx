@@ -219,6 +219,8 @@ interface ChatInputProps {
   onModelChange: (modelId: string) => void
   onOpenModelSearch: () => void
   workspaceFolder: string | null
+  /** Shown after the add menu, such as the chat's worktree. */
+  toolbarExtra?: React.ReactNode
   onOpenWorkspace: () => void
   onOpenWorkspaceMemory: () => void
   workspaceMemoryAvailable: boolean
@@ -298,6 +300,7 @@ export function ChatInput({
   onModelChange,
   onOpenModelSearch,
   workspaceFolder,
+  toolbarExtra,
   onOpenWorkspace,
   onOpenWorkspaceMemory,
   workspaceMemoryAvailable,
@@ -1121,6 +1124,7 @@ export function ChatInput({
               </div>
             )}
           </div>
+          {toolbarExtra}
         </>
       }
       toolbarRight={

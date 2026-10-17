@@ -5,7 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedWorktreeSummary, WorktreeBranchOptions } from '../../../shared/worktrees'
 import { WorktreesDialog } from './WorktreesDialog'
-import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -133,7 +133,7 @@ describe('worktree UI', () => {
     expect(labelled(container, 'Remove').disabled).toBe(true)
   })
 
-  it('names the worktree a chat works in', async () => {
+  it('shows no bar once a chat works in a worktree; the composer chip names it', async () => {
     await act(async () => {
       root.render(
         <WorkspaceBar
@@ -148,31 +148,32 @@ describe('worktree UI', () => {
         />
       )
     })
-    expect(container.textContent).toContain('sidekick/cards')
-    expect(container.textContent).toContain('worktree from main')
+    expect(container.querySelector('.workspace-bar')).toBeNull()
+
+    const onManage = vi.fn()
+    await act(async () => root.render(<WorktreeChip worktree={changed} onManage={onManage} />))
+    const chip = container.querySelector<HTMLButtonElement>('.composer-worktree-chip')!
+    expect(chip.textContent).toBe('sidekick/cards')
+    await act(async () => chip.click())
+    expect(onManage).toHaveBeenCalled()
   })
 
   it('names a detached worktree by the base it copies', async () => {
     await act(async () => {
       root.render(
-        <WorkspaceBar
-          projectId="project-wt-1"
+        <WorktreeChip
           worktree={{
             ...changed,
             branch: null,
             status: changed.status && { ...changed.status, currentBranch: null }
           }}
-          canChoose={false}
-          workIn="folder"
-          baseRef=""
-          onWorkInChange={vi.fn()}
-          onBaseRefChange={vi.fn()}
-          onManageWorktrees={vi.fn()}
+          onManage={vi.fn()}
         />
       )
     })
-    expect(container.querySelector('.workspace-bar-branch')?.textContent).toBe('detached from main')
-    expect(container.querySelector('.workspace-bar-muted')?.textContent).toBe('worktree')
+    expect(container.querySelector('.composer-worktree-chip')?.textContent).toBe(
+      'detached from main'
+    )
   })
 
   it('lets a new project chat choose a worktree and its base', async () => {
