@@ -1499,8 +1499,16 @@ The user approved this exact plan revision. Act capabilities are now available a
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
         }
-        const truncatedToolBatch =
-          turn.toolCalls.length > 0 && toolBatchMayBeTruncated(turn.usage.doneReason)
+        // Some servers (LM Studio among them) report a turn the output limit cut off as finished
+        // normally, even `tool_calls`; a turn that used its whole allowance was cut off whatever
+        // the reason says.
+        const hitOutputLimit =
+          toolBatchMayBeTruncated(turn.usage.doneReason) ||
+          Boolean(
+            activeRequest.maxOutputTokens &&
+            turn.usage.completionTokens >= activeRequest.maxOutputTokens
+          )
+        const truncatedToolBatch = turn.toolCalls.length > 0 && hitOutputLimit
         activeContextManager?.observeUsage?.(
           requestMessages,
           toolDefinitions,
@@ -1524,7 +1532,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           !turn.toolCalls.length &&
           !turn.content.trim() &&
           !finalContent.trim() &&
-          toolBatchMayBeTruncated(turn.usage.doneReason)
+          hitOutputLimit
         ) {
           const limit = activeRequest.maxOutputTokens
           throw new Error(
