@@ -1228,14 +1228,16 @@ body[data-theme='light'] .message-user .message-action:hover {
   pointer-events: none;
 }
 
+/* Looks exactly like the same step in the opened list (.thinking-step-toggle), so opening it
+   changes nothing but what is shown. */
 .agent-work-live-thinking {
   display: flex;
   align-items: center;
   gap: 7px;
-  padding: 3px 0;
+  min-height: 22px;
+  padding: 1px 2px;
   color: var(--text-muted);
-  font-size: var(--content-text-secondary);
-  font-style: italic;
+  font-size: var(--text-xs);
 }
 
 .thinking-step-text {
