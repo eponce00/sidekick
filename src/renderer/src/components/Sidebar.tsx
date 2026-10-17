@@ -937,6 +937,99 @@ function Sidebar({
     )
   }
 
+  const moreMenu = (
+    <div className="sidebar-menu-wrap" ref={menuRef}>
+      <button
+        className={`sidebar-icon-btn sidebar-menu-btn ${isMenuOpen ? 'active' : ''}`}
+        onClick={() => setIsMenuOpen((current) => !current)}
+        title="More"
+        aria-label="More"
+        aria-haspopup="menu"
+        aria-expanded={isMenuOpen}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {isMenuOpen && (
+        <div className="sidebar-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setIsMenuOpen(false)
+              onNewConversation(null)
+            }}
+          >
+            <SquarePen size={15} />
+            <span>New chat</span>
+            <kbd>{shortcutLabel('new-chat', platform)}</kbd>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setIsMenuOpen(false)
+              onOpenCommandPalette()
+            }}
+          >
+            <Command size={15} />
+            <span>Command palette</span>
+            <kbd>{shortcutLabel('command-palette', platform)}</kbd>
+          </button>
+          {/* Expanded, these live on their section's heading, and Recent has no Projects heading. */}
+          {(isCollapsed || view === 'recent') && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsMenuOpen(false)
+                onOpenProject()
+              }}
+            >
+              <FolderPlus size={15} />
+              <span>Open project</span>
+              <kbd>{shortcutLabel('open-project', platform)}</kbd>
+            </button>
+          )}
+          {projects.length > 1 && !isCollapsed && view === 'folders' && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setIsMenuOpen(false)
+                setCollapsedProjectIds(
+                  allProjectsCollapsed ? new Set() : new Set(projects.map(({ id }) => id))
+                )
+              }}
+            >
+              {allProjectsCollapsed ? <ChevronsUpDown size={15} /> : <ChevronsDownUp size={15} />}
+              <span>{allProjectsCollapsed ? 'Expand all projects' : 'Collapse all projects'}</span>
+            </button>
+          )}
+          {conversations.length > 0 && !isCollapsed && (
+            <button
+              type="button"
+              role="menuitem"
+              className="danger"
+              disabled={busyConversationIds.size > 0}
+              title={
+                busyConversationIds.size > 0
+                  ? 'Stop active conversations before clearing chat history'
+                  : 'Delete all conversation history'
+              }
+              onClick={() => {
+                setIsMenuOpen(false)
+                setDeleteAllConfirm(true)
+              }}
+            >
+              <Trash2 size={15} />
+              <span>Clear all chats</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
   return (
     <>
       <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
@@ -950,7 +1043,7 @@ function Sidebar({
           </button>
           {!isCollapsed && <span className="sidebar-heading">SideKick</span>}
           <div className="sidebar-header-actions">
-            {onOpenSchedules && (
+            {!isCollapsed && onOpenSchedules && (
               <button
                 type="button"
                 className="sidebar-icon-btn"
@@ -1039,102 +1132,7 @@ function Sidebar({
                 </div>
               </>
             )}
-            <div className="sidebar-menu-wrap" ref={menuRef}>
-              <button
-                className={`sidebar-icon-btn sidebar-menu-btn ${isMenuOpen ? 'active' : ''}`}
-                onClick={() => setIsMenuOpen((current) => !current)}
-                title="More"
-                aria-label="More"
-                aria-haspopup="menu"
-                aria-expanded={isMenuOpen}
-              >
-                <MoreHorizontal size={16} />
-              </button>
-              {isMenuOpen && (
-                <div className="sidebar-menu" role="menu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsMenuOpen(false)
-                      onNewConversation(null)
-                    }}
-                  >
-                    <SquarePen size={15} />
-                    <span>New chat</span>
-                    <kbd>{shortcutLabel('new-chat', platform)}</kbd>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsMenuOpen(false)
-                      onOpenCommandPalette()
-                    }}
-                  >
-                    <Command size={15} />
-                    <span>Command palette</span>
-                    <kbd>{shortcutLabel('command-palette', platform)}</kbd>
-                  </button>
-                  {/* Expanded, these live on their section's heading, and Recent has no Projects heading. */}
-                  {(isCollapsed || view === 'recent') && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsMenuOpen(false)
-                        onOpenProject()
-                      }}
-                    >
-                      <FolderPlus size={15} />
-                      <span>Open project</span>
-                      <kbd>{shortcutLabel('open-project', platform)}</kbd>
-                    </button>
-                  )}
-                  {projects.length > 1 && !isCollapsed && view === 'folders' && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setIsMenuOpen(false)
-                        setCollapsedProjectIds(
-                          allProjectsCollapsed ? new Set() : new Set(projects.map(({ id }) => id))
-                        )
-                      }}
-                    >
-                      {allProjectsCollapsed ? (
-                        <ChevronsUpDown size={15} />
-                      ) : (
-                        <ChevronsDownUp size={15} />
-                      )}
-                      <span>
-                        {allProjectsCollapsed ? 'Expand all projects' : 'Collapse all projects'}
-                      </span>
-                    </button>
-                  )}
-                  {conversations.length > 0 && !isCollapsed && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="danger"
-                      disabled={busyConversationIds.size > 0}
-                      title={
-                        busyConversationIds.size > 0
-                          ? 'Stop active conversations before clearing chat history'
-                          : 'Delete all conversation history'
-                      }
-                      onClick={() => {
-                        setIsMenuOpen(false)
-                        setDeleteAllConfirm(true)
-                      }}
-                    >
-                      <Trash2 size={15} />
-                      <span>Clear all chats</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+            {!isCollapsed && moreMenu}
           </div>
         </div>
 
@@ -1191,6 +1189,20 @@ function Sidebar({
                   <MessageSquare size={16} />
                   <span>{standaloneConversations.length}</span>
                 </button>
+              )}
+              {onOpenSchedules && (
+                <>
+                  {/* Chat lists above, other places below. */}
+                  <span className="collapsed-sidebar-divider" aria-hidden="true" />
+                  <button
+                    type="button"
+                    onClick={onOpenSchedules}
+                    title="Schedules"
+                    aria-label="Schedules"
+                  >
+                    <CalendarClock size={16} />
+                  </button>
+                </>
               )}
             </nav>
           ) : query.trim() ? (
@@ -1460,6 +1472,8 @@ function Sidebar({
             </>
           )}
         </div>
+        {/* The rail keeps its menu at the bottom, out of the way of the places above. */}
+        {isCollapsed && <div className="sidebar-rail-footer">{moreMenu}</div>}
       </aside>
 
       <ConfirmDialog

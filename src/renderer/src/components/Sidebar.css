@@ -13,6 +13,11 @@
 
 .sidebar.collapsed {
   width: 48px;
+  /* The rail's menus open beside it, outside its 48 pixels, so it must not clip them, and it
+     sits above the chat so they draw on top. */
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 
 .sidebar-header {
@@ -336,6 +341,33 @@
   transition:
     color var(--duration-fast),
     background var(--duration-fast);
+}
+
+.collapsed-sidebar-divider {
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-color);
+}
+
+.sidebar-rail-footer {
+  margin-top: auto;
+  display: grid;
+  flex-shrink: 0;
+  justify-items: center;
+  padding: 8px 0 10px;
+}
+
+.sidebar-rail-footer .sidebar-menu-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+}
+
+/* From the bottom of the rail the menu opens beside it and upward, so it stays on screen. */
+.sidebar.collapsed .sidebar-rail-footer .sidebar-menu {
+  top: auto;
+  bottom: 0;
 }
 
 .collapsed-sidebar-nav button:hover {
