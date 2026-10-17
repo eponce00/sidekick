@@ -189,3 +189,35 @@ describe('auto-scroll positioning', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 1_800, behavior: 'auto' })
   })
 })
+
+function Following({ messages }: { messages: string[] }): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  useAutoScroll(endRef, containerRef, messages, 'smooth', 'chat')
+  return (
+    <div ref={containerRef} data-testid="follow">
+      <div ref={endRef} />
+    </div>
+  )
+}
+
+describe('following a growing reply', () => {
+  it('follows a few new lines at once and glides only over a bigger jump', async () => {
+    await act(async () => root.render(<Following messages={['a']} />))
+    const container = host.querySelector<HTMLDivElement>('[data-testid="follow"]')!
+    const scrollTo = vi.fn()
+    container.scrollTo = scrollTo as unknown as typeof container.scrollTo
+    let scrollHeight = 1_000
+    Object.defineProperty(container, 'scrollHeight', { get: () => scrollHeight })
+    Object.defineProperty(container, 'clientHeight', { value: 400 })
+    Object.defineProperty(container, 'scrollTop', { value: 600, writable: true })
+
+    scrollHeight = 1_060
+    await act(async () => root.render(<Following messages={['a', 'b']} />))
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_060, behavior: 'auto' })
+
+    scrollHeight = 1_800
+    await act(async () => root.render(<Following messages={['a', 'b', 'c']} />))
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_800, behavior: 'smooth' })
+  })
+})

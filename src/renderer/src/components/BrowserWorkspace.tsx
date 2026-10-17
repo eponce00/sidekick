@@ -59,11 +59,22 @@ export function BrowserWorkspace({
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
     let running = false
+    let again = false
+    // While the panel animates, the page view must follow every step. A change during an update
+    // runs one more update afterwards, so the view always ends at the latest bounds instead of
+    // waiting for the next poll.
     const update = async (): Promise<void> => {
-      if (stopped || running) return
+      if (stopped) return
+      if (running) {
+        again = true
+        return
+      }
       running = true
       try {
-        await refresh()
+        do {
+          again = false
+          await refresh()
+        } while (again && !stopped)
       } catch (e) {
         if (!stopped) setLayoutError(String(e))
       } finally {

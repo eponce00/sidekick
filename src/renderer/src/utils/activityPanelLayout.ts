@@ -62,6 +62,9 @@ export function storedActivityPanelWidth(value: string | null, viewportWidth: nu
   )
 }
 
+/** How long the sidebar and the inspector take to change size. Matches --duration-layout. */
+export const LAYOUT_MOTION_MS = 280
+
 export const SIDEBAR_WIDTH = 276
 export const SIDEBAR_RAIL_WIDTH = 48
 /** The chat width the sidebar folds to its rail to keep beside an open inspector. */

@@ -8,7 +8,17 @@
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 2%, transparent), transparent 160px),
     var(--surface-0);
   border-right: 1px solid var(--panel-border);
-  transition: width var(--duration-normal) ease;
+  transition: width var(--duration-layout) var(--ease-out);
+}
+
+/* While it changes width, its content keeps its full width and is clipped or revealed, so text
+   never re-wraps from frame to frame. */
+.sidebar:not(.collapsed) > * {
+  min-width: 275px;
+}
+
+.sidebar.is-closing {
+  width: 48px;
 }
 
 .sidebar.collapsed {
@@ -27,6 +37,11 @@
   gap: 4px;
   padding: 0 8px 0 10px;
   flex-shrink: 0;
+}
+
+/* The rail's icons fade in once the sidebar has finished folding. */
+.sidebar.collapsed > * {
+  animation: motion-fade-in var(--duration-normal) ease-out;
 }
 
 .sidebar.collapsed .sidebar-header {
@@ -954,6 +969,7 @@
 }
 
 .sidebar-overflow-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 90;
   top: calc(100% + 4px);
@@ -1010,6 +1026,7 @@
 }
 
 .conversation-move-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 50;
   top: 32px;

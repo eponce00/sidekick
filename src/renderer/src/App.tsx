@@ -57,6 +57,10 @@ import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
 import {
+  ACTIVITY_PANEL_NARROW_WIDTH,
+  LAYOUT_MOTION_MS,
+  SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_WIDTH,
   storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout,
@@ -255,6 +259,43 @@ function App(): React.JSX.Element {
   }, [sidebarNeedsRoom])
   const effectiveSidebarCollapsed =
     isSidebarCollapsed || layout.sidebarAutoCollapsed || (isCompactLayout && isCompactActivityOpen)
+  // When the sidebar or the inspector opens, closes or changes size, the chat's content is held at
+  // its final width for the animation, centred and clipped, instead of re-wrapping every frame.
+  // Dragging the inspector's edge and resizing the window still re-lay it out live.
+  const collapsedPanelWidth = 48
+  const sidebarTargetWidth = effectiveSidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH
+  const panelTargetWidth = !effectiveActivityPanelPinned
+    ? collapsedPanelWidth
+    : panelSize === 'narrow'
+      ? Math.min(ACTIVITY_PANEL_NARROW_WIDTH, layout.panelMaxWidth)
+      : panelSize === 'full'
+        ? layout.panelMaxWidth
+        : Math.min(activityPanelWidth, layout.panelMaxWidth)
+  const chatTargetWidth = panelIsFull
+    ? 0
+    : Math.max(0, viewportWidth - sidebarTargetWidth - panelTargetWidth)
+  const layoutShape = `${panelSize}|${effectiveActivityPanelPinned}|${effectiveSidebarCollapsed}`
+  const [settledLayout, setSettledLayout] = useState({
+    shape: layoutShape,
+    chatWidth: chatTargetWidth
+  })
+  const [layoutMotion, setLayoutMotion] = useState<{ chatWidth: number; at: number } | null>(null)
+  if (settledLayout.shape !== layoutShape) {
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth })
+    if (!isCompactLayout)
+      setLayoutMotion({
+        // A chat stepping aside for the full panel keeps the width it had while it fades.
+        chatWidth: chatTargetWidth > 0 ? chatTargetWidth : settledLayout.chatWidth,
+        at: Date.now()
+      })
+  } else if (settledLayout.chatWidth !== chatTargetWidth) {
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth })
+  }
+  useEffect(() => {
+    if (!layoutMotion) return
+    const timer = window.setTimeout(() => setLayoutMotion(null), LAYOUT_MOTION_MS + 40)
+    return () => window.clearTimeout(timer)
+  }, [layoutMotion])
   const toggleSidebar = (): void => {
     if (isCompactLayout && effectiveSidebarCollapsed) {
       setIsCompactActivityOpen(false)
@@ -1381,8 +1422,13 @@ function App(): React.JSX.Element {
           onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
         <div
-          className={`conversation-panel-stack${panelIsFull ? ' is-behind-panel' : ''}`}
+          className={`conversation-panel-stack${panelIsFull ? ' is-behind-panel' : ''}${layoutMotion ? ' is-in-motion' : ''}`}
           aria-hidden={panelIsFull || undefined}
+          style={
+            layoutMotion
+              ? ({ '--frozen-chat-width': `${layoutMotion.chatWidth}px` } as React.CSSProperties)
+              : undefined
+          }
         >
           {!currentConversationId && renderConversationPanel(null, draftPanelKey, true)}
           {mountedConversationIds.map((id) => {

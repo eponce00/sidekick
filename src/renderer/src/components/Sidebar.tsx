@@ -28,6 +28,7 @@ import {
 import type { Conversation, Project } from '../types/app.types'
 import type { MoveConversationInput } from '../../../shared/projects'
 import { sidebarConversationOrder } from '../utils/sidebarConversationOrder'
+import { LAYOUT_MOTION_MS } from '../utils/activityPanelLayout'
 import { conversationRunStatus, type ConversationRunStatus } from '../utils/conversationAttention'
 import {
   SIDEBAR_DOT_LABELS,
@@ -121,7 +122,7 @@ function Sidebar({
   conversations,
   projects,
   currentConversationId,
-  isCollapsed,
+  isCollapsed: collapseRequested,
   platform,
   busyConversationIds,
   unreadConversationIds,
@@ -145,6 +146,21 @@ function Sidebar({
   onOpenSchedules,
   sessionStatuses = NO_SESSION_STATUSES
 }: SidebarProps): React.JSX.Element {
+  // Folding slides the full sidebar closed and only then shows the rail, so nothing re-lays out
+  // while it moves. Opening shows the full sidebar at once and reveals it as it widens.
+  const [railShown, setRailShown] = useState(collapseRequested)
+  const [lastCollapseRequest, setLastCollapseRequest] = useState(collapseRequested)
+  if (lastCollapseRequest !== collapseRequested) {
+    setLastCollapseRequest(collapseRequested)
+    if (!collapseRequested) setRailShown(false)
+  }
+  useEffect(() => {
+    if (!collapseRequested || railShown) return
+    const timer = window.setTimeout(() => setRailShown(true), LAYOUT_MOTION_MS)
+    return () => window.clearTimeout(timer)
+  }, [collapseRequested, railShown])
+  const isCollapsed = collapseRequested && railShown
+  const isClosing = collapseRequested && !railShown
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
@@ -1025,7 +1041,9 @@ function Sidebar({
 
   return (
     <>
-      <aside className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+      <aside
+        className={`sidebar${isCollapsed ? ' collapsed' : ''}${isClosing ? ' is-closing' : ''}`}
+      >
         <div className="sidebar-header">
           <button
             className="sidebar-icon-btn sidebar-toggle-btn"

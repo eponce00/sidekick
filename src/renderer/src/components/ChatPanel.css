@@ -13,6 +13,7 @@
 }
 
 .composer-command-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   display: flex;
   flex-direction: column;
   max-height: min(420px, 52vh);
@@ -2123,7 +2124,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   cursor: pointer;
   font-size: var(--text-xs);
   border-radius: var(--radius-full);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .thinking-toggle:hover {
@@ -2493,6 +2494,7 @@ body[data-theme='light'] .message-user .message-action:hover {
 }
 
 .composer-popover {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 8;
   right: -1px;
@@ -2957,7 +2959,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .input-plus-button:hover {
@@ -3069,7 +3071,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .send-button:not(:disabled) {
@@ -3295,7 +3297,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   font-size: var(--text-sm);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .model-selector-inline:hover {
@@ -3663,7 +3665,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   border: none;
   border-radius: var(--radius-full);
   padding: 2px var(--space-4);
-  transition: all var(--duration-fast) ease;
+  transition: var(--transition-ui);
   max-width: min(100%, 400px);
   word-wrap: break-word;
 }

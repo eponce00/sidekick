@@ -613,7 +613,15 @@ function ActivityPanel({
       <aside
         className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
         data-size={isPinned ? size : undefined}
-        style={isPinned ? { width: renderedWidth, minWidth: renderedWidth } : undefined}
+        style={
+          isPinned
+            ? ({
+                width: renderedWidth,
+                minWidth: renderedWidth,
+                '--panel-content-width': `${renderedWidth}px`
+              } as React.CSSProperties)
+            : undefined
+        }
       >
         {resizable && (
           <div

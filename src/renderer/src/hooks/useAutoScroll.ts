@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 const FOLLOW_BOTTOM_THRESHOLD = 80
 const SHOW_JUMP_THRESHOLD = 240
+/** Following the end glides only when it moved more than about half a screen of text. */
+const SMOOTH_FOLLOW_MIN_DISTANCE = 320
 
 export interface AutoScrollController {
   showScrollToBottom: boolean
@@ -171,13 +173,17 @@ export function useAutoScroll<T>(
     if (shouldStickToBottomRef.current) {
       const frame = window.requestAnimationFrame(() => {
         setShowScrollToBottom(false)
-        moveToBottom(behavior)
+        // A streaming reply grows a few lines at a time. Restarting a smooth scroll for each makes
+        // the view lurch, so small growth follows at once and only a bigger jump glides.
+        const container = scrollContainerRef.current
+        const distance = container ? scrollDistanceFromBottom(container) : 0
+        moveToBottom(distance > SMOOTH_FOLLOW_MIN_DISTANCE ? behavior : 'auto')
       })
       return () => window.cancelAnimationFrame(frame)
     }
     updatePosition()
     return undefined
-  }, [autoScrollChange, behavior, moveToBottom, updatePosition])
+  }, [autoScrollChange, behavior, moveToBottom, scrollContainerRef, updatePosition])
 
   useEffect(() => {
     const container = scrollContainerRef.current

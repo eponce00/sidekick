@@ -119,6 +119,16 @@
   --duration-fast: 0.12s;
   --duration-normal: 0.2s;
   --duration-slow: 0.3s;
+  /* Panels and the sidebar changing size. Matches LAYOUT_MOTION_MS in App.tsx. */
+  --duration-layout: 0.28s;
+  /* Fast start, long gentle settle: things arrive and stop without a bump. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Hover and press feedback, for the properties that change on hover; never layout. */
+  --transition-ui:
+    background-color var(--duration-fast) ease, color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease,
+    opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 
   /* — Focus ring — */
   --focus-ring: 0 0 0 3px rgba(59, 212, 189, 0.28);
@@ -414,7 +424,7 @@ select {
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  transition: all var(--duration-fast) ease;
+  transition: var(--transition-ui);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -455,12 +465,24 @@ select {
 
 .conversation-panel-stack {
   position: relative;
-  transition: opacity var(--duration-normal) ease;
+  transition: opacity var(--duration-layout) var(--ease-out);
 }
 
-/* The inspector at full size takes the chat's room; the chat stays mounted and fades out. */
+/* While the sidebar or the inspector moves, the chat keeps one width, centred in the space it
+   has, so only its edges move. It re-lays out once when the motion ends. */
+.conversation-panel-stack.is-in-motion {
+  justify-content: center;
+}
+
+.conversation-panel-stack.is-in-motion > .conversation-panel-slot {
+  flex: 0 0 var(--frozen-chat-width);
+  width: var(--frozen-chat-width);
+  min-width: var(--frozen-chat-width);
+}
+
+/* The inspector at full size takes the chat's room; the chat stays mounted and fades out. It
+   keeps flexing, so it narrows as the inspector widens instead of vanishing on the first frame. */
 .conversation-panel-stack.is-behind-panel {
-  flex: 0 0 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -571,6 +593,35 @@ select {
   .title-bar-context,
   .title-bar-divider {
     display: none;
+  }
+}
+
+/* Shared entrances: overlays fade, dialogs and menus rise a few pixels as they fade in. Only
+   opacity and transform move, so they stay smooth however busy the page is. */
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@keyframes motion-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+@keyframes motion-menu-down-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
   }
 }
 
