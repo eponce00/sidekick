@@ -126,6 +126,10 @@ export interface TokenUsage {
   /** Durable wall-clock timing for the full agent run, including tools and research. */
   runStartedAt?: number
   runCompletedAt?: number
+  /** Every completion token the run's model turns produced, summed across turns. */
+  generatedTokens?: number
+  /** The model turn being streamed now, before the server reports its usage. */
+  streaming?: { startedAt: number; updatedAt: number; characters: number }
 }
 
 export interface Message {

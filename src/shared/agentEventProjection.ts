@@ -127,6 +127,10 @@ export interface ProjectedAgentRunMessage {
     providerTimings?: import('./providerRuntime').ProviderRequestTiming[]
     runStartedAt?: number
     runCompletedAt?: number
+    /** Every completion token the run's model turns produced, summed across turns. */
+    generatedTokens?: number
+    /** The model turn being streamed now, before the server reports its usage. */
+    streaming?: { startedAt: number; updatedAt: number; characters: number }
   }
   phase: AgentRunPhase | null
 }
@@ -161,6 +165,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let completionTokens = 0
   let measuredCompletionTokens = 0
   let measuredGenerationSeconds = 0
+  let generatedTokens = 0
+  let streaming: { startedAt: number; updatedAt: number; characters: number } | undefined
   let timeToFirstTokenMs: number | undefined
   const providerTimings: import('./providerRuntime').ProviderRequestTiming[] = []
   let phase: AgentRunPhase | null = null
@@ -183,8 +189,13 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       if (event.type === 'run.completed') runCompletedAt = event.timestamp
     }
     if (event.type === 'assistant.delta') {
-      pendingContent += typeof event.payload.content === 'string' ? event.payload.content : ''
-      pendingThinking += typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
+      const content = typeof event.payload.content === 'string' ? event.payload.content : ''
+      const thinking = typeof event.payload.thinking === 'string' ? event.payload.thinking : ''
+      pendingContent += content
+      pendingThinking += thinking
+      streaming ??= { startedAt: event.timestamp, updatedAt: event.timestamp, characters: 0 }
+      streaming.updatedAt = event.timestamp
+      streaming.characters += content.length + thinking.length
     }
     if (event.type === 'assistant.completed') {
       const content =
@@ -225,6 +236,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         timeToFirstTokenMs = Math.max(0, event.payload.timeToFirstTokenMs)
       }
       completionTokens = turnCompletionTokens
+      generatedTokens += turnCompletionTokens
+      streaming = undefined
       if (
         typeof event.payload.providerDurationMs === 'number' &&
         Number.isFinite(event.payload.providerDurationMs)
@@ -728,7 +741,9 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       ...(timeToFirstTokenMs === undefined ? {} : { timeToFirstTokenMs }),
       ...(runStartedAt === undefined ? {} : { runStartedAt }),
       ...(runCompletedAt === undefined ? {} : { runCompletedAt }),
-      ...(providerTimings.length ? { providerTimings } : {})
+      ...(providerTimings.length ? { providerTimings } : {}),
+      ...(generatedTokens > 0 ? { generatedTokens } : {}),
+      ...(streaming && runCompletedAt === undefined ? { streaming: { ...streaming } } : {})
     },
     phase
   }

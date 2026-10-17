@@ -1,4 +1,4 @@
-import { Children, useState, useRef, useEffect, memo, useMemo } from 'react'
+import { Children, useState, useRef, memo, useMemo } from 'react'
 import {
   AlignLeft,
   Brain,
@@ -59,6 +59,7 @@ import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
 import { Reveal } from './Reveal'
+import { AgentRunStats } from './AgentRunStats'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -625,39 +626,22 @@ const WORK_STEPS_SHOWN = 30
 function AgentWorkDisclosure({
   messageId,
   isLoading,
-  startedAt,
-  completedAt,
   children,
   segments,
-  awaitingFirstOutput = false,
-  showDuration = true,
   live = false,
   runId: _runId
 }: {
   messageId: string
   isLoading: boolean
-  startedAt?: number
-  completedAt?: number
   children?: React.ReactNode
   segments?: readonly import('../types/chat.types').ContentSegment[]
-  awaitingFirstOutput?: boolean
-  /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
-  showDuration?: boolean
   /** The work in progress at the end of a running reply: shows its current step on one line. */
   live?: boolean
   runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [showEarlier, setShowEarlier] = useState(false)
-  const [now, setNow] = useState(Date.now)
 
-  useEffect(() => {
-    if (!isLoading) return undefined
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [isLoading])
-
-  const endAt = isLoading ? now : (completedAt ?? startedAt ?? now)
   const toolCount = segments?.filter((segment) => segment.type === 'tool').length ?? 0
   const reasoningCount = segments?.filter((segment) => segment.type === 'thinking').length ?? 0
   const activityLabel = [
@@ -666,14 +650,8 @@ function AgentWorkDisclosure({
   ]
     .filter(Boolean)
     .join(' · ')
-  const durationLabel = startedAt
-    ? `${isLoading ? (awaitingFirstOutput ? 'Waiting for model' : 'Working') : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
-    : 'Worked'
-  const label = !showDuration
-    ? activityLabel || 'Steps'
-    : activityLabel
-      ? `${durationLabel} · ${activityLabel}`
-      : durationLabel
+  // The time is at the foot of a working reply and in the footer of a finished one.
+  const label = activityLabel || (isLoading ? 'Thinking' : 'Thought process')
   const contentId = `${messageId}-agent-work`
   // The newest step, replaced by the next as the agent works; the whole list is one click away.
   const currentIndex =
@@ -750,29 +728,6 @@ function AgentWorkDisclosure({
   )
 }
 
-/**
- * Shown below a working reply whose latest output is text. The model may be
- * writing its next tool call, which some servers send only once complete, so
- * minutes can pass with nothing new on screen; this keeps the reply from
- * looking finished.
- */
-function AgentWorkingTail({ startedAt }: { startedAt?: number }): React.JSX.Element {
-  const [now, setNow] = useState(Date.now)
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  return (
-    <div className="agent-work-disclosure is-working agent-work-tail" role="status">
-      <span className="agent-work-toggle">
-        {startedAt ? `Working for ${formatWorkDuration(now - startedAt)}` : 'Working'}
-      </span>
-    </div>
-  )
-}
-
 interface MessageItemProps {
   message: Message
   index: number // Reserved for future features (message navigation)
@@ -842,7 +797,6 @@ function MessageItemInner({
   // starts the clock again, to its end.
   const workStartedAt = msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
-  const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
   const canUndoChanges = Boolean(
     !readOnly &&
     msg.checkpointHash &&
@@ -945,21 +899,6 @@ function MessageItemInner({
             ))}
           </div>
         )}
-        {/* Show loading animation only when: no content, no thinking, no segments, and still loading */}
-        {msg.role === 'agent' &&
-          !msg.content &&
-          !msg.thinking &&
-          !msg.segments?.length &&
-          isLoading && (
-            <AgentWorkDisclosure
-              key={`${msg.id}:working`}
-              messageId={msg.id}
-              isLoading
-              startedAt={workStartedAt}
-              awaitingFirstOutput
-            />
-          )}
-
         {msg.role === 'system' ? (
           <div className="system-notice" role={msg.noticeTone === 'error' ? 'alert' : 'status'}>
             <span className="system-notice-icon" aria-hidden="true">
@@ -1265,12 +1204,6 @@ function MessageItemInner({
                 changeReviewRendered = true
               }
 
-              // While working, one line carries the time: the live work, or the line below the
-              // answer. Once finished, the time is in the footer instead of inside the reply.
-              const timedBlock =
-                !isLoading || showWorkingTail
-                  ? -1
-                  : blocks.findLastIndex((block) => block.type === 'work')
               blocks.forEach((block, blockIndex) => {
                 const firstGroupIndex =
                   block.type === 'work' ? block.groups[0]!.groupIndex : block.groupIndex
@@ -1289,10 +1222,7 @@ function MessageItemInner({
                     key={`${msg.id}:work:${firstGroupIndex}`}
                     messageId={`${msg.id}-work-${firstGroupIndex}`}
                     isLoading={isLoading}
-                    startedAt={workStartedAt}
-                    completedAt={workCompletedAt}
                     segments={blockSegments}
-                    showDuration={blockIndex === timedBlock}
                     live={isLoading && blockIndex === blocks.length - 1}
                     runId={msg.runId}
                   >
@@ -1303,7 +1233,6 @@ function MessageItemInner({
               appendChangeReview()
               return output
             })()}
-            {showWorkingTail && <AgentWorkingTail startedAt={workStartedAt} />}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
           // Legacy format: separate thinking and content
@@ -1312,9 +1241,6 @@ function MessageItemInner({
               key={`${msg.id}:${isLoading ? 'working' : 'worked'}`}
               messageId={msg.id}
               isLoading={isLoading}
-              startedAt={workStartedAt}
-              completedAt={workCompletedAt}
-              showDuration={isLoading}
             >
               <div className="thinking-content">
                 <MessageMarkdown
@@ -1343,6 +1269,10 @@ function MessageItemInner({
               onArtifactResult={onHandleArtifactResult}
             />
           </div>
+        )}
+        {/* One live line at the foot of a working reply; the footer replaces it when done. */}
+        {msg.role === 'agent' && isLoading && (
+          <AgentRunStats startedAt={workStartedAt} usage={msg.tokenUsage} segments={msg.segments} />
         )}
       </div>
       {msg.role === 'agent' && !isLoading && !readOnly && (

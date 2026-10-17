@@ -8,6 +8,11 @@
   an approval or a question, or is finishing), SideKick stops the reply and starts a new one from
   your message instead.
 - **Queue:** a message added to the queue waits for the reply to finish and is sent next.
+- **Live progress:** a line at the foot of the reply shows what the agent is doing (waiting for
+  the model, thinking, using tools, writing, or waiting for you), how long it has worked since your
+  message, how many tokens the model has written and how fast, and how full its context is. The
+  token count for a model step still being written is estimated from its text until the server
+  reports it. Once the reply ends, its footer shows the totals when you point at it.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
   counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
   when SideKick is not in front. A failed reply is announced the same way. See

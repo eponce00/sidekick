@@ -463,13 +463,19 @@ describe('MessageItem shared-channel presentation', () => {
       })
     }
 
-    // The model can spend minutes writing its next tool call with nothing new on screen.
+    // The model can spend minutes writing its next tool call with nothing new on screen; the
+    // live line at the foot of the reply keeps counting.
     await render(true)
-    expect(container.querySelector('.agent-work-tail')?.textContent).toMatch(/^Working for 21/)
+    const stats = container.querySelector('.agent-run-stats')
+    expect(stats?.textContent).toContain('Writing')
+    expect(stats?.textContent).toContain('21m')
+    expect(stats?.textContent).toContain('1.4k tokens')
+    expect(stats?.textContent).toContain('13 t/s')
+    expect(stats?.textContent).toContain('48.0k context')
     expect(container.querySelector('.message-meta')).toBeNull()
 
     await render(false)
-    expect(container.querySelector('.agent-work-tail')).toBeNull()
+    expect(container.querySelector('.agent-run-stats')).toBeNull()
     expect(container.querySelector('.message-token-info')?.textContent).toBe('12.5 t/s')
   })
 
@@ -1353,16 +1359,14 @@ describe('MessageItem shared-channel presentation', () => {
           />
         )
       })
-      expect(container.querySelector('.agent-work-toggle')?.textContent).toContain(
-        'Waiting for model for 3m 52s'
-      )
+      const stats = (): string => container.querySelector('.agent-run-stats')?.textContent ?? ''
+      expect(stats()).toContain('Waiting for model')
+      expect(stats()).toContain('3m 52s')
 
       await act(async () => {
         vi.advanceTimersByTime(1_000)
       })
-      expect(container.querySelector('.agent-work-toggle')?.textContent).toContain(
-        'Waiting for model for 3m 53s'
-      )
+      expect(stats()).toContain('3m 53s')
     } finally {
       await act(async () => root.render(<></>))
       vi.useRealTimers()
