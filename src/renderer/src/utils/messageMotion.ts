@@ -6,6 +6,12 @@ export function prefersReducedMotion(): boolean {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 }
 
+/**
+ * A section opening or closing under the reader's hand. The chat holds its scroll for `detail.ms`
+ * instead of following the bottom, so the section unfolds from where it was clicked.
+ */
+export const SECTION_REVEAL_EVENT = 'sidekick:section-reveal'
+
 /** Motion only where someone can see it: a hidden window does not advance animations. */
 export function motionAllowed(): boolean {
   return document.visibilityState !== 'hidden' && !prefersReducedMotion()

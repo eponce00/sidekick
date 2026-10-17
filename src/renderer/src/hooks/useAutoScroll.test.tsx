@@ -9,6 +9,7 @@ import {
   useAutoScroll,
   type AutoScrollController
 } from './useAutoScroll'
+import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
 let root: Root
 let host: HTMLDivElement
@@ -187,6 +188,38 @@ describe('auto-scroll positioning', () => {
     act(() => resizeCallback?.([], {} as ResizeObserver))
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 1_800, behavior: 'auto' })
+  })
+
+  it('lets a section the reader opens unfold from where it was, even at the end', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await act(async () => root.render(<Harness ready />))
+      const timeline = host.firstElementChild as HTMLDivElement
+      const scrollTo = vi.fn()
+      Object.defineProperties(timeline, {
+        scrollHeight: { configurable: true, value: 1_800 },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, writable: true, value: 1_300 },
+        scrollTo: { configurable: true, value: scrollTo }
+      })
+      scrollTo.mockClear()
+
+      timeline.dispatchEvent(
+        new CustomEvent(SECTION_REVEAL_EVENT, { bubbles: true, detail: { ms: 260 } })
+      )
+      // The section grows below the end while it opens.
+      Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 2_100 })
+      act(() => resizeCallback?.([], {} as ResizeObserver))
+      expect(scrollTo).not.toHaveBeenCalled()
+
+      // Settled, the end is out of view, so the chat no longer follows it.
+      await act(async () => vi.advanceTimersByTimeAsync(400))
+      act(() => resizeCallback?.([], {} as ResizeObserver))
+      expect(scrollTo).not.toHaveBeenCalled()
+      expect(controller.showScrollToBottom).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -468,6 +468,11 @@ select {
   transform: rotate(60deg);
 }
 
+/* Sections that slide open (Reveal.tsx) animate to their natural height, whatever it becomes. */
+.reveal {
+  interpolate-size: allow-keywords;
+}
+
 /* The new theme spreads from the toggle as a circle (themeTransition.ts); colors change all at
    once beneath it. */
 ::view-transition-old(root),
