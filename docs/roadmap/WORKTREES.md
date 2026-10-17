@@ -47,8 +47,9 @@ removal. The renderer only asks for those operations by identity; it never passe
   `worktrees/<source project id>/<name>`, outside the user's checkout so editors, file watchers and
   `git status` in the original folder never see them. Each is a SideKick project linked to its
   source project, with the base it was created from. It starts detached at that base (Codex,
-  OpenCode), since the base branch is usually checked out in the project folder already; a branch
-  is created only when the user names one, and otherwise by the agent when the work needs it.
+  OpenCode), since the base branch is usually checked out in the project folder already; the agent
+  creates a branch when the work needs one. Worktrees from before this have the branch SideKick
+  made for them, which removal still deletes or keeps as before.
 - **Work in.** A new project chat chooses "This folder" or "New worktree" before its first message.
   The choice is remembered as the default. A fresh chat (no messages yet) is moved into its new
   worktree; a chat with history forks into one instead, so its history never points at the wrong

@@ -80,11 +80,6 @@ export interface WorktreeBranchOptions {
 
 export interface CreateConversationWorktreeInput {
   conversationId: string
-  /**
-   * A branch to create for the worktree. Without one it starts detached at its base, and the agent
-   * or the user creates a branch when the work needs one.
-   */
-  branchName?: string
   /** Branch or commit to start from; defaults to the source checkout's HEAD. */
   baseRef?: string
 }
@@ -176,30 +171,6 @@ export function worktreeSlug(title: string): string {
   const cut = slug.slice(0, 33)
   const boundary = cut.lastIndexOf('-')
   return (boundary > 8 ? cut.slice(0, boundary) : slug.slice(0, 32)).replace(/-$/, '')
-}
-
-/**
- * A conservative subset of Git's ref-name rules, checked before Git sees the name.
- * Git's own `check-ref-format` still runs in the main process.
- */
-export function worktreeBranchProblem(name: string): string | null {
-  const trimmed = name.trim()
-  if (!trimmed) return 'Enter a branch name'
-  if (trimmed.length > 200) return 'Branch names are limited to 200 characters'
-  if (!/^[A-Za-z0-9._/-]+$/.test(trimmed))
-    return 'Use letters, numbers, dots, dashes, underscores and slashes'
-  if (
-    trimmed.startsWith('-') ||
-    trimmed.startsWith('/') ||
-    trimmed.endsWith('/') ||
-    trimmed.endsWith('.') ||
-    trimmed.endsWith('.lock') ||
-    trimmed.includes('..') ||
-    trimmed.includes('//') ||
-    trimmed.split('/').some((part) => part.startsWith('.'))
-  )
-    return 'That is not a valid Git branch name'
-  return null
 }
 
 export interface WorktreesAPI {

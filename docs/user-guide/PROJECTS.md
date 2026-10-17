@@ -121,8 +121,8 @@ Before the first message of a project chat, the bar above the composer offers **
 folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
 or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
 be checked out in only one folder, and the project folder already has it. The agent creates a
-branch when the work needs one, for example to commit or open a pull request. To start on a branch
-of your own instead, type its name in **New branch (optional)**. Sending the first message creates
+branch when the work needs one, for example to commit or open a pull request. Sending the first
+message creates
 the worktree, moves the chat into it and then starts the agent. SideKick
 remembers your last choice for the next new chat. Worktrees need a project inside a Git
 repository; for other folders only **This folder** is offered.

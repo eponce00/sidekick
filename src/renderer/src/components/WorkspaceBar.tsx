@@ -15,12 +15,10 @@ interface WorkspaceBarProps {
   /** The chat has not sent a message yet, so it can still choose where to work. */
   canChoose: boolean
   workIn: WorkInChoice
-  branchName: string
   baseRef: string
   disabled?: boolean
   error?: string | null
   onWorkInChange: (choice: WorkInChoice) => void
-  onBranchNameChange: (name: string) => void
   onBaseRefChange: (ref: string) => void
   onManageWorktrees: () => void
 }
@@ -34,17 +32,14 @@ export function WorkspaceBar({
   worktree,
   canChoose,
   workIn,
-  branchName,
   baseRef,
   disabled,
   error,
   onWorkInChange,
-  onBranchNameChange,
   onBaseRefChange,
   onManageWorktrees
 }: WorkspaceBarProps): React.JSX.Element | null {
   const [options, setOptions] = useState<WorktreeBranchOptions | null>(null)
-  const branchId = useId()
   const baseId = useId()
   const choosing = canChoose && Boolean(projectId) && !worktree
 
@@ -156,21 +151,6 @@ export function WorkspaceBar({
                     </option>
                   ))}
               </select>
-            </label>
-            {/* Optional: without a name the worktree is a detached copy of the base, and the agent
-                creates a branch when the work needs one. */}
-            <label className="workspace-bar-field" htmlFor={branchId}>
-              <GitBranch size={12} className="workspace-bar-muted" aria-hidden="true" />
-              <input
-                id={branchId}
-                aria-label="New branch (optional)"
-                value={branchName}
-                placeholder="New branch (optional)"
-                spellCheck={false}
-                disabled={disabled}
-                onChange={(event) => onBranchNameChange(event.target.value)}
-                title="Leave empty to work on a copy of the base with no branch of its own. The agent can create a branch when the work needs one."
-              />
             </label>
           </>
         )}

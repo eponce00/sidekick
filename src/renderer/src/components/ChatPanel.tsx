@@ -106,10 +106,7 @@ interface ChatPanelProps {
   /** Set when the chat's project is one of SideKick's worktrees. */
   worktree?: ManagedWorktreeSummary | null
   /** Moves a chat that has not sent anything yet into its own new worktree. */
-  onStartInWorktree?: (
-    conversationId: string,
-    options: { branchName?: string; baseRef?: string }
-  ) => Promise<void>
+  onStartInWorktree?: (conversationId: string, options: { baseRef?: string }) => Promise<void>
   /** Forks a chat with history into a new worktree, carrying the unsent message along. */
   onForkIntoWorktree?: (conversationId: string, draft: ComposerDraft) => Promise<void>
   onManageWorktrees?: () => void
@@ -222,7 +219,6 @@ function ChatPanel({
   // Where the chat works. A project chat chooses before its first message; afterwards a run that
   // would join a folder another agent is writing in asks first.
   const [workIn, setWorkIn] = useState<WorkInChoice>(storedWorkInChoice)
-  const [worktreeBranch, setWorktreeBranch] = useState('')
   const [worktreeBase, setWorktreeBase] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [busyPrompt, setBusyPrompt] = useState<{
@@ -1037,11 +1033,7 @@ function ChatPanel({
 
   const startInWorktree = async (targetConversationId: string): Promise<void> => {
     if (!onStartInWorktree) throw new Error('Worktrees are not available here')
-    // No name, no branch: the worktree starts detached at its base.
-    await onStartInWorktree(targetConversationId, {
-      ...(worktreeBranch.trim() ? { branchName: worktreeBranch.trim() } : {}),
-      ...(worktreeBase ? { baseRef: worktreeBase } : {})
-    })
+    await onStartInWorktree(targetConversationId, worktreeBase ? { baseRef: worktreeBase } : {})
   }
 
   /**
@@ -1594,14 +1586,12 @@ function ChatPanel({
         worktree={worktree}
         canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
         workIn={workIn}
-        branchName={worktreeBranch}
         baseRef={worktreeBase}
         error={workspaceError}
         onWorkInChange={(choice) => {
           setWorkIn(choice)
           setWorkspaceError(null)
         }}
-        onBranchNameChange={setWorktreeBranch}
         onBaseRefChange={setWorktreeBase}
         onManageWorktrees={() => onManageWorktrees?.()}
       />

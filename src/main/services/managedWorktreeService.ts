@@ -6,7 +6,6 @@ import { promisify } from 'util'
 import type Database from 'better-sqlite3'
 import type { Project, ProjectConversation } from '../../shared/projects'
 import {
-  worktreeBranchProblem,
   worktreeSlug,
   type CreateConversationWorktreeInput,
   type CreateConversationWorktreeResult,
@@ -508,32 +507,16 @@ export class ManagedWorktreeService {
     )
   }
 
-  private async branchExists(repositoryRoot: string, branch: string): Promise<boolean> {
-    return gitSucceeds(repositoryRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
-  }
-
-  /** A branch name someone asked for must be valid and not taken. */
-  private async resolveBranchName(repositoryRoot: string, requested: string): Promise<string> {
-    const problem = worktreeBranchProblem(requested)
-    if (problem) throw new Error(problem)
-    const name = requested.trim()
-    if (!(await gitSucceeds(repositoryRoot, ['check-ref-format', '--branch', name])))
-      throw new Error('That is not a valid Git branch name')
-    if (await this.branchExists(repositoryRoot, name))
-      throw new Error(`A branch named ${name} already exists`)
-    return name
-  }
-
   /**
-   * Creates a SideKick worktree for a project. Without a branch name it starts detached at its
-   * base, as Codex and OpenCode do: the base branch stays checked out where it is, and the agent
-   * or the user creates a branch only when the work needs one. A project that is itself a
-   * SideKick worktree starts its new worktree from its own commit but is stored under its source.
+   * Creates a SideKick worktree for a project, detached at its base as Codex and OpenCode do: the
+   * base branch stays checked out where it already is, and the agent creates a branch when its
+   * work needs one. A project that is itself a SideKick worktree starts its new worktree from its
+   * own commit but is stored under its source project.
    */
   async create(
     sourceProjectId: string,
     conversationTitle: string,
-    options: { branchName?: string; baseRef?: string } = {}
+    options: { baseRef?: string } = {}
   ): Promise<Project> {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sourceProjectId))
       throw new Error('Invalid source project identity')
@@ -585,11 +568,7 @@ export class ManagedWorktreeService {
     }
 
     const id = randomUUID()
-    const branch = options.branchName?.trim()
-      ? await this.resolveBranchName(repositoryRoot, options.branchName)
-      : null
-    const folderLabel = branch ? (branch.split('/').at(-1) ?? branch) : conversationTitle
-    const name = `${worktreeSlug(folderLabel)}-${id.slice(0, 8)}`
+    const name = `${worktreeSlug(conversationTitle)}-${id.slice(0, 8)}`
     const worktreeRoot = join(this.storageRoot, rootProjectId, name)
     const projectFolder = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
     await fs.mkdir(join(this.storageRoot, rootProjectId), { recursive: true })
@@ -608,16 +587,11 @@ export class ManagedWorktreeService {
     let created = false
 
     try {
-      await git(
-        repositoryRoot,
-        branch
-          ? ['worktree', 'add', '-b', branch, worktreeRoot, baseRef]
-          : ['worktree', 'add', '--detach', worktreeRoot, baseRef]
-      )
+      await git(repositoryRoot, ['worktree', 'add', '--detach', worktreeRoot, baseRef])
       created = true
       const project = this.projects.create(
         projectFolder,
-        `${source.name} · ${branch ?? `from ${shortRef(baseRef)}`}`
+        `${source.name} · from ${shortRef(baseRef)}`
       )
       const now = Date.now()
       this.db
@@ -627,7 +601,7 @@ export class ManagedWorktreeService {
             created_at, last_used_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(id, project.id, rootProjectId, repositoryRoot, worktreeRoot, branch, baseRef, now, now)
+        .run(id, project.id, rootProjectId, repositoryRoot, worktreeRoot, null, baseRef, now, now)
       return project
     } catch (error) {
       // Never delete an unrelated pre-existing branch or changed checkout after
@@ -635,7 +609,6 @@ export class ManagedWorktreeService {
       if (created) {
         try {
           await git(repositoryRoot, ['worktree', 'remove', worktreeRoot])
-          if (branch) await git(repositoryRoot, ['branch', '-d', branch])
         } catch {
           /* Preserve files and refs for manual recovery. */
         }
@@ -665,7 +638,6 @@ export class ManagedWorktreeService {
     )
       throw new Error('This chat already has messages. Fork it into a new worktree instead.')
     const project = await this.create(conversation.project_id, conversation.title, {
-      branchName: input.branchName,
       baseRef: input.baseRef
     })
     try {

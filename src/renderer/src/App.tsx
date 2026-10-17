@@ -689,7 +689,7 @@ function App(): React.JSX.Element {
 
   const handleStartInWorktree = async (
     conversationId: string,
-    options: { branchName?: string; baseRef?: string }
+    options: { baseRef?: string }
   ): Promise<void> => {
     const result = await window.api.worktrees.createForConversation({ conversationId, ...options })
     if (currentConversationIdRef.current === conversationId) {

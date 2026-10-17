@@ -149,10 +149,8 @@ describe('worktree UI', () => {
           worktree={changed}
           canChoose={false}
           workIn="folder"
-          branchName=""
           baseRef=""
           onWorkInChange={vi.fn()}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
@@ -174,10 +172,8 @@ describe('worktree UI', () => {
           }}
           canChoose={false}
           workIn="folder"
-          branchName=""
           baseRef=""
           onWorkInChange={vi.fn()}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
@@ -196,18 +192,16 @@ describe('worktree UI', () => {
           worktree={null}
           canChoose
           workIn="worktree"
-          branchName=""
           baseRef=""
           onWorkInChange={onWorkInChange}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
       )
     })
     expect(api.branchOptions).toHaveBeenCalledWith('p')
-    // The branch is optional and never named from the message.
-    expect(container.querySelector('input')?.placeholder).toBe('New branch (optional)')
+    // A worktree starts as a copy of its base; there is no branch to name.
+    expect(container.querySelector('input')).toBeNull()
     const options = [...container.querySelectorAll('option')].map((option) => option.textContent)
     expect(options).toEqual(['main', 'release'])
     await act(async () => button(container, 'This folder').click())
@@ -228,10 +222,8 @@ describe('worktree UI', () => {
           worktree={null}
           canChoose
           workIn="worktree"
-          branchName=""
           baseRef=""
           onWorkInChange={vi.fn()}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />

@@ -371,14 +371,14 @@ const previewWorktreesApi: WorktreesAPI = {
     isGitRepository: projectId !== 'preview-project-2',
     isManagedWorktree: projectId.startsWith('preview-worktree-project')
   }),
-  createForConversation: async ({ conversationId, branchName, baseRef }) => {
+  createForConversation: async ({ conversationId, baseRef }) => {
     const conversation = previewCreatedConversations.find(({ id }) => id === conversationId)
     if (!conversation) throw new Error('Only a chat without messages can move to a new worktree')
-    const branch = branchName || 'sidekick/new-chat'
-    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\${branch.split('/').at(-1)}`
+    const base = baseRef || 'main'
+    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\new-chat`
     const project = {
       id: `preview-worktree-project-${Date.now()}`,
-      name: `sidekick-demo · ${branch}`,
+      name: `sidekick-demo · from ${base}`,
       folder_path: folder,
       is_pinned: 0,
       created_at: Date.now(),
@@ -401,12 +401,12 @@ const previewWorktreesApi: WorktreesAPI = {
       worktreeRoot: folder,
       sourceProjectId: 'preview-project-1',
       sourceProjectName: 'sidekick-demo',
-      branch,
-      baseRef: baseRef || 'main',
+      branch: null,
+      baseRef: base,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
-      status: { currentBranch: branch, ahead: 0, behind: 0, changedFiles: 0, merged: true },
+      status: { currentBranch: null, ahead: 0, behind: 0, changedFiles: 0, merged: true },
       blockers: [
         {
           code: 'in-use',

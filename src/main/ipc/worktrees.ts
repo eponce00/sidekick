@@ -50,13 +50,11 @@ export function registerWorktreeHandlers(): void {
       !input ||
       typeof input !== 'object' ||
       !validId(input.conversationId) ||
-      !optionalText(input.branchName, 200) ||
       !optionalText(input.baseRef, 200)
     )
       throw new Error('Invalid worktree request')
     const result = await worktrees.createForConversation({
       conversationId: input.conversationId,
-      ...(input.branchName ? { branchName: input.branchName } : {}),
       ...(input.baseRef ? { baseRef: input.baseRef } : {})
     })
     // Setup hooks match the original project's folder, also for a worktree started from a worktree.

@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  parseWorkspaceBusyMessage,
-  workspaceBusyMessage,
-  worktreeBranchProblem,
-  worktreeSlug
-} from './worktrees'
+import { parseWorkspaceBusyMessage, workspaceBusyMessage, worktreeSlug } from './worktrees'
 
 describe('worktree names', () => {
   it('names a worktree folder from a chat title, cutting long titles at a word boundary', () => {
@@ -14,12 +9,6 @@ describe('worktree names', () => {
     )
     expect(worktreeSlug('')).toBe('chat')
     expect(worktreeSlug('x'.repeat(50))).toHaveLength(32)
-  })
-
-  it('rejects names Git would refuse or misread', () => {
-    expect(worktreeBranchProblem('sidekick/ok-name')).toBeNull()
-    for (const name of ['', '-x', 'a..b', 'a/', 'a.lock', 'a b', 'a/.hidden', 'a//b'])
-      expect(worktreeBranchProblem(name)).not.toBeNull()
   })
 
   it('carries busy-folder occupants through an error message', () => {
