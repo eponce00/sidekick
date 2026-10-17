@@ -402,7 +402,7 @@ export async function streamOpenAICompatibleChat(
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError')
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: requestFailureMessage(error) }
+    return { ok: false, error: requestFailureMessage(error, endpoint) }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)

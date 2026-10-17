@@ -1,4 +1,5 @@
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
+import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 
 export interface OpenAICompatibleResult<T> {
   ok: boolean
@@ -57,8 +58,10 @@ export interface OpenAICompatibleChatResult {
 
 type FetchImplementation = typeof fetch
 
-export function requestFailureMessage(error: unknown): string {
+export function requestFailureMessage(error: unknown, endpoint?: string): string {
   if (!(error instanceof Error)) return 'Unknown error'
+  const connection = endpoint ? providerConnectionFailureMessage(error, endpoint) : null
+  if (connection) return connection
   const cause = error.cause
   if (cause && typeof cause === 'object' && 'code' in cause && typeof cause.code === 'string') {
     return `${error.message} (${cause.code})`
@@ -110,7 +113,7 @@ export async function fetchOpenAICompatibleModels(
     }
     return { ok: true, data }
   } catch (error) {
-    return { ok: false, error: requestFailureMessage(error) }
+    return { ok: false, error: requestFailureMessage(error, endpoint) }
   }
 }
 
@@ -240,6 +243,6 @@ export async function completeOpenAICompatibleChat(
       }
     }
   } catch (error) {
-    return { ok: false, error: requestFailureMessage(error) }
+    return { ok: false, error: requestFailureMessage(error, endpoint) }
   }
 }

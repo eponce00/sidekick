@@ -829,7 +829,12 @@ describe('MessageItem shared-channel presentation', () => {
       segments: [
         {
           type: 'run_error' as const,
-          runError: { code: 'internal', message: 'fetch failed (UND_ERR_SOCKET)', retryable: true }
+          runError: {
+            code: 'transient',
+            message:
+              'Lost the connection to the model server at 127.0.0.1:4000 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)',
+            retryable: true
+          }
         }
       ]
     }
@@ -858,6 +863,10 @@ describe('MessageItem shared-channel presentation', () => {
         (candidate) => candidate.textContent?.trim() === label
       ) as HTMLButtonElement | undefined
 
+    // Says what went wrong in words, not the error code.
+    expect(container.querySelector('.run-error-segment strong')?.textContent).toBe(
+      'Connection lost'
+    )
     await act(async () => button('Retry')!.click())
     expect(onRetryMessage).not.toHaveBeenCalled()
     expect(container.textContent).toContain('file changes it made are undone')

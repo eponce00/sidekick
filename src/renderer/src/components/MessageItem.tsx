@@ -55,6 +55,7 @@ import {
   VERIFICATION_STATUS_COPY,
   type WorkspaceVerificationSummary
 } from '../../../shared/verification'
+import { providerConnectionFailureKind } from '../../../shared/providerErrors'
 import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
@@ -89,6 +90,15 @@ function RunStatusSegment({
       <span>{retryLabel(status.reason)}</span>
     </div>
   )
+}
+
+/** A failed reply's heading: what went wrong in words, not the error code. */
+function runErrorTitle(error: { code?: string; message: string }): string {
+  const connection = providerConnectionFailureKind(error.message)
+  if (connection === 'unreachable') return 'Model server unreachable'
+  if (connection === 'dropped') return 'Connection lost'
+  if (!error.code || error.code === 'internal') return 'Reply failed'
+  return error.code.replaceAll('_', ' ')
 }
 
 function RunErrorSegment({
@@ -147,7 +157,7 @@ function RunErrorSegment({
     <div className="run-error-segment" role="alert">
       <CircleAlert size={15} aria-hidden="true" />
       <div>
-        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
+        <strong>{runErrorTitle(error)}</strong>
         <span>
           {error.message}
           {canContinue ? ' Continue picks up from where it stopped and keeps its work.' : ''}

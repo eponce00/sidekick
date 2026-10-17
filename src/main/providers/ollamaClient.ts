@@ -8,6 +8,7 @@ import type {
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
 
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
+import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -179,7 +180,12 @@ export async function streamOllamaChat(
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: error instanceof Error ? error.message : 'Ollama stream failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Ollama stream failed')
+    }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)
@@ -229,7 +235,12 @@ export async function completeOllamaChat(
       }
     }
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Ollama completion failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Ollama completion failed')
+    }
   }
 }
 

@@ -10,6 +10,7 @@ import type { ProviderInstance, ProviderInstanceModel } from '../../shared/setti
 import { previewToolCallArguments } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
+import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -445,7 +446,12 @@ export async function streamAnthropicChat(
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: error instanceof Error ? error.message : 'Anthropic stream failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Anthropic stream failed')
+    }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)
@@ -523,7 +529,9 @@ export async function completeAnthropicChat(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Anthropic completion failed'
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Anthropic completion failed')
     }
   }
 }
