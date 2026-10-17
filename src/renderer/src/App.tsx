@@ -56,7 +56,12 @@ import { buildCommandPaletteItems, latestProjectConversationId } from './utils/c
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
-import { storedActivityPanelWidth, workspaceLayout } from './utils/activityPanelLayout'
+import {
+  storedActivityPanelSize,
+  storedActivityPanelWidth,
+  workspaceLayout,
+  type ActivityPanelSize
+} from './utils/activityPanelLayout'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -214,6 +219,18 @@ function App(): React.JSX.Element {
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
     storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
   )
+  const [activityPanelSize, setActivityPanelSize] = useState<ActivityPanelSize>(() =>
+    storedActivityPanelSize(
+      window.localStorage.getItem('activityPanelSize'),
+      window.localStorage.getItem('activityPanelWidth')
+    )
+  )
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelSize', activityPanelSize)
+  }, [activityPanelSize])
+  // Where the panel floats over the chat, sizes do not apply.
+  const panelSize: ActivityPanelSize = isCompactLayout ? 'wide' : activityPanelSize
+  const panelIsFull = effectiveActivityPanelPinned && panelSize === 'full'
   // Opening the sidebar while it is folded for room keeps it open; the inspector narrows instead.
   const [isSidebarHeldOpen, setIsSidebarHeldOpen] = useState(false)
   const layout = workspaceLayout({
@@ -221,7 +238,8 @@ function App(): React.JSX.Element {
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth
+    panelWidth: activityPanelWidth,
+    panelSize
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
   const sidebarNeedsRoom = workspaceLayout({
@@ -229,7 +247,8 @@ function App(): React.JSX.Element {
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth
+    panelWidth: activityPanelWidth,
+    panelSize: panelSize === 'full' ? 'wide' : panelSize
   }).sidebarAutoCollapsed
   useEffect(() => {
     if (!sidebarNeedsRoom) setIsSidebarHeldOpen(false)
@@ -242,8 +261,10 @@ function App(): React.JSX.Element {
       setIsSidebarCollapsed(false)
       return
     }
-    // Opening it is a choice to keep it open; only closing hands it back to the layout.
+    // Opening it is a choice to keep it open; only closing hands it back to the layout. The full
+    // panel has no room for it, so opening the sidebar steps the panel back to wide.
     const opening = effectiveSidebarCollapsed
+    if (opening && panelIsFull) setActivityPanelSize('wide')
     setIsSidebarHeldOpen(opening)
     setIsSidebarCollapsed(!opening)
   }
@@ -1359,7 +1380,10 @@ function App(): React.JSX.Element {
           scheduleNames={scheduleNames}
           onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
-        <div className="conversation-panel-stack">
+        <div
+          className={`conversation-panel-stack${panelIsFull ? ' is-behind-panel' : ''}`}
+          aria-hidden={panelIsFull || undefined}
+        >
           {!currentConversationId && renderConversationPanel(null, draftPanelKey, true)}
           {mountedConversationIds.map((id) => {
             const conversation = conversations.find((candidate) => candidate.id === id)
@@ -1379,11 +1403,13 @@ function App(): React.JSX.Element {
           onActiveTabChange={handleActivityTabChange}
           maxWidth={layout.panelMaxWidth}
           onWidthChange={setActivityPanelWidth}
+          size={panelSize}
+          onSizeChange={isCompactLayout ? undefined : setActivityPanelSize}
           onOpenConversation={(id) => void handleSelectConversation(id)}
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }
-          workspaceFolder={activeProject?.folder_path ?? null}
+          workspaceFolder={conversationFolder(currentConversation)}
           historyWorkspaceFolder={historyWorkspaceFolder}
           historyReadOnly={historyReadOnly}
           checkpointVersion={checkpointVersion}

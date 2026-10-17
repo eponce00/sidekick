@@ -6,8 +6,6 @@ import {
   Plus,
   X,
   Globe,
-  Maximize2,
-  Minimize2,
   MonitorSmartphone,
   Pause
 } from 'lucide-react'
@@ -18,13 +16,9 @@ import type {
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 
 export function BrowserWorkspace({
-  conversationId,
-  onToggleWidth,
-  isWide
+  conversationId
 }: {
   conversationId: string
-  onToggleWidth?: () => void
-  isWide?: boolean
 }): React.JSX.Element {
   const [state, setState] = useState<BrowserWorkspaceState | null>(null)
   const [address, setAddress] = useState('')
@@ -158,16 +152,6 @@ export function BrowserWorkspace({
             <Plus size={15} />
           </button>
         </div>
-        {onToggleWidth && (
-          <button
-            className="browser-workspace-width"
-            onClick={onToggleWidth}
-            aria-label={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-            title={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-          >
-            {isWide ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-          </button>
-        )}
       </div>
       <form
         className="browser-workspace-toolbar"

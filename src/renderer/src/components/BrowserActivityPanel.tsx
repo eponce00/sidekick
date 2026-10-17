@@ -5,8 +5,6 @@ import {
   Circle,
   ExternalLink,
   LoaderCircle,
-  Maximize2,
-  Minimize2,
   MonitorUp,
   MousePointer2,
   ShieldAlert
@@ -23,8 +21,6 @@ import { BrowserWorkspace } from './BrowserWorkspace'
 export interface BrowserActivityPanelProps {
   conversationId: string | null
   onActivityChange?: (state: BrowserActivityState) => void
-  isWide?: boolean
-  onToggleWidth?: () => void
 }
 
 function activityStatus(
@@ -50,26 +46,20 @@ function statusLabel(state: BrowserActivityState): string {
 
 export function BrowserActivityPanel({
   conversationId,
-  onActivityChange,
-  isWide,
-  onToggleWidth
+  onActivityChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   return (
     <BrowserActivityPanelSession
       key={conversationId ?? 'no-conversation'}
       conversationId={conversationId}
       onActivityChange={onActivityChange}
-      isWide={isWide}
-      onToggleWidth={onToggleWidth}
     />
   )
 }
 
 function BrowserActivityPanelSession({
   conversationId,
-  onActivityChange,
-  isWide = false,
-  onToggleWidth
+  onActivityChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   const [activity, setActivity] = useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const [failedScreenshot, setFailedScreenshot] = useState<string | null>(null)
@@ -155,26 +145,11 @@ function BrowserActivityPanelSession({
                 : statusLabel(activity)}
             </span>
           </div>
-          {onToggleWidth && (
-            <button
-              className="browser-activity-icon-button"
-              type="button"
-              onClick={onToggleWidth}
-              title={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-              aria-label={isWide ? 'Restore browser panel width' : 'Widen browser panel'}
-            >
-              {isWide ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-            </button>
-          )}
         </header>
       )}
 
       {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
-        <BrowserWorkspace
-          conversationId={conversationId}
-          onToggleWidth={onToggleWidth}
-          isWide={isWide}
-        />
+        <BrowserWorkspace conversationId={conversationId} />
       ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />

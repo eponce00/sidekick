@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
-  ACTIVITY_PANEL_DEFAULT_WIDTH,
   ACTIVITY_PANEL_MIN_WIDTH,
+  ACTIVITY_PANEL_WIDE_WIDTH,
   activityPanelMaximumWidth,
   clampActivityPanelWidth,
+  storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout
 } from './activityPanelLayout'
@@ -19,10 +20,18 @@ describe('activity panel layout', () => {
     expect(clampActivityPanelWidth(900, 760)).toBe(712)
   })
 
-  it('restores only finite persisted widths', () => {
-    expect(storedActivityPanelWidth(null, 1_400)).toBe(ACTIVITY_PANEL_DEFAULT_WIDTH)
+  it('restores the dragged wide width, never one as narrow as the narrow size', () => {
+    expect(storedActivityPanelWidth(null, 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
     expect(storedActivityPanelWidth('512', 1_400)).toBe(512)
-    expect(storedActivityPanelWidth('not-a-number', 1_400)).toBe(ACTIVITY_PANEL_DEFAULT_WIDTH)
+    expect(storedActivityPanelWidth('320', 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
+    expect(storedActivityPanelWidth('not-a-number', 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
+  })
+
+  it('remembers the size, and starts from the old dragged width without one', () => {
+    expect(storedActivityPanelSize('full', '320')).toBe('full')
+    expect(storedActivityPanelSize(null, '320')).toBe('narrow')
+    expect(storedActivityPanelSize(null, '720')).toBe('wide')
+    expect(storedActivityPanelSize(null, null)).toBe('narrow')
   })
 })
 
@@ -84,5 +93,29 @@ describe('narrow windows', () => {
         panelWidth: 649
       })
     ).toEqual({ sidebarAutoCollapsed: true, panelMaxWidth: 901 - 48 - 320 })
+  })
+
+  const sized = (overrides: Partial<Parameters<typeof workspaceLayout>[0]>) =>
+    workspaceLayout({
+      viewportWidth: 1_130,
+      sidebarCollapsed: false,
+      sidebarHeldOpen: false,
+      panelOpen: true,
+      panelWidth: 720,
+      ...overrides
+    })
+
+  it('gives the full size everything but the rail, and folds the sidebar for it', () => {
+    expect(sized({ panelSize: 'full' })).toEqual({
+      sidebarAutoCollapsed: true,
+      panelMaxWidth: 1_130 - 48
+    })
+    // A sidebar already folded is not folded again.
+    expect(sized({ panelSize: 'full', sidebarCollapsed: true }).sidebarAutoCollapsed).toBe(false)
+  })
+
+  it('keeps the sidebar beside the narrow size whatever the wide width is', () => {
+    expect(sized({ panelSize: 'narrow', panelWidth: 900 }).sidebarAutoCollapsed).toBe(false)
+    expect(sized({ panelSize: 'wide', panelWidth: 900 }).sidebarAutoCollapsed).toBe(true)
   })
 })

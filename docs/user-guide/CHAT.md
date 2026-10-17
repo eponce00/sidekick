@@ -82,6 +82,20 @@ of its report.
   and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
   each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
 
+## The side panel
+
+The panel beside the chat holds Files, Recovery, Browser and Terminal. The size button in its
+header shows how big it is, and each click steps to the next size:
+
+- **Narrow:** a fixed column beside the chat.
+- **Wide:** drag the panel's edge to size it, down to a phone-width chat. SideKick remembers that
+  width for next time.
+- **Full window:** the chat steps aside and the left sidebar folds to its thin rail, so the
+  panel, a browser page for example, gets the whole window. Opening the sidebar returns the panel
+  to wide. The next click goes back to narrow.
+
+The button beside it hides the panel and shows it again.
+
 ## Going back
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the

@@ -62,8 +62,8 @@
 .workspace-bar-link:focus-visible,
 .workspace-bar-icon-button:focus-visible,
 .workspace-bar-segments button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .workspace-bar-segments {
@@ -285,8 +285,8 @@
 
 .worktrees-icon-action:focus-visible,
 .worktrees-action:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .worktrees-action {
@@ -400,6 +400,6 @@
 }
 
 .composer-worktree-chip:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

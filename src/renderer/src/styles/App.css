@@ -455,6 +455,20 @@ select {
 
 .conversation-panel-stack {
   position: relative;
+  transition: opacity var(--duration-normal) ease;
+}
+
+/* The inspector at full size takes the chat's room; the chat stays mounted and fades out. */
+.conversation-panel-stack.is-behind-panel {
+  flex: 0 0 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Its chat keeps a usable width while hidden, so the composer never sizes itself to a sliver
+   and comes back too tall. */
+.conversation-panel-stack.is-behind-panel > .conversation-panel-slot {
+  min-width: 480px;
 }
 
 .conversation-panel-slot[hidden] {

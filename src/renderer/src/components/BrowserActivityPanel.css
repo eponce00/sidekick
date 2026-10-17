@@ -42,9 +42,6 @@
   color: var(--text-secondary);
   font-size: var(--text-sm);
 }
-.browser-workspace-width {
-  flex-shrink: 0;
-}
 .browser-workspace button {
   background: transparent;
   color: var(--text-secondary);
