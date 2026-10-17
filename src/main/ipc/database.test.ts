@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   db: null as Database.Database | null,
   createWorktree: vi.fn(),
   discardFresh: vi.fn(),
+  discardWithUnusedChat: vi.fn(),
   setupCreatedWorktree: vi.fn()
 }))
 
@@ -27,6 +28,7 @@ vi.mock('./worktrees', () => ({
   getManagedWorktrees: () => ({
     create: mocks.createWorktree,
     discardFresh: mocks.discardFresh,
+    discardWithUnusedChat: mocks.discardWithUnusedChat,
     worktreeIdFor: () => null
   })
 }))
@@ -337,5 +339,85 @@ describe('conversation fork IPC', () => {
       { id: 'objective', startsGoal: true },
       { id: 'ordinary', startsGoal: undefined }
     ])
+  })
+})
+
+describe('discarding a chat left unused', () => {
+  beforeEach(() => {
+    mocks.handlers.clear()
+    mocks.discardWithUnusedChat.mockReset()
+    mocks.db = new Database(':memory:')
+    applyDatabaseSchema(mocks.db)
+    registerDatabaseHandlers()
+  })
+
+  afterEach(() => {
+    mocks.db?.close()
+    mocks.db = null
+  })
+
+  const addChat = (
+    id: string,
+    titleSource = 'placeholder',
+    worktreeId: string | null = null
+  ): void => {
+    const now = Date.now()
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations
+         (id, title, created_at, updated_at, project_id, title_source, title_version,
+          sidebar_order, project_context_version, worktree_id)
+         VALUES (?, 'New Conversation', ?, ?, NULL, ?, 1, 0, 0, ?)`
+      )
+      .run(id, now, now, titleSource, worktreeId)
+  }
+  const discard = (id: unknown): Promise<{ discarded: boolean }> =>
+    (mocks.handlers.get('conversations:discardIfUntouched') as RegisteredHandler)(
+      {},
+      id
+    ) as Promise<{ discarded: boolean }>
+  const exists = (id: string): boolean =>
+    Boolean(mocks.db!.prepare('SELECT 1 FROM conversations WHERE id = ?').get(id))
+
+  it('removes a chat nothing was said in', async () => {
+    addChat('empty')
+    await expect(discard('empty')).resolves.toEqual({ discarded: true })
+    expect(exists('empty')).toBe(false)
+  })
+
+  it('keeps a chat with a message, a run, or a title of its own', async () => {
+    addChat('spoken')
+    mocks
+      .db!.prepare(
+        `INSERT INTO messages (id, conversation_id, role, content, timestamp)
+         VALUES ('m', 'spoken', 'user', 'Hi', 1)`
+      )
+      .run()
+    addChat('ran')
+    mocks
+      .db!.prepare(
+        `INSERT INTO agent_runs
+         (id, thread_id, surface, phase, provider, model, profile_json, started_at, updated_at)
+         VALUES ('r', 'ran', 'conversation', 'running', 'p', 'm', '{}', 1, 1)`
+      )
+      .run()
+    addChat('named', 'user')
+
+    for (const id of ['spoken', 'ran', 'named']) {
+      await expect(discard(id)).resolves.toEqual({ discarded: false })
+      expect(exists(id)).toBe(true)
+    }
+    await expect(discard({ id: 'spoken' })).resolves.toEqual({ discarded: false })
+  })
+
+  it('keeps a chat whose worktree holds changes', async () => {
+    mocks.discardWithUnusedChat.mockResolvedValue(false)
+    addChat('worktree-chat', 'placeholder', null)
+    mocks
+      .db!.prepare("UPDATE conversations SET worktree_id = 'w1' WHERE id = 'worktree-chat'")
+      .run()
+    await expect(discard('worktree-chat')).resolves.toEqual({ discarded: false })
+    expect(mocks.discardWithUnusedChat).toHaveBeenCalledWith('w1', 'worktree-chat')
+    expect(exists('worktree-chat')).toBe(true)
   })
 })

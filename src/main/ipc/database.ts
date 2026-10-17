@@ -413,6 +413,54 @@ export function registerDatabaseHandlers(): void {
     return { success: true, ...(worktreeCleanup ? { worktreeCleanup } : {}) }
   })
 
+  // A chat opened and left with nothing said in it does not stay behind in the sidebar. Only a
+  // chat nothing has touched goes: no messages, runs, goal, queued prompt, schedule or session
+  // link, and its placeholder title.
+  ipcMain.handle('conversations:discardIfUntouched', async (_, id: unknown) => {
+    if (typeof id !== 'string') return { discarded: false }
+    const conversation = db
+      .prepare(
+        `SELECT worktree_id, title_source, started_by_conversation_id
+         FROM conversations WHERE id = ?`
+      )
+      .get(id) as
+      | {
+          worktree_id: string | null
+          title_source: string | null
+          started_by_conversation_id: string | null
+        }
+      | undefined
+    if (
+      !conversation ||
+      conversation.title_source !== 'placeholder' ||
+      conversation.started_by_conversation_id
+    ) {
+      return { discarded: false }
+    }
+    const { touched } = db
+      .prepare(
+        `SELECT EXISTS(SELECT 1 FROM messages WHERE conversation_id = @id)
+           OR EXISTS(SELECT 1 FROM agent_runs WHERE thread_id = @id)
+           OR EXISTS(SELECT 1 FROM conversation_goals WHERE conversation_id = @id)
+           OR EXISTS(SELECT 1 FROM agent_prompt_admissions WHERE conversation_id = @id)
+           OR EXISTS(SELECT 1 FROM schedule_runs WHERE conversation_id = @id)
+           OR EXISTS(SELECT 1 FROM session_messages WHERE to_conversation_id = @id)
+           OR EXISTS(SELECT 1 FROM conversations WHERE started_by_conversation_id = @id)
+           AS touched`
+      )
+      .get({ id }) as { touched: number }
+    if (touched) return { discarded: false }
+    if (
+      conversation.worktree_id &&
+      !(await worktrees.discardWithUnusedChat(conversation.worktree_id, id))
+    ) {
+      return { discarded: false }
+    }
+    db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+    refreshSessionStatuses([id])
+    return { discarded: true }
+  })
+
   ipcMain.handle('conversations:deleteAll', async () => {
     db.prepare('DELETE FROM messages').run()
     db.prepare('DELETE FROM conversations').run()

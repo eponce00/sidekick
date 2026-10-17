@@ -676,6 +676,24 @@ export class ManagedWorktreeService {
     if (!result.removed) throw new Error(`Worktree cleanup refused: ${result.reason}`)
   }
 
+  /**
+   * Whether a chat that was opened and left unused may go, taking its worktree with it. Shared by
+   * other chats, the worktree stays; set aside or changed, the chat stays so nothing is lost.
+   */
+  async discardWithUnusedChat(id: string, conversationId: string): Promise<boolean> {
+    const row = this.findRow(id)
+    if (!row) return true
+    if (this.owners(id).some((owner) => owner.id !== conversationId)) return true
+    if (row.set_aside_at) return false
+    try {
+      const result = await this.serialized(id, () => this.removeNow(id, { onlyIfClean: true }))
+      return result.removed
+    } catch (error) {
+      console.warn('[Worktrees] An unused chat kept its worktree:', error)
+      return false
+    }
+  }
+
   /** Removes a worktree no chat uses any more, as when its last chat is deleted. */
   async removeIfUnused(id: string): Promise<RemoveManagedWorktreeResult | null> {
     if (!this.findRow(id) || this.owners(id).length) return null

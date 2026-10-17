@@ -737,6 +737,11 @@ export function installBrowserApiMock(): void {
         return { success: Boolean(conversation) }
       },
       delete: async () => ({ success: true }),
+      discardIfUntouched: async (id) => {
+        const index = previewCreatedConversations.findIndex((candidate) => candidate.id === id)
+        if (index >= 0) previewCreatedConversations.splice(index, 1)
+        return { discarded: index >= 0 }
+      },
       deleteAll: async () => ({ success: true }),
       getMessages: async (conversationId) =>
         conversationId === 'preview-1'

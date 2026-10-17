@@ -13,7 +13,9 @@ standalone chats for work that does not belong to a folder.
 - A standalone conversation has no project folder and therefore does not silently inherit file or
   command context from the last project that happened to be open.
 - The global New Chat action creates a standalone chat. The plus action beside a project creates a
-  chat inside that project.
+  chat inside that project. A new chat left before anything is sent in it goes away rather than
+  waiting in the sidebar, unless something was typed in its message box; a worktree made for it
+  goes too when nothing in it changed.
 - A never-attached standalone conversation may enter one project. That canonical folder becomes its
   durable affinity. It may later detach to Chats and reattach only to that same folder; direct or
   indirect moves between different projects are rejected.

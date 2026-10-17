@@ -46,6 +46,7 @@ import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
+import { useUntouchedChatCleanup } from './hooks/useUntouchedChatCleanup'
 import {
   deleteComposerDraft,
   saveComposerDraft,
@@ -375,6 +376,16 @@ function App(): React.JSX.Element {
     forgetPanel,
     resetPanels
   } = useConversationPanelRegistry(conversations, currentConversationId)
+  useUntouchedChatCleanup({
+    ready: isReady,
+    conversations,
+    currentConversationId,
+    onDiscarded: (id) => {
+      deleteComposerDraft(id)
+      forgetPanel(id)
+      setConversations((current) => current.filter((conversation) => conversation.id !== id))
+    }
+  })
   // Load settings, pinned models, and conversations on startup
   useEffect(() => {
     const loadData = async (): Promise<void> => {

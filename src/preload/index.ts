@@ -118,6 +118,7 @@ const api = {
     ) => ipcRenderer.invoke('conversations:preserveTitle', input),
     markRead: (id: string) => ipcRenderer.invoke('conversations:markRead', id),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
+    discardIfUntouched: (id: string) => ipcRenderer.invoke('conversations:discardIfUntouched', id),
     deleteAll: () => ipcRenderer.invoke('conversations:deleteAll'),
     getMessages: (conversationId: string) =>
       ipcRenderer.invoke('conversations:getMessages', conversationId),
