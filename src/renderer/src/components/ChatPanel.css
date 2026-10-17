@@ -13,6 +13,7 @@
 }
 
 .composer-command-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   display: flex;
   flex-direction: column;
   max-height: min(420px, 52vh);
@@ -237,6 +238,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  transition:
+    filter var(--duration-slow) var(--ease-out),
+    opacity var(--duration-slow) var(--ease-out);
+}
+
+/* While a message is edited in the message box, it and everything after it step back: sending
+   the edit replaces them. */
+.message.message-rewound {
+  filter: blur(2px) saturate(0.6);
+  opacity: 0.32;
+  pointer-events: none;
+  user-select: none;
 }
 
 .message-bubble {
@@ -763,7 +776,6 @@
 
 .message:hover .message-meta,
 .message:focus-within .message-meta,
-.message-editing .message-meta,
 .message-meta:has(.read-aloud.is-reading),
 .message-meta:has(.message-footer-popover[open]),
 /* A failed check is news, not a detail to find on hover. */
@@ -812,6 +824,22 @@
   color: var(--color-success);
 }
 
+/* The check pops in when a copy lands. */
+.message-action.icon.copied-icon svg {
+  animation: copied-pop 0.42s var(--ease-out);
+}
+
+@keyframes copied-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) rotate(-20deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
 .message-action:hover {
   color: var(--text-primary);
   background: var(--surface-3);
@@ -849,37 +877,11 @@
   opacity: 0.8;
 }
 
-.message-edit-input {
-  width: 100%;
-  background-color: transparent;
-  color: inherit;
-  border: none;
-  padding: 0;
-  font-size: var(--content-text);
-  line-height: var(--leading);
-  resize: none;
-  font-family: inherit;
-  min-height: 24px;
+/* The copy of a message that glides into the message box when it is edited. */
+.message-edit-ghost {
   overflow: hidden;
-  overflow-wrap: anywhere;
-  caret-color: var(--accent);
-  outline: none;
-}
-
-.message-editing .message-bubble {
-  align-self: flex-end;
-  max-width: 100%;
-  background-color: var(--message-user-bg);
-  box-shadow: none;
-}
-
-.message-editing .message-actions {
-  gap: 1px;
-}
-
-.message-editing .message-action:first-child {
-  color: var(--accent);
-  opacity: 1;
+  box-shadow: var(--shadow-md);
+  will-change: transform, opacity;
 }
 
 .message-user .message-action:hover {
@@ -2123,7 +2125,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   cursor: pointer;
   font-size: var(--text-xs);
   border-radius: var(--radius-full);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .thinking-toggle:hover {
@@ -2493,6 +2495,7 @@ body[data-theme='light'] .message-user .message-action:hover {
 }
 
 .composer-popover {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 8;
   right: -1px;
@@ -2505,6 +2508,60 @@ body[data-theme='light'] .message-user .message-action:hover {
 }
 
 .research-mode-bar,
+/* Above the message box while it holds an edited message. */
+.composer-editing-bar {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+  padding: 0 var(--space-1) var(--space-3);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border-color));
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
+}
+
+.composer-editing-bar svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.composer-editing-bar strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.composer-editing-bar span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-editing-bar button {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: var(--transition-ui);
+}
+
+.composer-editing-bar button:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.composer-editing-bar button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .plan-mode-bar {
   display: flex;
   align-items: center;
@@ -2567,7 +2624,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   gap: 6px;
 }
 
-.plan-mode-copy select {
+.plan-mode-copy :is(select, .ui-select) {
   max-width: min(190px, 28vw);
   min-width: 0;
   padding: 2px 18px 2px 4px;
@@ -2579,12 +2636,12 @@ body[data-theme='light'] .message-user .message-action:hover {
   text-overflow: ellipsis;
 }
 
-.plan-mode-copy select:hover:not(:disabled) {
+.plan-mode-copy :is(select, .ui-select):hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-3);
 }
 
-.plan-mode-copy select:disabled {
+.plan-mode-copy :is(select, .ui-select):disabled {
   appearance: none;
   padding-right: 4px;
   opacity: 1;
@@ -2957,7 +3014,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .input-plus-button:hover {
@@ -3069,7 +3126,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .send-button:not(:disabled) {
@@ -3295,7 +3352,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   font-size: var(--text-sm);
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .model-selector-inline:hover {
@@ -3663,7 +3720,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   border: none;
   border-radius: var(--radius-full);
   padding: 2px var(--space-4);
-  transition: all var(--duration-fast) ease;
+  transition: var(--transition-ui);
   max-width: min(100%, 400px);
   word-wrap: break-word;
 }

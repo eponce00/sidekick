@@ -57,6 +57,11 @@ const api = {
       return () => ipcRenderer.removeListener('providers:healthChanged', listener)
     }
   },
+  menus: {
+    onShow: voiceEvent<import('../shared/appMenus').AppMenuRequest>('menus:show'),
+    choose: (token: string, itemId: string) => ipcRenderer.invoke('menus:choose', token, itemId),
+    dismiss: (token: string) => ipcRenderer.invoke('menus:dismiss', token)
+  },
   settings: {
     selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),
@@ -113,6 +118,7 @@ const api = {
     ) => ipcRenderer.invoke('conversations:preserveTitle', input),
     markRead: (id: string) => ipcRenderer.invoke('conversations:markRead', id),
     delete: (id: string) => ipcRenderer.invoke('conversations:delete', id),
+    discardIfUntouched: (id: string) => ipcRenderer.invoke('conversations:discardIfUntouched', id),
     deleteAll: () => ipcRenderer.invoke('conversations:deleteAll'),
     getMessages: (conversationId: string) =>
       ipcRenderer.invoke('conversations:getMessages', conversationId),
@@ -146,13 +152,10 @@ const api = {
   },
   worktrees: {
     list: () => ipcRenderer.invoke('worktrees:list'),
-    diskUsage: (id: string) => ipcRenderer.invoke('worktrees:diskUsage', id),
     branchOptions: (projectId: string) => ipcRenderer.invoke('worktrees:branchOptions', projectId),
     createForConversation: (input: import('../shared/worktrees').CreateConversationWorktreeInput) =>
       ipcRenderer.invoke('worktrees:createForConversation', input),
-    remove: (input: import('../shared/worktrees').RemoveManagedWorktreeInput) =>
-      ipcRenderer.invoke('worktrees:remove', input),
-    sync: (id: string) => ipcRenderer.invoke('worktrees:sync', id),
+    remove: (id: string) => ipcRenderer.invoke('worktrees:remove', id),
     reveal: (id: string) => ipcRenderer.invoke('worktrees:reveal', id)
   },
   agentRuns: {

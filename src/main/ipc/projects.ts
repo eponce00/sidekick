@@ -4,7 +4,6 @@ import { basename, resolve } from 'path'
 import { getDb } from './state'
 import { ProjectStore } from '../services/projectStore'
 import type { MoveConversationInput } from '../../shared/projects'
-import { getManagedWorktrees } from './worktrees'
 
 async function normalizeProjectFolder(folderPath: string): Promise<string> {
   const normalized = resolve(folderPath)
@@ -29,23 +28,6 @@ export function registerProjectHandlers(): void {
   )
 
   ipcMain.handle('projects:remove', async (_, id: string) => {
-    // A SideKick worktree is removed as a worktree, so its folder and branch are not orphaned.
-    const worktrees = getManagedWorktrees()
-    if (typeof id === 'string' && worktrees.isManagedProject(id)) {
-      const worktree = (await worktrees.list()).find(({ projectId }) => projectId === id)
-      const result = worktree
-        ? await worktrees.remove({ id: worktree.id })
-        : { removed: false, blockers: [] }
-      if (!result.removed)
-        throw new Error(
-          `This worktree was kept: ${result.blockers.map(({ message }) => message).join(' ')}${
-            result.blockers.every(({ forceable }) => forceable)
-              ? ' Use Manage worktrees to remove it anyway.'
-              : ''
-          }`
-        )
-      return { success: true }
-    }
     store.remove(id)
     return { success: true }
   })

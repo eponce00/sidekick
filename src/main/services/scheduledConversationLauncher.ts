@@ -19,9 +19,9 @@ export interface ScheduledConversationLauncherOptions {
   isRunQueued?: (agentRunId: string) => boolean
   worktrees?: {
     isGitProject: (projectId: string) => Promise<boolean>
-    /** A new worktree project of `projectId` and its branch. */
-    create: (projectId: string, title: string) => Promise<{ projectId: string; branch: string }>
-    discard: (projectId: string) => Promise<void>
+    /** A new worktree of `projectId`, and where it starts ("detached from main"). */
+    create: (projectId: string, title: string) => Promise<{ worktreeId: string; location: string }>
+    discard: (worktreeId: string) => Promise<void>
   }
   now?: () => number
 }
@@ -50,9 +50,10 @@ async function placeScheduledRun(
   const worktrees = options.worktrees
   const created = await worktrees.create(schedule.projectId, schedule.name)
   return {
-    projectId: created.projectId,
-    note: `Started in a new worktree on ${created.branch} because ${who} working in the project folder.`,
-    discard: () => worktrees.discard(created.projectId)
+    projectId: schedule.projectId,
+    worktreeId: created.worktreeId,
+    note: `Started in a new worktree, ${created.location}, because ${who} working in the project folder.`,
+    discard: () => worktrees.discard(created.worktreeId)
   }
 }
 
@@ -70,7 +71,12 @@ export function createScheduledConversationLauncher(
       Boolean(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)),
     placeRun: (schedule) => placeScheduledRun(options, schedule),
     ...(options.isRunQueued ? { isRunQueued: options.isRunQueued } : {}),
-    createConversation: (schedule: Schedule, runNumber: number, projectId: string | null): string =>
+    createConversation: (
+      schedule: Schedule,
+      runNumber: number,
+      projectId: string | null,
+      worktreeId: string | null = null
+    ): string =>
       db.transaction(() => {
         const id = randomUUID()
         const timestamp = now()
@@ -92,8 +98,8 @@ export function createScheduledConversationLauncher(
           `INSERT INTO conversations
            (id, title, created_at, updated_at, project_id, title_source, title_version,
             sidebar_order, project_context_version, home_workspace_root, home_project_name,
-            schedule_id, schedule_run_number, started_by_kind, permission_ceiling)
-           VALUES (?, ?, ?, ?, ?, 'preserved', ?, ?, 0, ?, ?, ?, ?, 'schedule', ?)`
+            worktree_id, schedule_id, schedule_run_number, started_by_kind, permission_ceiling)
+           VALUES (?, ?, ?, ?, ?, 'preserved', ?, ?, 0, ?, ?, ?, ?, ?, 'schedule', ?)`
         ).run(
           id,
           `${schedule.name} · Run ${runNumber}`,
@@ -104,6 +110,7 @@ export function createScheduledConversationLauncher(
           placement.sidebar_order,
           project?.folder_path ?? null,
           project?.name ?? null,
+          worktreeId,
           schedule.id,
           runNumber,
           schedule.permissionCeiling ?? null

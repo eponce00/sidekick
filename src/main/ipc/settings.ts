@@ -18,6 +18,8 @@ import {
   MCP_ENV_SECRETS_KEY,
   retainedMcpEnvironment
 } from '../services/mcpServerTrust'
+import { showTrustedDialog } from '../services/trustedDialog'
+import { RETIRED_SETTING_KEYS } from '../../shared/settingsSchema'
 
 const CREDENTIAL_STORAGE_ERROR =
   'Secure credential storage is unavailable. Unlock or enable your operating system keychain or password manager, then try again. Settings without new credentials can still be saved.'
@@ -254,6 +256,7 @@ export function publicSettings(value: unknown): unknown {
 }
 
 function migrateLegacySettingsForStorage(store: ReturnType<typeof getStore>): SettingsRecord {
+  removeRetiredSettings(store)
   const stored = store.get('settings', {})
   const revealed = asSettingsRecord(revealSettings(stored)) as unknown as ProviderSettings
   // Defer migration rather than persisting a credential-less projection while
@@ -265,6 +268,17 @@ function migrateLegacySettingsForStorage(store: ReturnType<typeof getStore>): Se
   const migrated = syncLegacyProviderSettings({ ...revealed, providerInstances })
   store.set('settings', protectSettings(migrated, stored))
   return asSettingsRecord(revealSettings(store.get('settings', {})))
+}
+
+/** Drops settings SideKick no longer has, so they do not linger as unknown keys. */
+function removeRetiredSettings(store: ReturnType<typeof getStore>): void {
+  const stored = store.get('settings', {}) as Record<string, unknown>
+  if (!stored || typeof stored !== 'object') return
+  const retired = RETIRED_SETTING_KEYS.filter((key) => Object.hasOwn(stored, key))
+  if (!retired.length) return
+  const kept = { ...stored }
+  for (const key of retired) delete kept[key]
+  store.set('settings', kept)
 }
 
 function asSettingsRecord(value: unknown): SettingsRecord {
@@ -370,9 +384,7 @@ export async function confirmSensitiveSettingsChange(
   }
   const window = sender ? BrowserWindow.fromWebContents(sender) : appState.mainWindowRef
   const parent = window && !window.isDestroyed() ? window : null
-  const result = parent
-    ? await dialog.showMessageBox(parent, options)
-    : await dialog.showMessageBox(options)
+  const result = await showTrustedDialog(parent, options)
   return result.response === 1
 }
 

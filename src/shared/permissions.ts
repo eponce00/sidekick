@@ -132,8 +132,8 @@ const PERMISSION_MODES_BY_STRICTNESS: readonly PermissionMode[] = [
 
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   'full-access': 'Full access',
-  'sensitive-only': 'Ask only for sensitive actions',
-  'always-ask': 'Ask for every write or command'
+  'sensitive-only': 'Ask for sensitive actions',
+  'always-ask': 'Ask before every change or command'
 }
 
 export function isPermissionMode(value: unknown): value is PermissionMode {

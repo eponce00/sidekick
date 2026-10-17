@@ -16,6 +16,7 @@ import {
 import { parseNumberedLines } from '../utils/codeHighlight'
 import { CommandLiveView } from './CommandLiveView'
 import { requestTerminalView, useTerminalSessionForTool } from '../utils/terminalSessionStore'
+import { Reveal } from './Reveal'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -98,7 +99,7 @@ export function ToolExecutionCard({
           />
         </button>
       )}
-      {expanded && (
+      <Reveal open={expanded}>
         <div className="tool-execution-detail">
           {subject && (
             <div
@@ -226,7 +227,7 @@ export function ToolExecutionCard({
             </div>
           )}
         </div>
-      )}
+      </Reveal>
     </div>
   )
 }

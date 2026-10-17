@@ -72,7 +72,7 @@ a short diff preview, preventing repeated edits from turning the context into a 
 file version.
 
 Long runs are bounded by capacity rather than a raw count of successful edits. The normal tool-round
-pause is 80 rounds and a continuous run stops after 45 minutes. Consecutive calls with identical
+pause is 500 rounds, adjustable from 10 to 2,000, and a continuous run stops after 45 minutes. Consecutive calls with identical
 canonical arguments receive model-only advisory reminders at selected thresholds, while exact file
 state revisits receive separate convergence guidance. Neither condition rewrites or blocks a
 successful tool result: hard loop stops are reserved for repeated failures and the explicit global

@@ -1,4 +1,4 @@
-import { GitBranch, FolderOpen, X } from 'lucide-react'
+import { FolderOpen, GitFork, X } from 'lucide-react'
 import { useId } from 'react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import './ForkConversationDialog.css'
@@ -37,7 +37,7 @@ export function ForkConversationDialog({
       >
         <div className="fork-dialog-header">
           <span className="fork-dialog-icon">
-            <GitBranch size={18} />
+            <GitFork size={18} />
           </span>
           <div>
             <h2 id={titleId}>Fork from this message</h2>

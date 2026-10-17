@@ -20,7 +20,7 @@ const worktree = (owner: string, ahead: number, changedFiles: number): ManagedWo
     branch: `sidekick/${owner.replace('worker-', '')}`,
     baseRef: 'main',
     owners: [{ kind: 'chat', id: owner, title: owner, running: false }],
-    status: { currentBranch: null, ahead, behind: 0, changedFiles, merged: false }
+    status: { currentBranch: null, ahead, changedFiles }
   }) as ManagedWorktreeSummary
 
 const worktrees = [worktree(schedules.conversationId, 3, 4), worktree(done.conversationId, 1, 0)]

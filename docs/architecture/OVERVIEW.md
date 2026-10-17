@@ -214,7 +214,7 @@ surfaces backed by the Electron runtime already shipped in the desktop package. 
 internal CDP bridge for accessibility snapshots, semantic node references, full-page capture,
 network accounting, and coordinate fallback; no debugging port is exposed and no personal browser
 profile is attached. Local files are limited to explicitly granted project roots, plain HTTP is
-limited to loopback servers and local-network origins the user approved in a native dialog
+limited to loopback servers and local-network origins the user approved in a trusted dialog
 (stored apart from settings, revocable in Settings), credential-bearing URLs and unsupported schemes fail
 closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
 subresources whose real path escapes that session's project grant. Conversation sessions persist
@@ -481,13 +481,20 @@ through the main window's external-navigation policy.
 
 ### Worktrees and parallel agents
 
+A worktree belongs to its chat, not to a project of its own: `conversations.worktree_id` points
+at it, the chat keeps its `project_id`, and `ProjectStore.getConversationContext` returns the
+worktree's folder as the chat's `workspaceRoot`, which every run, tool and checkpoint uses.
+
 `src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
 a chat that has not started (`createForConversation`, also the entry point for main-process callers
-such as agent-started chats), inventory with Git state, owners and disk use, merging the base into a
-clean idle worktree, and removal. It acts only on folders it can prove it created: the exact
-storage shape under the private `worktrees` folder, the recorded branch, and registration in
-`git worktree list`. Forced removal deletes links inside the worktree as links before
-`git worktree remove --force`, so a junction to a shared install never loses its target.
+such as agent-started chats), inventory with Git state and owners, setting the least recently used
+worktrees aside beyond 15 on disk, restoring one before its chat's next run (the coordinator's
+`prepareWorkspace` hook), and removal. Setting aside snapshots HEAD and every unignored file into a
+commit held by `refs/sidekick/worktrees/<id>`, built in a private index so the worktree's own index
+is untouched. It acts only on folders it can prove it created: the exact storage shape under the
+private `worktrees` folder and registration in `git worktree list`. Removal deletes links inside the
+worktree as links before `git worktree remove --force`, so a junction to a shared install never
+loses its target.
 
 `src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
 `AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a

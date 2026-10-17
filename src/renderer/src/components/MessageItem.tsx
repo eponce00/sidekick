@@ -1,26 +1,25 @@
-import { Children, useState, useRef, useEffect, useLayoutEffect, memo, useMemo } from 'react'
+import { Children, useState, useRef, useEffect, memo, useMemo } from 'react'
 import {
-  Loader2,
-  Check,
-  X,
   AlignLeft,
   Brain,
+  Check,
   ChevronDown,
   ChevronRight,
-  Copy,
-  Pencil,
-  RotateCcw,
-  Info,
   CircleAlert,
   CircleCheck,
-  ListChecks,
-  Microscope,
-  GitBranch,
+  Copy,
+  CornerDownRight,
   FileText,
   FolderOpen,
+  GitFork,
+  Info,
+  ListChecks,
+  Loader2,
   MessageSquareText,
-  CornerDownRight,
+  Microscope,
+  Pencil,
   Play,
+  RotateCcw,
   Undo2
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
@@ -50,7 +49,7 @@ import {
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
-import type { Message, MessageEditGeometry } from '../types/chat.types'
+import type { Message } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import {
   VERIFICATION_STATUS_COPY,
@@ -59,6 +58,7 @@ import {
 import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
+import { Reveal } from './Reveal'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -723,26 +723,28 @@ function AgentWorkDisclosure({
           )}
         </div>
       )}
-      {expanded && children && (
-        <div id={contentId} className="agent-work-content">
-          {(() => {
-            const steps = Children.toArray(children)
-            const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
-            if (!earlier) return steps
-            return (
-              <>
-                <button
-                  type="button"
-                  className="agent-work-earlier"
-                  onClick={() => setShowEarlier(true)}
-                >
-                  Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
-                </button>
-                {steps.slice(earlier)}
-              </>
-            )
-          })()}
-        </div>
+      {children && (
+        <Reveal open={expanded}>
+          <div id={contentId} className="agent-work-content">
+            {(() => {
+              const steps = Children.toArray(children)
+              const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
+              if (!earlier) return steps
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="agent-work-earlier"
+                    onClick={() => setShowEarlier(true)}
+                  >
+                    Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
+                  </button>
+                  {steps.slice(earlier)}
+                </>
+              )
+            })()}
+          </div>
+        </Reveal>
       )}
     </div>
   )
@@ -776,18 +778,18 @@ interface MessageItemProps {
   index: number // Reserved for future features (message navigation)
   isLoading: boolean
   expandedThinking: Set<string>
+  /** The message being edited in the message box, if any. */
   editingMessageId: string | null
-  editingGeometry: MessageEditGeometry | null
-  editingContent: string
+  /** This message is the one being edited, or comes after it: sending the edit replaces it. */
+  isRewound?: boolean
   copiedMessageId: string | null
   onToggleThinking: (id: string) => void
   onHandleArtifactResult: (
     title: string,
     result: { success: boolean; error?: string; code?: string }
   ) => void
+  /** Loads the message into the message box to edit and send again. */
   onEditMessage: (msg: Message, event: React.MouseEvent<HTMLButtonElement>) => void
-  onCancelEditMessage: () => void
-  onConfirmEditMessage: (msg: Message) => void
   onCopyMessage: (msg: Message) => void
   onRetryMessage: (msg: Message) => void
   /** Continues this interrupted reply; passed only while it can still be continued. */
@@ -795,7 +797,6 @@ interface MessageItemProps {
   onForkMessage?: (messageId: string) => void
   /** Goes back to before this message and returns it to the message box; absent while running. */
   onRewindMessage?: (message: Message, restoreFiles: boolean) => void
-  onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
   onResolveAgentInteraction?: (
@@ -806,7 +807,6 @@ interface MessageItemProps {
   workspaceFolder?: string | null
   onUndoCheckpoint?: (hash: string) => void
   editActionTitle?: string
-  confirmEditActionTitle?: string
   retryActionTitle?: string
   readOnly?: boolean
 }
@@ -817,32 +817,26 @@ function MessageItemInner({
   isLoading,
   expandedThinking,
   editingMessageId,
-  editingGeometry,
-  editingContent,
+  isRewound = false,
   copiedMessageId,
   onToggleThinking,
   onHandleArtifactResult,
   onEditMessage,
-  onCancelEditMessage,
-  onConfirmEditMessage,
   onCopyMessage,
   onRetryMessage,
   onContinueRun,
   onForkMessage,
   onRewindMessage,
-  onSetEditingContent,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
   workspaceFolder,
   onUndoCheckpoint,
   editActionTitle = 'Edit message',
-  confirmEditActionTitle = 'Save and resend',
   retryActionTitle = 'Rewind and retry from here',
   readOnly = false
 }: MessageItemProps) {
   const messageRef = useRef<HTMLDivElement>(null)
-  const editInputRef = useRef<HTMLTextAreaElement>(null)
   const isEditing = editingMessageId === msg.id
   const workStartedAt = msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
@@ -862,46 +856,16 @@ function MessageItemInner({
     (segment) => segment.type === 'verification' && segment.verification
   )
 
-  useLayoutEffect(() => {
-    if (!isEditing) return
-    const input = editInputRef.current
-    const message = messageRef.current
-    if (!input || !message) return
-    const scrollContainer = message.closest<HTMLElement>('.messages-container')
-    input.style.height = '0px'
-    input.style.height = `${Math.max(24, input.scrollHeight)}px`
-    if (scrollContainer && editingGeometry) {
-      const topDelta = message.getBoundingClientRect().top - editingGeometry.viewportTop
-      if (Math.abs(topDelta) > 0.5) scrollContainer.scrollTop += topDelta
-    }
-    input.focus({ preventScroll: true })
-    input.setSelectionRange(input.value.length, input.value.length)
-  }, [editingGeometry, isEditing])
-
-  useLayoutEffect(() => {
-    if (!isEditing || !editInputRef.current) return
-    const input = editInputRef.current
-    input.style.height = '0px'
-    input.style.height = `${Math.max(24, input.scrollHeight)}px`
-  }, [editingContent, isEditing])
-
   return (
     <div
       key={msg.id}
       ref={messageRef}
-      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${editingMessageId === msg.id ? 'message-editing' : ''}`}
+      data-message-id={msg.id}
+      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${isEditing ? 'message-editing' : ''} ${isRewound ? 'message-rewound' : ''}`}
+      // Sending the edit replaces this part of the chat, so it steps back while the edit is open.
+      aria-hidden={isRewound || undefined}
     >
-      <div
-        className="message-bubble"
-        style={
-          isEditing && editingGeometry
-            ? {
-                width: `${Math.max(320, editingGeometry.width)}px`,
-                minHeight: `${editingGeometry.height}px`
-              }
-            : undefined
-        }
-      >
+      <div className="message-bubble">
         {msg.role === 'agent' && msg.runMode === 'research' && (
           <div className="message-run-profile">
             <Microscope size={12} aria-hidden="true" />
@@ -1092,7 +1056,7 @@ function MessageItemInner({
                                 className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
                               />
                             </button>
-                            {expandedThinking.has(thinkingId) && (
+                            <Reveal open={expandedThinking.has(thinkingId)}>
                               <div className="actions-content">
                                 <div className="action-item">
                                   <div className="action-thinking">
@@ -1108,7 +1072,7 @@ function MessageItemInner({
                                   </div>
                                 </div>
                               </div>
-                            )}
+                            </Reveal>
                           </div>
                         )
                       })}
@@ -1364,29 +1328,6 @@ function MessageItemInner({
               />
             </div>
           </>
-        ) : editingMessageId === msg.id ? (
-          // Editing mode - just textarea, save/cancel via icons in message-meta
-          <textarea
-            ref={editInputRef}
-            className="message-edit-input"
-            value={editingContent}
-            onChange={(event) => {
-              event.currentTarget.style.height = '0px'
-              event.currentTarget.style.height = `${Math.max(24, event.currentTarget.scrollHeight)}px`
-              onSetEditingContent(event.target.value)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault()
-                onConfirmEditMessage(msg)
-              }
-              if (e.key === 'Escape') {
-                onCancelEditMessage()
-              }
-            }}
-            rows={2}
-            disabled={isLoading}
-          />
         ) : (
           // Normal message rendering
           <div className="message-content">
@@ -1524,103 +1465,78 @@ function MessageItemInner({
           </div>
           {msg.role === 'user' && (
             <div className="message-actions">
-              {editingMessageId === msg.id ? (
-                <>
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={() => onConfirmEditMessage(msg)}
-                    title={confirmEditActionTitle}
-                    aria-label={confirmEditActionTitle}
-                    disabled={isLoading}
-                  >
-                    <Check size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={onCancelEditMessage}
-                    title="Cancel edit"
-                    aria-label="Cancel edit"
-                    disabled={isLoading}
-                  >
-                    <X size={13} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className={`message-action icon ${copiedMessageId === msg.id ? 'copied-icon' : 'copy-icon'}`}
-                    onClick={() => onCopyMessage(msg)}
-                    title={copiedMessageId === msg.id ? 'Copied!' : 'Copy message'}
-                    aria-label={copiedMessageId === msg.id ? 'Copied' : 'Copy message'}
-                  >
-                    {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
-                  </button>
-                  <ReadAloudButton messageId={msg.id} text={msg.content} />
-                  {!readOnly && (
-                    <>
+              <>
+                <button
+                  type="button"
+                  className={`message-action icon ${copiedMessageId === msg.id ? 'copied-icon' : 'copy-icon'}`}
+                  onClick={() => onCopyMessage(msg)}
+                  title={copiedMessageId === msg.id ? 'Copied!' : 'Copy message'}
+                  aria-label={copiedMessageId === msg.id ? 'Copied' : 'Copy message'}
+                >
+                  {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
+                </button>
+                <ReadAloudButton messageId={msg.id} text={msg.content} />
+                {!readOnly && (
+                  <>
+                    <button
+                      type="button"
+                      className="message-action icon"
+                      onClick={(e) => onEditMessage(msg, e)}
+                      title={editActionTitle}
+                      aria-label={editActionTitle}
+                      disabled={isLoading}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="message-action icon"
+                      onClick={() => onRetryMessage(msg)}
+                      title={retryActionTitle}
+                      aria-label={retryActionTitle}
+                      disabled={isLoading}
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                    {onForkMessage && (
                       <button
                         type="button"
                         className="message-action icon"
-                        onClick={(e) => onEditMessage(msg, e)}
-                        title={editActionTitle}
-                        aria-label={editActionTitle}
+                        onClick={() => onForkMessage(msg.id)}
+                        title="Fork from this message"
+                        aria-label="Fork from this message"
                         disabled={isLoading}
                       >
-                        <Pencil size={13} />
+                        <GitFork size={13} />
                       </button>
-                      <button
-                        type="button"
-                        className="message-action icon"
-                        onClick={() => onRetryMessage(msg)}
-                        title={retryActionTitle}
-                        aria-label={retryActionTitle}
-                        disabled={isLoading}
+                    )}
+                    {onRewindMessage && (
+                      <MessageFooterPopover
+                        className="message-rewind"
+                        cardClassName="message-rewind-card"
+                        summaryClassName="message-action icon"
+                        chevron={false}
+                        title="Rewind to before this message"
+                        label={<Undo2 size={13} aria-label="Rewind to here" />}
                       >
-                        <RotateCcw size={13} />
-                      </button>
-                      {onForkMessage && (
-                        <button
-                          type="button"
-                          className="message-action icon"
-                          onClick={() => onForkMessage(msg.id)}
-                          title="Fork from this message"
-                          aria-label="Fork from this message"
-                          disabled={isLoading}
-                        >
-                          <GitBranch size={13} />
-                        </button>
-                      )}
-                      {onRewindMessage && (
-                        <MessageFooterPopover
-                          className="message-rewind"
-                          cardClassName="message-rewind-card"
-                          summaryClassName="message-action icon"
-                          chevron={false}
-                          title="Rewind to before this message"
-                          label={<Undo2 size={13} aria-label="Rewind to here" />}
-                        >
-                          <strong>Rewind to before this message</strong>
-                          <p>
-                            This message and everything after it leave the chat, and the message
-                            goes back into the box to change or send.
-                          </p>
-                          <div className="message-rewind-actions">
-                            <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                              Rewind chat and files
-                            </button>
-                            <button type="button" onClick={() => onRewindMessage(msg, false)}>
-                              Chat only
-                            </button>
-                          </div>
-                        </MessageFooterPopover>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
+                        <strong>Rewind to before this message</strong>
+                        <p>
+                          This message and everything after it leave the chat, and the message goes
+                          back into the box to change or send.
+                        </p>
+                        <div className="message-rewind-actions">
+                          <button type="button" onClick={() => onRewindMessage(msg, true)}>
+                            Rewind chat and files
+                          </button>
+                          <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                            Chat only
+                          </button>
+                        </div>
+                      </MessageFooterPopover>
+                    )}
+                  </>
+                )}
+              </>
             </div>
           )}
           {msg.role === 'agent' && (
@@ -1644,7 +1560,7 @@ function MessageItemInner({
                   aria-label="Fork from this message"
                   disabled={isLoading}
                 >
-                  <GitBranch size={13} />
+                  <GitFork size={13} />
                 </button>
               )}
               {canUndoChanges && !hasChangeReview && (
@@ -1693,9 +1609,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
     (prev.editingMessageId === prev.message.id || next.editingMessageId === next.message.id)
   )
     return false
-  // Re-render if editing content changed for this message
-  if (prev.editingMessageId === prev.message.id && prev.editingContent !== next.editingContent)
-    return false
+  if (prev.isRewound !== next.isRewound) return false
   // Re-render if copied state changed for this message
   if (
     prev.copiedMessageId !== next.copiedMessageId &&

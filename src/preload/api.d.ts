@@ -97,6 +97,8 @@ interface ConversationsAPI {
     success: boolean
     worktreeCleanup?: import('../shared/worktrees').RemoveManagedWorktreeResult
   }>
+  /** Removes a chat left without anything said in it; one that was used stays. */
+  discardIfUntouched: (id: string) => Promise<{ discarded: boolean }>
   deleteAll: () => Promise<{ success: boolean }>
   getMessages: (
     conversationId: string
@@ -391,6 +393,7 @@ export interface DesktopApi {
   conversations: ConversationsAPI
   projects: ProjectsAPI
   worktrees: import('../shared/worktrees').WorktreesAPI
+  menus: import('../shared/appMenus').AppMenusAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
   schedules: import('../shared/schedules').SchedulesAPI

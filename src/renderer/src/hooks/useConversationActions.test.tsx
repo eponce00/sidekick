@@ -274,8 +274,19 @@ describe('useConversationActions with a persistent goal', () => {
   })
 
   it('starts the goal with the edited objective when its first message is edited', async () => {
-    act(() => controller.setEditingDraft('Build a weather card for Tahoe'))
-    act(() => controller.confirmEditMessage(goalStart))
+    const click = {
+      currentTarget: { closest: () => null }
+    } as unknown as React.MouseEvent<HTMLButtonElement>
+    act(() => controller.startEditMessage(goalStart, click))
+    act(() =>
+      controller.submitEdit({
+        content: 'Build a weather card for Tahoe',
+        images: [],
+        attachments: [],
+        runMode: 'conversation',
+        startsGoal: true
+      })
+    )
 
     await vi.waitFor(() =>
       expect(rerunStream).toHaveBeenCalledWith(
@@ -295,5 +306,158 @@ describe('useConversationActions with a persistent goal', () => {
         discardsGoalStart: true
       })
     )
+  })
+})
+
+describe('useConversationActions editing', () => {
+  const message: Message = { id: 'user-0', role: 'user', content: 'Hi', timestamp: 1 }
+
+  function Harness({
+    beginEdit,
+    onReady
+  }: {
+    beginEdit: (message: Message) => void
+    onReady: (value: ReturnType<typeof useConversationActions>) => void
+  }): null {
+    const [messages, setMessages] = useState<Message[]>([message])
+    const value = useConversationActions({
+      messages,
+      setMessages,
+      conversationId: 'conversation-1',
+      selectedModel: 'model-1',
+      workspaceFolder: null,
+      rerunStream: vi.fn(async () => undefined),
+      beginEdit
+    })
+    useEffect(() => onReady(value), [onReady, value])
+    return null
+  }
+
+  it('reaches the current composer from an Edit button rendered earlier', async () => {
+    const root = createRoot(document.createElement('div'))
+    const first: Array<ReturnType<typeof useConversationActions>> = []
+    const keepFirst = (value: ReturnType<typeof useConversationActions>): void => {
+      if (!first.length) first.push(value)
+    }
+    const stale = vi.fn()
+    const current = vi.fn()
+    await act(async () => root.render(<Harness beginEdit={stale} onReady={keepFirst} />))
+    await act(async () => root.render(<Harness beginEdit={current} onReady={keepFirst} />))
+
+    const click = {
+      currentTarget: { closest: () => null }
+    } as unknown as React.MouseEvent<HTMLButtonElement>
+    act(() => first[0].startEditMessage(message, click))
+
+    expect(current).toHaveBeenCalledWith(message, null)
+    expect(stale).not.toHaveBeenCalled()
+    await act(async () => root.unmount())
+  })
+})
+
+describe('useConversationActions leaving messages', () => {
+  const question: Message = { id: 'user-0', role: 'user', content: 'Hi', timestamp: 1 }
+  const answer: Message = { id: 'agent-0', role: 'agent', content: 'Hello', timestamp: 2 }
+
+  let root: Root
+  let controller: ReturnType<typeof useConversationActions>
+  let latestMessages: Message[] = []
+  let finishLeaving: () => void = () => undefined
+  const beforeMessagesLeave = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishLeaving = resolve
+      })
+  )
+  const rerunStream = vi.fn(async () => undefined)
+  const restoreDraft = vi.fn()
+
+  function Harness(): null {
+    const [messages, setMessages] = useState<Message[]>([question, answer])
+    const value = useConversationActions({
+      messages,
+      setMessages,
+      conversationId: 'conversation-1',
+      selectedModel: 'model-1',
+      workspaceFolder: null,
+      rerunStream,
+      restoreDraft,
+      beforeMessagesLeave
+    })
+    useEffect(() => {
+      controller = value
+      latestMessages = messages
+    }, [messages, value])
+    return null
+  }
+
+  beforeEach(async () => {
+    root = createRoot(document.createElement('div'))
+    beforeMessagesLeave.mockClear()
+    rerunStream.mockClear()
+    restoreDraft.mockClear()
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        conversations: {
+          deleteMessagesAfter: vi.fn(async () => ({ success: true })),
+          updateMessage: vi.fn(async () => ({ success: true }))
+        }
+      }
+    })
+    await act(async () => root.render(<Harness />))
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+  })
+
+  it('lets the replaced reply leave before answering again', async () => {
+    act(() => controller.retryMessage(answer))
+
+    await vi.waitFor(() => expect(beforeMessagesLeave).toHaveBeenCalledWith(question, 'retry'))
+    expect(rerunStream).not.toHaveBeenCalled()
+
+    await act(async () => finishLeaving())
+    await vi.waitFor(() => expect(rerunStream).toHaveBeenCalled())
+  })
+
+  it('keeps an edited message stepped back until what it replaces has left', async () => {
+    const click = {
+      currentTarget: { closest: () => null }
+    } as unknown as React.MouseEvent<HTMLButtonElement>
+    act(() => controller.startEditMessage(question, click))
+    act(() =>
+      controller.submitEdit({
+        content: 'Hello there',
+        images: [],
+        attachments: [],
+        runMode: 'conversation',
+        startsGoal: false
+      })
+    )
+
+    expect(controller.editingMessageId).toBeNull()
+    expect(controller.steppedBackFromId).toBe(question.id)
+    await vi.waitFor(() => expect(beforeMessagesLeave).toHaveBeenCalledWith(question, 'edit'))
+    expect(controller.steppedBackFromId).toBe(question.id)
+
+    await act(async () => finishLeaving())
+    await vi.waitFor(() => expect(controller.steppedBackFromId).toBeNull())
+    expect(rerunStream).toHaveBeenCalled()
+  })
+
+  it('returns a rewound message to the box while it and its reply leave', async () => {
+    const rewinding = controller.rewindToMessage(question, false)
+
+    await vi.waitFor(() => expect(beforeMessagesLeave).toHaveBeenCalledWith(question, 'rewind'))
+    await vi.waitFor(() => expect(restoreDraft).toHaveBeenCalledWith(question, false))
+    expect(latestMessages).toHaveLength(2)
+
+    await act(async () => {
+      finishLeaving()
+      await rewinding
+    })
+    expect(latestMessages).toEqual([])
   })
 })

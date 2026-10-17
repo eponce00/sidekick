@@ -43,7 +43,7 @@ The app checks the public GitHub Releases API after startup and every six hours.
 updater downloads newer stable packages automatically, streams them to a private staging directory,
 and verifies the exact asset against that release's `SHA256SUMS.txt`. It permits only the canonical
 GitHub release path and GitHub's release-assets HTTPS host. It never accepts an installer URL or
-file path from the renderer. Installation requires **Restart and update** and a native confirmation;
+file path from the renderer. Installation requires **Restart and update** and a trusted confirmation;
 normal closing does not silently install. The computer is never restarted.
 
 This is an explicit change from the notification-only policy in 0.7.0. Checksums protect against

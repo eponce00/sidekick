@@ -20,6 +20,10 @@ export interface ProjectConversation {
   project_context_version: number
   home_workspace_root: string | null
   home_project_name: string | null
+  /** The chat's own worktree of its project, when it works in one. */
+  worktree_id?: string | null
+  /** That worktree's folder, where the chat works instead of the project folder. */
+  worktree_folder?: string | null
   unread_completion_at?: number | null
   forked_from_conversation_id?: string | null
   forked_from_message_id?: string | null
@@ -71,7 +75,9 @@ export interface ConversationProjectContext {
   conversationId: string
   projectId: string | null
   projectName: string | null
+  /** Where the chat works: its worktree's folder when it has one, else the project folder. */
   workspaceRoot: string | null
+  worktreeId: string | null
   homeWorkspaceRoot: string | null
   homeProjectName: string | null
   isDetached: boolean

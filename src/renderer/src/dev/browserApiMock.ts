@@ -2,7 +2,6 @@ import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import {
   previewSessionConversations,
-  previewSessionProjects,
   previewSessionsApi,
   previewSessionTranscripts,
   previewSessionWorktrees
@@ -258,17 +257,6 @@ const previewProjects = [
     last_activity_at: Date.now() - 120_000
   },
   {
-    id: 'preview-worktree-project-1',
-    name: 'sidekick-demo · sidekick/card-polish',
-    folder_path:
-      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d',
-    is_pinned: 0,
-    created_at: Date.now() - 7_200_000,
-    updated_at: Date.now() - 600_000,
-    conversation_count: 1,
-    last_activity_at: Date.now() - 600_000
-  },
-  {
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
@@ -277,29 +265,31 @@ const previewProjects = [
     updated_at: Date.now() - 90_000,
     conversation_count: 0,
     last_activity_at: Date.now() - 90_000
-  },
-  ...previewSessionProjects
+  }
 ]
+
+const CARD_POLISH_FOLDER =
+  'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d'
 
 previewConversations.push({
   id: 'preview-4',
   title: 'Polish the conversation cards',
   created_at: Date.now() - 7_200_000,
   updated_at: Date.now() - 600_000,
-  project_id: 'preview-worktree-project-1',
+  project_id: 'preview-project-1',
   sidebar_order: 0,
   project_context_version: 0,
-  home_workspace_root: previewProjects[1].folder_path,
-  home_project_name: previewProjects[1].name
+  home_workspace_root: previewProjects[0].folder_path,
+  home_project_name: previewProjects[0].name,
+  worktree_id: 'preview-worktree-1',
+  worktree_folder: CARD_POLISH_FOLDER
 })
 
 const previewWorktrees: ManagedWorktreeSummary[] = [
   {
     id: 'preview-worktree-1',
-    projectId: 'preview-worktree-project-1',
-    projectName: previewProjects[1].name,
-    folderPath: previewProjects[1].folder_path,
-    worktreeRoot: previewProjects[1].folder_path,
+    folderPath: CARD_POLISH_FOLDER,
+    worktreeRoot: CARD_POLISH_FOLDER,
     sourceProjectId: 'preview-project-1',
     sourceProjectName: 'sidekick-demo',
     branch: 'sidekick/card-polish',
@@ -309,32 +299,11 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
     owners: [
       { kind: 'chat', id: 'preview-4', title: 'Polish the conversation cards', running: false }
     ],
-    status: {
-      currentBranch: 'sidekick/card-polish',
-      ahead: 3,
-      behind: 2,
-      changedFiles: 4,
-      merged: false
-    },
-    blockers: [
-      {
-        code: 'in-use',
-        message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
-        forceable: true
-      },
-      { code: 'modified', message: '4 uncommitted changes would be lost.', forceable: true },
-      {
-        code: 'unmerged',
-        message:
-          'sidekick/card-polish has 3 commits that main does not. The branch is kept unless you also delete it.',
-        forceable: true
-      }
-    ]
+    setAsideAt: null,
+    status: { currentBranch: 'sidekick/card-polish', ahead: 3, changedFiles: 4 }
   },
   {
     id: 'preview-worktree-2',
-    projectId: 'preview-worktree-project-2',
-    projectName: 'sidekick-demo · sidekick/release-notes',
     folderPath:
       'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
     worktreeRoot:
@@ -345,104 +314,62 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
     baseRef: 'main',
     createdAt: Date.now() - 90_000_000,
     lastUsedAt: Date.now() - 80_000_000,
-    owners: [],
-    status: {
-      currentBranch: 'sidekick/release-notes',
-      ahead: 0,
-      behind: 5,
-      changedFiles: 0,
-      merged: true
-    },
-    blockers: []
+    owners: [
+      {
+        kind: 'chat',
+        id: 'preview-release-notes',
+        title: 'Draft the release notes',
+        running: false
+      }
+    ],
+    setAsideAt: Date.now() - 70_000_000,
+    status: null
   },
   ...previewSessionWorktrees
 ]
 
 const previewWorktreesApi: WorktreesAPI = {
   list: async () => structuredClone(previewWorktrees),
-  diskUsage: async (id) => ({
-    id,
-    bytes: id === 'preview-worktree-1' ? 412_000_000 : 38_500_000,
-    truncated: id === 'preview-worktree-1'
-  }),
   branchOptions: async (projectId) => ({
     branches: ['main', 'release/0.13', 'eponce/tray-menu'],
     currentBranch: 'main',
-    isGitRepository: projectId !== 'preview-project-2',
-    isManagedWorktree: projectId.startsWith('preview-worktree-project')
+    isGitRepository: projectId !== 'preview-project-2'
   }),
-  createForConversation: async ({ conversationId, branchName, baseRef }) => {
+  createForConversation: async ({ conversationId, baseRef }) => {
     const conversation = previewCreatedConversations.find(({ id }) => id === conversationId)
     if (!conversation) throw new Error('Only a chat without messages can move to a new worktree')
-    const branch = branchName || 'sidekick/new-chat'
-    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\${branch.split('/').at(-1)}`
-    const project = {
-      id: `preview-worktree-project-${Date.now()}`,
-      name: `sidekick-demo · ${branch}`,
-      folder_path: folder,
-      is_pinned: 0,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      conversation_count: 1,
-      last_activity_at: Date.now()
-    }
-    previewProjects.push(project)
+    const base = baseRef || 'main'
+    const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\new-chat`
+    const id = `preview-worktree-${Date.now()}`
     Object.assign(conversation, {
-      project_id: project.id,
-      home_workspace_root: folder,
-      home_project_name: project.name,
+      worktree_id: id,
+      worktree_folder: folder,
       project_context_version: conversation.project_context_version + 1
     })
     const worktree: ManagedWorktreeSummary = {
-      id: `preview-worktree-${Date.now()}`,
-      projectId: project.id,
-      projectName: project.name,
+      id,
       folderPath: folder,
       worktreeRoot: folder,
       sourceProjectId: 'preview-project-1',
       sourceProjectName: 'sidekick-demo',
-      branch,
-      baseRef: baseRef || 'main',
+      branch: null,
+      baseRef: base,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
-      status: { currentBranch: branch, ahead: 0, behind: 0, changedFiles: 0, merged: true },
-      blockers: [
-        {
-          code: 'in-use',
-          message: 'A chat uses it. Forced removal keeps that chat as a detached chat.',
-          forceable: true
-        }
-      ]
+      setAsideAt: null,
+      status: { currentBranch: null, ahead: 0, changedFiles: 0 }
     }
     previewWorktrees.unshift(worktree)
-    return { project, conversation, worktree }
+    return { conversation, worktree }
   },
-  remove: async ({ id, force, deleteBranch }) => {
+  remove: async (id) => {
     const index = previewWorktrees.findIndex((worktree) => worktree.id === id)
     if (index < 0) throw new Error('This worktree is no longer managed by SideKick')
-    const worktree = previewWorktrees[index]
-    if (worktree.blockers.length && !force) return { removed: false, blockers: worktree.blockers }
+    if (previewWorktrees[index].owners.some(({ running }) => running))
+      return { removed: false, reason: 'An agent is working in it. Stop it first.' }
     previewWorktrees.splice(index, 1)
-    return {
-      removed: true,
-      blockers: [],
-      ...(worktree.status?.merged || deleteBranch ? {} : { keptBranch: worktree.branch }),
-      detachedConversationIds: worktree.owners.map(({ id: ownerId }) => ownerId)
-    }
-  },
-  sync: async (id) => {
-    const worktree = previewWorktrees.find((candidate) => candidate.id === id)
-    if (!worktree?.status) return { status: 'refused', message: 'This worktree is busy' }
-    if (worktree.status.changedFiles)
-      return {
-        status: 'refused',
-        message: 'Commit or discard the uncommitted changes before syncing.'
-      }
-    if (!worktree.status.behind)
-      return { status: 'up-to-date', message: `Already up to date with ${worktree.baseRef}.` }
-    worktree.status.behind = 0
-    return { status: 'merged', message: `Merged ${worktree.baseRef} into ${worktree.branch}.` }
+    return { removed: true }
   },
   reveal: async () => undefined
 }
@@ -810,6 +737,11 @@ export function installBrowserApiMock(): void {
         return { success: Boolean(conversation) }
       },
       delete: async () => ({ success: true }),
+      discardIfUntouched: async (id) => {
+        const index = previewCreatedConversations.findIndex((candidate) => candidate.id === id)
+        if (index >= 0) previewCreatedConversations.splice(index, 1)
+        return { discarded: index >= 0 }
+      },
       deleteAll: async () => ({ success: true }),
       getMessages: async (conversationId) =>
         conversationId === 'preview-1'
@@ -865,7 +797,8 @@ export function installBrowserApiMock(): void {
           conversationId,
           projectId: conversation?.project_id ?? null,
           projectName: project?.name ?? null,
-          workspaceRoot: project?.folder_path ?? null,
+          workspaceRoot: conversation?.worktree_folder ?? project?.folder_path ?? null,
+          worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
           homeProjectName: conversation?.home_project_name ?? null,
           isDetached: !conversation?.project_id && Boolean(conversation?.home_workspace_root),
@@ -889,6 +822,11 @@ export function installBrowserApiMock(): void {
       })
     },
     worktrees: previewWorktreesApi,
+    menus: {
+      onShow: () => () => undefined,
+      choose: async () => undefined,
+      dismiss: async () => undefined
+    },
     agentRuns: {
       // "Refine the desktop experience" is treated as writing in sidekick-demo, so a new chat
       // there shows the busy-folder prompt.

@@ -33,7 +33,11 @@ vi.mock('node:child_process', async () => {
 vi.mock('electron', () => ({
   app: { isPackaged: true, getPath: () => mocks.root, quit: mocks.quit, relaunch: mocks.relaunch },
   dialog: { showMessageBox: async () => ({ response: mocks.choice }), showErrorBox: mocks.error },
-  shell: { showItemInFolder: mocks.show }
+  shell: { showItemInFolder: mocks.show },
+  BrowserWindow: { getFocusedWindow: () => null }
+}))
+vi.mock('./trustedDialog', () => ({
+  showTrustedDialog: async () => ({ response: mocks.choice })
 }))
 import {
   checksumForAsset,

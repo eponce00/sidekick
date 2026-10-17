@@ -1,11 +1,13 @@
 import { useEffect, useId, useState } from 'react'
-import { ArrowDown, ArrowUp, FolderOpen, GitBranch, Settings2 } from 'lucide-react'
-import type {
-  ManagedWorktreeSummary,
-  WorkInChoice,
-  WorktreeBranchOptions
+import { FolderGit2, FolderOpen, Settings2 } from 'lucide-react'
+import {
+  worktreeBranchLabel,
+  type ManagedWorktreeSummary,
+  type WorkInChoice,
+  type WorktreeBranchOptions
 } from '../../../shared/worktrees'
 import './Worktrees.css'
+import { Select } from './Select'
 
 interface WorkspaceBarProps {
   projectId: string | null
@@ -14,39 +16,41 @@ interface WorkspaceBarProps {
   /** The chat has not sent a message yet, so it can still choose where to work. */
   canChoose: boolean
   workIn: WorkInChoice
-  branchName: string
-  branchPlaceholder: string
   baseRef: string
   disabled?: boolean
   error?: string | null
   onWorkInChange: (choice: WorkInChoice) => void
-  onBranchNameChange: (name: string) => void
   onBaseRefChange: (ref: string) => void
   onManageWorktrees: () => void
+  /** Reports whether the project can have worktrees, once that is known. */
+  onWorktreesAvailableChange?: (available: boolean) => void
+  /** Projects a chat outside any project can move into before its first message. */
+  projectChoices?: ReadonlyArray<{ id: string; name: string }>
+  onChooseProject?: (projectId: string) => void
 }
 
 /**
- * Says where a chat works: its worktree and branch, or, before the first message of a project
- * chat, a choice between the project folder and a new worktree.
+ * Before the first message of a project chat, the choice between the project folder and a new
+ * worktree. Once the chat works in a worktree, `WorktreeChip` in the composer says so instead.
  */
 export function WorkspaceBar({
   projectId,
   worktree,
   canChoose,
   workIn,
-  branchName,
-  branchPlaceholder,
   baseRef,
   disabled,
   error,
   onWorkInChange,
-  onBranchNameChange,
   onBaseRefChange,
-  onManageWorktrees
+  onManageWorktrees,
+  onWorktreesAvailableChange,
+  projectChoices = [],
+  onChooseProject
 }: WorkspaceBarProps): React.JSX.Element | null {
   const [options, setOptions] = useState<WorktreeBranchOptions | null>(null)
-  const branchId = useId()
   const baseId = useId()
+  const projectSelectId = useId()
   const choosing = canChoose && Boolean(projectId) && !worktree
 
   useEffect(() => {
@@ -55,7 +59,9 @@ export function WorkspaceBar({
     void window.api.worktrees
       .branchOptions(projectId)
       .then((result) => {
-        if (!cancelled) setOptions(result)
+        if (cancelled) return
+        setOptions(result)
+        onWorktreesAvailableChange?.(result.isGitRepository)
       })
       .catch(() => {
         if (!cancelled) setOptions(null)
@@ -63,42 +69,61 @@ export function WorkspaceBar({
     return () => {
       cancelled = true
     }
-  }, [choosing, projectId])
+  }, [choosing, projectId, onWorktreesAvailableChange])
 
-  if (worktree) {
-    const status = worktree.status
+  // A chat outside any project has no folder to copy, so it picks a project first.
+  if (canChoose && !projectId && onChooseProject && projectChoices.length) {
+    return (
+      <div className="workspace-bar-area">
+        <div className="workspace-bar is-choosing">
+          <span className="workspace-bar-label">Work in</span>
+          <label className="workspace-bar-field is-base" htmlFor={projectSelectId}>
+            <FolderOpen size={12} className="workspace-bar-muted" aria-hidden="true" />
+            <Select
+              id={projectSelectId}
+              value=""
+              disabled={disabled}
+              onChange={(event) => {
+                if (event.target.value) onChooseProject(event.target.value)
+              }}
+              aria-label="Project"
+            >
+              <option value="">No project</option>
+              {projectChoices.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <span className="workspace-bar-muted">
+            Choose a project to work in its folder or a new worktree
+          </span>
+        </div>
+        {error && (
+          <div className="workspace-bar-error" role="alert">
+            {error}
+          </div>
+        )}
+      </div>
+    )
+  }
+  if (!choosing) return null
+  // A folder without Git has no worktrees to offer; say so instead of showing a dead button.
+  if (options?.isGitRepository === false) {
     return (
       <div className="workspace-bar-area">
         <div className="workspace-bar" role="status" aria-label="Where this chat works">
-          <GitBranch size={14} className="workspace-bar-icon" aria-hidden="true" />
-          <span className="workspace-bar-branch" title={worktree.worktreeRoot}>
-            {worktree.branch}
-          </span>
+          <FolderOpen size={14} className="workspace-bar-icon" aria-hidden="true" />
+          <span>This folder</span>
           <span className="workspace-bar-muted">
-            worktree{worktree.baseRef ? ` from ${worktree.baseRef}` : ''}
+            Not a Git repository, so new worktrees are not available
           </span>
-          {status && (status.ahead || status.behind) ? (
-            <span
-              className="workspace-bar-counts"
-              title={`${status.ahead ?? 0} commits ahead of and ${status.behind ?? 0} behind ${worktree.baseRef ?? 'its base'}`}
-            >
-              <ArrowUp size={12} aria-hidden="true" />
-              {status.ahead ?? 0}
-              <ArrowDown size={12} aria-hidden="true" />
-              {status.behind ?? 0}
-            </span>
-          ) : null}
-          <button type="button" className="workspace-bar-link" onClick={onManageWorktrees}>
-            Manage
-          </button>
         </div>
       </div>
     )
   }
-
-  if (!choosing) return null
-  const gitAvailable = options?.isGitRepository !== false
-  const effectiveChoice = gitAvailable ? workIn : 'folder'
+  const effectiveChoice = workIn
 
   return (
     <div className="workspace-bar-area">
@@ -122,36 +147,19 @@ export function WorkspaceBar({
             role="radio"
             aria-checked={effectiveChoice === 'worktree'}
             className={effectiveChoice === 'worktree' ? 'is-selected' : ''}
-            disabled={disabled || !gitAvailable}
+            disabled={disabled}
             onClick={() => onWorkInChange('worktree')}
-            title={
-              gitAvailable
-                ? 'A separate folder on its own branch, so other agents cannot overwrite this work'
-                : 'Worktrees need a Git repository'
-            }
+            title="A separate copy of the project, so chats working at once do not overwrite each other"
           >
-            <GitBranch size={13} aria-hidden="true" />
+            <FolderGit2 size={13} aria-hidden="true" />
             New worktree
           </button>
         </div>
         {effectiveChoice === 'worktree' && (
           <>
-            <label className="workspace-bar-field" htmlFor={branchId}>
-              <GitBranch size={12} className="workspace-bar-muted" aria-hidden="true" />
-              <input
-                id={branchId}
-                aria-label="Branch name"
-                value={branchName}
-                placeholder={branchPlaceholder}
-                spellCheck={false}
-                disabled={disabled}
-                onChange={(event) => onBranchNameChange(event.target.value)}
-                title="Branch name. Leave empty to name it from your first message."
-              />
-            </label>
             <label className="workspace-bar-field is-base" htmlFor={baseId}>
               <span className="workspace-bar-muted">from</span>
-              <select
+              <Select
                 id={baseId}
                 value={baseRef}
                 disabled={disabled || !options?.branches.length}
@@ -166,7 +174,7 @@ export function WorkspaceBar({
                       {branch}
                     </option>
                   ))}
-              </select>
+              </Select>
             </label>
           </>
         )}
@@ -186,5 +194,32 @@ export function WorkspaceBar({
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * A quiet mark in the composer for a chat that works in its own worktree: its branch, or the base
+ * it is a copy of. It opens the worktree list.
+ */
+export function WorktreeChip({
+  worktree,
+  onManage
+}: {
+  worktree: ManagedWorktreeSummary
+  onManage: () => void
+}): React.JSX.Element {
+  const label = worktreeBranchLabel(worktree)
+  const state = worktree.setAsideAt ? ' It is set aside and comes back when you send.' : ''
+  return (
+    <button
+      type="button"
+      className="composer-worktree-chip"
+      onClick={onManage}
+      title={`Works in its own worktree, ${label}.${state} ${worktree.folderPath}`}
+      aria-label={`Worktree: ${label}. Manage worktrees`}
+    >
+      <FolderGit2 size={13} aria-hidden="true" />
+      <span>{label}</span>
+    </button>
   )
 }

@@ -5,6 +5,7 @@ import { validateMcpServerConfig } from '../../../shared/mcp'
 import type { McpServerConfig, McpServerStatus } from '../../../shared/types'
 import { SettingsEmptyState, SettingsSection, SettingsSwitch } from './SettingsLayout'
 import './McpServerSettings.css'
+import { Select } from './Select'
 
 interface McpServerSettingsProps {
   servers: McpServerConfig[]
@@ -80,7 +81,7 @@ export function McpServerSettings({
     <SettingsSection
       icon={Boxes}
       title="MCP servers"
-      description="External MCP server commands run as local processes."
+      description="Connectors give the agent tools from other apps and services. Local ones run as programs on this computer."
       actions={
         <>
           <button
@@ -120,7 +121,7 @@ export function McpServerSettings({
         <SettingsEmptyState
           icon={Plug}
           title="No MCP servers yet"
-          description="SideKick works normally without them. Add an official connector above, or a custom connector for any local or remote MCP server."
+          description="SideKick works without them. Add an official connector above, or your own for any MCP server."
         />
       )}
       {servers.map((server, index) => {
@@ -221,7 +222,7 @@ export function McpServerSettings({
               </label>
               <label>
                 Connection
-                <select
+                <Select
                   value={server.transport}
                   onChange={(event) => {
                     const nextTransport = event.target.value
@@ -245,11 +246,11 @@ export function McpServerSettings({
                 >
                   <option value="stdio">Local process</option>
                   <option value="streamable-http">Remote HTTPS</option>
-                </select>
+                </Select>
               </label>
               <label>
                 Approval
-                <select
+                <Select
                   value={server.approvalMode}
                   onChange={(event) =>
                     update(index, (current) => ({
@@ -260,7 +261,7 @@ export function McpServerSettings({
                 >
                   <option value="prompt">Always ask</option>
                   <option value="reads-auto">Auto-approve safe reads</option>
-                </select>
+                </Select>
               </label>
               {server.transport === 'stdio' ? (
                 <>
@@ -336,7 +337,7 @@ export function McpServerSettings({
                   </label>
                   <label className="mcp-wide">
                     Authentication
-                    <select
+                    <Select
                       value={server.authentication}
                       disabled={Boolean(server.catalogId)}
                       onChange={(event) =>
@@ -352,7 +353,7 @@ export function McpServerSettings({
                     >
                       <option value="oauth">OAuth sign-in</option>
                       <option value="none">No authentication</option>
-                    </select>
+                    </Select>
                   </label>
                 </>
               )}

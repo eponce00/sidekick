@@ -5,10 +5,7 @@ import { getDb } from './state'
 import { ManagedWorktreeService } from '../services/managedWorktreeService'
 import { ProjectStore } from '../services/projectStore'
 import { setupCreatedWorktree } from './worktreeSetup'
-import type {
-  CreateConversationWorktreeInput,
-  RemoveManagedWorktreeInput
-} from '../../shared/worktrees'
+import type { CreateConversationWorktreeInput } from '../../shared/worktrees'
 
 let service: ManagedWorktreeService | null = null
 
@@ -34,11 +31,6 @@ export function registerWorktreeHandlers(): void {
 
   ipcMain.handle('worktrees:list', () => worktrees.list())
 
-  ipcMain.handle('worktrees:diskUsage', (_event, id: unknown) => {
-    if (!validId(id)) throw new Error('Invalid worktree')
-    return worktrees.diskUsage(id)
-  })
-
   ipcMain.handle('worktrees:branchOptions', (_event, projectId: unknown) => {
     if (!validId(projectId)) throw new Error('Invalid project')
     return worktrees.branchOptions(projectId)
@@ -50,13 +42,11 @@ export function registerWorktreeHandlers(): void {
       !input ||
       typeof input !== 'object' ||
       !validId(input.conversationId) ||
-      !optionalText(input.branchName, 200) ||
       !optionalText(input.baseRef, 200)
     )
       throw new Error('Invalid worktree request')
     const result = await worktrees.createForConversation({
       conversationId: input.conversationId,
-      ...(input.branchName ? { branchName: input.branchName } : {}),
       ...(input.baseRef ? { baseRef: input.baseRef } : {})
     })
     // Setup hooks match the original project's folder, also for a worktree started from a worktree.
@@ -67,7 +57,7 @@ export function registerWorktreeHandlers(): void {
       await setupCreatedWorktree(
         event.sender,
         source.folder_path,
-        result.project.folder_path
+        result.worktree.folderPath
       ).catch(() =>
         console.warn('[Worktrees] Setup could not finish; the new worktree is preserved')
       )
@@ -75,27 +65,9 @@ export function registerWorktreeHandlers(): void {
     return result
   })
 
-  ipcMain.handle('worktrees:remove', (_event, raw: unknown) => {
-    const input = raw as RemoveManagedWorktreeInput
-    if (
-      !input ||
-      typeof input !== 'object' ||
-      !validId(input.id) ||
-      (input.force !== undefined && typeof input.force !== 'boolean') ||
-      (input.deleteBranch !== undefined && typeof input.deleteBranch !== 'boolean') ||
-      (input.deleteBranch && !input.force)
-    )
-      throw new Error('Invalid worktree removal')
-    return worktrees.remove({
-      id: input.id,
-      force: input.force === true,
-      deleteBranch: input.deleteBranch === true
-    })
-  })
-
-  ipcMain.handle('worktrees:sync', (_event, id: unknown) => {
+  ipcMain.handle('worktrees:remove', (_event, id: unknown) => {
     if (!validId(id)) throw new Error('Invalid worktree')
-    return worktrees.syncWithBase(id)
+    return worktrees.remove(id)
   })
 
   // Opens SideKick's own folder for this worktree, never a renderer-chosen path.
@@ -108,7 +80,7 @@ export function registerWorktreeHandlers(): void {
         () => false
       ))
     )
-      throw new Error('The worktree folder no longer exists')
+      throw new Error('This worktree is set aside. Send a message in its chat to bring it back.')
     const error = await shell.openPath(worktreeRoot)
     if (error) throw new Error(error)
   })

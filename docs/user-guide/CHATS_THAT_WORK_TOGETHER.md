@@ -31,11 +31,11 @@ What happens next depends on the [permission mode](PERMISSIONS.md):
 
 Where a worker works:
 
-| Choice                     | Meaning                                                                                       |
-| -------------------------- | --------------------------------------------------------------------------------------------- |
-| **New worktree** (default) | Its own managed worktree and branch, so its edits never mix with other chats' edits.          |
-| **This folder, shared**    | The manager's folder. Choosing it is the decision to share the folder with the other writers. |
-| **This folder, read-only** | The manager's folder, without tools that edit files, run commands, or use the browser.        |
+| Choice                     | Meaning                                                                                                                                                                    |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **New worktree** (default) | Its own managed worktree, starting from the base without a branch of its own, so its edits never mix with other chats' edits. It creates a branch when its work needs one. |
+| **This folder, shared**    | The manager's folder. Choosing it is the decision to share the folder with the other writers.                                                                              |
+| **This folder, read-only** | The manager's folder, without tools that edit files, run commands, or use the browser.                                                                                     |
 
 Worktrees are managed as described in [Projects](PROJECTS.md). For work you did not ask for, the
 agent suggests a chat instead of starting it: a dashed card with **Start** and **Dismiss**.
@@ -105,9 +105,9 @@ had not been delivered are kept and delivered on the chat's next reply.
 - A worker gets no tool its manager could not have, and a read-only worker loses every tool that
   edits or executes. Every worker follows your permission mode. An **Allow for this chat** answer
   in the manager does not carry over to its workers.
-- Each worker works in exactly one project. It cannot read the manager's project or another
-  worker's worktree unless that is its own project; information moves between projects only
-  through messages and attachments.
+- Each worker works in exactly one folder: its own worktree, or its project folder. It cannot read
+  the manager's folder or another worker's worktree unless that is its own folder; information
+  moves between them only through messages and attachments.
 - Messages from other chats reach the model marked as untrusted information. They cannot change a
   chat's instructions or permissions.
 

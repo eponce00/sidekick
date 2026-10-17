@@ -49,8 +49,8 @@ export interface SessionRuntime {
 export interface SessionWorktrees {
   isGitProject: (projectId: string) => Promise<boolean>
   createForConversation: (input: CreateConversationWorktreeInput) => Promise<unknown>
-  /** Removes a worktree no chat uses any more, when nothing would be lost. */
-  removeIfUnused: (projectId: string) => Promise<unknown>
+  /** Removes a worktree no chat uses any more. */
+  removeIfUnused: (worktreeId: string) => Promise<unknown>
 }
 
 export interface SessionServiceOptions {
@@ -510,8 +510,8 @@ export class SessionService {
        (id, title, created_at, updated_at, project_id, title_source, sidebar_order,
         project_context_version, home_workspace_root, home_project_name, started_by_kind,
         started_by_conversation_id, report_to_conversation_id, session_handle, work_in,
-        permission_ceiling)
-       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?, ?)`
+        permission_ceiling, worktree_id)
+       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       plan.title,
@@ -525,7 +525,11 @@ export class SessionService {
       plan.handle,
       plan.workIn,
       // A worker can never do more than the chat that started it.
-      manager.permission_ceiling ?? null
+      manager.permission_ceiling ?? null,
+      // Working in the manager's folder means its worktree, when it has one.
+      plan.workIn !== 'worktree' && plan.projectId === manager.project_id
+        ? (manager.worktree_id ?? null)
+        : null
     )
     this.starting.add(id)
     let runStarted = false
@@ -606,9 +610,9 @@ export class SessionService {
 
   /** Removes a worker whose first run never started, with a worktree made only for it. */
   private async discardWorker(id: string): Promise<void> {
-    const projectId = this.store.conversation(id)?.project_id
+    const worktreeId = this.store.conversation(id)?.worktree_id
     this.store.deleteConversation(id)
-    if (projectId) await this.options.worktrees.removeIfUnused(projectId).catch(() => undefined)
+    if (worktreeId) await this.options.worktrees.removeIfUnused(worktreeId).catch(() => undefined)
   }
 
   proposals(conversationId: string): SessionProposal[] {
@@ -971,12 +975,15 @@ export class SessionService {
       .prepare("SELECT content FROM messages WHERE run_id = ? AND role != 'user'")
       .get(run.id) as { content: string } | undefined
     const facts: string[] = []
-    const worktree = conversation.project_id
+    const worktree = conversation.worktree_id
       ? (this.options.db
-          .prepare('SELECT branch FROM managed_worktrees WHERE project_id = ?')
-          .get(conversation.project_id) as { branch: string } | undefined)
+          .prepare('SELECT branch, set_aside_branch FROM managed_worktrees WHERE id = ?')
+          .get(conversation.worktree_id) as
+          | { branch: string | null; set_aside_branch: string | null }
+          | undefined)
       : undefined
-    if (worktree) facts.push(`Branch ${worktree.branch}`)
+    const branch = worktree?.set_aside_branch ?? worktree?.branch
+    if (branch) facts.push(`Branch ${branch}`)
     if (this.userSteppedIn.has(conversation.id)) facts.push('The user stepped in')
     const text = final?.content ? excerpt(final.content, SESSION_LIMITS.reportExcerptMaxLength) : ''
     return [verdict, text, facts.join(' · ')].filter(Boolean).join('\n\n')

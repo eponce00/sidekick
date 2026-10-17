@@ -10,12 +10,23 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  transition: width var(--duration-normal) ease;
+  /* Size changes glide; dragging follows the pointer instead (is-resizing). */
+  transition:
+    width var(--duration-layout) var(--ease-out),
+    min-width var(--duration-layout) var(--ease-out);
   border-left: 1px solid var(--panel-border);
 }
 
 .activity-panel.is-resizing {
   transition: none;
+}
+
+/* Its content is laid out at the width the panel is heading for, so opening or resizing reveals
+   or trims it at the edge instead of re-wrapping it every frame. The window clips the overhang. */
+.activity-panel.is-pinned > .activity-header,
+.activity-panel.is-pinned > .activity-content {
+  width: var(--panel-content-width, auto);
+  min-width: var(--panel-content-width, auto);
 }
 
 .activity-panel-resize-handle {
@@ -93,6 +104,8 @@
   gap: 3px;
   flex: 1;
   min-width: 0;
+  /* Tabs share a narrow panel; in a wide one they keep their size instead of spreading out. */
+  max-width: 120px;
   padding: 7px 4px 6px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
@@ -226,7 +239,7 @@
   padding: 0;
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
   text-align: center;
 }
 

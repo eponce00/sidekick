@@ -5,6 +5,7 @@ import {
   type ContextMenuParams,
   type MenuItemConstructorOptions
 } from 'electron'
+import { showAppMenu } from '../services/appMenus'
 
 export interface NativeTextMenuActions {
   openLink?: (url: string) => void
@@ -174,6 +175,10 @@ export function installNativeTextContextMenu(
       }
     )
     if (!template.length) return
+    // Its coordinates belong to the frame it came from, so a menu in an embedded frame stays native.
+    const inMainFrame = !params.frame || params.frame === window.webContents.mainFrame
+    if (inMainFrame && showAppMenu(window.webContents, template, { x: params.x, y: params.y }))
+      return
     Menu.buildFromTemplate(template).popup({ window, frame: params.frame ?? undefined })
   })
 }

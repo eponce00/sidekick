@@ -1,4 +1,5 @@
 .fork-dialog-backdrop {
+  animation: motion-fade-in var(--duration-normal) ease-out;
   position: fixed;
   inset: 0;
   z-index: 10020;
@@ -9,6 +10,7 @@
 }
 
 .fork-dialog {
+  animation: motion-dialog-in var(--duration-normal) var(--ease-out);
   width: min(520px, calc(100vw - 32px));
   padding: var(--space-4);
   border: 1px solid var(--border-color);

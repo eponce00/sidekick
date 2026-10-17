@@ -8,6 +8,7 @@ import type {
   StartSessionsCardResponse
 } from '../../../shared/sessions'
 import './SessionCards.css'
+import { Select } from './Select'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
 
@@ -119,7 +120,7 @@ export function StartSessionsCard({
               <span title={row.brief}>{row.title}</span>
             </span>
             <span role="cell">
-              <select
+              <Select
                 aria-label={`Project for ${row.handle}`}
                 value={projectOf(index) ?? ''}
                 disabled={Boolean(submitting)}
@@ -137,10 +138,10 @@ export function StartSessionsCard({
                     {project.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </span>
             <span role="cell">
-              <select
+              <Select
                 aria-label={`Where ${row.handle} works`}
                 value={workInOf(index)}
                 disabled={Boolean(submitting) || !projectOf(index)}
@@ -159,7 +160,7 @@ export function StartSessionsCard({
                     {WORK_IN_LABELS[value]}
                   </option>
                 ))}
-              </select>
+              </Select>
             </span>
             <span className="start-sessions-model" role="cell" title={row.modelName}>
               {row.modelName}

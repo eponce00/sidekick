@@ -8,6 +8,7 @@ import type { Project } from '../../../shared/projects'
 import type { PermissionMode } from '../../../shared/permissions'
 import type { Schedule, ScheduleRun } from '../../../shared/schedules'
 import SchedulesDialog from './SchedulesDialog'
+import { selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -128,9 +129,9 @@ describe('SchedulesDialog', () => {
     await act(async () => button('New schedule').click())
     const select = [...container.querySelectorAll('label')]
       .find((label) => label.textContent?.startsWith('Without asking, runs may'))!
-      .querySelector('select')!
-    expect(select.value).toBe('sensitive-only')
-    expect([...select.options].map((option) => option.value)).toEqual([
+      .querySelector<HTMLElement>('.ui-select')!
+    expect(select.dataset.value).toBe('sensitive-only')
+    expect((await selectOptions(select)).map((option) => option.value)).toEqual([
       'always-ask',
       'sensitive-only'
     ])

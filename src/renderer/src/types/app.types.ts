@@ -23,6 +23,9 @@ export interface Conversation {
   project_context_version: number
   home_workspace_root: string | null
   home_project_name: string | null
+  /** The chat's own worktree of its project, and that worktree's folder, where it works. */
+  worktree_id?: string | null
+  worktree_folder?: string | null
   unread_completion_at?: number | null
   forked_from_conversation_id?: string | null
   forked_from_message_id?: string | null

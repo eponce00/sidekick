@@ -8,11 +8,26 @@
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 2%, transparent), transparent 160px),
     var(--surface-0);
   border-right: 1px solid var(--panel-border);
-  transition: width var(--duration-normal) ease;
+  transition: width var(--duration-layout) var(--ease-out);
+}
+
+/* While it changes width, its content keeps its full width and is clipped or revealed, so text
+   never re-wraps from frame to frame. */
+.sidebar:not(.collapsed) > * {
+  min-width: 275px;
+}
+
+.sidebar.is-closing {
+  width: 48px;
 }
 
 .sidebar.collapsed {
   width: 48px;
+  /* The rail's menus open beside it, outside its 48 pixels, so it must not clip them, and it
+     sits above the chat so they draw on top. */
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 
 .sidebar-header {
@@ -22,6 +37,11 @@
   gap: 4px;
   padding: 0 8px 0 10px;
   flex-shrink: 0;
+}
+
+/* The rail's icons fade in once the sidebar has finished folding. */
+.sidebar.collapsed > * {
+  animation: motion-fade-in var(--duration-normal) ease-out;
 }
 
 .sidebar.collapsed .sidebar-header {
@@ -336,6 +356,33 @@
   transition:
     color var(--duration-fast),
     background var(--duration-fast);
+}
+
+.collapsed-sidebar-divider {
+  width: 22px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-color);
+}
+
+.sidebar-rail-footer {
+  margin-top: auto;
+  display: grid;
+  flex-shrink: 0;
+  justify-items: center;
+  padding: 8px 0 10px;
+}
+
+.sidebar-rail-footer .sidebar-menu-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-md);
+}
+
+/* From the bottom of the rail the menu opens beside it and upward, so it stays on screen. */
+.sidebar.collapsed .sidebar-rail-footer .sidebar-menu {
+  top: auto;
+  bottom: 0;
 }
 
 .collapsed-sidebar-nav button:hover {
@@ -738,6 +785,13 @@
   white-space: nowrap;
 }
 
+/* A chat in its own worktree: a quiet mark before its title. */
+.conversation-worktree-icon {
+  margin-right: 5px;
+  color: var(--text-muted);
+  vertical-align: -2px;
+}
+
 .conversation-metadata {
   overflow: hidden;
   color: var(--text-muted);
@@ -915,6 +969,7 @@
 }
 
 .sidebar-overflow-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 90;
   top: calc(100% + 4px);
@@ -971,6 +1026,7 @@
 }
 
 .conversation-move-menu {
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
   position: absolute;
   z-index: 50;
   top: 32px;

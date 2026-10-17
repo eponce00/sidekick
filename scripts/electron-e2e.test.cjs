@@ -335,7 +335,9 @@ test(
         has: page.getByRole('heading', { name: 'Project hooks', exact: true })
       })
       for (const moment of ['Before the final answer', 'After creating a worktree']) {
-        await projectHooks.getByRole('combobox', { name: 'When' }).selectOption({ label: moment })
+        // SideKick's dropdown opens a list of options instead of a native select.
+        await projectHooks.getByRole('combobox', { name: 'When' }).click()
+        await page.getByRole('option', { name: moment, exact: true }).click()
         await projectHooks.getByRole('textbox', { name: 'Hook project folder' }).fill(profile)
         await projectHooks.getByRole('textbox', { name: 'Hook command' }).fill('echo fixture-only')
         await projectHooks.getByRole('button', { name: 'Add hook', exact: true }).click()

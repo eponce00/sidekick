@@ -42,10 +42,9 @@ import { useCheckpointTitleBackfill } from '../hooks/useCheckpointTitleBackfill'
 import BrowserActivityPanel from './BrowserActivityPanel'
 import { EMPTY_BROWSER_ACTIVITY, type BrowserActivityState } from '../utils/browserActivity'
 import {
-  ACTIVITY_PANEL_DEFAULT_WIDTH,
-  ACTIVITY_PANEL_MAX_WIDTH,
   ACTIVITY_PANEL_MIN_WIDTH,
-  ACTIVITY_PANEL_WIDE_WIDTH,
+  ACTIVITY_PANEL_NARROW_WIDTH,
+  type ActivityPanelSize,
   activityPanelMaximumWidth,
   clampActivityPanelWidth,
   storedActivityPanelWidth
@@ -56,6 +55,7 @@ import {
   type WorkspaceFileViewRequest
 } from '../utils/workspaceFileViewer'
 import { ChatsTab } from './ChatsPanel'
+import { ActivityPanelSizeButton } from './ActivityPanelSizeButton'
 import { useSessionFamily } from '../hooks/useSessionFamily'
 import './ActivityPanel.css'
 
@@ -92,6 +92,10 @@ interface ActivityPanelProps {
   maxWidth?: number
   /** The width the user chose, so the layout can make room for it. */
   onWidthChange?: (width: number) => void
+  /** Narrow, wide (the width the user dragged to) or the whole window. */
+  size?: ActivityPanelSize
+  /** Offers the size switch; left out where the panel floats over the chat instead. */
+  onSizeChange?: (size: ActivityPanelSize) => void
   /** Opens another chat, from the Chats tab. */
   onOpenConversation?: (conversationId: string) => void
 }
@@ -113,6 +117,8 @@ function ActivityPanel({
   onActiveTabChange,
   maxWidth,
   onWidthChange,
+  size = 'wide',
+  onSizeChange,
   onOpenConversation
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
@@ -134,7 +140,15 @@ function ActivityPanel({
     storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
   )
   const [isResizing, setIsResizing] = useState(false)
-  const renderedWidth = Math.min(panelWidth, maxWidth ?? Number.POSITIVE_INFINITY)
+  const widthLimit = maxWidth ?? Number.POSITIVE_INFINITY
+  // Only the wide size follows the user's dragged width; the others are fixed.
+  const renderedWidth =
+    size === 'narrow'
+      ? Math.min(ACTIVITY_PANEL_NARROW_WIDTH, widthLimit)
+      : size === 'full' && Number.isFinite(widthLimit)
+        ? widthLimit
+        : Math.min(panelWidth, widthLimit)
+  const resizable = isPinned && size === 'wide'
   const maxWidthRef = useRef(maxWidth)
   maxWidthRef.current = maxWidth
   const fitWidth = (width: number): number =>
@@ -215,14 +229,14 @@ function ActivityPanel({
   )
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!isPinned || event.button !== 0) return
+    if (!resizable || event.button !== 0) return
     resizeStartRef.current = { x: event.clientX, width: renderedWidth }
     setIsResizing(true)
     event.preventDefault()
   }
 
   const resizeFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (!isPinned) return
+    if (!resizable) return
     const step = event.shiftKey ? 50 : 20
     let next: number | undefined
     if (event.key === 'ArrowLeft') next = renderedWidth + step
@@ -232,14 +246,6 @@ function ActivityPanel({
     if (next === undefined) return
     event.preventDefault()
     setPanelWidth(fitWidth(next))
-  }
-
-  // Widening asks for as much as the window allows; the sidebar folds and the chat keeps its
-  // minimum, so the panel ends as wide as that leaves.
-  const widestWidth = clampActivityPanelWidth(ACTIVITY_PANEL_MAX_WIDTH, window.innerWidth)
-  const isWide = panelWidth >= Math.min(widestWidth, ACTIVITY_PANEL_WIDE_WIDTH) - 20
-  const toggleWidePanel = (): void => {
-    setPanelWidth(isWide ? fitWidth(ACTIVITY_PANEL_DEFAULT_WIDTH) : widestWidth)
   }
 
   const openCollapsedTab = (tab: ActivityTab): void => {
@@ -606,9 +612,18 @@ function ActivityPanel({
       )}
       <aside
         className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
-        style={isPinned ? { width: renderedWidth, minWidth: renderedWidth } : undefined}
+        data-size={isPinned ? size : undefined}
+        style={
+          isPinned
+            ? ({
+                width: renderedWidth,
+                minWidth: renderedWidth,
+                '--panel-content-width': `${renderedWidth}px`
+              } as React.CSSProperties)
+            : undefined
+        }
       >
-        {isPinned && (
+        {resizable && (
           <div
             className="activity-panel-resize-handle"
             role="separator"
@@ -697,6 +712,7 @@ function ActivityPanel({
             </button>
           </div>
           <div className="activity-header-right">
+            {onSizeChange && <ActivityPanelSizeButton size={size} onChange={onSizeChange} />}
             <button
               className="activity-panel-toggle"
               onClick={onTogglePin}
@@ -984,8 +1000,6 @@ ${viewedFile.filePath}`}
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
-                isWide={isWide}
-                onToggleWidth={toggleWidePanel}
               />
             </div>
           </div>

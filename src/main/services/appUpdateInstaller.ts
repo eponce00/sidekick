@@ -1,4 +1,4 @@
-import { app, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, chmod, lstat, mkdir, mkdtemp, open, readdir, realpath, rm } from 'node:fs/promises'
@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import { PRODUCT_IDENTITY } from '../../shared/productIdentity'
+import { showTrustedDialog } from './trustedDialog'
 
 const execute = promisify(execFile)
 const REPOSITORY = `${PRODUCT_IDENTITY.repositoryOwner}/${PRODUCT_IDENTITY.repositoryName}`
@@ -194,7 +195,7 @@ export async function installAppUpdate(
     shell.showItemInFolder(update.path)
     return false
   }
-  const choice = await dialog.showMessageBox({
+  const choice = await showTrustedDialog(BrowserWindow.getFocusedWindow(), {
     type: 'question',
     buttons: ['Restart SideKick and update', 'Later'],
     defaultId: 0,

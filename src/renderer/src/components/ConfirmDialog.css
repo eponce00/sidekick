@@ -57,7 +57,7 @@
   font-size: var(--text-base);
   font-weight: 500;
   cursor: pointer;
-  transition: all var(--duration-fast) ease;
+  transition: var(--transition-ui);
   border: none;
 }
 

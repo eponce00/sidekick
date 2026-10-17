@@ -82,13 +82,31 @@ of its report.
   and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
   each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
 
+## The side panel
+
+The panel beside the chat holds Files, Recovery, Browser and Terminal. The size button in its
+header shows how big it is, and each click steps to the next size:
+
+- **Narrow:** a fixed column beside the chat.
+- **Wide:** drag the panel's edge to size it, down to a phone-width chat. SideKick remembers that
+  width for next time.
+- **Full window:** the chat steps aside and the left sidebar folds to its thin rail, so the
+  panel, a browser page for example, gets the whole window. Opening the sidebar returns the panel
+  to wide. The next click goes back to narrow.
+
+The button beside it hides the panel and shows it again.
+
 ## Going back
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the
   message and everything after it leave the chat, and the message returns to the box to change or
   send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
   [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
-- **Edit** and **Retry** on a message do the same, then ask again at once.
+- **Edit** on a message you sent moves it into the message box, with its images, attachments,
+  mode, and goal, and blurs it and everything after it. Change it with anything the box offers,
+  then send: the message and what followed are replaced and SideKick answers again from there, the
+  same way a rewind does. **Esc** or **Cancel** puts back what the box held before.
+- **Retry** rewinds to the message and asks again at once.
 
 ## After an interruption
 

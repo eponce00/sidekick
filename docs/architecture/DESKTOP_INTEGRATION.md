@@ -6,9 +6,11 @@ Platform differences are explicit; the renderer does not infer them from user-ag
 
 ## Text editing and contextual actions
 
-All editable fields use Chromium/Electron spellcheck and a native Electron menu. The menu includes
-suggestions, dictionary learning, undo/redo, cut/copy/paste, paste-and-match-style, delete, and
-select all. Links add Open in Browser and Copy Link; images add Copy Image and Copy Image Address.
+All editable fields use Chromium/Electron spellcheck and an Electron menu template drawn in
+SideKick's style (see [Menus and dialogs](#menus-and-dialogs)). The menu includes suggestions,
+dictionary learning, undo/redo, cut/copy/paste, paste-and-match-style, delete, and select all.
+Links add Open in Browser and Copy Link; images add Copy Image and Copy Image Address. A menu with a
+macOS-only item (Services, Speech, Substitutions) and a menu from an embedded frame stay native.
 
 - macOS uses the native spellchecker and automatic language detection. Selected text also exposes
   Lookup, Speech, Substitutions, and the system Services menu. Writing Tools can appear through the
@@ -91,6 +93,25 @@ The tray's contextual entries (New Chat and waiting conversations) go in the Doc
 
 The tray's shape (Open, New, a running-count status line, Settings, update entry, Quit, and
 hide-on-close) follows Cline's desktop app; SideKick's implementation is independent.
+
+## Menus and dialogs
+
+Menus the main process opens, such as a file's actions, the browser's device sizes, the Windows
+title-bar menu and the text menu, are drawn by the renderer in SideKick's style
+(`src/main/services/appMenus.ts`, `AppMenuHost`). The main process keeps every action: it sends a
+serializable description with a one-time token, and the renderer reports only the token and the
+chosen item's id, for a menu opened for that window. Templates with roles only the system can
+perform fall back to the native menu. The device menu opens over the page, which is a native view
+drawn above the app, so the panel shows a capture of the page while that menu is open. Dropdowns are
+`Select`, not `<select>`, so their lists are styled and float above dialogs.
+
+Questions the main process must hear from the user directly, such as security-sensitive settings,
+MCP connectors, permission prompts and quitting with active runs, use `showTrustedDialog`. It is a
+modal child window with its own sandboxed page, built from escaped text with a strict content
+security policy, that reports the answer by a navigation the main process intercepts. The app's
+window cannot read, click or cover it, so it keeps the guarantee of a system dialog in SideKick's
+style. Without a visible window to attach to, it falls back to the system dialog. The system tray,
+the macOS menu bar and the page's own context menu in the browser stay native.
 
 ## Dialog and accessibility behavior
 

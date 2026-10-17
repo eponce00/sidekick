@@ -23,7 +23,7 @@ import {
   Server,
   Settings2,
   ShieldCheck,
-  SquareTerminal,
+  Layers,
   Type,
   Workflow
 } from 'lucide-react'
@@ -53,6 +53,9 @@ import { SettingsPageHeader, SettingsRow, SettingsSection, ToggleField } from '.
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
+import { Select } from './Select'
+import { globalRunSlots, MAX_GLOBAL_RUN_SLOTS } from '../../../shared/runSlots'
+import { PERMISSION_MODE_LABELS } from '../../../shared/permissions'
 
 export type { AccentPalette } from '../constants/accentPalettes'
 export { applyAccentPalette } from '../constants/accentPalettes'
@@ -214,16 +217,16 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="General"
-            description="Everyday behavior without provider-specific noise."
+            description="Notifications, running in the background, voice, web search, and updates."
           />
           <SettingsSection
             icon={Bell}
             title="Notifications"
-            description="Only notify when SideKick is not focused."
+            description="Only while SideKick is in the background."
           >
             <ToggleField
               label="Completion notifications"
-              hint="Use Notification Center or Windows notifications when a response finishes."
+              hint="A desktop notification when a reply finishes."
               checked={settings.notificationsEnabled ?? true}
               onChange={(notificationsEnabled) =>
                 setSettings({ ...settings, notificationsEnabled })
@@ -231,7 +234,7 @@ function SettingsModal({
             />
             <ToggleField
               label="Notification sound"
-              hint="Allow the operating system to play its notification sound."
+              hint="Play the system notification sound with it."
               checked={settings.notificationSoundEnabled ?? false}
               disabled={!(settings.notificationsEnabled ?? true)}
               onChange={(notificationSoundEnabled) =>
@@ -243,7 +246,7 @@ function SettingsModal({
             <SettingsSection
               icon={AppWindow}
               title="Background"
-              description="Keep agents working after you close the window."
+              description="Let agents finish after you close the window."
             >
               <ToggleField
                 label={
@@ -251,7 +254,7 @@ function SettingsModal({
                     ? 'Close to the notification area'
                     : 'Close to the system tray'
                 }
-                hint="Closing the window hides SideKick to its tray icon. Quit from the icon's right-click menu. Off, closing the window quits SideKick."
+                hint="Closing the window keeps SideKick running from its tray icon; quit from the icon's menu. Off, closing the window quits."
                 checked={settings.closeToTray ?? true}
                 onChange={(closeToTray) => setSettings({ ...settings, closeToTray })}
               />
@@ -264,11 +267,11 @@ function SettingsModal({
           <SettingsSection
             icon={Globe}
             title="Web search"
-            description="Search without an account or API key, through public search engines."
+            description="Searches public search engines, with no account or API key."
           >
             <ToggleField
               label="Let the agent search the web"
-              hint="Sends search text to DuckDuckGo, Brave Search, and Bing, and reads the pages it finds. Off, the agent neither searches nor reads web pages; the browser panel still opens what you or the agent choose."
+              hint="Uses DuckDuckGo, Brave Search, and Bing, and reads the pages it finds. Off, the agent can still open pages in the Browser tab."
               checked={settings.webSearchEnabled ?? true}
               onChange={(webSearchEnabled) => setSettings({ ...settings, webSearchEnabled })}
             />
@@ -276,11 +279,11 @@ function SettingsModal({
           <SettingsSection
             icon={MapPin}
             title="Location"
-            description="Optional context for weather, travel, and local recommendations."
+            description="Lets the agent answer local questions, such as the weather."
           >
             <SettingsRow
               label="City or region"
-              description="Leave empty to keep your location private."
+              description="Leave empty and the agent knows only your time zone."
               controlId={`${controlId}-location`}
               control={
                 <input
@@ -298,11 +301,11 @@ function SettingsModal({
             id="settings-updates"
             icon={RefreshCw}
             title="Updates"
-            description="Check the public project releases. Installation stays under your control."
+            description="SideKick checks GitHub for new versions and installs one only when you choose."
           >
             <ToggleField
               label="Check automatically"
-              hint="Asks GitHub Releases for a newer version after startup and every six hours. Off, SideKick checks only when you choose Check now."
+              hint="After startup and every six hours. Off, check from here with Check now."
               checked={settings.automaticUpdateChecks ?? true}
               onChange={(automaticUpdateChecks) =>
                 setSettings({ ...settings, automaticUpdateChecks })
@@ -313,11 +316,11 @@ function SettingsModal({
           <SettingsSection
             icon={LifeBuoy}
             title="Support"
-            description="Create a metadata-only report for troubleshooting."
+            description="A troubleshooting report with no personal content."
           >
             <SettingsRow
               label="Diagnostic report"
-              description="Excludes conversations, prompts, files, paths, endpoints, model names, logs, and credentials."
+              description="Leaves out conversations, prompts, files, paths, addresses, model names, logs, and keys."
               control={
                 <button
                   type="button"
@@ -355,29 +358,29 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Agent"
-            description="Control autonomy, long-running work, and default capabilities."
+            description="How the agent works on long tasks and what it may do without asking."
           />
           <SettingsSection
             icon={Workflow}
-            title="Run behavior"
-            description="How the agent keeps track of long tasks."
+            title="Long tasks"
+            description="How the agent keeps track of long work."
           >
             <ToggleField
-              label="Focus Chain"
-              hint="Track multi-step work with a visible task list."
+              label="Task list"
+              hint="Keep a visible checklist for work with several steps."
               checked={settings.focusChainEnabled ?? true}
               onChange={(focusChainEnabled) => setSettings({ ...settings, focusChainEnabled })}
             />
             <ToggleField
-              label="Auto compact"
-              hint="Summarize long conversations before context is exhausted."
+              label="Summarize older messages"
+              hint="When a chat nears the model's limit, summarize its oldest part so the work can go on."
               checked={settings.autoCompactEnabled ?? true}
               onChange={(autoCompactEnabled) => setSettings({ ...settings, autoCompactEnabled })}
             />
             {settings.autoCompactEnabled !== false && (
               <SettingsRow
-                label="Compaction threshold"
-                description="How full the context gets before SideKick summarizes it."
+                label="Summarize at"
+                description="How full the model's context gets first."
                 controlId={`${controlId}-compact`}
                 control={
                   <>
@@ -405,14 +408,14 @@ function SettingsModal({
           <SettingsSection
             icon={Route}
             title="Planning"
-            description="Use a dedicated model to design a plan, then return to the selected chat model for execution."
+            description="Plan mode can write the plan with its own model; the chat model then does the work."
           >
             <SettingsRow
-              label="Default planning model"
-              description="You can override this from the composer whenever Plan mode is selected."
+              label="Planning model"
+              description="You can change it in the composer whenever Plan mode is on."
               controlId={`${controlId}-planning`}
               control={
-                <select
+                <Select
                   id={`${controlId}-planning`}
                   value={settings.planningModelId || ''}
                   onChange={(event) =>
@@ -425,22 +428,22 @@ function SettingsModal({
                       {model.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               }
             />
           </SettingsSection>
           <SettingsSection
             icon={ShieldCheck}
             title="Permissions"
-            description="One policy applies consistently to shell, files, MCP, checkpoints, and browser actions."
+            description="What the agent may do without asking you. It applies to commands, files, connectors, and the browser."
           >
             <SettingsRow
               icon={Hand}
-              label="Tool approval mode"
-              description="Full access runs tools without approval popups. Destructive actions still follow SideKick's safety rules and the scope of your request."
+              label="Approvals"
+              description="With full access the agent works without asking; destructive actions still follow SideKick's safety rules."
               controlId={`${controlId}-approval`}
               control={
-                <select
+                <Select
                   id={`${controlId}-approval`}
                   value={settings.commandPermissionMode || 'full-access'}
                   onChange={(event) =>
@@ -451,16 +454,18 @@ function SettingsModal({
                     })
                   }
                 >
-                  <option value="full-access">Full access (default)</option>
-                  <option value="sensitive-only">Ask only for sensitive actions</option>
-                  <option value="always-ask">Ask for every write or command</option>
-                </select>
+                  {Object.entries(PERMISSION_MODE_LABELS).map(([mode, label]) => (
+                    <option key={mode} value={mode}>
+                      {label}
+                    </option>
+                  ))}
+                </Select>
               }
             />
             <SettingsRow
               icon={Repeat}
-              label="Agent rounds before safety pause"
-              description={`The agent stops to check in after this many rounds. Default ${DEFAULT_TOOL_CALL_LIMIT}.`}
+              label="Steps before checking in"
+              description={`After this many steps in one reply, the agent pauses to ask whether to go on. Default ${DEFAULT_TOOL_CALL_LIMIT}.`}
               controlId={`${controlId}-rounds`}
               control={
                 <input
@@ -480,11 +485,11 @@ function SettingsModal({
             />
             <SettingsRow
               icon={Container}
-              label="Shell execution environment"
-              description="Docker runs commands in a Linux container with only the project mounted and no network. It needs a local Docker daemon, and other tools still run on the host."
+              label="Where commands run"
+              description="A Docker container sees only the project and has no network. It needs Docker running; other tools still run on this computer."
               controlId={`${controlId}-shell`}
               control={
-                <select
+                <Select
                   id={`${controlId}-shell`}
                   value={settings.shellIsolation ?? 'host'}
                   onChange={(event) =>
@@ -494,24 +499,38 @@ function SettingsModal({
                     })
                   }
                 >
-                  <option value="host">Host shell (not sandboxed)</option>
-                  <option value="docker">Isolated Linux container (no network)</option>
-                </select>
+                  <option value="host">On this computer</option>
+                  <option value="docker">In a Docker container</option>
+                </Select>
               }
             />
-            <ToggleField
-              icon={SquareTerminal}
-              label="Run commands in a terminal"
-              hint="Programs behave as they do for you: colours, progress, and prompts you or the agent can answer. Turn off to use plain pipes."
-              checked={settings.agentCommandTerminal ?? true}
-              onChange={(agentCommandTerminal) =>
-                setSettings({ ...settings, agentCommandTerminal })
+            <SettingsRow
+              icon={Layers}
+              label="Chats working at once"
+              description="Chats, scheduled runs, and helper agents that may run together; the rest wait their turn."
+              controlId={`${controlId}-run-slots`}
+              control={
+                <input
+                  id={`${controlId}-run-slots`}
+                  type="number"
+                  min={1}
+                  max={MAX_GLOBAL_RUN_SLOTS}
+                  value={globalRunSlots(settings)}
+                  onChange={(event) =>
+                    setSettings({
+                      ...settings,
+                      maxConcurrentRuns: globalRunSlots({
+                        maxConcurrentRuns: Number(event.target.value)
+                      })
+                    })
+                  }
+                />
               }
             />
             <SettingsRow
               icon={FileCode2}
-              label="Office helper Python"
-              description="Optional. Lets an Office skill check documents with read-only validation. It runs with your normal approvals, never installs packages, and is off in Docker."
+              label="Python for Office documents"
+              description="Optional. Lets the Word, Excel, and PowerPoint skills check documents with this Python. It only reads, never installs anything, and is off when commands run in Docker."
               stacked
               control={
                 <span className="settings-inline-field">
@@ -520,7 +539,7 @@ function SettingsModal({
                     aria-label="Office Python interpreter"
                     readOnly
                     value={settings.officeHelperInterpreter ?? ''}
-                    placeholder="Not set, direct Office tools are off"
+                    placeholder="Not set"
                   />
                   <button
                     type="button"
@@ -596,7 +615,7 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Appearance"
-            description="Keep SideKick calm, readable, and personal."
+            description="Accent color and conversation text size."
           />
           <SettingsSection
             icon={Palette}
@@ -629,7 +648,7 @@ function SettingsModal({
           <SettingsSection
             icon={Type}
             title="Conversation text"
-            description="Adjust messages and the composer without changing the whole interface. Use Ctrl + or Ctrl − for window zoom."
+            description="Sizes messages and the message box only. Ctrl + and Ctrl − zoom the whole window."
           >
             <SettingsRow
               label="Text size"
@@ -676,7 +695,7 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Integrations"
-            description="Connect external MCP tool servers and the sidekick command."
+            description="Tools from other apps and services, and the sidekick command."
           />
           <McpServerSettings
             servers={settings.mcpServers || []}

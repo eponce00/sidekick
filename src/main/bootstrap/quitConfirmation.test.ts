@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 const dialog = vi.hoisted(() => ({ showMessageBox: vi.fn() }))
 vi.mock('electron', () => ({ dialog }))
+// SideKick's own dialog window, reduced to the system dialog it stands in for.
+vi.mock('../services/trustedDialog', () => ({
+  showTrustedDialog: (parent: unknown, options: unknown) =>
+    parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)
+}))
 
 import type { BrowserWindow } from 'electron'
 import { confirmQuitWithActiveRuns, QuitGuard, quitConfirmationMessage } from './quitConfirmation'

@@ -11,7 +11,7 @@ import {
   VOICE_SAMPLE_RATE,
   type SpeechOptions
 } from '../../../shared/voice'
-import { detectSpeechLanguage, speakableText } from '../../../shared/voiceText'
+import { detectSpeechLanguage, speakableParagraphs, speechChunks } from '../../../shared/voiceText'
 import { VOICE_MODELS, VoiceModelStore } from './voiceModels'
 
 /** The slice of sherpa-onnx-node this service uses. */
@@ -89,6 +89,14 @@ const DRAFT_WINDOW = VOICE_SAMPLE_RATE * 20
 const SEGMENT_LEAD_IN = Math.round(VOICE_SAMPLE_RATE * 0.6)
 const SEGMENT_TAIL = Math.round(VOICE_SAMPLE_RATE * 0.3)
 
+// Read-aloud follows Supertonic's reference settings: whole passages of up to 300 characters
+// (120 for Japanese and Korean), a short silence between them, and a speed of 1.05. A passage
+// said at once keeps its intonation flowing; a sentence at a time made every sentence start
+// the same way. A paragraph's end gets a longer pause.
+const SPEECH_SPEED = 1.05
+const PASSAGE_PAUSE_SECONDS = 0.3
+const PARAGRAPH_PAUSE_SECONDS = 0.55
+
 /**
  * The recent audio of a dictation, addressed by sample index from its start,
  * so a detected stretch can be read back with the moments around it. Only the
@@ -147,7 +155,7 @@ const DEFAULT_RETRY_DELAYS = [60_000, 5 * 60_000, 30 * 60_000]
  * loads them on first use, and drops them after a while unused. Dictation
  * finds speech with Silero VAD and transcribes each stretch with Parakeet as
  * the user talks, so stopping leaves only the last stretch to decode.
- * Read-aloud streams Supertonic audio sentence by sentence.
+ * Read-aloud streams Supertonic audio passage by passage.
  */
 export class VoiceService {
   private readonly store: VoiceModelStore
@@ -399,7 +407,8 @@ export class VoiceService {
             provider: 'cpu',
             debug: false
           },
-          maxNumSentences: 1
+          // Passages are made here (speechChunks); each is said whole.
+          maxNumSentences: 50
         })
       )
       .catch((error) => {
@@ -565,7 +574,8 @@ export class VoiceService {
     await this.ready()
     const availability = this.availability('speech')
     if (!availability.ok) return availability
-    const text = speakableText(markdown)
+    const paragraphs = speakableParagraphs(markdown)
+    const text = paragraphs.join(' ')
     if (!text) {
       return {
         ok: false,
@@ -590,26 +600,36 @@ export class VoiceService {
       const tts = await this.loadTts()
       const generationConfig = new sherpa.GenerationConfig({
         sid: voice,
-        speed: 1.1,
+        speed: SPEECH_SPEED,
         numSteps: 8,
         extra: { lang: language }
       })
-      const finished = tts
-        .generateAsync({
-          text,
-          generationConfig,
-          enableExternalBuffer: false,
-          onProgress: ({ samples }) => {
-            if (run.stopped) return 0
-            onAudio(Float32Array.from(samples), tts.sampleRate)
-            return 1
-          }
-        })
-        .then(() => undefined)
-        .finally(() => {
-          this.speeches.delete(speechId)
-          this.touch()
-        })
+      const passages = speechChunks(paragraphs, language === 'ja' || language === 'ko' ? 120 : 300)
+      const silence = (seconds: number): Float32Array =>
+        new Float32Array(Math.round(tts.sampleRate * seconds))
+      const finished = (async () => {
+        for (const [index, passage] of passages.entries()) {
+          if (run.stopped) return
+          await tts.generateAsync({
+            text: passage.text,
+            generationConfig,
+            enableExternalBuffer: false,
+            onProgress: ({ samples }) => {
+              if (run.stopped) return 0
+              onAudio(Float32Array.from(samples), tts.sampleRate)
+              return 1
+            }
+          })
+          if (run.stopped || index === passages.length - 1) continue
+          onAudio(
+            silence(passage.endsParagraph ? PARAGRAPH_PAUSE_SECONDS : PASSAGE_PAUSE_SECONDS),
+            tts.sampleRate
+          )
+        }
+      })().finally(() => {
+        this.speeches.delete(speechId)
+        this.touch()
+      })
       return { ok: true, finished }
     } catch (error) {
       this.speeches.delete(speechId)

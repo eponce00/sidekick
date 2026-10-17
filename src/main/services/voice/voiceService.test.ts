@@ -171,4 +171,44 @@ describe('VoiceService', () => {
       reason: 'disabled'
     })
   })
+
+  it('says a reply a passage at a time, with a pause between passages', async () => {
+    const { store } = fakeStore(['dictation', 'speech'])
+    const sherpa = fakeSherpa()
+    const said: string[] = []
+    sherpa.OfflineTts.createAsync.mockResolvedValue({
+      sampleRate: 10,
+      generateAsync: vi.fn(
+        async (request: {
+          text: string
+          onProgress: (info: { samples: Float32Array }) => void
+        }) => {
+          said.push(request.text)
+          request.onProgress({ samples: Float32Array.of(1, 1) })
+          return { samples: Float32Array.of(1, 1), sampleRate: 10 }
+        }
+      )
+    })
+    const service = new VoiceService({
+      store,
+      enabled: true,
+      startDelayMs: 0,
+      loadSherpa: async () => sherpa
+    })
+    await service.ready()
+    const audio: number[] = []
+    const result = await service.speak(
+      'speech-1',
+      'First point. Second point.\n\nNext paragraph.\n\n## Sources\n- [Reuters](https://reuters.com/x)',
+      (samples) => audio.push(samples.length)
+    )
+    await (result as { finished: Promise<void> }).finished
+
+    expect(said).toEqual(['First point. Second point.', 'Next paragraph.'])
+    // Speech, a paragraph's pause (0.55 s at 10 Hz), speech; nothing after the last passage.
+    expect(audio).toEqual([2, 6, 2])
+    expect(sherpa.OfflineTts.createAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ maxNumSentences: 50 })
+    )
+  })
 })

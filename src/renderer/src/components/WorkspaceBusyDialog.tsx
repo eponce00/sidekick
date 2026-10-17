@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { FolderOpen, GitBranch, Users, X } from 'lucide-react'
+import { FolderGit2, FolderOpen, Users, X } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import type { WorkspaceOccupant } from '../../../shared/worktrees'
 import './ForkConversationDialog.css'
@@ -77,7 +77,7 @@ export function WorkspaceBusyDialog({
             disabled={busy || !canUseWorktree}
             autoFocus
           >
-            <GitBranch size={18} />
+            <FolderGit2 size={18} />
             <span>
               <strong>{hasHistory ? 'Fork into a new worktree' : 'Start in a new worktree'}</strong>
               <small>

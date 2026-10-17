@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { ACTIVITY_PANEL_MAX_WIDTH, clampActivityPanelWidth } from '../utils/activityPanelLayout'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -85,10 +84,6 @@ describe('ActivityPanel inspector', () => {
     expect(container.textContent).toContain('Files')
     expect(container.textContent).toContain('Recovery')
     expect(container.textContent).toContain('Browser')
-    const widthControl = container.querySelector(
-      'button[aria-label="Widen browser panel"]'
-    ) as HTMLButtonElement
-    expect(widthControl.closest('.activity-browser-wrap')).toBe(browserContent)
     expect(browserContent.hidden).toBe(true)
 
     const browserTab = container.querySelector(
@@ -98,34 +93,60 @@ describe('ActivityPanel inspector', () => {
     expect(browserTab.classList.contains('active')).toBe(true)
     expect(browserContent.hidden).toBe(false)
     expect(container.textContent).toContain('No browser activity yet')
-    expect(widthControl.closest('.activity-browser-wrap')).toBe(browserContent)
   })
 
-  it('resizes with keyboard controls, toggles a wide view, and persists width', async () => {
-    await renderPanel()
-    const panel = container.querySelector('.activity-panel') as HTMLElement
-    const separator = container.querySelector(
-      '[aria-label="Resize workspace inspector"]'
-    ) as HTMLElement
-    expect(panel.style.width).toBe('320px')
+  it('steps through narrow, wide and full, and drags only the wide size', async () => {
+    const onSizeChange = vi.fn()
+    const render = async (size: 'narrow' | 'wide' | 'full'): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <ActivityPanel
+            isPinned
+            onTogglePin={vi.fn()}
+            conversationId="chat-1"
+            focusChainTodos={[]}
+            workspaceFolder={null}
+            maxWidth={1_000}
+            size={size}
+            onSizeChange={onSizeChange}
+          />
+        )
+      )
+    }
+    const panel = (): HTMLElement => container.querySelector('.activity-panel') as HTMLElement
+    const separator = (): HTMLElement | null =>
+      container.querySelector('[aria-label="Resize workspace inspector"]')
 
+    await render('narrow')
+    expect(panel().style.width).toBe('320px')
+    expect(separator()).toBeNull()
+    // One button: it shows the size the panel is and steps to the next.
+    const sizeButton = (): HTMLButtonElement =>
+      container.querySelector('.activity-size-button') as HTMLButtonElement
+    expect(sizeButton().dataset.size).toBe('narrow')
+    expect(sizeButton().title).toContain('Click for wide')
+    await act(async () => sizeButton().click())
+    expect(onSizeChange).toHaveBeenLastCalledWith('wide')
+
+    await render('wide')
+    expect(panel().style.width).toBe('640px')
     await act(async () => {
-      separator.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+      separator()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
     })
-    expect(panel.style.width).toBe('340px')
+    // The width dragged to is the wide size from now on.
+    expect(panel().style.width).toBe('660px')
+    expect(window.localStorage.getItem('activityPanelWidth')).toBe('660')
 
-    const browserTab = container.querySelector(
-      'button[aria-label="Open browser activity"]'
-    ) as HTMLButtonElement
-    await act(async () => browserTab.click())
-    const widen = container.querySelector(
-      'button[aria-label="Widen browser panel"]'
-    ) as HTMLButtonElement
-    await act(async () => widen.click())
-    // Widening asks for as much as the window allows next to a readable chat.
-    const widest = clampActivityPanelWidth(ACTIVITY_PANEL_MAX_WIDTH, window.innerWidth)
-    expect(panel.style.width).toBe(`${widest}px`)
-    expect(window.localStorage.getItem('activityPanelWidth')).toBe(String(widest))
+    await render('full')
+    expect(panel().style.width).toBe('1000px')
+    expect(panel().dataset.size).toBe('full')
+    expect(separator()).toBeNull()
+    // From the full window it goes back to narrow.
+    await act(async () => sizeButton().click())
+    expect(onSizeChange).toHaveBeenLastCalledWith('narrow')
+
+    await render('wide')
+    expect(panel().style.width).toBe('660px')
   })
 
   it('auto-selects Browser once when a new run starts and exposes all collapsed shortcuts', async () => {

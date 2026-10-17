@@ -40,18 +40,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={editMessage}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={copyMessage}
           onRetryMessage={retryMessage}
           onForkMessage={forkMessage}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
           editActionTitle="Edit and resend"
@@ -85,48 +80,38 @@ describe('MessageItem shared-channel presentation', () => {
     expect(forkMessage).toHaveBeenCalledOnce()
   })
 
-  it('keeps an edited message anchored, full-sized, and focused', async () => {
-    container.className = 'messages-container'
-    container.scrollTop = 420
+  it('steps back while it is edited in the message box, with no editor of its own', async () => {
     await act(async () => {
       root.render(
         <MessageItem
           message={{
             id: 'editing-message',
             role: 'user',
-            content: 'A longer message that should keep its visual footprint while being edited.',
+            content: 'Change the tagline',
             timestamp: Date.now()
           }}
           index={0}
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId="editing-message"
-          editingGeometry={{ width: 640, height: 132, viewportTop: 0 }}
-          editingContent="A longer message that should keep its visual footprint while being edited."
+          isRewound
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
-          confirmEditActionTitle="Save and restart from here"
         />
       )
     })
-
-    const bubble = container.querySelector('.message-bubble') as HTMLDivElement
-    const input = container.querySelector('.message-edit-input') as HTMLTextAreaElement
-    expect(bubble.style.width).toBe('640px')
-    expect(bubble.style.minHeight).toBe('132px')
-    expect(input.style.height).toBe('24px')
-    expect(document.activeElement).toBe(input)
-    expect(container.scrollTop).toBe(420)
-    expect(container.querySelector('[aria-label="Save and restart from here"]')).not.toBeNull()
+    const message = container.querySelector('.message') as HTMLElement
+    expect(message.classList.contains('message-editing')).toBe(true)
+    expect(message.classList.contains('message-rewound')).toBe(true)
+    expect(message.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.textContent).toContain('Change the tagline')
   })
 
   it('keeps compact tool status hints available even when a row has no click action', async () => {
@@ -165,18 +150,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           readOnly
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -214,17 +194,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -253,17 +228,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -293,17 +263,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -347,17 +312,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -416,17 +376,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -454,17 +409,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -500,17 +450,12 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading={isLoading}
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
@@ -545,19 +490,14 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           workspaceFolder={'C:\\project'}
           onUndoCheckpoint={undo}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -604,17 +544,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -666,17 +601,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -812,17 +742,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading
           expandedThinking={new Set<string>()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
           onResolveAgentInteraction={vi.fn()}
@@ -862,18 +787,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set<string>()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={onRetryMessage}
           onContinueRun={onContinueRun}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -942,17 +862,12 @@ describe('MessageItem shared-channel presentation', () => {
             ])
           }
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1100,17 +1015,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1180,17 +1090,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1238,17 +1143,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1303,17 +1203,12 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading={false}
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
@@ -1350,18 +1245,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
           onRewindMessage={rewind}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1404,17 +1294,12 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
@@ -1479,8 +1364,6 @@ describe('MessageItem in long conversations', () => {
         isLoading={isLoading}
         expandedThinking={expandedThinking}
         editingMessageId={null}
-        editingGeometry={null}
-        editingContent=""
         copiedMessageId={null}
         {...handlers}
       />
