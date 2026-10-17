@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Dispatch, SetStateAction } from 'react'
 import { messageTextForClipboard } from '../utils/messageClipboard'
 import { authorizeCheckpointMutation } from '../utils/checkpointAuthorization'
-import type { Message, MessageEditGeometry } from '../types/chat.types'
+import type { Message } from '../types/chat.types'
+import type { MessageImageAttachment } from '../../../shared/messageImages'
+import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 
 interface ConversationActionsOptions {
@@ -25,6 +27,22 @@ interface ConversationActionsOptions {
    * the rewind discarded the start of.
    */
   restoreDraft?: (message: Message, discardsGoalStart: boolean) => Promise<void> | void
+  /**
+   * Editing a message loads it into the message box, setting aside what was there. `source` is
+   * the message on screen, for the move into the box.
+   */
+  beginEdit?: (message: Message, source: HTMLElement | null) => void
+  /** The edit was cancelled: put back what the message box held before. */
+  cancelEdit?: () => void
+}
+
+/** What the message box holds when an edited message is sent again. */
+export interface MessageEdit {
+  content: string
+  images: MessageImageAttachment[]
+  attachments: MessageContextAttachment[]
+  runMode: ConversationRunMode
+  startsGoal: boolean
 }
 
 /**
@@ -42,14 +60,12 @@ export interface RewoundGoal {
 
 export function useConversationActions(options: ConversationActionsOptions): {
   editingMessageId: string | null
-  editingDraft: string
-  editingGeometry: MessageEditGeometry | null
   copiedMessageId: string | null
   pendingCheckpointRestore: string | null
-  setEditingDraft: Dispatch<SetStateAction<string>>
   startEditMessage: (message: Message, event: React.MouseEvent<HTMLButtonElement>) => void
   cancelEditMessage: () => void
-  confirmEditMessage: (message: Message) => void
+  /** Replaces the message being edited with this and answers again from there. */
+  submitEdit: (edit: MessageEdit) => void
   copyMessage: (message: Message) => Promise<void>
   requestCheckpointRestore: (hash: string) => void
   cancelCheckpointRestore: () => void
@@ -58,11 +74,15 @@ export function useConversationActions(options: ConversationActionsOptions): {
   rewindToMessage: (message: Message, restoreFiles: boolean) => Promise<void>
 } {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
-  const [editingDraft, setEditingDraft] = useState('')
-  const [editingGeometry, setEditingGeometry] = useState<MessageEditGeometry | null>(null)
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [pendingCheckpointRestore, setPendingCheckpointRestore] = useState<string | null>(null)
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Messages skip re-rendering when only their handlers change, so an Edit button can hold an
+  // older startEditMessage; it reaches the current beginEdit, and the box's current draft, here.
+  const beginEditRef = useRef(options.beginEdit)
+  useLayoutEffect(() => {
+    beginEditRef.current = options.beginEdit
+  })
 
   useEffect(
     () => () => {
@@ -134,38 +154,39 @@ export function useConversationActions(options: ConversationActionsOptions): {
    * or twice from a double click, the second start was refused and took the first one down with
    * it, leaving a reply running that the window no longer followed.
    */
-  const rewindConversation = async (message: Message, updatedContent?: string): Promise<void> => {
+  const rewindConversation = async (message: Message, edit?: MessageEdit): Promise<void> => {
     if (rewindingRef.current || options.isRunActive?.()) return
     rewindingRef.current = true
     try {
-      await rewindConversationOnce(message, updatedContent)
+      await rewindConversationOnce(message, edit)
     } finally {
       rewindingRef.current = false
     }
   }
 
-  const rewindConversationOnce = async (
-    message: Message,
-    updatedContent?: string
-  ): Promise<void> => {
+  const rewindConversationOnce = async (message: Message, edit?: MessageEdit): Promise<void> => {
     if (!options.conversationId || !options.selectedModel) return
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
 
     await restoreFilesBefore(targetIndex)
 
-    const trimmedContent = updatedContent?.trim()
-    if (updatedContent !== undefined && !trimmedContent) return
-    const updatedMessage =
-      updatedContent === undefined
-        ? message
-        : { ...message, content: trimmedContent || message.content }
+    const trimmedContent = edit?.content.trim() ?? ''
+    if (edit && !trimmedContent && !edit.images.length && !edit.attachments.length) return
+    const updatedMessage: Message = edit
+      ? {
+          ...message,
+          content: trimmedContent,
+          images: edit.images,
+          attachments: edit.attachments,
+          runMode: edit.runMode,
+          startsGoal: edit.startsGoal
+        }
+      : message
     const truncatedMessages = options.messages
       .slice(0, targetIndex + 1)
       .map((candidate) => (candidate.id === message.id ? updatedMessage : candidate))
     setEditingMessageId(null)
-    setEditingDraft('')
-    setEditingGeometry(null)
 
     // A failed rewind must not start a new run. The stored history still holds
     // the messages this rewind meant to replace, so answering on top of them
@@ -186,14 +207,16 @@ export function useConversationActions(options: ConversationActionsOptions): {
       ])
     }
 
-    if (updatedContent !== undefined) {
+    if (edit) {
       try {
         await window.api.conversations.updateMessage({
           id: message.id,
           conversation_id: options.conversationId,
           content: updatedMessage.content,
-          images: message.images,
-          attachments: message.attachments,
+          images: updatedMessage.images,
+          attachments: updatedMessage.attachments,
+          runMode: updatedMessage.runMode,
+          startsGoal: updatedMessage.startsGoal,
           thinking: message.thinking,
           segments: message.segments,
           timestamp: message.timestamp
@@ -249,27 +272,20 @@ export function useConversationActions(options: ConversationActionsOptions): {
     )
   }
 
+  /** Brings a message into the message box; sending it then replaces it and what follows. */
   const startEditMessage = (message: Message, event: React.MouseEvent<HTMLButtonElement>): void => {
-    const bubble = event.currentTarget
+    if (options.isRunActive?.()) return
+    const source = event.currentTarget
       .closest('.message')
       ?.querySelector<HTMLElement>('.message-bubble')
-    const messageElement = event.currentTarget.closest<HTMLElement>('.message')
-    if (bubble && messageElement) {
-      const bubbleRect = bubble.getBoundingClientRect()
-      setEditingGeometry({
-        width: bubbleRect.width,
-        height: bubbleRect.height,
-        viewportTop: messageElement.getBoundingClientRect().top
-      })
-    }
     setEditingMessageId(message.id)
-    setEditingDraft(message.content)
+    beginEditRef.current?.(message, source ?? null)
   }
 
   const cancelEditMessage = (): void => {
+    if (!editingMessageId) return
     setEditingMessageId(null)
-    setEditingDraft('')
-    setEditingGeometry(null)
+    options.cancelEdit?.()
   }
 
   const copyMessage = async (message: Message): Promise<void> => {
@@ -330,15 +346,13 @@ export function useConversationActions(options: ConversationActionsOptions): {
 
   return {
     editingMessageId,
-    editingDraft,
-    editingGeometry,
     copiedMessageId,
     pendingCheckpointRestore,
-    setEditingDraft,
     startEditMessage,
     cancelEditMessage,
-    confirmEditMessage: (message) => {
-      void rewindConversation(message, editingDraft)
+    submitEdit: (edit) => {
+      const message = options.messages.find((candidate) => candidate.id === editingMessageId)
+      if (message) void rewindConversation(message, edit)
     },
     copyMessage,
     rewindToMessage,

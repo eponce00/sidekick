@@ -128,12 +128,6 @@ export interface TokenUsage {
   runCompletedAt?: number
 }
 
-export interface MessageEditGeometry {
-  width: number
-  height: number
-  viewportTop: number
-}
-
 export interface Message {
   id: string
   /** Authoritative agent journal backing this assistant materialization. */

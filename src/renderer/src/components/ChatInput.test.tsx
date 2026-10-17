@@ -399,7 +399,7 @@ describe('ChatInput long pastes', () => {
     expect(onAddPastedText).toHaveBeenCalledWith(longText)
   })
 
-  it('pastes long text inline with Ctrl+Shift+V or while editing a message', async () => {
+  it('pastes long text inline with Ctrl+Shift+V, also while editing a message', async () => {
     const onAddPastedText = vi.fn()
     await act(async () => root.render(<ChatInput {...baseProps({ onAddPastedText })} />))
     const input = container.querySelector('textarea.message-input')!
@@ -414,8 +414,26 @@ describe('ChatInput long pastes', () => {
     await act(async () =>
       root.render(<ChatInput {...baseProps({ onAddPastedText, editingMessageId: 'message-1' })} />)
     )
-    expect(paste(longText).defaultPrevented).toBe(false)
-    expect(onAddPastedText).not.toHaveBeenCalled()
+    // An edited message is in the box like any draft, so a long paste becomes an attachment.
+    expect(paste(longText).defaultPrevented).toBe(true)
+    expect(onAddPastedText).toHaveBeenCalledOnce()
+  })
+
+  it('shows the edit it holds, and cancels it with Escape or Cancel', async () => {
+    const onCancelEdit = vi.fn()
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ editingMessageId: 'message-1', onCancelEdit })} />)
+    )
+    const bar = container.querySelector('.composer-editing-bar')!
+    expect(bar.textContent).toContain('Editing your message')
+    const input = container.querySelector<HTMLTextAreaElement>('textarea.message-input')!
+    expect(input.disabled).toBe(false)
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onCancelEdit).toHaveBeenCalledOnce()
+    await act(async () => bar.querySelector('button')!.click())
+    expect(onCancelEdit).toHaveBeenCalledTimes(2)
   })
 
   it('shows a pasted attachment as a card that can be viewed, inserted, or removed', async () => {

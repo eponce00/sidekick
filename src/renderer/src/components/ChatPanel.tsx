@@ -91,6 +91,7 @@ import {
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
+import { flyIntoComposer } from '../utils/flyIntoComposer'
 
 export type { PinnedModel }
 
@@ -306,6 +307,14 @@ function ChatPanel({
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // The message box's contents while a message is being edited in it, put back on Cancel.
+  const editStashRef = useRef<{
+    text: string
+    images: MessageImageAttachment[]
+    attachments: MessageContextAttachment[]
+    mode: ConversationRunMode
+    goalArmed: boolean
+  } | null>(null)
   const featuresMenuRef = useRef<HTMLDivElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   // Track artifact render results for tool response
@@ -417,14 +426,11 @@ function ChatPanel({
 
   const {
     editingMessageId,
-    editingDraft,
-    editingGeometry,
     copiedMessageId,
     pendingCheckpointRestore,
-    setEditingDraft,
     startEditMessage: handleStartEditMessage,
     cancelEditMessage: handleCancelEditMessage,
-    confirmEditMessage: handleConfirmEditMessage,
+    submitEdit,
     copyMessage: handleCopyMessage,
     requestCheckpointRestore: handleUndoCheckpoint,
     cancelCheckpointRestore,
@@ -450,6 +456,43 @@ function ChatPanel({
       setAttachedImages(message.images ?? [])
       setAttachedContext(message.attachments ?? [])
       window.requestAnimationFrame(() => inputRef.current?.focus())
+    },
+    beginEdit: (message, source) => {
+      // What the box held comes back if the edit is cancelled.
+      editStashRef.current ??= {
+        text: inputValue,
+        images: attachedImages,
+        attachments: attachedContext,
+        mode: nextRunMode,
+        goalArmed
+      }
+      setInputValue(message.content)
+      setAttachedImages(message.images ?? [])
+      setAttachedContext(message.attachments ?? [])
+      setNextRunMode(
+        message.runMode === 'plan' || message.runMode === 'research'
+          ? message.runMode
+          : 'conversation'
+      )
+      setGoalArmed(Boolean(message.startsGoal))
+      setPlanModelOverrideId(null)
+      // After the editing bar has rendered, so the message lands where its text now sits.
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current
+        if (!input) return
+        flyIntoComposer(source, input.closest<HTMLElement>('.input-container'))
+        input.focus()
+        input.setSelectionRange(input.value.length, input.value.length)
+      })
+    },
+    cancelEdit: () => {
+      const stash = editStashRef.current
+      editStashRef.current = null
+      setInputValue(stash?.text ?? '')
+      setAttachedImages(stash?.images ?? [])
+      setAttachedContext(stash?.attachments ?? [])
+      setNextRunMode(stash?.mode ?? 'conversation')
+      setGoalArmed(stash?.goalArmed ?? false)
     },
     rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
       if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
@@ -673,7 +716,7 @@ function ChatPanel({
   }, [conversationId, isLoading, messagesRef])
 
   // Auto-focus input when conversation changes or loading completes
-  useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)
+  useAutoFocus(inputRef, isLoading, false, conversationId)
 
   // Close menus when clicking outside
   useOutsideClick(
@@ -1146,6 +1189,27 @@ function ChatPanel({
     }
     const images = attachedImages
     const attachments = attachedContext
+    if (editingMessageId) {
+      // Sending an edit replaces the message and everything after it, then answers again.
+      if (isLoading) return
+      if (goalArmed && !inputValue.trim()) return
+      editStashRef.current = null
+      const edit = {
+        content: inputValue,
+        images,
+        attachments,
+        runMode: goalArmed ? ('conversation' as const) : nextRunMode,
+        startsGoal: goalArmed
+      }
+      setInputValue('')
+      setAttachedImages([])
+      setAttachedContext([])
+      setNextRunMode('conversation')
+      setGoalArmed(false)
+      setPlanModelOverrideId(null)
+      submitEdit(edit)
+      return
+    }
     if (isLoading) {
       void handleSendDuringLoading(inputValue, images, attachments)
       return
@@ -1315,7 +1379,6 @@ function ChatPanel({
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (editingMessageId) return
 
       const queuedMessageId = getQueuedMessageIdForEmptySubmit(
         isLoading,
@@ -1447,6 +1510,10 @@ function ChatPanel({
     enabled: virtualizeMessages
   })
 
+  // While a message is edited in the box, it and everything after it step back.
+  const editingIndex = editingMessageId
+    ? visibleMessages.findIndex((candidate) => candidate.id === editingMessageId)
+    : -1
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem
       key={msg.id}
@@ -1455,13 +1522,10 @@ function ChatPanel({
       isLoading={isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'}
       expandedThinking={expandedThinking}
       editingMessageId={editingMessageId}
-      editingGeometry={editingGeometry}
-      editingContent={editingDraft}
+      isRewound={editingIndex >= 0 && index >= editingIndex}
       onToggleThinking={toggleThinking}
       onHandleArtifactResult={handleArtifactResult}
       onEditMessage={handleStartEditMessage}
-      onCancelEditMessage={handleCancelEditMessage}
-      onConfirmEditMessage={handleConfirmEditMessage}
       onCopyMessage={handleCopyMessage}
       onRetryMessage={handleRetryMessage}
       onContinueRun={
@@ -1472,7 +1536,6 @@ function ChatPanel({
       onForkMessage={forkMessage}
       onRewindMessage={isLoading ? undefined : rewindMessage}
       copiedMessageId={copiedMessageId}
-      onSetEditingContent={setEditingDraft}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
       onDenyToolLimitDecision={handleDenyToolLimitDecision}
       onResolveAgentInteraction={(id, response, cancelled) =>
@@ -1635,6 +1698,7 @@ function ChatPanel({
         isStopping={isStopping}
         isCompacting={isCompacting}
         editingMessageId={editingMessageId}
+        onCancelEdit={handleCancelEditMessage}
         researchSelected={nextRunMode === 'research'}
         researchActive={activeMode === 'research'}
         researchPhase={phase}

@@ -274,8 +274,19 @@ describe('useConversationActions with a persistent goal', () => {
   })
 
   it('starts the goal with the edited objective when its first message is edited', async () => {
-    act(() => controller.setEditingDraft('Build a weather card for Tahoe'))
-    act(() => controller.confirmEditMessage(goalStart))
+    const click = {
+      currentTarget: { closest: () => null }
+    } as unknown as React.MouseEvent<HTMLButtonElement>
+    act(() => controller.startEditMessage(goalStart, click))
+    act(() =>
+      controller.submitEdit({
+        content: 'Build a weather card for Tahoe',
+        images: [],
+        attachments: [],
+        runMode: 'conversation',
+        startsGoal: true
+      })
+    )
 
     await vi.waitFor(() =>
       expect(rerunStream).toHaveBeenCalledWith(
@@ -295,5 +306,51 @@ describe('useConversationActions with a persistent goal', () => {
         discardsGoalStart: true
       })
     )
+  })
+})
+
+describe('useConversationActions editing', () => {
+  const message: Message = { id: 'user-0', role: 'user', content: 'Hi', timestamp: 1 }
+
+  function Harness({
+    beginEdit,
+    onReady
+  }: {
+    beginEdit: (message: Message) => void
+    onReady: (value: ReturnType<typeof useConversationActions>) => void
+  }): null {
+    const [messages, setMessages] = useState<Message[]>([message])
+    const value = useConversationActions({
+      messages,
+      setMessages,
+      conversationId: 'conversation-1',
+      selectedModel: 'model-1',
+      workspaceFolder: null,
+      rerunStream: vi.fn(async () => undefined),
+      beginEdit
+    })
+    useEffect(() => onReady(value), [onReady, value])
+    return null
+  }
+
+  it('reaches the current composer from an Edit button rendered earlier', async () => {
+    const root = createRoot(document.createElement('div'))
+    const first: Array<ReturnType<typeof useConversationActions>> = []
+    const keepFirst = (value: ReturnType<typeof useConversationActions>): void => {
+      if (!first.length) first.push(value)
+    }
+    const stale = vi.fn()
+    const current = vi.fn()
+    await act(async () => root.render(<Harness beginEdit={stale} onReady={keepFirst} />))
+    await act(async () => root.render(<Harness beginEdit={current} onReady={keepFirst} />))
+
+    const click = {
+      currentTarget: { closest: () => null }
+    } as unknown as React.MouseEvent<HTMLButtonElement>
+    act(() => first[0].startEditMessage(message, click))
+
+    expect(current).toHaveBeenCalledWith(message, null)
+    expect(stale).not.toHaveBeenCalled()
+    await act(async () => root.unmount())
   })
 })

@@ -566,7 +566,8 @@ export function registerDatabaseHandlers(): void {
     const stmt = db.prepare(
       `UPDATE messages
        SET content = ?, thinking = ?, segments = ?, images = ?, attachments = ?, token_usage = ?, checkpoint_hash = ?,
-           checkpoint_workspace_root = ?, timestamp = ?
+           checkpoint_workspace_root = ?, timestamp = ?,
+           run_mode = COALESCE(?, run_mode), starts_goal = COALESCE(?, starts_goal)
        WHERE id = ? AND conversation_id = ?`
     )
     const segmentsJson = message.segments ? JSON.stringify(message.segments) : null
@@ -585,6 +586,13 @@ export function registerDatabaseHandlers(): void {
       message.checkpointHash || null,
       message.checkpointWorkspaceRoot || null,
       message.timestamp,
+      // An edit may change the message's mode or whether it starts a goal; other updates keep them.
+      message.runMode === 'plan' ||
+        message.runMode === 'research' ||
+        message.runMode === 'conversation'
+        ? message.runMode
+        : null,
+      typeof message.startsGoal === 'boolean' ? (message.startsGoal ? 1 : 0) : null,
       message.id,
       message.conversation_id
     )

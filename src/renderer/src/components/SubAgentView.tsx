@@ -192,17 +192,12 @@ export function SubAgentView({
             isLoading={working}
             expandedThinking={NO_EXPANDED}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={noop}
             onHandleArtifactResult={noop}
             onEditMessage={noop}
-            onCancelEditMessage={noop}
-            onConfirmEditMessage={noop}
             onCopyMessage={noop}
             onRetryMessage={noop}
-            onSetEditingContent={noop}
             onApproveToolLimitDecision={(id) => void resolveInteraction(id, { approved: true })}
             onDenyToolLimitDecision={(id) => void resolveInteraction(id, { approved: false })}
             onResolveAgentInteraction={resolveInteraction}

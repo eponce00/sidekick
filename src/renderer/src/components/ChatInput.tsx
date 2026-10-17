@@ -6,15 +6,16 @@ import {
   Command,
   FileText,
   FolderOpen,
+  ImagePlus,
   ListChecks,
   Loader2,
   MessageSquareText,
   Microscope,
-  ImagePlus,
   Paperclip,
-  StickyNote,
+  Pencil,
   Plus,
   Square,
+  StickyNote,
   Target,
   X
 } from 'lucide-react'
@@ -167,7 +168,9 @@ interface ChatInputProps {
   isLoading: boolean
   isStopping: boolean
   isCompacting: boolean
+  /** A message from the chat is being edited here; sending replaces it and what follows. */
   editingMessageId: string | null
+  onCancelEdit?: () => void
   researchSelected: boolean
   researchActive: boolean
   researchPhase: AgentRunPhase | 'idle'
@@ -251,6 +254,7 @@ export function ChatInput({
   isStopping,
   isCompacting: _isCompacting,
   editingMessageId,
+  onCancelEdit,
   researchSelected,
   researchActive,
   researchPhase,
@@ -504,7 +508,7 @@ export function ChatInput({
   }, [inputRef])
 
   const typedMention =
-    !commandMatch && workspaceFolder && onAddFileMention && !editingMessageId
+    !commandMatch && workspaceFolder && onAddFileMention
       ? activeFileMentionAtCursor(inputValue, Math.min(caret, inputValue.length))
       : null
   const fileMention =
@@ -630,6 +634,11 @@ export function ChatInput({
       onInputChange('')
       return
     }
+    if (editingMessageId && event.key === 'Escape') {
+      event.preventDefault()
+      onCancelEdit?.()
+      return
+    }
     if (recallPrompt(event)) return
     onKeyDown(event)
   }
@@ -651,7 +660,6 @@ export function ChatInput({
     <ChatComposer
       value={inputValue}
       inputRef={inputRef}
-      disabled={Boolean(editingMessageId)}
       placeholder={
         voiceLoop === 'listening'
           ? 'Listening… press Enter to send'
@@ -674,93 +682,109 @@ export function ChatInput({
                           : 'Type a message...'
       }
       contextBar={
-        goal ? (
-          <ConversationGoalBar
-            goal={goal}
-            isRunning={isLoading}
-            onPause={onPauseGoal}
-            onResume={onResumeGoal}
-            onClear={onClearGoal}
-          />
-        ) : goalArmed ? (
-          <GoalArmedBar onCancel={onToggleGoal} />
-        ) : planSelected || planActive ? (
-          <div className={`plan-mode-bar ${planActive ? 'is-running' : 'is-selected'}`}>
-            <span className="plan-mode-icon" aria-hidden="true">
-              {planActive ? <Loader2 size={14} className="icon-spin" /> : <ListChecks size={14} />}
-            </span>
-            <span className="plan-mode-copy">
-              <strong>{planActive ? 'Plan in progress' : 'Plan first'}</strong>
-              <span>
-                <Select
-                  value={planningModelId}
-                  disabled={planActive}
-                  onChange={(event) => onPlanModelChange(event.target.value)}
-                  aria-label="Planning model"
-                  title="Choose the planning model"
+        <>
+          {editingMessageId && (
+            <div className="composer-editing-bar" role="status">
+              <Pencil size={13} aria-hidden="true" />
+              <strong>Editing your message</strong>
+              <span>Sending replaces it and everything after it.</span>
+              <button type="button" onClick={onCancelEdit} title="Cancel the edit (Esc)">
+                Cancel
+              </button>
+            </div>
+          )}
+          {goal ? (
+            <ConversationGoalBar
+              goal={goal}
+              isRunning={isLoading}
+              onPause={onPauseGoal}
+              onResume={onResumeGoal}
+              onClear={onClearGoal}
+            />
+          ) : goalArmed ? (
+            <GoalArmedBar onCancel={onToggleGoal} />
+          ) : planSelected || planActive ? (
+            <div className={`plan-mode-bar ${planActive ? 'is-running' : 'is-selected'}`}>
+              <span className="plan-mode-icon" aria-hidden="true">
+                {planActive ? (
+                  <Loader2 size={14} className="icon-spin" />
+                ) : (
+                  <ListChecks size={14} />
+                )}
+              </span>
+              <span className="plan-mode-copy">
+                <strong>{planActive ? 'Plan in progress' : 'Plan first'}</strong>
+                <span>
+                  <Select
+                    value={planningModelId}
+                    disabled={planActive}
+                    onChange={(event) => onPlanModelChange(event.target.value)}
+                    aria-label="Planning model"
+                    title="Choose the planning model"
+                  >
+                    {planningModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <i aria-hidden="true">→</i>
+                  <span title={executorModelName}>{executorModelName || 'Current model'}</span>
+                </span>
+              </span>
+              {planSelected && !planActive && (
+                <button
+                  type="button"
+                  className="research-mode-remove"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onTogglePlan()
+                  }}
+                  title="Use normal conversation mode"
+                  aria-label="Remove Plan mode"
                 >
-                  {planningModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </Select>
-                <i aria-hidden="true">→</i>
-                <span title={executorModelName}>{executorModelName || 'Current model'}</span>
-              </span>
-            </span>
-            {planSelected && !planActive && (
-              <button
-                type="button"
-                className="research-mode-remove"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onTogglePlan()
-                }}
-                title="Use normal conversation mode"
-                aria-label="Remove Plan mode"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        ) : researchSelected || researchActive ? (
-          <div
-            className={`research-mode-bar ${researchActive ? 'is-running' : 'is-selected'}`}
-            role="status"
-            aria-live="polite"
-          >
-            <span className="research-mode-icon" aria-hidden="true">
-              {researchActive ? (
-                <Loader2 size={14} className="icon-spin" />
-              ) : (
-                <Microscope size={14} />
+                  <X size={13} />
+                </button>
               )}
-            </span>
-            <span className="research-mode-copy">
-              <strong>{researchActive ? researchPhaseLabel : 'Research report'}</strong>
-              <span>
-                {researchActive
-                  ? 'Searching, verifying, and citing sources'
-                  : 'One response · web sources · cross-checked citations'}
+            </div>
+          ) : researchSelected || researchActive ? (
+            <div
+              className={`research-mode-bar ${researchActive ? 'is-running' : 'is-selected'}`}
+              role="status"
+              aria-live="polite"
+            >
+              <span className="research-mode-icon" aria-hidden="true">
+                {researchActive ? (
+                  <Loader2 size={14} className="icon-spin" />
+                ) : (
+                  <Microscope size={14} />
+                )}
               </span>
-            </span>
-            {researchSelected && !researchActive && (
-              <button
-                type="button"
-                className="research-mode-remove"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onToggleResearch()
-                }}
-                title="Use normal conversation mode"
-                aria-label="Remove research mode"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
-        ) : undefined
+              <span className="research-mode-copy">
+                <strong>{researchActive ? researchPhaseLabel : 'Research report'}</strong>
+                <span>
+                  {researchActive
+                    ? 'Searching, verifying, and citing sources'
+                    : 'One response · web sources · cross-checked citations'}
+                </span>
+              </span>
+              {researchSelected && !researchActive && (
+                <button
+                  type="button"
+                  className="research-mode-remove"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onToggleResearch()
+                  }}
+                  title="Use normal conversation mode"
+                  aria-label="Remove research mode"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          ) : undefined}
+        </>
       }
       queueTray={
         queuedMessages.length || pivotMessage ? (
@@ -802,8 +826,7 @@ export function ChatInput({
           onAddImageFiles(files)
           return
         }
-        // An edited message keeps its attachments, so a long paste goes into its text.
-        if (plainPaste || editingMessageId) return
+        if (plainPaste) return
         const text = event.clipboardData.getData('text/plain')
         if (!shouldAttachPastedText(text)) return
         event.preventDefault()
@@ -902,7 +925,7 @@ export function ChatInput({
                   key={attachment.id}
                   attachment={attachment}
                   onRemove={() => onRemoveContextAttachment(attachment.id)}
-                  onInsert={editingMessageId ? undefined : () => onInsertPastedText(attachment.id)}
+                  onInsert={() => onInsertPastedText(attachment.id)}
                 />
               ) : isReviewCommentAttachment(attachment) ? (
                 <div
@@ -972,7 +995,6 @@ export function ChatInput({
       sendDisabled={
         (!inputValue.trim() && !attachedImages.length && !attachedContext.length) ||
         Boolean(commandMatch) ||
-        Boolean(editingMessageId) ||
         isStopping
       }
       sendButtonClassName={isStopping ? 'is-stopping' : ''}
@@ -1032,13 +1054,11 @@ export function ChatInput({
                     description="Attach files or a folder from the current project"
                     icon={<Paperclip size={16} />}
                     onClick={() => runFeatureAction(onAddContextAttachments)}
-                    disabled={!workspaceFolder || Boolean(editingMessageId)}
+                    disabled={!workspaceFolder}
                     unavailableReason={
-                      editingMessageId
-                        ? 'Attachments cannot be changed while editing a message'
-                        : !workspaceFolder
-                          ? 'Open a project before attaching files or folders'
-                          : undefined
+                      !workspaceFolder
+                        ? 'Open a project before attaching files or folders'
+                        : undefined
                     }
                   />
                   <FeatureMenuAction
@@ -1050,12 +1070,8 @@ export function ChatInput({
                         imageInputRef.current?.click()
                       })
                     }
-                    disabled={!visionAvailable || Boolean(editingMessageId)}
-                    unavailableReason={
-                      editingMessageId
-                        ? 'Images cannot be changed while editing a message'
-                        : visionUnavailableReason
-                    }
+                    disabled={!visionAvailable}
+                    unavailableReason={visionUnavailableReason}
                   />
                 </section>
 
