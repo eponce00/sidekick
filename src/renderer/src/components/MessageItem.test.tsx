@@ -510,7 +510,7 @@ describe('MessageItem shared-channel presentation', () => {
     expect(undo).toHaveBeenCalledWith('abc1234')
   })
 
-  it('times a reply from the message it answers, across every run it took', async () => {
+  it('times a reply from the run that wrote it, so a retry starts the clock again', async () => {
     const props = {
       index: 0,
       expandedThinking: new Set<string>(),
@@ -532,7 +532,7 @@ describe('MessageItem shared-channel presentation', () => {
       tokenUsage: {
         promptTokens: 10,
         completionTokens: 5,
-        // The last of several runs began long after the message was sent.
+        // A retry, long after the message it answers was first sent.
         runStartedAt: 4_000_000,
         runCompletedAt: 4_200_000
       },
@@ -545,13 +545,11 @@ describe('MessageItem shared-channel presentation', () => {
       ]
     }
     await act(async () => {
-      root.render(
-        <MessageItem {...props} message={reply} isLoading={false} taskStartedAt={1_000_000} />
-      )
+      root.render(<MessageItem {...props} message={reply} isLoading={false} />)
     })
-    // 3,200 s from the message to the end: 53m 20s, once, in the footer.
+    // 200 s from the retry to the end: 3m 20s, once, in the footer.
     expect(container.querySelector('.message-run-stats')?.textContent).toContain(
-      'Worked for 53m 20s'
+      'Worked for 3m 20s'
     )
     expect(container.textContent?.match(/Work(ed|ing) for/g)).toHaveLength(1)
   })

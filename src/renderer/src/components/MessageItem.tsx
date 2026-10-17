@@ -782,8 +782,6 @@ interface MessageItemProps {
   editingMessageId: string | null
   /** This message is the one being edited, or comes after it: sending the edit replaces it. */
   isRewound?: boolean
-  /** When the message this reply answers was sent: the reply's time counts from there. */
-  taskStartedAt?: number
   copiedMessageId: string | null
   onToggleThinking: (id: string) => void
   onHandleArtifactResult: (
@@ -820,7 +818,6 @@ function MessageItemInner({
   expandedThinking,
   editingMessageId,
   isRewound = false,
-  taskStartedAt,
   copiedMessageId,
   onToggleThinking,
   onHandleArtifactResult,
@@ -841,10 +838,9 @@ function MessageItemInner({
 }: MessageItemProps) {
   const messageRef = useRef<HTMLDivElement>(null)
   const isEditing = editingMessageId === msg.id
-  // One time for the whole task: from the message it answers to the end of the reply, however
-  // many runs that took.
-  const workStartedAt =
-    taskStartedAt ?? msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
+  // One time for the whole reply: from the start of the run that wrote it, so a retry or an edit
+  // starts the clock again, to its end.
+  const workStartedAt = msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
   const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
   const canUndoChanges = Boolean(
@@ -1620,7 +1616,6 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   )
     return false
   if (prev.isRewound !== next.isRewound) return false
-  if (prev.taskStartedAt !== next.taskStartedAt) return false
   // Re-render if copied state changed for this message
   if (
     prev.copiedMessageId !== next.copiedMessageId &&
