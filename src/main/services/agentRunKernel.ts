@@ -254,6 +254,14 @@ const RESEARCH_SOURCE_TOOLS = new Set(['web_search', 'web_fetch'])
 const RESEARCH_SOURCE_GUARD = `<sidekick_research_guard trust="app-policy">
 This research report cannot finish without attempting source retrieval. Use web_search to discover relevant sources and web_fetch to verify the material claims. If retrieval fails, report that limitation explicitly. Do not repeat the unverified answer from the previous turn.
 </sidekick_research_guard>`
+// A reply the output limit cut off is not an answer; it is retried at most this often.
+const OUTPUT_LIMIT_RECOVERIES = 2
+const OUTPUT_LIMIT_WHILE_THINKING = `<sidekick_output_limit trust="app-policy">
+Your last reply reached the output limit while you were still thinking, before you answered or used a tool. Stop planning now and act on what you have: call a tool or begin the answer, and keep any further reasoning brief. Large output, such as a long file, should be written in parts with tools rather than worked out in full first.
+</sidekick_output_limit>`
+const OUTPUT_LIMIT_MID_ANSWER = `<sidekick_output_limit trust="app-policy">
+Your last reply was cut off by the output limit. Continue exactly where it stopped, without repeating anything already written.
+</sidekick_output_limit>`
 const RESEARCH_UNVERIFIED_RESPONSE =
   'I couldn’t complete a verified research report because the selected model did not use the available web research tools. Try again with a tool-capable model.'
 
@@ -1114,6 +1122,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     const toolRecovery = new AgentToolRecoveryController()
     let researchSourceAttempted = false
     let researchGuardInjected = false
+    let outputLimitRecoveries = 0
     // A turn that follows a goal continuation or a steered message starts a new paragraph.
     let separateNextTurn = false
     // Tool rounds the model attempted after its goal was already complete.
@@ -1512,6 +1521,47 @@ The user approved this exact plan revision. Act capabilities are now available a
         const projectedTurnContent =
           separateNextTurn && turn.content ? `\n\n${turn.content}` : turn.content
         separateNextTurn = false
+
+        // A reply the output limit cut off is not an answer. One still thinking is asked to act;
+        // one partway through its answer goes on from where it stopped. Without this, a model
+        // that spent its whole budget thinking ended the run as if it had answered.
+        if (!turn.toolCalls.length && toolBatchMayBeTruncated(turn.usage.doneReason)) {
+          const stillThinking = !turn.content.trim()
+          if (outputLimitRecoveries < OUTPUT_LIMIT_RECOVERIES) {
+            outputLimitRecoveries += 1
+            this.append(input.id, 'assistant.completed', {
+              content: projectedTurnContent,
+              thinking: turn.thinking,
+              thinkingBlocks: turn.thinkingBlocks,
+              toolCalls: [],
+              usage: turn.usage,
+              generationId: turn.generationId,
+              provisional: false
+            })
+            this.append(input.id, 'usage.updated', turn.usage)
+            input.goalController?.onUsage?.(turn.usage)
+            finalContent += projectedTurnContent
+            finalThinking += turn.thinking
+            this.append(input.id, 'run.retrying', {
+              reason: stillThinking ? 'output_limit_while_thinking' : 'output_limit_mid_answer'
+            })
+            messages = [
+              ...messages,
+              {
+                role: 'user',
+                content: stillThinking ? OUTPUT_LIMIT_WHILE_THINKING : OUTPUT_LIMIT_MID_ANSWER
+              }
+            ]
+            continue
+          }
+          if (stillThinking && !finalContent.trim()) {
+            const limit = activeRequest.maxOutputTokens
+            throw new Error(
+              `The model used its whole output limit${limit ? ` of ${limit.toLocaleString('en-US')} tokens` : ''} thinking, ${OUTPUT_LIMIT_RECOVERIES + 1} times, and never answered or acted. Try again, or use a model that thinks less for this task.`
+            )
+          }
+        }
+
         const needsResearchSource =
           input.profile.surface === 'research' &&
           !researchSourceAttempted &&
