@@ -2,7 +2,6 @@ import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import {
   previewSessionConversations,
-  previewSessionProjects,
   previewSessionsApi,
   previewSessionTranscripts,
   previewSessionWorktrees
@@ -258,17 +257,6 @@ const previewProjects = [
     last_activity_at: Date.now() - 120_000
   },
   {
-    id: 'preview-worktree-project-1',
-    name: 'sidekick-demo · sidekick/card-polish',
-    folder_path:
-      'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d',
-    is_pinned: 0,
-    created_at: Date.now() - 7_200_000,
-    updated_at: Date.now() - 600_000,
-    conversation_count: 1,
-    last_activity_at: Date.now() - 600_000
-  },
-  {
     id: 'preview-project-2',
     name: 'sidekick-api',
     folder_path: 'C:\\Projects\\sidekick-api',
@@ -277,29 +265,31 @@ const previewProjects = [
     updated_at: Date.now() - 90_000,
     conversation_count: 0,
     last_activity_at: Date.now() - 90_000
-  },
-  ...previewSessionProjects
+  }
 ]
+
+const CARD_POLISH_FOLDER =
+  'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\card-polish-1a2b3c4d'
 
 previewConversations.push({
   id: 'preview-4',
   title: 'Polish the conversation cards',
   created_at: Date.now() - 7_200_000,
   updated_at: Date.now() - 600_000,
-  project_id: 'preview-worktree-project-1',
+  project_id: 'preview-project-1',
   sidebar_order: 0,
   project_context_version: 0,
-  home_workspace_root: previewProjects[1].folder_path,
-  home_project_name: previewProjects[1].name
+  home_workspace_root: previewProjects[0].folder_path,
+  home_project_name: previewProjects[0].name,
+  worktree_id: 'preview-worktree-1',
+  worktree_folder: CARD_POLISH_FOLDER
 })
 
 const previewWorktrees: ManagedWorktreeSummary[] = [
   {
     id: 'preview-worktree-1',
-    projectId: 'preview-worktree-project-1',
-    projectName: previewProjects[1].name,
-    folderPath: previewProjects[1].folder_path,
-    worktreeRoot: previewProjects[1].folder_path,
+    folderPath: CARD_POLISH_FOLDER,
+    worktreeRoot: CARD_POLISH_FOLDER,
     sourceProjectId: 'preview-project-1',
     sourceProjectName: 'sidekick-demo',
     branch: 'sidekick/card-polish',
@@ -314,8 +304,6 @@ const previewWorktrees: ManagedWorktreeSummary[] = [
   },
   {
     id: 'preview-worktree-2',
-    projectId: 'preview-worktree-project-2',
-    projectName: 'sidekick-demo · from main',
     folderPath:
       'C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\release-notes-9f8e7d6c',
     worktreeRoot:
@@ -345,35 +333,21 @@ const previewWorktreesApi: WorktreesAPI = {
   branchOptions: async (projectId) => ({
     branches: ['main', 'release/0.13', 'eponce/tray-menu'],
     currentBranch: 'main',
-    isGitRepository: projectId !== 'preview-project-2',
-    isManagedWorktree: projectId.startsWith('preview-worktree-project')
+    isGitRepository: projectId !== 'preview-project-2'
   }),
   createForConversation: async ({ conversationId, baseRef }) => {
     const conversation = previewCreatedConversations.find(({ id }) => id === conversationId)
     if (!conversation) throw new Error('Only a chat without messages can move to a new worktree')
     const base = baseRef || 'main'
     const folder = `C:\\Users\\you\\AppData\\Roaming\\sidekick\\worktrees\\preview-project-1\\new-chat`
-    const project = {
-      id: `preview-worktree-project-${Date.now()}`,
-      name: `sidekick-demo · from ${base}`,
-      folder_path: folder,
-      is_pinned: 0,
-      created_at: Date.now(),
-      updated_at: Date.now(),
-      conversation_count: 1,
-      last_activity_at: Date.now()
-    }
-    previewProjects.push(project)
+    const id = `preview-worktree-${Date.now()}`
     Object.assign(conversation, {
-      project_id: project.id,
-      home_workspace_root: folder,
-      home_project_name: project.name,
+      worktree_id: id,
+      worktree_folder: folder,
       project_context_version: conversation.project_context_version + 1
     })
     const worktree: ManagedWorktreeSummary = {
-      id: `preview-worktree-${Date.now()}`,
-      projectId: project.id,
-      projectName: project.name,
+      id,
       folderPath: folder,
       worktreeRoot: folder,
       sourceProjectId: 'preview-project-1',
@@ -387,7 +361,7 @@ const previewWorktreesApi: WorktreesAPI = {
       status: { currentBranch: null, ahead: 0, changedFiles: 0 }
     }
     previewWorktrees.unshift(worktree)
-    return { project, conversation, worktree }
+    return { conversation, worktree }
   },
   remove: async (id) => {
     const index = previewWorktrees.findIndex((worktree) => worktree.id === id)
@@ -818,7 +792,8 @@ export function installBrowserApiMock(): void {
           conversationId,
           projectId: conversation?.project_id ?? null,
           projectName: project?.name ?? null,
-          workspaceRoot: project?.folder_path ?? null,
+          workspaceRoot: conversation?.worktree_folder ?? project?.folder_path ?? null,
+          worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
           homeProjectName: conversation?.home_project_name ?? null,
           isDetached: !conversation?.project_id && Boolean(conversation?.home_workspace_root),

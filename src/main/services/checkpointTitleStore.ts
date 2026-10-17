@@ -201,8 +201,9 @@ export class CheckpointTitleStore {
         `SELECT m.conversation_id AS conversationId, m.content, m.timestamp
          FROM messages m
          JOIN conversations c ON c.id = m.conversation_id
-         JOIN projects p ON p.id = c.project_id
-         WHERE p.folder_path = ?
+         LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
+         WHERE COALESCE(w.folder_path, p.folder_path) = ?
            AND m.role IN ('agent', 'assistant')
            AND (
              m.checkpoint_hash = ? OR

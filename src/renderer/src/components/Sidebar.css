@@ -770,6 +770,13 @@
   white-space: nowrap;
 }
 
+/* A chat in its own worktree: a quiet mark before its title. */
+.conversation-worktree-icon {
+  margin-right: 5px;
+  color: var(--text-muted);
+  vertical-align: -2px;
+}
+
 .conversation-metadata {
   overflow: hidden;
   color: var(--text-muted);

@@ -91,13 +91,10 @@ interface SidebarProps {
   onOpenSchedules?: () => void
   /** Each chat's state from the main process; chats missing from it are idle. */
   sessionStatuses?: ReadonlyMap<string, SessionStatus>
-  /** The project each managed worktree project was made from, by worktree project id. */
-  worktreeSources?: ReadonlyMap<string, string>
 }
 
 const NO_CONVERSATIONS: ReadonlySet<string> = new Set()
 const NO_SESSION_STATUSES: ReadonlyMap<string, SessionStatus> = new Map()
-const NO_WORKTREE_SOURCES: ReadonlyMap<string, string> = new Map()
 
 const COLLAPSED_FAMILIES_STORAGE_KEY = 'collapsedSessionFamilies'
 
@@ -146,8 +143,7 @@ function Sidebar({
   onVisibleConversationOrderChange,
   scheduleNames,
   onOpenSchedules,
-  sessionStatuses = NO_SESSION_STATUSES,
-  worktreeSources = NO_WORKTREE_SOURCES
+  sessionStatuses = NO_SESSION_STATUSES
 }: SidebarProps): React.JSX.Element {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
@@ -404,15 +400,7 @@ function Sidebar({
   const standaloneMatches = filtering
     ? standaloneConversations.filter(familyMatches)
     : standaloneConversations
-  // A worker's worktree is a project too, but its chats are listed under their manager, so a
-  // worktree with no chat of its own would be an empty row.
-  const listedProjects = useMemo(
-    () =>
-      projects.filter(
-        (project) => !worktreeSources.has(project.id) || conversationsByProject.has(project.id)
-      ),
-    [conversationsByProject, projects, worktreeSources]
-  )
+  const listedProjects = projects
   const projectsWithMatches = filtering
     ? listedProjects.filter((project) =>
         (conversationsByProject.get(project.id) || []).some(familyMatches)
@@ -590,13 +578,9 @@ function Sidebar({
       ? conversationById.get(conversation.started_by_conversation_id ?? '')
       : undefined
     // A worker elsewhere stays with its manager and names its own project instead.
-    // A worktree counts as the project it came from, so a worker in its own worktree of the
-    // manager's project is not "elsewhere".
-    const homeProjectId = (projectId: string | null): string | null =>
-      projectId ? (worktreeSources.get(projectId) ?? projectId) : null
-    const workerHome = homeProjectId(conversation.project_id)
+    const workerHome = conversation.project_id
     const projectTag =
-      manager && workerHome && workerHome !== homeProjectId(manager.project_id)
+      manager && workerHome && workerHome !== manager.project_id
         ? (projectNameById.get(workerHome) ?? conversation.home_project_name)
         : null
     const label =
@@ -696,7 +680,16 @@ function Sidebar({
               onDoubleClick={() => beginConversationRename(conversation)}
               title={`${conversation.title} — double-click to rename`}
             >
-              <span className="conversation-title">{label}</span>
+              <span className="conversation-title">
+                {conversation.worktree_id && (
+                  <GitBranch
+                    size={12}
+                    className="conversation-worktree-icon"
+                    aria-label="Works in its own worktree"
+                  />
+                )}
+                {label}
+              </span>
               {rollUp && <span className="conversation-metadata session-roll-up">{rollUp}</span>}
               {options.showProject && conversation.project_id && (
                 <span className="conversation-metadata">

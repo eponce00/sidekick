@@ -401,6 +401,104 @@ describe('database schema migrations', () => {
     }
   })
 
+  it('moves chats out of worktree projects into their own project, keeping their worktree', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-worktree-chats-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk
+        .prepare(
+          "DELETE FROM schema_migrations WHERE id = '20261021_001_worktrees_belong_to_chats'"
+        )
+        .run()
+      // As 0.14.0 kept them: each worktree was a project, and its chats belonged to that project.
+      disk.exec(`
+        DROP TABLE managed_worktrees;
+        CREATE TABLE managed_worktrees (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL UNIQUE,
+          source_project_id TEXT NOT NULL,
+          repository_root TEXT NOT NULL,
+          worktree_root TEXT NOT NULL UNIQUE,
+          branch TEXT UNIQUE,
+          base_ref TEXT,
+          created_at INTEGER NOT NULL,
+          last_used_at INTEGER NOT NULL,
+          set_aside_at INTEGER,
+          set_aside_head TEXT,
+          set_aside_branch TEXT,
+          snapshot_commit TEXT
+        );
+        INSERT INTO projects (id, name, folder_path, created_at, updated_at) VALUES
+          ('repo', 'Repo', '/repo', 1, 1),
+          ('wt-project', 'Repo · from main', '/wt/cards/app', 1, 1),
+          ('orphan-project', 'Gone · from main', '/wt/orphan', 1, 1);
+        INSERT INTO managed_worktrees
+          (id, project_id, source_project_id, repository_root, worktree_root, base_ref,
+           created_at, last_used_at)
+        VALUES
+          ('wt', 'wt-project', 'repo', '/repo', '/wt/cards', 'main', 1, 2),
+          ('orphan', 'orphan-project', 'removed', '/gone', '/wt/orphan', 'main', 1, 2);
+        INSERT INTO conversations
+          (id, title, created_at, updated_at, project_id, home_workspace_root, home_project_name)
+        VALUES
+          ('cards', 'Cards', 1, 1, 'wt-project', '/wt/cards/app', 'Repo · from main'),
+          ('lost', 'Lost', 1, 1, 'orphan-project', '/wt/orphan', 'Gone · from main'),
+          ('plain', 'Plain', 1, 1, 'repo', '/repo', 'Repo');
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      expect(
+        disk
+          .prepare(
+            `SELECT id, project_id, worktree_id, home_workspace_root, home_project_name
+             FROM conversations ORDER BY id`
+          )
+          .all()
+      ).toEqual([
+        {
+          id: 'cards',
+          project_id: 'repo',
+          worktree_id: 'wt',
+          home_workspace_root: '/repo',
+          home_project_name: 'Repo'
+        },
+        // Its source project is gone, so it stays outside any project, still in its worktree.
+        {
+          id: 'lost',
+          project_id: null,
+          worktree_id: 'orphan',
+          home_workspace_root: '/wt/orphan',
+          home_project_name: 'Gone · from main'
+        },
+        {
+          id: 'plain',
+          project_id: 'repo',
+          worktree_id: null,
+          home_workspace_root: '/repo',
+          home_project_name: 'Repo'
+        }
+      ])
+      expect(disk.prepare('SELECT id FROM projects').all()).toEqual([{ id: 'repo' }])
+      expect(
+        disk.prepare('SELECT id, folder_path FROM managed_worktrees ORDER BY id').all()
+      ).toEqual([
+        { id: 'orphan', folder_path: '/wt/orphan' },
+        { id: 'wt', folder_path: '/wt/cards/app' }
+      ])
+      const columns = (
+        disk.prepare('PRAGMA table_info(managed_worktrees)').all() as Array<{ name: string }>
+      ).map(({ name }) => name)
+      expect(columns).not.toContain('project_id')
+      expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('rolls back the entire schema upgrade when a later migration fails, then retries cleanly', async () => {
     const root = await mkdtemp(join(tmpdir(), 'sidekick-db-fault-'))
     let disk: Database.Database | undefined
@@ -427,7 +525,7 @@ describe('database schema migrations', () => {
       disk = openApplicationDatabase(path)
       expect(disk.prepare('SELECT title FROM conversations').get()).toEqual({ title: 'Keep me' })
       expect(disk.prepare('SELECT count(*) AS count FROM schema_migrations').get()).toEqual({
-        count: 16
+        count: 17
       })
       expect(disk.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
@@ -562,7 +660,8 @@ describe('database schema migrations', () => {
       { id: '20261016_004_group_chats_to_chats', checksum_length: 64 },
       { id: '20261018_001_schedule_starters', checksum_length: 64 },
       { id: '20261020_001_detached_worktrees', checksum_length: 64 },
-      { id: '20261020_002_set_aside_worktrees', checksum_length: 64 }
+      { id: '20261020_002_set_aside_worktrees', checksum_length: 64 },
+      { id: '20261021_001_worktrees_belong_to_chats', checksum_length: 64 }
     ])
     expect(
       db

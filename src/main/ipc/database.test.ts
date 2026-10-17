@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, RegisteredHandler>(),
   db: null as Database.Database | null,
   createWorktree: vi.fn(),
-  discardFreshProject: vi.fn(),
+  discardFresh: vi.fn(),
   setupCreatedWorktree: vi.fn()
 }))
 
@@ -26,8 +26,8 @@ vi.mock('./workspaceUtils', () => ({ resolveKnownWorkspace: vi.fn() }))
 vi.mock('./worktrees', () => ({
   getManagedWorktrees: () => ({
     create: mocks.createWorktree,
-    discardFreshProject: mocks.discardFreshProject,
-    isManagedProject: () => false
+    discardFresh: mocks.discardFresh,
+    worktreeIdFor: () => null
   })
 }))
 vi.mock('./worktreeSetup', () => ({ setupCreatedWorktree: mocks.setupCreatedWorktree }))
@@ -38,7 +38,7 @@ describe('conversation fork IPC', () => {
   beforeEach(() => {
     mocks.handlers.clear()
     mocks.createWorktree.mockReset()
-    mocks.discardFreshProject.mockReset()
+    mocks.discardFresh.mockReset()
     mocks.setupCreatedWorktree.mockReset()
     mocks.db = new Database(':memory:')
     applyDatabaseSchema(mocks.db)
@@ -151,8 +151,16 @@ describe('conversation fork IPC', () => {
       )
       .run()
     mocks.createWorktree.mockImplementation(async () => {
-      insertProject.run('fork-project', 'Fork project', '/fork-project')
-      return { id: 'fork-project', name: 'Fork project', folder_path: '/fork-project' }
+      mocks
+        .db!.prepare(
+          `INSERT INTO managed_worktrees
+           (id, source_project_id, repository_root, worktree_root, folder_path, created_at,
+            last_used_at)
+           VALUES ('fork-worktree', 'source-project', '/source-project', '/fork-worktree',
+                   '/fork-worktree', 1, 1)`
+        )
+        .run()
+      return { id: 'fork-worktree', folderPath: '/fork-worktree' }
     })
     let committedForkId: string | undefined
     mocks.setupCreatedWorktree.mockImplementation(async () => {
@@ -178,16 +186,22 @@ describe('conversation fork IPC', () => {
         { sender },
         { sourceId: 'source', workspaceMode: 'worktree' }
       )) as { id: string; project_id: string }
-      expect(forked).toMatchObject({ id: committedForkId, project_id: 'fork-project' })
+      // The fork stays in its project and works in its own new worktree.
+      expect(forked).toMatchObject({
+        id: committedForkId,
+        project_id: 'source-project',
+        worktree_id: 'fork-worktree',
+        worktree_folder: '/fork-worktree'
+      })
       expect(mocks.setupCreatedWorktree).toHaveBeenCalledWith(
         sender,
         '/source-project',
-        '/fork-project'
+        '/fork-worktree'
       )
-      expect(mocks.discardFreshProject).not.toHaveBeenCalled()
+      expect(mocks.discardFresh).not.toHaveBeenCalled()
       expect(
-        mocks.db!.prepare('SELECT id FROM projects WHERE id = ?').get('fork-project')
-      ).toBeDefined()
+        mocks.db!.prepare('SELECT worktree_id FROM conversations WHERE id = ?').get(forked.id)
+      ).toEqual({ worktree_id: 'fork-worktree' })
       expect(
         mocks.db!.prepare('SELECT id FROM conversations WHERE id = ?').get(forked.id)
       ).toBeDefined()

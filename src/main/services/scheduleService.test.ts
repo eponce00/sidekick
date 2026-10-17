@@ -79,14 +79,16 @@ function harness(now: number, placement: PlacementFixture = {}): Harness {
     isRunQueued: (agentRunId) => placement.queuedRunIds?.has(agentRunId) ?? false,
     worktrees: {
       isGitProject: async () => placement.git ?? false,
-      create: async (projectId, title) => {
+      create: async (projectId) => {
         const id = `worktree-${(placement.worktreesCreated ??= []).length + 1}`
         db.prepare(
-          `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
-           VALUES (?, ?, ?, 1, 1)`
-        ).run(id, `demo · sidekick/${title}`, `C:/worktrees/${projectId}/${id}`)
+          `INSERT INTO managed_worktrees
+           (id, source_project_id, repository_root, worktree_root, folder_path, created_at,
+            last_used_at)
+           VALUES (?, ?, 'C:/repo', ?, ?, 1, 1)`
+        ).run(id, projectId, `C:/worktrees/${projectId}/${id}`, `C:/worktrees/${projectId}/${id}`)
         placement.worktreesCreated.push(id)
-        return { projectId: id, location: 'detached from main' }
+        return { worktreeId: id, location: 'detached from main' }
       },
       discard: async () => undefined
     },
@@ -468,12 +470,9 @@ describe('ScheduleService and a busy project folder', () => {
     )
     expect(
       h.db
-        .prepare('SELECT project_id, home_workspace_root FROM conversations WHERE id = ?')
+        .prepare('SELECT project_id, worktree_id FROM conversations WHERE id = ?')
         .get(run.conversationId)
-    ).toEqual({
-      project_id: 'worktree-1',
-      home_workspace_root: 'C:/worktrees/project-1/worktree-1'
-    })
+    ).toEqual({ project_id: 'project-1', worktree_id: 'worktree-1' })
     expect(h.starts).toHaveLength(1)
   })
 

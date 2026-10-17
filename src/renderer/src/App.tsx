@@ -16,6 +16,7 @@ import { useManagedWorktrees } from './hooks/useManagedWorktrees'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
+import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { resolveStoredToolCallLimit } from '../../shared/agentLimits'
 import {
@@ -162,7 +163,7 @@ function App(): React.JSX.Element {
   const [forkBusy, setForkBusy] = useState(false)
   const [forkError, setForkError] = useState<string | null>(null)
   const { worktrees, refreshWorktrees } = useManagedWorktrees()
-  const [worktreesDialog, setWorktreesDialog] = useState<{ focusProjectId: string | null } | null>(
+  const [worktreesDialog, setWorktreesDialog] = useState<{ focusWorktreeId: string | null } | null>(
     null
   )
   const currentConversation = conversations.find(
@@ -534,28 +535,26 @@ function App(): React.JSX.Element {
     [projectById]
   )
 
+  const worktreeById = useMemo(
+    () => new Map(worktrees.map((worktree) => [worktree.id, worktree])),
+    [worktrees]
+  )
+  /** Where a chat works: its own worktree's folder, else its project's folder. */
+  const conversationFolder = useCallback(
+    (conversation: Conversation | null | undefined): string | null =>
+      conversation?.worktree_folder ??
+      (conversation?.worktree_id ? worktreeById.get(conversation.worktree_id)?.folderPath : null) ??
+      projectById(conversation?.project_id)?.folder_path ??
+      null,
+    [projectById, worktreeById]
+  )
+
   const refreshProjects = useCallback(async (): Promise<void> => {
     setProjects(await window.api.projects.list())
-    // A project can be a worktree that was just created or removed.
-    void refreshWorktrees()
-  }, [refreshWorktrees])
+  }, [])
 
-  const worktreeByProjectId = useMemo(
-    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree])),
-    [worktrees]
-  )
-  // A chat outside any project can move into one of these; worktrees are chosen inside a project.
-  const projectChoices = useMemo(
-    () =>
-      projects
-        .filter(({ id }) => !worktreeByProjectId.has(id))
-        .map(({ id, name }) => ({ id, name })),
-    [projects, worktreeByProjectId]
-  )
-  const worktreeSources = useMemo(
-    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree.sourceProjectId])),
-    [worktrees]
-  )
+  // A chat outside any project can move into one of these.
+  const projectChoices = useMemo(() => projects.map(({ id, name }) => ({ id, name })), [projects])
 
   const markConversationRead = useCallback((id: string): void => {
     setConversations((current) =>
@@ -566,16 +565,7 @@ function App(): React.JSX.Element {
     void window.api.conversations.markRead(id)
   }, [])
 
-  const handleNewConversation = async (
-    requestedProjectId: string | null = null,
-    options: { joinWorktree?: boolean } = {}
-  ): Promise<void> => {
-    // A new chat gets its own choice of folder or worktree in the project the worktree came from,
-    // instead of sharing another chat's worktree.
-    const projectId =
-      requestedProjectId && !options.joinWorktree
-        ? (worktreeSources.get(requestedProjectId) ?? requestedProjectId)
-        : requestedProjectId
+  const handleNewConversation = async (projectId: string | null = null): Promise<void> => {
     await activateProjectWorkspace(projectId)
     const newConv = await window.api.conversations.create(
       'New Conversation',
@@ -592,7 +582,7 @@ function App(): React.JSX.Element {
   const handleSelectConversation = async (id: string): Promise<void> => {
     const conversation = conversations.find((candidate) => candidate.id === id)
     markConversationRead(id)
-    await activateProjectWorkspace(conversation?.project_id)
+    await window.api.workspace.setPath(conversationFolder(conversation))
     setCurrentConversationId(id)
     restoreTokenCounts(id)
     setConversationCost(0)
@@ -692,11 +682,14 @@ function App(): React.JSX.Element {
         messageId: pendingFork.messageId,
         workspaceMode
       })
-      await window.api.workspace.setPath(forked.home_workspace_root ?? null)
+      await window.api.workspace.setPath(
+        forked.worktree_folder ?? forked.home_workspace_root ?? null
+      )
       setProjects(await window.api.projects.list())
       setConversations((prev) => [forked, ...prev])
       setCurrentConversationId(forked.id)
       setPendingFork(null)
+      if (forked.worktree_id) void refreshWorktrees()
     } catch (error) {
       setForkError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -710,7 +703,7 @@ function App(): React.JSX.Element {
   ): Promise<void> => {
     const result = await window.api.worktrees.createForConversation({ conversationId, ...options })
     if (currentConversationIdRef.current === conversationId) {
-      await window.api.workspace.setPath(result.project.folder_path)
+      await window.api.workspace.setPath(result.worktree.folderPath)
     }
     setConversations((current) =>
       current.map((conversation) =>
@@ -719,7 +712,6 @@ function App(): React.JSX.Element {
           : conversation
       )
     )
-    setProjects(await window.api.projects.list())
     await refreshWorktrees()
   }
 
@@ -733,30 +725,27 @@ function App(): React.JSX.Element {
     })
     // The fork's composer opens with the message that could not be sent here.
     saveComposerDraft(forked.id, draft)
-    await window.api.workspace.setPath(forked.home_workspace_root ?? null)
-    setProjects(await window.api.projects.list())
+    await window.api.workspace.setPath(forked.worktree_folder ?? forked.home_workspace_root ?? null)
     setConversations((prev) => [forked, ...prev])
     setCurrentConversationId(forked.id)
     await refreshWorktrees()
   }
 
   const handleWorktreesRemoved = async (): Promise<void> => {
-    const [listedConversations, listedProjects] = await Promise.all([
-      window.api.conversations.list(),
-      window.api.projects.list()
-    ])
+    const listedConversations = await window.api.conversations.list()
     setConversations(listedConversations)
-    setProjects(listedProjects)
     await refreshWorktrees()
     const current = listedConversations.find(({ id }) => id === currentConversationIdRef.current)
-    if (current && !current.project_id) await window.api.workspace.setPath(null)
+    if (current && !current.project_id && !current.worktree_id)
+      await window.api.workspace.setPath(null)
   }
 
-  const openWorktreeProject = (projectId: string): void => {
+  /** Opens a worktree's chat, or a new chat in its project when none is left. */
+  const openWorktreeChat = (worktree: ManagedWorktreeSummary): void => {
     setWorktreesDialog(null)
-    const latest = latestProjectConversationId(conversations, projectId)
-    if (latest) void handleSelectConversation(latest)
-    else void handleNewConversation(projectId, { joinWorktree: true })
+    const chat = worktree.owners[0]
+    if (chat) void handleSelectConversation(chat.id)
+    else void handleNewConversation(worktree.sourceProjectId)
   }
 
   const handleConversationCreated = async (id: string, title: string): Promise<void> => {
@@ -916,7 +905,7 @@ function App(): React.JSX.Element {
             else void handleNewConversation(projectId)
           },
           manageWorktrees: () =>
-            setWorktreesDialog({ focusProjectId: currentConversation?.project_id ?? null })
+            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null })
         }
       })
     : []
@@ -1112,8 +1101,9 @@ function App(): React.JSX.Element {
     ? currentConversation?.title || 'Conversation'
     : null
   const historyWorkspaceFolder =
-    activeProject?.folder_path ?? currentConversation?.home_workspace_root ?? null
-  const historyReadOnly = !activeProject && Boolean(currentConversation?.home_workspace_root)
+    conversationFolder(currentConversation) ?? currentConversation?.home_workspace_root ?? null
+  const historyReadOnly =
+    !conversationFolder(currentConversation) && Boolean(currentConversation?.home_workspace_root)
   const welcomeSuggestions = useMemo(() => {
     const currentProjectId = currentConversation?.project_id ?? null
     const recentConversationTitles = conversations
@@ -1158,13 +1148,17 @@ function App(): React.JSX.Element {
           conversationId={panelConversationId}
           conversationTitle={conversation?.title ?? null}
           welcomeSuggestions={visible ? welcomeSuggestions : []}
-          workspaceFolder={panelProject?.folder_path ?? null}
+          workspaceFolder={conversationFolder(conversation)}
           projectName={panelProject?.name ?? null}
           projectId={panelProject?.id ?? null}
-          worktree={panelProject ? (worktreeByProjectId.get(panelProject.id) ?? null) : null}
+          worktree={
+            conversation?.worktree_id ? (worktreeById.get(conversation.worktree_id) ?? null) : null
+          }
           onStartInWorktree={handleStartInWorktree}
           onForkIntoWorktree={handleForkIntoWorktree}
-          onManageWorktrees={() => setWorktreesDialog({ focusProjectId: panelProject?.id ?? null })}
+          onManageWorktrees={() =>
+            setWorktreesDialog({ focusWorktreeId: conversation?.worktree_id ?? null })
+          }
           projectChoices={projectChoices}
           onChooseProject={(projectId) =>
             panelConversationId
@@ -1339,7 +1333,6 @@ function App(): React.JSX.Element {
       <main className="app-main">
         <Sidebar
           sessionStatuses={sessionStatuses.byId}
-          worktreeSources={worktreeSources}
           conversations={conversations}
           projects={projects}
           currentConversationId={currentConversationId}
@@ -1426,10 +1419,10 @@ function App(): React.JSX.Element {
       <WorktreesDialog
         isOpen={worktreesDialog !== null}
         worktrees={worktrees}
-        focusProjectId={worktreesDialog?.focusProjectId}
+        focusWorktreeId={worktreesDialog?.focusWorktreeId}
         onClose={() => setWorktreesDialog(null)}
         onRefresh={refreshWorktrees}
-        onOpenProject={openWorktreeProject}
+        onOpenChat={openWorktreeChat}
         onRemoved={handleWorktreesRemoved}
       />
       <ForkConversationDialog

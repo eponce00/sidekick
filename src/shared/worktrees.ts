@@ -1,4 +1,4 @@
-import type { Project, ProjectConversation } from './projects'
+import type { ProjectConversation } from './projects'
 
 /** Where a new project chat does its work before its first message. */
 export type WorkInChoice = 'folder' | 'worktree'
@@ -10,13 +10,16 @@ export interface ManagedWorktreeOwner {
   running: boolean
 }
 
+/**
+ * A chat's own copy of its project. The chat stays in its project; only its folder is the
+ * worktree's.
+ */
 export interface ManagedWorktreeSummary {
   id: string
-  projectId: string
-  projectName: string
-  /** The project folder: the worktree root, or the same subfolder the source project used. */
+  /** Where its chats work: the worktree root, or the same subfolder the project uses. */
   folderPath: string
   worktreeRoot: string
+  /** The project it is a copy of, which its chats belong to. */
   sourceProjectId: string
   sourceProjectName: string | null
   /**
@@ -52,8 +55,6 @@ export interface WorktreeBranchOptions {
   currentBranch: string | null
   /** Whether the project is inside a Git repository at all. */
   isGitRepository: boolean
-  /** The project is itself a SideKick worktree; new worktrees then start from its source. */
-  isManagedWorktree: boolean
 }
 
 export interface CreateConversationWorktreeInput {
@@ -63,7 +64,6 @@ export interface CreateConversationWorktreeInput {
 }
 
 export interface CreateConversationWorktreeResult {
-  project: Project
   conversation: ProjectConversation
   worktree: ManagedWorktreeSummary
 }

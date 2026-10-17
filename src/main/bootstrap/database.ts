@@ -49,6 +49,8 @@ const REQUIRED_COLUMNS = [
   { table: 'managed_worktrees', column: 'set_aside_head', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'set_aside_branch', definition: 'TEXT' },
   { table: 'managed_worktrees', column: 'snapshot_commit', definition: 'TEXT' },
+  { table: 'managed_worktrees', column: 'folder_path', definition: 'TEXT' },
+  { table: 'conversations', column: 'worktree_id', definition: 'TEXT' },
   {
     table: 'messages',
     column: 'run_mode',
@@ -470,8 +472,100 @@ const SCHEMA_MIGRATIONS: readonly SchemaMigration[] = [
     apply: (db) => {
       ensureRequiredColumns(db)
     }
+  },
+  {
+    id: '20261021_001_worktrees_belong_to_chats',
+    description: 'attach each managed worktree to its chats and drop the project made for it',
+    contentId: 'v1|required-worktree-columns|move-chats-to-source-project|drop-worktree-projects',
+    apply: (db) => {
+      ensureRequiredColumns(db)
+      attachWorktreesToChats(db)
+    }
   }
 ]
+
+/**
+ * Worktrees used to be projects of their own, so a chat in one sat under "project · from main"
+ * instead of its project. Each chat now keeps its project and points at its worktree; the
+ * worktree projects go, and the table is rebuilt without its project link.
+ */
+function attachWorktreesToChats(db: Database.Database): void {
+  const columns = (db.prepare('PRAGMA table_info(managed_worktrees)').all() as ColumnRow[]).map(
+    ({ name }) => name
+  )
+  if (!columns.includes('project_id')) return
+  const rows = db
+    .prepare(
+      `SELECT w.id, w.project_id, w.source_project_id, w.worktree_root,
+              p.folder_path AS folder, s.folder_path AS source_folder, s.name AS source_name
+       FROM managed_worktrees w
+       LEFT JOIN projects p ON p.id = w.project_id
+       LEFT JOIN projects s ON s.id = w.source_project_id`
+    )
+    .all() as Array<{
+    id: string
+    project_id: string
+    source_project_id: string
+    worktree_root: string
+    folder: string | null
+    source_folder: string | null
+    source_name: string | null
+  }>
+  for (const row of rows) {
+    db.prepare('UPDATE managed_worktrees SET folder_path = ? WHERE id = ?').run(
+      row.folder ?? row.worktree_root,
+      row.id
+    )
+    // A chat whose source project was removed stays outside any project, still in its worktree.
+    db.prepare(
+      `UPDATE conversations
+       SET worktree_id = ?, project_id = ?,
+           home_workspace_root = COALESCE(?, home_workspace_root),
+           home_project_name = COALESCE(?, home_project_name),
+           project_context_version = project_context_version + 1
+       WHERE project_id = ?`
+    ).run(
+      row.id,
+      row.source_folder ? row.source_project_id : null,
+      row.source_folder,
+      row.source_name,
+      row.project_id
+    )
+    db.prepare('UPDATE schedules SET project_id = ? WHERE project_id = ?').run(
+      row.source_folder ? row.source_project_id : null,
+      row.project_id
+    )
+    db.prepare('DELETE FROM projects WHERE id = ?').run(row.project_id)
+  }
+  db.exec(`
+    CREATE TABLE managed_worktrees_for_chats (
+      id TEXT PRIMARY KEY,
+      source_project_id TEXT NOT NULL,
+      repository_root TEXT NOT NULL,
+      worktree_root TEXT NOT NULL UNIQUE,
+      folder_path TEXT,
+      branch TEXT UNIQUE,
+      base_ref TEXT,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER NOT NULL,
+      set_aside_at INTEGER,
+      set_aside_head TEXT,
+      set_aside_branch TEXT,
+      snapshot_commit TEXT
+    );
+    INSERT INTO managed_worktrees_for_chats
+      (id, source_project_id, repository_root, worktree_root, folder_path, branch, base_ref,
+       created_at, last_used_at, set_aside_at, set_aside_head, set_aside_branch, snapshot_commit)
+      SELECT id, source_project_id, repository_root, worktree_root, folder_path, branch, base_ref,
+             created_at, last_used_at, set_aside_at, set_aside_head, set_aside_branch,
+             snapshot_commit
+      FROM managed_worktrees;
+    DROP TABLE managed_worktrees;
+    ALTER TABLE managed_worktrees_for_chats RENAME TO managed_worktrees;
+    CREATE INDEX IF NOT EXISTS idx_managed_worktrees_age
+      ON managed_worktrees(last_used_at ASC, created_at ASC);
+  `)
+}
 
 /**
  * SQLite cannot drop a NOT NULL constraint in place, so the table is rebuilt with every row kept.
@@ -660,10 +754,10 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
 
     CREATE TABLE IF NOT EXISTS managed_worktrees (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL UNIQUE,
       source_project_id TEXT NOT NULL,
       repository_root TEXT NOT NULL,
       worktree_root TEXT NOT NULL UNIQUE,
+      folder_path TEXT,
       branch TEXT UNIQUE,
       base_ref TEXT,
       created_at INTEGER NOT NULL,

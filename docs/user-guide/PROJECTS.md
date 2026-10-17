@@ -111,9 +111,10 @@ commands are never automatically replayed. There are no automatic removal hooks.
 ### Worktrees
 
 Two agents writing in one folder overwrite each other's work. A worktree is a separate copy of the
-project, so each chat can work without touching another chat's files. SideKick keeps its worktrees
-in its private data folder, under `worktrees`, never inside your project, and each one appears in
-the sidebar as its own project named after the original project and where it started.
+project, so each chat can work without touching another chat's files. A worktree belongs to its
+chat: the chat stays in its project in the sidebar, marked with a branch icon, and only works in a
+different folder. SideKick keeps worktrees in its private data folder, under `worktrees`, never
+inside your project.
 
 #### Starting a chat in a worktree
 
@@ -121,15 +122,14 @@ Before the first message of a project chat, the bar above the composer offers **
 folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
 or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
 be checked out in only one folder, and the project folder already has it. Sending the first message
-creates the worktree, moves the chat into it and then starts the agent. SideKick remembers your
+creates the chat's worktree and then starts the agent there. SideKick remembers your
 last choice for the next new chat. Worktrees need a project inside a Git repository; for any other
 folder the bar says so and the chat works in the folder. A new chat outside any project shows
 **Work in: No project** instead; choosing a project there moves the chat into it and offers both
 choices.
 
-A new chat started from a worktree's project in the sidebar starts in the original project with
-the same choice, so it never shares another chat's worktree by accident. A chat that already has
-messages keeps its folder. To move its work aside, fork it into a new
+Every new chat in a project gets the same choice, so two chats never share a worktree by accident.
+A chat that already has messages keeps its folder. To move its work aside, fork it into a new
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
 Once a chat works in a worktree, the bar shows its branch, or "detached from main" until it has
@@ -179,8 +179,7 @@ last used, marked **Working**, **Set aside**, or with its number of changed file
   stay in the repository with their commits. Its chats keep their history as chats outside any
   project.
 
-Deleting a worktree's last chat removes the worktree too, and so does removing the worktree's
-project from the sidebar. SideKick never removes a worktree while an agent works in it, or one it
+Deleting a worktree's chat removes the worktree too. SideKick never removes a worktree while an agent works in it, or one it
 cannot prove it created: the folder must have the exact shape SideKick uses inside its storage and
 be registered with Git. Removal goes through `git worktree remove`; there is no recursive-delete
 fallback. Links inside a worktree, such as a `node_modules` junction to a shared install, are

@@ -2,10 +2,10 @@ import { randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
-import { basename, isAbsolute, join, relative, resolve, sep } from 'path'
+import { isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
 import type Database from 'better-sqlite3'
-import type { Project, ProjectConversation } from '../../shared/projects'
+import type { ProjectConversation } from '../../shared/projects'
 import {
   worktreeSlug,
   type CreateConversationWorktreeInput,
@@ -37,10 +37,11 @@ const SNAPSHOT_IDENTITY = {
 
 interface ManagedWorktreeRow {
   id: string
-  project_id: string
   source_project_id: string
   repository_root: string
   worktree_root: string
+  /** Where its chats work: the root, or the subfolder the source project uses. */
+  folder_path: string | null
   /** The branch SideKick created for it; null when it started detached at its base. */
   branch: string | null
   base_ref: string | null
@@ -186,32 +187,32 @@ export class ManagedWorktreeService {
     return row
   }
 
-  private rowForProject(projectId: string): ManagedWorktreeRow | undefined {
+  private rowForConversation(conversationId: string): ManagedWorktreeRow | undefined {
     return this.db
-      .prepare('SELECT * FROM managed_worktrees WHERE project_id = ?')
-      .get(projectId) as ManagedWorktreeRow | undefined
+      .prepare(
+        `SELECT w.* FROM managed_worktrees w
+         JOIN conversations c ON c.worktree_id = w.id
+         WHERE c.id = ?`
+      )
+      .get(conversationId) as ManagedWorktreeRow | undefined
   }
 
-  branchForProject(projectId: string): string | null {
-    const row = this.rowForProject(projectId)
-    return row?.set_aside_branch ?? row?.branch ?? null
+  /** The worktree a chat works in, if any. */
+  worktreeIdFor(conversationId: string): string | null {
+    return this.rowForConversation(conversationId)?.id ?? null
   }
 
   /** Where a worktree started, for messages: its branch, or the base it is a detached copy of. */
-  locationForProject(projectId: string): string | null {
-    const row = this.rowForProject(projectId)
+  location(id: string): string | null {
+    const row = this.findRow(id)
     if (!row) return null
     return row.branch ? `on ${row.branch}` : `detached from ${shortRef(row.base_ref)}`
   }
 
-  isManagedProject(projectId: string): boolean {
-    return Boolean(this.rowForProject(projectId))
-  }
-
-  private owners(projectId: string): ManagedWorktreeOwner[] {
+  private owners(id: string): ManagedWorktreeOwner[] {
     const chats = this.db
-      .prepare('SELECT id, title FROM conversations WHERE project_id = ? ORDER BY updated_at DESC')
-      .all(projectId) as Array<{ id: string; title: string }>
+      .prepare('SELECT id, title FROM conversations WHERE worktree_id = ? ORDER BY updated_at DESC')
+      .all(id) as Array<{ id: string; title: string }>
     return chats.map(({ id, title }) => ({
       kind: 'chat' as const,
       id,
@@ -220,15 +221,15 @@ export class ManagedWorktreeService {
     }))
   }
 
-  private running(projectId: string): boolean {
-    return this.owners(projectId).some(({ running }) => running)
+  private running(id: string): boolean {
+    return this.owners(id).some(({ running }) => running)
   }
 
-  private pinned(projectId: string): boolean {
+  private pinned(id: string): boolean {
     return Boolean(
       this.db
-        .prepare('SELECT 1 FROM conversations WHERE project_id = ? AND is_pinned = 1 LIMIT 1')
-        .get(projectId)
+        .prepare('SELECT 1 FROM conversations WHERE worktree_id = ? AND is_pinned = 1 LIMIT 1')
+        .get(id)
     )
   }
 
@@ -304,14 +305,11 @@ export class ManagedWorktreeService {
   }
 
   private async summary(row: ManagedWorktreeRow): Promise<ManagedWorktreeSummary> {
-    const project = this.projects.get(row.project_id)
     const source = this.projects.get(row.source_project_id)
     const target = row.set_aside_at ? null : await this.managedTarget(row)
     return {
       id: row.id,
-      projectId: row.project_id,
-      projectName: project?.name ?? basename(row.worktree_root),
-      folderPath: project?.folder_path ?? row.worktree_root,
+      folderPath: row.folder_path ?? row.worktree_root,
       worktreeRoot: row.worktree_root,
       sourceProjectId: row.source_project_id,
       sourceProjectName: source?.name ?? null,
@@ -320,7 +318,7 @@ export class ManagedWorktreeService {
       createdAt: row.created_at,
       lastUsedAt: row.last_used_at,
       setAsideAt: row.set_aside_at,
-      owners: this.owners(row.project_id),
+      owners: this.owners(row.id),
       status: target ? await this.gitStatus(row, target) : null
     }
   }
@@ -339,14 +337,8 @@ export class ManagedWorktreeService {
 
   /** Branches a new worktree can start from, for the project a chat is in. */
   async branchOptions(projectId: string): Promise<WorktreeBranchOptions> {
-    const managed = this.rowForProject(projectId)
-    const project = this.projects.get(managed?.source_project_id ?? projectId)
-    const empty = {
-      branches: [],
-      currentBranch: null,
-      isGitRepository: false,
-      isManagedWorktree: Boolean(managed)
-    }
+    const project = this.projects.get(projectId)
+    const empty = { branches: [], currentBranch: null, isGitRepository: false }
     if (!project) return empty
     try {
       await git(project.folder_path, ['rev-parse', '--show-toplevel'])
@@ -370,8 +362,7 @@ export class ManagedWorktreeService {
         ? [currentBranch, ...branches.filter((branch) => branch !== currentBranch)]
         : branches,
       currentBranch,
-      isGitRepository: true,
-      isManagedWorktree: Boolean(managed)
+      isGitRepository: true
     }
   }
 
@@ -396,7 +387,7 @@ export class ManagedWorktreeService {
     let excess = onDisk.length - this.maxOnDisk
     for (const row of onDisk) {
       if (excess <= 0) return
-      if (row.id === keepId || this.pinned(row.project_id) || this.running(row.project_id)) continue
+      if (row.id === keepId || this.pinned(row.id) || this.running(row.id)) continue
       try {
         if (await this.serialized(row.id, () => this.setAsideNow(row.id))) excess--
       } catch (error) {
@@ -411,7 +402,7 @@ export class ManagedWorktreeService {
    */
   private async setAsideNow(id: string): Promise<boolean> {
     const row = this.findRow(id)
-    if (!row || row.set_aside_at || this.running(row.project_id)) return false
+    if (!row || row.set_aside_at || this.running(row.id)) return false
     const target = await this.managedTarget(row)
     if (!target) return false
     const head = await git(target, ['rev-parse', 'HEAD'])
@@ -420,10 +411,7 @@ export class ManagedWorktreeService {
     const snapshot = changes ? await this.snapshot(target, head) : head
     await git(row.repository_root, ['update-ref', `${SNAPSHOT_REF_PREFIX}${row.id}`, snapshot])
     // Something written since the snapshot would be lost, so the worktree stays this time.
-    if (
-      this.running(row.project_id) ||
-      (await git(target, ['status', '--porcelain'])) !== changes
-    ) {
+    if (this.running(row.id) || (await git(target, ['status', '--porcelain'])) !== changes) {
       await git(row.repository_root, ['update-ref', '-d', `${SNAPSHOT_REF_PREFIX}${row.id}`])
       return false
     }
@@ -511,12 +499,7 @@ export class ManagedWorktreeService {
    * the least recently used worktrees are set aside first. Other chats are untouched.
    */
   prepareConversation(conversationId: string): Promise<void> | undefined {
-    const projectId = (
-      this.db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(conversationId) as
-        | { project_id: string | null }
-        | undefined
-    )?.project_id
-    const row = projectId ? this.rowForProject(projectId) : undefined
+    const row = this.rowForConversation(conversationId)
     if (!row) return undefined
     const touch = (): void => {
       this.db
@@ -533,26 +516,22 @@ export class ManagedWorktreeService {
   }
 
   /**
-   * Creates a SideKick worktree for a project, detached at its base as Codex and OpenCode do: the
+   * Creates a SideKick worktree of a project, detached at its base as Codex and OpenCode do: the
    * base branch stays checked out where it already is, and the agent creates a branch when its
-   * work needs one. A project that is itself a SideKick worktree starts its new worktree from its
-   * own commit but is stored under its source project.
+   * work needs one. `fromWorktreeId` starts it from another worktree's commit instead, as when a
+   * chat in a worktree forks into a new one.
    */
   async create(
-    sourceProjectId: string,
+    projectId: string,
     conversationTitle: string,
-    options: { baseRef?: string } = {}
-  ): Promise<Project> {
-    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(sourceProjectId))
-      throw new Error('Invalid source project identity')
-    const parentWorktree = this.rowForProject(sourceProjectId)
-    const requestedSource = this.projects.get(sourceProjectId)
-    if (!requestedSource) throw new Error('The source project no longer exists')
-    const rootProjectId = parentWorktree?.source_project_id ?? sourceProjectId
-    const source = this.projects.get(rootProjectId)
-    if (!source) throw new Error('The source project no longer exists')
+    options: { baseRef?: string; fromWorktreeId?: string | null } = {}
+  ): Promise<ManagedWorktreeSummary> {
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(projectId)) throw new Error('Invalid project identity')
+    const source = this.projects.get(projectId)
+    if (!source) throw new Error('The project no longer exists')
     if (options.baseRef !== undefined && !validRef(options.baseRef))
       throw new Error('That base is not a valid branch or commit')
+    const parentWorktree = options.fromWorktreeId ? this.findRow(options.fromWorktreeId) : undefined
     // Starting from a set-aside worktree needs its folder back first.
     if (parentWorktree)
       await this.serialized(parentWorktree.id, () => this.restoreNow(parentWorktree.id))
@@ -576,7 +555,9 @@ export class ManagedWorktreeService {
       throw new Error('Project folder is outside its Git root')
 
     // The base is what the chat sees as "where my work came from": a branch when there is one.
-    const startFrom = requestedSource.folder_path
+    const startFrom = parentWorktree
+      ? (parentWorktree.folder_path ?? parentWorktree.worktree_root)
+      : source.folder_path
     let baseRef = options.baseRef
     if (baseRef) {
       if (
@@ -596,12 +577,12 @@ export class ManagedWorktreeService {
 
     const id = randomUUID()
     const name = `${worktreeSlug(conversationTitle)}-${id.slice(0, 8)}`
-    const worktreeRoot = join(this.storageRoot, rootProjectId, name)
-    const projectFolder = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
-    await fs.mkdir(join(this.storageRoot, rootProjectId), { recursive: true })
+    const worktreeRoot = join(this.storageRoot, projectId, name)
+    const folderPath = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
+    await fs.mkdir(join(this.storageRoot, projectId), { recursive: true })
     const [canonicalStorage, canonicalParent] = await Promise.all([
       fs.realpath(this.storageRoot),
-      fs.realpath(join(this.storageRoot, rootProjectId))
+      fs.realpath(join(this.storageRoot, projectId))
     ])
     const parentChild = relative(canonicalStorage, canonicalParent)
     if (
@@ -616,24 +597,21 @@ export class ManagedWorktreeService {
     try {
       await git(repositoryRoot, ['worktree', 'add', '--detach', worktreeRoot, baseRef])
       created = true
-      const project = this.projects.create(
-        projectFolder,
-        `${source.name} · from ${shortRef(baseRef)}`
-      )
       const now = Date.now()
       this.db
         .prepare(
           `INSERT INTO managed_worktrees
-           (id, project_id, source_project_id, repository_root, worktree_root, branch, base_ref,
+           (id, source_project_id, repository_root, worktree_root, folder_path, branch, base_ref,
             created_at, last_used_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)`
         )
-        .run(id, project.id, rootProjectId, repositoryRoot, worktreeRoot, null, baseRef, now, now)
+        .run(id, projectId, repositoryRoot, worktreeRoot, folderPath, baseRef, now, now)
       this.scheduleHousekeeping(id)
-      return project
+      return await this.get(id)
     } catch (error) {
       // A cleanup failure leaves recoverable Git state rather than deleting anything by force.
       if (created) {
+        this.db.prepare('DELETE FROM managed_worktrees WHERE id = ?').run(id)
         try {
           await git(repositoryRoot, ['worktree', 'remove', worktreeRoot])
         } catch {
@@ -645,54 +623,64 @@ export class ManagedWorktreeService {
   }
 
   /**
-   * Gives a chat that has not started yet its own worktree and moves it there. The entry point
-   * for "Work in: new worktree" and for chats another agent starts.
+   * Gives a chat that has not started yet its own worktree. The chat stays in its project; only
+   * its folder changes. The entry point for "Work in: new worktree" and for chats another agent
+   * starts.
    */
   async createForConversation(
     input: CreateConversationWorktreeInput
   ): Promise<CreateConversationWorktreeResult> {
     const conversation = this.db
-      .prepare('SELECT id, title, project_id FROM conversations WHERE id = ?')
+      .prepare('SELECT id, title, project_id, worktree_id FROM conversations WHERE id = ?')
       .get(input.conversationId) as
-      | Pick<ProjectConversation, 'id' | 'title' | 'project_id'>
+      | Pick<ProjectConversation, 'id' | 'title' | 'project_id' | 'worktree_id'>
       | undefined
     if (!conversation) throw new Error('Conversation not found')
     if (!conversation.project_id) throw new Error('Only a chat in a project can use a worktree')
-    if (
+    if (conversation.worktree_id) throw new Error('This chat already works in a worktree')
+    const hasHistory =
       this.db
         .prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1')
-        .get(conversation.id)
-    )
+        .get(conversation.id) ||
+      this.db.prepare('SELECT 1 FROM agent_runs WHERE thread_id = ? LIMIT 1').get(conversation.id)
+    if (hasHistory)
       throw new Error('This chat already has messages. Fork it into a new worktree instead.')
-    const project = await this.create(conversation.project_id, conversation.title, {
+    const worktree = await this.create(conversation.project_id, conversation.title, {
       baseRef: input.baseRef
     })
     try {
-      const moved = this.projects.rehomeFreshConversation(conversation.id, project.id)
-      const row = this.rowForProject(project.id)!
-      return { project, conversation: moved, worktree: await this.get(row.id) }
+      this.db
+        .prepare(
+          `UPDATE conversations
+           SET worktree_id = ?, project_context_version = project_context_version + 1
+           WHERE id = ?`
+        )
+        .run(worktree.id, conversation.id)
+      const moved = this.db
+        .prepare('SELECT * FROM conversations WHERE id = ?')
+        .get(conversation.id) as ProjectConversation
+      return {
+        conversation: { ...moved, worktree_folder: worktree.folderPath },
+        worktree: await this.get(worktree.id)
+      }
     } catch (error) {
-      await this.discardFreshProject(project.id).catch(() => undefined)
+      await this.discardFresh(worktree.id).catch(() => undefined)
       throw error
     }
   }
 
   /** Removes a worktree made a moment ago for a chat or fork that then failed to start. */
-  async discardFreshProject(projectId: string): Promise<void> {
-    const row = this.rowForProject(projectId)
-    if (!row) return
-    const result = await this.serialized(row.id, () =>
-      this.removeNow(row.id, { onlyIfClean: true })
-    )
+  async discardFresh(id: string): Promise<void> {
+    if (!this.findRow(id)) return
+    const result = await this.serialized(id, () => this.removeNow(id, { onlyIfClean: true }))
     if (!result.removed) throw new Error(`Worktree cleanup refused: ${result.reason}`)
   }
 
   /** Removes a worktree no chat uses any more, as when its last chat is deleted. */
-  async removeIfUnused(projectId: string): Promise<RemoveManagedWorktreeResult | null> {
-    const row = this.rowForProject(projectId)
-    if (!row || this.owners(projectId).length) return null
+  async removeIfUnused(id: string): Promise<RemoveManagedWorktreeResult | null> {
+    if (!this.findRow(id) || this.owners(id).length) return null
     try {
-      return await this.serialized(row.id, () => this.removeNow(row.id))
+      return await this.serialized(id, () => this.removeNow(id))
     } catch (error) {
       console.warn('[Worktrees] Automatic cleanup skipped:', error)
       return null
@@ -714,7 +702,7 @@ export class ManagedWorktreeService {
   ): Promise<RemoveManagedWorktreeResult> {
     const row = this.findRow(id)
     if (!row) return { removed: true }
-    if (this.running(row.project_id))
+    if (this.running(row.id))
       return { removed: false, reason: 'An agent is working in it. Stop it first.' }
     if (!row.set_aside_at) {
       const exists = await fs.stat(row.worktree_root).then(
@@ -740,9 +728,18 @@ export class ManagedWorktreeService {
     await git(row.repository_root, ['update-ref', '-d', `${SNAPSHOT_REF_PREFIX}${row.id}`]).catch(
       () => undefined
     )
-    // The files are gone; chats that used them stay as chats outside any project.
+    // The folder is gone, so its chats keep their history as chats outside any project instead of
+    // silently working in the project folder.
     this.db.transaction(() => {
-      if (this.projects.get(row.project_id)) this.projects.remove(row.project_id)
+      this.db
+        .prepare(
+          `UPDATE conversations
+           SET worktree_id = NULL, project_id = NULL,
+               project_context_version = project_context_version + 1,
+               home_workspace_root = ?
+           WHERE worktree_id = ?`
+        )
+        .run(row.folder_path ?? row.worktree_root, row.id)
       this.db.prepare('DELETE FROM managed_worktrees WHERE id = ?').run(row.id)
     })()
     return { removed: true }

@@ -11,8 +11,6 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const changed: ManagedWorktreeSummary = {
   id: 'wt-1',
-  projectId: 'project-wt-1',
-  projectName: 'demo · sidekick/cards',
   folderPath: '/data/worktrees/p/cards-1',
   worktreeRoot: '/data/worktrees/p/cards-1',
   sourceProjectId: 'p',
@@ -32,8 +30,7 @@ const api = {
     async (): Promise<WorktreeBranchOptions> => ({
       branches: ['main', 'release'],
       currentBranch: 'main',
-      isGitRepository: true,
-      isManagedWorktree: false
+      isGitRepository: true
     })
   ),
   createForConversation: vi.fn(),
@@ -83,7 +80,7 @@ describe('worktree UI', () => {
           worktrees={worktrees}
           onClose={vi.fn()}
           onRefresh={vi.fn(async () => undefined)}
-          onOpenProject={vi.fn()}
+          onOpenChat={vi.fn()}
           onRemoved={onRemoved}
         />
       )
@@ -238,8 +235,7 @@ describe('worktree UI', () => {
     api.branchOptions.mockResolvedValueOnce({
       branches: [],
       currentBranch: null,
-      isGitRepository: false,
-      isManagedWorktree: false
+      isGitRepository: false
     })
     await act(async () => {
       root.render(

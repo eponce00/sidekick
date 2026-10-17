@@ -19,6 +19,7 @@ import { validateMessageContextAttachments } from '../../shared/messageContextAt
 import type { ForkConversationInput } from '../../shared/projects'
 import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
+import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
@@ -40,8 +41,12 @@ export function registerDatabaseHandlers(): void {
   const worktrees = getManagedWorktrees()
 
   ipcMain.handle('conversations:list', async () => {
+    // Each chat carries its worktree's folder, so the renderer knows where it works.
     const stmt = db.prepare(
-      'SELECT * FROM conversations ORDER BY is_pinned DESC, sidebar_order ASC, updated_at DESC'
+      `SELECT c.*, w.folder_path AS worktree_folder
+       FROM conversations c
+       LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
+       ORDER BY c.is_pinned DESC, c.sidebar_order ASC, c.updated_at DESC`
     )
     return stmt.all()
   })
@@ -50,14 +55,20 @@ export function registerDatabaseHandlers(): void {
     const normalized = query.trim()
     if (!normalized) {
       return db
-        .prepare('SELECT * FROM conversations ORDER BY is_pinned DESC, updated_at DESC')
+        .prepare(
+          `SELECT c.*, w.folder_path AS worktree_folder
+           FROM conversations c
+           LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
+           ORDER BY c.is_pinned DESC, c.updated_at DESC`
+        )
         .all()
     }
     const pattern = `%${normalized.replace(/[\\%_]/g, '\\$&')}%`
     return db
       .prepare(
-        `SELECT DISTINCT c.*
+        `SELECT DISTINCT c.*, w.folder_path AS worktree_folder
          FROM conversations c
+         LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
          LEFT JOIN messages m ON m.conversation_id = c.id
          WHERE c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\'
          ORDER BY c.is_pinned DESC, c.updated_at DESC
@@ -134,7 +145,7 @@ export function registerDatabaseHandlers(): void {
     const sourceId = input.sourceId
     const source = db
       .prepare(
-        `SELECT title, project_id, home_workspace_root, home_project_name
+        `SELECT title, project_id, home_workspace_root, home_project_name, worktree_id
          FROM conversations WHERE id = ?`
       )
       .get(sourceId) as
@@ -143,6 +154,7 @@ export function registerDatabaseHandlers(): void {
           project_id: string | null
           home_workspace_root: string | null
           home_project_name: string | null
+          worktree_id: string | null
         }
       | undefined
     if (!source) throw new Error('Conversation not found')
@@ -154,17 +166,17 @@ export function registerDatabaseHandlers(): void {
       : undefined
     if (input.messageId && !boundary) throw new Error('Fork message not found in conversation')
 
-    let targetProjectId = source.project_id
-    let targetWorkspaceRoot = source.home_workspace_root
-    let targetProjectName = source.home_project_name
-    let createdWorktreeProjectId: string | null = null
+    // The fork stays in the source's project. In the current folder it shares the source's
+    // worktree, if any; otherwise it gets a new worktree started from the source's commit.
+    const targetProjectId = source.project_id
+    let targetWorktreeId = source.worktree_id
+    let createdWorktree: ManagedWorktreeSummary | null = null
     if (input.workspaceMode === 'worktree') {
       if (!source.project_id) throw new Error('An isolated fork requires a project')
-      const project = await worktrees.create(source.project_id, source.title)
-      createdWorktreeProjectId = project.id
-      targetProjectId = project.id
-      targetWorkspaceRoot = project.folder_path
-      targetProjectName = project.name
+      createdWorktree = await worktrees.create(source.project_id, source.title, {
+        fromWorktreeId: source.worktree_id
+      })
+      targetWorktreeId = createdWorktree.id
     }
 
     const id = randomUUID()
@@ -194,8 +206,8 @@ export function registerDatabaseHandlers(): void {
           `INSERT INTO conversations
          (id, title, created_at, updated_at, project_id, title_source, title_version,
           sidebar_order, project_context_version, home_workspace_root, home_project_name,
-          forked_from_conversation_id, forked_from_message_id)
-         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?)`
+          worktree_id, forked_from_conversation_id, forked_from_message_id)
+         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?, ?)`
         ).run(
           id,
           title,
@@ -204,8 +216,9 @@ export function registerDatabaseHandlers(): void {
           targetProjectId,
           conversationTitleVersionForSource('fork'),
           placement.sidebar_order,
-          targetWorkspaceRoot,
-          targetProjectName,
+          source.home_workspace_root,
+          source.home_project_name,
+          targetWorktreeId,
           sourceId,
           boundary?.id ?? null
         )
@@ -244,13 +257,11 @@ export function registerDatabaseHandlers(): void {
         compactions.copyLatestForFork(sourceId, id, messageIdMap, boundary?.timestamp)
       })()
     } catch (error) {
-      if (createdWorktreeProjectId) {
-        await worktrees.discardFreshProject(createdWorktreeProjectId)
-      }
+      if (createdWorktree) await worktrees.discardFresh(createdWorktree.id)
       throw error
     }
 
-    if (createdWorktreeProjectId && source.project_id && targetWorkspaceRoot) {
+    if (createdWorktree && source.project_id) {
       const sourceProject = db
         .prepare('SELECT folder_path FROM projects WHERE id = ?')
         .get(source.project_id) as { folder_path: string } | undefined
@@ -259,7 +270,7 @@ export function registerDatabaseHandlers(): void {
         await setupCreatedWorktree(
           event.sender,
           sourceProject.folder_path,
-          targetWorkspaceRoot
+          createdWorktree.folderPath
         ).catch(() => {
           console.warn('[Worktrees] Setup could not finish; created fork preserved')
         })
@@ -276,8 +287,18 @@ export function registerDatabaseHandlers(): void {
       title_version: conversationTitleVersionForSource('fork'),
       sidebar_order: placement.sidebar_order,
       project_context_version: 0,
-      home_workspace_root: targetWorkspaceRoot,
-      home_project_name: targetProjectName,
+      home_workspace_root: source.home_workspace_root,
+      home_project_name: source.home_project_name,
+      worktree_id: targetWorktreeId,
+      worktree_folder: targetWorktreeId
+        ? (createdWorktree?.folderPath ??
+          (
+            db
+              .prepare('SELECT folder_path FROM managed_worktrees WHERE id = ?')
+              .get(targetWorktreeId) as { folder_path: string | null } | undefined
+          )?.folder_path ??
+          null)
+        : null,
       forked_from_conversation_id: sourceId,
       forked_from_message_id: boundary?.id ?? null,
       unread_completion_at: null
@@ -383,19 +404,12 @@ export function registerDatabaseHandlers(): void {
   )
 
   ipcMain.handle('conversations:delete', async (_, id: string) => {
-    const projectId = (
-      db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(id) as
-        | { project_id: string | null }
-        | undefined
-    )?.project_id
+    const worktreeId = worktrees.worktreeIdFor(id)
     db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
     db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
     refreshSessionStatuses([id])
-    // A worktree its last chat leaves behind goes too, when nothing in it would be lost.
-    const worktreeCleanup =
-      projectId && worktrees.isManagedProject(projectId)
-        ? await worktrees.removeIfUnused(projectId)
-        : null
+    // A worktree its last chat leaves behind goes too.
+    const worktreeCleanup = worktreeId ? await worktrees.removeIfUnused(worktreeId) : null
     return { success: true, ...(worktreeCleanup ? { worktreeCleanup } : {}) }
   })
 

@@ -481,6 +481,10 @@ through the main window's external-navigation policy.
 
 ### Worktrees and parallel agents
 
+A worktree belongs to its chat, not to a project of its own: `conversations.worktree_id` points
+at it, the chat keeps its `project_id`, and `ProjectStore.getConversationContext` returns the
+worktree's folder as the chat's `workspaceRoot`, which every run, tool and checkpoint uses.
+
 `src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
 a chat that has not started (`createForConversation`, also the entry point for main-process callers
 such as agent-started chats), inventory with Git state and owners, setting the least recently used

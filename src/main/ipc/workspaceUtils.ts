@@ -51,9 +51,11 @@ export function resolveKnownWorkspace(passedRoot?: unknown): string {
       `SELECT 1 FROM projects WHERE folder_path = ?
        UNION ALL
        SELECT 1 FROM conversations WHERE home_workspace_root = ?
+       UNION ALL
+       SELECT 1 FROM managed_worktrees WHERE folder_path = ?
        LIMIT 1`
     )
-    .get(candidate, candidate)
+    .get(candidate, candidate, candidate)
   if (!known) throw new Error('Workspace is not associated with a SideKick project chat')
   return candidate
 }

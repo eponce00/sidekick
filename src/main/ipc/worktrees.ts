@@ -57,7 +57,7 @@ export function registerWorktreeHandlers(): void {
       await setupCreatedWorktree(
         event.sender,
         source.folder_path,
-        result.project.folder_path
+        result.worktree.folderPath
       ).catch(() =>
         console.warn('[Worktrees] Setup could not finish; the new worktree is preserved')
       )

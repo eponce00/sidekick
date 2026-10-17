@@ -45,15 +45,22 @@ restoring and removal. The renderer only asks for those operations by identity; 
 
 - **Storage and identity.** Worktrees live in SideKick's private data folder,
   `worktrees/<source project id>/<name>`, outside the user's checkout so editors, file watchers and
-  `git status` in the original folder never see them. Each is a SideKick project linked to its
-  source project, with the base it was created from. It starts detached at that base (Codex,
+  `git status` in the original folder never see them.
+- **A worktree belongs to its chat** (Codex, Claude Code, Cursor, Cline). The chat keeps its
+  project; `conversations.worktree_id` points at the worktree, and
+  `ProjectStore.getConversationContext` resolves the chat's folder to the worktree's. Worktrees
+  used to be projects of their own ("project · from main"), which cluttered the sidebar and let a
+  new chat started there share another chat's worktree; migration
+  `20261021_001_worktrees_belong_to_chats` moved their chats back to the source project and
+  removed those projects. A fork in the current folder shares its source's worktree; a worker that
+  works in its manager's folder shares the manager's.
+- **Base.** A worktree records the base it was created from and starts detached at it (Codex,
   OpenCode), since the base branch is usually checked out in the project folder already; the agent
   creates a branch when the work needs one, then merges or opens a pull request from the worktree.
   Worktrees from before this keep the branch SideKick made for them.
 - **Work in.** A new project chat chooses "This folder" or "New worktree" before its first message.
-  The choice is remembered as the default. A fresh chat (no messages yet) is moved into its new
-  worktree; a chat with history forks into one instead, so its history never points at the wrong
-  folder.
+  The choice is remembered as the default. A fresh chat (no messages yet) gets its new worktree;
+  a chat with history forks into one instead, so its history never points at the wrong folder.
 - **Concurrency guard.** The agent runtime records which folder every writing run uses. A
   conversation run that would write into a folder (or a folder nested in it) where another run is
   writing is refused unless the caller explicitly accepts sharing. The renderer checks first and

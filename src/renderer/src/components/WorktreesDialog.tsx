@@ -8,11 +8,11 @@ import './Worktrees.css'
 interface WorktreesDialogProps {
   isOpen: boolean
   worktrees: ManagedWorktreeSummary[]
-  /** Scrolls to and highlights this worktree's project. */
-  focusProjectId?: string | null
+  /** Scrolls to and highlights this worktree. */
+  focusWorktreeId?: string | null
   onClose: () => void
   onRefresh: () => Promise<void>
-  onOpenProject: (projectId: string) => void
+  onOpenChat: (worktree: ManagedWorktreeSummary) => void
   /** Called after a removal so the sidebar drops the project and detached chats. */
   onRemoved: () => Promise<void>
 }
@@ -41,10 +41,10 @@ function stateOf(worktree: ManagedWorktreeSummary): { label: string; tone: strin
 export function WorktreesDialog({
   isOpen,
   worktrees,
-  focusProjectId,
+  focusWorktreeId,
   onClose,
   onRefresh,
-  onOpenProject,
+  onOpenChat,
   onRemoved
 }: WorktreesDialogProps): React.JSX.Element | null {
   const dialogRef = useModalDialog<HTMLDivElement>(isOpen, onClose)
@@ -61,13 +61,11 @@ export function WorktreesDialog({
   }, [isOpen])
 
   useEffect(() => {
-    if (!isOpen || !focusProjectId) return
-    const target = worktrees.find(({ projectId }) => projectId === focusProjectId)
-    if (!target) return
+    if (!isOpen || !focusWorktreeId) return
     document
-      .getElementById(`worktree-row-${target.id}`)
+      .getElementById(`worktree-row-${focusWorktreeId}`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [focusProjectId, isOpen, worktrees])
+  }, [focusWorktreeId, isOpen, worktrees])
 
   if (!isOpen) return null
 
@@ -140,7 +138,7 @@ export function WorktreesDialog({
                 <li
                   key={worktree.id}
                   id={`worktree-row-${worktree.id}`}
-                  className={`worktrees-row${focusProjectId === worktree.projectId ? ' is-focused' : ''}${worktree.setAsideAt ? ' is-aside' : ''}`}
+                  className={`worktrees-row${focusWorktreeId === worktree.id ? ' is-focused' : ''}${worktree.setAsideAt ? ' is-aside' : ''}`}
                 >
                   <div className="worktrees-row-main">
                     <span className="worktrees-row-title" title={chat}>
@@ -193,7 +191,7 @@ export function WorktreesDialog({
                         type="button"
                         className="worktrees-icon-action"
                         disabled={Boolean(working)}
-                        onClick={() => onOpenProject(worktree.projectId)}
+                        onClick={() => onOpenChat(worktree)}
                         title="Open its chat"
                         aria-label="Open its chat"
                       >
