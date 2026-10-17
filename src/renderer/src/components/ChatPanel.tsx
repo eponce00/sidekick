@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
@@ -92,6 +92,7 @@ import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
 import { flyIntoComposer } from '../utils/flyIntoComposer'
+import { dissolveMessages, easeInReply, liftSendArrow, riseIntoChat } from '../utils/messageMotion'
 
 export type { PinnedModel }
 
@@ -308,6 +309,14 @@ function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // The message box's contents while a message is being edited in it, put back on Cancel.
+  const sentAtRef = useRef(0)
+  const riseMessageIdRef = useRef<string | null>(null)
+  const seenMessagesRef = useRef<{
+    conversationId: string | null
+    ids: Set<string>
+    count: number
+    lastId: string | undefined
+  } | null>(null)
   const editStashRef = useRef<{
     text: string
     images: MessageImageAttachment[]
@@ -426,6 +435,7 @@ function ChatPanel({
 
   const {
     editingMessageId,
+    steppedBackFromId,
     copiedMessageId,
     pendingCheckpointRestore,
     startEditMessage: handleStartEditMessage,
@@ -493,6 +503,29 @@ function ChatPanel({
       setAttachedContext(stash?.attachments ?? [])
       setNextRunMode(stash?.mode ?? 'conversation')
       setGoalArmed(stash?.goalArmed ?? false)
+    },
+    beforeMessagesLeave: (message, kind) => {
+      const container = messagesContainerRef.current
+      if (!container) return
+      // The chat's own messages, not the ones a sub-agent's card shows inside them.
+      const rendered = [
+        ...container.querySelectorAll<HTMLElement>('.message[data-message-id]')
+      ].filter((element) => !element.parentElement?.closest('.message'))
+      const index = rendered.findIndex((element) => element.dataset.messageId === message.id)
+      if (index < 0) return
+      if (kind === 'rewind') {
+        // It heads back into the box it came from.
+        flyIntoComposer(
+          rendered[index].querySelector<HTMLElement>('.message-bubble'),
+          inputRef.current?.closest<HTMLElement>('.input-container') ?? null
+        )
+      }
+      // An edited message comes back into focus with its new words as the old replies go.
+      if (kind === 'edit') riseMessageIdRef.current = message.id
+      return dissolveMessages(
+        rendered.slice(kind === 'rewind' ? index : index + 1),
+        container.getBoundingClientRect()
+      )
     },
     rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
       if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
@@ -1178,6 +1211,14 @@ function ChatPanel({
     submitMessage()
   }
 
+  const sendArrow = (): Element | null | undefined =>
+    inputRef.current?.closest('.input-container')?.querySelector('.send-button svg')
+  // The next message to appear rises out of the box, even into a chat created by sending it.
+  const markSent = (): void => {
+    sentAtRef.current = Date.now()
+    liftSendArrow(sendArrow())
+  }
+
   const submitMessage = (): void => {
     // What was dictated so far is in the box and goes with the message; with
     // voice on, the mic pauses until the reply has been read aloud.
@@ -1207,6 +1248,7 @@ function ChatPanel({
       setNextRunMode('conversation')
       setGoalArmed(false)
       setPlanModelOverrideId(null)
+      liftSendArrow(sendArrow())
       submitEdit(edit)
       return
     }
@@ -1221,6 +1263,7 @@ function ChatPanel({
       setPlanModelOverrideId(null)
       setAttachedImages([])
       setAttachedContext([])
+      markSent()
       void handleStartGoal(inputValue.trim(), images, attachments)
       return
     }
@@ -1229,6 +1272,7 @@ function ChatPanel({
     setPlanModelOverrideId(null)
     setAttachedImages([])
     setAttachedContext([])
+    markSent()
     void sendMessage(inputValue, { clearInput: true, mode, images, attachments })
   }
 
@@ -1510,9 +1554,55 @@ function ChatPanel({
     enabled: virtualizeMessages
   })
 
-  // While a message is edited in the box, it and everything after it step back.
-  const editingIndex = editingMessageId
-    ? visibleMessages.findIndex((candidate) => candidate.id === editingMessageId)
+  // New messages arrive with a little motion: what you send rises out of the box, replies ease
+  // in. Opening a chat or loading its history shows everything at once.
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current
+    const seen = seenMessagesRef.current
+    const lastId = visibleMessages.at(-1)?.id
+    // A reply streaming in re-renders constantly; only a change of messages needs a look.
+    if (
+      seen?.conversationId === conversationId &&
+      seen.count === visibleMessages.length &&
+      seen.lastId === lastId &&
+      !riseMessageIdRef.current
+    ) {
+      return
+    }
+    const ids = visibleMessages.map((message) => message.id)
+    seenMessagesRef.current = {
+      conversationId,
+      ids: new Set(ids),
+      count: ids.length,
+      lastId
+    }
+    if (!container) return
+    const element = (id: string): HTMLElement | null =>
+      container.querySelector<HTMLElement>(`.message[data-message-id="${CSS.escape(id)}"]`)
+    const riseId = riseMessageIdRef.current
+    if (riseId && ids.includes(riseId)) {
+      riseMessageIdRef.current = null
+      riseIntoChat(element(riseId))
+    }
+    const justSent = Date.now() - sentAtRef.current < 4_000
+    const sameChat = seen?.conversationId === conversationId && seen.ids.size > 0
+    if (!seen || (!sameChat && !justSent)) return
+    // Only what joined the end of the chat: history paged in above is not new.
+    let firstNew = ids.length
+    while (firstNew > 0 && !seen.ids.has(ids[firstNew - 1])) firstNew -= 1
+    if (firstNew === ids.length || ids.length - firstNew > 3) return
+    for (const message of visibleMessages.slice(firstNew)) {
+      if (message.role === 'user' && justSent) {
+        sentAtRef.current = 0
+        riseIntoChat(element(message.id))
+      } else if (message.role !== 'user') easeInReply(element(message.id))
+    }
+  }, [conversationId, visibleMessages])
+
+  // While a message is edited in the box, or replaced by sending it, it and everything after it
+  // step back.
+  const editingIndex = steppedBackFromId
+    ? visibleMessages.findIndex((candidate) => candidate.id === steppedBackFromId)
     : -1
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem

@@ -58,6 +58,8 @@ import type { SessionStatus } from '../../../shared/sessions'
 import ConfirmDialog from './ConfirmDialog'
 import ScheduledRunGroupRow from './ScheduledRunGroupRow'
 import { groupScheduledConversations } from '../utils/scheduledRunGroups'
+import { Reveal } from './Reveal'
+import { WrittenTitle } from './WrittenTitle'
 import './Sidebar.css'
 
 interface SidebarProps {
@@ -704,7 +706,7 @@ function Sidebar({
                     aria-label="Works in its own worktree"
                   />
                 )}
-                {label}
+                <WrittenTitle text={label || conversation.title} identity={conversation.id} />
               </span>
               {rollUp && <span className="conversation-metadata session-roll-up">{rollUp}</span>}
               {options.showProject && conversation.project_id && (
@@ -882,14 +884,16 @@ function Sidebar({
           ...options,
           context: filtering && !conversationMatches(conversation)
         })}
-        {!isFamilyCollapsed(conversation.id) && shown.length > 0 && (
-          <div
-            className="session-family-workers"
-            role="group"
-            aria-label={`Chats ${conversation.title} started`}
-          >
-            {shown.map((worker) => renderFamily(worker, { nested: true, worker: true }))}
-          </div>
+        {shown.length > 0 && (
+          <Reveal open={!isFamilyCollapsed(conversation.id)}>
+            <div
+              className="session-family-workers"
+              role="group"
+              aria-label={`Chats ${conversation.title} started`}
+            >
+              {shown.map((worker) => renderFamily(worker, { nested: true, worker: true }))}
+            </div>
+          </Reveal>
         )}
       </div>
     )
@@ -1407,7 +1411,7 @@ function Sidebar({
                                   </span>
                                 </span>
                               </div>
-                              {!isProjectCollapsed && (
+                              <Reveal open={!isProjectCollapsed}>
                                 <div className="project-conversations">
                                   {renderConversationList(projectConversations, { nested: true })}
                                   {!filtering && projectConversations.length === 0 ? (
@@ -1420,7 +1424,7 @@ function Sidebar({
                                     </button>
                                   ) : null}
                                 </div>
-                              )}
+                              </Reveal>
                             </div>
                           )
                         })

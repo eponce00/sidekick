@@ -58,6 +58,7 @@ import {
 import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
+import { Reveal } from './Reveal'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -722,26 +723,28 @@ function AgentWorkDisclosure({
           )}
         </div>
       )}
-      {expanded && children && (
-        <div id={contentId} className="agent-work-content">
-          {(() => {
-            const steps = Children.toArray(children)
-            const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
-            if (!earlier) return steps
-            return (
-              <>
-                <button
-                  type="button"
-                  className="agent-work-earlier"
-                  onClick={() => setShowEarlier(true)}
-                >
-                  Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
-                </button>
-                {steps.slice(earlier)}
-              </>
-            )
-          })()}
-        </div>
+      {children && (
+        <Reveal open={expanded}>
+          <div id={contentId} className="agent-work-content">
+            {(() => {
+              const steps = Children.toArray(children)
+              const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
+              if (!earlier) return steps
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="agent-work-earlier"
+                    onClick={() => setShowEarlier(true)}
+                  >
+                    Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
+                  </button>
+                  {steps.slice(earlier)}
+                </>
+              )
+            })()}
+          </div>
+        </Reveal>
       )}
     </div>
   )
@@ -857,6 +860,7 @@ function MessageItemInner({
     <div
       key={msg.id}
       ref={messageRef}
+      data-message-id={msg.id}
       className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${isEditing ? 'message-editing' : ''} ${isRewound ? 'message-rewound' : ''}`}
       // Sending the edit replaces this part of the chat, so it steps back while the edit is open.
       aria-hidden={isRewound || undefined}
@@ -1052,7 +1056,7 @@ function MessageItemInner({
                                 className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
                               />
                             </button>
-                            {expandedThinking.has(thinkingId) && (
+                            <Reveal open={expandedThinking.has(thinkingId)}>
                               <div className="actions-content">
                                 <div className="action-item">
                                   <div className="action-thinking">
@@ -1068,7 +1072,7 @@ function MessageItemInner({
                                   </div>
                                 </div>
                               </div>
-                            )}
+                            </Reveal>
                           </div>
                         )
                       })}

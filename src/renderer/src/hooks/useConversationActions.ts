@@ -34,7 +34,15 @@ interface ConversationActionsOptions {
   beginEdit?: (message: Message, source: HTMLElement | null) => void
   /** The edit was cancelled: put back what the message box held before. */
   cancelEdit?: () => void
+  /**
+   * Called just before a rewind takes messages out of the chat: after `message` for an edit or a
+   * retry, from `message` on for a rewind to it. The chat waits for what this returns, so the
+   * messages can be seen to leave.
+   */
+  beforeMessagesLeave?: (message: Message, kind: MessagesLeaveKind) => Promise<void> | void
 }
+
+export type MessagesLeaveKind = 'edit' | 'retry' | 'rewind'
 
 /** What the message box holds when an edited message is sent again. */
 export interface MessageEdit {
@@ -60,6 +68,8 @@ export interface RewoundGoal {
 
 export function useConversationActions(options: ConversationActionsOptions): {
   editingMessageId: string | null
+  /** The message being edited or replaced: it and everything after it step back. */
+  steppedBackFromId: string | null
   copiedMessageId: string | null
   pendingCheckpointRestore: string | null
   startEditMessage: (message: Message, event: React.MouseEvent<HTMLButtonElement>) => void
@@ -74,14 +84,16 @@ export function useConversationActions(options: ConversationActionsOptions): {
   rewindToMessage: (message: Message, restoreFiles: boolean) => Promise<void>
 } {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  // A sent edit keeps what it replaces stepped back until those messages leave.
+  const [replacingMessageId, setReplacingMessageId] = useState<string | null>(null)
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [pendingCheckpointRestore, setPendingCheckpointRestore] = useState<string | null>(null)
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Messages skip re-rendering when only their handlers change, so an Edit button can hold an
-  // older startEditMessage; it reaches the current beginEdit, and the box's current draft, here.
-  const beginEditRef = useRef(options.beginEdit)
+  // older startEditMessage; it reaches the current callbacks, and the box's current draft, here.
+  const latestOptionsRef = useRef(options)
   useLayoutEffect(() => {
-    beginEditRef.current = options.beginEdit
+    latestOptionsRef.current = options
   })
 
   useEffect(
@@ -161,6 +173,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
       await rewindConversationOnce(message, edit)
     } finally {
       rewindingRef.current = false
+      setReplacingMessageId(null)
     }
   }
 
@@ -195,6 +208,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
     // letting the run silently diverge from what is stored.
     const abortRewind = (summary: string, error: unknown): void => {
       console.error('[Rewind]', summary, error)
+      setReplacingMessageId(null)
       options.setMessages((current) => [
         ...current,
         {
@@ -232,6 +246,8 @@ export function useConversationActions(options: ConversationActionsOptions): {
       abortRewind('The replaced messages could not be cleared, so no new reply was started:', error)
       return
     }
+    await latestOptionsRef.current.beforeMessagesLeave?.(message, edit ? 'edit' : 'retry')
+    setReplacingMessageId(null)
     await options.rerunStream(
       truncatedMessages,
       options.conversationId,
@@ -265,11 +281,14 @@ export function useConversationActions(options: ConversationActionsOptions): {
       console.error('[Rewind] The rewound messages could not be cleared:', error)
       return
     }
-    options.setMessages(options.messages.slice(0, targetIndex))
+    // The message heads back into the box while it and what follows leave the chat.
+    const leaving = latestOptionsRef.current.beforeMessagesLeave?.(message, 'rewind')
     await options.restoreDraft?.(
       message,
       options.messages.slice(targetIndex).some((candidate) => candidate.startsGoal === true)
     )
+    await leaving
+    options.setMessages(options.messages.slice(0, targetIndex))
   }
 
   /** Brings a message into the message box; sending it then replaces it and what follows. */
@@ -279,7 +298,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
       .closest('.message')
       ?.querySelector<HTMLElement>('.message-bubble')
     setEditingMessageId(message.id)
-    beginEditRef.current?.(message, source ?? null)
+    latestOptionsRef.current.beginEdit?.(message, source ?? null)
   }
 
   const cancelEditMessage = (): void => {
@@ -346,13 +365,17 @@ export function useConversationActions(options: ConversationActionsOptions): {
 
   return {
     editingMessageId,
+    steppedBackFromId: editingMessageId ?? replacingMessageId,
     copiedMessageId,
     pendingCheckpointRestore,
     startEditMessage,
     cancelEditMessage,
     submitEdit: (edit) => {
       const message = options.messages.find((candidate) => candidate.id === editingMessageId)
-      if (message) void rewindConversation(message, edit)
+      if (!message) return
+      setEditingMessageId(null)
+      setReplacingMessageId(message.id)
+      void rewindConversation(message, edit)
     },
     copyMessage,
     rewindToMessage,

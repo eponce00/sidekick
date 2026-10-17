@@ -40,6 +40,8 @@ import {
 } from './types/app.types'
 import { resolveFastModel } from './utils/fastModel'
 import { isPlaceholderConversationTitle } from './utils/chatPanelHelpers'
+import { switchThemeFrom } from './utils/themeTransition'
+import { WrittenTitle } from './components/WrittenTitle'
 import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
@@ -956,7 +958,10 @@ function App(): React.JSX.Element {
           toggleSidebar,
           toggleBrowserPanel,
           toggleVoice: toggleVoiceLoop,
-          toggleTheme: () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark')),
+          toggleTheme: () =>
+            switchThemeFrom(document.querySelector('.theme-toggle-button'), () =>
+              setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+            ),
           checkForUpdates: () => void window.api.appUpdates.check(),
           previousConversation: () => showAdjacentConversation(-1),
           nextConversation: () => showAdjacentConversation(1),
@@ -1326,7 +1331,11 @@ function App(): React.JSX.Element {
           {titleBarContext && (
             <>
               <span className="title-bar-divider">/</span>
-              <span className="title-bar-context">{titleBarContext}</span>
+              <WrittenTitle
+                className="title-bar-context"
+                text={titleBarContext}
+                identity={currentConversationId}
+              />
             </>
           )}
         </div>
@@ -1343,7 +1352,12 @@ function App(): React.JSX.Element {
             />
             <button
               className="theme-toggle-button"
-              onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+              onClick={(event) => {
+                const origin = event.currentTarget
+                switchThemeFrom(origin, () =>
+                  setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+                )
+              }}
               title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
               aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             >

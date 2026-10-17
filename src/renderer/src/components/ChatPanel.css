@@ -824,6 +824,22 @@
   color: var(--color-success);
 }
 
+/* The check pops in when a copy lands. */
+.message-action.icon.copied-icon svg {
+  animation: copied-pop 0.42s var(--ease-out);
+}
+
+@keyframes copied-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.4) rotate(-20deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
 .message-action:hover {
   color: var(--text-primary);
   background: var(--surface-3);

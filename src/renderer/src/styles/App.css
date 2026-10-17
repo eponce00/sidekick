@@ -448,6 +448,41 @@ select {
   opacity: 0.8;
 }
 
+/* The sun sets and the moon rises as the theme switches. */
+.theme-toggle-button svg {
+  animation: theme-icon-in 0.5s var(--ease-out);
+}
+
+@keyframes theme-icon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.5);
+  }
+}
+
+.settings-button svg {
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+
+.settings-button:hover svg {
+  transform: rotate(60deg);
+}
+
+/* The new theme spreads from the toggle as a circle (themeTransition.ts); colors change all at
+   once beneath it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
 .app-main {
   display: flex;
   flex: 1;
