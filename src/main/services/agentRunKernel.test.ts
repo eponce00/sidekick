@@ -1051,65 +1051,34 @@ describe('AgentRunKernel', () => {
     ])
   })
 
-  it('asks a model that hit the output limit while still thinking to act', async () => {
+  it('ends a turn the output limit cut off while still thinking, without nudging the model', async () => {
     const cutOff = { promptTokens: 10, completionTokens: 32_768, doneReason: 'length' }
     const thinkingOnly = sampledTurn({ thinking: 'Planning the horse…', usage: cutOff })
-    const answered = sampledTurn({ content: 'Here is the page.' })
-    const sampler = sequence(thinkingOnly, answered)
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-
-    const result = await kernel.start(input())
-    const events = store.listEvents('run-1')
-
-    expect(result).toMatchObject({ phase: 'completed', content: 'Here is the page.' })
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'run.retrying',
-        payload: expect.objectContaining({ reason: 'output_limit_while_thinking' })
-      })
-    )
-    const nudge = vi.mocked(answered).mock.calls[0][0].messages.at(-1)
-    expect(nudge).toMatchObject({ role: 'user' })
-    expect(String(nudge?.content)).toContain(
-      'reached the output limit while you were still thinking'
-    )
-  })
-
-  it('fails plainly when a model keeps spending its output limit on thinking', async () => {
-    const cutOff = { promptTokens: 10, completionTokens: 32_768, doneReason: 'length' }
-    const sampler = sequence(sampledTurn({ thinking: 'Still planning…', usage: cutOff }))
+    const sampler = vi.fn(thinkingOnly)
     const kernel = new AgentRunKernel(store, undefined, sampler)
 
     const result = await kernel.start(input())
 
     expect(result).toMatchObject({ phase: 'failed' })
     expect((result as { error?: string }).error).toMatch(
-      /used its whole output limit.*thinking, 3 times, and never answered/
+      /reached its output limit.*while still thinking, before it answered or used a tool/
     )
+    // Asked once: nothing tells the model to stop thinking and act.
+    expect(sampler).toHaveBeenCalledTimes(1)
   })
 
-  it('continues an answer the output limit cut off partway', async () => {
+  it('keeps an answer the output limit cut off partway', async () => {
     const sampler = sequence(
       sampledTurn({
-        content: 'The first half of the answer, ',
+        content: 'The first half of the answer',
         usage: { promptTokens: 10, completionTokens: 4_096, doneReason: 'length' }
-      }),
-      sampledTurn({ content: 'and the second half.' })
+      })
     )
     const kernel = new AgentRunKernel(store, undefined, sampler)
 
     const result = await kernel.start(input())
 
-    expect(result).toMatchObject({
-      phase: 'completed',
-      content: 'The first half of the answer, and the second half.'
-    })
-    expect(store.listEvents('run-1')).toContainEqual(
-      expect.objectContaining({
-        type: 'run.retrying',
-        payload: expect.objectContaining({ reason: 'output_limit_mid_answer' })
-      })
-    )
+    expect(result).toMatchObject({ phase: 'completed', content: 'The first half of the answer' })
   })
 
   it('requires a research profile to attempt source retrieval before completing', async () => {

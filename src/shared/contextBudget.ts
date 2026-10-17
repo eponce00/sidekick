@@ -78,20 +78,27 @@ export function calculateContextCapacity(options: {
   }
 }
 
+/**
+ * How long one reply may be. Without a configured maximum, a quarter of the context window up to
+ * 32,768 tokens. A configured maximum is the user's own and is honored up to half the window, so
+ * the conversation keeps room; a reasoning model needs it to think through a large task.
+ */
 export function resolveMaxOutputTokens(
   contextLength: number,
   configuredMaxOutputTokens?: number
 ): number {
   const normalizedContext = Math.max(1_024, Math.floor(contextLength))
-  const derived = Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
   if (
     configuredMaxOutputTokens === undefined ||
     !Number.isFinite(configuredMaxOutputTokens) ||
     configuredMaxOutputTokens <= 0
   ) {
-    return derived
+    return Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
   }
-  return Math.max(1_024, Math.min(derived, Math.floor(configuredMaxOutputTokens)))
+  return Math.max(
+    1_024,
+    Math.min(Math.floor(normalizedContext / 2), Math.floor(configuredMaxOutputTokens))
+  )
 }
 
 function estimateImageTokens(image: string): number {
