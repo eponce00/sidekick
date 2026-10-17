@@ -4,8 +4,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
+import { pathToFileURL } from 'url'
 import {
   classifyVerificationCommand,
+  isVisualPath,
   WorkspaceVerificationService
 } from './workspaceVerificationService'
 
@@ -174,6 +176,52 @@ describe('WorkspaceVerificationService', () => {
       continue: false,
       summary: { status: 'not_applicable' }
     })
+  })
+
+  it('asks a model that can see to look at a page it changed, once, unless it already has', async () => {
+    await mkdir(join(root, 'site'))
+    await writeFile(join(root, 'site', 'horse.html'), '<canvas></canvas>\n')
+    service.recordChanges('run-7', root, 'workspace_tool', [
+      { path: 'site/horse.html', kind: 'create' },
+      { path: 'site/horse.js', kind: 'create' }
+    ])
+    const controller = service.createTerminalController('run-7', root, 0, { visualCheck: true })!
+
+    const first = await controller.afterTerminalTurn()
+    expect(first.continue).toBe(true)
+    expect(first.prompt).toContain('sidekick_visual_check')
+    expect(first.prompt).toContain('(site/horse.html)')
+    expect(first.prompt).toContain(pathToFileURL(join(root, 'site', 'horse.html')).href)
+    expect((await controller.afterTerminalTurn()).continue).toBe(false)
+
+    // Having looked since its last visual change, it is not asked.
+    const looked = service.createTerminalController('run-7', root, 0, { visualCheck: true })!
+    looked.recordVisualLook!()
+    expect((await looked.afterTerminalTurn()).continue).toBe(false)
+    // A model without the browser is never asked.
+    const blind = service.createTerminalController('run-7', root, 0)!
+    expect((await blind.afterTerminalTurn()).continue).toBe(false)
+  })
+
+  it('asks for a check and a look in one pass, and ignores tests and plain scripts', async () => {
+    // A second pass would keep the first pass's one-line result as the answer.
+    await writeFile(join(root, 'package.json'), '{"scripts":{"test":"vitest"}}')
+    service.recordChanges('run-8', root, 'workspace_tool', [
+      { path: 'src/App.tsx', kind: 'update' }
+    ])
+    const controller = service.createTerminalController('run-8', root, 0, { visualCheck: true })!
+    const both = await controller.afterTerminalTurn()
+    expect(both.continue).toBe(true)
+    expect(both.prompt).toContain('sidekick_verification_guard')
+    expect(both.prompt).toContain('sidekick_visual_check')
+    expect(both.prompt).toContain("project's dev server")
+    expect(both.prompt!.match(/Your previous reply stays the answer/g)).toHaveLength(1)
+    expect((await controller.afterTerminalTurn()).continue).toBe(false)
+
+    expect(isVisualPath('src/App.test.tsx')).toBe(false)
+    expect(isVisualPath('src/__tests__/Button.tsx')).toBe(false)
+    expect(isVisualPath('scripts/build.js')).toBe(false)
+    expect(isVisualPath('styles\\site.css')).toBe(true)
   })
 
   it('suggests the checks of the project that changed inside a larger workspace', async () => {

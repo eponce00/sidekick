@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3'
 import { createHash, randomUUID } from 'crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'fs'
-import { dirname, relative, resolve } from 'path'
+import { dirname, extname, relative, resolve } from 'path'
+import { pathToFileURL } from 'url'
 import type { ToolDiagnostic, ToolWorkspaceChange } from '../../shared/agentRuntime'
 import type { ShellCommandResult } from '../../shared/types'
 import type {
@@ -235,6 +236,28 @@ export function classifyVerificationCommand(command: string): VerificationComman
     // source evidence. Compound commands with an explicit mutation do.
     mutatesWorkspace: explicitMutation || (!kind && !onlyRead)
   }
+}
+
+const VISUAL_EXTENSIONS = new Set([
+  '.html',
+  '.htm',
+  '.css',
+  '.scss',
+  '.sass',
+  '.less',
+  '.svg',
+  '.jsx',
+  '.tsx',
+  '.vue',
+  '.svelte',
+  '.astro'
+])
+
+/** A changed file whose result is seen rendered: markup, styles, and UI components, not tests. */
+export function isVisualPath(path: string): boolean {
+  const normalized = path.replaceAll('\\', '/')
+  if (/(^|\/)__tests__\//.test(normalized) || /\.(test|spec)\.[^/]+$/.test(normalized)) return false
+  return VISUAL_EXTENSIONS.has(extname(normalized).toLowerCase())
 }
 
 export class WorkspaceVerificationService {
@@ -553,9 +576,40 @@ export class WorkspaceVerificationService {
   createTerminalController(
     runId: string,
     workspaceRoot: string | undefined,
-    baselineRevision: number
+    baselineRevision: number,
+    options: { visualCheck?: boolean } = {}
   ): WorkspaceVerificationTerminalController | undefined {
     if (!workspaceRoot) return undefined
+    // The model has seen the rendered result of every change up to this revision.
+    let lookedAtRevision = baselineRevision
+    let visualNudged = false
+    const visualDecision = (instruction: string): VerificationTerminalDecision | undefined => {
+      if (!options.visualCheck || visualNudged) return undefined
+      const unseen = this.changedPaths(runId, workspaceRoot, lookedAtRevision).filter(isVisualPath)
+      if (!unseen.length) return undefined
+      visualNudged = true
+      const root = resolve(workspaceRoot)
+      const pages = unseen
+        .filter((path) => /\.html?$/i.test(path))
+        .slice(0, 3)
+        .map((path) => pathToFileURL(resolve(root, path)).href)
+      const where = pages.length
+        ? `Open ${pages.length === 1 ? 'the page' : 'the pages'} (${pages.join(', ')}). If a page loads ES modules or fetches files, serve its folder over a local HTTP server instead of file://.`
+        : `Open where these files render, such as the project's dev server.`
+      return {
+        continue: true,
+        summary: this.summary(runId, workspaceRoot, baselineRevision),
+        prompt:
+          `<sidekick_visual_check trust="app-policy">\n` +
+          `You changed files that render (${unseen.slice(0, 5).join(', ')}${unseen.length > 5 ? ', …' : ''}) ` +
+          `and have not looked at the result since. ${where} ` +
+          `Call browser_verify with the visual criteria from the request; for an animation or ` +
+          `anything that should move, set frames to 3. Fix what does not match, then look again. ` +
+          `If it cannot be opened here, say so in one sentence rather than describing how it ` +
+          `probably looks.${instruction ? ` ${instruction}` : ''}\n` +
+          `</sidekick_visual_check>`
+      }
+    }
     // One nudge per run, whichever boundary reaches it first. A goal that was
     // refused completion for missing evidence has been asked already, and must
     // not be told again after it completes that it cannot claim completion.
@@ -587,12 +641,21 @@ export class WorkspaceVerificationService {
       }
       return { continue: false, summary }
     }
+    const answerInstruction =
+      'Your previous reply stays the answer the user reads. After verifying, reply with one short sentence stating the result; do not repeat or summarize that answer. ' +
+      'If you had to change files, end instead with a complete answer, because it replaces the previous one.'
     return {
-      afterTerminalTurn: async () =>
-        decide(
-          'Your previous reply stays the answer the user reads. After verifying, reply with one short sentence stating the result; do not repeat or summarize that answer. ' +
-            'If you had to change files, end instead with a complete answer, because it replaces the previous one.'
-        ),
+      // A check and a look are asked for in one pass: a second pass would take the first one's
+      // short result as the answer it keeps.
+      afterTerminalTurn: async () => {
+        const check = decide(answerInstruction)
+        const look = visualDecision(check.continue ? '' : answerInstruction)
+        if (!look) return check
+        return check.continue ? { ...check, prompt: `${check.prompt}\n${look.prompt}` } : look
+      },
+      recordVisualLook: () => {
+        lookedAtRevision = this.currentRevision(workspaceRoot)
+      },
       beforeGoalCompletion: () =>
         decide(
           'The goal was not marked complete. Verify first, then call update_goal again; a second request completes it even when no check applies.'

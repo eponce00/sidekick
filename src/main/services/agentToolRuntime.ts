@@ -563,19 +563,29 @@ export class AgentToolRuntime {
       codeIntelligenceRisk: sessionState.codeIntelligenceRisk,
       editingDialect: input.editingDialect
     })
+    // A model that can see pages is asked to look at what it changed before it finishes.
+    const verificationController = this.verification.createTerminalController(
+      input.runId,
+      input.workspaceRoot,
+      baselineRevision,
+      { visualCheck: catalog().browserEnabled === true && input.surface === 'conversation' }
+    )
     return {
       catalog,
       persistentSkillIds: () =>
         [...activeSkillIds].filter((id) => getSkillById(id)?.activationScope === 'conversation'),
-      verificationController: this.verification.createTerminalController(
-        input.runId,
-        input.workspaceRoot,
-        baselineRevision
-      ),
+      verificationController,
       router: {
-        execute: (name, args, context) => {
+        execute: async (name, args, context) => {
           const title = this.title(name, args)
-          return handlers.execute({ name, title, arguments: args, context })
+          const result = await handlers.execute({ name, title, arguments: args, context })
+          if (
+            name.startsWith('browser_') &&
+            result.status === 'success' &&
+            result.media?.some((item) => item.type === 'image')
+          )
+            verificationController?.recordVisualLook?.()
+          return result
         },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,

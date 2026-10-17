@@ -10,7 +10,12 @@ An eligible agent can open a local or remote page, inspect its accessible struct
 screenshot, click or hover an element, type into fields, choose options, scroll, resize the
 viewport, move between tabs, wait for page state, inspect console and failed network activity, and
 verify an expected result. Screenshots are delivered as actual image input when the selected model
-supports vision.
+supports vision. To check an animation, the agent can capture a few frames a moment apart, which
+it sees side by side in one image.
+
+When the agent changes a page, styles, or UI components and is about to finish without having
+looked at the result since, SideKick asks it once to open the result here and check it, then fix
+what does not match. This happens only with a model that can see images.
 
 `browser_hold` provides one bounded, atomic press-and-hold gesture for ordinary controls such as
 maps, sliders, canvases, and test interfaces. It always releases the mouse even if the action is
