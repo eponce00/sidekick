@@ -84,17 +84,20 @@ of its report.
 
 ## The side panel
 
-The panel beside the chat holds Files, Recovery, Browser and Terminal. The size button in its
-header shows how big it is, and each click steps to the next size:
+The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
+any width; the chat and the left sidebar make room as it grows:
 
-- **Narrow:** a fixed column beside the chat.
-- **Wide:** drag the panel's edge to size it, down to a phone-width chat. SideKick remembers that
-  width for next time.
-- **Full window:** the chat steps aside and the left sidebar folds to its thin rail, so the
-  panel, a browser page for example, gets the whole window. Opening the sidebar returns the panel
-  to wide. The next click goes back to narrow.
+- Let go near the **narrow** column or an **even split** with the chat, and the edge glides onto
+  it. A width in between stays where you leave it, and SideKick remembers it.
+- Drag past the point where the chat would get too narrow, and the panel takes the **full
+  window**: the chat steps aside and the left sidebar folds to its thin rail, so a browser page,
+  for example, gets the whole window. Drag back to bring them back. Opening the sidebar also
+  returns the panel beside the chat.
+- Drag it nearly shut to **fold it away** to its rail of tab icons. Click an icon, or drag out
+  from the rail, to open it again at the width it had.
 
-The button beside it hides the panel and shows it again.
+Clicking the tab already showing also folds the panel away. Double-click the edge to switch
+between the narrow column and the even split; the arrow keys move a focused edge.
 
 ## Going back
 

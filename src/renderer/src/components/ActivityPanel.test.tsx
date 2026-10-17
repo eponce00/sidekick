@@ -95,58 +95,117 @@ describe('ActivityPanel inspector', () => {
     expect(container.textContent).toContain('No browser activity yet')
   })
 
-  it('steps through narrow, wide and full, and drags only the wide size', async () => {
-    const onSizeChange = vi.fn()
-    const render = async (size: 'narrow' | 'wide' | 'full'): Promise<void> => {
+  it('drags its edge to any width, snapping, taking the window, and folding away', async () => {
+    const onSettle = vi.fn()
+    let state = { width: 500, size: 'wide' as 'wide' | 'full', pinned: true }
+    const render = async (): Promise<void> => {
       await act(async () =>
         root.render(
           <ActivityPanel
-            isPinned
-            onTogglePin={vi.fn()}
+            isPinned={state.pinned}
+            onTogglePin={() => {
+              state = { ...state, pinned: !state.pinned }
+              void render()
+            }}
             conversationId="chat-1"
             focusChainTodos={[]}
             workspaceFolder={null}
-            maxWidth={1_000}
-            size={size}
-            onSizeChange={onSizeChange}
+            maxWidth={state.size === 'full' ? 1_000 : 900}
+            width={state.width}
+            onWidthChange={(width) => {
+              state = { ...state, width }
+              void render()
+            }}
+            size={state.size}
+            onSizeChange={(size) => {
+              state = { ...state, size }
+              void render()
+            }}
+            sideBySideMaxWidth={900}
+            snapWidths={[320, 600]}
+            onSettle={onSettle}
           />
         )
       )
     }
     const panel = (): HTMLElement => container.querySelector('.activity-panel') as HTMLElement
-    const separator = (): HTMLElement | null =>
-      container.querySelector('[aria-label="Resize workspace inspector"]')
+    const edge = (): HTMLElement =>
+      container.querySelector('[aria-label="Resize workspace inspector"]') as HTMLElement
+    const drag = async (from: number, to: number, beforeRelease?: () => void): Promise<void> => {
+      await act(async () => {
+        edge().dispatchEvent(
+          new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: from })
+        )
+      })
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('pointermove', { clientX: to }))
+      })
+      beforeRelease?.()
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('pointerup', { clientX: to }))
+      })
+    }
+    await render()
+    expect(panel().style.width).toBe('500px')
+    // No size buttons: the edge does it all.
+    expect(container.querySelector('.activity-size-button')).toBeNull()
+    expect(container.querySelector('[title="Collapse panel"]')).toBeNull()
 
-    await render('narrow')
-    expect(panel().style.width).toBe('320px')
-    expect(separator()).toBeNull()
-    // One button: it shows the size the panel is and steps to the next.
-    const sizeButton = (): HTMLButtonElement =>
-      container.querySelector('.activity-size-button') as HTMLButtonElement
-    expect(sizeButton().dataset.size).toBe('narrow')
-    expect(sizeButton().title).toContain('Click for wide')
-    await act(async () => sizeButton().click())
-    expect(onSizeChange).toHaveBeenLastCalledWith('wide')
+    // Let go near the even split, it glides there.
+    await drag(1_000, 880)
+    expect(state.width).toBe(600)
+    expect(onSettle).toHaveBeenCalled()
+    expect(panel().classList.contains('is-gliding')).toBe(true)
 
-    await render('wide')
-    expect(panel().style.width).toBe('640px')
-    await act(async () => {
-      separator()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    // Well past the widest it fits beside the chat, it takes the window.
+    await drag(1_000, 500, () => {
+      expect(container.textContent).toContain('Full window')
     })
-    // The width dragged to is the wide size from now on.
-    expect(panel().style.width).toBe('660px')
-    expect(window.localStorage.getItem('activityPanelWidth')).toBe('660')
-
-    await render('full')
+    expect(state.size).toBe('full')
     expect(panel().style.width).toBe('1000px')
-    expect(panel().dataset.size).toBe('full')
-    expect(separator()).toBeNull()
-    // From the full window it goes back to narrow.
-    await act(async () => sizeButton().click())
-    expect(onSizeChange).toHaveBeenLastCalledWith('narrow')
 
-    await render('wide')
-    expect(panel().style.width).toBe('660px')
+    // From the window, dragging back sets it beside the chat at the width let go at.
+    await drag(1_000, 1_300)
+    expect(state.size).toBe('wide')
+    expect(state.width).toBe(700)
+
+    // Nearly shut, it folds to the rail and opens again at the width it had.
+    await drag(1_000, 1_620, () => {
+      expect(container.textContent).toContain('Let go to fold away')
+    })
+    expect(state.pinned).toBe(false)
+    expect(state.width).toBe(700)
+    expect(panel().classList.contains('is-collapsed')).toBe(true)
+
+    // Dragged out from the rail, it opens.
+    await drag(1_000, 400)
+    expect(state.pinned).toBe(true)
+
+    // The arrow keys move the edge too.
+    state = { ...state, size: 'wide', width: 500 }
+    await render()
+    await act(async () => {
+      edge().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    })
+    expect(state.width).toBe(520)
+  })
+
+  it('folds to its rail when the tab already showing is clicked', async () => {
+    const onTogglePin = vi.fn()
+    await act(async () =>
+      root.render(
+        <ActivityPanel
+          isPinned
+          onTogglePin={onTogglePin}
+          conversationId="chat-1"
+          focusChainTodos={[]}
+          workspaceFolder={null}
+        />
+      )
+    )
+    const filesTab = container.querySelector('.activity-tab-button.active') as HTMLButtonElement
+    await act(async () => filesTab.click())
+    expect(onTogglePin).toHaveBeenCalledTimes(1)
   })
 
   it('auto-selects Browser once when a new run starts and exposes all collapsed shortcuts', async () => {

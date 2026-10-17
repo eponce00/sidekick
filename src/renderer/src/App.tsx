@@ -61,10 +61,10 @@ import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
 import {
-  ACTIVITY_PANEL_NARROW_WIDTH,
   LAYOUT_MOTION_MS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH,
+  activityPanelSnapWidths,
   storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout,
@@ -224,17 +224,23 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', update)
   }, [])
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
-    storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
+    storedActivityPanelWidth(
+      window.localStorage.getItem('activityPanelWidth'),
+      window.innerWidth,
+      window.localStorage.getItem('activityPanelSize')
+    )
   )
   const [activityPanelSize, setActivityPanelSize] = useState<ActivityPanelSize>(() =>
-    storedActivityPanelSize(
-      window.localStorage.getItem('activityPanelSize'),
-      window.localStorage.getItem('activityPanelWidth')
-    )
+    storedActivityPanelSize(window.localStorage.getItem('activityPanelSize'))
   )
   useEffect(() => {
     window.localStorage.setItem('activityPanelSize', activityPanelSize)
   }, [activityPanelSize])
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelWidth', String(activityPanelWidth))
+  }, [activityPanelWidth])
+  // Each time the inspector's edge glides to a width, the chat is held still while it moves.
+  const [panelGlide, setPanelGlide] = useState(0)
   // Where the panel floats over the chat, sizes do not apply.
   const panelSize: ActivityPanelSize = isCompactLayout ? 'wide' : activityPanelSize
   const panelIsFull = effectiveActivityPanelPinned && panelSize === 'full'
@@ -269,15 +275,28 @@ function App(): React.JSX.Element {
   const sidebarTargetWidth = effectiveSidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH
   const panelTargetWidth = !effectiveActivityPanelPinned
     ? collapsedPanelWidth
-    : panelSize === 'narrow'
-      ? Math.min(ACTIVITY_PANEL_NARROW_WIDTH, layout.panelMaxWidth)
-      : panelSize === 'full'
-        ? layout.panelMaxWidth
-        : Math.min(activityPanelWidth, layout.panelMaxWidth)
+    : panelSize === 'full'
+      ? layout.panelMaxWidth
+      : Math.min(activityPanelWidth, layout.panelMaxWidth)
+  // The widest the inspector fits beside the chat, with the sidebar folded for it: dragged well
+  // past this, it takes the whole window.
+  const panelSideBySideMax = workspaceLayout({
+    viewportWidth,
+    sidebarCollapsed: isSidebarCollapsed,
+    sidebarHeldOpen: isSidebarHeldOpen,
+    panelOpen: true,
+    panelWidth: Number.MAX_SAFE_INTEGER,
+    panelSize: 'wide'
+  }).panelMaxWidth
+  const panelSnapWidths = activityPanelSnapWidths({
+    viewportWidth,
+    sidebarWidth: SIDEBAR_RAIL_WIDTH,
+    sideBySideMax: panelSideBySideMax
+  })
   const chatTargetWidth = panelIsFull
     ? 0
     : Math.max(0, viewportWidth - sidebarTargetWidth - panelTargetWidth)
-  const layoutShape = `${panelSize}|${effectiveActivityPanelPinned}|${effectiveSidebarCollapsed}`
+  const layoutShape = `${panelSize}|${effectiveActivityPanelPinned}|${effectiveSidebarCollapsed}|${panelGlide}`
   const [settledLayout, setSettledLayout] = useState({
     shape: layoutShape,
     chatWidth: chatTargetWidth
@@ -1473,9 +1492,13 @@ function App(): React.JSX.Element {
           tabRequest={activityTabRequest}
           onActiveTabChange={handleActivityTabChange}
           maxWidth={layout.panelMaxWidth}
+          width={activityPanelWidth}
           onWidthChange={setActivityPanelWidth}
           size={panelSize}
           onSizeChange={isCompactLayout ? undefined : setActivityPanelSize}
+          sideBySideMaxWidth={panelSideBySideMax}
+          snapWidths={panelSnapWidths}
+          onSettle={() => setPanelGlide((count) => count + 1)}
           onOpenConversation={(id) => void handleSelectConversation(id)}
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []

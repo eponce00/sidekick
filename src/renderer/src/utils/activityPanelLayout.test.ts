@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   ACTIVITY_PANEL_MIN_WIDTH,
+  ACTIVITY_PANEL_NARROW_WIDTH,
   ACTIVITY_PANEL_WIDE_WIDTH,
+  activityPanelDragZone,
   activityPanelMaximumWidth,
+  activityPanelSnapWidths,
   clampActivityPanelWidth,
+  snapActivityPanelWidth,
   storedActivityPanelSize,
   storedActivityPanelWidth,
   workspaceLayout
@@ -20,18 +24,44 @@ describe('activity panel layout', () => {
     expect(clampActivityPanelWidth(900, 760)).toBe(712)
   })
 
-  it('restores the dragged wide width, never one as narrow as the narrow size', () => {
+  it('restores the width the user left it at', () => {
     expect(storedActivityPanelWidth(null, 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
     expect(storedActivityPanelWidth('512', 1_400)).toBe(512)
-    expect(storedActivityPanelWidth('320', 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
+    expect(storedActivityPanelWidth('320', 1_400)).toBe(320)
     expect(storedActivityPanelWidth('not-a-number', 1_400)).toBe(ACTIVITY_PANEL_WIDE_WIDTH)
+    // Someone on the narrow size of earlier versions keeps that narrow width.
+    expect(storedActivityPanelWidth('720', 1_400, 'narrow')).toBe(ACTIVITY_PANEL_NARROW_WIDTH)
   })
 
-  it('remembers the size, and starts from the old dragged width without one', () => {
-    expect(storedActivityPanelSize('full', '320')).toBe('full')
-    expect(storedActivityPanelSize(null, '320')).toBe('narrow')
-    expect(storedActivityPanelSize(null, '720')).toBe('wide')
-    expect(storedActivityPanelSize(null, null)).toBe('narrow')
+  it('remembers the whole window, and otherwise sits beside the chat', () => {
+    expect(storedActivityPanelSize('full')).toBe('full')
+    expect(storedActivityPanelSize('narrow')).toBe('wide')
+    expect(storedActivityPanelSize(null)).toBe('wide')
+  })
+})
+
+describe('dragging the inspector edge', () => {
+  it('folds when let go nearly shut, and takes the window when dragged well past the chat', () => {
+    expect(activityPanelDragZone(150, 900)).toBe('fold')
+    expect(activityPanelDragZone(320, 900)).toBe('side')
+    expect(activityPanelDragZone(930, 900)).toBe('side')
+    expect(activityPanelDragZone(960, 900)).toBe('full')
+  })
+
+  it('snaps to the narrow column and an even split with the chat', () => {
+    const snaps = activityPanelSnapWidths({
+      viewportWidth: 1_448,
+      sidebarWidth: 48,
+      sideBySideMax: 1_080
+    })
+    expect(snaps).toEqual([ACTIVITY_PANEL_NARROW_WIDTH, 700])
+    expect(snapActivityPanelWidth(350, snaps)).toBe(320)
+    expect(snapActivityPanelWidth(680, snaps)).toBe(700)
+    expect(snapActivityPanelWidth(500, snaps)).toBe(500)
+    // A small window leaves no room for a split distinct from the narrow column.
+    expect(
+      activityPanelSnapWidths({ viewportWidth: 800, sidebarWidth: 48, sideBySideMax: 432 })
+    ).toEqual([ACTIVITY_PANEL_NARROW_WIDTH])
   })
 })
 
@@ -114,8 +144,8 @@ describe('narrow windows', () => {
     expect(sized({ panelSize: 'full', sidebarCollapsed: true }).sidebarAutoCollapsed).toBe(false)
   })
 
-  it('keeps the sidebar beside the narrow size whatever the wide width is', () => {
-    expect(sized({ panelSize: 'narrow', panelWidth: 900 }).sidebarAutoCollapsed).toBe(false)
+  it('keeps the sidebar beside a narrow panel, and folds it for a wide one', () => {
+    expect(sized({ panelSize: 'wide', panelWidth: 320 }).sidebarAutoCollapsed).toBe(false)
     expect(sized({ panelSize: 'wide', panelWidth: 900 }).sidebarAutoCollapsed).toBe(true)
   })
 })

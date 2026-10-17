@@ -1,33 +1,26 @@
 export const ACTIVITY_PANEL_MIN_WIDTH = 280
-/** The narrow size: a fixed column beside the chat. */
+/** The narrow width the edge snaps to: a column beside the chat. */
 export const ACTIVITY_PANEL_NARROW_WIDTH = 320
-/** The wide size before the user has dragged it to a width of their own. */
+/** The width before the user has dragged it to one of their own. */
 export const ACTIVITY_PANEL_WIDE_WIDTH = 640
+/** Let go narrower than this, the inspector folds to its rail of tabs. */
+export const ACTIVITY_PANEL_FOLD_WIDTH = 200
+/** Dragged this far past the widest it fits beside the chat, it takes the whole window. */
+export const ACTIVITY_PANEL_FULL_PULL = 48
+/** Let go this close to a snap width, the edge settles on it. */
+export const ACTIVITY_PANEL_SNAP_DISTANCE = 48
+/** While dragging, this close to a snap width the edge holds there a moment. */
+export const ACTIVITY_PANEL_MAGNET_DISTANCE = 10
 
 /**
- * The inspector's three sizes: a narrow column, a wide one the user sizes by dragging, and the
- * whole window beside the sidebar's rail, with the chat out of the way.
+ * The inspector beside the chat at a width the user drags it to, or across the whole window
+ * beside the sidebar's rail, with the chat out of the way.
  */
-export type ActivityPanelSize = 'narrow' | 'wide' | 'full'
-export const ACTIVITY_PANEL_SIZES: readonly ActivityPanelSize[] = ['narrow', 'wide', 'full']
+export type ActivityPanelSize = 'wide' | 'full'
 
-/** The size after this one: narrow, wide, full, then narrow again. */
-export function nextActivityPanelSize(size: ActivityPanelSize): ActivityPanelSize {
-  const index = ACTIVITY_PANEL_SIZES.indexOf(size)
-  return ACTIVITY_PANEL_SIZES[(index + 1) % ACTIVITY_PANEL_SIZES.length]
-}
-
-/**
- * The remembered size, or for someone who has none yet, the size their dragged width was closest
- * to before there were sizes.
- */
-export function storedActivityPanelSize(
-  value: string | null,
-  storedWidth: string | null
-): ActivityPanelSize {
-  if (value === 'narrow' || value === 'wide' || value === 'full') return value
-  const width = Number(storedWidth)
-  return Number.isFinite(width) && width > ACTIVITY_PANEL_NARROW_WIDTH + 40 ? 'wide' : 'narrow'
+/** The remembered size. The narrow size of earlier versions is now just a width. */
+export function storedActivityPanelSize(value: string | null): ActivityPanelSize {
+  return value === 'full' ? 'full' : 'wide'
 }
 /**
  * The narrowest the chat gets when the user widens the inspector, a phone's width. Only the
@@ -51,15 +44,72 @@ export function clampActivityPanelWidth(width: number, viewportWidth: number): n
   )
 }
 
-/** The wide size's width: the last one the user dragged to, never narrower than the narrow size. */
-export function storedActivityPanelWidth(value: string | null, viewportWidth: number): number {
+/**
+ * The last width the user left the inspector at. Someone who used the narrow size of earlier
+ * versions keeps that narrow width.
+ */
+export function storedActivityPanelWidth(
+  value: string | null,
+  viewportWidth: number,
+  storedSize: string | null = null
+): number {
+  if (storedSize === 'narrow')
+    return clampActivityPanelWidth(ACTIVITY_PANEL_NARROW_WIDTH, viewportWidth)
   const width = value === null ? ACTIVITY_PANEL_WIDE_WIDTH : Number(value)
   return clampActivityPanelWidth(
-    Number.isFinite(width) && width > ACTIVITY_PANEL_NARROW_WIDTH
-      ? width
-      : ACTIVITY_PANEL_WIDE_WIDTH,
+    Number.isFinite(width) ? width : ACTIVITY_PANEL_WIDE_WIDTH,
     viewportWidth
   )
+}
+
+/**
+ * Where a dragged edge is heading: folded to the rail, beside the chat, or across the whole
+ * window. `width` is where the pointer puts the edge, before any limit; `sideBySideMax` is the
+ * widest the inspector fits beside the chat.
+ */
+export type ActivityPanelDragZone = 'fold' | 'side' | 'full'
+
+export function activityPanelDragZone(width: number, sideBySideMax: number): ActivityPanelDragZone {
+  if (width < ACTIVITY_PANEL_FOLD_WIDTH) return 'fold'
+  if (width > sideBySideMax + ACTIVITY_PANEL_FULL_PULL) return 'full'
+  return 'side'
+}
+
+/**
+ * The widths the edge snaps to beside the chat: the narrow column, and an even split with the
+ * chat. A split too close to the narrow column, or wider than fits, is left out.
+ */
+export function activityPanelSnapWidths(input: {
+  viewportWidth: number
+  sidebarWidth: number
+  sideBySideMax: number
+}): number[] {
+  const split = Math.round((input.viewportWidth - input.sidebarWidth) / 2)
+  const widths = [ACTIVITY_PANEL_NARROW_WIDTH]
+  if (
+    split - ACTIVITY_PANEL_NARROW_WIDTH > ACTIVITY_PANEL_SNAP_DISTANCE * 2 &&
+    split <= input.sideBySideMax
+  )
+    widths.push(split)
+  return widths.filter((width) => width <= input.sideBySideMax)
+}
+
+/** The snap width within `distance` of `width`, or `width` itself. */
+export function snapActivityPanelWidth(
+  width: number,
+  snapWidths: readonly number[],
+  distance = ACTIVITY_PANEL_SNAP_DISTANCE
+): number {
+  let nearest = width
+  let best = distance
+  for (const snap of snapWidths) {
+    const gap = Math.abs(snap - width)
+    if (gap <= best) {
+      nearest = snap
+      best = gap
+    }
+  }
+  return nearest
 }
 
 /** How long the sidebar and the inspector take to change size. Matches --duration-layout. */
@@ -94,7 +144,7 @@ export function workspaceLayout(input: {
   sidebarCollapsed: boolean
   sidebarHeldOpen: boolean
   panelOpen: boolean
-  /** The wide size's width; the narrow size has its own. */
+  /** The width the user left it at. */
   panelWidth: number
   panelSize?: ActivityPanelSize
 }): WorkspaceLayout {
@@ -109,7 +159,7 @@ export function workspaceLayout(input: {
       panelMaxWidth: Math.max(ACTIVITY_PANEL_MIN_WIDTH, input.viewportWidth - SIDEBAR_RAIL_WIDTH)
     }
   }
-  const panelWidth = input.panelSize === 'narrow' ? ACTIVITY_PANEL_NARROW_WIDTH : input.panelWidth
+  const panelWidth = input.panelWidth
   const room = (sidebar: number, chat: number): number => input.viewportWidth - sidebar - chat
   const sidebarAutoCollapsed =
     !input.sidebarCollapsed &&
