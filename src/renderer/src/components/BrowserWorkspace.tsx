@@ -26,6 +26,9 @@ export function BrowserWorkspace({
   const [layoutError, setLayoutError] = useState('')
   const [pending, setPending] = useState(false)
   const viewport = useRef<HTMLDivElement>(null)
+  // The page is drawn above the app, so it hides while one of SideKick's menus is open; this
+  // picture of it fills its place until the menu closes.
+  const [snapshot, setSnapshot] = useState<string | null>(null)
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
 
@@ -42,13 +45,14 @@ export function BrowserWorkspace({
       document.hidden ||
       !bounds ||
       element.closest('[hidden], [aria-hidden="true"]') ||
-      document.querySelector('[role="dialog"], [aria-modal="true"]')
+      document.querySelector('[role="dialog"], [aria-modal="true"], .app-menu')
     const result = await window.api.agentRuns.browserWorkspace({
       conversationId,
       action: hidden ? 'unmount' : 'mount',
       ...(hidden ? {} : { bounds: bounds! })
     })
     setLayoutError('')
+    if (!hidden) setSnapshot(null)
     if (!hidden)
       setState((previous) =>
         JSON.stringify(previous) === JSON.stringify(result) ? previous : result
@@ -231,6 +235,10 @@ export function BrowserWorkspace({
                 action: 'deviceMenu',
                 menuPosition: { x: rect.left, y: rect.bottom + 4 }
               })
+              .then((result) => {
+                if (result?.snapshot && document.querySelector('.app-menu'))
+                  setSnapshot(result.snapshot)
+              })
               .catch((e) => setError(e instanceof Error ? e.message : String(e)))
           }}
         >
@@ -265,6 +273,9 @@ export function BrowserWorkspace({
         </div>
       )}
       <div ref={viewport} className="browser-workspace-viewport" aria-label="Live browser page">
+        {snapshot && (
+          <img className="browser-workspace-snapshot" src={snapshot} alt="" aria-hidden="true" />
+        )}
         {!state && (
           <p>
             Open a page above, or ask the agent to browse. You share the same tabs and page state.

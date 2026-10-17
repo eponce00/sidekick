@@ -108,7 +108,7 @@
 }
 
 .workspace-bar-field input,
-.workspace-bar-field select {
+.workspace-bar-field :is(select, .ui-select) {
   height: 24px;
   padding: 0 8px;
   border: 1px solid var(--border-color);
@@ -123,13 +123,13 @@
   width: 220px;
 }
 
-.workspace-bar-field select {
+.workspace-bar-field :is(select, .ui-select) {
   max-width: 180px;
   font-family: var(--font-sans);
 }
 
 .workspace-bar-field input:focus,
-.workspace-bar-field select:focus {
+.workspace-bar-field :is(select, .ui-select):focus {
   border-color: var(--accent);
   outline: none;
 }

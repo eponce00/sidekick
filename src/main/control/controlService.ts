@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, safeStorage } from 'electron'
+import { app, BrowserWindow, safeStorage } from 'electron'
 import { join } from 'node:path'
 import { CONTROL_PROTOCOL_VERSION } from '../../shared/controlProtocol'
 import { providerUrlIsUnencryptedRemote } from '../../shared/providerInstances'
@@ -25,6 +25,7 @@ import { writeCliRuntime } from './commandLineTool'
 import { createControlHandlers } from './controlMethods'
 import type { ProviderEndpointChange } from './controlProviderMethods'
 import { ControlServer, type ControlHandlers } from './controlServer'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 function credentialBackend(): string {
   if (process.platform === 'win32') return 'dpapi'
@@ -38,10 +39,7 @@ function credentialBackend(): string {
 
 async function showDialog(options: Electron.MessageBoxOptions): Promise<number> {
   const parent = appState.mainWindowRef
-  const answer =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, options)
-      : await dialog.showMessageBox(options)
+  const answer = await showTrustedDialog(parent && !parent.isDestroyed() ? parent : null, options)
   return answer.response
 }
 

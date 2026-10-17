@@ -18,6 +18,7 @@ import {
   MCP_ENV_SECRETS_KEY,
   retainedMcpEnvironment
 } from '../services/mcpServerTrust'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 const CREDENTIAL_STORAGE_ERROR =
   'Secure credential storage is unavailable. Unlock or enable your operating system keychain or password manager, then try again. Settings without new credentials can still be saved.'
@@ -370,9 +371,7 @@ export async function confirmSensitiveSettingsChange(
   }
   const window = sender ? BrowserWindow.fromWebContents(sender) : appState.mainWindowRef
   const parent = window && !window.isDestroyed() ? window : null
-  const result = parent
-    ? await dialog.showMessageBox(parent, options)
-    : await dialog.showMessageBox(options)
+  const result = await showTrustedDialog(parent, options)
   return result.response === 1
 }
 

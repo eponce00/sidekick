@@ -391,6 +391,7 @@ export interface DesktopApi {
   conversations: ConversationsAPI
   projects: ProjectsAPI
   worktrees: import('../shared/worktrees').WorktreesAPI
+  menus: import('../shared/appMenus').AppMenusAPI
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
   schedules: import('../shared/schedules').SchedulesAPI

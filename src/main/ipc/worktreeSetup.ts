@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, type WebContents } from 'electron'
+import { app, BrowserWindow, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, appendFileSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
@@ -11,6 +11,7 @@ import { projectStartCommands } from '../services/projectHooks'
 import { runWorktreeCreationHooks } from '../services/worktreeCreationHooks'
 import { getStore } from './state'
 import type { ProviderSettings } from '../../shared/settings'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 const runner = new CommandRunner()
 let shuttingDown = false
@@ -41,9 +42,7 @@ export async function setupCreatedWorktree(
   const canonicalRoot = await realpath(workspaceRoot)
   const owner = BrowserWindow.fromWebContents(sender)
   const show = (options: Electron.MessageBoxOptions) =>
-    owner && !owner.isDestroyed()
-      ? dialog.showMessageBox(owner, options)
-      : dialog.showMessageBox(options)
+    showTrustedDialog(owner && !owner.isDestroyed() ? owner : null, options)
   const result = await runWorktreeCreationHooks({
     commands,
     approve: async (command) => {

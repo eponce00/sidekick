@@ -5,6 +5,7 @@ import { validateMcpServerConfig } from '../../../shared/mcp'
 import type { McpServerConfig, McpServerStatus } from '../../../shared/types'
 import { SettingsEmptyState, SettingsSection, SettingsSwitch } from './SettingsLayout'
 import './McpServerSettings.css'
+import { Select } from './Select'
 
 interface McpServerSettingsProps {
   servers: McpServerConfig[]
@@ -221,7 +222,7 @@ export function McpServerSettings({
               </label>
               <label>
                 Connection
-                <select
+                <Select
                   value={server.transport}
                   onChange={(event) => {
                     const nextTransport = event.target.value
@@ -245,11 +246,11 @@ export function McpServerSettings({
                 >
                   <option value="stdio">Local process</option>
                   <option value="streamable-http">Remote HTTPS</option>
-                </select>
+                </Select>
               </label>
               <label>
                 Approval
-                <select
+                <Select
                   value={server.approvalMode}
                   onChange={(event) =>
                     update(index, (current) => ({
@@ -260,7 +261,7 @@ export function McpServerSettings({
                 >
                   <option value="prompt">Always ask</option>
                   <option value="reads-auto">Auto-approve safe reads</option>
-                </select>
+                </Select>
               </label>
               {server.transport === 'stdio' ? (
                 <>
@@ -336,7 +337,7 @@ export function McpServerSettings({
                   </label>
                   <label className="mcp-wide">
                     Authentication
-                    <select
+                    <Select
                       value={server.authentication}
                       disabled={Boolean(server.catalogId)}
                       onChange={(event) =>
@@ -352,7 +353,7 @@ export function McpServerSettings({
                     >
                       <option value="oauth">OAuth sign-in</option>
                       <option value="none">No authentication</option>
-                    </select>
+                    </Select>
                   </label>
                 </>
               )}

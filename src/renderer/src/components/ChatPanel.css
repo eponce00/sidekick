@@ -2569,7 +2569,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   gap: 6px;
 }
 
-.plan-mode-copy select {
+.plan-mode-copy :is(select, .ui-select) {
   max-width: min(190px, 28vw);
   min-width: 0;
   padding: 2px 18px 2px 4px;
@@ -2581,12 +2581,12 @@ body[data-theme='light'] .message-user .message-action:hover {
   text-overflow: ellipsis;
 }
 
-.plan-mode-copy select:hover:not(:disabled) {
+.plan-mode-copy :is(select, .ui-select):hover:not(:disabled) {
   color: var(--text-primary);
   background: var(--surface-3);
 }
 
-.plan-mode-copy select:disabled {
+.plan-mode-copy :is(select, .ui-select):disabled {
   appearance: none;
   padding-right: 4px;
   opacity: 1;

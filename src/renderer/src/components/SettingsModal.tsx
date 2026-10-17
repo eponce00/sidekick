@@ -53,6 +53,7 @@ import { SettingsPageHeader, SettingsRow, SettingsSection, ToggleField } from '.
 import { useModalDialog } from '../hooks/useModalDialog'
 import { settingsSectionContributions, type SettingsSectionId } from '../services/uiContributions'
 import './SettingsModal.css'
+import { Select } from './Select'
 
 export type { AccentPalette } from '../constants/accentPalettes'
 export { applyAccentPalette } from '../constants/accentPalettes'
@@ -412,7 +413,7 @@ function SettingsModal({
               description="You can override this from the composer whenever Plan mode is selected."
               controlId={`${controlId}-planning`}
               control={
-                <select
+                <Select
                   id={`${controlId}-planning`}
                   value={settings.planningModelId || ''}
                   onChange={(event) =>
@@ -425,7 +426,7 @@ function SettingsModal({
                       {model.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               }
             />
           </SettingsSection>
@@ -440,7 +441,7 @@ function SettingsModal({
               description="Full access runs tools without approval popups. Destructive actions still follow SideKick's safety rules and the scope of your request."
               controlId={`${controlId}-approval`}
               control={
-                <select
+                <Select
                   id={`${controlId}-approval`}
                   value={settings.commandPermissionMode || 'full-access'}
                   onChange={(event) =>
@@ -454,7 +455,7 @@ function SettingsModal({
                   <option value="full-access">Full access (default)</option>
                   <option value="sensitive-only">Ask only for sensitive actions</option>
                   <option value="always-ask">Ask for every write or command</option>
-                </select>
+                </Select>
               }
             />
             <SettingsRow
@@ -484,7 +485,7 @@ function SettingsModal({
               description="Docker runs commands in a Linux container with only the project mounted and no network. It needs a local Docker daemon, and other tools still run on the host."
               controlId={`${controlId}-shell`}
               control={
-                <select
+                <Select
                   id={`${controlId}-shell`}
                   value={settings.shellIsolation ?? 'host'}
                   onChange={(event) =>
@@ -496,7 +497,7 @@ function SettingsModal({
                 >
                   <option value="host">Host shell (not sandboxed)</option>
                   <option value="docker">Isolated Linux container (no network)</option>
-                </select>
+                </Select>
               }
             />
             <ToggleField

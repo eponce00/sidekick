@@ -12,6 +12,7 @@ import { useSchedules } from './hooks/useSchedules'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
+import { AppMenuHost } from './components/AppMenuHost'
 import { useManagedWorktrees } from './hooks/useManagedWorktrees'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
@@ -1531,6 +1532,7 @@ function App(): React.JSX.Element {
           providerKeyRequest={providerKeyRequest}
         />
       )}
+      <AppMenuHost />
     </div>
   )
 }

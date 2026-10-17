@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedWorktreeSummary, WorktreeBranchOptions } from '../../../shared/worktrees'
 import { WorktreesDialog } from './WorktreesDialog'
 import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
+import { chooseSelectOption, selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -195,8 +196,8 @@ describe('worktree UI', () => {
     expect(api.branchOptions).toHaveBeenCalledWith('p')
     // A worktree starts as a copy of its base; there is no branch to name.
     expect(container.querySelector('input')).toBeNull()
-    const options = [...container.querySelectorAll('option')].map((option) => option.textContent)
-    expect(options).toEqual(['main', 'release'])
+    const base = container.querySelector<HTMLElement>('.ui-select[aria-label="Start from"]')!
+    expect((await selectOptions(base)).map((option) => option.label)).toEqual(['main', 'release'])
     await act(async () => button(container, 'This folder').click())
     expect(onWorkInChange).toHaveBeenCalledWith('folder')
   })
@@ -219,15 +220,9 @@ describe('worktree UI', () => {
         />
       )
     })
-    const select = container.querySelector<HTMLSelectElement>('select[aria-label="Project"]')!
-    expect([...select.options].map(({ textContent }) => textContent)).toEqual([
-      'No project',
-      'Repo'
-    ])
-    await act(async () => {
-      select.value = 'repo'
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    const select = container.querySelector<HTMLElement>('.ui-select[aria-label="Project"]')!
+    expect((await selectOptions(select)).map(({ label }) => label)).toEqual(['No project', 'Repo'])
+    await chooseSelectOption(select, 'repo')
     expect(onChooseProject).toHaveBeenCalledWith('repo')
     expect(api.branchOptions).not.toHaveBeenCalled()
   })

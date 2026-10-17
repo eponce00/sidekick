@@ -5,7 +5,8 @@ import {
   ipcMain,
   dialog,
   shell,
-  type OpenDialogOptions
+  type OpenDialogOptions,
+  type MenuItemConstructorOptions
 } from 'electron'
 import { basename, isAbsolute, join, relative } from 'path'
 import { getStore } from './state'
@@ -29,6 +30,8 @@ import { listSavedPrompts } from '../services/savedPrompts'
 import { discoverExternalOpeners, fileManagerIcon } from '../services/externalOpeners'
 import { workspaceWatchers } from '../services/workspaceWatchers'
 import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
+import { showAppMenu } from '../services/appMenus'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 const workspaceReads = new WorkspaceReadService()
 
@@ -64,9 +67,7 @@ export function registerWorkspaceHandlers(): void {
         cancelId: 2,
         noLink: true
       }
-      const choice = win
-        ? await dialog.showMessageBox(win, choiceOptions)
-        : await dialog.showMessageBox(choiceOptions)
+      const choice = await showTrustedDialog(win, choiceOptions)
       if (choice.response === 2) return { ok: true, canceled: true, attachments: [] }
 
       const selectFolder = choice.response === 1
@@ -462,20 +463,20 @@ export function registerWorkspaceHandlers(): void {
             : { ok: true, status: 'opened' as const, path: target }
         }
         if (matches.length > 1) {
-          const menu = Menu.buildFromTemplate(
-            matches.map((match) => ({
-              label: match,
-              click: () => {
-                void resolveSecureWorkspacePath(workspaceRoot, match)
-                  .then((target) => shell.openPath(target))
-                  .then((error) => {
-                    if (error) console.warn('[Workspace] Could not open file reference:', error)
-                  })
-              }
-            }))
-          )
-          const window = BrowserWindow.fromWebContents(event.sender)
-          menu.popup(window ? { window } : undefined)
+          const template: MenuItemConstructorOptions[] = matches.map((match) => ({
+            label: match,
+            click: () => {
+              void resolveSecureWorkspacePath(workspaceRoot, match)
+                .then((target) => shell.openPath(target))
+                .then((error) => {
+                  if (error) console.warn('[Workspace] Could not open file reference:', error)
+                })
+            }
+          }))
+          if (!showAppMenu(event.sender, template)) {
+            const window = BrowserWindow.fromWebContents(event.sender)
+            Menu.buildFromTemplate(template).popup(window ? { window } : undefined)
+          }
           return { ok: true, status: 'choose' as const, matches }
         }
         return { ok: false, status: 'not_found' as const, error: 'File not found in this project' }
@@ -517,7 +518,7 @@ export function registerWorkspaceHandlers(): void {
         child.unref()
       }
       const primaryEditor = editors[0]
-      const menu = Menu.buildFromTemplate([
+      const template: MenuItemConstructorOptions[] = [
         ...(primaryEditor
           ? [
               {
@@ -582,9 +583,11 @@ export function registerWorkspaceHandlers(): void {
               }
             ]
           : [])
-      ])
-      const window = BrowserWindow.fromWebContents(event.sender)
-      menu.popup(window ? { window } : undefined)
+      ]
+      if (!showAppMenu(event.sender, template)) {
+        const window = BrowserWindow.fromWebContents(event.sender)
+        Menu.buildFromTemplate(template).popup(window ? { window } : undefined)
+      }
     }
   )
 }

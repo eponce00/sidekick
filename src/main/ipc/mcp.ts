@@ -1,10 +1,11 @@
-import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain } from 'electron'
 import { validateMcpServerConfig } from '../../shared/mcp'
 import type { McpServerConfig, McpServerStatus } from '../../shared/types'
 import { McpClientManager } from '../services/mcpClientManager'
 import { approveMcpServers, mainProcessMcpTrust } from '../services/mcpServerTrust'
 import { describeMcpServer } from './settings'
 import { getStore } from './state'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 const manager = new McpClientManager(undefined, undefined, undefined, mainProcessMcpTrust)
 
@@ -44,9 +45,7 @@ export async function confirmMcpServer(
     noLink: true
   }
   const window = parent && !parent.isDestroyed() ? parent : null
-  const answer = window
-    ? await dialog.showMessageBox(window, options)
-    : await dialog.showMessageBox(options)
+  const answer = await showTrustedDialog(window, options)
   return answer.response === 1
 }
 

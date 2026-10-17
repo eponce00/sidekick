@@ -48,7 +48,7 @@
   white-space: nowrap;
 }
 
-.start-sessions-row select {
+.start-sessions-row :is(select, .ui-select) {
   width: 100%;
   min-width: 0;
   padding: 3px 6px;
@@ -60,7 +60,7 @@
   font-size: var(--text-sm);
 }
 
-.start-sessions-row select:disabled {
+.start-sessions-row :is(select, .ui-select):disabled {
   opacity: 0.6;
 }
 

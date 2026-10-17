@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { FolderOpen, Plus, Trash2, Webhook } from 'lucide-react'
 import type { ProjectStartHook } from '../../../shared/projectHooks'
 import { SettingsEmptyState, SettingsSection, SettingsSwitch } from './SettingsLayout'
+import { Select } from './Select'
 
 export type ProjectHookStage = 'start' | 'completion' | 'worktree'
 
@@ -99,7 +100,7 @@ export function ProjectHooksPanel({
         <strong className="settings-row-label">Add a hook</strong>
         <label className="modern-field" htmlFor={`${id}-stage`}>
           <span>When</span>
-          <select
+          <Select
             id={`${id}-stage`}
             value={stage}
             onChange={(event) => setStage(event.target.value as ProjectHookStage)}
@@ -109,7 +110,7 @@ export function ProjectHooksPanel({
                 {label}
               </option>
             ))}
-          </select>
+          </Select>
           <small>{STAGES.find(({ id: stageId }) => stageId === stage)!.hint}</small>
         </label>
         <div className="modern-field">

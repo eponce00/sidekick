@@ -57,6 +57,11 @@ const api = {
       return () => ipcRenderer.removeListener('providers:healthChanged', listener)
     }
   },
+  menus: {
+    onShow: voiceEvent<import('../shared/appMenus').AppMenuRequest>('menus:show'),
+    choose: (token: string, itemId: string) => ipcRenderer.invoke('menus:choose', token, itemId),
+    dismiss: (token: string) => ipcRenderer.invoke('menus:dismiss', token)
+  },
   settings: {
     selectOfficeInterpreter: () => ipcRenderer.invoke('settings:selectOfficeInterpreter'),
     save: (settings: unknown) => ipcRenderer.invoke('settings:save', settings),

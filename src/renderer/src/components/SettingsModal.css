@@ -513,7 +513,9 @@
   margin-top: 10px;
 }
 
-.settings-row.stacked .settings-row-control > :is(input, select, textarea, .settings-inline-field) {
+.settings-row.stacked
+  .settings-row-control
+  > :is(input, select, .ui-select, textarea, .settings-inline-field) {
   flex: 1 1 auto;
   width: 100%;
   max-width: none;
@@ -538,7 +540,7 @@
 }
 
 /* A control sitting in a row has a steady width so the column lines up. */
-.settings-row-control > select,
+.settings-row-control > :is(select, .ui-select),
 .settings-row-control > input:not([type='range'], [type='checkbox']) {
   width: 240px;
   max-width: 100%;
@@ -562,9 +564,9 @@
 
 /* Form controls */
 
-.settings-card :is(input, select, textarea):not([type='checkbox'], [type='range']),
+.settings-card :is(input, select, .ui-select, textarea):not([type='checkbox'], [type='range']),
 .modern-field input,
-.modern-field select,
+.modern-field :is(select, .ui-select),
 .modern-field textarea,
 .provider-name-input,
 .manual-model-row input {
@@ -583,29 +585,33 @@
 }
 
 /* Fields fill their column; a control in a row keeps the steady width set above. */
-.modern-field :is(input, select, textarea),
-.mcp-server-grid :is(input, select, textarea),
+.modern-field :is(input, select, .ui-select, textarea),
+.mcp-server-grid :is(input, select, .ui-select, textarea),
 .settings-inline-field > input,
 .provider-name-input,
 .manual-model-row input {
   width: 100%;
 }
 
-.settings-card select,
-.modern-field select {
+.settings-card :is(select, .ui-select),
+.modern-field :is(select, .ui-select) {
   padding-right: 8px;
   text-overflow: ellipsis;
   cursor: pointer;
 }
 
 .settings-card
-  :is(input, select, textarea):not([type='checkbox'], [type='range']):hover:not(:disabled, :focus) {
+  :is(input, select, .ui-select, textarea):not([type='checkbox'], [type='range']):hover:not(
+    :disabled,
+    :focus
+  ) {
   border-color: var(--border-strong);
 }
 
-.settings-card :is(input, select, textarea):not([type='checkbox'], [type='range']):focus,
+.settings-card
+  :is(input, select, .ui-select, textarea):not([type='checkbox'], [type='range']):focus,
 .modern-field input:focus,
-.modern-field select:focus,
+.modern-field :is(select, .ui-select):focus,
 .modern-field textarea:focus,
 .provider-name-input:focus,
 .manual-model-row input:focus {
@@ -613,7 +619,7 @@
   box-shadow: var(--focus-ring);
 }
 
-.settings-card :is(input, select, textarea):disabled {
+.settings-card :is(input, select, .ui-select, textarea):disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -1611,7 +1617,7 @@ code.settings-origin {
 }
 
 .provider-model-metadata-grid input,
-.provider-model-metadata-grid select {
+.provider-model-metadata-grid :is(select, .ui-select) {
   width: 100%;
   min-width: 0;
   height: 30px;
@@ -1625,7 +1631,7 @@ code.settings-origin {
 }
 
 .provider-model-metadata-grid input:focus,
-.provider-model-metadata-grid select:focus {
+.provider-model-metadata-grid :is(select, .ui-select):focus {
   border-color: var(--accent);
   outline: none;
 }
@@ -1988,7 +1994,7 @@ code.settings-origin {
   gap: var(--space-3);
 }
 
-.voice-device-control > select {
+.voice-device-control > :is(select, .ui-select) {
   width: 240px;
   max-width: 100%;
   min-width: 0;
@@ -2000,7 +2006,7 @@ code.settings-origin {
 }
 
 /* Voice and language selects span the device column, so the section lines up. */
-.settings-row-control > select.voice-wide-select {
+.settings-row-control > :is(select, .ui-select).voice-wide-select {
   width: calc(240px + var(--space-3) + 92px);
 }
 
@@ -2180,7 +2186,7 @@ code.settings-origin {
     margin-top: 10px;
   }
 
-  .settings-row:not(.settings-toggle-row) .settings-row-control > :is(select, input) {
+  .settings-row:not(.settings-toggle-row) .settings-row-control > :is(select, .ui-select, input) {
     width: 100%;
   }
 
@@ -2188,7 +2194,7 @@ code.settings-origin {
     width: 100%;
   }
 
-  .voice-device-control > select {
+  .voice-device-control > :is(select, .ui-select) {
     flex: 1 1 auto;
     width: auto;
   }

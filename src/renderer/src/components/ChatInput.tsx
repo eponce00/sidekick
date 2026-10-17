@@ -57,6 +57,7 @@ import {
 } from '../utils/fileMentions'
 import { SAVED_PROMPT_ARGUMENTS, type SavedPrompt } from '../../../shared/savedPrompts'
 import './ChatInput.css'
+import { Select } from './Select'
 
 interface FeatureMenuActionProps {
   label: string
@@ -691,7 +692,7 @@ export function ChatInput({
             <span className="plan-mode-copy">
               <strong>{planActive ? 'Plan in progress' : 'Plan first'}</strong>
               <span>
-                <select
+                <Select
                   value={planningModelId}
                   disabled={planActive}
                   onChange={(event) => onPlanModelChange(event.target.value)}
@@ -703,7 +704,7 @@ export function ChatInput({
                       {model.name}
                     </option>
                   ))}
-                </select>
+                </Select>
                 <i aria-hidden="true">→</i>
                 <span title={executorModelName}>{executorModelName || 'Current model'}</span>
               </span>

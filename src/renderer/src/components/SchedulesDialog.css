@@ -485,7 +485,7 @@
 }
 
 .schedules-editor-fields input:not([type='checkbox']),
-.schedules-editor-fields select,
+.schedules-editor-fields :is(select, .ui-select),
 .schedules-editor-fields textarea {
   width: 100%;
   min-width: 0;
@@ -499,7 +499,7 @@
 }
 
 .schedules-editor-fields input:not([type='checkbox']),
-.schedules-editor-fields select {
+.schedules-editor-fields :is(select, .ui-select) {
   height: 36px;
 }
 
@@ -511,7 +511,7 @@
 }
 
 .schedules-editor-fields input:focus-visible,
-.schedules-editor-fields select:focus-visible,
+.schedules-editor-fields :is(select, .ui-select):focus-visible,
 .schedules-editor-fields textarea:focus-visible {
   border-color: var(--border-strong);
   box-shadow: 0 0 0 2px var(--focus-ring);

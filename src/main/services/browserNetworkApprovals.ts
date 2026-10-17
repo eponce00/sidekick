@@ -84,7 +84,8 @@ export class BrowserNetworkApprovals implements BrowserNetworkPolicy {
 }
 
 export const confirmBrowserNetworkOrigin: BrowserNetworkConfirm = async (origin) => {
-  const { BrowserWindow, dialog } = await import('electron')
+  const { BrowserWindow } = await import('electron')
+  const { showTrustedDialog } = await import('./trustedDialog')
   const owner = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
   const options = {
     type: 'warning' as const,
@@ -100,9 +101,7 @@ export const confirmBrowserNetworkOrigin: BrowserNetworkConfirm = async (origin)
     cancelId: 0,
     noLink: true
   }
-  const result = owner
-    ? await dialog.showMessageBox(owner, options)
-    : await dialog.showMessageBox(options)
+  const result = await showTrustedDialog(owner, options)
   return result.response === 1
 }
 

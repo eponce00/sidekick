@@ -7,6 +7,7 @@ import {
   type WorktreeBranchOptions
 } from '../../../shared/worktrees'
 import './Worktrees.css'
+import { Select } from './Select'
 
 interface WorkspaceBarProps {
   projectId: string | null
@@ -78,7 +79,7 @@ export function WorkspaceBar({
           <span className="workspace-bar-label">Work in</span>
           <label className="workspace-bar-field is-base" htmlFor={projectSelectId}>
             <FolderOpen size={12} className="workspace-bar-muted" aria-hidden="true" />
-            <select
+            <Select
               id={projectSelectId}
               value=""
               disabled={disabled}
@@ -93,7 +94,7 @@ export function WorkspaceBar({
                   {project.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <span className="workspace-bar-muted">
             Choose a project to work in its folder or a new worktree
@@ -158,7 +159,7 @@ export function WorkspaceBar({
           <>
             <label className="workspace-bar-field is-base" htmlFor={baseId}>
               <span className="workspace-bar-muted">from</span>
-              <select
+              <Select
                 id={baseId}
                 value={baseRef}
                 disabled={disabled || !options?.branches.length}
@@ -173,7 +174,7 @@ export function WorkspaceBar({
                       {branch}
                     </option>
                   ))}
-              </select>
+              </Select>
             </label>
           </>
         )}

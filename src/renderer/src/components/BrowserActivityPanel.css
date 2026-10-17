@@ -138,6 +138,7 @@
   }
 }
 .browser-workspace-viewport {
+  position: relative;
   flex: 1;
   min-height: 80px;
   overflow: hidden;
@@ -518,4 +519,14 @@
   .browser-pointer::after {
     animation: none;
   }
+}
+
+/* A still of the page while a SideKick menu covers it; the live page is drawn above the app. */
+.browser-workspace-snapshot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
 }

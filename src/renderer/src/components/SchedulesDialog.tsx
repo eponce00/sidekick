@@ -33,6 +33,7 @@ import { agentPhaseStatus, formatScheduleTime, scheduleRunStatus } from '../util
 import { SCHEDULE_TEMPLATES, type ScheduleTemplate } from '../utils/scheduleTemplates'
 import ConfirmDialog from './ConfirmDialog'
 import './SchedulesDialog.css'
+import { Select } from './Select'
 
 interface SchedulesDialogProps {
   isOpen: boolean
@@ -602,7 +603,7 @@ function ScheduleEditor({
         <div className="schedules-editor-row">
           <label>
             <span>Project folder</span>
-            <select
+            <Select
               value={draft.projectId ?? ''}
               onChange={(event) => set('projectId', event.target.value || null)}
             >
@@ -612,11 +613,11 @@ function ScheduleEditor({
                 </option>
               ))}
               <option value="">No project (standalone chat)</option>
-            </select>
+            </Select>
           </label>
           <label>
             <span>Model</span>
-            <select value={draft.modelId} onChange={(event) => set('modelId', event.target.value)}>
+            <Select value={draft.modelId} onChange={(event) => set('modelId', event.target.value)}>
               {modelMissing && <option value={draft.modelId}>Choose a model</option>}
               {models.map((model) => (
                 <option key={model.id} value={model.id}>
@@ -625,7 +626,7 @@ function ScheduleEditor({
                     : model.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
         <fieldset className="schedules-cadence">
@@ -649,7 +650,7 @@ function ScheduleEditor({
           {draft.cadence === 'weekly' && (
             <label>
               <span>Day</span>
-              <select
+              <Select
                 value={draft.weekday}
                 onChange={(event) => set('weekday', Number(event.target.value))}
               >
@@ -658,13 +659,13 @@ function ScheduleEditor({
                     {scheduleWeekdayName(day)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           {draft.cadence === 'hourly' ? (
             <label>
               <span>Minute past the hour</span>
-              <select
+              <Select
                 value={draft.minute}
                 onChange={(event) => set('minute', Number(event.target.value))}
               >
@@ -676,7 +677,7 @@ function ScheduleEditor({
                 {draft.minute % 5 !== 0 && (
                   <option value={draft.minute}>:{String(draft.minute).padStart(2, '0')}</option>
                 )}
-              </select>
+              </Select>
             </label>
           ) : (
             <label>
@@ -697,7 +698,7 @@ function ScheduleEditor({
         </div>
         <label>
           <span>Without asking, runs may</span>
-          <select
+          <Select
             value={ceiling ?? ''}
             onChange={(event) =>
               set('permissionCeiling', (event.target.value || null) as PermissionMode | null)
@@ -709,7 +710,7 @@ function ScheduleEditor({
                 {PERMISSION_MODE_LABELS[mode]}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="schedules-checkbox">
           <input

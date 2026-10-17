@@ -817,6 +817,11 @@ export function installBrowserApiMock(): void {
       })
     },
     worktrees: previewWorktreesApi,
+    menus: {
+      onShow: () => () => undefined,
+      choose: async () => undefined,
+      dismiss: async () => undefined
+    },
     agentRuns: {
       // "Refine the desktop experience" is treated as writing in sidekick-demo, so a new chat
       // there shows the busy-folder prompt.
