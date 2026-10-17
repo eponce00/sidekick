@@ -1,7 +1,11 @@
-import type { SpeechLanguageCode } from './voice'
-
 /** Languages recognized by their common words. */
 type WordLanguage = 'en' | 'es' | 'pt' | 'fr' | 'de' | 'it'
+
+/**
+ * A language a reply can be recognized as. Read-aloud speaks only some of them
+ * (SPEECH_LANGUAGES); the rest are recognized so it can say so.
+ */
+export type DetectedLanguage = WordLanguage | 'ja' | 'ko' | 'ar' | 'el' | 'hi' | 'uk' | 'ru'
 
 const STOPWORDS: Record<WordLanguage, string[]> = {
   en: ['the', 'and', 'is', 'are', 'of', 'to', 'you', 'that', 'it', 'with', 'this', 'for', 'was'],
@@ -99,7 +103,7 @@ const STOPWORDS: Record<WordLanguage, string[]> = {
 }
 
 // Languages with a script of their own, recognized by the letters they use.
-const SCRIPTS: Array<[RegExp, SpeechLanguageCode]> = [
+const SCRIPTS: Array<[RegExp, DetectedLanguage]> = [
   [/[぀-ヿ]/gu, 'ja'],
   [/[가-힯]/gu, 'ko'],
   [/[؀-ۿ]/gu, 'ar'],
@@ -113,7 +117,7 @@ const SCRIPTS: Array<[RegExp, SpeechLanguageCode]> = [
  * The language of a reply: by script where a language has its own, otherwise
  * from its most frequent common words. English when unsure.
  */
-export function detectSpeechLanguage(text: string): SpeechLanguageCode {
+export function detectSpeechLanguage(text: string): DetectedLanguage {
   const sample = text.slice(0, 4_000)
   const letters = (sample.match(/\p{L}/gu) ?? []).length
   for (const [pattern, language] of SCRIPTS) {
@@ -287,7 +291,7 @@ export interface SpeechChunk {
 const SENTENCE_END = /(?<=[.!?…。！？]["'”’)\]]?)\s+/u
 
 /**
- * Splits a reply into passages the voice says whole, as Supertonic's reference code does:
+ * Splits a reply into passages the voice says whole, as Supertone's reference code does:
  * sentences packed up to `maxLength` characters within a paragraph. Said a sentence at a time,
  * every sentence starts afresh and the intonation repeats; a passage flows. The first passage is
  * kept short so reading starts at once.

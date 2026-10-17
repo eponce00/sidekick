@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,6 +47,32 @@ describe('VoiceModelStore', () => {
         expect(file.size).toBeGreaterThan(0)
       }
     }
+  })
+
+  it('downloads a file that sits in a folder of its own', async () => {
+    const files = { 'espeak-ng-data/lang/roa/es': 'name Spanish', 'model.onnx': 'weights' }
+    const fetcher = vi.fn(
+      async (url: string) =>
+        new Response(files[url.slice('https://models.test/'.length) as keyof typeof files])
+    )
+    const store = new VoiceModelStore(root, fetcher)
+    const model = manifest(files)
+    await store.download(model, () => undefined, new AbortController().signal)
+    expect(await store.isInstalled(model)).toBe(true)
+    expect(await readFile(store.path(model, 'espeak-ng-data/lang/roa/es'), 'utf8')).toBe(
+      'name Spanish'
+    )
+  })
+
+  it('removes a superseded model folder, and nothing outside the models folder', async () => {
+    const store = new VoiceModelStore(join(root, 'models'))
+    await mkdir(join(root, 'models', 'old-voice'), { recursive: true })
+    await writeFile(join(root, 'keep.txt'), 'mine')
+    await store.removeFolder('old-voice')
+    await store.removeFolder('..')
+    await store.removeFolder('../keep.txt')
+    expect(existsSync(join(root, 'models', 'old-voice'))).toBe(false)
+    expect(await readFile(join(root, 'keep.txt'), 'utf8')).toBe('mine')
   })
 
   it('downloads, verifies and marks a model installed', async () => {

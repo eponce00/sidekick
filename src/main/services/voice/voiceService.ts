@@ -4,15 +4,18 @@ import type {
   VoiceStartResult,
   VoiceState
 } from '../../../shared/voice'
+import { execFile } from 'node:child_process'
 import {
   DEFAULT_SPEECH_VOICE,
   isSpeechLanguage,
+  SPEECH_LANGUAGE_VOICES,
+  SPEECH_LANGUAGES,
   SPEECH_VOICES,
   VOICE_SAMPLE_RATE,
   type SpeechOptions
 } from '../../../shared/voice'
 import { detectSpeechLanguage, speakableParagraphs, speechChunks } from '../../../shared/voiceText'
-import { VOICE_MODELS, VoiceModelStore } from './voiceModels'
+import { SUPERSEDED_VOICE_FOLDERS, VOICE_MODELS, VoiceModelStore } from './voiceModels'
 
 /** The slice of sherpa-onnx-node this service uses. */
 export interface SherpaModule {
@@ -89,13 +92,36 @@ const DRAFT_WINDOW = VOICE_SAMPLE_RATE * 20
 const SEGMENT_LEAD_IN = Math.round(VOICE_SAMPLE_RATE * 0.6)
 const SEGMENT_TAIL = Math.round(VOICE_SAMPLE_RATE * 0.3)
 
-// Read-aloud follows Supertonic's reference settings: whole passages of up to 300 characters
-// (120 for Japanese and Korean), a short silence between them, and a speed of 1.05. A passage
-// said at once keeps its intonation flowing; a sentence at a time made every sentence start
-// the same way. A paragraph's end gets a longer pause.
-const SPEECH_SPEED = 1.05
+// Read-aloud says whole passages of up to 300 characters, well within what Kokoro reads at once,
+// with a short silence between them. A passage said at once keeps its intonation flowing; a
+// sentence at a time made every sentence start the same way. A paragraph's end gets a longer
+// pause, and the first passage is short so reading starts soon.
+const SPEECH_SPEED = 1
+const PASSAGE_LENGTH = 300
+const FIRST_PASSAGE_LENGTH = 100
 const PASSAGE_PAUSE_SECONDS = 0.3
 const PARAGRAPH_PAUSE_SECONDS = 0.55
+
+const plainPath = (path: string): boolean => /^[ -~]*$/.test(path) && path.length < 200
+
+/**
+ * espeak-ng, which turns Kokoro's text into sounds, opens its data through a short, narrow path
+ * buffer. On Windows a folder under a long or non-English user name ("José") is reached by its
+ * short 8.3 name instead.
+ */
+export async function espeakDataPath(path: string): Promise<string> {
+  if (process.platform !== 'win32' || plainPath(path)) return path
+  const short = await new Promise<string>((resolve) =>
+    execFile(
+      'cmd.exe',
+      ['/d', '/s', '/c', `"for %I in ("${path}") do @echo %~sI"`],
+      { windowsHide: true, windowsVerbatimArguments: true },
+      (error, stdout) => resolve(error ? '' : stdout.trim())
+    )
+  )
+  if (plainPath(short)) return short
+  throw new Error(`its voice data is in a folder it cannot open (${path})`)
+}
 
 /**
  * The recent audio of a dictation, addressed by sample index from its start,
@@ -155,7 +181,7 @@ const DEFAULT_RETRY_DELAYS = [60_000, 5 * 60_000, 30 * 60_000]
  * loads them on first use, and drops them after a while unused. Dictation
  * finds speech with Silero VAD and transcribes each stretch with Parakeet as
  * the user talks, so stopping leaves only the last stretch to decode.
- * Read-aloud streams Supertonic audio passage by passage.
+ * Read-aloud streams Kokoro audio passage by passage.
  */
 export class VoiceService {
   private readonly store: VoiceModelStore
@@ -213,6 +239,10 @@ export class VoiceService {
     }
     this.queue = DOWNLOAD_ORDER.filter((id) => this.models[id].status !== 'ready')
     this.publish()
+    // The voice an earlier SideKick read with is no longer used; its download goes.
+    for (const folder of SUPERSEDED_VOICE_FOLDERS) {
+      await this.store.removeFolder(folder).catch(() => undefined)
+    }
   }
 
   ready(): Promise<void> {
@@ -390,25 +420,25 @@ export class VoiceService {
   private loadTts(): Promise<SherpaTts> {
     const manifest = VOICE_MODELS.speech
     const file = (name: string): string => this.store.path(manifest, name)
-    this.tts ??= this.module()
-      .then((sherpa) =>
+    this.tts ??= Promise.all([this.module(), espeakDataPath(file('espeak-ng-data'))])
+      .then(([sherpa, dataDir]) =>
         sherpa.OfflineTts.createAsync({
           model: {
-            supertonic: {
-              durationPredictor: file('duration_predictor.int8.onnx'),
-              textEncoder: file('text_encoder.int8.onnx'),
-              vectorEstimator: file('vector_estimator.int8.onnx'),
-              vocoder: file('vocoder.int8.onnx'),
-              ttsJson: file('tts.json'),
-              unicodeIndexer: file('unicode_indexer.bin'),
-              voiceStyle: file('voice.bin')
+            // One model reads every language: each request names its own (generate's lang).
+            kokoro: {
+              model: file('model.onnx'),
+              voices: file('voices.bin'),
+              tokens: file('tokens.txt'),
+              dataDir,
+              lexicon: file('lexicon-us-en.txt'),
+              lang: 'en-us'
             },
             numThreads: 2,
             provider: 'cpu',
             debug: false
           },
-          // Passages are made here (speechChunks); each is said whole.
-          maxNumSentences: 50
+          // Passages are made here (speechChunks); Kokoro says each whole.
+          maxNumSentences: 1
         })
       )
       .catch((error) => {
@@ -584,14 +614,26 @@ export class VoiceService {
       }
     }
     const voice =
-      Number.isInteger(options.voice) &&
-      options.voice! >= 0 &&
-      options.voice! < SPEECH_VOICES.length
-        ? options.voice!
-        : DEFAULT_SPEECH_VOICE
+      SPEECH_VOICES.find(({ id }) => id === options.voice) ??
+      SPEECH_VOICES.find(({ id }) => id === DEFAULT_SPEECH_VOICE)!
     const language = isSpeechLanguage(options.language)
       ? options.language
       : detectSpeechLanguage(text)
+    if (!isSpeechLanguage(language)) {
+      const named = new Intl.DisplayNames(['en'], { type: 'language' })
+      const spoken = new Intl.ListFormat('en', { type: 'conjunction' }).format(
+        Object.keys(SPEECH_LANGUAGES).map((code) => named.of(code) ?? code)
+      )
+      return {
+        ok: false,
+        reason: 'unavailable',
+        message: `Read aloud does not speak ${named.of(language) ?? language} yet. It reads ${spoken}.`
+      }
+    }
+    // Another language is read by its own voice of the same gender.
+    const own = language === 'en' ? undefined : SPEECH_LANGUAGE_VOICES[language]
+    const speaker = own ? own[voice.gender] : voice.speaker
+    const espeakVoice = own ? own.espeak : 'en-us'
     const run: SpeechRun = { stopped: false }
     this.speeches.set(speechId, run)
     this.touch()
@@ -599,12 +641,11 @@ export class VoiceService {
       const sherpa = await this.module()
       const tts = await this.loadTts()
       const generationConfig = new sherpa.GenerationConfig({
-        sid: voice,
+        sid: speaker,
         speed: SPEECH_SPEED,
-        numSteps: 8,
-        extra: { lang: language }
+        extra: { lang: espeakVoice }
       })
-      const passages = speechChunks(paragraphs, language === 'ja' || language === 'ko' ? 120 : 300)
+      const passages = speechChunks(paragraphs, PASSAGE_LENGTH, FIRST_PASSAGE_LENGTH)
       const silence = (seconds: number): Float32Array =>
         new Float32Array(Math.round(tts.sampleRate * seconds))
       const finished = (async () => {

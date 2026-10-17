@@ -43,62 +43,60 @@ export interface VoiceSpeechEnd {
 
 export const VOICE_SAMPLE_RATE = 16_000
 
-/** Supertonic 3's voices, in the order its voice file numbers them. */
+/**
+ * The read-aloud voices: Kokoro v1.0's American English voices, by speaker id in its voices file.
+ * The ones it rates best come first. A reply in another language is read by that language's own
+ * Kokoro voice of the same gender (SPEECH_LANGUAGE_VOICES).
+ */
 export const SPEECH_VOICES = [
-  'Female 1',
-  'Female 2',
-  'Female 3',
-  'Female 4',
-  'Female 5',
-  'Male 1',
-  'Male 2',
-  'Male 3',
-  'Male 4',
-  'Male 5'
+  { id: 'af_heart', speaker: 3, name: 'Heart', gender: 'female' },
+  { id: 'af_bella', speaker: 2, name: 'Bella', gender: 'female' },
+  { id: 'af_nicole', speaker: 6, name: 'Nicole', gender: 'female' },
+  { id: 'af_sarah', speaker: 9, name: 'Sarah', gender: 'female' },
+  { id: 'af_kore', speaker: 5, name: 'Kore', gender: 'female' },
+  { id: 'am_michael', speaker: 16, name: 'Michael', gender: 'male' },
+  { id: 'am_fenrir', speaker: 14, name: 'Fenrir', gender: 'male' },
+  { id: 'am_puck', speaker: 18, name: 'Puck', gender: 'male' }
 ] as const
 
-export const DEFAULT_SPEECH_VOICE = 6
+export type SpeechVoiceId = (typeof SPEECH_VOICES)[number]['id']
 
-/** Languages Supertonic 3 reads, named in their own language. */
+export const DEFAULT_SPEECH_VOICE: SpeechVoiceId = 'af_heart'
+
+export function isSpeechVoice(value: unknown): value is SpeechVoiceId {
+  return SPEECH_VOICES.some(({ id }) => id === value)
+}
+
+/** Languages Kokoro reads, named in their own language. */
 export const SPEECH_LANGUAGES = {
-  ar: 'العربية',
-  bg: 'Български',
-  cs: 'Čeština',
-  da: 'Dansk',
-  de: 'Deutsch',
-  el: 'Ελληνικά',
   en: 'English',
   es: 'Español',
-  et: 'Eesti',
-  fi: 'Suomi',
   fr: 'Français',
   hi: 'हिन्दी',
-  hr: 'Hrvatski',
-  hu: 'Magyar',
-  id: 'Bahasa Indonesia',
   it: 'Italiano',
-  ja: '日本語',
-  ko: '한국어',
-  lt: 'Lietuvių',
-  lv: 'Latviešu',
-  nl: 'Nederlands',
-  pl: 'Polski',
-  pt: 'Português',
-  ro: 'Română',
-  ru: 'Русский',
-  sk: 'Slovenčina',
-  sl: 'Slovenščina',
-  sv: 'Svenska',
-  tr: 'Türkçe',
-  uk: 'Українська',
-  vi: 'Tiếng Việt'
+  pt: 'Português'
 } as const
 
 export type SpeechLanguageCode = keyof typeof SPEECH_LANGUAGES
 
+/**
+ * Each language's own voices, by Kokoro speaker id, and the espeak-ng voice that turns its text
+ * into sounds. French has only a female voice.
+ */
+export const SPEECH_LANGUAGE_VOICES: Record<
+  Exclude<SpeechLanguageCode, 'en'>,
+  { female: number; male: number; espeak: string }
+> = {
+  es: { female: 28, male: 29, espeak: 'es' },
+  fr: { female: 30, male: 30, espeak: 'fr' },
+  hi: { female: 31, male: 33, espeak: 'hi' },
+  it: { female: 35, male: 36, espeak: 'it' },
+  pt: { female: 42, male: 43, espeak: 'pt-br' }
+}
+
 export interface SpeechOptions {
-  /** Index into SPEECH_VOICES. */
-  voice?: number
+  /** One of SPEECH_VOICES. */
+  voice?: SpeechVoiceId
   /** A language to read in, or 'auto' to detect it from each reply. */
   language?: SpeechLanguageCode | 'auto'
 }

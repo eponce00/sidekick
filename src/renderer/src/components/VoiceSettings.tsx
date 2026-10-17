@@ -18,6 +18,7 @@ import {
   SPEECH_VOICES,
   voiceModelProgress,
   type SpeechLanguageCode,
+  type SpeechVoiceId,
   type VoiceModelState
 } from '../../../shared/voice'
 import { useSpeechPlayback, useVoiceState } from '../hooks/useVoice'
@@ -39,8 +40,8 @@ const SAMPLES: Partial<Record<SpeechLanguageCode, string>> = {
   es: '¡Hola! Así suena SideKick cuando te lee un mensaje.',
   pt: 'Olá! É assim que o SideKick soa quando lê uma mensagem para você.',
   fr: 'Bonjour ! Voici comment SideKick lit un message à voix haute.',
-  de: 'Hallo! So klingt SideKick, wenn es dir eine Nachricht vorliest.',
-  it: 'Ciao! Ecco come suona SideKick quando ti legge un messaggio.'
+  it: 'Ciao! Ecco come suona SideKick quando ti legge un messaggio.',
+  hi: 'नमस्ते! जब SideKick आपको संदेश पढ़कर सुनाता है, तो ऐसा सुनाई देता है।'
 }
 
 const LANGUAGES = (Object.entries(SPEECH_LANGUAGES) as Array<[SpeechLanguageCode, string]>).sort(
@@ -101,7 +102,7 @@ export function VoiceSettings({
       <ToggleField
         icon={AudioLines}
         label="Dictation and read-aloud"
-        hint="Downloads about 820 MB of speech models once, in the background: NVIDIA Parakeet (CC BY 4.0) and Supertone Supertonic."
+        hint="Downloads about 1 GB of speech models once, in the background: NVIDIA Parakeet (CC BY 4.0) for dictation and Kokoro (Apache 2.0) for read-aloud."
         checked={enabled}
         onChange={onEnabledChange}
       />
@@ -281,18 +282,20 @@ function VoiceDeviceRows(): React.JSX.Element {
       <SettingsRow
         icon={UserRound}
         label="Voice"
-        description="Changes here apply right away."
+        description="A reply in another language is read by that language's voice of the same kind."
         controlId={`${id}-voice`}
         control={
           <Select
             id={`${id}-voice`}
             className="voice-wide-select"
             value={preferences.voice}
-            onChange={(event) => updateVoicePreferences({ voice: Number(event.target.value) })}
+            onChange={(event) =>
+              updateVoicePreferences({ voice: event.target.value as SpeechVoiceId })
+            }
           >
-            {SPEECH_VOICES.map((name, index) => (
-              <option key={name} value={index}>
-                {name}
+            {SPEECH_VOICES.map(({ id: voiceId, name, gender }) => (
+              <option key={voiceId} value={voiceId}>
+                {`${name} · ${gender === 'female' ? 'Female' : 'Male'}`}
               </option>
             ))}
           </Select>

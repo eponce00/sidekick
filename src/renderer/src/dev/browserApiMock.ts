@@ -1135,7 +1135,7 @@ export function installBrowserApiMock(): void {
         enabled: true,
         models: {
           dictation: { status: 'downloading' as const, receivedBytes: 280e6, totalBytes: 671e6 },
-          speech: { status: 'ready' as const, receivedBytes: 145e6, totalBytes: 145e6 }
+          speech: { status: 'ready' as const, receivedBytes: 361e6, totalBytes: 361e6 }
         }
       }),
       onState: () => () => undefined,
