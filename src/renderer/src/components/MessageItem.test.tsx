@@ -510,6 +510,52 @@ describe('MessageItem shared-channel presentation', () => {
     expect(undo).toHaveBeenCalledWith('abc1234')
   })
 
+  it('times a reply from the message it answers, across every run it took', async () => {
+    const props = {
+      index: 0,
+      expandedThinking: new Set<string>(),
+      editingMessageId: null,
+      copiedMessageId: null,
+      onToggleThinking: vi.fn(),
+      onHandleArtifactResult: vi.fn(),
+      onEditMessage: vi.fn(),
+      onCopyMessage: vi.fn(),
+      onRetryMessage: vi.fn(),
+      onApproveToolLimitDecision: vi.fn(),
+      onDenyToolLimitDecision: vi.fn()
+    }
+    const reply = {
+      id: 'long-task',
+      role: 'agent' as const,
+      content: 'Done.',
+      timestamp: 5_000_000,
+      tokenUsage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        // The last of several runs began long after the message was sent.
+        runStartedAt: 4_000_000,
+        runCompletedAt: 4_200_000
+      },
+      segments: [
+        {
+          type: 'tool' as const,
+          tool: { id: 't', title: 'Read', command: 'read', status: 'success' as const }
+        },
+        { type: 'text' as const, content: 'Done.' }
+      ]
+    }
+    await act(async () => {
+      root.render(
+        <MessageItem {...props} message={reply} isLoading={false} taskStartedAt={1_000_000} />
+      )
+    })
+    // 3,200 s from the message to the end: 53m 20s, once, in the footer.
+    expect(container.querySelector('.message-run-stats')?.textContent).toContain(
+      'Worked for 53m 20s'
+    )
+    expect(container.textContent?.match(/Work(ed|ing) for/g)).toHaveLength(1)
+  })
+
   it('collapses completed work and leaves the final answer visible', async () => {
     await act(async () => {
       root.render(
@@ -557,7 +603,11 @@ describe('MessageItem shared-channel presentation', () => {
     })
 
     const toggle = container.querySelector('.agent-work-toggle') as HTMLButtonElement
-    expect(toggle.textContent).toContain('Worked for 3m 21s')
+    // A finished reply carries its time once, in the footer, not inside the reply.
+    expect(toggle.textContent).not.toContain('Worked for')
+    expect(container.querySelector('.message-run-stats')?.textContent).toContain(
+      'Worked for 3m 21s'
+    )
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(container.textContent).toContain('The fix is complete.')
     expect(container.textContent).not.toContain('Read the renderer')

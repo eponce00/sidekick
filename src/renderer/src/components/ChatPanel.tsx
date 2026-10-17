@@ -1601,6 +1601,13 @@ function ChatPanel({
 
   // While a message is edited in the box, or replaced by sending it, it and everything after it
   // step back.
+  // When the message a reply answers was sent, so the reply's time covers the whole task.
+  const askedAt = (index: number): number | undefined => {
+    for (let at = index - 1; at >= 0; at--) {
+      if (visibleMessages[at]?.role === 'user') return visibleMessages[at]!.timestamp
+    }
+    return undefined
+  }
   const editingIndex = steppedBackFromId
     ? visibleMessages.findIndex((candidate) => candidate.id === steppedBackFromId)
     : -1
@@ -1613,6 +1620,7 @@ function ChatPanel({
       expandedThinking={expandedThinking}
       editingMessageId={editingMessageId}
       isRewound={editingIndex >= 0 && index >= editingIndex}
+      taskStartedAt={msg.role === 'agent' ? askedAt(index) : undefined}
       onToggleThinking={toggleThinking}
       onHandleArtifactResult={handleArtifactResult}
       onEditMessage={handleStartEditMessage}
