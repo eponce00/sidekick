@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { ACTIVITY_PANEL_MAX_WIDTH, clampActivityPanelWidth } from '../utils/activityPanelLayout'
+import { activityPanelMaximumWidth } from '../utils/activityPanelLayout'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -123,7 +123,7 @@ describe('ActivityPanel inspector', () => {
     ) as HTMLButtonElement
     await act(async () => widen.click())
     // Widening asks for as much as the window allows next to a readable chat.
-    const widest = clampActivityPanelWidth(ACTIVITY_PANEL_MAX_WIDTH, window.innerWidth)
+    const widest = activityPanelMaximumWidth(window.innerWidth)
     expect(panel.style.width).toBe(`${widest}px`)
     expect(window.localStorage.getItem('activityPanelWidth')).toBe(String(widest))
   })
