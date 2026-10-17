@@ -129,6 +129,7 @@ describe('ActivityPanel inspector', () => {
       )
     }
     const panel = (): HTMLElement => container.querySelector('.activity-panel') as HTMLElement
+    const phantom = (): HTMLElement | null => document.querySelector('.activity-panel-phantom')
     const edge = (): HTMLElement =>
       container.querySelector('[aria-label="Resize workspace inspector"]') as HTMLElement
     const drag = async (from: number, to: number, beforeRelease?: () => void): Promise<void> => {
@@ -159,8 +160,12 @@ describe('ActivityPanel inspector', () => {
 
     // Well past the widest it fits beside the chat, it takes the window.
     await drag(1_000, 500, () => {
-      expect(container.textContent).toContain('Full window')
+      // Nothing moves while dragged; a phantom shows where it lands.
+      expect(state.size).toBe('wide')
+      expect(phantom()?.dataset.landing).toBe('full')
+      expect(phantom()?.querySelector('.activity-panel-phantom-icon')).not.toBeNull()
     })
+    expect(phantom()).toBeNull()
     expect(state.size).toBe('full')
     expect(panel().style.width).toBe('1000px')
 
@@ -171,15 +176,31 @@ describe('ActivityPanel inspector', () => {
 
     // Nearly shut, it folds to the rail and opens again at the width it had.
     await drag(1_000, 1_620, () => {
-      expect(container.textContent).toContain('Let go to fold away')
+      expect(phantom()?.dataset.landing).toBe('fold')
     })
     expect(state.pinned).toBe(false)
     expect(state.width).toBe(700)
     expect(panel().classList.contains('is-collapsed')).toBe(true)
 
-    // Dragged out from the rail, it opens.
+    // Dragged out from the rail, it opens, settling on a snap width nearby.
     await drag(1_000, 400)
     expect(state.pinned).toBe(true)
+    expect(state.width).toBe(600)
+
+    // Escape lets go without changing anything.
+    await act(async () => {
+      edge().dispatchEvent(
+        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 1_000 })
+      )
+    })
+    await act(async () => {
+      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 400 }))
+    })
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    expect(phantom()).toBeNull()
+    expect(state.size).toBe('wide')
 
     // The arrow keys move the edge too.
     state = { ...state, size: 'wide', width: 500 }

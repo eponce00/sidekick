@@ -7,10 +7,8 @@ export const ACTIVITY_PANEL_WIDE_WIDTH = 640
 export const ACTIVITY_PANEL_FOLD_WIDTH = 200
 /** Dragged this far past the widest it fits beside the chat, it takes the whole window. */
 export const ACTIVITY_PANEL_FULL_PULL = 48
-/** Let go this close to a snap width, the edge settles on it. */
+/** This close to a snap width, the dragged edge settles on it. */
 export const ACTIVITY_PANEL_SNAP_DISTANCE = 48
-/** While dragging, this close to a snap width the edge holds there a moment. */
-export const ACTIVITY_PANEL_MAGNET_DISTANCE = 10
 
 /**
  * The inspector beside the chat at a width the user drags it to, or across the whole window
@@ -114,6 +112,8 @@ export function snapActivityPanelWidth(
 
 /** How long the sidebar and the inspector take to change size. Matches --duration-layout. */
 export const LAYOUT_MOTION_MS = 280
+/** How long the inspector takes to settle where its edge was let go. Matches --duration-glide. */
+export const PANEL_GLIDE_MS = 420
 
 export const SIDEBAR_WIDTH = 276
 export const SIDEBAR_RAIL_WIDTH = 48

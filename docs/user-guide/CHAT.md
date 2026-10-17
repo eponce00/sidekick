@@ -85,16 +85,20 @@ of its report.
 ## The side panel
 
 The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
-any width; the chat and the left sidebar make room as it grows:
+resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
+with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
+chat and the left sidebar make room.
 
-- Let go near the **narrow** column or an **even split** with the chat, and the edge glides onto
-  it. A width in between stays where you leave it, and SideKick remembers it.
-- Drag past the point where the chat would get too narrow, and the panel takes the **full
-  window**: the chat steps aside and the left sidebar folds to its thin rail, so a browser page,
-  for example, gets the whole window. Drag back to bring them back. Opening the sidebar also
-  returns the panel beside the chat.
-- Drag it nearly shut to **fold it away** to its rail of tab icons. Click an icon, or drag out
-  from the rail, to open it again at the width it had.
+- Near the **narrow** column or an **even split** with the chat, the outline settles on it with a
+  little spring. Anywhere in between, the panel stays where you leave it, and SideKick remembers
+  the width.
+- Past the point where the chat would get too narrow, the outline takes the **full window**: the
+  chat steps aside and the left sidebar folds to its thin rail, so a browser page, for example, gets
+  the whole window. Drag back to bring them back. Opening the sidebar also returns the panel beside
+  the chat.
+- Nearly shut, the outline shrinks to the rail and the panel **folds away** to its tab icons when
+  let go. Click an icon, or drag out from the rail, to open it again at the width it had.
+- **Esc** while dragging leaves the panel as it was.
 
 Clicking the tab already showing also folds the panel away. Double-click the edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.

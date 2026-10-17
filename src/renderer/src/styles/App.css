@@ -121,9 +121,13 @@
   --duration-slow: 0.3s;
   /* Panels and the sidebar changing size. Matches LAYOUT_MOTION_MS in App.tsx. */
   --duration-layout: 0.28s;
+  /* The inspector settling where its edge was let go. Matches PANEL_GLIDE_MS. */
+  --duration-glide: 0.42s;
   /* Fast start, long gentle settle: things arrive and stop without a bump. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Settles a few percent past its target and back: for things let go into place. */
+  --ease-spring: cubic-bezier(0.3, 1.3, 0.5, 1);
   /* Hover and press feedback, for the properties that change on hover; never layout. */
   --transition-ui:
     background-color var(--duration-fast) ease, color var(--duration-fast) ease,

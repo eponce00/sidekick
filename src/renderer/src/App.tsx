@@ -62,6 +62,7 @@ import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
 import {
   LAYOUT_MOTION_MS,
+  PANEL_GLIDE_MS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH,
   activityPanelSnapWidths,
@@ -299,23 +300,30 @@ function App(): React.JSX.Element {
   const layoutShape = `${panelSize}|${effectiveActivityPanelPinned}|${effectiveSidebarCollapsed}|${panelGlide}`
   const [settledLayout, setSettledLayout] = useState({
     shape: layoutShape,
-    chatWidth: chatTargetWidth
+    chatWidth: chatTargetWidth,
+    panelGlide
   })
-  const [layoutMotion, setLayoutMotion] = useState<{ chatWidth: number; at: number } | null>(null)
+  const [layoutMotion, setLayoutMotion] = useState<{
+    chatWidth: number
+    duration: number
+    at: number
+  } | null>(null)
   if (settledLayout.shape !== layoutShape) {
-    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth })
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth, panelGlide })
     if (!isCompactLayout)
       setLayoutMotion({
         // A chat stepping aside for the full panel keeps the width it had while it fades.
         chatWidth: chatTargetWidth > 0 ? chatTargetWidth : settledLayout.chatWidth,
+        // The inspector let go of glides a little longer than other layout changes.
+        duration: settledLayout.panelGlide !== panelGlide ? PANEL_GLIDE_MS : LAYOUT_MOTION_MS,
         at: Date.now()
       })
   } else if (settledLayout.chatWidth !== chatTargetWidth) {
-    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth })
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth, panelGlide })
   }
   useEffect(() => {
     if (!layoutMotion) return
-    const timer = window.setTimeout(() => setLayoutMotion(null), LAYOUT_MOTION_MS + 40)
+    const timer = window.setTimeout(() => setLayoutMotion(null), layoutMotion.duration + 40)
     return () => window.clearTimeout(timer)
   }, [layoutMotion])
   const toggleSidebar = (): void => {

@@ -10,16 +10,17 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* Size changes glide; dragging follows the pointer instead (is-resizing), except between
-     zones and onto a snap width (is-gliding). */
   transition:
     width var(--duration-layout) var(--ease-out),
     min-width var(--duration-layout) var(--ease-out);
   border-left: 1px solid var(--panel-border);
 }
 
-.activity-panel.is-resizing {
-  transition: none;
+/* Let go of its edge, it settles where the phantom showed with a slight overshoot. */
+.activity-panel.is-gliding {
+  transition:
+    width var(--duration-glide) var(--ease-spring),
+    min-width var(--duration-glide) var(--ease-spring);
 }
 
 /* Dragged nearly shut, its content dims to show it will fold away when let go. */
@@ -27,32 +28,108 @@
   transition: opacity var(--duration-normal) var(--ease-out);
 }
 
-.activity-panel[data-drag-zone='fold'].is-pinned > .activity-content {
+.activity-panel[data-landing='fold'].is-pinned > .activity-content {
   opacity: 0.35;
 }
 
-/* Says what letting go will do when it is more than a new width. */
-.activity-panel-drag-hint {
-  position: absolute;
-  z-index: 5;
-  top: 50%;
-  left: 18px;
-  padding: 5px 10px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: var(--surface-3);
-  box-shadow: var(--shadow-md);
-  color: var(--text-primary);
-  font-size: var(--text-xs);
+/* Where the panel will land while its edge is dragged. Only this moves with the pointer; it
+   eases onto a snap width, the rail or the whole window with a little spring. */
+.activity-panel-phantom {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  backdrop-filter: saturate(0.7);
+  opacity: 0;
   pointer-events: none;
-  white-space: nowrap;
-  animation: activity-drag-hint-in var(--duration-normal) var(--ease-out);
+  will-change: width;
+  transition:
+    width 90ms var(--ease-out),
+    background-color var(--duration-normal) var(--ease-out),
+    opacity var(--duration-fast) ease;
 }
 
-@keyframes activity-drag-hint-in {
+.activity-panel-phantom[data-shown] {
+  opacity: 1;
+}
+
+.activity-panel-phantom:not([data-landing='free']) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  transition:
+    width 320ms var(--ease-spring),
+    background-color var(--duration-normal) var(--ease-out),
+    opacity var(--duration-fast) ease;
+}
+
+.activity-panel-phantom-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.activity-panel-phantom:not([data-landing='free']) > .activity-panel-phantom-edge {
+  animation: activity-phantom-edge-lock 420ms var(--ease-out);
+}
+
+@keyframes activity-phantom-edge-lock {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  35% {
+    box-shadow: 0 0 14px 3px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* What letting go will do: fold to the rail, take the window, or sit at a snap width. */
+.activity-panel-phantom-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-1));
+  box-shadow: var(--shadow-md);
+  color: var(--accent);
+  animation: activity-phantom-icon-in 320ms var(--ease-spring);
+}
+
+.activity-panel-phantom[data-landing='fold'] > .activity-panel-phantom-icon > svg {
+  animation: activity-phantom-point-right 900ms var(--ease-in-out) 200ms infinite;
+}
+
+.activity-panel-phantom[data-landing='full'] > .activity-panel-phantom-icon > svg {
+  animation: activity-phantom-grow 900ms var(--ease-in-out) 200ms infinite;
+}
+
+@keyframes activity-phantom-icon-in {
   from {
     opacity: 0;
-    transform: translateX(-6px);
+    transform: scale(0.5);
+  }
+}
+
+@keyframes activity-phantom-point-right {
+  50% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes activity-phantom-grow {
+  50% {
+    transform: scale(1.18);
   }
 }
 
