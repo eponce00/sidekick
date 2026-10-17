@@ -28,9 +28,13 @@ are speaking, and adds punctuation and capitals.
 
 ## Read aloud
 
-Hover any message, yours or SideKick's, and click the speaker. Playback starts with the first
-sentence while the rest is generated; click again to stop. Code blocks, tables, images, and bare
-links are skipped.
+Hover any message, yours or SideKick's, and click the speaker. Playback starts with the opening
+words while the rest is generated; click again to stop. The voice reads a few sentences at a time
+so they flow together, pausing briefly between them and longer between paragraphs.
+
+What is there to be looked at rather than heard is skipped: code blocks, tables' rules, images,
+links' addresses, source lists, citation marks such as [1], and the dates and outlets put in
+brackets after a fact. Symbols are said as words, so "~3 → 5" is read as "about 3 to 5".
 
 ## Settings
 
