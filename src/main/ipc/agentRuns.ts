@@ -1,10 +1,6 @@
-import { app, BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu } from 'electron'
+import { browserDeviceMenuTemplate } from './browserDeviceMenu'
 import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
-import {
-  BROWSER_DEVICE_PRESETS,
-  BROWSER_RESPONSIVE_DEVICE,
-  type BrowserDevicePreset
-} from '../../shared/browserDevices'
 import type {
   BrowserHumanTakeoverSnapshot,
   ResolveAgentInteractionInput,
@@ -401,8 +397,7 @@ export function registerAgentRunHandlers(): void {
       const state = manager.workspaceState(input.conversationId)
       if (!state) return null
       // A native menu: an HTML one would open under the page, which is drawn above the app.
-      const current = state.device?.id ?? BROWSER_RESPONSIVE_DEVICE
-      const choose = (device: string) => () => {
+      const template = browserDeviceMenuTemplate(state.device, (device) => {
         void manager
           .workspaceAction(input.conversationId, {
             conversationId: input.conversationId,
@@ -410,36 +405,7 @@ export function registerAgentRunHandlers(): void {
             device
           })
           .catch((error) => console.warn('[Browser] Could not change the device size:', error))
-      }
-      const item = (preset: BrowserDevicePreset): MenuItemConstructorOptions => ({
-        label: `${preset.label}    ${preset.width} × ${preset.height}`,
-        type: 'radio',
-        checked: current === preset.id,
-        click: choose(preset.id)
       })
-      const template: MenuItemConstructorOptions[] = [
-        {
-          label: 'Responsive (fit the panel)',
-          type: 'radio',
-          checked: current === BROWSER_RESPONSIVE_DEVICE,
-          click: choose(BROWSER_RESPONSIVE_DEVICE)
-        },
-        ...(state.device?.id === 'custom'
-          ? [
-              {
-                label: `${state.device.label}, set by the agent`,
-                type: 'radio' as const,
-                checked: true,
-                enabled: false
-              }
-            ]
-          : []),
-        ...(['Phone', 'Tablet', 'Laptop', 'Desktop'] as const).flatMap((group) => [
-          { type: 'separator' as const },
-          { label: group, enabled: false },
-          ...BROWSER_DEVICE_PRESETS.filter((preset) => preset.group === group).map(item)
-        ])
-      ]
       const zoom = event.sender.getZoomFactor()
       Menu.buildFromTemplate(template).popup({
         window: host,
