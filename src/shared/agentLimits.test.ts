@@ -20,6 +20,11 @@ describe('agent round limits', () => {
     expect(resolveStoredToolCallLimit(100, 2)).toBe(DEFAULT_TOOL_CALL_LIMIT)
     expect(resolveStoredToolCallLimit(100, 3)).toBe(100)
     expect(resolveStoredToolCallLimit(1000, 3)).toBe(DEFAULT_TOOL_CALL_LIMIT)
+    // The old default of 80 moves to the new one; a value the user chose stays.
+    expect(resolveStoredToolCallLimit(80, 4)).toBe(DEFAULT_TOOL_CALL_LIMIT)
+    expect(resolveStoredToolCallLimit(80, 5)).toBe(80)
     expect(resolveStoredToolCallLimit(240, 4)).toBe(240)
+    expect(DEFAULT_TOOL_CALL_LIMIT).toBe(500)
+    expect(normalizeToolCallLimit(1_500)).toBe(1_500)
   })
 })
