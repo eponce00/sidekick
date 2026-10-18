@@ -170,11 +170,13 @@ GitHub release, and a Store install leaves updating to the Store (the in-app upd
 One-time setup, by the maintainer:
 
 1. Register as an individual developer in [Partner Center](https://partner.microsoft.com/dashboard)
-   and reserve the app name **SideKick**.
+   and reserve the app name.
 2. Under **Product identity**, copy `Package/Identity/Name`, `Package/Identity/Publisher`, and
    `Package/Properties/PublisherDisplayName` into the repository variables
    `SIDEKICK_STORE_IDENTITY_NAME`, `SIDEKICK_STORE_PUBLISHER`, and
-   `SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME`.
+   `SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME`, and the reserved name into
+   `SIDEKICK_STORE_DISPLAY_NAME`. SideKick is listed as **SideKick AI**, because "SideKick" was
+   already taken in the Store.
 3. Fill in the Store listing: description, screenshots, age rating, and the
    [privacy policy](../../PRIVACY.md) URL.
 
