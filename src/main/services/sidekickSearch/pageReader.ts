@@ -1,7 +1,20 @@
 import { Readability } from '@mozilla/readability'
 import axios from 'axios'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, session, type Session } from 'electron'
 import { JSDOM } from 'jsdom'
+import {
+  loopbackHost,
+  networkAddressKind,
+  privateNetworkHost
+} from '../../../shared/browserNetwork'
+import {
+  admitWebUrl,
+  getAdmitted,
+  resolveAdmitted,
+  webNetworkRefusal,
+  type WebAdmission,
+  type WebNetworkOptions
+} from '../webNetworkGuard'
 import { browserIdentity } from './browserIdentity'
 import { htmlToMarkdown } from './htmlMarkdown'
 import type { PageContent } from './types'
@@ -9,6 +22,7 @@ import type { PageContent } from './types'
 const DIRECT_FETCH_TIMEOUT_MS = 18_000
 const BROWSER_FETCH_TIMEOUT_MS = 25_000
 const DEFAULT_MAX_CONTENT_LENGTH = 100_000
+const RENDER_PARTITION = 'sidekick-page-reader'
 
 function emptyPage(url: string, error: string): PageContent {
   return {
@@ -21,6 +35,10 @@ function emptyPage(url: string, error: string): PageContent {
     success: false,
     error
   }
+}
+
+function refusedPage(url: string, error: string): PageContent {
+  return { ...emptyPage(url, error), refused: true }
 }
 
 const STRUCTURED_TEXT_TYPES = ['json', 'text/plain', 'text/csv', 'text/markdown']
@@ -64,6 +82,9 @@ function validatedPageUrl(value: string): URL {
   const url = new URL(value)
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error('Only HTTP and HTTPS pages can be read')
+  }
+  if (url.username || url.password) {
+    throw new Error('Invalid page URL: it cannot carry a user name or password')
   }
   return url
 }
@@ -233,15 +254,133 @@ function shouldRenderInBrowser(status?: number, message = ''): boolean {
   )
 }
 
-async function renderPage(url: string, maxContentLength: number): Promise<PageContent> {
+/** http(s) for ws(s), so a WebSocket answers to the same rules as the page that opens it. */
+function httpUrl(value: string): URL | undefined {
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'ws:') url.protocol = 'http:'
+    if (url.protocol === 'wss:') url.protocol = 'https:'
+    return url
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether a rendered page may make one request: never to this computer, and to the local network
+ * only on `localOrigin`, the page's own origin when it was admitted there. Names are resolved and
+ * checked first.
+ */
+export async function renderRequestAllowed(
+  value: string,
+  localOrigin: string | undefined,
+  network: WebNetworkOptions = {}
+): Promise<boolean> {
+  if (/^(?:data|blob|about):/i.test(value)) return true
+  const url = httpUrl(value)
+  if (!url || (url.protocol !== 'http:' && url.protocol !== 'https:')) return false
+  if (url.username || url.password || loopbackHost(url.hostname)) return false
+  const allowLocal = url.origin === localOrigin
+  if (privateNetworkHost(url.hostname)) return allowLocal
+  if (networkAddressKind(url.hostname)) return true
+  try {
+    await resolveAdmitted(url.hostname, { allowLocal }, network)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Whether the address a rendered response came from was one its request could reach. Chromium
+ * resolves the name again after the check above, so a name that rebinds in between shows here.
+ */
+export function renderResponseAllowed(
+  value: string,
+  ip: string | undefined,
+  localOrigin: string | undefined,
+  addressKind: (address: string) => ReturnType<typeof networkAddressKind> = networkAddressKind
+): boolean {
+  if (!ip) return true
+  const kind = addressKind(ip)
+  return kind === 'public' || (kind === 'local' && httpUrl(value)?.origin === localOrigin)
+}
+
+/** What one rendered read may reach, and why it was refused if it reached past that. */
+interface RenderScope {
+  localOrigin?: string
+  network: WebNetworkOptions
+  refused?: string
+}
+
+const renderScopes = new Map<number, RenderScope>()
+let renderSession: Promise<Session> | undefined
+
+/**
+ * The rendered reads' own session: no permissions, so Chromium refuses a page's requests into the
+ * local network, no downloads, direct connections so the address checked is the one reached,
+ * and every request checked against the read it belongs to.
+ */
+function pageReaderSession(): Promise<Session> {
+  renderSession ??= (async () => {
+    const reader = session.fromPartition(RENDER_PARTITION)
+    await reader.setProxy({ mode: 'direct' })
+    reader.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
+    reader.setPermissionCheckHandler(() => false)
+    reader.on('will-download', (event) => event.preventDefault())
+    reader.webRequest.onBeforeRequest((details, callback) => {
+      const scope = renderScopes.get(details.webContentsId ?? -1)
+      void renderRequestAllowed(details.url, scope?.localOrigin, scope?.network)
+        .catch(() => false)
+        .then((allowed) => {
+          if (!allowed && scope && details.resourceType === 'mainFrame') {
+            scope.refused ??= `SideKick's network policy does not let web_fetch open ${details.url}`
+          }
+          callback({ cancel: !allowed })
+        })
+    })
+    const watch = (details: { url: string; ip?: string; webContentsId?: number }): void => {
+      const scope = renderScopes.get(details.webContentsId ?? -1)
+      if (
+        scope &&
+        !renderResponseAllowed(
+          details.url,
+          details.ip,
+          scope.localOrigin,
+          scope.network.addressKind
+        )
+      ) {
+        scope.refused ??= `${details.url} answered from ${details.ip}, an address web_fetch may not read`
+      }
+    }
+    reader.webRequest.onBeforeRedirect(watch)
+    reader.webRequest.onCompleted(watch)
+    return reader
+  })().catch((error: unknown) => {
+    renderSession = undefined
+    throw error
+  })
+  return renderSession
+}
+
+async function renderPage(
+  url: string,
+  maxContentLength: number,
+  localOrigin: string | undefined,
+  network: WebNetworkOptions
+): Promise<PageContent> {
   let window: BrowserWindow | undefined
   let timeout: NodeJS.Timeout | undefined
+  let contentsId: number | undefined
+  const scope: RenderScope = { localOrigin, network }
   try {
+    await pageReaderSession()
     window = new BrowserWindow({
       show: false,
       width: 1280,
       height: 900,
       webPreferences: {
+        partition: RENDER_PARTITION,
         javascript: true,
         nodeIntegration: false,
         contextIsolation: true,
@@ -249,6 +388,8 @@ async function renderPage(url: string, maxContentLength: number): Promise<PageCo
         sandbox: true
       }
     })
+    contentsId = window.webContents.id
+    renderScopes.set(contentsId, scope)
     window.webContents.setAudioMuted(true)
     window.webContents.setUserAgent(browserIdentity())
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -268,13 +409,17 @@ async function renderPage(url: string, maxContentLength: number): Promise<PageCo
         )
       })
     ])
+    // A page whose requests reached past its scope may hold what it read there.
+    if (scope.refused) return refusedPage(url, scope.refused)
     return (
       readablePage(url, html, maxContentLength) || emptyPage(url, 'No readable page content found')
     )
   } catch (error) {
+    if (scope.refused) return refusedPage(url, scope.refused)
     return emptyPage(url, error instanceof Error ? error.message : 'Rendered page failed')
   } finally {
     if (timeout) clearTimeout(timeout)
+    if (contentsId !== undefined) renderScopes.delete(contentsId)
     if (window && !window.isDestroyed()) window.destroy()
   }
 }
@@ -283,10 +428,13 @@ async function renderPage(url: string, maxContentLength: number): Promise<PageCo
  * Reads a page directly: its main article as Markdown (found with Firefox Readability), the
  * page's own details, and the text around the article.
  * JavaScript-heavy or protected pages are rendered once in Sidekick's embedded Chromium.
+ * The browser's local-network rules apply to every request either makes, and the address of a
+ * plain-HTTP device is read only once the user allows it through `network.policy`.
  */
 export async function readPage(
   value: string,
-  maxContentLength = DEFAULT_MAX_CONTENT_LENGTH
+  maxContentLength = DEFAULT_MAX_CONTENT_LENGTH,
+  network: WebNetworkOptions = {}
 ): Promise<PageContent> {
   let url: URL
   try {
@@ -294,35 +442,52 @@ export async function readPage(
   } catch (error) {
     return emptyPage(value, error instanceof Error ? error.message : 'Invalid page URL')
   }
+  let admission: WebAdmission
+  try {
+    admission = await admitWebUrl(url, network)
+  } catch (error) {
+    return refusedPage(url.href, error instanceof Error ? error.message : 'The address was refused')
+  }
+  // A rendered page reaches the local network only on its own origin, and only if it is there.
+  const localOrigin = admission.allowLocal ? url.origin : undefined
 
   const contentLimit = Math.max(1_000, Math.min(500_000, Math.trunc(maxContentLength)))
   try {
-    const response = await axios.get<string>(url.href, {
-      timeout: DIRECT_FETCH_TIMEOUT_MS,
-      responseType: 'text',
-      maxRedirects: 5,
-      headers: {
-        'User-Agent': browserIdentity(),
-        Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        DNT: '1',
-        Referer: url.origin
+    const { response } = await getAdmitted<string>(
+      url,
+      {
+        timeout: DIRECT_FETCH_TIMEOUT_MS,
+        responseType: 'text',
+        headers: {
+          'User-Agent': browserIdentity(),
+          Accept:
+            'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          DNT: '1',
+          Referer: url.origin
+        }
       },
-      validateStatus: (status) => status < 400
-    })
+      network,
+      admission
+    )
     const contentType = String(response.headers['content-type'] || '').toLowerCase()
     const structured = structuredTextPage(url, contentType, response.data, contentLimit)
     if (structured) return structured
     if (contentType && !contentType.includes('html') && !contentType.includes('xml')) {
       return emptyPage(url.href, `Unsupported page content type: ${contentType.split(';')[0]}`)
     }
-    return readablePage(url.href, response.data, contentLimit) || renderPage(url.href, contentLimit)
+    return (
+      readablePage(url.href, response.data, contentLimit) ||
+      renderPage(url.href, contentLimit, localOrigin, network)
+    )
   } catch (error) {
+    // A refused address is not a failure to render around.
+    const refusal = webNetworkRefusal(error)
+    if (refusal) return refusedPage(url.href, refusal.message)
     const status = axios.isAxiosError(error) ? error.response?.status : undefined
     const message = error instanceof Error ? error.message : 'Page request failed'
     return shouldRenderInBrowser(status, message)
-      ? renderPage(url.href, contentLimit)
+      ? renderPage(url.href, contentLimit, localOrigin, network)
       : emptyPage(url.href, message)
   }
 }

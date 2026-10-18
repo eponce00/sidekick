@@ -68,7 +68,9 @@ the agent asks, a notification tells you, and the agent waits for your answer ra
 out; stopping the run withdraws the question. Devices on a local network often
 trust anyone who can reach them, so a page the agent reads cannot send it to one you have not
 chosen, and requests a page makes to any other local address are blocked. Allowed addresses are
-listed in **Settings › Agent › Local network**, where you can remove them.
+listed in **Settings › Agent › Local network**, where you can remove them. The same answer
+applies to `web_fetch`, so the agent cannot read a device you have not allowed by switching tools;
+see [Addresses on your network](SEARCH.md#addresses-on-your-network).
 
 `browser_upload` selects up to eight project-relative regular files (25 MiB total)
 on an observed file input, then verifies the actual selection. Symlinks and paths

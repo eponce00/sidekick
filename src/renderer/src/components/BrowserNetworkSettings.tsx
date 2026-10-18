@@ -3,7 +3,7 @@ import { Network, Trash2 } from 'lucide-react'
 import type { BrowserNetworkApproval } from '../../../shared/browserNetwork'
 import { SettingsEmptyState, SettingsRow, SettingsSection } from './SettingsLayout'
 
-/** Local-network addresses the user let the browser open over plain HTTP, each removable. */
+/** Local-network addresses the user let the agent open over plain HTTP, each removable. */
 export function BrowserNetworkSettings(): React.JSX.Element {
   const [approvals, setApprovals] = useState<BrowserNetworkApproval[] | null>(null)
 
@@ -22,7 +22,7 @@ export function BrowserNetworkSettings(): React.JSX.Element {
     <SettingsSection
       icon={Network}
       title="Local network"
-      description="Addresses on your network that you let the browser open, such as a router or a device. Remove one to be asked again."
+      description="Addresses on your network that you let the agent open in its browser or with web fetch, such as a router or a device. Remove one to be asked again."
     >
       {approvals && approvals.length > 0 ? (
         approvals.map(({ origin, approvedAt }) => (

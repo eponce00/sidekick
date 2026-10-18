@@ -74,7 +74,7 @@ describe('BrowserNetworkApprovals', () => {
     expect(await confirmBrowserNetworkOrigin('http://192.168.1.1', run.signal)).toBe(true)
     expect(showTrustedDialog).toHaveBeenCalledWith(
       mainWindow,
-      expect.objectContaining({ message: "Allow SideKick's browser to open http://192.168.1.1?" }),
+      expect.objectContaining({ message: 'Allow SideKick to open http://192.168.1.1?' }),
       { signal: run.signal }
     )
   })

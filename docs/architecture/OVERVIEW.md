@@ -225,7 +225,8 @@ internal CDP bridge for accessibility snapshots, semantic node references, full-
 network accounting, and coordinate fallback; no debugging port is exposed and no personal browser
 profile is attached. Local files are limited to explicitly granted project roots, plain HTTP is
 limited to loopback servers and local-network origins the user approved in a trusted dialog
-(stored apart from settings, revocable in Settings), credential-bearing URLs and unsupported schemes fail
+(stored apart from settings, revocable in Settings, and shared with `web_fetch`, see
+[Built-in SideKick Search](#built-in-sidekick-search)), credential-bearing URLs and unsupported schemes fail
 closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
 subresources whose real path escapes that session's project grant. Conversation sessions persist
 across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used
@@ -523,6 +524,21 @@ open work.
 ## Built-in SideKick Search
 
 `src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and page reading (Markdown conversion, Readability for the main article, and a digest bounded by what the agent asked for) use the same internal capability.
+
+Page reading and image downloads go through `webNetworkGuard`, which applies the browser's
+local-network policy to SideKick's own requests. `admitWebUrl` decides each hop before anything is
+sent: loopback is refused, a plain-HTTP local-network origin asks `browserNetworkApprovals`, the
+same store and trusted dialog the browser uses, an HTTPS local-network origin opens as in the
+browser, a public name may never resolve into the local network, and a redirect never asks and
+never leads from a public response into the local network. Names are checked where the connection
+resolves them: each
+request gets its own agent whose `lookup` classifies every address with `networkAddressKind`, which
+reads IPv4 inside IPv6 (mapped, compatible, translated, NAT64, 6to4), and refuses the lookup when
+any address is out of bounds, so DNS rebinding cannot swap in an address after a check. Proxies are
+disabled for the same reason. A refusal is final; it never falls back to the rendered read. That
+render runs in its own partition with direct connections and every permission denied, checks each
+request before Chromium sends it, and discards the page if `onCompleted` or `onBeforeRedirect`
+reports a remote address its request could not reach.
 
 Only `AgentToolRuntime` can invoke search, image discovery, or page extraction; there is no raw
 renderer search bridge. See [Search](../user-guide/SEARCH.md) for behavior, privacy boundaries,
