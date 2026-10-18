@@ -46,6 +46,7 @@ jobs:
           SIDEKICK_STORE_IDENTITY_NAME: ${{ vars.SIDEKICK_STORE_IDENTITY_NAME }}
           SIDEKICK_STORE_PUBLISHER: ${{ vars.SIDEKICK_STORE_PUBLISHER }}
           SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME }}
+          SIDEKICK_STORE_DISPLAY_NAME: ${{ vars.SIDEKICK_STORE_DISPLAY_NAME }}
         run: npm run build:store
       - name: Verify the package identity
         shell: pwsh
