@@ -23,6 +23,7 @@ import {
   browserAgentInput,
   browserDebuggerCommand,
   browserNavigationState,
+  browserViewLayoutSettled,
   showBrowserPointer,
   setBrowserViewAgentViewport,
   type BrowserViewportFit
@@ -1308,6 +1309,8 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
+    // The capture path and the agent viewport's scale both depend on where the page now is.
+    await browserViewLayoutSettled(this.webContentsId)
     this.contents.invalidate()
     if (
       this.view &&
@@ -1422,6 +1425,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+    // Full-page and element screenshots measure and capture the layout the page is moving to.
+    if (method === 'Page.captureScreenshot' || method === 'Page.getLayoutMetrics')
+      await browserViewLayoutSettled(this.webContentsId)
     if (
       !this.view &&
       method === 'Page.captureScreenshot' &&
