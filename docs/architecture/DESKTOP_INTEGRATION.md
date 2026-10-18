@@ -110,8 +110,12 @@ MCP connectors, permission prompts and quitting with active runs, use `showTrust
 modal child window with its own sandboxed page, built from escaped text with a strict content
 security policy, that reports the answer by a navigation the main process intercepts. The app's
 window cannot read, click or cover it, so it keeps the guarantee of a system dialog in SideKick's
-style. Without a visible window to attach to, it falls back to the system dialog. The system tray,
-the macOS menu bar and the page's own context menu in the browser stay native.
+style. It always opens over the app's own window, never a browser page's window parked off screen.
+When SideKick is not in front, its taskbar entry flashes and a notification says what is being
+asked. With the window minimized, in the tray or closed, it asks with the system dialog instead.
+A tool waiting on the answer does not spend its time limit meanwhile (`whileWaitingForUser`), and
+a caller can pass a signal that withdraws the question, as Cancel, when its run stops. The system
+tray, the macOS menu bar and the page's own context menu in the browser stay native.
 
 ## Dialog and accessibility behavior
 

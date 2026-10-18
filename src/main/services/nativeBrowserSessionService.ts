@@ -1782,7 +1782,7 @@ export class NativeBrowserSessionService {
     const viewport = this.normalizeViewport(input.viewport ?? this.defaultViewport)
     const allowedFileRoots = await this.resolveFileRoots(input.allowedFileRoots ?? [])
     const initialUrl = input.url
-      ? await this.normalizeNavigationUrl(input.url, allowedFileRoots)
+      ? await this.normalizeNavigationUrl(input.url, allowedFileRoots, signal)
       : undefined
     const id = randomUUID()
     const partition = `sidekick-browser-${safeSegment(input.runId)}-${id}`
@@ -1932,7 +1932,11 @@ export class NativeBrowserSessionService {
     }
   }
 
-  private async normalizeNavigationUrl(input: string, allowedFileRoots: string[]): Promise<string> {
+  private async normalizeNavigationUrl(
+    input: string,
+    allowedFileRoots: string[],
+    signal?: AbortSignal
+  ): Promise<string> {
     let url: URL
     try {
       url = new URL(input)
@@ -1946,7 +1950,7 @@ export class NativeBrowserSessionService {
       if (this.plainHttpAllowed(url)) return url.href
       const policy = this.options.networkPolicy
       if (policy && privateNetworkHost(url.hostname)) {
-        if (await policy.approve(browserNetworkOrigin(url))) return url.href
+        if (await policy.approve(browserNetworkOrigin(url), signal)) return url.href
         throw new Error(
           `The user did not allow the browser to open ${browserNetworkOrigin(url)}. Ask them before trying it again.`
         )
@@ -2344,7 +2348,7 @@ export class NativeBrowserSessionService {
       let url: string | undefined
       if (navigationAction === 'url') {
         if (!input.url) throw new Error('URL navigation requires a url')
-        url = await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+        url = await this.normalizeNavigationUrl(input.url, session.allowedFileRoots, signal)
       } else if (input.url) {
         throw new Error(`${navigationAction} navigation does not accept a url`)
       }
@@ -4921,7 +4925,7 @@ export class NativeBrowserSessionService {
       }
       if (action === 'new') {
         const url = input.url
-          ? await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+          ? await this.normalizeNavigationUrl(input.url, session.allowedFileRoots, signal)
           : undefined
         const viewport = await this.currentViewport(this.getTab(session))
         const tab = await this.createOwnedTab(session, viewport, signal)

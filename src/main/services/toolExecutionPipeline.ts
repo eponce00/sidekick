@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
+
 export class ToolRuntimeTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`Tool execution timed out after ${timeoutMs} ms`)
@@ -27,6 +29,63 @@ export type ToolExecutionAfterHook<T = unknown> = (
   input: ToolExecutionContext,
   result: T
 ) => T | Promise<T>
+
+interface ToolClock {
+  /** Stops the tool's time limit; the returned function starts it again. */
+  pause: () => () => void
+}
+
+const runningToolClock = new AsyncLocalStorage<ToolClock>()
+
+/**
+ * Waits for the user without spending the running tool's time limit: a person answering a
+ * question is not the tool being slow. Outside a tool call it simply waits.
+ */
+export async function whileWaitingForUser<T>(wait: () => Promise<T>): Promise<T> {
+  const resume = runningToolClock.getStore()?.pause()
+  try {
+    return await wait()
+  } finally {
+    resume?.()
+  }
+}
+
+/** A time limit that can be stopped and started again, keeping what was left of it. */
+function pausableTimeout(
+  milliseconds: number,
+  onTimeout: () => void
+): ToolClock & { clear: () => void } {
+  let remaining = milliseconds
+  let startedAt = Date.now()
+  let pauses = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const start = (): void => {
+    startedAt = Date.now()
+    timer = setTimeout(onTimeout, remaining)
+    timer.unref?.()
+  }
+  start()
+  return {
+    pause: () => {
+      if (pauses++ === 0 && timer) {
+        clearTimeout(timer)
+        timer = undefined
+        remaining = Math.max(0, remaining - (Date.now() - startedAt))
+      }
+      let resumed = false
+      return () => {
+        if (resumed) return
+        resumed = true
+        if (--pauses === 0) start()
+      }
+    },
+    clear: () => {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      pauses = Number.POSITIVE_INFINITY
+    }
+  }
+}
 
 /**
  * Canonical execution boundary shared by every model-facing tool.
@@ -79,13 +138,13 @@ export class ToolExecutionPipeline {
     if (input.signal.aborted) throw new DOMException('Tool execution cancelled', 'AbortError')
     const timeoutController = new AbortController()
     let timedOut = false
+    // The limit stops while the tool waits for the user, as for an approval dialog.
     const timeout = input.timeoutMs
-      ? setTimeout(() => {
+      ? pausableTimeout(input.timeoutMs, () => {
           timedOut = true
           timeoutController.abort(new ToolRuntimeTimeoutError(input.timeoutMs!))
-        }, input.timeoutMs)
+        })
       : undefined
-    timeout?.unref()
     const signal = AbortSignal.any([input.signal, timeoutController.signal])
     let onAbort!: () => void
     const aborted = new Promise<never>((_, reject) => {
@@ -137,9 +196,10 @@ export class ToolExecutionPipeline {
         input.onStage?.('completed')
         return result
       }
-      return await Promise.race([lifecycle(), aborted])
+      const run = (): Promise<T> => Promise.race([lifecycle(), aborted])
+      return await (timeout ? runningToolClock.run(timeout, run) : run())
     } finally {
-      if (timeout) clearTimeout(timeout)
+      timeout?.clear()
       signal.removeEventListener('abort', onAbort)
     }
   }

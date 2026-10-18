@@ -3,9 +3,13 @@ import {
   BrowserWindow,
   dialog,
   nativeTheme,
+  Notification,
   type MessageBoxOptions,
   type MessageBoxReturnValue
 } from 'electron'
+import { appState } from '../ipc/state'
+import { isBrowserParkingWindow } from './browserViewHost'
+import { whileWaitingForUser } from './toolExecutionPipeline'
 
 const DIALOG_WIDTH = 460
 const RESPONSE_SCHEME = 'sidekick-dialog:'
@@ -156,23 +160,95 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, v
 </html>`
 }
 
+export interface TrustedDialogRequest {
+  /** Stops asking, answering Cancel, when whatever is waiting gives up, such as a stopped run. */
+  signal?: AbortSignal
+}
+
+/**
+ * The window a question belongs over. A browser page's window is parked off screen, so a dialog
+ * centred on it would be open where nobody can see it; the app's own window stands in for it.
+ */
+function dialogOwner(parent: BrowserWindow | null): BrowserWindow | null {
+  if (!parent || parent.isDestroyed()) return null
+  if (!isBrowserParkingWindow(parent)) return parent
+  const main = appState.mainWindowRef
+  return main && !main.isDestroyed() ? main : null
+}
+
+/**
+ * Makes sure a question is noticed when SideKick is not in front: the taskbar entry flashes and a
+ * notification says what is being asked; clicking it brings the window up. Returns a function
+ * that takes both back once the question is answered.
+ */
+function callAttention(owner: BrowserWindow | null, options: MessageBoxOptions): () => void {
+  if (!owner || (owner.isFocused() && owner.isVisible() && !owner.isMinimized()))
+    return () => undefined
+  owner.flashFrame(true)
+  let notice: Notification | undefined
+  if (Notification.isSupported()) {
+    notice = new Notification({
+      title: options.title || 'SideKick needs your answer',
+      body: options.message,
+      silent: false
+    })
+    notice.on('click', () => {
+      if (owner.isDestroyed()) return
+      if (owner.isMinimized()) owner.restore()
+      owner.show()
+      owner.focus()
+    })
+    notice.show()
+  }
+  return () => {
+    if (!owner.isDestroyed()) owner.flashFrame(false)
+    notice?.close()
+  }
+}
+
 /**
  * Asks the user something the main process must hear from them directly, in SideKick's style.
  * Like a system dialog, it is its own window that only the main process controls: the app's
- * window cannot read, click or cover it, so it can approve security-sensitive changes. Without a
- * visible window to attach to, it falls back to the system dialog.
+ * window cannot read, click or cover it, so it can approve security-sensitive changes. When
+ * SideKick is not in front it calls for attention. With its window minimized, in the tray, or
+ * closed, it asks with the system dialog, which stands on its own. A tool waiting on the answer
+ * does not spend its time limit meanwhile.
  */
-export async function showTrustedDialog(
+export function showTrustedDialog(
   parent: BrowserWindow | null,
-  options: MessageBoxOptions
+  options: MessageBoxOptions,
+  request: TrustedDialogRequest = {}
+): Promise<MessageBoxReturnValue> {
+  return whileWaitingForUser(() => askTrusted(parent, options, request))
+}
+
+async function askTrusted(
+  parent: BrowserWindow | null,
+  options: MessageBoxOptions,
+  { signal }: TrustedDialogRequest
 ): Promise<MessageBoxReturnValue> {
   const buttons = options.buttons?.length ? options.buttons : ['OK']
   const cancelId = options.cancelId ?? 0
-  if (!parent || parent.isDestroyed() || !parent.isVisible() || parent.isMinimized())
-    return parent && !parent.isDestroyed()
-      ? dialog.showMessageBox(parent, options)
-      : dialog.showMessageBox(options)
+  const cancelled: MessageBoxReturnValue = { response: cancelId, checkboxChecked: false }
+  if (signal?.aborted) return cancelled
+  const owner = dialogOwner(parent)
+  const release = callAttention(owner, options)
+  try {
+    if (!owner || !owner.isVisible() || owner.isMinimized())
+      return await dialog.showMessageBox(signal ? { ...options, signal } : options)
+    return await presentTrusted(owner, options, buttons, cancelId, signal)
+  } finally {
+    release()
+  }
+}
 
+async function presentTrusted(
+  parent: BrowserWindow,
+  options: MessageBoxOptions,
+  buttons: string[],
+  cancelId: number,
+  signal: AbortSignal | undefined
+): Promise<MessageBoxReturnValue> {
   const theme = await parentTheme(parent)
   const window = new BrowserWindow({
     parent,
@@ -205,9 +281,13 @@ export async function showTrustedDialog(
     const finish = (response: number, checkboxChecked = false): void => {
       if (settled) return
       settled = true
+      signal?.removeEventListener('abort', abandon)
       resolve({ response, checkboxChecked })
       if (!window.isDestroyed()) window.destroy()
     }
+    // Whatever was waiting gave up, so the question no longer stands.
+    const abandon = (): void => finish(cancelId, false)
+    signal?.addEventListener('abort', abandon, { once: true })
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event, url) => {
       event.preventDefault()

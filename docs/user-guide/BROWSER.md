@@ -63,7 +63,9 @@ checks are always human-only; SideKick does not ask the model to bypass or solve
 
 The browser opens HTTPS, files inside the project, and plain HTTP on your own computer. A plain
 HTTP address on your local network, such as a device or gateway at `http://10.0.0.5:8080`, opens
-only after you allow it in a dialog, once per address and port. Devices on a local network often
+only after you allow it in a dialog, once per address and port. If SideKick is not in front when
+the agent asks, a notification tells you, and the agent waits for your answer rather than timing
+out; stopping the run withdraws the question. Devices on a local network often
 trust anyone who can reach them, so a page the agent reads cannot send it to one you have not
 chosen, and requests a page makes to any other local address are blocked. Allowed addresses are
 listed in **Settings › Agent › Local network**, where you can remove them.
