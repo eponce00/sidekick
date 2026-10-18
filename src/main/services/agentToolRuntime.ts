@@ -831,11 +831,10 @@ export class AgentToolRuntime {
       })
       if (!result.ok) {
         const failureCode = result.failure?.code
-        const stale =
-          failureCode === 'read_required' ||
-          failureCode === 'stale_read' ||
-          /stale|re-?read|read receipt/i.test(result.error || '')
-        const ambiguous = failureCode === 'multiple_matches'
+        const stale = failureCode
+          ? failureCode === 'read_required' || failureCode === 'stale_read'
+          : /stale|re-?read|read receipt/i.test(result.error || '')
+        const correctable = failureCode === 'multiple_matches' || failureCode === 'text_not_found'
         const patchSyntax =
           name === 'apply_patch' &&
           /^Invalid (?:patch|Add File|Delete File|Update File|hunk)/i.test(result.error || '')
@@ -845,7 +844,7 @@ export class AgentToolRuntime {
           message: result.error || 'Workspace mutation failed',
           retryable: true,
           recoveryAction:
-            patchSyntax || ambiguous
+            patchSyntax || correctable
               ? 'correct_input'
               : stale
                 ? 'refresh_state'
