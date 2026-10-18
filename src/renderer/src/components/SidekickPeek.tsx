@@ -4,7 +4,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import peekSvg from '../assets/sidekick-peek.svg?raw'
 import { CapeCloth } from '../utils/capeCloth'
-import { motionAllowed } from '../utils/messageMotion'
+import { motionAllowed, prefersReducedMotion } from '../utils/messageMotion'
 import './SidekickPeek.css'
 
 // How far, in the drawing's units, the eyes move inside the visor, and the head turns, at most.
@@ -82,7 +82,10 @@ export function SidekickPeek(): React.JSX.Element {
     const element = ref.current
     const cape = element?.querySelector<SVGPathElement>('.peek-cape')
     const lining = element?.querySelector<SVGPathElement>('.peek-cape-lining')
-    if (!element || !cape || !lining || !motionAllowed()) return undefined
+    // Only reduced motion stops it for good. A hidden window just pauses it: the browser holds
+    // animation frames back until the window is seen again, so the robot can appear while SideKick
+    // is in the tray and its cape still moves once it is shown.
+    if (!element || !cape || !lining || prefersReducedMotion()) return undefined
     const cloth = new CapeCloth()
     let wind = 0
     let gustTarget = 0

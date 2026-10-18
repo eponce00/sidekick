@@ -92,4 +92,14 @@ describe('SidekickPeek', () => {
       ?.getAttribute('d')
     expect(capeOutline()).toBe(drawn)
   })
+
+  it('still moves its cape when it appears while the window is hidden', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    await act(async () => root.render(<SidekickPeek />))
+    const drawn = capeOutline()
+    visibility.mockReturnValue('visible')
+    await frames(2)
+    expect(capeOutline()).not.toBe(drawn)
+    visibility.mockRestore()
+  })
 })
