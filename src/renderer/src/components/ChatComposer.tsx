@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { ClipboardEvent, KeyboardEvent, ReactNode, RefObject } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowUp } from 'lucide-react'
@@ -74,6 +75,19 @@ export function ChatComposer({
     onChange
   })
   const showPromptRefiner = promptRefiner.canRefine || promptRefiner.status !== 'idle'
+  // The autosizing textarea measures itself only when it renders or the window resizes. When the
+  // chat narrows and widens again, as beside a full-size inspector, it would keep the height it
+  // measured while narrow; a width change renders it again so it measures at the new width.
+  const [, setMeasuredWidth] = useState(0)
+  useEffect(() => {
+    const element = inputRef.current
+    if (!element || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(([entry]) => {
+      setMeasuredWidth(Math.round(entry.contentRect.width))
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [inputRef])
 
   return (
     <div className={`input-area ${className}`.trim()}>

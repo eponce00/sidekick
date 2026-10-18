@@ -103,9 +103,16 @@ Each configured model exposes exactly one editing contract. Automatic selection 
 model identity when a gateway such as LiteLLM reports it. Opaque aliases can run active,
 long-context localized-edit, multi-match replacement, and complete-write probes across every
 dialect; successful results are persisted against the exact provider/model/upstream identity.
-Exact-edit contracts require an explicit `replace_all` boolean so replacement scope is never an
-implicit default. Ambiguous matches fail closed with a typed failure, bounded match-start lines,
-and a concrete correction rather than a generic conflict.
+In exact-edit contracts `replace_all` defaults to false, the scope that can change only one
+location. When `old_string` does not match exactly, the mutation service tries fallbacks from
+strictest to loosest: typography, trailing whitespace, line endings, invisible marks and read-tool
+line numbers; then blank lines and newlines at the edges of `old_string`; then whole lines retyped
+with different indentation or inner whitespace, re-indented to the file. The first fallback with
+any match decides, and it applies only a unique match (or every match with `replace_all`). A block
+whose middle differs from the file is never applied; the error names the closest block's lines and
+lists the lines that differ. Ambiguous matches fail closed with a typed failure, bounded
+match-start lines with excerpts, and a concrete correction rather than a generic conflict. When
+an edit fails and the target changed since it was read, the stale read is reported instead.
 
 After two production mutation-schema failures—or two identical ambiguous exact edits—the kernel
 can switch at a safe provider boundary to a probe-verified fallback, promote it for future runs,
@@ -186,8 +193,11 @@ Every normal conversation, worker chat, research run, and child agent executes i
 
 The kernel treats a provider output-limit finish reason as a failed tool batch: none of that turn's
 calls execute, even when an argument prefix happens to be valid JSON. Every call receives a
-model-visible `output_truncated` result so the model can retry with a smaller request. Within a
-non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
+model-visible `output_truncated` result so the model can retry with a smaller request. A turn the
+limit cut off while the model was still thinking, before any answer or tool call, ends the run
+with that reason, as Codex treats an incomplete response, instead of completing it empty; the
+model is never told to cut its thinking short. A reply's limit is a quarter of the context window
+up to 32,768 tokens, or the model's configured maximum output, honored up to half the window. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
@@ -214,8 +224,9 @@ surfaces backed by the Electron runtime already shipped in the desktop package. 
 internal CDP bridge for accessibility snapshots, semantic node references, full-page capture,
 network accounting, and coordinate fallback; no debugging port is exposed and no personal browser
 profile is attached. Local files are limited to explicitly granted project roots, plain HTTP is
-limited to loopback servers and local-network origins the user approved in a native dialog
-(stored apart from settings, revocable in Settings), credential-bearing URLs and unsupported schemes fail
+limited to loopback servers and local-network origins the user approved in a trusted dialog
+(stored apart from settings, revocable in Settings, and shared with `web_fetch`, see
+[Built-in SideKick Search](#built-in-sidekick-search)), credential-bearing URLs and unsupported schemes fail
 closed, popups inherit the same navigation guard, and the ephemeral partition rejects file
 subresources whose real path escapes that session's project grant. Conversation sessions persist
 across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used
@@ -337,7 +348,11 @@ discovery strategy, enabled model inventory, optional utility model, and its lat
 outcome. Multiple instances of the same provider type are valid. `src/shared/providerInstances.ts`
 owns normalization and projection into chat-selectable models.
 
-`src/shared/providerRegistry.ts` is the provider metadata boundary. It distinguishes provider kind from UI transport and wire protocol, including LM Studio versus a generic OpenAI-compatible instance. Registry capabilities describe credentials, model discovery, health checks, context metadata, model lifecycle, pricing, generation statistics, thinking controls, and vision payloads. `services/providers/providerDiscovery.ts` is the renderer facade for the trusted discovery runtime.
+`src/shared/providerRegistry.ts` is the provider metadata boundary. It distinguishes provider kind from UI transport and wire protocol, including LM Studio versus a generic OpenAI-compatible instance. `src/shared/reasoning.ts` owns
+which reasoning levels each model offers and resolves the one a request carries; each adapter
+translates that level into its protocol's own field (`reasoning.effort`, `reasoning_effort`,
+`chat_template_kwargs.enable_thinking`, Ollama `think`, or Anthropic adaptive thinking with an
+effort or a thinking budget) and retries once with the model's default when a server rejects it. Registry capabilities describe credentials, model discovery, health checks, context metadata, model lifecycle, pricing, generation statistics, thinking controls, and vision payloads. `services/providers/providerDiscovery.ts` is the renderer facade for the trusted discovery runtime.
 
 `src/main/providers/providerRuntime.ts` resolves the selected persisted instance and dispatches to the OpenAI-compatible, Ollama, or native Anthropic adapter. It owns discovery, context lookup, completion, streaming, signal-based cancellation, and OpenRouter generation statistics. Fragmented protocol fixtures exercise each adapter, and the opt-in real-provider fixture exercises catalog, completion, and streaming clients against a configured endpoint; regular CI skips the network case when no smoke endpoint is supplied.
 
@@ -481,13 +496,20 @@ through the main window's external-navigation policy.
 
 ### Worktrees and parallel agents
 
+A worktree belongs to its chat, not to a project of its own: `conversations.worktree_id` points
+at it, the chat keeps its `project_id`, and `ProjectStore.getConversationContext` returns the
+worktree's folder as the chat's `workspaceRoot`, which every run, tool and checkpoint uses.
+
 `src/main/services/managedWorktreeService.ts` owns SideKick's Git worktrees: creation for a fork or
 a chat that has not started (`createForConversation`, also the entry point for main-process callers
-such as agent-started chats), inventory with Git state, owners and disk use, merging the base into a
-clean idle worktree, and removal. It acts only on folders it can prove it created: the exact
-storage shape under the private `worktrees` folder, the recorded branch, and registration in
-`git worktree list`. Forced removal deletes links inside the worktree as links before
-`git worktree remove --force`, so a junction to a shared install never loses its target.
+such as agent-started chats), inventory with Git state and owners, setting the least recently used
+worktrees aside beyond 15 on disk, restoring one before its chat's next run (the coordinator's
+`prepareWorkspace` hook), and removal. Setting aside snapshots HEAD and every unignored file into a
+commit held by `refs/sidekick/worktrees/<id>`, built in a private index so the worktree's own index
+is untouched. It acts only on folders it can prove it created: the exact storage shape under the
+private `worktrees` folder and registration in `git worktree list`. Removal deletes links inside the
+worktree as links before `git worktree remove --force`, so a junction to a shared install never
+loses its target.
 
 `src/main/services/workspaceOccupancy.ts` records the folder every writing run uses.
 `AgentRuntimeCoordinator.startConversation` checks and claims it in one step and refuses a run in a
@@ -502,6 +524,21 @@ open work.
 ## Built-in SideKick Search
 
 `src/main/services/sidekickSearch` is a main-process capability with no configured endpoint or separately managed runtime. Source adapters query DuckDuckGo, Brave Search, and Bing concurrently through their public browser surfaces. The coordinator records source diagnostics, canonicalizes and deduplicates destinations, applies reciprocal-rank fusion and domain diversity, and caches successful results locally. Image discovery, optional local image-byte optimization, and page reading (Markdown conversion, Readability for the main article, and a digest bounded by what the agent asked for) use the same internal capability.
+
+Page reading and image downloads go through `webNetworkGuard`, which applies the browser's
+local-network policy to SideKick's own requests. `admitWebUrl` decides each hop before anything is
+sent: loopback is refused, a plain-HTTP local-network origin asks `browserNetworkApprovals`, the
+same store and trusted dialog the browser uses, an HTTPS local-network origin opens as in the
+browser, a public name may never resolve into the local network, and a redirect never asks and
+never leads from a public response into the local network. Names are checked where the connection
+resolves them: each
+request gets its own agent whose `lookup` classifies every address with `networkAddressKind`, which
+reads IPv4 inside IPv6 (mapped, compatible, translated, NAT64, 6to4), and refuses the lookup when
+any address is out of bounds, so DNS rebinding cannot swap in an address after a check. Proxies are
+disabled for the same reason. A refusal is final; it never falls back to the rendered read. That
+render runs in its own partition with direct connections and every permission denied, checks each
+request before Chromium sends it, and discards the page if `onCompleted` or `onBeforeRedirect`
+reports a remote address its request could not reach.
 
 Only `AgentToolRuntime` can invoke search, image discovery, or page extraction; there is no raw
 renderer search bridge. See [Search](../user-guide/SEARCH.md) for behavior, privacy boundaries,

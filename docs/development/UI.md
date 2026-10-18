@@ -19,11 +19,15 @@ Global tokens live in `src/renderer/src/styles/App.css`. Component styles should
 - Borders: `--border-subtle`, `--border-color`, `--border-strong`, `--panel-border`
 - Text: `--text-primary`, `--text-secondary`, `--text-muted`
 - Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`, and `--on-accent`
-  for anything drawn on an accent fill (plain white is 1.85:1 on the dark theme's accent)
+  for anything drawn on an accent fill (dark accents are light, so white text would not read)
 - Semantic: `--color-success`, `--color-error`, `--color-warning` for text and icons; the
   `-fill` variants for filled controls carrying `--on-semantic` text; the `-subtle` variants for
   tinted backgrounds. `--error`, `--danger`, `--success`, and `--warning` are aliases of these.
 - Interaction: `--focus-ring`, `--shadow-panel`, `--shadow-md`, motion duration and radius tokens
+
+- Brand: `--brand-helmet`, `--brand-shade`, `--brand-visor`, `--brand-glint`, and `--brand-led`
+  colour the robot wherever the app draws it; light themes tone the helmet down so it keeps its
+  shape on a pale surface.
 
 Type and shape stay on fixed scales rather than ad-hoc values:
 
@@ -32,6 +36,35 @@ Type and shape stay on fixed scales rather than ad-hoc values:
 - Weights: 400, 500, 600, 700. Inter is loaded at exactly these four; any other value silently
   rounds to one of them, so writing it only hides the real weight.
 - Radius: `--radius-xs` through `--radius-xl` and `--radius-full`.
+
+## Brand
+
+SideKick is a superhero's robot sidekick: a helmet in the tile's continuous-corner shape, a glass
+visor cut like a domino mask with pointed tips, pixel LED eyes, an antenna, an ear module, and a red
+cape fastened with a badge that carries a prompt chevron, flying in from the side of its tile.
+Surfaces, text, and borders are pure greys with no hue, so the interface stays quiet and colour
+means something. Accents are soft: the default Blue (`#86AEE8`, deepening to `#2850B8` in light
+themes so it reads as text), with the other palettes in Settings, among them Lime, the icon's LED
+colour, and Mono, which uses no colour at all. The robot on an empty chat lights its LEDs in each
+palette's full-brightness shade, so it stays the one bright thing on screen.
+
+- The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
+  small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
+  run it; never edit the generated files. The cape is one piece of fabric with a softly waving hem
+  and two creases, as the app's moving cape draws it. The small cut keeps a plain cape but leaves
+  out the creases, the badge and the mask's tips, which are noise at 16 px.
+- Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
+  or a failure at 6 px: warnings are orange rather than yellow, and errors are rose.
+- The robot appears where it adds character and no information: the icon, the title bar, the
+  loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
+  and then. It is decoration, hidden from screen readers.
+- On an empty chat its cape is cloth (`utils/capeCloth.ts`): a Verlet-integrated chain from the
+  neck to the hem, with one piece of fabric drawn around it, so it folds wherever it bends, its
+  creases deepen with the bend, and it shades toward the neck. Gravity drapes it, a light breeze
+  sways it, a gust now and then streams it back with ripples running down it, the pointer pushes
+  the cloth where it brushes through, and a click flicks it up. Streaks
+  (`utils/windStreaks.ts`) sweep past behind the robot while the wind blows, with a burst as a gust
+  arrives, so it is plain what moves the cape. With reduced motion the cape stays as drawn.
 
 Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
 must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.
@@ -70,6 +103,10 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 - Do not render permanent pills for capabilities the agent manages automatically. Built-in web search and auto-discovered skills remain invisible unless their execution appears in the conversation.
 - Use Lucide for interactive and semantic UI icons. Default to a 1.75–1.8 stroke, use 13–16px inside dense controls, and reserve 18px or larger for primary actions and empty states.
 - Use `ProviderIcon` everywhere a provider or provider-owned model is identified. Resolve from `providerKind` before transport so OpenAI-compatible connections, LM Studio, and llama.cpp remain visually distinct.
+- Provider icons are one set: each provider's official mark simplified to a solid shape on a
+  24-unit grid, drawn in `currentColor` (`--text-secondary`) so it follows the theme and reads at
+  14px. OpenAI-compatible servers, which have no brand, get a neutral plug. Keep a new mark's source
+  and license notice in `ProviderIcon.tsx`.
 - Custom SVG is reserved for official provider marks and genuine data visualizations such as the context ring or research progress—not ordinary buttons.
 
 ## Settings pages

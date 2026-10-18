@@ -3,6 +3,21 @@ import { AgentToolLoopError, classifyAgentKernelFailure, withToolGuard } from '.
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 
 describe('kernel terminal policy', () => {
+  it('fails a reply the model server dropped as a connection problem that can continue', () => {
+    const failure = classifyAgentKernelFailure(
+      new Error(
+        'Lost the connection to the model server at 127.0.0.1:4000 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
+      ),
+      false
+    )
+    expect(failure.error).toMatchObject({
+      code: 'transient',
+      retryable: true,
+      recoveryAction: 'retry_later'
+    })
+    expect(classifyAgentKernelFailure(new Error('boom'), false).error.code).toBe('internal')
+  })
+
   it('adds recovery guidance without rewriting tool results or mutating prior evidence', () => {
     const failure = toolExecutionFailed({
       title: 'Patch',

@@ -8,6 +8,8 @@ import type {
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
 
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
+import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -19,9 +21,17 @@ function headers(instance: ProviderInstance): Record<string, string> {
   }
 }
 
-function thinkValue(model: string, enabled: boolean): boolean | 'low' | 'medium' {
-  return model.toLowerCase().includes('gpt-oss') ? (enabled ? 'medium' : 'low') : enabled
+/** Ollama's `think`: on or off, or a level for gpt-oss, which cannot stop reasoning. */
+function thinkValue(model: string, level: ReasoningLevel | undefined): ThinkValue | undefined {
+  if (level === 'auto') return undefined
+  if (model.toLowerCase().includes('gpt-oss')) {
+    if (level === 'off') return 'low'
+    return nearestEffort(level ?? 'medium', ['low', 'medium', 'high'] as const)
+  }
+  return level !== 'off'
 }
+
+type ThinkValue = boolean | 'low' | 'medium' | 'high'
 
 function ollamaImagePayload(dataUrl: string): string {
   const match = dataUrl.match(/^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/s)
@@ -95,7 +105,7 @@ function body(request: ProviderChatRequest, stream: boolean): Record<string, unk
     tools: request.tools?.length ? request.tools : undefined,
     stream,
     keep_alive: '30m',
-    think: thinkValue(request.target.model, request.thinkingEnabled ?? true),
+    think: thinkValue(request.target.model, requestReasoningLevel(request) ?? 'on'),
     options: {
       ...(request.target.contextLength ? { num_ctx: request.target.contextLength } : {}),
       ...(request.maxOutputTokens ? { num_predict: request.maxOutputTokens } : {}),
@@ -179,7 +189,12 @@ export async function streamOllamaChat(
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: error instanceof Error ? error.message : 'Ollama stream failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Ollama stream failed')
+    }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)
@@ -229,7 +244,12 @@ export async function completeOllamaChat(
       }
     }
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : 'Ollama completion failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Ollama completion failed')
+    }
   }
 }
 

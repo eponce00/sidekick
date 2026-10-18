@@ -988,7 +988,21 @@ function isTransientViewportCaptureError(error: unknown): boolean {
   )
 }
 
-class ElectronNativeBrowserSurface implements NativeBrowserSurface {
+/**
+ * An SVG file opened on its own is drawn at the size written in it, in the top-left corner of a
+ * white page, so it overflowed a narrow panel or sat small in a wide one. Like an image viewer,
+ * one with a viewBox is fitted to the window and centred on a neutral checkerboard instead; the
+ * selector matches only when the document itself is an SVG, never an SVG inside a web page.
+ */
+export const STANDALONE_SVG_VIEWER_CSS = `svg:root[viewBox] {
+  width: 100vw !important;
+  height: 100vh !important;
+  background-color: #f4f4f4;
+  background-image: conic-gradient(#e6e6e6 25%, transparent 0 50%, #e6e6e6 0 75%, transparent 0);
+  background-size: 16px 16px;
+}`
+
+export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   readonly webContentsId: number
   private readonly consoleListeners = new Set<
     (message: NativeBrowserSurfaceConsoleMessage) => void
@@ -1028,6 +1042,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     })
     contents.on('did-navigate', () => this.updateTakeoverTitle())
     contents.on('did-navigate-in-page', () => this.updateTakeoverTitle())
+    contents.on('dom-ready', () => {
+      void contents.insertCSS(STANDALONE_SVG_VIEWER_CSS).catch(() => undefined)
+    })
     contents.setWindowOpenHandler(({ url }) => {
       if (this.navigationGuard(url)) {
         for (const listener of this.openUrlListeners) listener(url)
@@ -1765,7 +1782,7 @@ export class NativeBrowserSessionService {
     const viewport = this.normalizeViewport(input.viewport ?? this.defaultViewport)
     const allowedFileRoots = await this.resolveFileRoots(input.allowedFileRoots ?? [])
     const initialUrl = input.url
-      ? await this.normalizeNavigationUrl(input.url, allowedFileRoots)
+      ? await this.normalizeNavigationUrl(input.url, allowedFileRoots, signal)
       : undefined
     const id = randomUUID()
     const partition = `sidekick-browser-${safeSegment(input.runId)}-${id}`
@@ -1915,7 +1932,11 @@ export class NativeBrowserSessionService {
     }
   }
 
-  private async normalizeNavigationUrl(input: string, allowedFileRoots: string[]): Promise<string> {
+  private async normalizeNavigationUrl(
+    input: string,
+    allowedFileRoots: string[],
+    signal?: AbortSignal
+  ): Promise<string> {
     let url: URL
     try {
       url = new URL(input)
@@ -1929,7 +1950,7 @@ export class NativeBrowserSessionService {
       if (this.plainHttpAllowed(url)) return url.href
       const policy = this.options.networkPolicy
       if (policy && privateNetworkHost(url.hostname)) {
-        if (await policy.approve(browserNetworkOrigin(url))) return url.href
+        if (await policy.approve(browserNetworkOrigin(url), signal)) return url.href
         throw new Error(
           `The user did not allow the browser to open ${browserNetworkOrigin(url)}. Ask them before trying it again.`
         )
@@ -2327,7 +2348,7 @@ export class NativeBrowserSessionService {
       let url: string | undefined
       if (navigationAction === 'url') {
         if (!input.url) throw new Error('URL navigation requires a url')
-        url = await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+        url = await this.normalizeNavigationUrl(input.url, session.allowedFileRoots, signal)
       } else if (input.url) {
         throw new Error(`${navigationAction} navigation does not accept a url`)
       }
@@ -4904,7 +4925,7 @@ export class NativeBrowserSessionService {
       }
       if (action === 'new') {
         const url = input.url
-          ? await this.normalizeNavigationUrl(input.url, session.allowedFileRoots)
+          ? await this.normalizeNavigationUrl(input.url, session.allowedFileRoots, signal)
           : undefined
         const viewport = await this.currentViewport(this.getTab(session))
         const tab = await this.createOwnedTab(session, viewport, signal)

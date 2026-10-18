@@ -15,6 +15,7 @@ vi.mock('../services/voice/microphone', () => ({
 }))
 
 import { VoiceSettings } from './VoiceSettings'
+import { selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -58,13 +59,16 @@ it('gives each device row an icon, a labelled select, and its own test button', 
   ]) {
     const device = row(label)
     expect(device.querySelector('.settings-row-icon svg'), `${label} icon`).not.toBeNull()
-    const select = device.querySelector('select')!
+    const select = device.querySelector('.ui-select')!
     expect(device.querySelector('label')?.htmlFor).toBe(select.id)
     const button = device.querySelector(`button[aria-label="${test}"]`)
     expect(button?.classList.contains('settings-secondary-action')).toBe(true)
     expect(button?.querySelector('svg')).not.toBeNull()
   }
-  expect(row('Microphone').querySelector('option[value="usb"]')?.textContent).toBe('USB Microphone')
+  const microphones = await selectOptions(
+    row('Microphone').querySelector<HTMLElement>('.ui-select')!
+  )
+  expect(microphones.find((option) => option.value === 'usb')?.label).toBe('USB Microphone')
 })
 
 it('tests the chosen microphone with a level meter under the row, then stops it', async () => {

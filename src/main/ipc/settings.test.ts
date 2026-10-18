@@ -494,3 +494,34 @@ describe('MCP servers that a save must ask about', () => {
     ).toEqual([other])
   })
 })
+
+describe('retired settings', () => {
+  afterEach(() => {
+    storeGet.mockReset()
+    storeSet.mockReset()
+  })
+
+  it('removes settings SideKick no longer has when it loads', async () => {
+    let stored: Record<string, unknown> = {
+      agentCommandTerminal: false,
+      focusChainReminderInterval: 15,
+      webSearchEnabled: false,
+      providerInstances: []
+    }
+    storeGet.mockImplementation((key: string, fallback: unknown) =>
+      key === 'settings' ? stored : fallback
+    )
+    storeSet.mockImplementation((key: string, value: Record<string, unknown>) => {
+      if (key === 'settings') stored = value
+    })
+    registerSettingsHandlers()
+    const load = vi
+      .mocked(ipcMain.handle)
+      .mock.calls.findLast(([channel]) => channel === 'settings:load')![1]
+    const loaded = (await load({ sender: {} } as IpcMainInvokeEvent)) as Record<string, unknown>
+    expect(stored).not.toHaveProperty('agentCommandTerminal')
+    expect(stored).not.toHaveProperty('focusChainReminderInterval')
+    expect(stored).toMatchObject({ webSearchEnabled: false })
+    expect(loaded).not.toHaveProperty('agentCommandTerminal')
+  })
+})

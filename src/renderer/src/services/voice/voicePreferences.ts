@@ -2,8 +2,9 @@ import { useSyncExternalStore } from 'react'
 import {
   DEFAULT_SPEECH_VOICE,
   isSpeechLanguage,
-  SPEECH_VOICES,
-  type SpeechLanguageCode
+  isSpeechVoice,
+  type SpeechLanguageCode,
+  type SpeechVoiceId
 } from '../../../../shared/voice'
 
 /**
@@ -14,7 +15,7 @@ import {
 export interface VoicePreferences {
   inputDeviceId: string
   outputDeviceId: string
-  voice: number
+  voice: SpeechVoiceId
   language: SpeechLanguageCode | 'auto'
   /** With the mic on, read each reply aloud and then listen again. */
   readRepliesAloud: boolean
@@ -37,10 +38,8 @@ function read(): VoicePreferences {
     return {
       inputDeviceId: typeof stored.inputDeviceId === 'string' ? stored.inputDeviceId : '',
       outputDeviceId: typeof stored.outputDeviceId === 'string' ? stored.outputDeviceId : '',
-      voice:
-        Number.isInteger(stored.voice) && stored.voice! >= 0 && stored.voice! < SPEECH_VOICES.length
-          ? stored.voice!
-          : DEFAULTS.voice,
+      // A voice of the model SideKick read with before (a number) starts from the default.
+      voice: isSpeechVoice(stored.voice) ? stored.voice : DEFAULTS.voice,
       language: isSpeechLanguage(stored.language) ? stored.language : 'auto',
       readRepliesAloud: stored.readRepliesAloud !== false
     }

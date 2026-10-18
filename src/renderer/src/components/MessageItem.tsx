@@ -1,26 +1,25 @@
-import { Children, useState, useRef, useEffect, useLayoutEffect, memo, useMemo } from 'react'
+import { Children, useState, useRef, memo, useMemo } from 'react'
 import {
-  Loader2,
-  Check,
-  X,
   AlignLeft,
   Brain,
+  Check,
   ChevronDown,
   ChevronRight,
-  Copy,
-  Pencil,
-  RotateCcw,
-  Info,
   CircleAlert,
   CircleCheck,
-  ListChecks,
-  Microscope,
-  GitBranch,
+  Copy,
+  CornerDownRight,
   FileText,
   FolderOpen,
+  GitFork,
+  Info,
+  ListChecks,
+  Loader2,
   MessageSquareText,
-  CornerDownRight,
+  Microscope,
+  Pencil,
   Play,
+  RotateCcw,
   Undo2
 } from 'lucide-react'
 import { formatTimestamp } from '../utils/messageFormatting'
@@ -50,15 +49,18 @@ import {
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
-import type { Message, MessageEditGeometry } from '../types/chat.types'
+import type { Message } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import {
   VERIFICATION_STATUS_COPY,
   type WorkspaceVerificationSummary
 } from '../../../shared/verification'
+import { providerConnectionFailureKind } from '../../../shared/providerErrors'
 import { MessageFooterPopover } from './MessageFooterPopover'
 import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
+import { Reveal } from './Reveal'
+import { AgentRunStats } from './AgentRunStats'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -88,6 +90,15 @@ function RunStatusSegment({
       <span>{retryLabel(status.reason)}</span>
     </div>
   )
+}
+
+/** A failed reply's heading: what went wrong in words, not the error code. */
+function runErrorTitle(error: { code?: string; message: string }): string {
+  const connection = providerConnectionFailureKind(error.message)
+  if (connection === 'unreachable') return 'Model server unreachable'
+  if (connection === 'dropped') return 'Connection lost'
+  if (!error.code || error.code === 'internal') return 'Reply failed'
+  return error.code.replaceAll('_', ' ')
 }
 
 function RunErrorSegment({
@@ -146,7 +157,7 @@ function RunErrorSegment({
     <div className="run-error-segment" role="alert">
       <CircleAlert size={15} aria-hidden="true" />
       <div>
-        <strong>{error.code ? error.code.replaceAll('_', ' ') : 'Run failed'}</strong>
+        <strong>{runErrorTitle(error)}</strong>
         <span>
           {error.message}
           {canContinue ? ' Continue picks up from where it stopped and keeps its work.' : ''}
@@ -625,39 +636,22 @@ const WORK_STEPS_SHOWN = 30
 function AgentWorkDisclosure({
   messageId,
   isLoading,
-  startedAt,
-  completedAt,
   children,
   segments,
-  awaitingFirstOutput = false,
-  showDuration = true,
   live = false,
   runId: _runId
 }: {
   messageId: string
   isLoading: boolean
-  startedAt?: number
-  completedAt?: number
   children?: React.ReactNode
   segments?: readonly import('../types/chat.types').ContentSegment[]
-  awaitingFirstOutput?: boolean
-  /** A reply split by a sub-agent row has several work groups; one of them carries the time. */
-  showDuration?: boolean
   /** The work in progress at the end of a running reply: shows its current step on one line. */
   live?: boolean
   runId?: string
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const [showEarlier, setShowEarlier] = useState(false)
-  const [now, setNow] = useState(Date.now)
 
-  useEffect(() => {
-    if (!isLoading) return undefined
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [isLoading])
-
-  const endAt = isLoading ? now : (completedAt ?? startedAt ?? now)
   const toolCount = segments?.filter((segment) => segment.type === 'tool').length ?? 0
   const reasoningCount = segments?.filter((segment) => segment.type === 'thinking').length ?? 0
   const activityLabel = [
@@ -666,14 +660,8 @@ function AgentWorkDisclosure({
   ]
     .filter(Boolean)
     .join(' · ')
-  const durationLabel = startedAt
-    ? `${isLoading ? (awaitingFirstOutput ? 'Waiting for model' : 'Working') : 'Worked'} for ${formatWorkDuration(endAt - startedAt)}`
-    : 'Worked'
-  const label = !showDuration
-    ? activityLabel || 'Steps'
-    : activityLabel
-      ? `${durationLabel} · ${activityLabel}`
-      : durationLabel
+  // The time is at the foot of a working reply and in the footer of a finished one.
+  const label = activityLabel || (segments ? 'Steps' : isLoading ? 'Thinking' : 'Thought process')
   const contentId = `${messageId}-agent-work`
   // The newest step, replaced by the next as the agent works; the whole list is one click away.
   const currentIndex =
@@ -723,50 +711,29 @@ function AgentWorkDisclosure({
           )}
         </div>
       )}
-      {expanded && children && (
-        <div id={contentId} className="agent-work-content">
-          {(() => {
-            const steps = Children.toArray(children)
-            const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
-            if (!earlier) return steps
-            return (
-              <>
-                <button
-                  type="button"
-                  className="agent-work-earlier"
-                  onClick={() => setShowEarlier(true)}
-                >
-                  Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
-                </button>
-                {steps.slice(earlier)}
-              </>
-            )
-          })()}
-        </div>
+      {children && (
+        <Reveal open={expanded}>
+          <div id={contentId} className="agent-work-content">
+            {(() => {
+              const steps = Children.toArray(children)
+              const earlier = showEarlier ? 0 : Math.max(0, steps.length - WORK_STEPS_SHOWN)
+              if (!earlier) return steps
+              return (
+                <>
+                  <button
+                    type="button"
+                    className="agent-work-earlier"
+                    onClick={() => setShowEarlier(true)}
+                  >
+                    Show {earlier} earlier {earlier === 1 ? 'step' : 'steps'}
+                  </button>
+                  {steps.slice(earlier)}
+                </>
+              )
+            })()}
+          </div>
+        </Reveal>
       )}
-    </div>
-  )
-}
-
-/**
- * Shown below a working reply whose latest output is text. The model may be
- * writing its next tool call, which some servers send only once complete, so
- * minutes can pass with nothing new on screen; this keeps the reply from
- * looking finished.
- */
-function AgentWorkingTail({ startedAt }: { startedAt?: number }): React.JSX.Element {
-  const [now, setNow] = useState(Date.now)
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  return (
-    <div className="agent-work-disclosure is-working agent-work-tail" role="status">
-      <span className="agent-work-toggle">
-        {startedAt ? `Working for ${formatWorkDuration(now - startedAt)}` : 'Working'}
-      </span>
     </div>
   )
 }
@@ -776,18 +743,18 @@ interface MessageItemProps {
   index: number // Reserved for future features (message navigation)
   isLoading: boolean
   expandedThinking: Set<string>
+  /** The message being edited in the message box, if any. */
   editingMessageId: string | null
-  editingGeometry: MessageEditGeometry | null
-  editingContent: string
+  /** This message is the one being edited, or comes after it: sending the edit replaces it. */
+  isRewound?: boolean
   copiedMessageId: string | null
   onToggleThinking: (id: string) => void
   onHandleArtifactResult: (
     title: string,
     result: { success: boolean; error?: string; code?: string }
   ) => void
+  /** Loads the message into the message box to edit and send again. */
   onEditMessage: (msg: Message, event: React.MouseEvent<HTMLButtonElement>) => void
-  onCancelEditMessage: () => void
-  onConfirmEditMessage: (msg: Message) => void
   onCopyMessage: (msg: Message) => void
   onRetryMessage: (msg: Message) => void
   /** Continues this interrupted reply; passed only while it can still be continued. */
@@ -795,7 +762,6 @@ interface MessageItemProps {
   onForkMessage?: (messageId: string) => void
   /** Goes back to before this message and returns it to the message box; absent while running. */
   onRewindMessage?: (message: Message, restoreFiles: boolean) => void
-  onSetEditingContent: (content: string) => void
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
   onResolveAgentInteraction?: (
@@ -806,7 +772,6 @@ interface MessageItemProps {
   workspaceFolder?: string | null
   onUndoCheckpoint?: (hash: string) => void
   editActionTitle?: string
-  confirmEditActionTitle?: string
   retryActionTitle?: string
   readOnly?: boolean
 }
@@ -817,36 +782,31 @@ function MessageItemInner({
   isLoading,
   expandedThinking,
   editingMessageId,
-  editingGeometry,
-  editingContent,
+  isRewound = false,
   copiedMessageId,
   onToggleThinking,
   onHandleArtifactResult,
   onEditMessage,
-  onCancelEditMessage,
-  onConfirmEditMessage,
   onCopyMessage,
   onRetryMessage,
   onContinueRun,
   onForkMessage,
   onRewindMessage,
-  onSetEditingContent,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
   workspaceFolder,
   onUndoCheckpoint,
   editActionTitle = 'Edit message',
-  confirmEditActionTitle = 'Save and resend',
   retryActionTitle = 'Rewind and retry from here',
   readOnly = false
 }: MessageItemProps) {
   const messageRef = useRef<HTMLDivElement>(null)
-  const editInputRef = useRef<HTMLTextAreaElement>(null)
   const isEditing = editingMessageId === msg.id
+  // One time for the whole reply: from the start of the run that wrote it, so a retry or an edit
+  // starts the clock again, to its end.
   const workStartedAt = msg.tokenUsage?.runStartedAt ?? (isLoading ? msg.timestamp : undefined)
   const workCompletedAt = msg.tokenUsage?.runCompletedAt
-  const showWorkingTail = isLoading && msg.segments?.[msg.segments.length - 1]?.type === 'text'
   const canUndoChanges = Boolean(
     !readOnly &&
     msg.checkpointHash &&
@@ -862,46 +822,16 @@ function MessageItemInner({
     (segment) => segment.type === 'verification' && segment.verification
   )
 
-  useLayoutEffect(() => {
-    if (!isEditing) return
-    const input = editInputRef.current
-    const message = messageRef.current
-    if (!input || !message) return
-    const scrollContainer = message.closest<HTMLElement>('.messages-container')
-    input.style.height = '0px'
-    input.style.height = `${Math.max(24, input.scrollHeight)}px`
-    if (scrollContainer && editingGeometry) {
-      const topDelta = message.getBoundingClientRect().top - editingGeometry.viewportTop
-      if (Math.abs(topDelta) > 0.5) scrollContainer.scrollTop += topDelta
-    }
-    input.focus({ preventScroll: true })
-    input.setSelectionRange(input.value.length, input.value.length)
-  }, [editingGeometry, isEditing])
-
-  useLayoutEffect(() => {
-    if (!isEditing || !editInputRef.current) return
-    const input = editInputRef.current
-    input.style.height = '0px'
-    input.style.height = `${Math.max(24, input.scrollHeight)}px`
-  }, [editingContent, isEditing])
-
   return (
     <div
       key={msg.id}
       ref={messageRef}
-      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${editingMessageId === msg.id ? 'message-editing' : ''}`}
+      data-message-id={msg.id}
+      className={`message message-${msg.role} ${msg.role === 'system' ? `message-notice message-notice-${msg.noticeTone || 'info'}` : ''} ${isEditing ? 'message-editing' : ''} ${isRewound ? 'message-rewound' : ''}`}
+      // Sending the edit replaces this part of the chat, so it steps back while the edit is open.
+      aria-hidden={isRewound || undefined}
     >
-      <div
-        className="message-bubble"
-        style={
-          isEditing && editingGeometry
-            ? {
-                width: `${Math.max(320, editingGeometry.width)}px`,
-                minHeight: `${editingGeometry.height}px`
-              }
-            : undefined
-        }
-      >
+      <div className="message-bubble">
         {msg.role === 'agent' && msg.runMode === 'research' && (
           <div className="message-run-profile">
             <Microscope size={12} aria-hidden="true" />
@@ -979,21 +909,6 @@ function MessageItemInner({
             ))}
           </div>
         )}
-        {/* Show loading animation only when: no content, no thinking, no segments, and still loading */}
-        {msg.role === 'agent' &&
-          !msg.content &&
-          !msg.thinking &&
-          !msg.segments?.length &&
-          isLoading && (
-            <AgentWorkDisclosure
-              key={`${msg.id}:working`}
-              messageId={msg.id}
-              isLoading
-              startedAt={workStartedAt}
-              awaitingFirstOutput
-            />
-          )}
-
         {msg.role === 'system' ? (
           <div className="system-notice" role={msg.noticeTone === 'error' ? 'alert' : 'status'}>
             <span className="system-notice-icon" aria-hidden="true">
@@ -1092,7 +1007,7 @@ function MessageItemInner({
                                 className={`toggle-icon ${expandedThinking.has(thinkingId) ? 'expanded' : ''}`}
                               />
                             </button>
-                            {expandedThinking.has(thinkingId) && (
+                            <Reveal open={expandedThinking.has(thinkingId)}>
                               <div className="actions-content">
                                 <div className="action-item">
                                   <div className="action-thinking">
@@ -1108,7 +1023,7 @@ function MessageItemInner({
                                   </div>
                                 </div>
                               </div>
-                            )}
+                            </Reveal>
                           </div>
                         )
                       })}
@@ -1299,10 +1214,6 @@ function MessageItemInner({
                 changeReviewRendered = true
               }
 
-              // The time goes on the work nearest the answer, or on the live line below it.
-              const timedBlock = showWorkingTail
-                ? -1
-                : blocks.findLastIndex((block) => block.type === 'work')
               blocks.forEach((block, blockIndex) => {
                 const firstGroupIndex =
                   block.type === 'work' ? block.groups[0]!.groupIndex : block.groupIndex
@@ -1321,10 +1232,7 @@ function MessageItemInner({
                     key={`${msg.id}:work:${firstGroupIndex}`}
                     messageId={`${msg.id}-work-${firstGroupIndex}`}
                     isLoading={isLoading}
-                    startedAt={workStartedAt}
-                    completedAt={workCompletedAt}
                     segments={blockSegments}
-                    showDuration={blockIndex === timedBlock}
                     live={isLoading && blockIndex === blocks.length - 1}
                     runId={msg.runId}
                   >
@@ -1335,7 +1243,6 @@ function MessageItemInner({
               appendChangeReview()
               return output
             })()}
-            {showWorkingTail && <AgentWorkingTail startedAt={workStartedAt} />}
           </div>
         ) : msg.role === 'agent' && msg.thinking ? (
           // Legacy format: separate thinking and content
@@ -1344,8 +1251,6 @@ function MessageItemInner({
               key={`${msg.id}:${isLoading ? 'working' : 'worked'}`}
               messageId={msg.id}
               isLoading={isLoading}
-              startedAt={workStartedAt}
-              completedAt={workCompletedAt}
             >
               <div className="thinking-content">
                 <MessageMarkdown
@@ -1364,29 +1269,6 @@ function MessageItemInner({
               />
             </div>
           </>
-        ) : editingMessageId === msg.id ? (
-          // Editing mode - just textarea, save/cancel via icons in message-meta
-          <textarea
-            ref={editInputRef}
-            className="message-edit-input"
-            value={editingContent}
-            onChange={(event) => {
-              event.currentTarget.style.height = '0px'
-              event.currentTarget.style.height = `${Math.max(24, event.currentTarget.scrollHeight)}px`
-              onSetEditingContent(event.target.value)
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault()
-                onConfirmEditMessage(msg)
-              }
-              if (e.key === 'Escape') {
-                onCancelEditMessage()
-              }
-            }}
-            rows={2}
-            disabled={isLoading}
-          />
         ) : (
           // Normal message rendering
           <div className="message-content">
@@ -1397,6 +1279,10 @@ function MessageItemInner({
               onArtifactResult={onHandleArtifactResult}
             />
           </div>
+        )}
+        {/* One live line at the foot of a working reply; the footer replaces it when done. */}
+        {msg.role === 'agent' && isLoading && (
+          <AgentRunStats startedAt={workStartedAt} usage={msg.tokenUsage} segments={msg.segments} />
         )}
       </div>
       {msg.role === 'agent' && !isLoading && !readOnly && (
@@ -1421,13 +1307,14 @@ function MessageItemInner({
                 title="Show response metrics"
                 label={
                   <>
+                    {/* The whole task's time, from the message it answers to the finished reply. */}
+                    {workStartedAt && workCompletedAt
+                      ? `Worked for ${formatWorkDuration(workCompletedAt - workStartedAt)} · `
+                      : ''}
                     {(
                       msg.tokenUsage.promptTokens + msg.tokenUsage.completionTokens
                     ).toLocaleString()}{' '}
                     tokens
-                    {workStartedAt && workCompletedAt
-                      ? ` · ${formatWorkDuration(workCompletedAt - workStartedAt)}`
-                      : ''}
                   </>
                 }
               >
@@ -1524,103 +1411,78 @@ function MessageItemInner({
           </div>
           {msg.role === 'user' && (
             <div className="message-actions">
-              {editingMessageId === msg.id ? (
-                <>
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={() => onConfirmEditMessage(msg)}
-                    title={confirmEditActionTitle}
-                    aria-label={confirmEditActionTitle}
-                    disabled={isLoading}
-                  >
-                    <Check size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="message-action icon"
-                    onClick={onCancelEditMessage}
-                    title="Cancel edit"
-                    aria-label="Cancel edit"
-                    disabled={isLoading}
-                  >
-                    <X size={13} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className={`message-action icon ${copiedMessageId === msg.id ? 'copied-icon' : 'copy-icon'}`}
-                    onClick={() => onCopyMessage(msg)}
-                    title={copiedMessageId === msg.id ? 'Copied!' : 'Copy message'}
-                    aria-label={copiedMessageId === msg.id ? 'Copied' : 'Copy message'}
-                  >
-                    {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
-                  </button>
-                  <ReadAloudButton messageId={msg.id} text={msg.content} />
-                  {!readOnly && (
-                    <>
+              <>
+                <button
+                  type="button"
+                  className={`message-action icon ${copiedMessageId === msg.id ? 'copied-icon' : 'copy-icon'}`}
+                  onClick={() => onCopyMessage(msg)}
+                  title={copiedMessageId === msg.id ? 'Copied!' : 'Copy message'}
+                  aria-label={copiedMessageId === msg.id ? 'Copied' : 'Copy message'}
+                >
+                  {copiedMessageId === msg.id ? <Check size={13} /> : <Copy size={13} />}
+                </button>
+                <ReadAloudButton messageId={msg.id} text={msg.content} />
+                {!readOnly && (
+                  <>
+                    <button
+                      type="button"
+                      className="message-action icon"
+                      onClick={(e) => onEditMessage(msg, e)}
+                      title={editActionTitle}
+                      aria-label={editActionTitle}
+                      disabled={isLoading}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      type="button"
+                      className="message-action icon"
+                      onClick={() => onRetryMessage(msg)}
+                      title={retryActionTitle}
+                      aria-label={retryActionTitle}
+                      disabled={isLoading}
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                    {onForkMessage && (
                       <button
                         type="button"
                         className="message-action icon"
-                        onClick={(e) => onEditMessage(msg, e)}
-                        title={editActionTitle}
-                        aria-label={editActionTitle}
+                        onClick={() => onForkMessage(msg.id)}
+                        title="Fork from this message"
+                        aria-label="Fork from this message"
                         disabled={isLoading}
                       >
-                        <Pencil size={13} />
+                        <GitFork size={13} />
                       </button>
-                      <button
-                        type="button"
-                        className="message-action icon"
-                        onClick={() => onRetryMessage(msg)}
-                        title={retryActionTitle}
-                        aria-label={retryActionTitle}
-                        disabled={isLoading}
+                    )}
+                    {onRewindMessage && (
+                      <MessageFooterPopover
+                        className="message-rewind"
+                        cardClassName="message-rewind-card"
+                        summaryClassName="message-action icon"
+                        chevron={false}
+                        title="Rewind to before this message"
+                        label={<Undo2 size={13} aria-label="Rewind to here" />}
                       >
-                        <RotateCcw size={13} />
-                      </button>
-                      {onForkMessage && (
-                        <button
-                          type="button"
-                          className="message-action icon"
-                          onClick={() => onForkMessage(msg.id)}
-                          title="Fork from this message"
-                          aria-label="Fork from this message"
-                          disabled={isLoading}
-                        >
-                          <GitBranch size={13} />
-                        </button>
-                      )}
-                      {onRewindMessage && (
-                        <MessageFooterPopover
-                          className="message-rewind"
-                          cardClassName="message-rewind-card"
-                          summaryClassName="message-action icon"
-                          chevron={false}
-                          title="Rewind to before this message"
-                          label={<Undo2 size={13} aria-label="Rewind to here" />}
-                        >
-                          <strong>Rewind to before this message</strong>
-                          <p>
-                            This message and everything after it leave the chat, and the message
-                            goes back into the box to change or send.
-                          </p>
-                          <div className="message-rewind-actions">
-                            <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                              Rewind chat and files
-                            </button>
-                            <button type="button" onClick={() => onRewindMessage(msg, false)}>
-                              Chat only
-                            </button>
-                          </div>
-                        </MessageFooterPopover>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
+                        <strong>Rewind to before this message</strong>
+                        <p>
+                          This message and everything after it leave the chat, and the message goes
+                          back into the box to change or send.
+                        </p>
+                        <div className="message-rewind-actions">
+                          <button type="button" onClick={() => onRewindMessage(msg, true)}>
+                            Rewind chat and files
+                          </button>
+                          <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                            Chat only
+                          </button>
+                        </div>
+                      </MessageFooterPopover>
+                    )}
+                  </>
+                )}
+              </>
             </div>
           )}
           {msg.role === 'agent' && (
@@ -1644,7 +1506,7 @@ function MessageItemInner({
                   aria-label="Fork from this message"
                   disabled={isLoading}
                 >
-                  <GitBranch size={13} />
+                  <GitFork size={13} />
                 </button>
               )}
               {canUndoChanges && !hasChangeReview && (
@@ -1693,9 +1555,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
     (prev.editingMessageId === prev.message.id || next.editingMessageId === next.message.id)
   )
     return false
-  // Re-render if editing content changed for this message
-  if (prev.editingMessageId === prev.message.id && prev.editingContent !== next.editingContent)
-    return false
+  if (prev.isRewound !== next.isRewound) return false
   // Re-render if copied state changed for this message
   if (
     prev.copiedMessageId !== next.copiedMessageId &&

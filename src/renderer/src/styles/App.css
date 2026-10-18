@@ -6,12 +6,13 @@
   color-scheme: dark;
 
   /* — Color: Surfaces (layered elevation) — */
-  --app-bg: #0b0d10;
-  --surface-0: #0e1115;
-  --surface-1: #12161b;
-  --surface-2: #191e25;
-  --surface-3: #232a34;
-  --surface-4: #2d3642;
+  /* Graphite, neutral rather than blue, so the one accent carries all the colour. */
+  --app-bg: #0f0f0f;
+  --surface-0: #131313;
+  --surface-1: #171717;
+  --surface-2: #1d1d1d;
+  --surface-3: #252525;
+  --surface-4: #2f2f2f;
 
   /* Legacy aliases (backward compat) */
   --panel-bg: var(--surface-1);
@@ -20,32 +21,33 @@
   --panel-border: rgba(255, 255, 255, 0.075);
   --border-subtle: rgba(255, 255, 255, 0.055);
   --border-color: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.15);
   --input-bg: var(--surface-2);
 
   /* — Color: Text — */
-  --text-primary: #f0f3f7;
-  --text-secondary: #a6afbd;
-  --text-muted: #8894a5;
+  --text-primary: #ececec;
+  --text-secondary: #a9a9a9;
+  --text-muted: #8d8d8d;
 
-  /* — Color: Accent (cool teal) — */
-  --accent: #3bd4bd;
+  /* — Color: Accent (Volt: the robot's LED colour) — */
+  --accent: #86aee8;
   --accent-color: var(--accent);
-  --accent-strong: #64e3d0;
-  --accent-pressed: #14b8a6;
-  --accent-subtle: rgba(45, 212, 191, 0.1);
-  --accent-muted: rgba(45, 212, 191, 0.2);
-  --on-accent: #06201b;
+  --accent-strong: #a1c0ee;
+  --accent-pressed: #6c97d6;
+  --accent-subtle: rgba(134, 174, 232, 0.08);
+  --accent-muted: rgba(134, 174, 232, 0.14);
+  --on-accent: #111111;
 
-  /* — Color: Semantic — */
-  --color-success: #4a9;
-  --color-error: #e06060;
-  --color-warning: #d9a43e;
+  /* — Color: Semantic — kept clear of the accent's hue, so a working dot is never mistaken for
+     a warning or a failure at 6px: warnings are orange rather than yellow. */
+  --color-success: #5fcf9f;
+  --color-error: #f0717f;
+  --color-warning: #e9a05f;
   --color-info: var(--accent);
   /* Filled destructive/positive controls carry white text, which needs a
      deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
-  --color-error-fill: #c94b4b;
-  --color-success-fill: #2f8a7a;
+  --color-error-fill: #c8475a;
+  --color-success-fill: #1f7a58;
   --on-semantic: #ffffff;
   /* Short aliases used throughout component styles. Kept in sync here so a
      theme change reaches every rule instead of falling through to a fallback. */
@@ -57,9 +59,9 @@
   --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
   --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
   --error-bg: var(--color-error-subtle);
-  --color-folder: #d4a82f;
+  --color-folder: #cfae5c;
   /* GitHub's merged and merge-queue purple. */
-  --color-merged: #a98bf5;
+  --color-merged: #ab98e8;
 
   /* — Color: Messages — */
   --message-user-bg: var(--surface-3);
@@ -119,50 +121,74 @@
   --duration-fast: 0.12s;
   --duration-normal: 0.2s;
   --duration-slow: 0.3s;
+  /* Panels and the sidebar changing size. Matches LAYOUT_MOTION_MS in App.tsx. */
+  --duration-layout: 0.28s;
+  /* The inspector settling where its edge was let go. Matches PANEL_GLIDE_MS. */
+  --duration-glide: 0.42s;
+  /* Fast start, long gentle settle: things arrive and stop without a bump. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  /* Settles a few percent past its target and back: for things let go into place. */
+  --ease-spring: cubic-bezier(0.3, 1.3, 0.5, 1);
+  /* Hover and press feedback, for the properties that change on hover; never layout. */
+  --transition-ui:
+    background-color var(--duration-fast) ease, color var(--duration-fast) ease,
+    border-color var(--duration-fast) ease, box-shadow var(--duration-fast) ease,
+    opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 
   /* — Focus ring — */
-  --focus-ring: 0 0 0 3px rgba(59, 212, 189, 0.28);
+  --focus-ring: 0 0 0 3px rgba(134, 174, 232, 0.26);
+
+  /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade — */
+  --brand-helmet: #e6e6e6;
+  --brand-shade: #b3b3b3;
+  --brand-visor: #0f0f0f;
+  --brand-glint: #2a2a2a;
+  --brand-led: #60a5fa;
+  /* The hero's red cape and its darker lining, the same in both themes. */
+  --brand-cape: #f0525b;
+  --brand-cape-lining: #b5303a;
 }
 
 body[data-theme='light'] {
   color-scheme: light;
 
-  --app-bg: #f6f7f8;
-  --surface-0: #fafbfc;
+  --app-bg: #efefef;
+  --surface-0: #f6f6f6;
   --surface-1: #ffffff;
-  --surface-2: #f0f2f4;
-  --surface-3: #e5e8eb;
-  --surface-4: #d9dde2;
+  --surface-2: #eeeeee;
+  --surface-3: #e3e3e3;
+  --surface-4: #d6d6d6;
 
   --panel-bg: var(--surface-1);
   --surface: var(--surface-2);
   --surface-hover: var(--surface-3);
-  --panel-border: rgba(19, 30, 43, 0.09);
-  --border-subtle: rgba(19, 30, 43, 0.065);
-  --border-color: rgba(19, 30, 43, 0.11);
-  --border-strong: rgba(19, 30, 43, 0.18);
+  --panel-border: rgba(0, 0, 0, 0.1);
+  --border-subtle: rgba(0, 0, 0, 0.07);
+  --border-color: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
   --input-bg: var(--surface-1);
 
-  --text-primary: #17202b;
-  --text-secondary: #536070;
-  --text-muted: #5d6978;
+  --text-primary: #161616;
+  --text-secondary: #4c4c4c;
+  --text-muted: #5c5c5c;
 
-  /* Dark enough to carry white text (5.5:1) and to read as text on --surface-2 (4.9:1). */
-  --accent: #0f766e;
+  /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.0:1). */
+  --accent: #2850b8;
   --accent-color: var(--accent);
-  --accent-strong: #115e59;
-  --accent-pressed: #0f4f4a;
-  --accent-subtle: rgba(15, 118, 110, 0.09);
-  --accent-muted: rgba(15, 118, 110, 0.17);
+  --accent-strong: #1f419a;
+  --accent-pressed: #18347d;
+  --accent-subtle: rgba(40, 80, 184, 0.07);
+  --accent-muted: rgba(40, 80, 184, 0.13);
   --on-accent: #ffffff;
 
-  --color-success: #217a50;
-  --color-error: #c23c3c;
-  --color-warning: #8a641a;
-  --color-error-fill: #b83a3a;
-  --color-success-fill: #1f6e48;
-  --color-folder: #b08a1f;
-  --color-merged: #7048c8;
+  --color-success: #036a4c;
+  --color-error: #b4233f;
+  --color-warning: #a23d0e;
+  --color-error-fill: #b3123a;
+  --color-success-fill: #04704f;
+  --color-folder: #9c7a1c;
+  --color-merged: #6248c0;
 
   --message-user-bg: var(--surface-3);
   --message-user-text: var(--text-primary);
@@ -170,11 +196,13 @@ body[data-theme='light'] {
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
-  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.32);
+  --focus-ring: 0 0 0 3px rgba(40, 80, 184, 0.26);
+  --brand-helmet: #d6d6d6;
+  --brand-shade: #a6a6a6;
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-lg: rgba(0, 0, 0, 0.12);
-  --shadow-panel: 0 24px 64px rgba(25, 38, 52, 0.24), 0 2px 10px rgba(25, 38, 52, 0.12);
-  --shadow-md: 0 8px 24px rgba(25, 38, 52, 0.12);
+  --shadow-panel: 0 24px 64px rgba(0, 0, 0, 0.24), 0 2px 10px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 /* ============================================
@@ -414,7 +442,7 @@ select {
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   color: var(--text-muted);
-  transition: all var(--duration-fast) ease;
+  transition: var(--transition-ui);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -438,6 +466,46 @@ select {
   opacity: 0.8;
 }
 
+/* The sun sets and the moon rises as the theme switches. */
+.theme-toggle-button svg {
+  animation: theme-icon-in 0.5s var(--ease-out);
+}
+
+@keyframes theme-icon-in {
+  from {
+    opacity: 0;
+    transform: rotate(-90deg) scale(0.5);
+  }
+}
+
+.settings-button svg {
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+
+.settings-button:hover svg {
+  transform: rotate(60deg);
+}
+
+/* Sections that slide open (Reveal.tsx) animate to their natural height, whatever it becomes. */
+.reveal {
+  interpolate-size: allow-keywords;
+}
+
+/* The new theme spreads from the toggle as a circle (themeTransition.ts); colors change all at
+   once beneath it. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+.theme-switching,
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
+
 .app-main {
   display: flex;
   flex: 1;
@@ -455,6 +523,32 @@ select {
 
 .conversation-panel-stack {
   position: relative;
+  transition: opacity var(--duration-layout) var(--ease-out);
+}
+
+/* While the sidebar or the inspector moves, the chat keeps one width, centred in the space it
+   has, so only its edges move. It re-lays out once when the motion ends. */
+.conversation-panel-stack.is-in-motion {
+  justify-content: center;
+}
+
+.conversation-panel-stack.is-in-motion > .conversation-panel-slot {
+  flex: 0 0 var(--frozen-chat-width);
+  width: var(--frozen-chat-width);
+  min-width: var(--frozen-chat-width);
+}
+
+/* The inspector at full size takes the chat's room; the chat stays mounted and fades out. It
+   keeps flexing, so it narrows as the inspector widens instead of vanishing on the first frame. */
+.conversation-panel-stack.is-behind-panel {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Its chat keeps a usable width while hidden, so the composer never sizes itself to a sliver
+   and comes back too tall. */
+.conversation-panel-stack.is-behind-panel > .conversation-panel-slot {
+  min-width: 480px;
 }
 
 .conversation-panel-slot[hidden] {
@@ -557,6 +651,35 @@ select {
   .title-bar-context,
   .title-bar-divider {
     display: none;
+  }
+}
+
+/* Shared entrances: overlays fade, dialogs and menus rise a few pixels as they fade in. Only
+   opacity and transform move, so they stay smooth however busy the page is. */
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes motion-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@keyframes motion-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+@keyframes motion-menu-down-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
   }
 }
 

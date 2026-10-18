@@ -10,7 +10,14 @@ An eligible agent can open a local or remote page, inspect its accessible struct
 screenshot, click or hover an element, type into fields, choose options, scroll, resize the
 viewport, move between tabs, wait for page state, inspect console and failed network activity, and
 verify an expected result. Screenshots are delivered as actual image input when the selected model
-supports vision.
+supports vision. To check an animation, the agent can capture a few frames a moment apart, which
+it sees side by side in one image. An SVG file opened on its own is shown like an image: fitted to
+the page and centred on a checkerboard, so the panel and the agent's screenshots show the whole
+drawing at any size.
+
+When the agent changes a page, styles, or UI components and is about to finish without having
+looked at the result since, SideKick asks it once to open the result here and check it, then fix
+what does not match. This happens only with a model that can see images.
 
 `browser_hold` provides one bounded, atomic press-and-hold gesture for ordinary controls such as
 maps, sliders, canvases, and test interfaces. It always releases the mouse even if the action is
@@ -36,7 +43,7 @@ interleaving; retry your input when it finishes. Manual changes invalidate old e
 so the agent must observe fresh state before reusing them. Focusing the address bar does not
 pause the agent. Right-click offers native text editing actions.
 
-The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
+The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
 ## Human-only site checks
 
@@ -56,10 +63,14 @@ checks are always human-only; SideKick does not ask the model to bypass or solve
 
 The browser opens HTTPS, files inside the project, and plain HTTP on your own computer. A plain
 HTTP address on your local network, such as a device or gateway at `http://10.0.0.5:8080`, opens
-only after you allow it in a dialog, once per address and port. Devices on a local network often
+only after you allow it in a dialog, once per address and port. If SideKick is not in front when
+the agent asks, a notice in the corner of your screen tells you, and the agent waits for your answer rather than timing
+out; stopping the run withdraws the question. Devices on a local network often
 trust anyone who can reach them, so a page the agent reads cannot send it to one you have not
 chosen, and requests a page makes to any other local address are blocked. Allowed addresses are
-listed in **Settings › Agent › Local network**, where you can remove them.
+listed in **Settings › Agent › Local network**, where you can remove them. The same answer
+applies to `web_fetch`, so the agent cannot read a device you have not allowed by switching tools;
+see [Addresses on your network](SEARCH.md#addresses-on-your-network).
 
 `browser_upload` selects up to eight project-relative regular files (25 MiB total)
 on an observed file input, then verifies the actual selection. Symlinks and paths

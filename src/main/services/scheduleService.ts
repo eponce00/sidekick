@@ -26,8 +26,16 @@ export interface ScheduledRunLauncher {
    * new worktree for a Git project, or a skip with the reason. Without it, the project folder.
    */
   placeRun?: (schedule: Schedule) => Promise<ScheduledRunPlacement>
-  /** Creates the run's chat, in `projectId`, with the schedule's prompt as its first message. */
-  createConversation: (schedule: Schedule, runNumber: number, projectId: string | null) => string
+  /**
+   * Creates the run's chat, in `projectId` and working in `worktreeId` when given, with the
+   * schedule's prompt as its first message.
+   */
+  createConversation: (
+    schedule: Schedule,
+    runNumber: number,
+    projectId: string | null,
+    worktreeId?: string | null
+  ) => string
   /** The run was started but waits for a free run slot, so it has no phase yet. */
   isRunQueued?: (agentRunId: string) => boolean
   /** Starts the agent run through `AgentRuntimeCoordinator`, under the user's permission mode. */
@@ -43,6 +51,8 @@ export interface ScheduledRunLauncher {
 export type ScheduledRunPlacement =
   | {
       projectId: string | null
+      /** The run's own worktree of the project, when the project folder was busy. */
+      worktreeId?: string
       /** Said in the run's history, as when it moved to a new worktree. */
       note?: string
       /** Undoes the placement when the run's chat could not be created. */
@@ -384,7 +394,12 @@ export class ScheduleService {
       const runNumber = this.store.claimRunNumber(schedule.id, now)
       let conversationId: string
       try {
-        conversationId = this.launcher.createConversation(schedule, runNumber, placement.projectId)
+        conversationId = this.launcher.createConversation(
+          schedule,
+          runNumber,
+          placement.projectId,
+          placement.worktreeId ?? null
+        )
       } catch (error) {
         await placement.discard?.().catch(() => undefined)
         throw error

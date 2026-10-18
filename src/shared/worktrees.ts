@@ -1,9 +1,7 @@
-import type { Project, ProjectConversation } from './projects'
+import type { ProjectConversation } from './projects'
 
 /** Where a new project chat does its work before its first message. */
 export type WorkInChoice = 'folder' | 'worktree'
-
-export const WORKTREE_BRANCH_PREFIX = 'sidekick/'
 
 export interface ManagedWorktreeOwner {
   kind: 'chat'
@@ -12,58 +10,43 @@ export interface ManagedWorktreeOwner {
   running: boolean
 }
 
-export type WorktreeRemovalBlockerCode =
-  | 'running'
-  | 'in-use'
-  | 'modified'
-  | 'unmerged'
-  | 'missing'
-  | 'unmanaged'
-
-export interface WorktreeRemovalBlocker {
-  code: WorktreeRemovalBlockerCode
-  message: string
-  /** Forced removal can override this blocker after confirmation. */
-  forceable: boolean
-}
-
+/**
+ * A chat's own copy of its project. The chat stays in its project; only its folder is the
+ * worktree's.
+ */
 export interface ManagedWorktreeSummary {
   id: string
-  projectId: string
-  projectName: string
-  /** The project folder: the worktree root, or the same subfolder the source project used. */
+  /** Where its chats work: the worktree root, or the same subfolder the project uses. */
   folderPath: string
   worktreeRoot: string
+  /** The project it is a copy of, which its chats belong to. */
   sourceProjectId: string
   sourceProjectName: string | null
-  branch: string
+  /**
+   * The branch it was on when set aside, or the one SideKick created for worktrees made before
+   * they started detached. The live branch is in `status`.
+   */
+  branch: string | null
   /** The branch or commit this worktree started from; null for worktrees from before bases were recorded. */
   baseRef: string | null
   createdAt: number
   lastUsedAt: number
+  /**
+   * When SideKick set it aside to keep the number of worktrees on disk down; null while its folder
+   * is on disk. Its chat's next run brings it back as it was.
+   */
+  setAsideAt: number | null
   owners: ManagedWorktreeOwner[]
-  /** Null when the folder is gone or Git could not read it. */
+  /** Null when it is set aside, its folder is gone, or Git could not read it. */
   status: ManagedWorktreeGitStatus | null
-  blockers: WorktreeRemovalBlocker[]
 }
 
 export interface ManagedWorktreeGitStatus {
   currentBranch: string | null
-  /** Commits on the branch that its base does not have. */
+  /** Commits in the worktree that its base does not have. */
   ahead: number | null
-  /** Commits on the base that the branch does not have. */
-  behind: number | null
   /** Uncommitted entries reported by `git status --porcelain`, untracked files included. */
   changedFiles: number
-  /** The branch is fully contained in its base or in the source checkout's HEAD. */
-  merged: boolean
-}
-
-export interface ManagedWorktreeDiskUsage {
-  id: string
-  bytes: number
-  /** The walk stopped at its file or time budget, so `bytes` is a lower bound. */
-  truncated: boolean
 }
 
 export interface WorktreeBranchOptions {
@@ -72,44 +55,24 @@ export interface WorktreeBranchOptions {
   currentBranch: string | null
   /** Whether the project is inside a Git repository at all. */
   isGitRepository: boolean
-  /** The project is itself a SideKick worktree; new worktrees then start from its source. */
-  isManagedWorktree: boolean
 }
 
 export interface CreateConversationWorktreeInput {
   conversationId: string
-  /** Full branch name; defaults to `sidekick/<chat-slug>`. */
-  branchName?: string
   /** Branch or commit to start from; defaults to the source checkout's HEAD. */
   baseRef?: string
 }
 
 export interface CreateConversationWorktreeResult {
-  project: Project
   conversation: ProjectConversation
   worktree: ManagedWorktreeSummary
 }
 
-export interface RemoveManagedWorktreeInput {
-  id: string
-  /** Discard uncommitted changes and detach the chats that use it. Never overrides a running agent. */
-  force?: boolean
-  /** Also delete the branch, even when it has commits its base does not. Only with `force`. */
-  deleteBranch?: boolean
-}
-
 export interface RemoveManagedWorktreeResult {
   removed: boolean
-  blockers: WorktreeRemovalBlocker[]
-  /** The branch was left in the repository so its commits stay recoverable. */
-  keptBranch?: string
-  detachedConversationIds?: string[]
+  /** Why it was kept, when it was. */
+  reason?: string
 }
-
-export type SyncManagedWorktreeResult =
-  | { status: 'up-to-date' | 'merged'; message: string }
-  | { status: 'conflict'; message: string; conflicts: string[] }
-  | { status: 'refused'; message: string }
 
 /** Another run that is writing in the same folder, or in a folder that contains or is inside it. */
 export interface WorkspaceOccupant {
@@ -147,6 +110,20 @@ export function workspaceBusyDisplayMessage(message: string): string {
   return (index < 0 ? message : message.slice(0, index)).trim()
 }
 
+/**
+ * What a worktree is on, for display: the branch checked out in it now (one the agent made, too),
+ * else the branch SideKick created, else the base it is a detached copy of.
+ */
+export function worktreeBranchLabel(
+  worktree: Pick<ManagedWorktreeSummary, 'branch' | 'baseRef' | 'status'>
+): string {
+  const branch = worktree.status?.currentBranch ?? worktree.branch
+  if (branch) return branch
+  const base = worktree.baseRef
+  const shortBase = base && /^[0-9a-f]{40}$/.test(base) ? base.slice(0, 7) : base
+  return shortBase ? `detached from ${shortBase}` : 'detached'
+}
+
 export function worktreeSlug(title: string): string {
   const slug = title
     .toLowerCase()
@@ -159,42 +136,12 @@ export function worktreeSlug(title: string): string {
   return (boundary > 8 ? cut.slice(0, boundary) : slug.slice(0, 32)).replace(/-$/, '')
 }
 
-export function suggestWorktreeBranch(title: string): string {
-  return `${WORKTREE_BRANCH_PREFIX}${worktreeSlug(title)}`
-}
-
-/**
- * A conservative subset of Git's ref-name rules, checked before Git sees the name.
- * Git's own `check-ref-format` still runs in the main process.
- */
-export function worktreeBranchProblem(name: string): string | null {
-  const trimmed = name.trim()
-  if (!trimmed) return 'Enter a branch name'
-  if (trimmed.length > 200) return 'Branch names are limited to 200 characters'
-  if (!/^[A-Za-z0-9._/-]+$/.test(trimmed))
-    return 'Use letters, numbers, dots, dashes, underscores and slashes'
-  if (
-    trimmed.startsWith('-') ||
-    trimmed.startsWith('/') ||
-    trimmed.endsWith('/') ||
-    trimmed.endsWith('.') ||
-    trimmed.endsWith('.lock') ||
-    trimmed.includes('..') ||
-    trimmed.includes('//') ||
-    trimmed.split('/').some((part) => part.startsWith('.'))
-  )
-    return 'That is not a valid Git branch name'
-  return null
-}
-
 export interface WorktreesAPI {
   list: () => Promise<ManagedWorktreeSummary[]>
-  diskUsage: (id: string) => Promise<ManagedWorktreeDiskUsage>
   branchOptions: (projectId: string) => Promise<WorktreeBranchOptions>
   createForConversation: (
     input: CreateConversationWorktreeInput
   ) => Promise<CreateConversationWorktreeResult>
-  remove: (input: RemoveManagedWorktreeInput) => Promise<RemoveManagedWorktreeResult>
-  sync: (id: string) => Promise<SyncManagedWorktreeResult>
+  remove: (id: string) => Promise<RemoveManagedWorktreeResult>
   reveal: (id: string) => Promise<void>
 }

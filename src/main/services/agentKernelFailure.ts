@@ -1,5 +1,5 @@
 import type { ToolExecutionError, ToolExecutionResult } from '../../shared/agentRuntime'
-import { providerImageLimitError } from '../../shared/providerErrors'
+import { providerConnectionFailureKind, providerImageLimitError } from '../../shared/providerErrors'
 
 export class AgentToolLoopError extends Error {
   constructor(message: string) {
@@ -39,6 +39,7 @@ export function classifyAgentKernelFailure(error: unknown, aborted: boolean) {
       ? error.message
       : String(error)
   const imageLimit = cancelled ? null : providerImageLimitError(message)
+  const connectionLost = !cancelled && providerConnectionFailureKind(message) !== null
   const displayMessage = imageLimit
     ? `The model accepts at most ${imageLimit.maxImages ?? 'a limited number of'} images per request. SideKick could not send this turn.`
     : message
@@ -49,7 +50,9 @@ export function classifyAgentKernelFailure(error: unknown, aborted: boolean) {
         ? 'loop_detected'
         : imageLimit
           ? 'invalid_arguments'
-          : 'internal',
+          : connectionLost
+            ? 'transient'
+            : 'internal',
     message: displayMessage,
     retryable: !cancelled && !loopDetected && !imageLimit,
     recoveryAction: cancelled || loopDetected || imageLimit ? 'stop' : 'retry_later',

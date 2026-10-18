@@ -289,6 +289,17 @@ test(
       await waitForVisible(page.getByRole('menuitem', { name: 'New chat' }), 'new-chat menu item')
       await page.getByRole('menuitem', { name: 'New chat' }).click()
       await waitForVisible(page.getByText('New Conversation', { exact: true }).first(), 'new chat')
+      // A new chat left with nothing in it is removed, so keep this one with an unsent draft.
+      const draft = 'Draft kept across a restart'
+      await page.getByPlaceholder('Type a message...').fill(draft)
+      await page.waitForFunction(
+        (text) =>
+          Object.keys(localStorage).some(
+            (key) =>
+              key.startsWith('sidekick.composerDraft.') && localStorage.getItem(key).includes(text)
+          ),
+        draft
+      )
 
       await page.getByRole('button', { name: 'Settings' }).click()
       await waitForVisible(page.getByRole('dialog', { name: 'Settings' }), 'settings dialog')
@@ -298,8 +309,8 @@ test(
         'diagnostic export action'
       )
       assert.match(
-        await page.getByText(/Excludes conversations, prompts, files/).textContent(),
-        /credentials/
+        await page.getByText(/Leaves out conversations, prompts, files/).textContent(),
+        /paths.*logs.*keys/
       )
 
       // Actual preload/IPC export; replace only the native picker in this owned
@@ -335,7 +346,9 @@ test(
         has: page.getByRole('heading', { name: 'Project hooks', exact: true })
       })
       for (const moment of ['Before the final answer', 'After creating a worktree']) {
-        await projectHooks.getByRole('combobox', { name: 'When' }).selectOption({ label: moment })
+        // SideKick's dropdown opens a list of options instead of a native select.
+        await projectHooks.getByRole('combobox', { name: 'When' }).click()
+        await page.getByRole('option', { name: moment, exact: true }).click()
         await projectHooks.getByRole('textbox', { name: 'Hook project folder' }).fill(profile)
         await projectHooks.getByRole('textbox', { name: 'Hook command' }).fill('echo fixture-only')
         await projectHooks.getByRole('button', { name: 'Add hook', exact: true }).click()
@@ -390,6 +403,12 @@ test(
       )
 
       const persistedChat = page.getByText('New Conversation', { exact: true }).first()
+      await persistedChat.click()
+      await page.waitForFunction(
+        (text) => [...document.querySelectorAll('textarea')].some((field) => field.value === text),
+        draft,
+        { timeout: 10_000 }
+      )
       await persistedChat.hover()
       await page.getByRole('button', { name: 'Delete New Conversation' }).click()
       await waitForVisible(

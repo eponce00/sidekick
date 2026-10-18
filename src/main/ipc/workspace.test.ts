@@ -61,6 +61,15 @@ vi.mock('electron', () => ({
   }
 }))
 
+// SideKick draws these menus itself; the main process hands it the template.
+vi.mock('../services/appMenus', () => ({
+  showAppMenu: vi.fn((_contents: unknown, template: (typeof menuTemplates)[number]) => {
+    menuTemplates.push(template)
+    menuPopup()
+    return true
+  })
+}))
+
 vi.mock('./state', () => ({
   appState: {
     mainWindowRef: null

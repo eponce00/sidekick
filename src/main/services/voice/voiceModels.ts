@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { createReadStream, createWriteStream, existsSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { VoiceModelId, VoiceModelState } from '../../../shared/voice'
@@ -22,14 +22,15 @@ export interface VoiceModelManifest {
 
 const PARAKEET =
   'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78'
-const SUPERTONIC =
-  'https://huggingface.co/csukuangfj2/sherpa-onnx-supertonic-3-tts-int8-2026-05-11/resolve/cca5a0e6c96e1d2c720986bf7e75fcc81dee3ae4'
+const KOKORO =
+  'https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b'
 
 /**
  * Pinned to exact revisions and hashes: a model that changes upstream is
  * refused rather than loaded. Parakeet TDT 0.6B v3 (CC-BY-4.0, NVIDIA) for
- * dictation with Silero VAD (MIT) to find speech; Supertonic 3 (OpenRAIL-M,
- * Supertone) to read replies aloud.
+ * dictation with Silero VAD (MIT) to find speech; Kokoro 82M v1.0 (Apache-2.0,
+ * hexgrad) to read replies aloud, with the espeak-ng data (GPL-3.0) for the
+ * languages it reads.
  */
 export const VOICE_MODELS: Record<VoiceModelId, VoiceModelManifest> = {
   dictation: {
@@ -70,53 +71,134 @@ export const VOICE_MODELS: Record<VoiceModelId, VoiceModelManifest> = {
   },
   speech: {
     id: 'speech',
-    folder: 'supertonic-3-int8-2026-05-11',
+    folder: 'kokoro-multi-lang-v1_0',
     files: [
       {
-        name: 'duration_predictor.int8.onnx',
-        url: `${SUPERTONIC}/duration_predictor.int8.onnx`,
-        size: 3_700_147,
-        sha256: 'c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db'
+        name: 'model.onnx',
+        url: `${KOKORO}/model.onnx`,
+        size: 325_560_556,
+        sha256: 'b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11'
       },
       {
-        name: 'text_encoder.int8.onnx',
-        url: `${SUPERTONIC}/text_encoder.int8.onnx`,
-        size: 36_416_150,
-        sha256: 'c7befd5ea8c3119769e8a6c1486c4edc6a3bc8365c67621c881bbb774b9902ff'
+        name: 'voices.bin',
+        url: `${KOKORO}/voices.bin`,
+        size: 28_200_960,
+        sha256: '1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29'
       },
       {
-        name: 'vector_estimator.int8.onnx',
-        url: `${SUPERTONIC}/vector_estimator.int8.onnx`,
-        size: 78_400_833,
-        sha256: '20cd86fa5c6effedfda0e7cffe5b0569ca401c440a0c3a1d72bf39286c0db3fd'
+        name: 'tokens.txt',
+        url: `${KOKORO}/tokens.txt`,
+        size: 687,
+        sha256: '6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425'
       },
       {
-        name: 'vocoder.int8.onnx',
-        url: `${SUPERTONIC}/vocoder.int8.onnx`,
-        size: 25_991_073,
-        sha256: 'e923d60f53f95eb1ce235f1dc33ec56d9c057823c96fa6f8acf98f32b0da6152'
+        name: 'lexicon-us-en.txt',
+        url: `${KOKORO}/lexicon-us-en.txt`,
+        size: 5_956_885,
+        sha256: '7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14'
       },
       {
-        name: 'tts.json',
-        url: `${SUPERTONIC}/tts.json`,
-        size: 8_253,
-        sha256: '42078d3aef1cd43ab43021f3c54f47d2d75ceb4e75f627f118890128b06a0d09'
+        name: 'espeak-ng-data/phontab',
+        url: `${KOKORO}/espeak-ng-data/phontab`,
+        size: 55_796,
+        sha256: '886f3fa402cb0ba73d483aa8ad000af47a6b7cc06293c75a97913fba68a530f6'
       },
       {
-        name: 'unicode_indexer.bin',
-        url: `${SUPERTONIC}/unicode_indexer.bin`,
-        size: 262_144,
-        sha256: '8402ca48e5189a8950138580b0fff64db6f072f24ac07cd54ba8b2fbb9883b30'
+        name: 'espeak-ng-data/phonindex',
+        url: `${KOKORO}/espeak-ng-data/phonindex`,
+        size: 39_074,
+        sha256: '3ca7b8fa3b42624e4b0f152707e7a39245fce569aa99ea47c055d9e622fcf0c4'
       },
       {
-        name: 'voice.bin',
-        url: `${SUPERTONIC}/voice.bin`,
-        size: 517_168,
-        sha256: '67d5209b0ee8ce6c74105ffbe12fe6a7628aea3b4ba2fcb308a4a67938a93ce8'
+        name: 'espeak-ng-data/phondata',
+        url: `${KOKORO}/espeak-ng-data/phondata`,
+        size: 550_424,
+        sha256: '4e0288957874029a8c3c9f41a8f517ad4bf18127046decbdd4b9d1d6807ce3a3'
+      },
+      {
+        name: 'espeak-ng-data/intonations',
+        url: `${KOKORO}/espeak-ng-data/intonations`,
+        size: 2_040,
+        sha256: '3f8af65fd3eda9759a10f021d61361c120871f463515229c925995c7f90918cc'
+      },
+      {
+        name: 'espeak-ng-data/en_dict',
+        url: `${KOKORO}/espeak-ng-data/en_dict`,
+        size: 166_944,
+        sha256: '71bd330ba8a2e3e8076e631508208ef49449d6147c17b7bd2b4b1e1468292e35'
+      },
+      {
+        name: 'espeak-ng-data/es_dict',
+        url: `${KOKORO}/espeak-ng-data/es_dict`,
+        size: 49_252,
+        sha256: '3fa93e251eab80838a2d6207ee58c9c847270a65fe3fae98850e0185b5a2186c'
+      },
+      {
+        name: 'espeak-ng-data/fr_dict',
+        url: `${KOKORO}/espeak-ng-data/fr_dict`,
+        size: 63_727,
+        sha256: 'e399ab924c4d10beef1fc310b30ea56e4ddfd8b4b64b8ed978e9c65394d49b2d'
+      },
+      {
+        name: 'espeak-ng-data/hi_dict',
+        url: `${KOKORO}/espeak-ng-data/hi_dict`,
+        size: 92_143,
+        sha256: '5a68c9532624e57ac845b26ce1e2e5034c4f6353bede46ecbe57e583ec8effd6'
+      },
+      {
+        name: 'espeak-ng-data/it_dict',
+        url: `${KOKORO}/espeak-ng-data/it_dict`,
+        size: 152_889,
+        sha256: '111f968359c9ebe36b107a2565ba9f258bab337d3cbe37e44871980a8f21ce6b'
+      },
+      {
+        name: 'espeak-ng-data/pt_dict',
+        url: `${KOKORO}/espeak-ng-data/pt_dict`,
+        size: 67_817,
+        sha256: '7e8398f15fa4a21db39a213381f28ec0d302b22663c644e865abb61a09c1b004'
+      },
+      {
+        name: 'espeak-ng-data/lang/gmw/en-US',
+        url: `${KOKORO}/espeak-ng-data/lang/gmw/en-US`,
+        size: 257,
+        sha256: '41534c2a22df5dd4f1052ff9e1a33a3ea7bff5a26b5c02bdad5ba8ddb7524704'
+      },
+      {
+        name: 'espeak-ng-data/lang/inc/hi',
+        url: `${KOKORO}/espeak-ng-data/lang/inc/hi`,
+        size: 23,
+        sha256: '3c1c3f916f57f2d6d6cbf7923c0f39a36ac2140e2a69ddffce917d7b8bf3ccab'
+      },
+      {
+        name: 'espeak-ng-data/lang/roa/es',
+        url: `${KOKORO}/espeak-ng-data/lang/roa/es`,
+        size: 63,
+        sha256: '966aa015ea5646d79f0ca4807cf5da7339aabd3782b55cfa5eb0d8c3fc8fc588'
+      },
+      {
+        name: 'espeak-ng-data/lang/roa/fr',
+        url: `${KOKORO}/espeak-ng-data/lang/roa/fr`,
+        size: 79,
+        sha256: '95f44834b48c075dad13eace54d2c98ff79b81aa0074dd67eebaf66c2909eef8'
+      },
+      {
+        name: 'espeak-ng-data/lang/roa/it',
+        url: `${KOKORO}/espeak-ng-data/lang/roa/it`,
+        size: 109,
+        sha256: '0d9069eb9a96db1c55c131b2bb7d1f5255c68fbddc2199ffd3295b52519a3256'
+      },
+      {
+        name: 'espeak-ng-data/lang/roa/pt-BR',
+        url: `${KOKORO}/espeak-ng-data/lang/roa/pt-BR`,
+        size: 109,
+        sha256: '84dd4e34c970fadbe32211eadecfdfaab52432479c0911e43300da88a33398ba'
       }
     ]
   }
 }
+
+/** Model folders an earlier SideKick downloaded and no longer uses. */
+export const SUPERSEDED_VOICE_FOLDERS = ['supertonic-3-int8-2026-05-11']
 
 const COMPLETE_MARKER = '.complete.json'
 
@@ -177,6 +259,12 @@ export class VoiceModelStore {
     return true
   }
 
+  /** Deletes a model folder SideKick no longer uses. Only a plain folder name is accepted. */
+  async removeFolder(folder: string): Promise<void> {
+    if (!/^[\w.-]+$/.test(folder) || folder === '.' || folder === '..') return
+    await rm(join(this.root, folder), { recursive: true, force: true })
+  }
+
   async initialState(manifest: VoiceModelManifest): Promise<VoiceModelState> {
     const totalBytes = voiceModelSize(manifest)
     if (await this.isInstalled(manifest)) {
@@ -205,6 +293,8 @@ export class VoiceModelStore {
         onProgress(completedBytes)
         continue
       }
+      // Some files sit in a folder of their own, such as espeak-ng-data/lang/roa.
+      await mkdir(dirname(target), { recursive: true })
       await this.downloadFile(file, target, (bytes) => onProgress(completedBytes + bytes), signal)
       completedBytes += file.size
     }

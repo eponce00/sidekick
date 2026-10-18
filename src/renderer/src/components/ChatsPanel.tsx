@@ -7,7 +7,7 @@ import {
   type SessionMessage,
   type SessionStatus
 } from '../../../shared/sessions'
-import type { ManagedWorktreeSummary } from '../../../shared/worktrees'
+import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../shared/worktrees'
 import { useManagedWorktrees } from '../hooks/useManagedWorktrees'
 import {
   familyProjectTag,
@@ -53,7 +53,7 @@ function BranchLine({
   return (
     <div className="chats-panel-branch">
       <GitBranch size={12} aria-hidden="true" />
-      <span className="chats-panel-branch-name">{worktree.branch}</span>
+      <span className="chats-panel-branch-name">{worktreeBranchLabel(worktree)}</span>
       {ahead > 0 && (
         <span className="chats-panel-ahead">
           +{ahead} {ahead === 1 ? 'commit' : 'commits'}

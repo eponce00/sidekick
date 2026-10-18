@@ -44,8 +44,8 @@ export function PermissionAuditPanel(): React.JSX.Element {
     <SettingsRow
       icon={History}
       className="permission-audit"
-      label="Authorization audit"
-      description="The latest agent decisions and grants, newest first."
+      label="Recent approvals"
+      description="What the agent was allowed or refused, newest first."
       control={
         <button
           type="button"

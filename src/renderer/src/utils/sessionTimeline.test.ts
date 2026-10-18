@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SessionMessage } from '../../../shared/sessions'
-import { sessionTimeline } from './sessionTimeline'
+import { sessionTimeline, workerBriefIds } from './sessionTimeline'
 
 const message = (
   id: string,
@@ -20,6 +20,18 @@ const message = (
   deliveredRunId: null,
   deliveredAt: null,
   readAt: null
+})
+
+describe('workerBriefIds', () => {
+  it('names only the brief sent to this worker, so its first message shows once', () => {
+    const messages = [
+      message('brief-a', 'manager', 'a', 'brief', 100),
+      message('brief-b', 'manager', 'b', 'brief', 100),
+      message('update-a', 'manager', 'a', 'update', 200)
+    ]
+    expect([...workerBriefIds('a', 'worker', messages)]).toEqual(['brief-a'])
+    expect(workerBriefIds('manager', 'manager', messages).size).toBe(0)
+  })
 })
 
 describe('sessionTimeline', () => {

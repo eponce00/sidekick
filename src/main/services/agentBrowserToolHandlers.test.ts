@@ -2,6 +2,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import Database from 'better-sqlite3'
 import { describe, expect, it, vi } from 'vitest'
+import { readFile, rm, writeFile } from 'fs/promises'
 import { MAX_TOOL_RESULT_MEDIA_BYTES, type ToolExecutionResult } from '../../shared/agentRuntime'
 import {
   AGENT_BROWSER_TOOL_NAMES,
@@ -24,6 +25,13 @@ import type {
 } from './nativeBrowserSessionService'
 import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
+import { WorkspaceVerificationService } from './workspaceVerificationService'
+import { composeFilmstrip } from './browserFilmstrip'
+
+// Decoding and resizing PNGs needs Electron's nativeImage, which tests run without.
+vi.mock('./browserFilmstrip', () => ({
+  composeFilmstrip: vi.fn(() => ({ jpeg: Buffer.from('strip'), width: 1536, height: 320 }))
+}))
 
 function observation(sessionId: string, runId = 'run-1'): BrowserObservation {
   const path = join(tmpdir(), `${sessionId}.png`)
@@ -774,6 +782,65 @@ describe('native browser agent tool handlers', () => {
     })
   })
 
+  it('captures an animation as one filmstrip image and says whether anything moved', async () => {
+    const { registry, service } = setup()
+    await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    const first = observation('session-1').screenshot!
+    const frame = (id: string, sha: string): typeof first => ({
+      ...first,
+      id,
+      path: join(tmpdir(), `${id}.png`),
+      sha256: sha.padEnd(64, '0')
+    })
+    const later = [frame('frame-2', 'b'), frame('frame-3', 'c')]
+    const firstFrame = { ...first, id: 'frame-1' }
+    await Promise.all(
+      [firstFrame, ...later].map((shot) => writeFile(shot.path, Buffer.from(shot.id)))
+    )
+    service.screenshot.mockResolvedValueOnce(later[0]).mockResolvedValueOnce(later[1])
+    try {
+      const result = await execute(registry, 'browser_verify', {
+        criterion: 'The horse gallops.',
+        frames: 3,
+        interval_ms: 100
+      })
+
+      expect(service.screenshot).toHaveBeenCalledTimes(2)
+      expect(vi.mocked(composeFilmstrip).mock.calls[0][0].map(String)).toEqual([
+        'frame-1',
+        'frame-2',
+        'frame-3'
+      ])
+      expect(result).toMatchObject({
+        status: 'success',
+        data: {
+          requiresModelJudgement: true,
+          frames: { count: 3, intervalMs: 100, offsets: ['0 ms', '100 ms', '200 ms'] },
+          instruction: expect.stringContaining('left to right')
+        },
+        media: [{ type: 'image', mimeType: 'image/jpeg' }]
+      })
+      const strip = result.media![0].source as { type: 'file'; path: string }
+      expect(String(await readFile(strip.path))).toBe('strip')
+      await rm(strip.path, { force: true })
+
+      // Frames that never change are evidence that nothing moves.
+      service.screenshot.mockResolvedValueOnce(first)
+      const still = await execute(registry, 'browser_verify', {
+        criterion: 'The horse gallops.',
+        frames: 2,
+        interval_ms: 100
+      })
+      expect(still.data).toMatchObject({
+        frames: { changedBetweenFrames: false },
+        instruction: expect.stringContaining('nothing on the page moved')
+      })
+      await rm((still.media![0].source as { path: string }).path, { force: true })
+    } finally {
+      await Promise.all([first, ...later].map((shot) => rm(shot.path, { force: true })))
+    }
+  })
+
   it('resizes an existing viewport and attaches the post-resize screenshot', async () => {
     const { registry, service } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
@@ -1118,6 +1185,31 @@ describe('native browser agent tool handlers', () => {
         }
       )
     ).resolves.toMatchObject({ status: 'success', media: [{ mimeType: 'image/png' }] })
+
+    // A page seen after the last visual change needs no look; a change after it does.
+    const verification = new WorkspaceVerificationService(db)
+    const controller = session.verificationController!
+    verification.recordChanges('runtime-run', root, 'workspace_tool', [
+      { path: 'index.html', kind: 'create' }
+    ])
+    await session.router.execute(
+      'browser_observe',
+      {},
+      {
+        runId: 'runtime-run',
+        conversationId: 'runtime-conversation',
+        workspaceRoot: root,
+        signal: new AbortController().signal
+      }
+    )
+    expect((await controller.afterTerminalTurn()).continue).toBe(false)
+    verification.recordChanges('runtime-run', root, 'workspace_tool', [
+      { path: 'style.css', kind: 'update' }
+    ])
+    expect(await controller.afterTerminalTurn()).toMatchObject({
+      continue: true,
+      prompt: expect.stringContaining('(style.css)')
+    })
     await runtime.close()
     expect(service.dispose).toHaveBeenCalledTimes(1)
     db.close()

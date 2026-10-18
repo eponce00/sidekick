@@ -5,8 +5,8 @@ import { VOICE_SAMPLE_RATE } from '../../../shared/voice'
 import { VoiceModelStore } from './voiceModels'
 import { VoiceService, type SherpaModule } from './voiceService'
 
-// Downloads the real models (about 820 MB) and runs them on this machine:
-// Supertonic reads a sentence aloud and Parakeet must transcribe it back.
+// Downloads the real models (about 1 GB) and runs them on this machine:
+// Kokoro reads a sentence aloud and Parakeet must transcribe it back.
 //   SIDEKICK_VOICE_LIVE=1 [SIDEKICK_VOICE_MODELS_DIR=...] npm test -- voiceService.live
 const enabled = process.env.SIDEKICK_VOICE_LIVE === '1'
 const root = process.env.SIDEKICK_VOICE_MODELS_DIR || join(tmpdir(), 'sidekick-voice-live')

@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
+import { editingToolDefinitions } from '../../shared/agentToolDefinitions'
 import {
   AgentToolExecutionError,
   AgentToolRegistry,
+  validateAgentToolArguments,
   type AgentToolExecutor
 } from './agentToolRegistry'
 import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
@@ -25,6 +27,16 @@ function input(
 }
 
 describe('AgentToolRegistry', () => {
+  it.each(['claude-edit', 'search-replace', 'structured-edit'] as const)(
+    'accepts a %s exact edit that omits replace_all, which defaults to one match',
+    (dialect) => {
+      const edit = editingToolDefinitions(dialect)[0]
+      expect(
+        validateAgentToolArguments(edit, { file_path: 'a.ts', old_string: 'a', new_string: 'b' })
+      ).toEqual([])
+    }
+  )
+
   it('takes correlation from the prepared call and trusted run context, not arguments', async () => {
     const request = input('wait', {
       seconds: 1,

@@ -42,6 +42,19 @@ describe('projectAgentRunEvents', () => {
       { promptTokens: 150, durationMs: 300 }
     ])
   })
+
+  it('sums what every turn generated and measures the turn still streaming', () => {
+    const projection = projectAgentRunEvents([
+      event(1, 'assistant.delta', { thinking: 'Plan it.' }),
+      event(2, 'usage.updated', { promptTokens: 100, completionTokens: 40 }),
+      event(3, 'usage.updated', { promptTokens: 160, completionTokens: 25 }),
+      event(4, 'assistant.delta', { content: 'Hello ' }),
+      event(7, 'assistant.delta', { thinking: 'more', content: 'there' })
+    ])
+    expect(projection.tokenUsage.completionTokens).toBe(25)
+    expect(projection.tokenUsage.generatedTokens).toBe(65)
+    expect(projection.tokenUsage.streaming).toEqual({ startedAt: 4, updatedAt: 7, characters: 15 })
+  })
   it('projects streamed turns once and preserves tool ordering', () => {
     const projection = projectAgentRunEvents([
       event(1, 'run.started', {}),
@@ -84,7 +97,8 @@ describe('projectAgentRunEvents', () => {
       completionTokens: 5,
       tokensPerSecond: 42.5,
       runStartedAt: 1,
-      runCompletedAt: 10
+      runCompletedAt: 10,
+      generatedTokens: 5
     })
     expect(projection.segments.map(({ type }) => type)).toEqual([
       'thinking',
@@ -174,7 +188,8 @@ describe('projectAgentRunEvents', () => {
       cachedPromptTokens: 120,
       completionTokens: 30,
       tokensPerSecond: 50 / 3,
-      timeToFirstTokenMs: 1_400
+      timeToFirstTokenMs: 1_400,
+      generatedTokens: 50
     })
   })
 

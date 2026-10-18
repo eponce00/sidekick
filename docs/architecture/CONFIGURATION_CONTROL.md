@@ -55,12 +55,15 @@ an already-open Settings draft is the user's explicit choice and wins when saved
 
 ## Approvals
 
-| Change                                | Approval                                                                                     |
-| ------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Weakening security                    | The Settings window's native dialog (`confirmSensitiveSettingsChange`), naming the requester |
-| Adding or replacing an MCP server     | A native dialog listing everything that decides what runs; always shown                      |
-| A provider base URL other than before | A native dialog with the old and new address and whether a stored key will be sent there     |
-| Any change by SideKick's agent        | An in-chat approval card with the before-and-after value, in every permission mode           |
+| Change                                | Approval                                                                                  |
+| ------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Weakening security                    | A trusted dialog (`confirmSensitiveSettingsChange`), naming the requester                 |
+| Adding or replacing an MCP server     | A trusted dialog listing everything that decides what runs; always shown                  |
+| A provider base URL other than before | A trusted dialog with the old and new address and whether a stored key will be sent there |
+| Any change by SideKick's agent        | An in-chat approval card with the before-and-after value, in every permission mode        |
+
+Trusted dialogs are SideKick-styled windows the app's own window cannot control; see
+[Menus and dialogs](DESKTOP_INTEGRATION.md#menus-and-dialogs).
 
 ### MCP servers are approved by content
 
@@ -88,7 +91,7 @@ planning, four tools backed by the same control methods with the agent as reques
   `approval: 'always'`, which the kernel honours before the permission mode: the call always
   suspends for an approval, never offers **Allow for this chat**, and carries a preview from the
   tool's registered `preview` function, which the approval card renders as before and after.
-  Sensitive changes then also show the native dialog.
+  Sensitive changes then also show the trusted dialog.
 - `provider_request_key` opens Settings at a provider's key field through `app:openProviderKey`.
   The user types the key into SideKick; the agent only learns whether one is stored.
 

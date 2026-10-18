@@ -5,7 +5,9 @@ import { pathToFileURL } from 'url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getBrowserPdfSession } from '../bootstrap/browserPdfSessionRegistry'
 import {
+  ElectronNativeBrowserSurface,
   NativeBrowserSessionService,
+  STANDALONE_SVG_VIEWER_CSS,
   type BrowserViewport,
   type NativeBrowserRuntime,
   type NativeBrowserSurface,
@@ -14,6 +16,31 @@ import {
   type NativeBrowserSurfaceLoadFailure,
   toViewInputEvent
 } from './nativeBrowserSessionService'
+
+describe('standalone SVG documents', () => {
+  it('fits an SVG opened on its own to the window, and leaves web pages alone', async () => {
+    const handlers = new Map<string, () => void>()
+    const insertCSS = vi.fn(async () => 'key')
+    const contents = {
+      id: 7,
+      on: vi.fn((event: string, handler: () => void) => handlers.set(event, handler)),
+      once: vi.fn(),
+      setWindowOpenHandler: vi.fn(),
+      debugger: { on: vi.fn() },
+      insertCSS
+    }
+    new ElectronNativeBrowserSurface(
+      contents as unknown as import('electron').WebContents,
+      null,
+      true
+    )
+    handlers.get('dom-ready')!()
+    await Promise.resolve()
+    expect(insertCSS).toHaveBeenCalledWith(STANDALONE_SVG_VIEWER_CSS)
+    // Only an SVG that is the document itself, and can scale, is matched.
+    expect(STANDALONE_SVG_VIEWER_CSS.startsWith('svg:root[viewBox] {')).toBe(true)
+  })
+})
 
 describe('toViewInputEvent', () => {
   it('scales pointer targets from CSS pixels into the zoomed view', () => {

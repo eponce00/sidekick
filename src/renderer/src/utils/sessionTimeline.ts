@@ -11,6 +11,25 @@ export type SessionTimelineRow =
   | { kind: 'message'; key: string; at: number; message: SessionMessage }
 
 /**
+ * A worker's brief is also its first user message, with the same id. These are the ids to leave
+ * out of the transcript, so the brief shows once, as the brief from its manager.
+ */
+export function workerBriefIds(
+  conversationId: string,
+  role: 'manager' | 'worker' | null,
+  messages: readonly SessionMessage[]
+): Set<string> {
+  if (role !== 'worker') return new Set()
+  return new Set(
+    messages
+      .filter(
+        (message) => message.intent === 'brief' && message.toConversationId === conversationId
+      )
+      .map((message) => message.id)
+  )
+}
+
+/**
  * Places family rows between a chat's own messages by time. The result maps a gap to its rows:
  * gap 0 comes before the first message and gap n after the n-th. Rows of one kind that land in
  * the same gap merge, so five briefs sent together read as one "Started 5 chats".

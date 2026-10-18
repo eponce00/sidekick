@@ -10,25 +10,31 @@ const masterIconPath = path.join(root, 'build/icon.svg')
 const runtimeIconPath = path.join(root, 'resources/icon.png')
 
 const EXPECTED_BRAND_ASSET_HASHES = new Map([
-  ['build/icon.svg', '83271a158063c4301745e5ec3d62faef5270f629b52fdffc3375d77bd7fc4f09'],
-  ['build/icon.icns', '9ef53e406637a7232ff50b33d48c61942fcda89ee2e163e36f0e7e01faccb7c2'],
-  ['build/icon.ico', '95a0e5eca4b6c880ca2e233bc1c3cb5d033c05f70966a421eb44ade7d87a2e0b'],
-  ['resources/icon.png', 'a33d94be784307b96cecb34984ea0c2b1c4bc291ee69220bd4140648f5ab936e'],
-  // Microsoft Store tiles, rendered by scripts/generate-store-assets.cjs.
-  ['build/appx/LargeTile.png', '20b21d515c2353153d47a6b82aae2a603600a8a4d94febb8eda91a065a1d2f5c'],
-  ['build/appx/SmallTile.png', '1240de6c1c8cae347bfc450c887f98754d367782535877f4d4545c3470bf98ab'],
+  // Drawn by scripts/generate-brand-assets.cjs: the masters, then everything rendered from them.
+  ['build/icon.svg', '6ea14e12dbc42ee71bb5ccfe7c5c1c1a8d971da8814a23b3e2825794d469a726'],
+  ['build/icon-small.svg', '044f7a2ffd8bcda5d83e292ffe71234a3d6df19c38a20189a21518c9b043773c'],
+  [
+    'src/renderer/src/assets/sidekick-peek.svg',
+    'c32f72441e8af637d1bdcb9ffa43c90d37f11b011b95c344be7f27b8ce919b35'
+  ],
+  ['build/icon.icns', '4b222af043091f9086b064e45eb62acfefe52d955a48ad3a88c9b84de24f7099'],
+  ['build/icon.ico', 'ad540ec6e8ab9b2ecc47c319947c51982402ba17d2288d7de737ca754ae0ab52'],
+  ['resources/icon.png', '706052f0bdcf2dc57587ec531740a8c46bc2ffc6e19e4482b4fe2656042349bc'],
+  ['resources/tray.png', 'ba9e54f54f1acd95c2d5c9448cfa1f9ece98f1c12bd06fde40147656d2a888d6'],
+  ['build/appx/LargeTile.png', 'cd3abcd06a6cd446f1c232ee5889cd94a34e48b1e168968308a4e1c0ed3fdfb3'],
+  ['build/appx/SmallTile.png', '068ca30262f8e4836a4a3f5a8519d254fa2704d0a3c96ebf44eb8f83567b77f8'],
   [
     'build/appx/Square150x150Logo.png',
-    '1232af930732a5223369fe4202b2cc394cd406e3c8d6acd7494cb072382b5118'
+    'a9a8ff8b81a4f2af2185e5b25cfab808ef859756ea366f313cb104badd07f5c4'
   ],
   [
     'build/appx/Square44x44Logo.png',
-    '1aec91b10113792a754afc143063e49f9ee8cbe7c7c11fda31f453ba7d6e1901'
+    'd183461ac587237a9e2b96a975992562842fe0780a60c2efc37b706e931165bd'
   ],
-  ['build/appx/StoreLogo.png', '04987e8505d45808242df770f05ed4b8dbaf6ec203e8d954ecac71bfaa23d63b'],
+  ['build/appx/StoreLogo.png', 'a30d1d2a3bb8bfbab5bc391d65371772ab27a294aa7a22e188dc2de2ac81974a'],
   [
     'build/appx/Wide310x150Logo.png',
-    'd9a1cfcaa63dba54c5e4d3d23cdac9de82defae1ec2fb62611f636cd03cc4142'
+    'fdf5aa32017a08436e4256a6f2471fc8ae18ea3122f6a1fa57771bab6976f2e1'
   ]
 ])
 
@@ -45,7 +51,7 @@ function sha256(contents) {
 }
 
 function canonicalAssetContents(relativePath, contents) {
-  return relativePath === 'build/icon.svg'
+  return relativePath.endsWith('.svg')
     ? Buffer.from(contents.toString('utf8').replaceAll('\r\n', '\n'))
     : contents
 }
@@ -57,19 +63,21 @@ test('normalizes irrelevant vector line endings before hashing', () => {
   )
 })
 
-test('uses deterministic platform derivatives of one SideKick vector master', () => {
+test('uses deterministic platform derivatives of one SideKick drawing', () => {
   assert.equal(builder.mac.icon, 'build/icon.icns')
   assert.equal(builder.win.icon, 'build/icon.ico')
   // Without its own tiles, the Store package would show Electron's default artwork.
-  const { STORE_ASSETS } = require('./generate-store-assets.cjs')
+  const { STORE_ASSETS } = require('./generate-brand-assets.cjs')
   for (const { name } of STORE_ASSETS) {
     assert.ok(EXPECTED_BRAND_ASSET_HASHES.has(`build/appx/${name}`), `${name} must be pinned`)
   }
 
-  const svg = readFileSync(masterIconPath, 'utf8')
-  assert.match(svg, /<svg\b/)
-  assert.match(svg, /viewBox="0 0 2048 2048"/)
-  assert.equal(RETIRED_ELECTRON_ICON_HASHES.has(sha256(svg)), false)
+  for (const master of [masterIconPath, path.join(root, 'build/icon-small.svg')]) {
+    const svg = readFileSync(master, 'utf8')
+    assert.match(svg, /<svg\b/)
+    assert.match(svg, /viewBox="0 0 2048 2048"/)
+    assert.equal(RETIRED_ELECTRON_ICON_HASHES.has(sha256(svg)), false)
+  }
 
   for (const [relativePath, expectedHash] of EXPECTED_BRAND_ASSET_HASHES) {
     const rawContents = readFileSync(path.join(root, relativePath))

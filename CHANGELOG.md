@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.15.0 — 2026-10-18
+
+- Meet the new SideKick: a robot sidekick with a red cape, a domino mask and a badge with a prompt
+  chevron. On an empty chat it leans out from behind the side panel, follows your pointer, and
+  winks when clicked. Its cape moves like cloth: it hangs under gravity, streams back when a gust
+  blows past, with streaks showing the wind, and gives way where your pointer brushes through it.
+- See a calmer look: neutral grey surfaces with soft accents. Blue is the default, and Settings
+  offers Lime, Sage, Mono, Teal, Violet, Rose, Amber and Emerald. Status colours never look like the
+  accent, even as small dots.
+- Choose how much each model reasons, from the levels its provider actually supports: on and off
+  for Ollama, effort levels for Anthropic, OpenRouter, LiteLLM, LM Studio and other OpenAI-compatible
+  servers, and Model default to leave it to the server. Each model remembers its own level.
+- See LM Studio, llama.cpp, LiteLLM and the other providers with their own logos, drawn as one set.
+- Let the agent's edits land when it retypes indentation differently, and show it exactly what
+  differs when an edit does not match.
+- Answer approval questions in SideKick's own dialog, in your theme and accent. When SideKick is in
+  the background, a notice in SideKick's look and a flashing taskbar entry say what is asked, and
+  the agent waits for your answer instead of timing out.
+- Keep web fetch off devices on your network and off this computer unless you allowed them, as the
+  browser does, including through redirects and names that point there.
+- Size the side panel by dragging its edge, with snaps and a preview of where it will land, and
+  fold it from a button. The panel can grow until the chat is a phone's width.
+- See live progress at the foot of a working reply, a reply's timer from your message to its end,
+  and a worker chat's brief once under a one-line header.
+- Say which model server dropped or could not be reached, and recover when a reply hits the output
+  limit instead of ending empty. A model's configured maximum output is honoured.
+- Edit a message in the message box, with the rest of the chat stepping back, and see smoother
+  motion when sending, rewinding, opening sections and changing theme.
+- Read replies aloud with Kokoro, a smoother voice that skips sources and symbols.
+- Start a worktree as a copy of its base, with a branch only when one is needed; worktree chats stay
+  in their project, and older worktrees are set aside instead of managed.
+- Let the agent work 500 rounds before it pauses to check in, and ask it to look at pages it
+  changed before it finishes.
+- Draw dropdowns, menus and confirmations in SideKick's style, and fit an SVG file to the browser
+  like an image viewer.
+
 ## 0.14.0 — 2026-10-16
 
 - Let a chat start other chats that work for it. Each worker chat gets its own worktree of the

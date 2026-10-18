@@ -32,6 +32,52 @@ describe('Sidebar chat section', () => {
     container.remove()
   })
 
+  it('slides closed with its full content, then shows the rail; opens at once', async () => {
+    vi.useFakeTimers()
+    try {
+      const render = async (isCollapsed: boolean): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <Sidebar
+              conversations={[]}
+              projects={[]}
+              currentConversationId={null}
+              isCollapsed={isCollapsed}
+              busyConversationIds={new Set()}
+              unreadConversationIds={new Set()}
+              onSelectConversation={vi.fn()}
+              onToggleCollapsed={vi.fn()}
+              onNewConversation={vi.fn()}
+              onOpenProject={vi.fn()}
+              onOpenCommandPalette={vi.fn()}
+              platform="windows"
+              onDeleteConversation={vi.fn()}
+              onDeleteAllConversations={vi.fn()}
+              onForkConversation={vi.fn()}
+              onRenameConversation={vi.fn()}
+              onMoveConversation={vi.fn()}
+              onRenameProject={vi.fn()}
+              onToggleConversationPin={vi.fn()}
+              onToggleProjectPin={vi.fn()}
+              onRemoveProject={vi.fn()}
+            />
+          )
+        })
+      }
+      const sidebar = (): HTMLElement => container.querySelector('.sidebar') as HTMLElement
+      await render(false)
+      await render(true)
+      expect(sidebar().className).toBe('sidebar is-closing')
+      expect(container.textContent).toContain('SideKick')
+      await act(async () => vi.advanceTimersByTime(280))
+      expect(sidebar().className).toBe('sidebar collapsed')
+      await render(false)
+      expect(sidebar().className).toBe('sidebar')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('creates a standalone chat from the Chats heading action', async () => {
     const onNewConversation = vi.fn()
     await act(async () => {

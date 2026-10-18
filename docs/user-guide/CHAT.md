@@ -8,6 +8,11 @@
   an approval or a question, or is finishing), SideKick stops the reply and starts a new one from
   your message instead.
 - **Queue:** a message added to the queue waits for the reply to finish and is sent next.
+- **Live progress:** a line at the foot of the reply shows what the agent is doing (waiting for
+  the model, thinking, using tools, writing, or waiting for you), how long it has worked since your
+  message, how many tokens the model has written and how fast, and how full its context is. The
+  token count for a model step still being written is estimated from its text until the server
+  reports it. Once the reply ends, its footer shows the totals when you point at it.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
   counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
   when SideKick is not in front. A failed reply is announced the same way. See
@@ -76,11 +81,46 @@ of its report.
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
-- **Thinking:** for a model whose reasoning can be switched (Ollama, Ollama Cloud, and OpenRouter),
-  the brain button beside the model turns it on or off. It is tinted while on. Off asks the model
-  to skip reasoning, which some models cannot do: gpt-oss models on Ollama reason briefly instead,
-  and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
-  each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
+- **Reasoning:** the brain button beside the model shows how much the selected model reasons, and
+  opens a menu of the levels that model can take. Each model keeps its own level. The levels follow
+  what its provider can send:
+
+  | Provider                             | Levels                                          |
+  | ------------------------------------ | ----------------------------------------------- |
+  | Ollama, Ollama Cloud                 | On, Off; gpt-oss models take Low, Medium, High  |
+  | Anthropic                            | Off, Low, Medium, High, and Max on newer Claude |
+  | OpenRouter, LiteLLM                  | Model default, Off, Minimal through Extra high  |
+  | LM Studio, OpenAI-compatible servers | Model default, Off, Low, Medium, High           |
+  | llama.cpp                            | Model default, On, Off                          |
+
+  Model default sends nothing and leaves it to the model or server. A server that rejects a level
+  answers with its own default instead of failing, and some models reason anyway: gpt-oss cannot
+  stop, and some OpenRouter models require reasoning. A model whose provider reports it cannot
+  reason, or whose Reasoning capability is turned off in its settings, has no button. The command
+  palette's Reasoning entry steps to the next level. In a reply, each step of reasoning shows the
+  same brain among the agent's steps; select it to read it in full.
+
+## The side panel
+
+The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
+resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
+with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
+chat and the left sidebar make room.
+
+- Near the **narrow** column or an **even split** with the chat, the outline settles on it with a
+  little spring. Anywhere in between, the panel stays where you leave it, and SideKick remembers
+  the width.
+- Past the point where the chat would get too narrow, the outline takes the **full window**: the
+  chat steps aside and the left sidebar folds to its thin rail, so a browser page, for example, gets
+  the whole window. Drag back to bring them back. Opening the sidebar also returns the panel beside
+  the chat.
+- Nearly shut, the outline shrinks to the rail and the panel **folds away** to its tab icons when
+  let go. Click an icon, or drag out from the rail, to open it again at the width it had.
+- **Esc** while dragging leaves the panel as it was.
+
+The fold button at the end of the tab row, or clicking the tab already showing, also folds the panel
+away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
+between the narrow column and the even split; the arrow keys move a focused edge.
 
 ## Going back
 
@@ -88,7 +128,11 @@ of its report.
   message and everything after it leave the chat, and the message returns to the box to change or
   send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
   [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
-- **Edit** and **Retry** on a message do the same, then ask again at once.
+- **Edit** on a message you sent moves it into the message box, with its images, attachments,
+  mode, and goal, and blurs it and everything after it. Change it with anything the box offers,
+  then send: the message and what followed are replaced and SideKick answers again from there, the
+  same way a rewind does. **Esc** or **Cancel** puts back what the box held before.
+- **Retry** rewinds to the message and asks again at once.
 
 ## After an interruption
 

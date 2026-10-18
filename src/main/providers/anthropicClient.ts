@@ -10,6 +10,8 @@ import type { ProviderInstance, ProviderInstanceModel } from '../../shared/setti
 import { previewToolCallArguments } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
+import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -46,13 +48,17 @@ function headers(
   instance: ProviderInstance,
   request?: ProviderChatRequest
 ): Record<string, string> {
+  const beta = [
+    ...(request && thinkingConfig(request) && request.tools?.length
+      ? ['interleaved-thinking-2025-05-14']
+      : []),
+    ...(request && effortConfig(request) ? ['effort-2025-11-24'] : [])
+  ]
   return {
     'Content-Type': 'application/json',
     'x-api-key': instance.apiKey || '',
     'anthropic-version': '2023-06-01',
-    ...(request?.thinkingEnabled && request.tools?.length
-      ? { 'anthropic-beta': 'interleaved-thinking-2025-05-14' }
-      : {})
+    ...(beta.length ? { 'anthropic-beta': beta.join(',') } : {})
   }
 }
 
@@ -177,14 +183,39 @@ function anthropicTools(tools: unknown[] | undefined): Array<Record<string, unkn
   })
 }
 
+// Claude models that think adaptively, with an effort level instead of a token budget.
+const ADAPTIVE_THINKING = /(?:opus-4-[5-9]|sonnet-4-[6-9]|sonnet-5|haiku-5|mythos|fable)/
+// Older models think within a budget; each level gets one.
+const THINKING_BUDGETS: Partial<Record<ReasoningLevel, number>> = {
+  minimal: 1_024,
+  low: 2_048,
+  medium: 8_192,
+  high: 16_384,
+  xhigh: 24_576,
+  max: 32_000
+}
+
+function thinkingLevel(request: ProviderChatRequest): ReasoningLevel | undefined {
+  const level = requestReasoningLevel(request)
+  return level && level !== 'off' && level !== 'auto' ? level : undefined
+}
+
+function effortConfig(request: ProviderChatRequest): { effort: string } | undefined {
+  const level = thinkingLevel(request)
+  if (!level || level === 'on' || !ADAPTIVE_THINKING.test(request.target.model.toLowerCase()))
+    return undefined
+  return { effort: nearestEffort(level, ['low', 'medium', 'high', 'max'] as const) }
+}
+
 function thinkingConfig(request: ProviderChatRequest): Record<string, unknown> | undefined {
-  if (!request.thinkingEnabled) return undefined
+  const level = thinkingLevel(request)
+  if (!level) return undefined
   const model = request.target.model.toLowerCase()
-  if (/(?:opus-4-[678]|sonnet-4-6|sonnet-5|mythos|fable)/.test(model)) {
+  if (ADAPTIVE_THINKING.test(model)) {
     return { type: 'adaptive', display: 'summarized' }
   }
   const maxTokens = request.maxOutputTokens || 16_000
-  const requestedBudget = request.reasoningTokens || 10_000
+  const requestedBudget = THINKING_BUDGETS[level] ?? (request.reasoningTokens || 10_000)
   const budgetTokens = Math.min(requestedBudget, maxTokens - 1)
   if (budgetTokens < 1_024) return undefined
   return {
@@ -197,6 +228,7 @@ function thinkingConfig(request: ProviderChatRequest): Record<string, unknown> |
 function body(request: ProviderChatRequest, stream: boolean): Record<string, unknown> {
   const converted = toAnthropicMessages(request.messages)
   const thinking = thinkingConfig(request)
+  const effort = effortConfig(request)
   return {
     model: request.target.model,
     max_tokens: request.maxOutputTokens || 8_192,
@@ -204,10 +236,9 @@ function body(request: ProviderChatRequest, stream: boolean): Record<string, unk
     system: converted.system,
     tools: anthropicTools(request.tools),
     stream,
-    ...(request.temperature !== undefined && !request.thinkingEnabled
-      ? { temperature: request.temperature }
-      : {}),
-    ...(thinking ? { thinking } : {})
+    ...(request.temperature !== undefined && !thinking ? { temperature: request.temperature } : {}),
+    ...(thinking ? { thinking } : {}),
+    ...(effort ? { output_config: effort } : {})
   }
 }
 
@@ -445,7 +476,12 @@ export async function streamAnthropicChat(
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError'))
       return { ok: false, error: 'aborted' }
-    return { ok: false, error: error instanceof Error ? error.message : 'Anthropic stream failed' }
+    return {
+      ok: false,
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Anthropic stream failed')
+    }
   } finally {
     signal?.removeEventListener('abort', cancelReader)
     releaseProviderStreamReader(reader)
@@ -523,7 +559,9 @@ export async function completeAnthropicChat(
   } catch (error) {
     return {
       ok: false,
-      error: error instanceof Error ? error.message : 'Anthropic completion failed'
+      error:
+        providerConnectionFailureMessage(error, instance.baseUrl) ??
+        (error instanceof Error ? error.message : 'Anthropic completion failed')
     }
   }
 }

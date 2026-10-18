@@ -43,7 +43,7 @@ The app checks the public GitHub Releases API after startup and every six hours.
 updater downloads newer stable packages automatically, streams them to a private staging directory,
 and verifies the exact asset against that release's `SHA256SUMS.txt`. It permits only the canonical
 GitHub release path and GitHub's release-assets HTTPS host. It never accepts an installer URL or
-file path from the renderer. Installation requires **Restart and update** and a native confirmation;
+file path from the renderer. Installation requires **Restart and update** and a trusted confirmation;
 normal closing does not silently install. The computer is never restarted.
 
 This is an explicit change from the notification-only policy in 0.7.0. Checksums protect against
@@ -112,9 +112,12 @@ installer has no Authenticode signature unless SignPath Foundation signed it. Th
 these facts so an accidental local identity or an undocumented paid dependency cannot change the
 release contract.
 
-Application branding has one vector master at `build/icon.svg`. Its reviewed ICNS, ICO, and runtime
-PNG derivatives are checked in and hash-validated so clean release runners do not depend on an icon
-conversion download and cannot silently fall back to Electron artwork.
+Application branding is drawn once, by `node scripts/generate-brand-assets.cjs`. It writes the
+vector master `build/icon.svg` and its small cut `build/icon-small.svg`, used at 16 to 32 px, and
+renders every derivative from them: the ICNS, the ICO (filling more of its frame, as Windows icons
+do), the runtime and tray PNGs, the Microsoft Store tiles, and the peeking robot the app draws. All
+of them are checked in and hash-validated, so clean release runners do not render or download icons
+and cannot silently fall back to Electron artwork.
 
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
 from the public release, and the final merged-set validator rejects them because the community
@@ -210,9 +213,8 @@ before submitting it, unpack it with `makeappx unpack`, register the folder with
 `store`, the agent ran a PowerShell command shown in the Terminal tab, and the browser panel
 opened a page. Windows does not redirect its data: where `%APPDATA%\SideKick` already exists, the
 Store and installer editions share one profile, so a user can switch between them without losing
-chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx` are
-rendered from `build/icon.svg` by `node scripts/generate-store-assets.cjs` and hash-checked with the
-other icon derivatives.
+chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx`
+are rendered by the same brand-asset script and hash-checked with the other icon derivatives.
 
 ## What the tagged workflow proves
 

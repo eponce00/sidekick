@@ -1,0 +1,164 @@
+/* The robot leans out from the chat's right edge, the side the panel opens on, just above the
+   empty chat's heading. Its right side is cut straight, so it reads as being behind that edge. */
+.sidekick-peek {
+  all: unset;
+  display: block;
+  position: absolute;
+  top: max(16px, calc(50% - 232px));
+  right: 0;
+  /* The frame leaves room for the cape to stream left and hang below; the head is the same size.
+     Only the drawing takes the pointer, not the empty room around it. */
+  width: 190px;
+  pointer-events: none;
+  cursor: pointer;
+  transform-origin: 100% 33%;
+  animation: sidekick-peek-in 760ms var(--ease-spring) 240ms both;
+}
+
+.sidekick-peek-drawing {
+  display: block;
+}
+
+.sidekick-peek svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* It leans toward the pointer, pivoting where it meets the panel's edge. */
+  rotate: var(--head-turn, 0deg);
+  transform-origin: 100% 33%;
+  pointer-events: none;
+}
+
+.sidekick-peek svg * {
+  pointer-events: visiblePainted;
+  transition: rotate 380ms var(--ease-out);
+}
+
+.sidekick-peek .peek-helmet {
+  fill: var(--brand-helmet);
+}
+
+.sidekick-peek .peek-shade {
+  fill: var(--brand-shade);
+}
+
+.sidekick-peek .peek-visor {
+  fill: var(--brand-visor);
+}
+
+.sidekick-peek .peek-glint {
+  stroke: var(--brand-glint);
+}
+
+.sidekick-peek .peek-led,
+.sidekick-peek .peek-eye,
+.sidekick-peek .peek-badge {
+  fill: var(--brand-led);
+}
+
+.sidekick-peek .peek-badge-mark {
+  stroke: var(--brand-visor);
+}
+
+/* The cape is cloth, redrawn by script each frame: see capeCloth. */
+.sidekick-peek .peek-cape {
+  fill: var(--brand-cape);
+}
+
+.sidekick-peek .peek-cape-lining {
+  fill: var(--brand-cape-lining);
+}
+
+.sidekick-peek .peek-wind-streak {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 14px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Now and then it blinks, both eyes at once, the way a person does. */
+.sidekick-peek .peek-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: sidekick-peek-blink 5.8s ease-in-out 1.8s infinite;
+  /* Looking is a separate property from the blink, so the two combine. */
+  translate: var(--look-x, 0) var(--look-y, 0);
+  transition: translate 220ms var(--ease-out);
+}
+
+/* Poked, it hops; one eye winks, or both squint happily. */
+.sidekick-peek.is-wink svg,
+.sidekick-peek.is-happy svg {
+  animation: sidekick-peek-hop 620ms var(--ease-spring);
+}
+
+.sidekick-peek.is-wink .peek-eye:last-of-type {
+  animation: sidekick-peek-wink 700ms ease-in-out;
+}
+
+.sidekick-peek.is-happy .peek-eye {
+  animation: sidekick-peek-happy 800ms ease-in-out;
+}
+
+.sidekick-peek.is-wink .peek-led,
+.sidekick-peek.is-happy .peek-led,
+.sidekick-peek.is-wink .peek-badge,
+.sidekick-peek.is-happy .peek-badge {
+  animation: sidekick-peek-flash 600ms ease-out;
+}
+
+/* Too narrow a chat has no room beside its heading. */
+@container (max-width: 380px) {
+  .sidekick-peek {
+    display: none;
+  }
+}
+
+@keyframes sidekick-peek-in {
+  from {
+    opacity: 0;
+    transform: translateX(70%) rotate(10deg);
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+@keyframes sidekick-peek-hop {
+  40% {
+    transform: translateY(-9%) rotate(-4deg);
+  }
+}
+
+@keyframes sidekick-peek-wink {
+  25%,
+  70% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes sidekick-peek-happy {
+  25%,
+  75% {
+    transform: scaleY(0.4) translateY(-30%);
+  }
+}
+
+@keyframes sidekick-peek-flash {
+  30% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes sidekick-peek-blink {
+  0%,
+  93%,
+  100% {
+    transform: none;
+  }
+  95.5% {
+    transform: scaleY(0.12);
+  }
+}

@@ -119,7 +119,7 @@ export function registerSessionHandlers(): void {
     worktrees: {
       isGitProject: async (projectId) => (await worktrees.branchOptions(projectId)).isGitRepository,
       createForConversation: (input) => worktrees.createForConversation(input),
-      removeIfUnused: (projectId) => worktrees.removeIfUnused(projectId)
+      removeIfUnused: (worktreeId) => worktrees.removeIfUnused(worktreeId)
     },
     resolveModel,
     onChange: (change) => publishDesktopEvent('sessions:changed', change)

@@ -39,8 +39,8 @@ the machine or in the project. SideKick does not download language servers or to
 
 Agent commands run in a terminal (a pseudo-terminal), so programs behave as they do for you:
 colours, progress bars, and prompts. The model reads the output as a terminal shows it, without
-control codes. **Agent settings → Run commands in a terminal** switches to plain pipes; Docker
-isolation always uses pipes.
+control codes. Where a terminal cannot start, and inside a Docker container, commands run over
+plain pipes instead.
 
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you

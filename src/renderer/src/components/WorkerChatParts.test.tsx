@@ -7,7 +7,7 @@ import type { ManagedWorktreeSummary } from '../../../shared/worktrees'
 import AgentInteractionCard from './AgentInteractionCard'
 import { WorkerChatContext } from './sessionChatContext'
 import { workerWorkplace } from '../utils/sessionLabels'
-import { BriefCard, SessionMessageRow, WorkerBanner, WorkerChatHeader } from './WorkerChatParts'
+import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
 import { familyMember, familyMessage } from './sessionTestFixtures'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -41,7 +41,7 @@ describe('worker chat parts', () => {
   it('leads back to the manager and says how the worker stands and where it works', async () => {
     const onOpenChat = vi.fn()
     const onStop = vi.fn()
-    const render = async (state: 'waiting' | 'done'): Promise<void> =>
+    const render = async (state: 'waiting' | 'done', reportsToManager = true): Promise<void> =>
       act(async () =>
         root.render(
           <WorkerChatHeader
@@ -50,40 +50,36 @@ describe('worker chat parts', () => {
             state={state}
             reason={state === 'waiting' ? 'Approval: run npm test' : undefined}
             worktree={worktree}
+            reportsToManager={reportsToManager}
             onOpenChat={onOpenChat}
             onStop={onStop}
           />
         )
       )
     await render('waiting')
+    // One line: back to the manager, the worker, its state, its branch.
+    expect(container.querySelector('header')?.textContent).toBe(
+      'Design reviewschedulesNeeds yousidekick/schedules Stop'
+    )
     expect(container.querySelector('h2')?.textContent).toBe('schedules')
     expect(container.querySelector('.worker-state')?.getAttribute('aria-label')).toBe(
       'State: Needs you. Approval: run npm test'
     )
-    expect(container.querySelector('.worker-header-branch')?.textContent).toBe(
-      'sidekick/schedules (worktree of sidekick-demo)'
+    expect(container.querySelector('.worker-header-branch')?.getAttribute('title')).toBe(
+      'Worktree of sidekick-demo'
     )
+    // Where its reports go, said where the way back is.
+    expect(button('Design review').title).toContain('sends its last message there')
     await act(async () => button('Design review').click())
     expect(onOpenChat).toHaveBeenCalledWith('manager')
     await act(async () => button('Stop').click())
     expect(onStop).toHaveBeenCalled()
 
-    // A finished worker has nothing to stop.
-    await render('done')
+    // A finished worker has nothing to stop; one that no longer reports says so.
+    await render('done', false)
     expect(container.querySelector('.worker-header-stop')).toBeNull()
-  })
-
-  it('says who started the chat, where it reports, and that typing reaches only it', async () => {
-    await act(async () =>
-      root.render(<WorkerBanner manager={manager} reportsToManager onOpenChat={vi.fn()} />)
-    )
-    expect(container.textContent).toBe(
-      'Started by Design review. When this chat goes idle, its last message is sent there. What you type here goes to this chat only.'
-    )
-    await act(async () =>
-      root.render(<WorkerBanner manager={manager} reportsToManager={false} onOpenChat={vi.fn()} />)
-    )
-    expect(container.textContent).toContain('This chat no longer reports there.')
+    expect(container.textContent).toContain('Not reporting')
+    expect(button('Design review').title).toContain('no longer reports there')
   })
 
   it('shows the brief as a card from the manager that folds away', async () => {

@@ -13,7 +13,9 @@ standalone chats for work that does not belong to a folder.
 - A standalone conversation has no project folder and therefore does not silently inherit file or
   command context from the last project that happened to be open.
 - The global New Chat action creates a standalone chat. The plus action beside a project creates a
-  chat inside that project.
+  chat inside that project. A new chat left before anything is sent in it goes away rather than
+  waiting in the sidebar, unless something was typed in its message box; a worktree made for it
+  goes too when nothing in it changed.
 - A never-attached standalone conversation may enter one project. That canonical folder becomes its
   durable affinity. It may later detach to Chats and reattach only to that same folder; direct or
   indirect moves between different projects are rejected.
@@ -98,7 +100,7 @@ Worktree hooks are also added switched off. They match the
 original project's exact folder and run when a chat forks into a new worktree or
 starts in one, after the chat is saved there and before its first run.
 Commands execute inside the new worktree, in
-order, with a separate native approval for each command in every permission mode.
+order, with a separate approval for each command in every permission mode.
 Skipping is the default. No repository Git hooks are discovered or enabled.
 
 Each command has a two-minute limit and uses the selected host or Docker shell;
@@ -110,26 +112,37 @@ commands are never automatically replayed. There are no automatic removal hooks.
 
 ### Worktrees
 
-Two agents writing in one folder overwrite each other's work. A worktree is a separate folder on its
-own Git branch, so each chat can work without touching another chat's files. SideKick keeps its
-worktrees in its private data folder, under `worktrees`, never inside your project, and each one
-appears in the sidebar as its own project named after the original project and the branch.
+Two agents writing in one folder overwrite each other's work. A worktree is a separate copy of the
+project, so each chat can work without touching another chat's files. A worktree belongs to its
+chat: the chat stays in its project in the sidebar, marked with a branch icon, and only works in a
+different folder. SideKick keeps worktrees in its private data folder, under `worktrees`, never
+inside your project.
 
 #### Starting a chat in a worktree
 
 Before the first message of a project chat, the bar above the composer offers **Work in: This
-folder** or **New worktree**. With a new worktree you can name the branch (by default
-`sidekick/` followed by words from your first message, with a number added if that branch exists)
-and choose the branch to start from (by default the branch the project folder is on). Sending the
-first message creates the worktree, moves the chat into it and then starts the agent. SideKick
-remembers your last choice for the next new chat. Worktrees need a project inside a Git
-repository; for other folders only **This folder** is offered.
+folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
+or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
+be checked out in only one folder, and the project folder already has it. Sending the first message
+creates the chat's worktree and then starts the agent there. SideKick remembers your
+last choice for the next new chat. Worktrees need a project inside a Git repository; for any other
+folder the bar says so and the chat works in the folder. A new chat outside any project shows
+**Work in: No project** instead; choosing a project there moves the chat into it and offers both
+choices.
 
+Every new chat in a project gets the same choice, so two chats never share a worktree by accident.
 A chat that already has messages keeps its folder. To move its work aside, fork it into a new
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
-Once a chat works in a worktree, the bar shows its branch, the branch it started from, and how many
-commits it is ahead of and behind that base.
+Once a chat works in a worktree, the Work in bar goes away. A small branch label in the
+composer's bottom row shows its branch, or "detached from main" until it has one.
+
+#### Finishing the work
+
+A worktree's work never has to come back through the project folder. In the worktree, the agent
+creates a branch when the work needs one, commits, and then merges into the base or pushes the
+branch and opens a pull request. Once the work is merged, remove the worktree or delete its chat.
+Each chat can have its own worktree, so several agents can each finish their own change this way.
 
 #### When another agent is already working in the folder
 
@@ -146,36 +159,33 @@ runtime refuses a second writer in a busy folder unless the run was started to s
 reports only read, so they are never held back. A worker chat set to work in its manager's folder
 shares it by design; see [Chats that work together](CHATS_THAT_WORK_TOGETHER.md).
 
+#### Older worktrees are set aside
+
+SideKick keeps the 15 most recently used worktrees on disk. When there are more, it sets the least
+recently used ones aside: it saves each one's commits and uncommitted files in a snapshot that Git
+keeps under `refs/sidekick/worktrees/`, then deletes the folder. A worktree whose chat is running
+or pinned is never set aside. Sending a message in the chat brings the worktree back as it was:
+the same folder, commit, branch and files, with its changes unstaged. Files Git ignores, such as
+installed dependencies, are not kept, so the agent may need to reinstall them.
+
 #### Managing worktrees
 
-**Manage** in the worktree bar, the settings icon beside **Work in**, or **Manage worktrees** in the
-command palette opens the list of SideKick's worktrees. Each shows its branch and base, commits
-ahead and behind, uncommitted changes, whether it is merged, the chats using it, its disk use
-(links are not followed), and when it was last used.
+The branch label in the composer, the settings icon beside **Work in**, or **Manage worktrees** in
+the command palette opens the list. Each row shows the chat, the project and branch, and when it was
+last used, marked **Working**, **Set aside**, or with its number of changed files.
 
-- **Open** switches to the worktree's most recent chat, or starts one there.
-- **Show folder** opens the worktree in your file manager.
-- **Sync with base** merges the base branch into the worktree. It needs a clean worktree with no
-  agent running. If the merge would conflict, SideKick stops it, changes nothing, and lists the
-  conflicting files so you can resolve them yourself or ask the agent to.
-- **Remove** deletes the worktree when nothing would be lost. Otherwise it lists what would be: chats
-  that use it, uncommitted changes, and commits the base does not have. **Remove anyway** then
-  removes it, keeps those chats as detached chats with their history, and keeps the branch so its
-  commits stay recoverable unless you also tick the box to delete it.
+- **Open its chat** switches to the chat, or starts one in the worktree.
+- **Show the folder** opens it in your file manager. A set-aside worktree has no folder until its
+  chat continues.
+- **Remove** asks once, then deletes the folder with any uncommitted changes. Branches made in it
+  stay in the repository with their commits. Its chats keep their history as chats outside any
+  project.
 
-SideKick never removes a worktree while an agent is working in it, or one it cannot prove it
-created: the folder must have the exact shape SideKick uses inside its storage, be on the branch
-SideKick recorded, and be registered with Git. Removal goes through `git worktree remove`; there is
-no recursive-delete fallback. Links inside a worktree, such as a `node_modules` junction to a shared
-install, are deleted as links first, so their targets are never emptied.
-
-#### Automatic cleanup
-
-Deleting a worktree's last chat removes the worktree when it is clean and merged, together with its
-branch. Otherwise it stays in the list with the reason. Removing a worktree project from the sidebar
-does the same safe removal and says why when it refuses. When the 20-worktree limit is reached,
-SideKick removes the least recently used worktrees that can be removed safely before creating
-another; if none can, it asks you to remove some first.
+Deleting a worktree's chat removes the worktree too. SideKick never removes a worktree while an agent works in it, or one it
+cannot prove it created: the folder must have the exact shape SideKick uses inside its storage and
+be registered with Git. Removal goes through `git worktree remove`; there is no recursive-delete
+fallback. Links inside a worktree, such as a `node_modules` junction to a shared install, are
+deleted as links first, so their targets are never emptied.
 
 SideKick's worktree commands disable implicit Git hooks for that invocation without changing your
 Git configuration. This is not a sandbox for arbitrary Git filters or manually executed commands.

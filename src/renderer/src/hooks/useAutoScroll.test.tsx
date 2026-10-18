@@ -9,6 +9,7 @@ import {
   useAutoScroll,
   type AutoScrollController
 } from './useAutoScroll'
+import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
 let root: Root
 let host: HTMLDivElement
@@ -187,5 +188,69 @@ describe('auto-scroll positioning', () => {
     act(() => resizeCallback?.([], {} as ResizeObserver))
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 1_800, behavior: 'auto' })
+  })
+
+  it('lets a section the reader opens unfold from where it was, even at the end', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      await act(async () => root.render(<Harness ready />))
+      const timeline = host.firstElementChild as HTMLDivElement
+      const scrollTo = vi.fn()
+      Object.defineProperties(timeline, {
+        scrollHeight: { configurable: true, value: 1_800 },
+        clientHeight: { configurable: true, value: 500 },
+        scrollTop: { configurable: true, writable: true, value: 1_300 },
+        scrollTo: { configurable: true, value: scrollTo }
+      })
+      scrollTo.mockClear()
+
+      timeline.dispatchEvent(
+        new CustomEvent(SECTION_REVEAL_EVENT, { bubbles: true, detail: { ms: 260 } })
+      )
+      // The section grows below the end while it opens.
+      Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 2_100 })
+      act(() => resizeCallback?.([], {} as ResizeObserver))
+      expect(scrollTo).not.toHaveBeenCalled()
+
+      // Settled, the end is out of view, so the chat no longer follows it.
+      await act(async () => vi.advanceTimersByTimeAsync(400))
+      act(() => resizeCallback?.([], {} as ResizeObserver))
+      expect(scrollTo).not.toHaveBeenCalled()
+      expect(controller.showScrollToBottom).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+function Following({ messages }: { messages: string[] }): React.JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  useAutoScroll(endRef, containerRef, messages, 'smooth', 'chat')
+  return (
+    <div ref={containerRef} data-testid="follow">
+      <div ref={endRef} />
+    </div>
+  )
+}
+
+describe('following a growing reply', () => {
+  it('follows a few new lines at once and glides only over a bigger jump', async () => {
+    await act(async () => root.render(<Following messages={['a']} />))
+    const container = host.querySelector<HTMLDivElement>('[data-testid="follow"]')!
+    const scrollTo = vi.fn()
+    container.scrollTo = scrollTo as unknown as typeof container.scrollTo
+    let scrollHeight = 1_000
+    Object.defineProperty(container, 'scrollHeight', { get: () => scrollHeight })
+    Object.defineProperty(container, 'clientHeight', { value: 400 })
+    Object.defineProperty(container, 'scrollTop', { value: 600, writable: true })
+
+    scrollHeight = 1_060
+    await act(async () => root.render(<Following messages={['a', 'b']} />))
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_060, behavior: 'auto' })
+
+    scrollHeight = 1_800
+    await act(async () => root.render(<Following messages={['a', 'b', 'c']} />))
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_800, behavior: 'smooth' })
   })
 })
