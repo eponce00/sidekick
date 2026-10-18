@@ -90,6 +90,10 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 - Do not render permanent pills for capabilities the agent manages automatically. Built-in web search and auto-discovered skills remain invisible unless their execution appears in the conversation.
 - Use Lucide for interactive and semantic UI icons. Default to a 1.75–1.8 stroke, use 13–16px inside dense controls, and reserve 18px or larger for primary actions and empty states.
 - Use `ProviderIcon` everywhere a provider or provider-owned model is identified. Resolve from `providerKind` before transport so OpenAI-compatible connections, LM Studio, and llama.cpp remain visually distinct.
+- Provider icons are one set: each provider's official mark simplified to a solid shape on a
+  24-unit grid, drawn in `currentColor` (`--text-secondary`) so it follows the theme and reads at
+  14px. OpenAI-compatible servers, which have no brand, get a neutral plug. Keep a new mark's source
+  and license notice in `ProviderIcon.tsx`.
 - Custom SVG is reserved for official provider marks and genuine data visualizations such as the context ring or research progress—not ordinary buttons.
 
 ## Settings pages
