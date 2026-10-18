@@ -186,10 +186,14 @@ it as the `SideKick-Microsoft-Store` workflow artifact. Submit that file in a ne
 submission. `npm run build:store` builds the same package locally with those three variables set
 in the environment.
 
-The app runs with the `runFullTrust` capability, like any packaged desktop app. Before the first
-submission, install the package locally in Developer Mode (`Add-AppxPackage -Register` on the
-unpacked folder) and confirm that commands, terminals, the browser panel, voice models, and data in
-the packaged app's own application-data folder work; this has not been qualified yet. Its tile images in `build/appx` are
+The app runs with the `runFullTrust` capability, like any packaged desktop app. To test a package
+before submitting it, unpack it with `makeappx unpack`, register the folder with
+`Add-AppxPackage -Register` in Developer Mode, and start it with `Invoke-CommandInDesktopPackage`;
+`Remove-AppxPackage` uninstalls it. Version 0.14.0 was checked this way: the in-app updater reports
+`store`, the agent ran a PowerShell command shown in the Terminal tab, and the browser panel
+opened a page. Windows does not redirect its data: where `%APPDATA%\SideKick` already exists, the
+Store and installer editions share one profile, so a user can switch between them without losing
+chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx` are
 rendered from `build/icon.svg` by `node scripts/generate-store-assets.cjs` and hash-checked with the
 other icon derivatives.
 
