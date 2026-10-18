@@ -10,13 +10,16 @@ const path = require('node:path')
 
 const root = path.resolve(__dirname, '..')
 
+// Neutral greys like the app's, so the lime LEDs and the red cape carry the colour.
 const COLORS = {
-  tile: '#191B22',
-  helmet: '#E6E9F0',
-  shade: '#B4BBC9',
-  visor: '#0B0C10',
+  tile: '#1C1C1C',
+  helmet: '#E6E6E6',
+  shade: '#B3B3B3',
+  visor: '#0F0F0F',
   led: '#C8FF3D',
-  glint: '#23262F'
+  glint: '#2A2A2A',
+  cape: '#F0525B',
+  capeLining: '#B5303A'
 }
 
 function round(value) {
@@ -71,6 +74,21 @@ const VISOR_RIGHT = [
   ]
 ]
 
+// The cape, as offsets from the head's centre on the master's proportions: it fastens under the
+// chin and billows up and back, as if the robot is flying in, ending in a scalloped hem. The
+// lining shows along its lower edge. The neck, where it pivots when it moves, is CAPE_PIVOT.
+const CAPE =
+  'M40 200 C-100 284 -300 282 -440 200 L-404 150 L-502 112 L-452 62 L-548 14 L-482 -30 ' +
+  'L-566 -84 C-466 -66 -366 -26 -250 -4 Z'
+const CAPE_LINING = 'M-440 200 C-300 282 -100 284 40 200 C-100 252 -280 248 -404 150 Z'
+const CAPE_PIVOT = [0, 200]
+
+/** Scales every coordinate of an absolute path: x by `sx`, y by `sy`. */
+function scalePath(d, sx, sy) {
+  let axis = 0
+  return d.replace(/-?\d+(\.\d+)?/g, (n) => String(round(Number(n) * (axis++ % 2 ? sy : sx))))
+}
+
 function visorPath() {
   const d = [`M${VISOR_START[0]} ${VISOR_START[1]}`]
   for (const [c1, c2, end] of VISOR_RIGHT)
@@ -85,10 +103,12 @@ function visorPath() {
 }
 
 /**
- * The robot leaning in from the right edge of its tile. `small` is the cut for 16-32 px: a bigger
- * head, bolder eyes, a shorter antenna and no visor glint, so it still reads as a robot when
- * every part is a few pixels. `glyph` drops the tile and cuts the head with a straight edge, for
- * the app's own surfaces; its parts carry classes so CSS can theme and animate them.
+ * The robot flying in from the right edge of its tile, a superhero's sidekick: a cape, a domino
+ * mask with pointed tips, and a badge with a prompt chevron where the cape fastens. `small` is the
+ * cut for 16-32 px: a bigger head, bolder eyes, a shorter antenna and no visor glint, so it still
+ * reads as a robot when every part is a few pixels. `glyph` drops the tile and cuts the head with
+ * a straight edge, for the app's own surfaces; its parts carry classes so CSS can theme and
+ * animate them, and the cape sits in its own group so the app can move it.
  */
 function robot({ small = false, glyph = false } = {}) {
   const cx = small ? 670 : 690
@@ -98,22 +118,49 @@ function robot({ small = false, glyph = false } = {}) {
   const tilt = -8
   const stem = small ? 70 : 92
   const eye = small ? 84 : 70
+  const sx = rx / 262
+  const sy = ry / 226
   const part = (name) => (glyph ? ` class="peek-${name}"` : '')
   const parts = []
   const clip = glyph ? `M0 0 H${Math.round(cx + rx * 0.78)} V1024 H0 Z` : TILE
   if (!glyph) parts.push(`<path d="${TILE}" fill="${COLORS.tile}"/>`)
   parts.push(`<clipPath id="sidekick-tile"><path d="${clip}"/></clipPath>`)
   parts.push(`<g clip-path="url(#sidekick-tile)"><g transform="rotate(${tilt} ${cx} ${cy})">`)
+  const [pivotX, pivotY] = CAPE_PIVOT
+  parts.push(
+    `<g transform="translate(${cx} ${cy})"><g${part('cape-rig')} data-pivot="${round(pivotX * sx)} ${round(pivotY * sy)}">`,
+    `<path${part('cape')} d="${scalePath(CAPE, sx, sy)}" fill="${COLORS.cape}"/>`,
+    `<path${part('cape-lining')} d="${scalePath(CAPE_LINING, sx, sy)}" fill="${COLORS.capeLining}"/>`,
+    '</g></g>'
+  )
   const top = cy - ry - stem
   parts.push(
     `<rect${part('shade')} x="${cx - 85}" y="${top}" width="30" height="${stem + 20}" rx="15" fill="${COLORS.shade}"/>`,
     `<circle${part('led')} cx="${cx - 70}" cy="${top}" r="${small ? 40 : 34}" fill="${COLORS.led}"/>`,
     `<rect${part('shade')} x="${cx - rx - 46}" y="${cy - 80}" width="70" height="160" rx="32" fill="${COLORS.shade}"/>`,
-    `<path${part('helmet')} d="${superellipse(cx, cy, rx, ry, 4.2)}" fill="${COLORS.helmet}"/>`,
+    `<path${part('helmet')} d="${superellipse(cx, cy, rx, ry, 4.2)}" fill="${COLORS.helmet}"/>`
+  )
+  // The badge where the cape fastens, a prompt chevron for the hero's emblem, and the domino
+  // mask's pointed tips. Both are detail the small cut leaves out: at 16 px they are noise.
+  const bx = round(cx - 40 * sx)
+  const by = round(cy + 214 * sy)
+  const br = 50
+  if (!small) {
+    parts.push(
+      `<circle${part('badge')} cx="${bx}" cy="${by}" r="${br}" fill="${COLORS.led}"/>`,
+      `<path${part('badge-mark')} d="M${round(bx - br * 0.3)} ${round(by - br * 0.42)} L${round(bx + br * 0.22)} ${by} L${round(bx - br * 0.3)} ${round(by + br * 0.42)}" fill="none" stroke="${COLORS.visor}" stroke-width="${round(br * 0.28)}" stroke-linecap="round" stroke-linejoin="round"/>`
+    )
+  }
+  parts.push(
     `<g transform="translate(${cx - 24} ${cy - 8})">`,
     `<path${part('visor')} d="${visorPath()}" fill="${COLORS.visor}"/>`
   )
   if (!small) {
+    for (const k of [-1, 1]) {
+      parts.push(
+        `<path${part('visor')} d="M${k * 200} -100 L${k * 306} -116 L${k * 224} -36 Z" fill="${COLORS.visor}"/>`
+      )
+    }
     parts.push(
       `<path${part('glint')} d="M-176 -66 C-120 -86 -50 -88 -6 -70" fill="none" stroke="${COLORS.glint}" stroke-width="18" stroke-linecap="round"/>`
     )
@@ -144,14 +191,14 @@ function windowsSvg(cut) {
   )
 }
 
+// The peek's frame: the head where the icon has it, with room to the left and below for the cape
+// to trail, lift in a gust and sag when the air is still.
+const PEEK_FRAME = { left: 30, top: 224, width: 864, height: 760 }
+
 function peekSvg() {
-  const cx = 690
-  const rx = 262
-  const ry = 226
-  const left = cx - rx - 70
-  const top = 600 - ry - 150
+  const { left, top, width, height } = PEEK_FRAME
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${left} ${top} ${Math.round(rx * 1.78 + 70)} ${ry * 2 + 190}">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${left} ${top} ${width} ${height}">` +
     `${robot({ glyph: true })}</svg>\n`
   )
 }

@@ -2,7 +2,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SidekickPeek } from './SidekickPeek'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -20,7 +20,20 @@ describe('SidekickPeek', () => {
   afterEach(async () => {
     await act(async () => root.unmount())
     container.remove()
+    vi.unstubAllGlobals()
   })
+
+  const frames = async (count: number): Promise<void> => {
+    for (let i = 0; i < count; i += 1) {
+      await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    }
+  }
+  const capeAngle = (): number =>
+    Number(
+      /rotate\((-?[\d.]+)\)/.exec(
+        container.querySelector('.peek-cape-rig')?.getAttribute('transform') ?? ''
+      )?.[1]
+    )
 
   it('draws the app icon robot with parts the theme colours and the eyes that blink', async () => {
     await act(async () => root.render(<SidekickPeek />))
@@ -28,7 +41,16 @@ describe('SidekickPeek', () => {
     // Decoration only: screen readers skip it.
     expect(peek.getAttribute('aria-hidden')).toBe('true')
     expect(peek.querySelectorAll('.peek-eye')).toHaveLength(2)
-    for (const part of ['helmet', 'visor', 'led', 'glint', 'shade']) {
+    for (const part of [
+      'helmet',
+      'visor',
+      'led',
+      'glint',
+      'shade',
+      'cape',
+      'cape-lining',
+      'badge'
+    ]) {
       expect(peek.querySelector(`.peek-${part}`), part).not.toBeNull()
     }
     // Its right side is cut straight, so it leans out from behind an edge.
@@ -47,5 +69,28 @@ describe('SidekickPeek', () => {
     await poke()
     await poke()
     expect(peek.classList.contains('is-happy')).toBe(true)
+  })
+
+  it('swings its cape from the neck, and a click flicks it up', async () => {
+    await act(async () => root.render(<SidekickPeek />))
+    expect(container.querySelector('.peek-cape-rig')?.getAttribute('data-pivot')).toMatch(
+      /^[\d.]+ [\d.]+$/
+    )
+    await frames(2)
+    const arriving = capeAngle()
+    const rig = container.querySelector('.peek-cape-rig')
+    expect(Number.isFinite(arriving)).toBe(true)
+    await act(async () => container.querySelector<HTMLButtonElement>('.sidekick-peek')!.click())
+    await frames(6)
+    expect(capeAngle()).toBeGreaterThan(arriving)
+    // Its reaction re-renders the button without redrawing the robot, so the pose holds.
+    expect(container.querySelector('.peek-cape-rig')).toBe(rig)
+  })
+
+  it('leaves the cape as drawn when motion is reduced', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
+    await act(async () => root.render(<SidekickPeek />))
+    await frames(3)
+    expect(container.querySelector('.peek-cape-rig')?.hasAttribute('transform')).toBe(false)
   })
 })

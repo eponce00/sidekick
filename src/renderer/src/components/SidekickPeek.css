@@ -6,10 +6,15 @@
   position: absolute;
   top: max(16px, calc(50% - 232px));
   right: 0;
-  width: 118px;
+  /* The frame leaves room for the cape to trail left and sag below; the head is the same size. */
+  width: 190px;
   cursor: pointer;
-  transform-origin: 100% 60%;
+  transform-origin: 100% 49%;
   animation: sidekick-peek-in 760ms var(--ease-spring) 240ms both;
+}
+
+.sidekick-peek-drawing {
+  display: block;
 }
 
 .sidekick-peek svg {
@@ -18,7 +23,7 @@
   height: auto;
   /* It leans toward the pointer, pivoting where it meets the panel's edge. */
   rotate: var(--head-turn, 0deg);
-  transform-origin: 100% 60%;
+  transform-origin: 100% 49%;
   transition: rotate 380ms var(--ease-out);
 }
 
@@ -39,8 +44,22 @@
 }
 
 .sidekick-peek .peek-led,
-.sidekick-peek .peek-eye {
+.sidekick-peek .peek-eye,
+.sidekick-peek .peek-badge {
   fill: var(--brand-led);
+}
+
+.sidekick-peek .peek-badge-mark {
+  stroke: var(--brand-visor);
+}
+
+/* The cape is moved by script, from the neck: see capePhysics. */
+.sidekick-peek .peek-cape {
+  fill: var(--brand-cape);
+}
+
+.sidekick-peek .peek-cape-lining {
+  fill: var(--brand-cape-lining);
 }
 
 /* Now and then it blinks, both eyes at once, the way a person does. */
@@ -68,7 +87,9 @@
 }
 
 .sidekick-peek.is-wink .peek-led,
-.sidekick-peek.is-happy .peek-led {
+.sidekick-peek.is-happy .peek-led,
+.sidekick-peek.is-wink .peek-badge,
+.sidekick-peek.is-happy .peek-badge {
   animation: sidekick-peek-flash 600ms ease-out;
 }
 

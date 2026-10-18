@@ -11,30 +11,30 @@ const runtimeIconPath = path.join(root, 'resources/icon.png')
 
 const EXPECTED_BRAND_ASSET_HASHES = new Map([
   // Drawn by scripts/generate-brand-assets.cjs: the masters, then everything rendered from them.
-  ['build/icon.svg', '917415777dfac30e57f327a308e4b430f5b3d4bb882833008ade0bf28d5f3052'],
-  ['build/icon-small.svg', '7cd58904b676cf3d6f006aac2cbb906ff08e020434e9a067fc3ca159466a2e14'],
+  ['build/icon.svg', 'e518896437ea7b4fc995afe6494a444b299a392d32d7cb5f63ab97cd13897707'],
+  ['build/icon-small.svg', '218e6288c526629a493af1882f6229cf34e3c4ba17570919bc8a02b6bd48c55f'],
   [
     'src/renderer/src/assets/sidekick-peek.svg',
-    '1c5bb38879f112754ee7c7b7c8ba05124a8ac8ca44693a6ac7c8920d9d866618'
+    '3345eea8c1873b728c97ba5d6fb850e3f1a0b6062937d2ff71760510d5da955e'
   ],
-  ['build/icon.icns', 'b06d139712aff0bf950dda9e96edd96b5417aac173937f36415060d700fa9600'],
-  ['build/icon.ico', '5af59f08e4b3e632dadadbd9a6a735f1cd880df78a281cb89f845877451ecbb7'],
-  ['resources/icon.png', 'ad06d787d28373cc29ab7319b0a1d3ac7f1bc604cae808381c11d8f7a168a894'],
-  ['resources/tray.png', '2aba93710c83541fd004b2cd72f2635292ef39587a78477dc55474c6ecc90258'],
-  ['build/appx/LargeTile.png', 'f196c0e4325a79df80866abc497dd9313e946d04375dd31ff2238fdf4e52122d'],
-  ['build/appx/SmallTile.png', 'e991217fb06168af5775a550a065d546cd162188dc040eefb22f2cdbff9a3b6a'],
+  ['build/icon.icns', '52223a8ab947c9e7d1f2617ea0c22c393c05a93bbd208660094fb73ffe44d149'],
+  ['build/icon.ico', 'b58d2aea87d18f265570c7dea7e53ac6d1f8711e47cb2de10781a766a09bc9fd'],
+  ['resources/icon.png', '1939b076184fa6616dc666cee8fd1336daae71e25e25a40301e453227869c49f'],
+  ['resources/tray.png', 'dede0297c08d84ca9bdbd44ac69c7314af6fd16d5d0ba7e0740a9c17d7c6ac71'],
+  ['build/appx/LargeTile.png', '67556d523cbebe05e80b093943b57e8cb3b982fcdd939d5539b4f6dca723a2c4'],
+  ['build/appx/SmallTile.png', '8d2dbd97c0ff16eabbc3fdcbc56258a3de91aed10997cc02fc460b7af7fa9a37'],
   [
     'build/appx/Square150x150Logo.png',
-    '05648b873acfa4fa71fd5abf113caae10a1fed1924ec52e30a0c4fd76d33a8cb'
+    '54c2e1551093765ac9017325d8e498992df7f71800a36f047aa6224a6face909'
   ],
   [
     'build/appx/Square44x44Logo.png',
-    '0b0ca72dfb93f9548cf82d2f7e8e8270f9abb5427cdd76252b078c17d6c1c862'
+    'f192059fd6a69875d7e7c44a3e5603ab4b569064c431f7ed684bafeb23d65037'
   ],
-  ['build/appx/StoreLogo.png', '1ba937c57ed768ab733f6f1a2d7eed2236d81a95dc532dfd5940ac3466c8b2f7'],
+  ['build/appx/StoreLogo.png', 'ed3a6b9ca291624cd4071d123a294cd24144caec1100800653344df7143e4c8d'],
   [
     'build/appx/Wide310x150Logo.png',
-    '93919183a04c3b0042e5c115d448e1ceaa440fa67ab13a331e223a13eca2bb52'
+    '271eb4707905fea525642ed9b188c349e72ab2191822e3bbd5bb05b60ed776f8'
   ]
 ])
 

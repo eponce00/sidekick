@@ -145,6 +145,9 @@
   --brand-visor: #0f0f0f;
   --brand-glint: #2a2a2a;
   --brand-led: #c8ff3d;
+  /* The hero's red cape and its darker lining, the same in both themes. */
+  --brand-cape: #f0525b;
+  --brand-cape-lining: #b5303a;
 }
 
 body[data-theme='light'] {

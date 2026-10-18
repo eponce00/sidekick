@@ -39,8 +39,9 @@ Type and shape stay on fixed scales rather than ad-hoc values:
 
 ## Brand
 
-SideKick is a robot sidekick: a helmet in the tile's continuous-corner shape, a glass visor cut like
-a hero's mask, pixel LED eyes, an antenna, and an ear module, leaning in from the side of its tile.
+SideKick is a superhero's robot sidekick: a helmet in the tile's continuous-corner shape, a glass
+visor cut like a domino mask with pointed tips, pixel LED eyes, an antenna, an ear module, and a red
+cape fastened with a badge that carries a prompt chevron, flying in from the side of its tile.
 Surfaces, text, and borders are pure greys with no hue, so the interface stays quiet and colour
 means something. Accents are soft: the default Lime (`#B4D36B`, deepening to `#4A6E14` in light
 themes so it reads as text) is the robot's LED toned down, and Settings offers the other palettes,
@@ -49,12 +50,17 @@ shade, so it stays the one bright thing on screen.
 
 - The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
   small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
-  run it; never edit the generated files.
+  run it; never edit the generated files. The small cut keeps the cape but leaves out the badge
+  and the mask's tips, which are noise at 16 px.
 - Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
   or a failure at 6 px: with Lime, warnings are orange rather than yellow, and errors are rose.
 - The robot appears where it adds character and no information: the icon, the title bar, the
   loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
   and then. It is decoration, hidden from screen readers.
+- On an empty chat its cape is a damped spring (`utils/capePhysics.ts`): gravity holds it in a sag,
+  a gust now and then lifts it and it flutters, a quick pointer passing by makes wind, and a click
+  flicks it up. The loop sleeps whenever the cape is still, and with reduced motion the cape stays
+  as drawn.
 
 Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
 must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.
