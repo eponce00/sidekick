@@ -11,7 +11,9 @@ screenshot, click or hover an element, type into fields, choose options, scroll,
 viewport, move between tabs, wait for page state, inspect console and failed network activity, and
 verify an expected result. Screenshots are delivered as actual image input when the selected model
 supports vision. To check an animation, the agent can capture a few frames a moment apart, which
-it sees side by side in one image.
+it sees side by side in one image. An SVG file opened on its own is shown like an image: fitted to
+the page and centred on a checkerboard, so the panel and the agent's screenshots show the whole
+drawing at any size.
 
 When the agent changes a page, styles, or UI components and is about to finish without having
 looked at the result since, SideKick asks it once to open the result here and check it, then fix

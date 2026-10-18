@@ -988,7 +988,21 @@ function isTransientViewportCaptureError(error: unknown): boolean {
   )
 }
 
-class ElectronNativeBrowserSurface implements NativeBrowserSurface {
+/**
+ * An SVG file opened on its own is drawn at the size written in it, in the top-left corner of a
+ * white page, so it overflowed a narrow panel or sat small in a wide one. Like an image viewer,
+ * one with a viewBox is fitted to the window and centred on a neutral checkerboard instead; the
+ * selector matches only when the document itself is an SVG, never an SVG inside a web page.
+ */
+export const STANDALONE_SVG_VIEWER_CSS = `svg:root[viewBox] {
+  width: 100vw !important;
+  height: 100vh !important;
+  background-color: #f4f4f4;
+  background-image: conic-gradient(#e6e6e6 25%, transparent 0 50%, #e6e6e6 0 75%, transparent 0);
+  background-size: 16px 16px;
+}`
+
+export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   readonly webContentsId: number
   private readonly consoleListeners = new Set<
     (message: NativeBrowserSurfaceConsoleMessage) => void
@@ -1028,6 +1042,9 @@ class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     })
     contents.on('did-navigate', () => this.updateTakeoverTitle())
     contents.on('did-navigate-in-page', () => this.updateTakeoverTitle())
+    contents.on('dom-ready', () => {
+      void contents.insertCSS(STANDALONE_SVG_VIEWER_CSS).catch(() => undefined)
+    })
     contents.setWindowOpenHandler(({ url }) => {
       if (this.navigationGuard(url)) {
         for (const listener of this.openUrlListeners) listener(url)
