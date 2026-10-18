@@ -384,7 +384,8 @@ export async function confirmSensitiveSettingsChange(
   }
   const window = sender ? BrowserWindow.fromWebContents(sender) : appState.mainWindowRef
   const parent = window && !window.isDestroyed() ? window : null
-  const result = await showTrustedDialog(parent, options)
+  // Without a sender the change came from the command line just now, so SideKick comes up to ask.
+  const result = await showTrustedDialog(parent, options, { reveal: !sender })
   return result.response === 1
 }
 

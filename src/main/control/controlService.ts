@@ -39,7 +39,10 @@ function credentialBackend(): string {
 
 async function showDialog(options: Electron.MessageBoxOptions): Promise<number> {
   const parent = appState.mainWindowRef
-  const answer = await showTrustedDialog(parent && !parent.isDestroyed() ? parent : null, options)
+  // The user asked for this change from the command line just now, so SideKick comes up to ask.
+  const answer = await showTrustedDialog(parent && !parent.isDestroyed() ? parent : null, options, {
+    reveal: true
+  })
   return answer.response
 }
 

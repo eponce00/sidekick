@@ -163,6 +163,39 @@ button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, v
 export interface TrustedDialogRequest {
   /** Stops asking, answering Cancel, when whatever is waiting gives up, such as a stopped run. */
   signal?: AbortSignal
+  /**
+   * Brings the window up to ask, for a question the user has just set off themselves, such as
+   * quitting from the tray. Otherwise a question waits, with a notification, until they bring
+   * SideKick back.
+   */
+  reveal?: boolean
+}
+
+function onScreen(window: BrowserWindow): boolean {
+  return window.isVisible() && !window.isMinimized()
+}
+
+/** Resolves true once the window is up where the user can answer, or false if it closes or the wait ends. */
+function untilShown(owner: BrowserWindow, signal: AbortSignal | undefined): Promise<boolean> {
+  if (onScreen(owner)) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const done = (shown: boolean): void => {
+      owner.off('show', check)
+      owner.off('restore', check)
+      owner.off('closed', closed)
+      signal?.removeEventListener('abort', aborted)
+      resolve(shown)
+    }
+    const check = (): void => {
+      if (onScreen(owner)) done(true)
+    }
+    const closed = (): void => done(false)
+    const aborted = (): void => done(false)
+    owner.on('show', check)
+    owner.on('restore', check)
+    owner.once('closed', closed)
+    signal?.addEventListener('abort', aborted, { once: true })
+  })
 }
 
 /**
@@ -182,8 +215,7 @@ function dialogOwner(parent: BrowserWindow | null): BrowserWindow | null {
  * that takes both back once the question is answered.
  */
 function callAttention(owner: BrowserWindow | null, options: MessageBoxOptions): () => void {
-  if (!owner || (owner.isFocused() && owner.isVisible() && !owner.isMinimized()))
-    return () => undefined
+  if (!owner || (owner.isFocused() && onScreen(owner))) return () => undefined
   owner.flashFrame(true)
   let notice: Notification | undefined
   if (Notification.isSupported()) {
@@ -210,9 +242,10 @@ function callAttention(owner: BrowserWindow | null, options: MessageBoxOptions):
  * Asks the user something the main process must hear from them directly, in SideKick's style.
  * Like a system dialog, it is its own window that only the main process controls: the app's
  * window cannot read, click or cover it, so it can approve security-sensitive changes. When
- * SideKick is not in front it calls for attention. With its window minimized, in the tray, or
- * closed, it asks with the system dialog, which stands on its own. A tool waiting on the answer
- * does not spend its time limit meanwhile.
+ * SideKick is not in front it calls for attention. With its window minimized or in the tray, the
+ * question waits until the user brings it back, or brings it up at once when they set it off
+ * (`reveal`). Only with no window at all does it ask with the system dialog. A tool waiting on
+ * the answer does not spend its time limit meanwhile.
  */
 export function showTrustedDialog(
   parent: BrowserWindow | null,
@@ -225,7 +258,7 @@ export function showTrustedDialog(
 async function askTrusted(
   parent: BrowserWindow | null,
   options: MessageBoxOptions,
-  { signal }: TrustedDialogRequest
+  { signal, reveal }: TrustedDialogRequest
 ): Promise<MessageBoxReturnValue> {
   const buttons = options.buttons?.length ? options.buttons : ['OK']
   const cancelId = options.cancelId ?? 0
@@ -234,8 +267,13 @@ async function askTrusted(
   const owner = dialogOwner(parent)
   const release = callAttention(owner, options)
   try {
-    if (!owner || !owner.isVisible() || owner.isMinimized())
-      return await dialog.showMessageBox(signal ? { ...options, signal } : options)
+    if (!owner) return await dialog.showMessageBox(signal ? { ...options, signal } : options)
+    if (reveal && !onScreen(owner)) {
+      if (owner.isMinimized()) owner.restore()
+      owner.show()
+      owner.focus()
+    }
+    if (!(await untilShown(owner, signal)) || owner.isDestroyed()) return cancelled
     return await presentTrusted(owner, options, buttons, cancelId, signal)
   } finally {
     release()

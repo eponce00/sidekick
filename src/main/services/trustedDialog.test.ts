@@ -58,16 +58,43 @@ import { dialog, type BrowserWindow } from 'electron'
 import { appState } from '../ipc/state'
 import { showTrustedDialog, trustedDialogPage } from './trustedDialog'
 
-function appWindow(state: { focused?: boolean; visible?: boolean; minimized?: boolean } = {}) {
-  return {
+function appWindow(initial: { focused?: boolean; visible?: boolean; minimized?: boolean } = {}) {
+  const state = { focused: true, visible: true, minimized: false, ...initial }
+  const listeners = new Map<string, Set<() => void>>()
+  const emit = (event: string): void => listeners.get(event)?.forEach((listener) => listener())
+  const window = {
     isDestroyed: () => false,
-    isVisible: () => state.visible ?? true,
-    isMinimized: () => state.minimized ?? false,
-    isFocused: () => state.focused ?? true,
+    isVisible: () => state.visible,
+    isMinimized: () => state.minimized,
+    isFocused: () => state.focused,
     flashFrame: vi.fn(),
     getBounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
-    webContents: { executeJavaScript: vi.fn(async () => 'dark') }
+    webContents: { executeJavaScript: vi.fn(async () => 'dark') },
+    on: (event: string, listener: () => void) => {
+      listeners.set(event, (listeners.get(event) ?? new Set()).add(listener))
+      return window
+    },
+    once: (event: string, listener: () => void) => window.on(event, listener),
+    off: (event: string, listener: () => void) => {
+      listeners.get(event)?.delete(listener)
+      return window
+    },
+    show: vi.fn(() => {
+      state.visible = true
+      emit('show')
+    }),
+    restore: vi.fn(() => {
+      state.minimized = false
+      emit('restore')
+    }),
+    focus: vi.fn(),
+    /** The user brings SideKick back, from the taskbar or the tray. */
+    bringBack: () => {
+      if (state.minimized) window.restore()
+      if (!state.visible) window.show()
+    }
   }
+  return window
 }
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -179,18 +206,47 @@ describe('SideKick-styled trusted dialog', () => {
     expect(dialogs[0].destroy).toHaveBeenCalled()
   })
 
-  it('asks with the system dialog, on its own, while the window is minimized or in the tray', async () => {
-    const waiting = new AbortController()
+  it('waits for SideKick to come back from the tray or the taskbar, then asks in its own style', async () => {
     for (const state of [{ minimized: true }, { visible: false }]) {
-      vi.mocked(dialog.showMessageBox).mockClear()
-      await showTrustedDialog(appWindow(state) as unknown as BrowserWindow, settingsOptions, {
-        signal: waiting.signal
-      })
-      expect(dialog.showMessageBox).toHaveBeenCalledWith({
-        ...settingsOptions,
-        signal: waiting.signal
-      })
+      dialogs.length = 0
+      notices.length = 0
+      const main = appWindow({ ...state, focused: false })
+      const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions)
+      await settle()
+      // Nothing native and nothing over a hidden window: a notification says what is asked.
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+      expect(dialogs).toHaveLength(0)
+      expect(notices.map((notice) => notice.options.body)).toEqual([settingsOptions.message])
+      main.bringBack()
+      await settle()
+      expect(dialogs).toHaveLength(1)
+      expect(dialogs[0].options.parent).toBe(main)
+      dialogs[0].navigate('sidekick-dialog:respond/1/0')
+      await expect(answer).resolves.toEqual({ response: 1, checkboxChecked: false })
     }
+  })
+
+  it('brings the window up at once to ask what the user just set off', async () => {
+    const main = appWindow({ visible: false })
+    const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions, {
+      reveal: true
+    })
+    await settle()
+    expect(main.show).toHaveBeenCalled()
+    expect(dialogs).toHaveLength(1)
+    dialogs[0].navigate('sidekick-dialog:respond/0/0')
+    await answer
+  })
+
+  it('stops waiting, as Cancel, when whatever waits on it gives up first', async () => {
+    const waiting = new AbortController()
+    const main = appWindow({ minimized: true })
+    const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions, {
+      signal: waiting.signal
+    })
+    await settle()
+    waiting.abort()
+    await expect(answer).resolves.toEqual({ response: 0, checkboxChecked: false })
     expect(dialogs).toHaveLength(0)
   })
 })

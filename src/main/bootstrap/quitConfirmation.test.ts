@@ -1,12 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
-const dialog = vi.hoisted(() => ({ showMessageBox: vi.fn() }))
-vi.mock('electron', () => ({ dialog }))
-// SideKick's own dialog window, reduced to the system dialog it stands in for.
-vi.mock('../services/trustedDialog', () => ({
-  showTrustedDialog: (parent: unknown, options: unknown) =>
-    parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options)
-}))
+const showTrustedDialog = vi.hoisted(() => vi.fn())
+vi.mock('electron', () => ({}))
+vi.mock('../services/trustedDialog', () => ({ showTrustedDialog }))
 
 import type { BrowserWindow } from 'electron'
 import { confirmQuitWithActiveRuns, QuitGuard, quitConfirmationMessage } from './quitConfirmation'
@@ -35,18 +31,23 @@ describe('confirmQuitWithActiveRuns', () => {
     return { isDestroyed: () => false, isVisible: () => visible } as unknown as BrowserWindow
   }
 
-  it('attaches the dialog to a visible window', async () => {
-    dialog.showMessageBox.mockResolvedValueOnce({ response: 0 })
+  it('asks over the app window', async () => {
+    showTrustedDialog.mockResolvedValueOnce({ response: 0 })
     const parent = window(true)
     await expect(confirmQuitWithActiveRuns(1, parent)).resolves.toBe(true)
-    expect(dialog.showMessageBox).toHaveBeenLastCalledWith(parent, expect.any(Object))
+    expect(showTrustedDialog).toHaveBeenLastCalledWith(parent, expect.any(Object), {
+      reveal: true
+    })
   })
 
-  it('shows the dialog on its own when the window is hidden in the tray', async () => {
-    dialog.showMessageBox.mockResolvedValueOnce({ response: 1 })
-    await expect(confirmQuitWithActiveRuns(2, window(false))).resolves.toBe(false)
-    expect(dialog.showMessageBox).toHaveBeenLastCalledWith(
-      expect.objectContaining({ message: quitConfirmationMessage(2) })
+  it('brings the window back from the tray to ask, since the user just chose to quit', async () => {
+    showTrustedDialog.mockResolvedValueOnce({ response: 1 })
+    const parent = window(false)
+    await expect(confirmQuitWithActiveRuns(2, parent)).resolves.toBe(false)
+    expect(showTrustedDialog).toHaveBeenLastCalledWith(
+      parent,
+      expect.objectContaining({ message: quitConfirmationMessage(2) }),
+      { reveal: true }
     )
   })
 })

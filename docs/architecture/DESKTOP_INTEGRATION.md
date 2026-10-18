@@ -112,10 +112,13 @@ security policy, that reports the answer by a navigation the main process interc
 window cannot read, click or cover it, so it keeps the guarantee of a system dialog in SideKick's
 style. It always opens over the app's own window, never a browser page's window parked off screen.
 When SideKick is not in front, its taskbar entry flashes and a notification says what is being
-asked. With the window minimized, in the tray or closed, it asks with the system dialog instead.
-A tool waiting on the answer does not spend its time limit meanwhile (`whileWaitingForUser`), and
-a caller can pass a signal that withdraws the question, as Cancel, when its run stops. The system
-tray, the macOS menu bar and the page's own context menu in the browser stay native.
+asked. With the window minimized or in the tray, the question waits for the user to bring it back,
+by the notification or the taskbar, and then opens in SideKick's style; a question the user just
+set off themselves, such as quitting from the tray or a change made from the command line, brings
+the window up at once (`reveal`). Only with no window at all does it use the system dialog. A tool
+waiting on the answer does not spend its time limit meanwhile (`whileWaitingForUser`), and a caller
+can pass a signal that withdraws the question, as Cancel, when its run stops. The system tray, the
+macOS menu bar and the page's own context menu in the browser stay native.
 
 ## Dialog and accessibility behavior
 
