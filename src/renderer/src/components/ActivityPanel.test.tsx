@@ -211,7 +211,7 @@ describe('ActivityPanel inspector', () => {
     expect(state.width).toBe(520)
   })
 
-  it('folds to its rail when the tab already showing is clicked', async () => {
+  it('folds to its rail from its button or the tab already showing', async () => {
     const onTogglePin = vi.fn()
     await act(async () =>
       root.render(
@@ -227,6 +227,12 @@ describe('ActivityPanel inspector', () => {
     const filesTab = container.querySelector('.activity-tab-button.active') as HTMLButtonElement
     await act(async () => filesTab.click())
     expect(onTogglePin).toHaveBeenCalledTimes(1)
+    // So does its own button, at the end of the tab row.
+    const fold = container.querySelector(
+      '.activity-header > [aria-label="Fold the panel to its rail"]'
+    ) as HTMLButtonElement
+    await act(async () => fold.click())
+    expect(onTogglePin).toHaveBeenCalledTimes(2)
   })
 
   it('auto-selects Browser once when a new run starts and exposes all collapsed shortcuts', async () => {

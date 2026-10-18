@@ -829,7 +829,7 @@ function ActivityPanel({
             document.body
           )}
         <div className="activity-header">
-          <div className="activity-tabs">
+          <div className={`activity-tabs${familyRole ? ' has-chats' : ''}`}>
             {familyRole && (
               <button
                 className={`activity-tab-button ${shownTab === 'chats' ? 'active' : ''}`}
@@ -837,7 +837,7 @@ function ActivityPanel({
                 title={familyRole === 'manager' ? 'Chats started here' : 'This chat and its family'}
               >
                 <span className="activity-tab-icon-wrap">
-                  <Workflow size={15} />
+                  <Workflow size={16} />
                   {sessionFamily.family &&
                     [sessionFamily.family.manager, ...sessionFamily.family.workers].some(
                       (member) =>
@@ -855,7 +855,9 @@ function ActivityPanel({
               onClick={() => selectTab('files')}
               title="Files"
             >
-              <FolderTree size={15} />
+              <span className="activity-tab-icon-wrap">
+                <FolderTree size={16} />
+              </span>
               <span className="tab-label">Files</span>
             </button>
             <button
@@ -864,7 +866,9 @@ function ActivityPanel({
               title="Advanced recovery"
               aria-label="Open advanced recovery"
             >
-              <History size={15} />
+              <span className="activity-tab-icon-wrap">
+                <History size={16} />
+              </span>
               <span className="tab-label">Recovery</span>
             </button>
             <button
@@ -874,7 +878,7 @@ function ActivityPanel({
               aria-label="Open browser activity"
             >
               <span className="activity-tab-icon-wrap">
-                <MonitorUp size={15} />
+                <MonitorUp size={16} />
                 {browserIsLive && (
                   <span className="browser-live-dot" aria-label="Browser is active" />
                 )}
@@ -888,7 +892,7 @@ function ActivityPanel({
               aria-label="Open the agent's terminal"
             >
               <span className="activity-tab-icon-wrap">
-                <SquareTerminal size={15} />
+                <SquareTerminal size={16} />
                 {terminalIsLive && (
                   <span
                     className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
@@ -901,6 +905,15 @@ function ActivityPanel({
               <span className="tab-label">Terminal</span>
             </button>
           </div>
+          <button
+            type="button"
+            className="activity-panel-fold"
+            onClick={onTogglePin}
+            title="Fold the panel to its rail"
+            aria-label="Fold the panel to its rail"
+          >
+            <PanelRightClose size={16} />
+          </button>
         </div>
 
         {isPinned ? (
@@ -1192,7 +1205,7 @@ ${viewedFile.filePath}`}
                 title={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
                 aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
               >
-                <Workflow size={17} />
+                <Workflow size={16} />
               </button>
             )}
             <button
@@ -1201,7 +1214,7 @@ ${viewedFile.filePath}`}
               title="Open Files"
               aria-label="Open Files"
             >
-              <FolderTree size={17} />
+              <FolderTree size={16} />
             </button>
             <button
               className="activity-tab-vertical"
@@ -1209,7 +1222,7 @@ ${viewedFile.filePath}`}
               title="Open Recovery"
               aria-label="Open Recovery"
             >
-              <History size={17} />
+              <History size={16} />
             </button>
             <button
               className="activity-tab-vertical"
@@ -1217,7 +1230,7 @@ ${viewedFile.filePath}`}
               title="Open Browser activity"
               aria-label="Open Browser activity"
             >
-              <MonitorUp size={17} />
+              <MonitorUp size={16} />
               {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
             </button>
             <button
@@ -1226,7 +1239,7 @@ ${viewedFile.filePath}`}
               title="Open the agent's terminal"
               aria-label="Open the agent's terminal"
             >
-              <SquareTerminal size={17} />
+              <SquareTerminal size={16} />
               {terminalIsLive && (
                 <span className="collapsed-tab-badge">{terminalIsWaiting ? 'Input' : 'Live'}</span>
               )}

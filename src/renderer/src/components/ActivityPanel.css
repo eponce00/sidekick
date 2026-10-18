@@ -180,19 +180,23 @@
 }
 
 .activity-header {
+  /* Its width decides whether tabs have room for their labels. */
+  container-type: inline-size;
   min-height: 48px;
   padding: var(--space-1) var(--space-2);
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Every tab is the same width with the same gap, left to right; the fold button closes the row. */
 .activity-tabs {
   display: flex;
   flex: 1;
+  align-self: stretch;
   min-width: 0;
-  gap: 0;
+  gap: var(--space-1);
 }
 
 .activity-tabs::-webkit-scrollbar {
@@ -206,12 +210,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  flex: 1;
+  gap: 4px;
+  flex: 0 1 76px;
   min-width: 0;
-  /* Tabs share a narrow panel; in a wide one they keep their size instead of spreading out. */
-  max-width: 120px;
-  padding: 7px 4px 6px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
@@ -234,6 +236,53 @@
   position: relative;
   display: grid;
   place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+.activity-panel-fold {
+  all: unset;
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-ui);
+}
+
+.activity-panel-fold:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.activity-panel-fold:focus-visible,
+.activity-tab-button:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* Too narrow for every label, about 60px a tab: the tabs become icons, still equal and evenly
+   spaced. A fifth tab (Chats) needs the room sooner. */
+@container (max-width: 291px) {
+  .activity-tab-button .tab-label {
+    display: none;
+  }
+
+  .activity-tab-button {
+    flex-basis: 40px;
+  }
+}
+
+@container (max-width: 355px) {
+  .activity-tabs.has-chats .tab-label {
+    display: none;
+  }
+
+  .activity-tabs.has-chats .activity-tab-button {
+    flex-basis: 40px;
+  }
 }
 
 .browser-live-dot {

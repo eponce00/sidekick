@@ -105,7 +105,8 @@ chat and the left sidebar make room.
   let go. Click an icon, or drag out from the rail, to open it again at the width it had.
 - **Esc** while dragging leaves the panel as it was.
 
-Clicking the tab already showing also folds the panel away. Double-click the edge to switch
+The fold button at the end of the tab row, or clicking the tab already showing, also folds the panel
+away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.
 
 ## Going back
