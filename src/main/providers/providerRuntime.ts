@@ -1,3 +1,4 @@
+import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
 import {
   providerDefinitionForInstance,
   providerKindForInstance
@@ -94,6 +95,7 @@ interface OpenRouterCatalogModel {
   id: string
   name?: string
   context_length?: number
+  supported_parameters?: string[]
   architecture?: { modality?: string }
   pricing?: { prompt?: string | number; completion?: string | number }
 }
@@ -342,24 +344,61 @@ function openAIHeaders(instance: ProviderInstance): Record<string, string> {
   return headers
 }
 
+const REASONING_FIELDS = ['reasoning', 'reasoning_effort', 'chat_template_kwargs'] as const
+
+/** Each OpenAI-compatible server's own way of carrying a reasoning level. */
+function openAIReasoningFields(request: ProviderChatRequest): Record<string, unknown> {
+  const level = requestReasoningLevel(request)
+  if (!level || level === 'auto') return {}
+  const kind = request.target.providerKind
+  if (kind === 'openrouter') {
+    if (request.reasoningTokens && level !== 'off')
+      return { reasoning: { max_tokens: request.reasoningTokens } }
+    return {
+      reasoning: {
+        effort:
+          level === 'off'
+            ? 'none'
+            : nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+      }
+    }
+  }
+  // llama.cpp and vLLM switch thinking through the model's chat template.
+  const template =
+    kind === 'llamacpp' || kind === 'openai-compatible'
+      ? { chat_template_kwargs: { enable_thinking: level !== 'off' } }
+      : {}
+  if (kind === 'llamacpp') return template
+  if (level === 'off') return { reasoning_effort: 'none', ...template }
+  if (level === 'on') return template
+  return {
+    reasoning_effort:
+      kind === 'litellm'
+        ? nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+        : nearestEffort(level, ['low', 'medium', 'high'] as const),
+    ...template
+  }
+}
+
 export function openAIRequest(request: ProviderChatRequest): Record<string, unknown> {
-  const openRouter = request.target.providerKind === 'openrouter'
   return {
     model: request.target.model,
     messages: toOpenAICompatibleMessages(request.messages),
     tools: request.tools?.length ? request.tools : undefined,
     max_tokens: request.maxOutputTokens,
     temperature: request.temperature,
-    ...(openRouter
-      ? {
-          reasoning: request.reasoningTokens
-            ? { max_tokens: request.reasoningTokens }
-            : { effort: request.thinkingEnabled ? 'medium' : 'none' }
-        }
-      : request.thinkingEnabled === false
-        ? { reasoning_effort: 'none' }
-        : {})
+    ...openAIReasoningFields(request)
   }
+}
+
+// What a server says when it will not take a reasoning parameter: a model that must reason, one
+// that cannot, or a server that rejects fields it does not know.
+const REASONING_REJECTED =
+  /reasoning|effort|chat_template|enable_thinking|thinking|unrecognized request argument|unsupported parameter|unknown (?:parameter|field)|extra (?:inputs|fields)/i
+
+/** Whether to retry a request without its reasoning settings, which then use the model default. */
+export function reasoningWasRejected(result: { ok: boolean; error?: string }): boolean {
+  return !result.ok && REASONING_REJECTED.test(result.error || '')
 }
 
 export async function executeOpenAICompatibleWithReasoningFallback<
@@ -370,21 +409,26 @@ export async function executeOpenAICompatibleWithReasoningFallback<
 ): Promise<T> {
   const body = openAIRequest(request)
   const result = await execute(body)
-  const disabledReasoning =
-    body.reasoning &&
-    typeof body.reasoning === 'object' &&
-    (body.reasoning as Record<string, unknown>).effort === 'none'
-  if (
-    result.ok ||
-    request.target.providerKind !== 'openrouter' ||
-    !disabledReasoning ||
-    !/reasoning is (?:mandatory|required).+cannot be disabled/i.test(result.error || '')
-  ) {
-    return result
-  }
+  const carried = REASONING_FIELDS.filter((field) => field in body)
+  if (!carried.length || !reasoningWasRejected(result)) return result
+  // A level is never worth a failed reply: ask again with the model's own default.
   const retryBody = { ...body }
-  delete retryBody.reasoning
+  for (const field of carried) delete retryBody[field]
   return execute(retryBody)
+}
+
+/** Ollama and Anthropic carry the level in their own requests; a rejected one retries without. */
+export async function withReasoningRetry<T extends { ok: boolean; error?: string }>(
+  request: ProviderChatRequest,
+  run: (request: ProviderChatRequest) => Promise<T>
+): Promise<T> {
+  const result = await run(request)
+  const level = requestReasoningLevel(request)
+  if (!level || level === 'auto' || !reasoningWasRejected(result)) return result
+  // Anthropic rejecting an effort level can still think adaptively.
+  const fallback: ReasoningLevel =
+    request.target.providerKind === 'anthropic' && level !== 'off' && level !== 'on' ? 'on' : 'auto'
+  return run({ ...request, reasoningLevel: fallback, thinkingEnabled: undefined })
 }
 
 export async function streamProviderChat(
@@ -398,10 +442,14 @@ export async function streamProviderChat(
   return observeProviderRequest(instance, preparedRequest, signal, () => {
     if (definition.capabilities.credentials === 'required') requireProviderApiKey(instance)
     if (definition.protocol === 'ollama') {
-      return streamOllamaChat(instance, preparedRequest, emit, fetch, signal)
+      return withReasoningRetry(preparedRequest, (attempt) =>
+        streamOllamaChat(instance, attempt, emit, fetch, signal)
+      )
     }
     if (definition.protocol === 'anthropic') {
-      return streamAnthropicChat(instance, preparedRequest, emit, fetch, signal)
+      return withReasoningRetry(preparedRequest, (attempt) =>
+        streamAnthropicChat(instance, attempt, emit, fetch, signal)
+      )
     }
     return executeOpenAICompatibleWithReasoningFallback(preparedRequest, (body) =>
       streamOpenAICompatibleChat(
@@ -426,10 +474,14 @@ export async function completeProviderChat(
   return observeProviderRequest(instance, preparedRequest, signal, () => {
     if (definition.capabilities.credentials === 'required') requireProviderApiKey(instance)
     if (definition.protocol === 'ollama') {
-      return completeOllamaChat(instance, preparedRequest, fetch, signal)
+      return withReasoningRetry(preparedRequest, (attempt) =>
+        completeOllamaChat(instance, attempt, fetch, signal)
+      )
     }
     if (definition.protocol === 'anthropic') {
-      return completeAnthropicChat(instance, preparedRequest, fetch, signal)
+      return withReasoningRetry(preparedRequest, (attempt) =>
+        completeAnthropicChat(instance, attempt, fetch, signal)
+      )
     }
     return executeOpenAICompatibleWithReasoningFallback(preparedRequest, (body) =>
       completeOpenAIChat(instance.baseUrl, body, openAIHeaders(instance), fetch, signal)
@@ -460,6 +512,14 @@ async function discoverOpenAIModels(instance: ProviderInstance): Promise<Provide
             name: model.name || model.id,
             enabled: configuredState(instance, model.id),
             contextLength: model.context_length,
+            // OpenRouter lists the parameters each model takes; reasoning is one of them.
+            ...(Array.isArray(model.supported_parameters)
+              ? {
+                  supportsReasoning:
+                    model.supported_parameters.includes('reasoning') ||
+                    model.supported_parameters.includes('include_reasoning')
+                }
+              : {}),
             supportsVision:
               typeof model.architecture?.modality === 'string' &&
               model.architecture.modality.includes('image'),

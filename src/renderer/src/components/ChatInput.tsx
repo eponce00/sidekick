@@ -1,7 +1,6 @@
 import React from 'react'
 import {
   AtSign,
-  Brain,
   Check,
   Command,
   FileText,
@@ -23,6 +22,13 @@ import type { PinnedModel } from '../types/models.types'
 import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import { ChatComposer } from './ChatComposer'
 import { ChatModelPicker } from './ChatModelPicker'
+import { ReasoningMenu } from './ReasoningMenu'
+import {
+  nextReasoningLevel,
+  REASONING_LEVEL_LABELS,
+  type ReasoningLevel,
+  type ReasoningOptions
+} from '../../../shared/reasoning'
 import { ScrollToBottomButton } from './ScrollToBottomButton'
 import { promptRefinementModelForPinnedModel } from '../services/providers/promptRefinement'
 import type { ConversationGoal } from '../../../shared/conversationGoals'
@@ -132,32 +138,6 @@ function FeatureMenuStatus({
   )
 }
 
-/** One button for both states, so turning reasoning off never moves or removes the control. */
-function ThinkingToggle({
-  enabled,
-  onToggle
-}: {
-  enabled: boolean
-  onToggle: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={`composer-thinking-toggle${enabled ? ' is-on' : ''}`}
-      onClick={onToggle}
-      aria-label="Model thinking"
-      aria-pressed={enabled}
-      title={
-        enabled
-          ? 'Thinking on: the model may reason before it answers. Click to turn off.'
-          : 'Thinking off: the model is asked to skip reasoning, though some always reason. Click to turn on.'
-      }
-    >
-      <Brain size={16} strokeWidth={1.9} aria-hidden="true" />
-    </button>
-  )
-}
-
 interface ChatInputProps {
   inputValue: string
   attachedImages: MessageImageAttachment[]
@@ -187,8 +167,9 @@ interface ChatInputProps {
   goalArmed: boolean
   goalAvailable: boolean
   goalUnavailableReason?: string
-  thinkingEnabled: boolean
-  thinkingAvailable: boolean
+  /** The selected model's reasoning levels, or null when it has none to set. */
+  reasoningOptions: ReasoningOptions | null
+  reasoningLevel?: ReasoningLevel
   isFeaturesMenuOpen: boolean
   isModelMenuOpen: boolean
   selectedModel: string
@@ -217,7 +198,7 @@ interface ChatInputProps {
   onPauseGoal: () => void
   onResumeGoal: () => void
   onClearGoal: () => void
-  onToggleThinking: () => void
+  onReasoningLevelChange: (level: ReasoningLevel) => void
   onToggleFeaturesMenu: () => void
   onToggleModelMenu: () => void
   onModelChange: (modelId: string) => void
@@ -271,8 +252,8 @@ export function ChatInput({
   goalArmed,
   goalAvailable,
   goalUnavailableReason,
-  thinkingEnabled,
-  thinkingAvailable,
+  reasoningOptions,
+  reasoningLevel,
   isFeaturesMenuOpen,
   isModelMenuOpen,
   selectedModel,
@@ -299,7 +280,7 @@ export function ChatInput({
   onPauseGoal,
   onResumeGoal,
   onClearGoal,
-  onToggleThinking,
+  onReasoningLevelChange,
   onToggleFeaturesMenu,
   onToggleModelMenu,
   onModelChange,
@@ -407,14 +388,15 @@ export function ChatInput({
             }
           ]
         : []),
-      ...(thinkingAvailable
+      ...(reasoningOptions && reasoningLevel
         ? [
             {
               id: 'thinking',
-              label: thinkingEnabled ? 'Turn off Thinking' : 'Turn on Thinking',
-              hint: 'Control model reasoning mode',
-              keywords: 'reasoning thinking',
-              run: onToggleThinking
+              label: `Reasoning: ${REASONING_LEVEL_LABELS[reasoningLevel]}`,
+              hint: `Switch to ${REASONING_LEVEL_LABELS[nextReasoningLevel(reasoningOptions, reasoningLevel)]}`,
+              keywords: 'reasoning thinking effort level',
+              run: () =>
+                onReasoningLevelChange(nextReasoningLevel(reasoningOptions, reasoningLevel))
             }
           ]
         : [])
@@ -428,13 +410,13 @@ export function ChatInput({
       onToggleModelMenu,
       onTogglePlan,
       onToggleResearch,
-      onToggleThinking,
+      onReasoningLevelChange,
       planAvailable,
       planSelected,
       researchAvailable,
       researchSelected,
-      thinkingAvailable,
-      thinkingEnabled,
+      reasoningLevel,
+      reasoningOptions,
       workspaceFolder,
       workspaceMemoryAvailable,
       workspaceMemoryUnavailableReason
@@ -1147,8 +1129,12 @@ export function ChatInput({
       toolbarRight={
         <>
           <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
-          {thinkingAvailable && (
-            <ThinkingToggle enabled={thinkingEnabled} onToggle={onToggleThinking} />
+          {reasoningOptions && reasoningLevel && (
+            <ReasoningMenu
+              options={reasoningOptions}
+              level={reasoningLevel}
+              onChange={onReasoningLevelChange}
+            />
           )}
           <ChatModelPicker
             selectedModelId={selectedModel}

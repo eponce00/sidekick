@@ -212,6 +212,7 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   fastModelLlamaCpp: true,
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: true,
+  reasoningLevels: true,
   toolCallLimit: true,
   toolCallLimitVersion: true,
   commandPermissionMode: true,

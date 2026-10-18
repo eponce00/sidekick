@@ -1,3 +1,4 @@
+import type { ReasoningLevel } from './reasoning'
 import type { PermissionMode } from './permissions'
 import type { McpServerConfig } from './types'
 import type { EditingContractCalibration, EditingDialectPreference } from './workspaceMutations'
@@ -128,8 +129,11 @@ export interface ProviderSettings {
   fastModelAnthropic?: string
   fastModelLMStudio?: string
   fastModelLlamaCpp?: string
+  /** The older on/off switches; they now only seed a model's starting reasoning level. */
   ollamaThinkingEnabled?: boolean
   openRouterThinkingEnabled?: boolean
+  /** The reasoning level chosen for each pinned model, by its id. */
+  reasoningLevels?: Record<string, ReasoningLevel>
   toolCallLimit?: number
   /** Runs that may work at once across the app; others wait in line. 1 to 8, four when unset. */
   maxConcurrentRuns?: number

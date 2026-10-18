@@ -32,6 +32,14 @@ import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatPart
 import { SidekickPeek } from './SidekickPeek'
 import { workerWorkplace } from '../utils/sessionLabels'
 import { WorkerChatContext } from './sessionChatContext'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel,
+  type ReasoningModel,
+  type ReasoningSettings
+} from '../../../shared/reasoning'
+import type { ProviderKind } from '../../../shared/providerRegistry'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
@@ -142,10 +150,9 @@ interface ChatPanelProps {
   focusReplyAt?: number
   onBusyStateChange?: (conversationId: string | null, busy: boolean) => void
   fastModelName?: string
-  ollamaThinkingEnabled?: boolean
-  openRouterThinkingEnabled?: boolean
-  onToggleOllamaThinking: () => void
-  onToggleOpenRouterThinking: () => void
+  /** Chosen reasoning levels, and the older switches that seed a model's first level. */
+  reasoningSettings?: ReasoningSettings
+  onReasoningLevelChange: (modelId: string, level: ReasoningLevel) => void
   onCheckpointCreated?: (restoredHash?: string) => void
   /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
   chatRollbackHash?: string | null
@@ -198,10 +205,8 @@ function ChatPanel({
   focusReplyAt,
   onBusyStateChange,
   fastModelName,
-  ollamaThinkingEnabled = true,
-  openRouterThinkingEnabled = false,
-  onToggleOllamaThinking,
-  onToggleOpenRouterThinking,
+  reasoningSettings = {},
+  onReasoningLevelChange,
   onCheckpointCreated,
   chatRollbackHash,
   onChatRollbackConsumed,
@@ -829,23 +834,19 @@ function ChatPanel({
     }
     if (goalArmed && !goalAvailable) setGoalArmed(false)
   }, [goalArmed, goalAvailable, nextRunMode, planAvailable, researchAvailable])
-  const thinkingAvailable =
-    selectedProvider === 'ollama' ||
-    selectedProvider === 'ollama-cloud' ||
-    selectedProvider === 'openrouter'
-  // Gateway/local providers auto-detect thinking from the model response.
-  const thinkingEnabled =
-    selectedProvider === 'openrouter'
-      ? openRouterThinkingEnabled
-      : selectedProvider === 'ollama' || selectedProvider === 'ollama-cloud'
-        ? ollamaThinkingEnabled
-        : selectedProvider === 'anthropic'
-          ? true
-          : selectedProvider === 'litellm' ||
-              selectedProvider === 'lmstudio' ||
-              selectedProvider === 'llamacpp'
-            ? true
-            : false
+  // The same levels and resolution the main process uses when it sends the request.
+  const reasoningModel: ReasoningModel | null = selectedPinnedModel
+    ? {
+        id: selectedPinnedModel.id,
+        providerKind: selectedPinnedModel.providerKind ?? (selectedProvider as ProviderKind),
+        model: selectedPinnedModel.providerModelId || selectedPinnedModel.id,
+        supportsReasoning: selectedPinnedModel.supportsReasoning
+      }
+    : null
+  const selectedReasoningOptions = reasoningModel ? reasoningOptions(reasoningModel) : null
+  const selectedReasoningLevel = reasoningModel
+    ? resolveReasoningLevel(reasoningModel, reasoningSettings)
+    : undefined
 
   const toggleThinking = (messageId: string): void => {
     setExpandedThinking((prev) => {
@@ -1817,8 +1818,8 @@ function ChatPanel({
         goalArmed={goalArmed}
         goalAvailable={goalAvailable}
         goalUnavailableReason={goalUnavailableReason}
-        thinkingEnabled={thinkingEnabled}
-        thinkingAvailable={thinkingAvailable}
+        reasoningOptions={selectedReasoningOptions}
+        reasoningLevel={selectedReasoningLevel}
         isFeaturesMenuOpen={isFeaturesMenuOpen}
         isModelMenuOpen={isModelMenuOpen}
         selectedModel={selectedModel}
@@ -1872,12 +1873,8 @@ function ChatPanel({
         onPauseGoal={() => void pauseGoal()}
         onResumeGoal={() => void handleResumeGoal()}
         onClearGoal={() => void clearGoal()}
-        onToggleThinking={() => {
-          if (selectedProvider === 'openrouter') {
-            onToggleOpenRouterThinking()
-          } else if (selectedProvider === 'ollama' || selectedProvider === 'ollama-cloud') {
-            onToggleOllamaThinking()
-          }
+        onReasoningLevelChange={(level) => {
+          if (selectedPinnedModel) onReasoningLevelChange(selectedPinnedModel.id, level)
         }}
         onToggleFeaturesMenu={() => setIsFeaturesMenuOpen(!isFeaturesMenuOpen)}
         onToggleModelMenu={() => setIsModelMenuOpen(!isModelMenuOpen)}

@@ -1313,20 +1313,11 @@ function App(): React.JSX.Element {
           }
           onBusyStateChange={handleConversationBusyStateChange}
           fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
-          ollamaThinkingEnabled={settings.ollamaThinkingEnabled ?? true}
-          openRouterThinkingEnabled={settings.openRouterThinkingEnabled ?? false}
-          onToggleOllamaThinking={() => {
+          reasoningSettings={settings}
+          onReasoningLevelChange={(modelId, level) => {
             const updatedSettings = {
               ...settings,
-              ollamaThinkingEnabled: !(settings.ollamaThinkingEnabled ?? true)
-            }
-            setSettings(updatedSettings)
-            window.api.settings.save(updatedSettings)
-          }}
-          onToggleOpenRouterThinking={() => {
-            const updatedSettings = {
-              ...settings,
-              openRouterThinkingEnabled: !(settings.openRouterThinkingEnabled ?? false)
+              reasoningLevels: { ...settings.reasoningLevels, [modelId]: level }
             }
             setSettings(updatedSettings)
             window.api.settings.save(updatedSettings)

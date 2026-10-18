@@ -44,7 +44,6 @@ export interface ProviderCapabilities {
   modelLifecycle: ProviderModelLifecycle
   reportsPricing: boolean
   reportsGenerationStats: boolean
-  supportsThinkingToggle: boolean
   supportsVisionPayloads: boolean
 }
 
@@ -77,7 +76,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: true,
       supportsVisionPayloads: true
     }
   },
@@ -98,7 +96,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: false,
       supportsVisionPayloads: true
     }
   },
@@ -118,7 +115,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: true,
       reportsGenerationStats: false,
-      supportsThinkingToggle: false,
       supportsVisionPayloads: true
     }
   },
@@ -139,7 +135,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: false,
       supportsVisionPayloads: true
     }
   },
@@ -159,7 +154,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: false,
       supportsVisionPayloads: true
     }
   },
@@ -179,7 +173,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: true,
       supportsVisionPayloads: true
     }
   },
@@ -199,7 +192,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: true,
       reportsGenerationStats: true,
-      supportsThinkingToggle: true,
       supportsVisionPayloads: true
     }
   },
@@ -219,7 +211,6 @@ export const PROVIDER_REGISTRY: readonly ProviderDefinition[] = [
       modelLifecycle: 'none',
       reportsPricing: false,
       reportsGenerationStats: false,
-      supportsThinkingToggle: true,
       supportsVisionPayloads: true
     }
   }

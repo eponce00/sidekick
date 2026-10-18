@@ -1,3 +1,4 @@
+import { resolveReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
@@ -815,12 +816,20 @@ export class ConversationRunPreparer {
         )
       : 0
     let latestRunCompaction: AgentCompactionRecord | null = null
-    const thinkingEnabled = (target: ProviderTarget): boolean | undefined =>
-      target.providerKind === 'ollama' || target.providerKind === 'ollama-cloud'
-        ? currentSettings.ollamaThinkingEnabled !== false
-        : target.providerKind === 'openrouter'
-          ? currentSettings.openRouterThinkingEnabled === true
-          : undefined
+    // The level chosen for this model, or its starting level.
+    const reasoningLevel = (
+      target: ProviderTarget,
+      model: PinnedModel
+    ): ReasoningLevel | undefined =>
+      resolveReasoningLevel(
+        {
+          id: model.id,
+          providerKind: target.providerKind,
+          model: target.model,
+          supportsReasoning: model.supportsReasoning
+        },
+        currentSettings
+      )
     const createRuntime = (
       target: ProviderTarget,
       model: PinnedModel,
@@ -840,7 +849,7 @@ export class ConversationRunPreparer {
           target: { ...target, contextLength },
           maxOutputTokens,
           purpose: surface === 'research' ? 'research' : 'conversation',
-          thinkingEnabled: thinkingEnabled(target)
+          reasoningLevel: reasoningLevel(target, model)
         },
         contextManager: new AgentContextManager({
           target: { ...target, contextLength },

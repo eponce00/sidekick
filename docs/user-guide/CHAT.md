@@ -81,11 +81,24 @@ of its report.
   is offered as `/` followed by its file name. A `description:` line in a leading `---` block
   describes it in the menu. Claude Code's `.claude/commands` folders are read too. Choosing one fills
   the message box; where the prompt says `$ARGUMENTS`, that word is selected so you type over it.
-- **Thinking:** for a model whose reasoning can be switched (Ollama, Ollama Cloud, and OpenRouter),
-  the brain button beside the model turns it on or off. It is tinted while on. Off asks the model
-  to skip reasoning, which some models cannot do: gpt-oss models on Ollama reason briefly instead,
-  and OpenRouter models that require reasoning keep it. Other providers have no button. In a reply,
-  each step of reasoning shows the same brain among the agent's steps; select it to read it in full.
+- **Reasoning:** the brain button beside the model shows how much the selected model reasons, and
+  opens a menu of the levels that model can take. Each model keeps its own level. The levels follow
+  what its provider can send:
+
+  | Provider                             | Levels                                          |
+  | ------------------------------------ | ----------------------------------------------- |
+  | Ollama, Ollama Cloud                 | On, Off; gpt-oss models take Low, Medium, High  |
+  | Anthropic                            | Off, Low, Medium, High, and Max on newer Claude |
+  | OpenRouter, LiteLLM                  | Model default, Off, Minimal through Extra high  |
+  | LM Studio, OpenAI-compatible servers | Model default, Off, Low, Medium, High           |
+  | llama.cpp                            | Model default, On, Off                          |
+
+  Model default sends nothing and leaves it to the model or server. A server that rejects a level
+  answers with its own default instead of failing, and some models reason anyway: gpt-oss cannot
+  stop, and some OpenRouter models require reasoning. A model whose provider reports it cannot
+  reason, or whose Reasoning capability is turned off in its settings, has no button. The command
+  palette's Reasoning entry steps to the next level. In a reply, each step of reasoning shows the
+  same brain among the agent's steps; select it to read it in full.
 
 ## The side panel
 
