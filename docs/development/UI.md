@@ -50,8 +50,9 @@ shade, so it stays the one bright thing on screen.
 
 - The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
   small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
-  run it; never edit the generated files. The small cut keeps the cape but leaves out the badge
-  and the mask's tips, which are noise at 16 px.
+  run it; never edit the generated files. The cape is one piece of fabric with a softly waving hem
+  and two creases, as the app's moving cape draws it. The small cut keeps a plain cape but leaves
+  out the creases, the badge and the mask's tips, which are noise at 16 px.
 - Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
   or a failure at 6 px: with Lime, warnings are orange rather than yellow, and errors are rose.
 - The robot appears where it adds character and no information: the icon, the title bar, the

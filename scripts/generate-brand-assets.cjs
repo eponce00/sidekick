@@ -75,12 +75,16 @@ const VISOR_RIGHT = [
 ]
 
 // The cape, as offsets from the head's centre on the master's proportions: it fastens under the
-// chin and billows up and back, as if the robot is flying in, ending in a scalloped hem. The
-// lining shows along its lower edge. In the app, a cloth simulation redraws it as it moves.
+// chin and billows up and back, as if the robot is flying in, one piece of fabric ending in a hem
+// that waves in two soft scallops. Two creases follow the cloth, and it shades toward the neck,
+// as if in the head's shadow. In the app, a cloth simulation redraws it as it moves.
 const CAPE =
-  'M40 200 C-100 284 -300 282 -440 200 L-404 150 L-502 112 L-452 62 L-548 14 L-482 -30 ' +
-  'L-566 -84 C-466 -66 -366 -26 -250 -4 Z'
-const CAPE_LINING = 'M-440 200 C-300 282 -100 284 40 200 C-100 252 -280 248 -404 150 Z'
+  'M40 200 C-100 284 -300 282 -440 200 C-474 172 -494 140 -505 116 C-517 92 -498 80 -509 56 ' +
+  'C-519 32 -559 -3 -568 -26 C-578 -49 -583 -77 -566 -84 C-466 -66 -366 -26 -250 -4 Z'
+const CAPE_FOLDS =
+  'M-220 70 C-320 52 -430 34 -512 24 C-430 52 -320 74 -220 78 Z ' +
+  'M-200 190 C-290 196 -375 180 -455 156 C-380 198 -290 214 -200 200 Z'
+const CAPE_SHADE = { from: [0, 200], to: [-560, -40] }
 
 /** Scales every coordinate of an absolute path: x by `sx`, y by `sy`. */
 function scalePath(d, sx, sy) {
@@ -126,12 +130,27 @@ function robot({ small = false, glyph = false } = {}) {
   if (!glyph) parts.push(`<path d="${TILE}" fill="${COLORS.tile}"/>`)
   parts.push(`<clipPath id="sidekick-tile"><path d="${clip}"/></clipPath>`)
   parts.push(`<g clip-path="url(#sidekick-tile)"><g transform="rotate(${tilt} ${cx} ${cy})">`)
+  // The full-size icon shades its cape toward the neck; the app's theme colours its own, and the
+  // small cut keeps a plain one, since creases and shading are noise at 16 px.
+  const shaded = !glyph && !small
+  if (shaded) {
+    const [x1, y1] = CAPE_SHADE.from
+    const [x2, y2] = CAPE_SHADE.to
+    parts.push(
+      `<linearGradient id="sidekick-cape-shade" gradientUnits="userSpaceOnUse" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}">` +
+        `<stop offset="0" stop-color="${COLORS.capeLining}"/><stop offset="0.45" stop-color="${COLORS.cape}"/></linearGradient>`
+    )
+  }
   parts.push(
     `<g transform="translate(${cx} ${cy})"><g${part('cape-rig')}>`,
-    `<path${part('cape')} d="${scalePath(CAPE, sx, sy)}" fill="${COLORS.cape}"/>`,
-    `<path${part('cape-lining')} d="${scalePath(CAPE_LINING, sx, sy)}" fill="${COLORS.capeLining}"/>`,
-    '</g></g>'
+    `<path${part('cape')} d="${scalePath(CAPE, sx, sy)}" fill="${shaded ? 'url(#sidekick-cape-shade)' : COLORS.cape}"/>`
   )
+  if (!small) {
+    parts.push(
+      `<path${part('cape-lining')} d="${scalePath(CAPE_FOLDS, sx, sy)}" fill="${COLORS.capeLining}" opacity="0.55"/>`
+    )
+  }
+  parts.push('</g></g>')
   const top = cy - ry - stem
   parts.push(
     `<rect${part('shade')} x="${cx - 85}" y="${top}" width="30" height="${stem + 20}" rx="15" fill="${COLORS.shade}"/>`,
