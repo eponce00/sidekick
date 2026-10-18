@@ -240,17 +240,27 @@
   height: 16px;
 }
 
+/* Shaped like a tab without a label: its icon sits on the same line as the tabs' icons, with a
+   blank where a label would be. */
 .activity-panel-fold {
   all: unset;
-  display: grid;
-  place-items: center;
+  display: flex;
   flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  gap: 4px;
   width: 32px;
-  height: 32px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
   transition: var(--transition-ui);
+}
+
+.activity-panel-fold::after {
+  height: var(--text-xs);
+  content: '';
 }
 
 .activity-panel-fold:hover {
@@ -266,7 +276,8 @@
 /* Too narrow for every label, about 60px a tab: the tabs become icons, still equal and evenly
    spaced. A fifth tab (Chats) needs the room sooner. */
 @container (max-width: 291px) {
-  .activity-tab-button .tab-label {
+  .activity-tab-button .tab-label,
+  .activity-panel-fold::after {
     display: none;
   }
 
@@ -276,7 +287,8 @@
 }
 
 @container (max-width: 355px) {
-  .activity-tabs.has-chats .tab-label {
+  .activity-tabs.has-chats .tab-label,
+  .activity-tabs.has-chats + .activity-panel-fold::after {
     display: none;
   }
 
