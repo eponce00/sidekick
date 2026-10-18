@@ -111,8 +111,11 @@ modal child window with its own sandboxed page, built from escaped text with a s
 security policy, that reports the answer by a navigation the main process intercepts. The app's
 window cannot read, click or cover it, so it keeps the guarantee of a system dialog in SideKick's
 style. It always opens over the app's own window, never a browser page's window parked off screen.
-When SideKick is not in front, its taskbar entry flashes and a notification says what is being
-asked. With the window minimized or in the tray, the question waits for the user to bring it back,
+When SideKick is not in front, its taskbar entry flashes and a notice in SideKick's own look
+(`attentionToast`) says what is being asked, in the corner of the screen, without taking focus.
+Both the dialog and the notice are drawn in the app's theme and the accent saved in settings
+(`trustedLook`); only "light" or "dark" is taken from the app's window, so a page cannot restyle
+a security prompt. With the window minimized or in the tray, the question waits for the user to bring it back,
 by the notification or the taskbar, and then opens in SideKick's style; a question the user just
 set off themselves, such as quitting from the tray or a change made from the command line, brings
 the window up at once (`reveal`). Only with no window at all does it use the system dialog. A tool

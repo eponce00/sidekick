@@ -5,9 +5,10 @@ import {
   ACCENT_PALETTES,
   ACCENT_PALETTE_VERSION,
   DARK_ON_ACCENT,
-  applyAccentPalette,
+  accentPalette,
   migrateAccentPalette
-} from './accentPalettes'
+} from '../../../shared/accentPalettes'
+import { applyAccentPalette } from './accentPalettes'
 
 describe('applyAccentPalette', () => {
   beforeEach(() => document.body.removeAttribute('style'))
@@ -22,6 +23,14 @@ describe('applyAccentPalette', () => {
   it("lights the robot's LEDs in the palette at full brightness, even in the light theme", () => {
     applyAccentPalette('blue', 'light')
     expect(document.body.style.getPropertyValue('--brand-led')).toBe('#60a5fa')
+  })
+})
+
+describe('accentPalette', () => {
+  it('finds a palette by id, and falls back to the default for an unknown one', () => {
+    expect(accentPalette('rose').id).toBe('rose')
+    expect(accentPalette('neon').id).toBe('blue')
+    expect(accentPalette(undefined).id).toBe('blue')
   })
 })
 

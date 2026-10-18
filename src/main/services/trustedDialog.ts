@@ -1,44 +1,16 @@
 import { createHash } from 'crypto'
-import {
-  BrowserWindow,
-  dialog,
-  nativeTheme,
-  Notification,
-  type MessageBoxOptions,
-  type MessageBoxReturnValue
-} from 'electron'
+import { BrowserWindow, dialog, type MessageBoxOptions, type MessageBoxReturnValue } from 'electron'
 import { appState } from '../ipc/state'
+import { showAttentionToast } from './attentionToast'
 import { isBrowserParkingWindow } from './browserViewHost'
 import { whileWaitingForUser } from './toolExecutionPipeline'
+import { escapeHtml, trustedLook, trustedLookCss, type TrustedLook } from './trustedLook'
 
 const DIALOG_WIDTH = 460
 const RESPONSE_SCHEME = 'sidekick-dialog:'
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-async function parentTheme(parent: BrowserWindow): Promise<'light' | 'dark'> {
-  // Only the colours depend on this; anything unexpected falls back to the system theme.
-  const fallback = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  try {
-    const theme = await Promise.race([
-      parent.webContents.executeJavaScript('document.documentElement.dataset.theme || ""', false),
-      new Promise((resolve) => setTimeout(() => resolve(''), 150))
-    ])
-    return theme === 'light' || theme === 'dark' ? theme : fallback
-  } catch {
-    return fallback
-  }
-}
-
 /** The dialog's page: SideKick's look, and a script that reports the choice by navigating. */
-export function trustedDialogPage(options: MessageBoxOptions, theme: 'light' | 'dark'): string {
+export function trustedDialogPage(options: MessageBoxOptions, look: TrustedLook): string {
   const buttons = options.buttons?.length ? options.buttons : ['OK']
   const cancelId = options.cancelId ?? 0
   const defaultId = options.defaultId ?? buttons.length - 1
@@ -78,44 +50,23 @@ const report = () => {
 requestAnimationFrame(report)
 `
   const scriptHash = createHash('sha256').update(script).digest('base64')
-  const dark = theme === 'dark'
   return `<!doctype html>
-<html data-theme="${theme}">
+<html data-theme="${look.theme}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-${scriptHash}'">
 <title>${escapeHtml(options.title || 'SideKick')}</title>
 <style>
-:root {
-  --surface: ${dark ? '#171717' : '#ffffff'};
-  --surface-2: ${dark ? '#1d1d1d' : '#eeeeee'};
-  --surface-3: ${dark ? '#252525' : '#e3e3e3'};
-  --border: ${dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.12)'};
-  --text: ${dark ? '#ececec' : '#161616'};
-  --text-2: ${dark ? '#a9a9a9' : '#4c4c4c'};
-  --accent: ${dark ? '#86aee8' : '#2850b8'};
-  --on-accent: ${dark ? '#111111' : '#ffffff'};
-  --warning: ${dark ? '#e9a05f' : '#a23d0e'};
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; background: transparent; }
-body {
-  padding: 10px;
-  color: var(--text);
-  font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  -webkit-user-select: none;
-  user-select: none;
-}
+${trustedLookCss(look)}
 .card {
   padding: 20px 20px 16px;
   border: 1px solid var(--border);
   border-radius: 14px;
   background: var(--surface);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, ${dark ? '0.45' : '0.18'});
+  box-shadow: 0 12px 32px var(--shadow);
   animation: rise 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes rise { from { opacity: 0; transform: translateY(6px) scale(0.985); } }
-@media (prefers-reduced-motion: reduce) { .card { animation: none; } }
 .head { display: flex; gap: 12px; align-items: flex-start; }
 .icon {
   display: grid; flex-shrink: 0; width: 32px; height: 32px; place-items: center;
@@ -211,30 +162,31 @@ function dialogOwner(parent: BrowserWindow | null): BrowserWindow | null {
 
 /**
  * Makes sure a question is noticed when SideKick is not in front: the taskbar entry flashes and a
- * notification says what is being asked; clicking it brings the window up. Returns a function
- * that takes both back once the question is answered.
+ * notice in SideKick's own look says what is being asked; clicking it brings the window up.
+ * Returns a function that takes both back once the question is answered.
  */
-function callAttention(owner: BrowserWindow | null, options: MessageBoxOptions): () => void {
-  if (!owner || (owner.isFocused() && onScreen(owner))) return () => undefined
+function callAttention(
+  owner: BrowserWindow,
+  options: MessageBoxOptions,
+  look: TrustedLook
+): () => void {
+  if (owner.isFocused() && onScreen(owner)) return () => undefined
   owner.flashFrame(true)
-  let notice: Notification | undefined
-  if (Notification.isSupported()) {
-    notice = new Notification({
-      title: options.title || 'SideKick needs your answer',
-      body: options.message,
-      silent: false
-    })
-    notice.on('click', () => {
+  const closeNotice = showAttentionToast({
+    title: options.title || 'SideKick needs your answer',
+    message: options.message,
+    warning: options.type === 'warning' || options.type === 'error',
+    look,
+    onOpen: () => {
       if (owner.isDestroyed()) return
       if (owner.isMinimized()) owner.restore()
       owner.show()
       owner.focus()
-    })
-    notice.show()
-  }
+    }
+  })
   return () => {
     if (!owner.isDestroyed()) owner.flashFrame(false)
-    notice?.close()
+    closeNotice()
   }
 }
 
@@ -265,16 +217,18 @@ async function askTrusted(
   const cancelled: MessageBoxReturnValue = { response: cancelId, checkboxChecked: false }
   if (signal?.aborted) return cancelled
   const owner = dialogOwner(parent)
-  const release = callAttention(owner, options)
+  // With no SideKick window at all, only the system dialog can ask.
+  if (!owner) return dialog.showMessageBox(signal ? { ...options, signal } : options)
+  const look = await trustedLook(owner)
+  const release = callAttention(owner, options, look)
   try {
-    if (!owner) return await dialog.showMessageBox(signal ? { ...options, signal } : options)
     if (reveal && !onScreen(owner)) {
       if (owner.isMinimized()) owner.restore()
       owner.show()
       owner.focus()
     }
     if (!(await untilShown(owner, signal)) || owner.isDestroyed()) return cancelled
-    return await presentTrusted(owner, options, buttons, cancelId, signal)
+    return await presentTrusted(owner, options, buttons, cancelId, look, signal)
   } finally {
     release()
   }
@@ -285,9 +239,9 @@ async function presentTrusted(
   options: MessageBoxOptions,
   buttons: string[],
   cancelId: number,
+  look: TrustedLook,
   signal: AbortSignal | undefined
 ): Promise<MessageBoxReturnValue> {
-  const theme = await parentTheme(parent)
   const window = new BrowserWindow({
     parent,
     modal: true,
@@ -316,6 +270,7 @@ async function presentTrusted(
 
   return new Promise<MessageBoxReturnValue>((resolve) => {
     let settled = false
+    let reported = false
     const finish = (response: number, checkboxChecked = false): void => {
       if (settled) return
       settled = true
@@ -332,6 +287,7 @@ async function presentTrusted(
       if (!url.startsWith(RESPONSE_SCHEME)) return
       const [kind, first, second] = url.slice(RESPONSE_SCHEME.length).split('/')
       if (kind === 'size') {
+        reported = true
         // Fit the window to the card, centred over the app a little above the middle.
         const height = Math.min(Math.max(Number(first) || 200, 120) + 20, 640)
         const bounds = parent.getBounds()
@@ -353,8 +309,13 @@ async function presentTrusted(
     window.webContents.on('render-process-gone', () => finish(cancelId, false))
     void window
       .loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(trustedDialogPage(options, theme))}`
+        `data:text/html;charset=utf-8,${encodeURIComponent(trustedDialogPage(options, look))}`
       )
-      .catch(() => finish(cancelId, false))
+      // The page reports its size by a navigation that is refused; when that comes before the
+      // load has finished, the load counts as failed although the dialog is up and waiting. Only
+      // a page that never reported in has failed, and that is the same as Cancel.
+      .catch(() => {
+        if (!reported) finish(cancelId, false)
+      })
   })
 }

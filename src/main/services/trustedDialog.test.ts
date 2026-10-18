@@ -1,13 +1,26 @@
 import { createHash } from 'crypto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// How the next dialog windows' loads end; a resolved load unless a test says otherwise.
+const dialogLoads: Array<Promise<void>> = []
 // A dialog window the tests can answer: it records how it was made and its navigation handler.
 const dialogs: Array<{
   options: { parent?: unknown }
   navigate: (url: string) => void
   destroy: ReturnType<typeof vi.fn>
 }> = []
-const notices: Array<{ options: { body?: string }; close: ReturnType<typeof vi.fn> }> = []
+// SideKick's own notices, recorded with how each was asked for and a way to see it taken away.
+const notices: Array<{
+  options: { message: string; look: { theme: string; accent: string } }
+  close: ReturnType<typeof vi.fn>
+}> = []
+vi.mock('./attentionToast', () => ({
+  showAttentionToast: vi.fn((options) => {
+    const close = vi.fn()
+    notices.push({ options, close })
+    return close
+  })
+}))
 
 vi.mock('electron', () => ({
   BrowserWindow: vi.fn(function (this: Record<string, unknown>, options: { parent?: unknown }) {
@@ -33,17 +46,9 @@ vi.mock('electron', () => ({
       isVisible: () => false,
       show: vi.fn(),
       setBounds: vi.fn(),
-      loadURL: vi.fn(async () => undefined)
+      loadURL: vi.fn(() => dialogLoads.shift() ?? Promise.resolve())
     })
   }),
-  Notification: Object.assign(
-    vi.fn(function (this: Record<string, unknown>, options: { body?: string }) {
-      const close = vi.fn()
-      notices.push({ options, close })
-      Object.assign(this, { on: vi.fn(), show: vi.fn(), close })
-    }),
-    { isSupported: () => true }
-  ),
   dialog: { showMessageBox: vi.fn(async () => ({ response: 0, checkboxChecked: false })) },
   nativeTheme: { shouldUseDarkColors: true }
 }))
@@ -52,14 +57,22 @@ const parked = new Set<unknown>()
 vi.mock('./browserViewHost', () => ({
   isBrowserParkingWindow: (window: unknown) => parked.has(window)
 }))
-vi.mock('../ipc/state', () => ({ appState: { mainWindowRef: null } }))
+const saved = vi.hoisted(() => ({ settings: {} as Record<string, unknown> }))
+vi.mock('../ipc/state', () => ({
+  appState: { mainWindowRef: null, store: { get: () => saved.settings } }
+}))
 
 import { dialog, type BrowserWindow } from 'electron'
 import { appState } from '../ipc/state'
 import { showTrustedDialog, trustedDialogPage } from './trustedDialog'
 
-function appWindow(initial: { focused?: boolean; visible?: boolean; minimized?: boolean } = {}) {
-  const state = { focused: true, visible: true, minimized: false, ...initial }
+const darkLook = { theme: 'dark' as const, accent: '#86aee8', onAccent: '#111111' }
+const lightLook = { theme: 'light' as const, accent: '#2850b8', onAccent: '#ffffff' }
+
+function appWindow(
+  initial: { focused?: boolean; visible?: boolean; minimized?: boolean; theme?: string } = {}
+) {
+  const state = { focused: true, visible: true, minimized: false, theme: 'dark', ...initial }
   const listeners = new Map<string, Set<() => void>>()
   const emit = (event: string): void => listeners.get(event)?.forEach((listener) => listener())
   const window = {
@@ -69,7 +82,7 @@ function appWindow(initial: { focused?: boolean; visible?: boolean; minimized?: 
     isFocused: () => state.focused,
     flashFrame: vi.fn(),
     getBounds: () => ({ x: 0, y: 0, width: 1200, height: 800 }),
-    webContents: { executeJavaScript: vi.fn(async () => 'dark') },
+    webContents: { executeJavaScript: vi.fn(async () => state.theme) },
     on: (event: string, listener: () => void) => {
       listeners.set(event, (listeners.get(event) ?? new Set()).add(listener))
       return window
@@ -110,6 +123,7 @@ const settingsOptions = {
 }
 
 beforeEach(() => {
+  saved.settings = {}
   dialogs.length = 0
   notices.length = 0
   parked.clear()
@@ -119,13 +133,13 @@ beforeEach(() => {
 
 describe('SideKick-styled trusted dialog', () => {
   it('shows text as text, never as markup', () => {
-    const page = trustedDialogPage(settingsOptions, 'dark')
+    const page = trustedDialogPage(settingsOptions, darkLook)
     expect(page).toContain('Full access lets &lt;b&gt;agents&lt;/b&gt; run without asking.')
     expect(page).not.toContain('<b>agents</b>')
   })
 
   it('allows only its own script', () => {
-    const page = trustedDialogPage(settingsOptions, 'light')
+    const page = trustedDialogPage(settingsOptions, lightLook)
     const script = page.match(/<script>([\s\S]*?)<\/script>/)![1]
     const hash = createHash('sha256').update(script).digest('base64')
     expect(page).toContain(`script-src 'sha256-${hash}'`)
@@ -133,7 +147,7 @@ describe('SideKick-styled trusted dialog', () => {
   })
 
   it('puts Cancel on the left, focuses the safe default, and marks the main action', () => {
-    const page = trustedDialogPage(settingsOptions, 'dark')
+    const page = trustedDialogPage(settingsOptions, darkLook)
     const buttons = [
       ...page.matchAll(
         /<button type="button" data-index="(\d)" class="([^"]*)"( autofocus)?>([^<]*)</g
@@ -148,7 +162,7 @@ describe('SideKick-styled trusted dialog', () => {
   it('marks the default as the main action when it is not Cancel', () => {
     const page = trustedDialogPage(
       { message: 'Install?', buttons: ['Restart and update', 'Later'], defaultId: 0, cancelId: 1 },
-      'dark'
+      darkLook
     )
     const buttons = [...page.matchAll(/data-index="(\d)" class="([^"]*)"/g)]
     expect(buttons.map((button) => [button[1], button[2]])).toEqual([
@@ -180,7 +194,7 @@ describe('SideKick-styled trusted dialog', () => {
     const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions)
     await settle()
     expect(main.flashFrame).toHaveBeenCalledWith(true)
-    expect(notices.map((notice) => notice.options.body)).toEqual([settingsOptions.message])
+    expect(notices.map((notice) => notice.options.message)).toEqual([settingsOptions.message])
     dialogs[0].navigate('sidekick-dialog:respond/0/0')
     await answer
     expect(main.flashFrame).toHaveBeenLastCalledWith(false)
@@ -216,7 +230,7 @@ describe('SideKick-styled trusted dialog', () => {
       // Nothing native and nothing over a hidden window: a notification says what is asked.
       expect(dialog.showMessageBox).not.toHaveBeenCalled()
       expect(dialogs).toHaveLength(0)
-      expect(notices.map((notice) => notice.options.body)).toEqual([settingsOptions.message])
+      expect(notices.map((notice) => notice.options.message)).toEqual([settingsOptions.message])
       main.bringBack()
       await settle()
       expect(dialogs).toHaveLength(1)
@@ -248,5 +262,59 @@ describe('SideKick-styled trusted dialog', () => {
     waiting.abort()
     await expect(answer).resolves.toEqual({ response: 0, checkboxChecked: false })
     expect(dialogs).toHaveLength(0)
+  })
+
+  it("draws the dialog and its notice in the app's theme and the accent chosen in settings", async () => {
+    saved.settings = { accentPalette: 'rose' }
+    const main = appWindow({ focused: false, theme: 'light' })
+    const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions)
+    await settle()
+    // The theme is asked of the page's body, where the app marks it.
+    expect(main.webContents.executeJavaScript).toHaveBeenCalledWith(
+      expect.stringContaining('document.body'),
+      false
+    )
+    expect(notices[0].options.look).toEqual({
+      theme: 'light',
+      accent: '#b01e45',
+      onAccent: '#ffffff'
+    })
+    dialogs[0].navigate('sidekick-dialog:respond/0/0')
+    await answer
+  })
+
+  it('believes only a light or dark theme from the window, and takes the accent from settings', async () => {
+    const main = appWindow({ focused: false, theme: '</style><script>alert(1)</script>' })
+    const answer = showTrustedDialog(main as unknown as BrowserWindow, settingsOptions)
+    await settle()
+    // The system theme stands in, mocked here as dark, with the default accent.
+    expect(notices[0].options.look).toEqual(darkLook)
+    dialogs[0].navigate('sidekick-dialog:respond/0/0')
+    await answer
+  })
+
+  it('puts the chosen accent in the page, as a colour and nothing else', () => {
+    const page = trustedDialogPage(settingsOptions, {
+      theme: 'dark',
+      accent: '#e98e9c',
+      onAccent: '#111111'
+    })
+    expect(page).toContain('--accent: #e98e9c;')
+    expect(page).toContain('color-scheme: dark;')
+  })
+
+  it('keeps waiting for the answer when its load is reported failed after it came up', async () => {
+    let fail!: () => void
+    dialogLoads.push(
+      new Promise<void>((_, reject) => (fail = () => reject(new Error('ERR_FAILED'))))
+    )
+    const answer = showTrustedDialog(appWindow() as unknown as BrowserWindow, settingsOptions)
+    await settle()
+    dialogs[0].navigate('sidekick-dialog:size/200')
+    fail()
+    await settle()
+    expect(dialogs[0].destroy).not.toHaveBeenCalled()
+    dialogs[0].navigate('sidekick-dialog:respond/1/0')
+    await expect(answer).resolves.toEqual({ response: 1, checkboxChecked: false })
   })
 })

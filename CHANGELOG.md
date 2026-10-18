@@ -15,9 +15,9 @@
 - See LM Studio, llama.cpp, LiteLLM and the other providers with their own logos, drawn as one set.
 - Let the agent's edits land when it retypes indentation differently, and show it exactly what
   differs when an edit does not match.
-- Answer approval questions in SideKick's own dialog. When SideKick is in the background, a
-  notification and a flashing taskbar entry say what is asked, and the agent waits for your answer
-  instead of timing out.
+- Answer approval questions in SideKick's own dialog, in your theme and accent. When SideKick is in
+  the background, a notice in SideKick's look and a flashing taskbar entry say what is asked, and
+  the agent waits for your answer instead of timing out.
 - Keep web fetch off devices on your network and off this computer unless you allowed them, as the
   browser does, including through redirects and names that point there.
 - Size the side panel by dragging its edge, with snaps and a preview of where it will land, and

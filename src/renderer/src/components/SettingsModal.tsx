@@ -40,11 +40,8 @@ import {
 } from '../../../shared/providerInstances'
 import { normalizeToolCallLimit } from '../../../shared/agentLimits'
 import { validateMcpServerConfig } from '../../../shared/mcp'
-import {
-  ACCENT_PALETTES,
-  DEFAULT_ACCENT_PALETTE,
-  applyAccentPalette
-} from '../constants/accentPalettes'
+import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentPalettes'
+import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
@@ -61,7 +58,7 @@ import { Select } from './Select'
 import { globalRunSlots, MAX_GLOBAL_RUN_SLOTS } from '../../../shared/runSlots'
 import { PERMISSION_MODE_LABELS } from '../../../shared/permissions'
 
-export type { AccentPalette } from '../constants/accentPalettes'
+export type { AccentPalette } from '../../../shared/accentPalettes'
 export { applyAccentPalette } from '../constants/accentPalettes'
 export type { ProviderSettings } from '../types/app.types'
 
