@@ -72,7 +72,8 @@ module.exports = {
     publisher: process.env.SIDEKICK_STORE_PUBLISHER,
     publisherDisplayName: process.env.SIDEKICK_STORE_PUBLISHER_DISPLAY_NAME,
     applicationId: identity.productName,
-    displayName: identity.productName,
+    // The Store requires the name reserved in Partner Center, which may differ from the app's.
+    displayName: process.env.SIDEKICK_STORE_DISPLAY_NAME || identity.productName,
     // The tile images are transparent, so Start draws them on the user's accent colour.
     backgroundColor: 'transparent',
     languages: ['en-US'],
