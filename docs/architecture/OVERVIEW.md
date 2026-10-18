@@ -103,9 +103,16 @@ Each configured model exposes exactly one editing contract. Automatic selection 
 model identity when a gateway such as LiteLLM reports it. Opaque aliases can run active,
 long-context localized-edit, multi-match replacement, and complete-write probes across every
 dialect; successful results are persisted against the exact provider/model/upstream identity.
-Exact-edit contracts require an explicit `replace_all` boolean so replacement scope is never an
-implicit default. Ambiguous matches fail closed with a typed failure, bounded match-start lines,
-and a concrete correction rather than a generic conflict.
+In exact-edit contracts `replace_all` defaults to false, the scope that can change only one
+location. When `old_string` does not match exactly, the mutation service tries fallbacks from
+strictest to loosest: typography, trailing whitespace, line endings, invisible marks and read-tool
+line numbers; then blank lines and newlines at the edges of `old_string`; then whole lines retyped
+with different indentation or inner whitespace, re-indented to the file. The first fallback with
+any match decides, and it applies only a unique match (or every match with `replace_all`). A block
+whose middle differs from the file is never applied; the error names the closest block's lines and
+lists the lines that differ. Ambiguous matches fail closed with a typed failure, bounded
+match-start lines with excerpts, and a concrete correction rather than a generic conflict. When
+an edit fails and the target changed since it was read, the stale read is reported instead.
 
 After two production mutation-schema failures—or two identical ambiguous exact edits—the kernel
 can switch at a safe provider boundary to a probe-verified fallback, promote it for future runs,
