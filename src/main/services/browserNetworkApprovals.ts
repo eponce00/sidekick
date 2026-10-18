@@ -10,12 +10,12 @@ export interface BrowserNetworkApprovalStore {
 }
 
 /**
- * Asks the user whether the browser may open one local-network origin. The signal withdraws the
- * question when the navigation waiting on it is cancelled.
+ * Asks the user whether the agent may open one local-network origin, in its browser or with
+ * web_fetch. The signal withdraws the question when the request waiting on it is cancelled.
  */
 export type BrowserNetworkConfirm = (origin: string, signal?: AbortSignal) => Promise<boolean>
 
-/** The browser's policy hooks for local-network origins. */
+/** The policy hooks for local-network origins, shared by the browser and web_fetch. */
 export interface BrowserNetworkPolicy {
   approved: (origin: string) => boolean
   approve: (origin: string, signal?: AbortSignal) => Promise<boolean>
@@ -31,7 +31,7 @@ function validOrigin(value: unknown): value is string {
 }
 
 /**
- * Local-network origins the user let the browser open over plain HTTP. Kept apart from the
+ * Local-network origins the user let the agent open over plain HTTP. Kept apart from the
  * settings object, which the window saves whole and would overwrite.
  */
 export class BrowserNetworkApprovals implements BrowserNetworkPolicy {
@@ -94,12 +94,12 @@ export const confirmBrowserNetworkOrigin: BrowserNetworkConfirm = async (origin,
   const options = {
     type: 'warning' as const,
     title: 'Open a local network address?',
-    message: `Allow SideKick's browser to open ${origin}?`,
+    message: `Allow SideKick to open ${origin}?`,
     detail:
       'This address is on your local network and uses plain HTTP. Devices there often trust ' +
       'anyone who can reach them, so the agent will be able to read and use what this address ' +
-      'serves.\n\nSideKick remembers your answer for this address. You can remove it in ' +
-      'Settings › Agent › Local network.',
+      'serves, in its browser and with web fetch.\n\nSideKick remembers your answer for this ' +
+      'address. You can remove it in Settings › Agent › Local network.',
     buttons: ['Deny', 'Allow this address'],
     defaultId: 0,
     cancelId: 0,

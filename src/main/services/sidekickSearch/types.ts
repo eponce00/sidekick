@@ -44,6 +44,8 @@ export interface PageContent {
   elsewhere?: string
   success: boolean
   error?: string
+  /** The local-network rules refused the address: a retry or a rendered read would not help. */
+  refused?: boolean
 }
 
 export interface ImageSearchResult {

@@ -1,4 +1,5 @@
 import { nativeImage } from 'electron'
+import { getAdmitted } from '../webNetworkGuard'
 import { browserIdentity } from './browserIdentity'
 import { SearchCache } from './cache'
 import { fetchSearchDocument } from './searchHttp'
@@ -123,20 +124,28 @@ async function attachImageBytes(
 ): Promise<ImageSearchResult> {
   for (const candidate of [...new Set([result.thumbnailUrl, result.imageUrl])]) {
     try {
-      const response = await fetch(candidate, {
-        headers: {
-          'User-Agent': browserIdentity(),
-          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-          Referer: result.pageUrl
+      // Image addresses come from whatever pages the search found, so none may reach the local
+      // network or this computer, directly or by a redirect.
+      const { response } = await getAdmitted<ArrayBuffer>(
+        new URL(candidate),
+        {
+          responseType: 'arraybuffer',
+          timeout: 12_000,
+          maxContentLength: 8_000_000,
+          headers: {
+            'User-Agent': browserIdentity(),
+            Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            Referer: result.pageUrl
+          }
         },
-        signal: AbortSignal.timeout(12_000)
-      })
-      if (!response.ok) continue
-      const mimeType = (response.headers.get('content-type') || '').split(';')[0].trim()
+        { localNetwork: false }
+      )
+      if (response.status >= 300) continue
+      const mimeType = String(response.headers['content-type'] || '')
+        .split(';')[0]
+        .trim()
       if (!mimeType.startsWith('image/')) continue
-      const declaredLength = Number(response.headers.get('content-length') || 0)
-      if (declaredLength > 8_000_000) continue
-      const rawBytes = Buffer.from(await response.arrayBuffer())
+      const rawBytes = Buffer.from(response.data)
       if (rawBytes.length === 0 || rawBytes.length > 8_000_000) continue
       const optimized = optimizeImage(rawBytes, mimeType, maxBytes)
       if (!optimized) continue
