@@ -29,7 +29,7 @@ describe('migrateAccentPalette', () => {
   it('moves a choice made under the old look to the new default once', () => {
     const migrated = migrateAccentPalette({ accentPalette: 'blue' })
     expect(migrated).toEqual({
-      accentPalette: 'lime',
+      accentPalette: 'blue',
       accentPaletteVersion: ACCENT_PALETTE_VERSION
     })
   })

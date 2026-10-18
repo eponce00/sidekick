@@ -55,7 +55,7 @@ function terminalTheme(): NonNullable<ConstructorParameters<typeof Terminal>[0]>
   return {
     background: token('--surface-1', '#171717'),
     foreground: token('--text-primary', '#e6e6e6'),
-    cursor: token('--accent', '#b4d36b'),
+    cursor: token('--accent', '#86aee8'),
     selectionBackground: token('--accent-subtle', 'rgba(58, 214, 184, 0.25)')
   }
 }

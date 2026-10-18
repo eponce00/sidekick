@@ -16,11 +16,11 @@
   --text-primary: #ececec;
   --text-secondary: #a9a9a9;
   --text-muted: #8d8d8d;
-  --accent: #b4d36b;
-  --accent-strong: #c3de86;
-  --accent-pressed: #9cbc52;
-  --accent-subtle: rgba(180, 211, 107, 0.1);
-  --accent-muted: rgba(180, 211, 107, 0.18);
+  --accent: #86aee8;
+  --accent-strong: #a1c0ee;
+  --accent-pressed: #6c97d6;
+  --accent-subtle: rgba(134, 174, 232, 0.1);
+  --accent-muted: rgba(134, 174, 232, 0.18);
   --on-accent: #111111;
   --color-success: #5fcf9f;
   --color-error: #f0717f;

@@ -22,13 +22,13 @@ export interface AccentPalette {
 export const DARK_ON_ACCENT = '#111111'
 
 /** The palette a new install starts with. */
-export const DEFAULT_ACCENT_PALETTE = 'lime'
+export const DEFAULT_ACCENT_PALETTE = 'blue'
 
 /**
  * Bumped when SideKick's look is redrawn as a whole. A choice made under an older look moves to
  * the new default once, so the redraw is seen; choosing again afterwards sticks.
  */
-export const ACCENT_PALETTE_VERSION = 3
+export const ACCENT_PALETTE_VERSION = 4
 
 export function migrateAccentPalette<
   T extends { accentPalette?: string; accentPaletteVersion?: number }
@@ -73,6 +73,13 @@ function palette(
  * so they override App.css and have to meet the same bar. */
 export const ACCENT_PALETTES: AccentPalette[] = [
   palette(
+    'blue',
+    'Blue',
+    '#60a5fa',
+    ['#86aee8', '#a1c0ee', '#6c97d6'],
+    ['#2850b8', '#1f419a', '#18347d']
+  ),
+  palette(
     'lime',
     'Lime',
     '#c8ff3d',
@@ -100,13 +107,6 @@ export const ACCENT_PALETTES: AccentPalette[] = [
     '#2dd4bf',
     ['#6cc9bb', '#8ad6ca', '#52b3a5'],
     ['#0f6b64', '#0b5a54', '#084843']
-  ),
-  palette(
-    'blue',
-    'Blue',
-    '#60a5fa',
-    ['#86aee8', '#a1c0ee', '#6c97d6'],
-    ['#2850b8', '#1f419a', '#18347d']
   ),
   palette(
     'violet',

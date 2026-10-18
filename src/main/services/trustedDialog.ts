@@ -93,7 +93,7 @@ requestAnimationFrame(report)
   --border: ${dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.12)'};
   --text: ${dark ? '#ececec' : '#161616'};
   --text-2: ${dark ? '#a9a9a9' : '#4c4c4c'};
-  --accent: ${dark ? '#b4d36b' : '#4a6e14'};
+  --accent: ${dark ? '#86aee8' : '#2850b8'};
   --on-accent: ${dark ? '#111111' : '#ffffff'};
   --warning: ${dark ? '#e9a05f' : '#a23d0e'};
 }

@@ -30,12 +30,12 @@
   --text-muted: #8d8d8d;
 
   /* — Color: Accent (Volt: the robot's LED colour) — */
-  --accent: #b4d36b;
+  --accent: #86aee8;
   --accent-color: var(--accent);
-  --accent-strong: #c3de86;
-  --accent-pressed: #9cbc52;
-  --accent-subtle: rgba(180, 211, 107, 0.08);
-  --accent-muted: rgba(180, 211, 107, 0.14);
+  --accent-strong: #a1c0ee;
+  --accent-pressed: #6c97d6;
+  --accent-subtle: rgba(134, 174, 232, 0.08);
+  --accent-muted: rgba(134, 174, 232, 0.14);
   --on-accent: #111111;
 
   /* — Color: Semantic — kept clear of the accent's hue, so a working dot is never mistaken for
@@ -137,14 +137,14 @@
     opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 
   /* — Focus ring — */
-  --focus-ring: 0 0 0 3px rgba(180, 211, 107, 0.26);
+  --focus-ring: 0 0 0 3px rgba(134, 174, 232, 0.26);
 
   /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade — */
   --brand-helmet: #e6e6e6;
   --brand-shade: #b3b3b3;
   --brand-visor: #0f0f0f;
   --brand-glint: #2a2a2a;
-  --brand-led: #c8ff3d;
+  --brand-led: #60a5fa;
   /* The hero's red cape and its darker lining, the same in both themes. */
   --brand-cape: #f0525b;
   --brand-cape-lining: #b5303a;
@@ -174,12 +174,12 @@ body[data-theme='light'] {
   --text-muted: #5c5c5c;
 
   /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.0:1). */
-  --accent: #4a6e14;
+  --accent: #2850b8;
   --accent-color: var(--accent);
-  --accent-strong: #3e5d10;
-  --accent-pressed: #334d0c;
-  --accent-subtle: rgba(74, 110, 20, 0.07);
-  --accent-muted: rgba(74, 110, 20, 0.13);
+  --accent-strong: #1f419a;
+  --accent-pressed: #18347d;
+  --accent-subtle: rgba(40, 80, 184, 0.07);
+  --accent-muted: rgba(40, 80, 184, 0.13);
   --on-accent: #ffffff;
 
   --color-success: #036a4c;
@@ -196,7 +196,7 @@ body[data-theme='light'] {
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
-  --focus-ring: 0 0 0 3px rgba(74, 110, 20, 0.26);
+  --focus-ring: 0 0 0 3px rgba(40, 80, 184, 0.26);
   --brand-helmet: #d6d6d6;
   --brand-shade: #a6a6a6;
   --shadow: rgba(0, 0, 0, 0.08);

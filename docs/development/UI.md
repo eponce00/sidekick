@@ -19,7 +19,7 @@ Global tokens live in `src/renderer/src/styles/App.css`. Component styles should
 - Borders: `--border-subtle`, `--border-color`, `--border-strong`, `--panel-border`
 - Text: `--text-primary`, `--text-secondary`, `--text-muted`
 - Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`, and `--on-accent`
-  for anything drawn on an accent fill (plain white is 1.2:1 on the dark theme's lime)
+  for anything drawn on an accent fill (dark accents are light, so white text would not read)
 - Semantic: `--color-success`, `--color-error`, `--color-warning` for text and icons; the
   `-fill` variants for filled controls carrying `--on-semantic` text; the `-subtle` variants for
   tinted backgrounds. `--error`, `--danger`, `--success`, and `--warning` are aliases of these.
@@ -43,10 +43,10 @@ SideKick is a superhero's robot sidekick: a helmet in the tile's continuous-corn
 visor cut like a domino mask with pointed tips, pixel LED eyes, an antenna, an ear module, and a red
 cape fastened with a badge that carries a prompt chevron, flying in from the side of its tile.
 Surfaces, text, and borders are pure greys with no hue, so the interface stays quiet and colour
-means something. Accents are soft: the default Lime (`#B4D36B`, deepening to `#4A6E14` in light
-themes so it reads as text) is the robot's LED toned down, and Settings offers the other palettes,
-including Mono, which uses no colour at all. The robot's LEDs keep each palette's full-brightness
-shade, so it stays the one bright thing on screen.
+means something. Accents are soft: the default Blue (`#86AEE8`, deepening to `#2850B8` in light
+themes so it reads as text), with the other palettes in Settings, among them Lime, the icon's LED
+colour, and Mono, which uses no colour at all. The robot on an empty chat lights its LEDs in each
+palette's full-brightness shade, so it stays the one bright thing on screen.
 
 - The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
   small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
@@ -54,7 +54,7 @@ shade, so it stays the one bright thing on screen.
   and two creases, as the app's moving cape draws it. The small cut keeps a plain cape but leaves
   out the creases, the badge and the mask's tips, which are noise at 16 px.
 - Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
-  or a failure at 6 px: with Lime, warnings are orange rather than yellow, and errors are rose.
+  or a failure at 6 px: warnings are orange rather than yellow, and errors are rose.
 - The robot appears where it adds character and no information: the icon, the title bar, the
   loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
   and then. It is decoration, hidden from screen readers.
