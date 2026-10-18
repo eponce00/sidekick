@@ -41,14 +41,17 @@ Type and shape stay on fixed scales rather than ad-hoc values:
 
 SideKick is a robot sidekick: a helmet in the tile's continuous-corner shape, a glass visor cut like
 a hero's mask, pixel LED eyes, an antenna, and an ear module, leaning in from the side of its tile.
-The LED colour is the accent. Volt (`#C8FF3D`) is the default palette; in light themes it deepens to
-`#367500` so it reads as text. Neutrals are graphite, not blue, so the accent carries the colour.
+Surfaces, text, and borders are pure greys with no hue, so the interface stays quiet and colour
+means something. Accents are soft: the default Lime (`#B4D36B`, deepening to `#4A6E14` in light
+themes so it reads as text) is the robot's LED toned down, and Settings offers the other palettes,
+including Mono, which uses no colour at all. The robot's LEDs keep each palette's full-brightness
+shade, so it stays the one bright thing on screen.
 
 - The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
   small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
   run it; never edit the generated files.
 - Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
-  or a failure at 6 px: with Volt, warnings are orange rather than yellow, and errors are rose.
+  or a failure at 6 px: with Lime, warnings are orange rather than yellow, and errors are rose.
 - The robot appears where it adds character and no information: the icon, the title bar, the
   loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
   and then. It is decoration, hidden from screen readers.

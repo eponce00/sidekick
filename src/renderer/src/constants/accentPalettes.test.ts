@@ -15,11 +15,11 @@ describe('applyAccentPalette', () => {
   it('updates both the canonical accent and legacy panel alias', () => {
     applyAccentPalette('blue', 'dark')
 
-    expect(document.body.style.getPropertyValue('--accent')).toBe('#60a5fa')
-    expect(document.body.style.getPropertyValue('--accent-color')).toBe('#60a5fa')
+    expect(document.body.style.getPropertyValue('--accent')).toBe('#86aee8')
+    expect(document.body.style.getPropertyValue('--accent-color')).toBe('#86aee8')
   })
 
-  it("lights the robot's LEDs in the palette's bright shade, even in the light theme", () => {
+  it("lights the robot's LEDs in the palette at full brightness, even in the light theme", () => {
     applyAccentPalette('blue', 'light')
     expect(document.body.style.getPropertyValue('--brand-led')).toBe('#60a5fa')
   })
@@ -29,7 +29,7 @@ describe('migrateAccentPalette', () => {
   it('moves a choice made under the old look to the new default once', () => {
     const migrated = migrateAccentPalette({ accentPalette: 'blue' })
     expect(migrated).toEqual({
-      accentPalette: 'volt',
+      accentPalette: 'lime',
       accentPaletteVersion: ACCENT_PALETTE_VERSION
     })
   })
@@ -60,8 +60,8 @@ function contrast(a: string, b: string): number {
 }
 
 describe('accent palette contrast', () => {
-  const LIGHT_SURFACE = '#eff1f4'
-  const DARK_SURFACE = '#171920'
+  const LIGHT_SURFACE = '#eeeeee'
+  const DARK_SURFACE = '#1d1d1d'
 
   it.each(ACCENT_PALETTES.map((p) => [p.id, p] as const))(
     '%s light accent reads as text and carries white on a fill',

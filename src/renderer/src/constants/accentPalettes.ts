@@ -1,37 +1,34 @@
 // ---- Accent palette definitions ----
+interface AccentShades {
+  accent: string
+  accentStrong: string
+  accentPressed: string
+  accentSubtle: string
+  accentMuted: string
+  focusRing: string
+}
+
 export interface AccentPalette {
   id: string
   name: string
   swatch: string // preview dot color
-  dark: {
-    accent: string
-    accentStrong: string
-    accentPressed: string
-    accentSubtle: string
-    accentMuted: string
-    focusRing: string
-  }
-  light: {
-    accent: string
-    accentStrong: string
-    accentPressed: string
-    accentSubtle: string
-    accentMuted: string
-    focusRing: string
-  }
+  /** The robot's LEDs: the palette at full brightness, on its dark visor in both themes. */
+  led: string
+  dark: AccentShades
+  light: AccentShades
 }
 
-/** The ink on a dark theme's bright accent fills, whichever palette is chosen. */
-export const DARK_ON_ACCENT = '#0b0c10'
+/** The ink on a dark theme's accent fills, whichever palette is chosen. */
+export const DARK_ON_ACCENT = '#111111'
 
-/** The palette a new install starts with: the robot's LED colour. */
-export const DEFAULT_ACCENT_PALETTE = 'volt'
+/** The palette a new install starts with. */
+export const DEFAULT_ACCENT_PALETTE = 'lime'
 
 /**
  * Bumped when SideKick's look is redrawn as a whole. A choice made under an older look moves to
  * the new default once, so the redraw is seen; choosing again afterwards sticks.
  */
-export const ACCENT_PALETTE_VERSION = 2
+export const ACCENT_PALETTE_VERSION = 3
 
 export function migrateAccentPalette<
   T extends { accentPalette?: string; accentPaletteVersion?: number }
@@ -44,157 +41,101 @@ export function migrateAccentPalette<
   }
 }
 
-/* Light accents must read at 4.5:1 as text on --surface-2 and carry white on a
- * fill; dark accents are bright and carry --on-accent. Palettes are applied
- * inline at runtime, so they override App.css and have to meet the same bar. */
-export const ACCENT_PALETTES: AccentPalette[] = [
-  {
-    id: 'volt',
-    name: 'Volt',
-    swatch: '#c8ff3d',
-    dark: {
-      accent: '#c8ff3d',
-      accentStrong: '#d6ff6e',
-      accentPressed: '#a8e01f',
-      accentSubtle: 'rgba(200, 255, 61, 0.10)',
-      accentMuted: 'rgba(200, 255, 61, 0.18)',
-      focusRing: '0 0 0 3px rgba(200, 255, 61, 0.30)'
-    },
-    light: {
-      accent: '#367500',
-      accentStrong: '#2d6200',
-      accentPressed: '#255000',
-      accentSubtle: 'rgba(54, 117, 0, 0.09)',
-      accentMuted: 'rgba(54, 117, 0, 0.17)',
-      focusRing: '0 0 0 3px rgba(54, 117, 0, 0.30)'
-    }
-  },
-  {
-    id: 'teal',
-    name: 'Teal',
-    swatch: '#2dd4bf',
-    dark: {
-      accent: '#3bd4bd',
-      accentStrong: '#64e3d0',
-      accentPressed: '#14b8a6',
-      accentSubtle: 'rgba(45, 212, 191, 0.10)',
-      accentMuted: 'rgba(45, 212, 191, 0.20)',
-      focusRing: '0 0 0 3px rgba(59, 212, 189, 0.28)'
-    },
-    light: {
-      accent: '#0f766e',
-      accentStrong: '#115e59',
-      accentPressed: '#0f4f4a',
-      accentSubtle: 'rgba(15, 118, 110, 0.09)',
-      accentMuted: 'rgba(15, 118, 110, 0.17)',
-      focusRing: '0 0 0 3px rgba(15, 118, 110, 0.32)'
-    }
-  },
-  {
-    id: 'blue',
-    name: 'Blue',
-    swatch: '#60a5fa',
-    dark: {
-      accent: '#60a5fa',
-      accentStrong: '#93c5fd',
-      accentPressed: '#3b82f6',
-      accentSubtle: 'rgba(96, 165, 250, 0.10)',
-      accentMuted: 'rgba(96, 165, 250, 0.20)',
-      focusRing: '0 0 0 2px rgba(96, 165, 250, 0.25)'
-    },
-    light: {
-      accent: '#1d4ed8',
-      accentStrong: '#1e40af',
-      accentPressed: '#1e3a8a',
-      accentSubtle: 'rgba(29, 78, 216, 0.09)',
-      accentMuted: 'rgba(29, 78, 216, 0.17)',
-      focusRing: '0 0 0 3px rgba(29, 78, 216, 0.32)'
-    }
-  },
-  {
-    id: 'violet',
-    name: 'Violet',
-    swatch: '#a78bfa',
-    dark: {
-      accent: '#a78bfa',
-      accentStrong: '#c4b5fd',
-      accentPressed: '#8b5cf6',
-      accentSubtle: 'rgba(167, 139, 250, 0.10)',
-      accentMuted: 'rgba(167, 139, 250, 0.20)',
-      focusRing: '0 0 0 2px rgba(167, 139, 250, 0.25)'
-    },
-    light: {
-      accent: '#6d28d9',
-      accentStrong: '#5b21b6',
-      accentPressed: '#4c1d95',
-      accentSubtle: 'rgba(109, 40, 217, 0.09)',
-      accentMuted: 'rgba(109, 40, 217, 0.17)',
-      focusRing: '0 0 0 3px rgba(109, 40, 217, 0.32)'
-    }
-  },
-  {
-    id: 'rose',
-    name: 'Rose',
-    swatch: '#fb7185',
-    dark: {
-      accent: '#fb7185',
-      accentStrong: '#fda4af',
-      accentPressed: '#f43f5e',
-      accentSubtle: 'rgba(251, 113, 133, 0.10)',
-      accentMuted: 'rgba(251, 113, 133, 0.20)',
-      focusRing: '0 0 0 2px rgba(251, 113, 133, 0.25)'
-    },
-    light: {
-      accent: '#be123c',
-      accentStrong: '#9f1239',
-      accentPressed: '#881337',
-      accentSubtle: 'rgba(190, 18, 60, 0.09)',
-      accentMuted: 'rgba(190, 18, 60, 0.17)',
-      focusRing: '0 0 0 3px rgba(190, 18, 60, 0.32)'
-    }
-  },
-  {
-    id: 'amber',
-    name: 'Amber',
-    swatch: '#fbbf24',
-    dark: {
-      accent: '#fbbf24',
-      accentStrong: '#fcd34d',
-      accentPressed: '#f59e0b',
-      accentSubtle: 'rgba(251, 191, 36, 0.10)',
-      accentMuted: 'rgba(251, 191, 36, 0.20)',
-      focusRing: '0 0 0 2px rgba(251, 191, 36, 0.25)'
-    },
-    light: {
-      accent: '#a35208',
-      accentStrong: '#8a4507',
-      accentPressed: '#713a05',
-      accentSubtle: 'rgba(163, 82, 8, 0.09)',
-      accentMuted: 'rgba(163, 82, 8, 0.17)',
-      focusRing: '0 0 0 3px rgba(163, 82, 8, 0.32)'
-    }
-  },
-  {
-    id: 'emerald',
-    name: 'Emerald',
-    swatch: '#34d399',
-    dark: {
-      accent: '#34d399',
-      accentStrong: '#6ee7b7',
-      accentPressed: '#10b981',
-      accentSubtle: 'rgba(52, 211, 153, 0.10)',
-      accentMuted: 'rgba(52, 211, 153, 0.20)',
-      focusRing: '0 0 0 2px rgba(52, 211, 153, 0.25)'
-    },
-    light: {
-      accent: '#047857',
-      accentStrong: '#065f46',
-      accentPressed: '#064e3b',
-      accentSubtle: 'rgba(4, 120, 87, 0.09)',
-      accentMuted: 'rgba(4, 120, 87, 0.17)',
-      focusRing: '0 0 0 3px rgba(4, 120, 87, 0.32)'
-    }
+function rgbOf(hex: string): string {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')
+}
+
+/** Accents sit quietly on neutral greys: soft fills, a soft focus ring. */
+function shades([accent, accentStrong, accentPressed]: string[], fill: number): AccentShades {
+  const rgb = rgbOf(accent)
+  return {
+    accent,
+    accentStrong,
+    accentPressed,
+    accentSubtle: `rgba(${rgb}, ${fill})`,
+    accentMuted: `rgba(${rgb}, ${fill + 0.06})`,
+    focusRing: `0 0 0 3px rgba(${rgb}, 0.26)`
   }
+}
+
+function palette(
+  id: string,
+  name: string,
+  led: string,
+  dark: [string, string, string],
+  light: [string, string, string]
+): AccentPalette {
+  return { id, name, swatch: dark[0], led, dark: shades(dark, 0.08), light: shades(light, 0.07) }
+}
+
+/* Light accents must read at 4.5:1 as text on --surface-2 and carry white on a
+ * fill; dark accents carry --on-accent. Palettes are applied inline at runtime,
+ * so they override App.css and have to meet the same bar. */
+export const ACCENT_PALETTES: AccentPalette[] = [
+  palette(
+    'lime',
+    'Lime',
+    '#c8ff3d',
+    ['#b4d36b', '#c3de86', '#9cbc52'],
+    ['#4a6e14', '#3e5d10', '#334d0c']
+  ),
+  palette(
+    'sage',
+    'Sage',
+    '#a6f5c0',
+    ['#97c4a4', '#acd2b7', '#80ae8e'],
+    ['#3b6a4a', '#30593e', '#264833']
+  ),
+  // White and grey only; colour is left to status and the robot.
+  palette(
+    'mono',
+    'Mono',
+    '#f0f0f0',
+    ['#e4e4e4', '#f2f2f2', '#c8c8c8'],
+    ['#1f1f1f', '#111111', '#000000']
+  ),
+  palette(
+    'teal',
+    'Teal',
+    '#2dd4bf',
+    ['#6cc9bb', '#8ad6ca', '#52b3a5'],
+    ['#0f6b64', '#0b5a54', '#084843']
+  ),
+  palette(
+    'blue',
+    'Blue',
+    '#60a5fa',
+    ['#86aee8', '#a1c0ee', '#6c97d6'],
+    ['#2850b8', '#1f419a', '#18347d']
+  ),
+  palette(
+    'violet',
+    'Violet',
+    '#a78bfa',
+    ['#ab9be6', '#bfb2ee', '#9483d6'],
+    ['#5b3fc0', '#4b33a0', '#3c2882']
+  ),
+  palette(
+    'rose',
+    'Rose',
+    '#fb7185',
+    ['#e98e9c', '#f0a8b3', '#d77585'],
+    ['#b01e45', '#931838', '#77122d']
+  ),
+  palette(
+    'amber',
+    'Amber',
+    '#fbbf24',
+    ['#d9b26a', '#e3c387', '#c49b52'],
+    ['#8f4c0a', '#773f08', '#5f3206']
+  ),
+  palette(
+    'emerald',
+    'Emerald',
+    '#34d399',
+    ['#6fc9a0', '#8fd7b6', '#56b388'],
+    ['#036a4c', '#025a40', '#024a34']
+  )
 ]
 
 export function applyAccentPalette(paletteId: string, theme: 'dark' | 'light'): void {
@@ -209,10 +150,9 @@ export function applyAccentPalette(paletteId: string, theme: 'dark' | 'light'): 
   el.style.setProperty('--accent-pressed', colors.accentPressed)
   el.style.setProperty('--accent-subtle', colors.accentSubtle)
   el.style.setProperty('--accent-muted', colors.accentMuted)
-  // Dark-mode accents are deliberately bright; light-mode accents are dark.
+  // Dark-mode accents are light; light-mode accents are dark.
   // Keep foreground contrast synchronized when the palette changes at runtime.
   el.style.setProperty('--on-accent', theme === 'light' ? '#ffffff' : DARK_ON_ACCENT)
   el.style.setProperty('--focus-ring', colors.focusRing)
-  // The robot's LEDs glow in the palette's bright shade in both themes: they sit on its dark visor.
-  el.style.setProperty('--brand-led', palette.dark.accent)
+  el.style.setProperty('--brand-led', palette.led)
 }

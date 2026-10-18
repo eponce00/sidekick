@@ -7,12 +7,12 @@
 
   /* — Color: Surfaces (layered elevation) — */
   /* Graphite, neutral rather than blue, so the one accent carries all the colour. */
-  --app-bg: #0a0b0e;
-  --surface-0: #0d0e12;
-  --surface-1: #111318;
-  --surface-2: #171920;
-  --surface-3: #1f222b;
-  --surface-4: #282c37;
+  --app-bg: #0f0f0f;
+  --surface-0: #131313;
+  --surface-1: #171717;
+  --surface-2: #1d1d1d;
+  --surface-3: #252525;
+  --surface-4: #2f2f2f;
 
   /* Legacy aliases (backward compat) */
   --panel-bg: var(--surface-1);
@@ -21,33 +21,33 @@
   --panel-border: rgba(255, 255, 255, 0.075);
   --border-subtle: rgba(255, 255, 255, 0.055);
   --border-color: rgba(255, 255, 255, 0.09);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border-strong: rgba(255, 255, 255, 0.15);
   --input-bg: var(--surface-2);
 
   /* — Color: Text — */
-  --text-primary: #eef0f4;
-  --text-secondary: #a3a8b5;
-  --text-muted: #858b99;
+  --text-primary: #ececec;
+  --text-secondary: #a9a9a9;
+  --text-muted: #8d8d8d;
 
   /* — Color: Accent (Volt: the robot's LED colour) — */
-  --accent: #c8ff3d;
+  --accent: #b4d36b;
   --accent-color: var(--accent);
-  --accent-strong: #d6ff6e;
-  --accent-pressed: #a8e01f;
-  --accent-subtle: rgba(200, 255, 61, 0.1);
-  --accent-muted: rgba(200, 255, 61, 0.18);
-  --on-accent: #0b0c10;
+  --accent-strong: #c3de86;
+  --accent-pressed: #9cbc52;
+  --accent-subtle: rgba(180, 211, 107, 0.08);
+  --accent-muted: rgba(180, 211, 107, 0.14);
+  --on-accent: #111111;
 
   /* — Color: Semantic — kept clear of the accent's hue, so a working dot is never mistaken for
      a warning or a failure at 6px: warnings are orange rather than yellow. */
-  --color-success: #34d399;
-  --color-error: #ff5470;
-  --color-warning: #ff9f43;
+  --color-success: #5fcf9f;
+  --color-error: #f0717f;
+  --color-warning: #e9a05f;
   --color-info: var(--accent);
   /* Filled destructive/positive controls carry white text, which needs a
      deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
-  --color-error-fill: #d63a5e;
-  --color-success-fill: #187a5a;
+  --color-error-fill: #c8475a;
+  --color-success-fill: #1f7a58;
   --on-semantic: #ffffff;
   /* Short aliases used throughout component styles. Kept in sync here so a
      theme change reaches every rule instead of falling through to a fallback. */
@@ -59,9 +59,9 @@
   --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
   --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
   --error-bg: var(--color-error-subtle);
-  --color-folder: #d4a82f;
+  --color-folder: #cfae5c;
   /* GitHub's merged and merge-queue purple. */
-  --color-merged: #a98bf5;
+  --color-merged: #ab98e8;
 
   /* — Color: Messages — */
   --message-user-bg: var(--surface-3);
@@ -137,55 +137,55 @@
     opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 
   /* — Focus ring — */
-  --focus-ring: 0 0 0 3px rgba(200, 255, 61, 0.3);
+  --focus-ring: 0 0 0 3px rgba(180, 211, 107, 0.26);
 
-  /* — The robot: fixed brand colours, lightened on light surfaces — */
-  --brand-helmet: #e6e9f0;
-  --brand-shade: #b4bbc9;
-  --brand-visor: #0b0c10;
-  --brand-glint: #23262f;
+  /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade — */
+  --brand-helmet: #e6e6e6;
+  --brand-shade: #b3b3b3;
+  --brand-visor: #0f0f0f;
+  --brand-glint: #2a2a2a;
   --brand-led: #c8ff3d;
 }
 
 body[data-theme='light'] {
   color-scheme: light;
 
-  --app-bg: #f1f2f4;
-  --surface-0: #f7f8fa;
+  --app-bg: #efefef;
+  --surface-0: #f6f6f6;
   --surface-1: #ffffff;
-  --surface-2: #eff1f4;
-  --surface-3: #e4e7ec;
-  --surface-4: #d8dce3;
+  --surface-2: #eeeeee;
+  --surface-3: #e3e3e3;
+  --surface-4: #d6d6d6;
 
   --panel-bg: var(--surface-1);
   --surface: var(--surface-2);
   --surface-hover: var(--surface-3);
-  --panel-border: rgba(19, 30, 43, 0.09);
-  --border-subtle: rgba(19, 30, 43, 0.065);
-  --border-color: rgba(19, 30, 43, 0.11);
-  --border-strong: rgba(19, 30, 43, 0.18);
+  --panel-border: rgba(0, 0, 0, 0.1);
+  --border-subtle: rgba(0, 0, 0, 0.07);
+  --border-color: rgba(0, 0, 0, 0.12);
+  --border-strong: rgba(0, 0, 0, 0.2);
   --input-bg: var(--surface-1);
 
-  --text-primary: #121418;
-  --text-secondary: #4b5160;
-  --text-muted: #5b6170;
+  --text-primary: #161616;
+  --text-secondary: #4c4c4c;
+  --text-muted: #5c5c5c;
 
   /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.0:1). */
-  --accent: #367500;
+  --accent: #4a6e14;
   --accent-color: var(--accent);
-  --accent-strong: #2d6200;
-  --accent-pressed: #255000;
-  --accent-subtle: rgba(54, 117, 0, 0.09);
-  --accent-muted: rgba(54, 117, 0, 0.17);
+  --accent-strong: #3e5d10;
+  --accent-pressed: #334d0c;
+  --accent-subtle: rgba(74, 110, 20, 0.07);
+  --accent-muted: rgba(74, 110, 20, 0.13);
   --on-accent: #ffffff;
 
-  --color-success: #047857;
-  --color-error: #be123c;
-  --color-warning: #c2410c;
+  --color-success: #036a4c;
+  --color-error: #b4233f;
+  --color-warning: #a23d0e;
   --color-error-fill: #b3123a;
   --color-success-fill: #04704f;
-  --color-folder: #b08a1f;
-  --color-merged: #7048c8;
+  --color-folder: #9c7a1c;
+  --color-merged: #6248c0;
 
   --message-user-bg: var(--surface-3);
   --message-user-text: var(--text-primary);
@@ -193,13 +193,13 @@ body[data-theme='light'] {
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
-  --focus-ring: 0 0 0 3px rgba(54, 117, 0, 0.3);
-  --brand-helmet: #d6dae3;
-  --brand-shade: #a3aaba;
+  --focus-ring: 0 0 0 3px rgba(74, 110, 20, 0.26);
+  --brand-helmet: #d6d6d6;
+  --brand-shade: #a6a6a6;
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-lg: rgba(0, 0, 0, 0.12);
-  --shadow-panel: 0 24px 64px rgba(25, 38, 52, 0.24), 0 2px 10px rgba(25, 38, 52, 0.12);
-  --shadow-md: 0 8px 24px rgba(25, 38, 52, 0.12);
+  --shadow-panel: 0 24px 64px rgba(0, 0, 0, 0.24), 0 2px 10px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 /* ============================================

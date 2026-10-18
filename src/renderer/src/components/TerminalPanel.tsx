@@ -53,9 +53,9 @@ function terminalTheme(): NonNullable<ConstructorParameters<typeof Terminal>[0]>
   const token = (name: string, fallback: string): string =>
     style.getPropertyValue(name).trim() || fallback
   return {
-    background: token('--surface-1', '#111318'),
+    background: token('--surface-1', '#171717'),
     foreground: token('--text-primary', '#e6e6e6'),
-    cursor: token('--accent', '#3ad6b8'),
+    cursor: token('--accent', '#b4d36b'),
     selectionBackground: token('--accent-subtle', 'rgba(58, 214, 184, 0.25)')
   }
 }

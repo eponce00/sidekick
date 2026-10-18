@@ -83,15 +83,15 @@ requestAnimationFrame(report)
 <title>${escapeHtml(options.title || 'SideKick')}</title>
 <style>
 :root {
-  --surface: ${dark ? '#111318' : '#ffffff'};
-  --surface-2: ${dark ? '#171920' : '#eff1f4'};
-  --surface-3: ${dark ? '#1f222b' : '#e4e7ec'};
-  --border: ${dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(19, 30, 43, 0.12)'};
-  --text: ${dark ? '#eef0f4' : '#121418'};
-  --text-2: ${dark ? '#a3a8b5' : '#4b5160'};
-  --accent: ${dark ? '#c8ff3d' : '#367500'};
-  --on-accent: ${dark ? '#0b0c10' : '#ffffff'};
-  --warning: ${dark ? '#ff9f43' : '#c2410c'};
+  --surface: ${dark ? '#171717' : '#ffffff'};
+  --surface-2: ${dark ? '#1d1d1d' : '#eeeeee'};
+  --surface-3: ${dark ? '#252525' : '#e3e3e3'};
+  --border: ${dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.12)'};
+  --text: ${dark ? '#ececec' : '#161616'};
+  --text-2: ${dark ? '#a9a9a9' : '#4c4c4c'};
+  --accent: ${dark ? '#b4d36b' : '#4a6e14'};
+  --on-accent: ${dark ? '#111111' : '#ffffff'};
+  --warning: ${dark ? '#e9a05f' : '#a23d0e'};
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: transparent; }
