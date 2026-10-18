@@ -28,7 +28,10 @@ const SEGMENTS = 14
 const LENGTH = 470
 const NECK_WIDTH = 84
 const HEM_WIDTH = 290
-const HEM_POINT = 46
+// How far the hem's two soft scallops reach past its line.
+const HEM_WAVE = 30
+// The creases, as offsets across the cape from its middle: toward the outer edge and the inner.
+const FOLDS = [0.3, -0.34]
 // Gravity and full-gust wind, in drawing units per second squared. Gravity sets the swing: a
 // pendulum the cape's length swings in about a second and a half.
 const GRAVITY = 7_200
@@ -229,14 +232,17 @@ export class CapeCloth {
   }
 
   /**
-   * The cape's outline and its lining, as SVG paths. The fabric is laid around the chain: each
-   * particle's edges sit across the chain's direction there, so wherever the chain bends, the
-   * cloth folds with it.
+   * The cape as one piece of fabric, as SVG paths: its outline with a softly waving hem, and the
+   * creases where it folds. The fabric is laid around the chain, each particle's edges across the
+   * chain's direction there, so wherever the chain bends the cloth bends with it; the creases
+   * deepen with the bend. `shade` runs from the neck to the hem, for shading that darkens toward
+   * the head.
    */
-  paths(): { cape: string; lining: string } {
+  paths(): { cape: string; folds: string; shade: { from: Point; to: Point } } {
     const upper: Point[] = []
     const lower: Point[] = []
-    const inner: Point[] = []
+    const across: Point[] = []
+    const halves: number[] = []
     for (let i = 0; i <= SEGMENTS; i += 1) {
       const p = this.chain[i]
       const before = this.chain[Math.max(0, i - 1)]
@@ -245,38 +251,66 @@ export class CapeCloth {
       const ty = after.y - before.y
       const tl = Math.hypot(tx, ty) || 1
       // Across the chain, toward the side the wind lifts: the cape's outer edge.
-      const nx = ty / tl
-      const ny = -tx / tl
-      const reach = i / SEGMENTS
-      const half = (NECK_WIDTH + (HEM_WIDTH - NECK_WIDTH) * reach ** 0.85) / 2
-      upper.push({ x: p.x + nx * half, y: p.y + ny * half })
-      lower.push({ x: p.x - nx * half, y: p.y - ny * half })
-      // The lining shows in a band along the inner edge, as if the cloth turns there.
-      inner.push({ x: p.x - nx * half * 0.2, y: p.y - ny * half * 0.2 })
+      const normal = { x: ty / tl, y: -tx / tl }
+      const half = (NECK_WIDTH + (HEM_WIDTH - NECK_WIDTH) * (i / SEGMENTS) ** 0.85) / 2
+      across.push(normal)
+      halves.push(half)
+      upper.push({ x: p.x + normal.x * half, y: p.y + normal.y * half })
+      lower.push({ x: p.x - normal.x * half, y: p.y - normal.y * half })
     }
+    // The hem waves gently in two soft scallops rather than cutting into points.
     const end = this.chain[SEGMENTS]
     const last = this.chain[SEGMENTS - 1]
-    const out = { x: end.x - last.x, y: end.y - last.y }
-    const outLength = Math.hypot(out.x, out.y) || 1
-    const tip = { x: (out.x / outLength) * HEM_POINT, y: (out.y / outLength) * HEM_POINT }
-    const hem = [1 / 6, 1 / 3, 1 / 2, 2 / 3, 5 / 6].map((s, index) => {
-      const base = mix(upper[SEGMENTS], lower[SEGMENTS], s)
-      return index % 2 === 0 ? { x: base.x + tip.x, y: base.y + tip.y } : base
+    const outLength = Math.hypot(end.x - last.x, end.y - last.y) || 1
+    const out = { x: (end.x - last.x) / outLength, y: (end.y - last.y) / outLength }
+    const hem = [0, 0.25, 0.5, 0.75, 1].map((t, index) => {
+      const base = mix(upper[SEGMENTS], lower[SEGMENTS], t)
+      const reach = [0, HEM_WAVE, HEM_WAVE * 0.15, HEM_WAVE, 0][index]
+      return { x: base.x + out.x * reach, y: base.y + out.y * reach }
     })
     const cape =
-      `M${fmt(upper[0])}` +
-      smooth(upper) +
-      hem.map((p) => ` L${fmt(p)}`).join('') +
-      ` L${fmt(lower[SEGMENTS])}` +
-      smooth([...lower].reverse()) +
-      ' Z'
-    const lining =
-      `M${fmt(inner[0])}` +
-      smooth(inner) +
-      ` L${fmt(lower[SEGMENTS])}` +
-      smooth([...lower].reverse()) +
-      ' Z'
-    return { cape, lining }
+      `M${fmt(upper[0])}` + smooth(upper) + smooth(hem) + smooth([...lower].reverse()) + ' Z'
+
+    // How sharply the chain turns at each particle, smoothed along it.
+    const bend = this.chain.map((p, i) => {
+      if (i === 0 || i === SEGMENTS) return 0
+      const a = this.chain[i - 1]
+      const c = this.chain[i + 1]
+      const cross = (p.x - a.x) * (c.y - p.y) - (p.y - a.y) * (c.x - p.x)
+      return cross / (this.segment * this.segment)
+    })
+    const soft = bend.map(
+      (value, i) => (value + (bend[i - 1] ?? value) + (bend[i + 1] ?? value)) / 3
+    )
+    const folds = FOLDS.map((offset) => {
+      const left: Point[] = []
+      const right: Point[] = []
+      for (let i = 2; i <= SEGMENTS; i += 1) {
+        const p = this.chain[i]
+        const n = across[i]
+        const half = halves[i]
+        // A crease starts thin under the neck, deepens where the cloth bends on its side, and
+        // fades out before the hem.
+        const grow = Math.min(1, (i - 2) / 3) * (i === SEGMENTS ? 0.4 : 1)
+        const deepen = Math.max(0, Math.sign(offset) * soft[i]) * 0.7 + Math.abs(soft[i]) * 0.25
+        const width = half * Math.min(0.16, 0.03 + deepen) * grow
+        const centre = { x: p.x + n.x * half * offset, y: p.y + n.y * half * offset }
+        left.push({ x: centre.x + n.x * width, y: centre.y + n.y * width })
+        right.push({ x: centre.x - n.x * width, y: centre.y - n.y * width })
+      }
+      return (
+        `M${fmt(left[0])}` +
+        smooth(left) +
+        ` L${fmt(right.at(-1)!)}` +
+        smooth([...right].reverse()) +
+        ' Z'
+      )
+    }).join(' ')
+    return {
+      cape,
+      folds,
+      shade: { from: { x: this.chain[0].x, y: this.chain[0].y }, to: { x: end.x, y: end.y } }
+    }
   }
 }
 

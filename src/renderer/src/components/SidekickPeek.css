@@ -69,6 +69,15 @@
   fill: var(--brand-cape-lining);
 }
 
+.sidekick-peek .peek-wind-streak {
+  fill: none;
+  stroke: var(--text-muted);
+  stroke-width: 14px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
 /* Now and then it blinks, both eyes at once, the way a person does. */
 .sidekick-peek .peek-eye {
   transform-box: fill-box;

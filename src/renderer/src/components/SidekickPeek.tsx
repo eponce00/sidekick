@@ -4,6 +4,7 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import peekSvg from '../assets/sidekick-peek.svg?raw'
 import { CapeCloth } from '../utils/capeCloth'
+import { MAX_STREAKS, WindStreaks } from '../utils/windStreaks'
 import { motionAllowed, prefersReducedMotion } from '../utils/messageMotion'
 import './SidekickPeek.css'
 
@@ -18,6 +19,62 @@ const GUST_FALL_PER_SECOND = 0.9
 // A quick pointer passing near makes wind, from this speed in pixels per millisecond.
 const POINTER_WIND_REACH = 420
 const POINTER_WIND_FROM = 0.5
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/**
+ * What the moving cape needs drawn alongside it: shading that darkens toward the neck, soft
+ * creases in place of the drawn lining band, and the wind's streaks, which pass behind the robot.
+ * Returns them with a way to take them away again.
+ */
+function dressCape(
+  cape: SVGPathElement,
+  lining: SVGPathElement
+): {
+  shade: SVGLinearGradientElement
+  streaks: SVGPathElement[]
+  remove: () => void
+} {
+  const svg = cape.ownerSVGElement!
+  const defs = document.createElementNS(SVG_NS, 'defs')
+  const shade = document.createElementNS(SVG_NS, 'linearGradient')
+  shade.id = 'sidekick-cape-shade'
+  shade.setAttribute('gradientUnits', 'userSpaceOnUse')
+  for (const [offset, colour] of [
+    ['0', 'var(--brand-cape-lining)'],
+    ['0.45', 'var(--brand-cape)'],
+    ['1', 'var(--brand-cape)']
+  ]) {
+    const stop = document.createElementNS(SVG_NS, 'stop')
+    stop.setAttribute('offset', offset)
+    stop.style.stopColor = colour
+    shade.append(stop)
+  }
+  defs.append(shade)
+  svg.prepend(defs)
+  cape.style.fill = 'url(#sidekick-cape-shade)'
+  lining.style.opacity = '0.55'
+  // Behind the cape and the head: the wind passes the robot rather than crossing its face.
+  const rig = cape.parentNode as SVGGElement
+  const wind = document.createElementNS(SVG_NS, 'g')
+  wind.setAttribute('class', 'peek-wind')
+  const streaks = Array.from({ length: MAX_STREAKS }, () => {
+    const streak = document.createElementNS(SVG_NS, 'path')
+    streak.setAttribute('class', 'peek-wind-streak')
+    wind.append(streak)
+    return streak
+  })
+  rig.parentNode?.insertBefore(wind, rig)
+  return {
+    shade,
+    streaks,
+    remove: () => {
+      defs.remove()
+      wind.remove()
+      cape.style.fill = ''
+      lining.style.opacity = ''
+    }
+  }
+}
 
 type Reaction = 'wink' | 'happy'
 
@@ -76,8 +133,8 @@ export function SidekickPeek(): React.JSX.Element {
 
   // The cape is cloth (capeCloth): it hangs under gravity, sways in a light breeze, streams back
   // in a gust now and then, gives way where the pointer brushes through it, and flicks up on a
-  // click. Each frame redraws its outline from the simulation. With reduced motion it stays as
-  // drawn.
+  // click. Each frame redraws it from the simulation, with streaks (windStreaks) showing the wind
+  // that moves it. With reduced motion it stays as drawn.
   useEffect(() => {
     const element = ref.current
     const cape = element?.querySelector<SVGPathElement>('.peek-cape')
@@ -87,6 +144,8 @@ export function SidekickPeek(): React.JSX.Element {
     // is in the tray and its cape still moves once it is shown.
     if (!element || !cape || !lining || prefersReducedMotion()) return undefined
     const cloth = new CapeCloth()
+    const air = new WindStreaks()
+    const dressing = dressCape(cape, lining)
     let wind = 0
     let gustTarget = 0
     let frame = 0
@@ -98,13 +157,28 @@ export function SidekickPeek(): React.JSX.Element {
       wind += (gustTarget - wind) * Math.min(1, seconds * GUST_RISE_PER_SECOND)
       gustTarget *= Math.exp(-GUST_FALL_PER_SECOND * seconds)
       cloth.step(seconds, wind)
+      air.step(seconds, wind)
       const paths = cloth.paths()
       cape.setAttribute('d', paths.cape)
-      lining.setAttribute('d', paths.lining)
+      // The lining's path now carries the creases where the cloth folds.
+      lining.setAttribute('d', paths.folds)
+      dressing.shade.setAttribute('x1', paths.shade.from.x.toFixed(1))
+      dressing.shade.setAttribute('y1', paths.shade.from.y.toFixed(1))
+      dressing.shade.setAttribute('x2', paths.shade.to.x.toFixed(1))
+      dressing.shade.setAttribute('y2', paths.shade.to.y.toFixed(1))
+      const streaks = air.paths()
+      dressing.streaks.forEach((element, index) => {
+        const streak = streaks[index]
+        element.setAttribute('d', streak?.d ?? '')
+        element.style.opacity = streak ? streak.opacity.toFixed(2) : '0'
+      })
       frame = window.requestAnimationFrame(tick)
     }
     const gust = (strength: number): void => {
-      gustTarget = Math.max(gustTarget, Math.min(1, strength))
+      const target = Math.min(1, strength)
+      // A gust that clearly picks up the wind arrives with a burst of streaks.
+      if (target - Math.max(wind, gustTarget) > 0.3) air.burst(3)
+      gustTarget = Math.max(gustTarget, target)
     }
     const scheduleGust = (): void => {
       gustTimer = window.setTimeout(
@@ -156,6 +230,7 @@ export function SidekickPeek(): React.JSX.Element {
       window.removeEventListener('pointermove', feelPointer)
       window.cancelAnimationFrame(frame)
       window.clearTimeout(gustTimer)
+      dressing.remove()
       flick.current = () => undefined
     }
   }, [])

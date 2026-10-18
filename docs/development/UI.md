@@ -58,10 +58,12 @@ shade, so it stays the one bright thing on screen.
   loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
   and then. It is decoration, hidden from screen readers.
 - On an empty chat its cape is cloth (`utils/capeCloth.ts`): a Verlet-integrated chain from the
-  neck to the hem, with the fabric drawn around it so it folds wherever it bends. Gravity drapes
-  it, a light breeze sways it, a gust now and then streams it back with ripples running down it,
-  the pointer pushes the cloth where it brushes through, and a click flicks it up. With reduced
-  motion the cape stays as drawn.
+  neck to the hem, with one piece of fabric drawn around it, so it folds wherever it bends, its
+  creases deepen with the bend, and it shades toward the neck. Gravity drapes it, a light breeze
+  sways it, a gust now and then streams it back with ripples running down it, the pointer pushes
+  the cloth where it brushes through, and a click flicks it up. Streaks
+  (`utils/windStreaks.ts`) sweep past behind the robot while the wind blows, with a burst as a gust
+  arrives, so it is plain what moves the cape. With reduced motion the cape stays as drawn.
 
 Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
 must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.

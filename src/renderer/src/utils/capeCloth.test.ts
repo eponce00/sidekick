@@ -101,12 +101,12 @@ describe('cape cloth', () => {
     expect(slow.hem().y).toBeCloseTo(fast.hem().y, 0)
   })
 
-  it('always draws a well-formed outline and lining', () => {
+  it('always draws a well-formed outline and creases', () => {
     const cloth = new CapeCloth()
     for (let i = 0; i < 120; i += 1) {
       cloth.step(1 / 60, i < 40 ? 1 : 0)
-      const { cape, lining } = cloth.paths()
-      for (const d of [cape, lining]) {
+      const { cape, folds } = cloth.paths()
+      for (const d of [cape, folds]) {
         expect(d).toMatch(/^M-?\d/)
         expect(d.endsWith('Z')).toBe(true)
         expect(d).not.toMatch(/NaN|Infinity/)
