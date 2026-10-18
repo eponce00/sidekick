@@ -182,9 +182,26 @@ One-time setup, by the maintainer:
 
 Each release, the [Store workflow](../../.github/workflows/store.yml) builds
 `SideKick-<version>-windows-x64-store.appx` from the version tag, checks its identity, and uploads
-it as the `SideKick-Microsoft-Store` workflow artifact. Submit that file in a new Partner Center
-submission. `npm run build:store` builds the same package locally with those three variables set
-in the environment.
+it as the `SideKick-Microsoft-Store` workflow artifact. `npm run build:store` builds the same
+package locally with those variables set in the environment.
+
+Once Partner Center API access is set up, the workflow also submits that package for certification
+with the [Microsoft Store Developer CLI](https://learn.microsoft.com/windows/apps/publish/msstore-dev-cli/overview),
+starting from the last published submission so the listing carries over. Until then, submit the
+artifact by hand in a new Partner Center submission. Setting up API access, once:
+
+1. Link a Microsoft Entra directory to the Partner Center account (**Account settings** ›
+   **Tenants**), creating one if the account has none, and sign in to Partner Center with it.
+2. Under **Account settings** › **User management** › **Microsoft Entra applications**, create an
+   application with the **Manager** role and add a client secret.
+3. Store the directory's tenant ID, the account's seller ID, the application's client ID, and the
+   secret as the repository secrets `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_SELLER_ID`,
+   `PARTNER_CENTER_CLIENT_ID`, and `PARTNER_CENTER_CLIENT_SECRET`, and the Store ID in the variable
+   `SIDEKICK_STORE_PRODUCT_ID`.
+
+A submission copies its publishing options from the last published one, so after the first release
+set **Submission options** to publish as soon as certification passes. Client secrets expire; renew
+the secret in Partner Center and in the repository before then.
 
 The app runs with the `runFullTrust` capability, like any packaged desktop app. To test a package
 before submitting it, unpack it with `makeappx unpack`, register the folder with
