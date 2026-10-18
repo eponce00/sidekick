@@ -36,9 +36,11 @@ const FOLDS = [0.3, -0.34]
 // pendulum the cape's length swings in about a second and a half.
 const GRAVITY = 7_200
 const GUST_FORCE = 15_500
-// A light breeze always moves the air, as it would round a hovering hero: at rest the cape drapes
-// back and sways a little rather than hanging dead.
-const BREEZE = 0.22
+// Still air is not quite still: a faint, slow breeze leans the cape back a little and sways it
+// once every few seconds. The quick turbulence and flutter come only with wind above it.
+const BREEZE = 0.1
+const BREEZE_SWAY = 0.018
+const BREEZE_SWAY_RATE = 1.2
 const STEP = 1 / 120
 const SOLVER_PASSES = 8
 // Air resistance: the share of its velocity a particle keeps each step.
@@ -57,6 +59,9 @@ interface Particle {
 
 export class CapeCloth {
   private readonly chain: Particle[] = []
+  // Where each particle was before the last step, for how fast it really moves: the implied
+  // velocity also carries the length pass's correction, which is bookkeeping, not motion.
+  private readonly before: Point[] = []
   private readonly segment = LENGTH / SEGMENTS
   private time = 0
   private carry = 0
@@ -89,7 +94,9 @@ export class CapeCloth {
     while (this.carry >= STEP) {
       this.carry -= STEP
       this.time += STEP
-      this.integrate(Math.max(BREEZE, wind))
+      this.before.length = 0
+      for (const p of this.chain) this.before.push({ x: p.x, y: p.y })
+      this.integrate(wind)
       for (let pass = 0; pass < SOLVER_PASSES; pass += 1) this.solve()
       this.inextensible()
     }
@@ -124,17 +131,22 @@ export class CapeCloth {
     this.chain[SEGMENTS].py += moved[SEGMENTS].y * 0.5
   }
 
-  private integrate(wind: number): void {
+  private integrate(gust: number): void {
     const t = this.time
+    const breeze = BREEZE + BREEZE_SWAY * Math.sin(t * BREEZE_SWAY_RATE)
+    const wind = Math.max(breeze, gust)
+    // How much of the wind is more than the breeze: only that makes the cloth churn.
+    const gusty = Math.max(0, (gust - breeze) / (1 - breeze))
     for (let i = 2; i <= SEGMENTS; i += 1) {
       const p = this.chain[i]
       const reach = i / SEGMENTS
-      // The wind's push varies in time and along the cloth, so it billows unevenly, and a flutter
+      // A gust's push varies in time and along the cloth, so it billows unevenly, and a flutter
       // across the cloth runs down it from the neck as a travelling wave.
-      const swirl = 1 + 0.4 * Math.sin(t * 3.7 + i * 0.55) + 0.2 * Math.sin(t * 7.9 - i * 1.3)
+      const swirl =
+        1 + gusty * (0.4 * Math.sin(t * 3.7 + i * 0.55) + 0.2 * Math.sin(t * 7.9 - i * 1.3))
       const push = GUST_FORCE * wind * (0.3 + 0.7 * reach) * swirl
-      // Flutter grows faster than the wind: a breeze ripples the cloth, a gust snaps it.
-      const flutter = GUST_FORCE * wind ** 1.6 * 0.6 * reach * Math.sin(t * 10.5 - i * 0.95)
+      // Flutter grows faster than the gust: a light one ripples the cloth, a strong one snaps it.
+      const flutter = GUST_FORCE * gusty ** 1.6 * 0.6 * reach * Math.sin(t * 10.5 - i * 0.95)
       const before = this.chain[i - 1]
       const tx = p.x - before.x
       const ty = p.y - before.y
@@ -199,10 +211,13 @@ export class CapeCloth {
     }
   }
 
-  /** The mean particle speed, in units per second. */
+  /** How fast the cloth moved over the last step, as the mean particle speed in units per second. */
   speed(): number {
+    if (!this.before.length) return 0
     let total = 0
-    for (const p of this.chain) total += Math.hypot(p.x - p.px, p.y - p.py)
+    this.chain.forEach((p, i) => {
+      total += Math.hypot(p.x - this.before[i].x, p.y - this.before[i].y)
+    })
     return total / this.chain.length / STEP
   }
 

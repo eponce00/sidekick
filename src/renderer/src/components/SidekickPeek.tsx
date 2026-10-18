@@ -16,9 +16,10 @@ const GUST_EVERY_MS = { min: 6000, spread: 9000 }
 // Gusts build over a fraction of a second and die away over a couple, as real ones do.
 const GUST_RISE_PER_SECOND = 5
 const GUST_FALL_PER_SECOND = 0.9
-// A quick pointer passing near makes wind, from this speed in pixels per millisecond.
-const POINTER_WIND_REACH = 420
-const POINTER_WIND_FROM = 0.5
+// A quick sweep of the pointer close by makes wind, from this speed in pixels per millisecond;
+// ordinary movement on the way somewhere else does not.
+const POINTER_WIND_REACH = 320
+const POINTER_WIND_FROM = 0.9
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 /**

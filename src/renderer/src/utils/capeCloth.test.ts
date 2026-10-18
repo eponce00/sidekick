@@ -19,6 +19,21 @@ describe('cape cloth', () => {
     expect(hem.x).toBeLessThan(neck.x)
   })
 
+  it('is calm once it has settled in still air: a slow sway, nothing that catches the eye', () => {
+    const cloth = new CapeCloth()
+    run(cloth, 8)
+    let fastest = 0
+    const hems: number[] = []
+    for (let i = 0; i < 300; i += 1) {
+      cloth.step(1 / 60, 0)
+      fastest = Math.max(fastest, cloth.speed())
+      hems.push(cloth.hem().x)
+    }
+    // Drawn at about a fifth of these units to a pixel: a few pixels a second, a few pixels of sway.
+    expect(fastest).toBeLessThan(12)
+    expect(Math.max(...hems) - Math.min(...hems)).toBeLessThan(35)
+  })
+
   it('streams back in a strong wind and drops again when it dies', () => {
     const cloth = new CapeCloth()
     run(cloth, 4)
