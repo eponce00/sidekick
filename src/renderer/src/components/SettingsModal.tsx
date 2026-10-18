@@ -40,7 +40,11 @@ import {
 } from '../../../shared/providerInstances'
 import { normalizeToolCallLimit } from '../../../shared/agentLimits'
 import { validateMcpServerConfig } from '../../../shared/mcp'
-import { ACCENT_PALETTES, applyAccentPalette } from '../constants/accentPalettes'
+import {
+  ACCENT_PALETTES,
+  DEFAULT_ACCENT_PALETTE,
+  applyAccentPalette
+} from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
@@ -610,7 +614,7 @@ function SettingsModal({
 
     if (activeSection === 'appearance') {
       const textSize = settings.contentFontSize ?? 13
-      const activePalette = settings.accentPalette || 'teal'
+      const activePalette = settings.accentPalette || DEFAULT_ACCENT_PALETTE
       return (
         <div className="settings-page">
           <SettingsPageHeader

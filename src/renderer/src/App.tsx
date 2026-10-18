@@ -5,6 +5,8 @@ import ChatPanel from './components/ChatPanel'
 import ActivityPanel from './components/ActivityPanel'
 import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
+import appIconUrl from '../../../build/icon.svg?url'
+import smallIconUrl from '../../../build/icon-small.svg?url'
 import type { SettingsSection } from './components/SettingsModal'
 import ContextIndicator from './components/ContextIndicator'
 import SchedulesDialog from './components/SchedulesDialog'
@@ -376,7 +378,6 @@ function App(): React.JSX.Element {
     max: 4096
   })
   const [conversationCost, setConversationCost] = useState<number>(0)
-  const [appIconPath, setAppIconPath] = useState<string>('')
   const [userLocation, setUserLocation] = useState<{
     city?: string
     country?: string
@@ -417,8 +418,6 @@ function App(): React.JSX.Element {
   useEffect(() => {
     const loadData = async (): Promise<void> => {
       try {
-        setAppIconPath(await window.api.app.getIconPath())
-
         const savedSettings = await window.api.settings.load()
         const savedModels = await window.api.pinnedModels.load()
         const mergedSettings = normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
@@ -1352,7 +1351,7 @@ function App(): React.JSX.Element {
     return (
       <div className="app-loading" data-theme={theme}>
         <div className="app-loading-content">
-          {appIconPath && <img src={appIconPath} alt="" className="app-loading-icon" />}
+          <img src={appIconUrl} alt="" className="app-loading-icon" />
           <span className="app-loading-name">SideKick</span>
         </div>
       </div>
@@ -1365,7 +1364,8 @@ function App(): React.JSX.Element {
     >
       <div className="title-bar">
         <div className="title-bar-left">
-          {appIconPath && <img src={appIconPath} alt="SideKick" className="title-bar-icon" />}
+          {/* At 20 px the title bar takes the icon's small cut, drawn to read at that size. */}
+          <img src={smallIconUrl} alt="SideKick" className="title-bar-icon" />
           {titleBarContext && (
             <>
               <span className="title-bar-divider">/</span>

@@ -29,6 +29,7 @@ import { latestRunTodos } from '../utils/runTodos'
 import { FamilyStrip, ReceivedMessagesRow, StartedChatsRow } from './ManagerChatRows'
 import { SessionTodoList } from './SessionTodoList'
 import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
+import { SidekickPeek } from './SidekickPeek'
 import { workerWorkplace } from '../utils/sessionLabels'
 import { WorkerChatContext } from './sessionChatContext'
 import { ChatInput } from './ChatInput'
@@ -1646,6 +1647,7 @@ function ChatPanel({
     />
   )
 
+  const isEmptyChat = messages.length === 0 && !familyRows.size
   const panel = (
     <div className="chat-panel">
       {familyRole === 'worker' && familySelf && chatFamily && (
@@ -1663,8 +1665,12 @@ function ChatPanel({
         </div>
       )}
       {/* Messages Area */}
-      <div className="messages-container" ref={messagesContainerRef}>
-        {messages.length === 0 && !familyRows.size ? (
+      <div
+        className={`messages-container${isEmptyChat ? ' is-empty' : ''}`}
+        ref={messagesContainerRef}
+      >
+        {isEmptyChat && <SidekickPeek />}
+        {isEmptyChat ? (
           <div className="empty-state">
             <h2>{workspaceFolder ? projectName || 'Your project' : 'What’s next?'}</h2>
             {pinnedModels.length === 0 && (

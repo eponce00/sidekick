@@ -21,10 +21,37 @@ export interface AccentPalette {
   }
 }
 
+/** The ink on a dark theme's bright accent fills, whichever palette is chosen. */
+export const DARK_ON_ACCENT = '#0b0c10'
+
+/** The palette a new install starts with: the robot's LED colour. */
+export const DEFAULT_ACCENT_PALETTE = 'volt'
+
 /* Light accents must read at 4.5:1 as text on --surface-2 and carry white on a
  * fill; dark accents are bright and carry --on-accent. Palettes are applied
  * inline at runtime, so they override App.css and have to meet the same bar. */
 export const ACCENT_PALETTES: AccentPalette[] = [
+  {
+    id: 'volt',
+    name: 'Volt',
+    swatch: '#c8ff3d',
+    dark: {
+      accent: '#c8ff3d',
+      accentStrong: '#d6ff6e',
+      accentPressed: '#a8e01f',
+      accentSubtle: 'rgba(200, 255, 61, 0.10)',
+      accentMuted: 'rgba(200, 255, 61, 0.18)',
+      focusRing: '0 0 0 3px rgba(200, 255, 61, 0.30)'
+    },
+    light: {
+      accent: '#367500',
+      accentStrong: '#2d6200',
+      accentPressed: '#255000',
+      accentSubtle: 'rgba(54, 117, 0, 0.09)',
+      accentMuted: 'rgba(54, 117, 0, 0.17)',
+      focusRing: '0 0 0 3px rgba(54, 117, 0, 0.30)'
+    }
+  },
   {
     id: 'teal',
     name: 'Teal',
@@ -167,6 +194,6 @@ export function applyAccentPalette(paletteId: string, theme: 'dark' | 'light'): 
   el.style.setProperty('--accent-muted', colors.accentMuted)
   // Dark-mode accents are deliberately bright; light-mode accents are dark.
   // Keep foreground contrast synchronized when the palette changes at runtime.
-  el.style.setProperty('--on-accent', theme === 'light' ? '#ffffff' : '#06201b')
+  el.style.setProperty('--on-accent', theme === 'light' ? '#ffffff' : DARK_ON_ACCENT)
   el.style.setProperty('--focus-ring', colors.focusRing)
 }

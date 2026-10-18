@@ -215,7 +215,6 @@ interface SiteIconsAPI {
 
 interface AppAPI {
   platform: import('../shared/platform').DesktopPlatform
-  getIconPath: () => Promise<string>
   onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => () => void
   onOpenConversation: (callback: (conversationId: string) => void) => () => void
   /** SideKick's agent asked the user to enter a provider's key in Settings. */

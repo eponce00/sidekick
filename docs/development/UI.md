@@ -19,11 +19,15 @@ Global tokens live in `src/renderer/src/styles/App.css`. Component styles should
 - Borders: `--border-subtle`, `--border-color`, `--border-strong`, `--panel-border`
 - Text: `--text-primary`, `--text-secondary`, `--text-muted`
 - Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`, and `--on-accent`
-  for anything drawn on an accent fill (plain white is 1.85:1 on the dark theme's accent)
+  for anything drawn on an accent fill (plain white is 1.2:1 on the dark theme's lime)
 - Semantic: `--color-success`, `--color-error`, `--color-warning` for text and icons; the
   `-fill` variants for filled controls carrying `--on-semantic` text; the `-subtle` variants for
   tinted backgrounds. `--error`, `--danger`, `--success`, and `--warning` are aliases of these.
 - Interaction: `--focus-ring`, `--shadow-panel`, `--shadow-md`, motion duration and radius tokens
+
+- Brand: `--brand-helmet`, `--brand-shade`, `--brand-visor`, `--brand-glint`, and `--brand-led`
+  colour the robot wherever the app draws it; light themes tone the helmet down so it keeps its
+  shape on a pale surface.
 
 Type and shape stay on fixed scales rather than ad-hoc values:
 
@@ -32,6 +36,22 @@ Type and shape stay on fixed scales rather than ad-hoc values:
 - Weights: 400, 500, 600, 700. Inter is loaded at exactly these four; any other value silently
   rounds to one of them, so writing it only hides the real weight.
 - Radius: `--radius-xs` through `--radius-xl` and `--radius-full`.
+
+## Brand
+
+SideKick is a robot sidekick: a helmet in the tile's continuous-corner shape, a glass visor cut like
+a hero's mask, pixel LED eyes, an antenna, and an ear module, leaning in from the side of its tile.
+The LED colour is the accent. Volt (`#C8FF3D`) is the default palette; in light themes it deepens to
+`#367500` so it reads as text. Neutrals are graphite, not blue, so the accent carries the colour.
+
+- The robot is drawn once, in `scripts/generate-brand-assets.cjs`, which writes the app icon, its
+  small cut for 16 to 32 px, and the peeking robot on an empty chat. Change the drawing there and
+  run it; never edit the generated files.
+- Semantic colours stay clear of the accent's hue so a working dot is never mistaken for a warning
+  or a failure at 6 px: with Volt, warnings are orange rather than yellow, and errors are rose.
+- The robot appears where it adds character and no information: the icon, the title bar, the
+  loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
+  and then. It is decoration, hidden from screen readers.
 
 Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
 must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ACCENT_PALETTES, applyAccentPalette } from './accentPalettes'
+import { ACCENT_PALETTES, DARK_ON_ACCENT, applyAccentPalette } from './accentPalettes'
 
 describe('applyAccentPalette', () => {
   beforeEach(() => document.body.removeAttribute('style'))
@@ -34,9 +34,8 @@ function contrast(a: string, b: string): number {
 }
 
 describe('accent palette contrast', () => {
-  const LIGHT_SURFACE = '#f0f2f4'
-  const DARK_SURFACE = '#191e25'
-  const DARK_ON_ACCENT = '#06201b'
+  const LIGHT_SURFACE = '#eff1f4'
+  const DARK_SURFACE = '#171920'
 
   it.each(ACCENT_PALETTES.map((p) => [p.id, p] as const))(
     '%s light accent reads as text and carries white on a fill',

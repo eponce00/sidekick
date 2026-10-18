@@ -204,6 +204,8 @@ export interface SystemTrayOptions {
   platform: NodeJS.Platform
   productName: string
   iconPath: string
+  /** The icon's small cut, drawn at the 16-48 px a notification area uses. */
+  trayIconPath: string
   snapshot: () => TraySnapshot
   actions: TrayActions
 }
@@ -242,7 +244,7 @@ export class SystemTray {
       return true
     }
     try {
-      this.source = nativeImage.createFromPath(this.options.iconPath)
+      this.source = nativeImage.createFromPath(this.options.trayIconPath)
       this.tray = new Tray(trayImage(this.source, this.options.platform, false))
       this.shownBadge = false
       // Windows and most Linux indicators open the menu on right-click; a plain

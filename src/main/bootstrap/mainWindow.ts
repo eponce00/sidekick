@@ -59,7 +59,7 @@ export function createMainWindow(): BrowserWindow {
     autoHideMenuBar: platform !== 'macos',
     ...mainWindowChrome(platform),
     title: 'SideKick',
-    backgroundColor: '#0e1115',
+    backgroundColor: '#0d0e12',
     icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

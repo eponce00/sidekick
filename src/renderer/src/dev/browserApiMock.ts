@@ -1106,7 +1106,6 @@ export function installBrowserApiMock(): void {
     siteIcons: { get: async () => ({ dataUrl: null }) },
     app: {
       platform: 'windows',
-      getIconPath: async () => '',
       onCommand: () => () => undefined,
       onOpenConversation: () => () => undefined,
       onOpenProviderKey: () => () => undefined

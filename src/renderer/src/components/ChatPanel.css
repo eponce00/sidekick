@@ -148,6 +148,13 @@
 }
 
 /* ---- Empty State ---- */
+/* An empty chat is the robot's stage: it leans in from this container's right edge, and hides
+   when the container is too narrow for it (see SidekickPeek.css). */
+.messages-container.is-empty {
+  position: relative;
+  container-type: inline-size;
+}
+
 .empty-state {
   flex: 1;
   display: flex;

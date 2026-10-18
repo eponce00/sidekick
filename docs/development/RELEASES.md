@@ -112,9 +112,12 @@ installer has no Authenticode signature unless SignPath Foundation signed it. Th
 these facts so an accidental local identity or an undocumented paid dependency cannot change the
 release contract.
 
-Application branding has one vector master at `build/icon.svg`. Its reviewed ICNS, ICO, and runtime
-PNG derivatives are checked in and hash-validated so clean release runners do not depend on an icon
-conversion download and cannot silently fall back to Electron artwork.
+Application branding is drawn once, by `node scripts/generate-brand-assets.cjs`. It writes the
+vector master `build/icon.svg` and its small cut `build/icon-small.svg`, used at 16 to 32 px, and
+renders every derivative from them: the ICNS, the ICO (filling more of its frame, as Windows icons
+do), the runtime and tray PNGs, the Microsoft Store tiles, and the peeking robot the app draws. All
+of them are checked in and hash-validated, so clean release runners do not render or download icons
+and cannot silently fall back to Electron artwork.
 
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
 from the public release, and the final merged-set validator rejects them because the community
@@ -188,8 +191,7 @@ The app runs with the `runFullTrust` capability, like any packaged desktop app. 
 submission, install the package locally in Developer Mode (`Add-AppxPackage -Register` on the
 unpacked folder) and confirm that commands, terminals, the browser panel, voice models, and data in
 the packaged app's own application-data folder work; this has not been qualified yet. Its tile images in `build/appx` are
-rendered from `build/icon.svg` by `node scripts/generate-store-assets.cjs` and hash-checked with the
-other icon derivatives.
+rendered by the same brand-asset script and hash-checked with the other icon derivatives.
 
 ## What the tagged workflow proves
 

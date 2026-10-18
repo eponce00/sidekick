@@ -83,15 +83,15 @@ requestAnimationFrame(report)
 <title>${escapeHtml(options.title || 'SideKick')}</title>
 <style>
 :root {
-  --surface: ${dark ? '#12161b' : '#ffffff'};
-  --surface-2: ${dark ? '#191e25' : '#f0f2f4'};
-  --surface-3: ${dark ? '#232a34' : '#e5e8eb'};
+  --surface: ${dark ? '#111318' : '#ffffff'};
+  --surface-2: ${dark ? '#171920' : '#eff1f4'};
+  --surface-3: ${dark ? '#1f222b' : '#e4e7ec'};
   --border: ${dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(19, 30, 43, 0.12)'};
-  --text: ${dark ? '#f0f3f7' : '#17202b'};
-  --text-2: ${dark ? '#a6afbd' : '#536070'};
-  --accent: ${dark ? '#3bd4bd' : '#0f766e'};
-  --on-accent: ${dark ? '#06201b' : '#ffffff'};
-  --warning: ${dark ? '#d9a43e' : '#8a641a'};
+  --text: ${dark ? '#eef0f4' : '#121418'};
+  --text-2: ${dark ? '#a3a8b5' : '#4b5160'};
+  --accent: ${dark ? '#c8ff3d' : '#367500'};
+  --on-accent: ${dark ? '#0b0c10' : '#ffffff'};
+  --warning: ${dark ? '#ff9f43' : '#c2410c'};
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; background: transparent; }

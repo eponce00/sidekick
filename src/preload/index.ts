@@ -339,7 +339,6 @@ const api = {
   },
   app: {
     platform: desktopPlatform(process.platform),
-    getIconPath: () => ipcRenderer.invoke('app:getIconPath'),
     onCommand: (callback: (command: import('../shared/appCommands').AppCommand) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, command: unknown): void => {
         if (isAppCommand(command)) callback(command)

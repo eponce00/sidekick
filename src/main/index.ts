@@ -23,6 +23,7 @@ import {
 import { CheckpointTitleStore } from './services/checkpointTitleStore'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
+import trayIcon from '../../resources/tray.png?asset'
 import type { AppCommand } from '../shared/appCommands'
 import { PRODUCT_IDENTITY } from '../shared/productIdentity'
 import { AppUpdateService } from './services/appUpdateService'
@@ -309,6 +310,7 @@ async function bootstrapApplication(): Promise<void> {
     platform: process.platform,
     productName: PRODUCT_IDENTITY.productName,
     iconPath: appIcon,
+    trayIconPath: trayIcon,
     snapshot: () => ({
       workingCount: workingConversationCount(),
       waiting: waitingConversations(),

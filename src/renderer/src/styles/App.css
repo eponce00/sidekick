@@ -6,12 +6,13 @@
   color-scheme: dark;
 
   /* — Color: Surfaces (layered elevation) — */
-  --app-bg: #0b0d10;
-  --surface-0: #0e1115;
-  --surface-1: #12161b;
-  --surface-2: #191e25;
-  --surface-3: #232a34;
-  --surface-4: #2d3642;
+  /* Graphite, neutral rather than blue, so the one accent carries all the colour. */
+  --app-bg: #0a0b0e;
+  --surface-0: #0d0e12;
+  --surface-1: #111318;
+  --surface-2: #171920;
+  --surface-3: #1f222b;
+  --surface-4: #282c37;
 
   /* Legacy aliases (backward compat) */
   --panel-bg: var(--surface-1);
@@ -24,28 +25,29 @@
   --input-bg: var(--surface-2);
 
   /* — Color: Text — */
-  --text-primary: #f0f3f7;
-  --text-secondary: #a6afbd;
-  --text-muted: #8894a5;
+  --text-primary: #eef0f4;
+  --text-secondary: #a3a8b5;
+  --text-muted: #858b99;
 
-  /* — Color: Accent (cool teal) — */
-  --accent: #3bd4bd;
+  /* — Color: Accent (Volt: the robot's LED colour) — */
+  --accent: #c8ff3d;
   --accent-color: var(--accent);
-  --accent-strong: #64e3d0;
-  --accent-pressed: #14b8a6;
-  --accent-subtle: rgba(45, 212, 191, 0.1);
-  --accent-muted: rgba(45, 212, 191, 0.2);
-  --on-accent: #06201b;
+  --accent-strong: #d6ff6e;
+  --accent-pressed: #a8e01f;
+  --accent-subtle: rgba(200, 255, 61, 0.1);
+  --accent-muted: rgba(200, 255, 61, 0.18);
+  --on-accent: #0b0c10;
 
-  /* — Color: Semantic — */
-  --color-success: #4a9;
-  --color-error: #e06060;
-  --color-warning: #d9a43e;
+  /* — Color: Semantic — kept clear of the accent's hue, so a working dot is never mistaken for
+     a warning or a failure at 6px: warnings are orange rather than yellow. */
+  --color-success: #34d399;
+  --color-error: #ff5470;
+  --color-warning: #ff9f43;
   --color-info: var(--accent);
   /* Filled destructive/positive controls carry white text, which needs a
      deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
-  --color-error-fill: #c94b4b;
-  --color-success-fill: #2f8a7a;
+  --color-error-fill: #d63a5e;
+  --color-success-fill: #187a5a;
   --on-semantic: #ffffff;
   /* Short aliases used throughout component styles. Kept in sync here so a
      theme change reaches every rule instead of falling through to a fallback. */
@@ -135,18 +137,25 @@
     opacity var(--duration-fast) ease, transform var(--duration-fast) var(--ease-out);
 
   /* — Focus ring — */
-  --focus-ring: 0 0 0 3px rgba(59, 212, 189, 0.28);
+  --focus-ring: 0 0 0 3px rgba(200, 255, 61, 0.3);
+
+  /* — The robot: fixed brand colours, lightened on light surfaces — */
+  --brand-helmet: #e6e9f0;
+  --brand-shade: #b4bbc9;
+  --brand-visor: #0b0c10;
+  --brand-glint: #23262f;
+  --brand-led: #c8ff3d;
 }
 
 body[data-theme='light'] {
   color-scheme: light;
 
-  --app-bg: #f6f7f8;
-  --surface-0: #fafbfc;
+  --app-bg: #f1f2f4;
+  --surface-0: #f7f8fa;
   --surface-1: #ffffff;
-  --surface-2: #f0f2f4;
-  --surface-3: #e5e8eb;
-  --surface-4: #d9dde2;
+  --surface-2: #eff1f4;
+  --surface-3: #e4e7ec;
+  --surface-4: #d8dce3;
 
   --panel-bg: var(--surface-1);
   --surface: var(--surface-2);
@@ -157,24 +166,24 @@ body[data-theme='light'] {
   --border-strong: rgba(19, 30, 43, 0.18);
   --input-bg: var(--surface-1);
 
-  --text-primary: #17202b;
-  --text-secondary: #536070;
-  --text-muted: #5d6978;
+  --text-primary: #121418;
+  --text-secondary: #4b5160;
+  --text-muted: #5b6170;
 
-  /* Dark enough to carry white text (5.5:1) and to read as text on --surface-2 (4.9:1). */
-  --accent: #0f766e;
+  /* Volt deepened until it carries white text (5.7:1) and reads as text on --surface-2 (5.0:1). */
+  --accent: #367500;
   --accent-color: var(--accent);
-  --accent-strong: #115e59;
-  --accent-pressed: #0f4f4a;
-  --accent-subtle: rgba(15, 118, 110, 0.09);
-  --accent-muted: rgba(15, 118, 110, 0.17);
+  --accent-strong: #2d6200;
+  --accent-pressed: #255000;
+  --accent-subtle: rgba(54, 117, 0, 0.09);
+  --accent-muted: rgba(54, 117, 0, 0.17);
   --on-accent: #ffffff;
 
-  --color-success: #217a50;
-  --color-error: #c23c3c;
-  --color-warning: #8a641a;
-  --color-error-fill: #b83a3a;
-  --color-success-fill: #1f6e48;
+  --color-success: #047857;
+  --color-error: #be123c;
+  --color-warning: #c2410c;
+  --color-error-fill: #b3123a;
+  --color-success-fill: #04704f;
   --color-folder: #b08a1f;
   --color-merged: #7048c8;
 
@@ -184,7 +193,9 @@ body[data-theme='light'] {
   --message-agent-text: var(--text-primary);
 
   --modal-overlay: rgba(0, 0, 0, 0.35);
-  --focus-ring: 0 0 0 3px rgba(15, 118, 110, 0.32);
+  --focus-ring: 0 0 0 3px rgba(54, 117, 0, 0.3);
+  --brand-helmet: #d6dae3;
+  --brand-shade: #a3aaba;
   --shadow: rgba(0, 0, 0, 0.08);
   --shadow-lg: rgba(0, 0, 0, 0.12);
   --shadow-panel: 0 24px 64px rgba(25, 38, 52, 0.24), 0 2px 10px rgba(25, 38, 52, 0.12);
