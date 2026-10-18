@@ -6,10 +6,12 @@
   position: absolute;
   top: max(16px, calc(50% - 232px));
   right: 0;
-  /* The frame leaves room for the cape to trail left and sag below; the head is the same size. */
+  /* The frame leaves room for the cape to stream left and hang below; the head is the same size.
+     Only the drawing takes the pointer, not the empty room around it. */
   width: 190px;
+  pointer-events: none;
   cursor: pointer;
-  transform-origin: 100% 49%;
+  transform-origin: 100% 33%;
   animation: sidekick-peek-in 760ms var(--ease-spring) 240ms both;
 }
 
@@ -23,7 +25,12 @@
   height: auto;
   /* It leans toward the pointer, pivoting where it meets the panel's edge. */
   rotate: var(--head-turn, 0deg);
-  transform-origin: 100% 49%;
+  transform-origin: 100% 33%;
+  pointer-events: none;
+}
+
+.sidekick-peek svg * {
+  pointer-events: visiblePainted;
   transition: rotate 380ms var(--ease-out);
 }
 
@@ -53,7 +60,7 @@
   stroke: var(--brand-visor);
 }
 
-/* The cape is moved by script, from the neck: see capePhysics. */
+/* The cape is cloth, redrawn by script each frame: see capeCloth. */
 .sidekick-peek .peek-cape {
   fill: var(--brand-cape);
 }

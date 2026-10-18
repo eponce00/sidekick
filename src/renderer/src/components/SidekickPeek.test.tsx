@@ -3,6 +3,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import peekSvg from '../assets/sidekick-peek.svg?raw'
 import { SidekickPeek } from './SidekickPeek'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -28,12 +29,7 @@ describe('SidekickPeek', () => {
       await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
     }
   }
-  const capeAngle = (): number =>
-    Number(
-      /rotate\((-?[\d.]+)\)/.exec(
-        container.querySelector('.peek-cape-rig')?.getAttribute('transform') ?? ''
-      )?.[1]
-    )
+  const capeOutline = (): string => container.querySelector('.peek-cape')?.getAttribute('d') ?? ''
 
   it('draws the app icon robot with parts the theme colours and the eyes that blink', async () => {
     await act(async () => root.render(<SidekickPeek />))
@@ -54,7 +50,7 @@ describe('SidekickPeek', () => {
       expect(peek.querySelector(`.peek-${part}`), part).not.toBeNull()
     }
     // Its right side is cut straight, so it leans out from behind an edge.
-    expect(peek.querySelector('clipPath path')?.getAttribute('d')).toMatch(/^M0 0 H\d+ V1024 H0 Z$/)
+    expect(peek.querySelector('clipPath path')?.getAttribute('d')).toMatch(/^M0 0 H\d+ V1400 H0 Z$/)
   })
 
   it('winks when poked, and squints happily every third time', async () => {
@@ -71,26 +67,29 @@ describe('SidekickPeek', () => {
     expect(peek.classList.contains('is-happy')).toBe(true)
   })
 
-  it('swings its cape from the neck, and a click flicks it up', async () => {
+  it('moves its cape as cloth, redrawing it every frame, and keeps it through a click', async () => {
     await act(async () => root.render(<SidekickPeek />))
-    expect(container.querySelector('.peek-cape-rig')?.getAttribute('data-pivot')).toMatch(
-      /^[\d.]+ [\d.]+$/
-    )
+    const drawn = capeOutline()
+    const cape = container.querySelector('.peek-cape')
     await frames(2)
-    const arriving = capeAngle()
-    const rig = container.querySelector('.peek-cape-rig')
-    expect(Number.isFinite(arriving)).toBe(true)
+    const moving = capeOutline()
+    expect(moving).not.toBe(drawn)
     await act(async () => container.querySelector<HTMLButtonElement>('.sidekick-peek')!.click())
-    await frames(6)
-    expect(capeAngle()).toBeGreaterThan(arriving)
-    // Its reaction re-renders the button without redrawing the robot, so the pose holds.
-    expect(container.querySelector('.peek-cape-rig')).toBe(rig)
+    await frames(4)
+    expect(capeOutline()).not.toBe(moving)
+    expect(capeOutline()).not.toMatch(/NaN/)
+    // Its reaction re-renders the button without redrawing the robot, so the cloth stays put.
+    expect(container.querySelector('.peek-cape')).toBe(cape)
   })
 
   it('leaves the cape as drawn when motion is reduced', async () => {
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduce') }))
     await act(async () => root.render(<SidekickPeek />))
     await frames(3)
-    expect(container.querySelector('.peek-cape-rig')?.hasAttribute('transform')).toBe(false)
+    const drawn = new DOMParser()
+      .parseFromString(peekSvg, 'image/svg+xml')
+      .querySelector('.peek-cape')
+      ?.getAttribute('d')
+    expect(capeOutline()).toBe(drawn)
   })
 })

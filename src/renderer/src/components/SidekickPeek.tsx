@@ -3,16 +3,7 @@
 // can move.
 import { memo, useEffect, useRef, useState } from 'react'
 import peekSvg from '../assets/sidekick-peek.svg?raw'
-import {
-  arrivingCape,
-  capePose,
-  capeSettled,
-  gust,
-  pointerWind,
-  stepCape,
-  whip,
-  type CapeState
-} from '../utils/capePhysics'
+import { CapeCloth } from '../utils/capeCloth'
 import { motionAllowed } from '../utils/messageMotion'
 import './SidekickPeek.css'
 
@@ -20,9 +11,13 @@ import './SidekickPeek.css'
 const EYE_TRAVEL = { x: 16, y: 10 }
 const HEAD_TURN_DEG = 4
 // A gust now and then, at a random interval and strength, so the cape never moves on a beat.
-const GUST_EVERY_MS = { min: 7000, spread: 9000 }
-// How close, in pixels, a quick pointer has to pass for the cape to feel its wind.
+const GUST_EVERY_MS = { min: 6000, spread: 9000 }
+// Gusts build over a fraction of a second and die away over a couple, as real ones do.
+const GUST_RISE_PER_SECOND = 5
+const GUST_FALL_PER_SECOND = 0.9
+// A quick pointer passing near makes wind, from this speed in pixels per millisecond.
 const POINTER_WIND_REACH = 420
+const POINTER_WIND_FROM = 0.5
 
 type Reaction = 'wink' | 'happy'
 
@@ -79,81 +74,80 @@ export function SidekickPeek(): React.JSX.Element {
     }
   }, [])
 
-  // The cape hangs under gravity and moves only when something moves it: the robot arriving, a
-  // gust now and then, a quick pointer passing by, or a click. Between those it rests and the
-  // loop sleeps.
+  // The cape is cloth (capeCloth): it hangs under gravity, sways in a light breeze, streams back
+  // in a gust now and then, gives way where the pointer brushes through it, and flicks up on a
+  // click. Each frame redraws its outline from the simulation. With reduced motion it stays as
+  // drawn.
   useEffect(() => {
     const element = ref.current
-    const pivot = element?.querySelector<SVGGElement>('.peek-cape-rig')?.dataset.pivot
-    if (!element || !pivot || !motionAllowed()) return undefined
-    const [pivotX, pivotY] = pivot.split(' ').map(Number)
-    let cape: CapeState = arrivingCape()
+    const cape = element?.querySelector<SVGPathElement>('.peek-cape')
+    const lining = element?.querySelector<SVGPathElement>('.peek-cape-lining')
+    if (!element || !cape || !lining || !motionAllowed()) return undefined
+    const cloth = new CapeCloth()
+    let wind = 0
+    let gustTarget = 0
     let frame = 0
     let last = 0
     let gustTimer = 0
-    const draw = (): void => {
-      const rig = element.querySelector<SVGGElement>('.peek-cape-rig')
-      const pose = capePose(cape)
-      rig?.setAttribute(
-        'transform',
-        `translate(${pivotX} ${pivotY}) rotate(${pose.angle.toFixed(2)}) ` +
-          `skewY(${pose.skew.toFixed(2)}) scale(${pose.stretch.toFixed(3)} 1) ` +
-          `translate(${-pivotX} ${-pivotY})`
-      )
-    }
     const tick = (now: number): void => {
-      // A long gap, such as a frame after the window was hidden, advances only one frame.
       const seconds = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60
       last = now
-      cape = stepCape(cape, seconds)
-      draw()
-      if (capeSettled(cape)) {
-        frame = 0
-        last = 0
-        return
-      }
+      wind += (gustTarget - wind) * Math.min(1, seconds * GUST_RISE_PER_SECOND)
+      gustTarget *= Math.exp(-GUST_FALL_PER_SECOND * seconds)
+      cloth.step(seconds, wind)
+      const paths = cloth.paths()
+      cape.setAttribute('d', paths.cape)
+      lining.setAttribute('d', paths.lining)
       frame = window.requestAnimationFrame(tick)
     }
-    const wake = (): void => {
-      if (!frame) frame = window.requestAnimationFrame(tick)
+    const gust = (strength: number): void => {
+      gustTarget = Math.max(gustTarget, Math.min(1, strength))
     }
     const scheduleGust = (): void => {
       gustTimer = window.setTimeout(
         () => {
-          if (motionAllowed()) {
-            cape = gust(cape, 0.55 + Math.random() * 0.45)
-            wake()
-          }
+          if (motionAllowed()) gust(0.55 + Math.random() * 0.45)
           scheduleGust()
         },
         GUST_EVERY_MS.min + Math.random() * GUST_EVERY_MS.spread
       )
     }
-    let previous: { x: number; y: number; at: number } | null = null
+    // The pointer in the cape's own units, and how fast it moves there.
+    let previous: { x: number; y: number; at: number; screenX: number; screenY: number } | null =
+      null
     const feelPointer = (event: PointerEvent): void => {
-      const at = event.timeStamp
-      const here = { x: event.clientX, y: event.clientY, at }
+      const matrix = cape.getScreenCTM?.()
+      if (!matrix || !motionAllowed()) return
+      const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(matrix.inverse())
+      const here = {
+        x: local.x,
+        y: local.y,
+        at: event.timeStamp,
+        screenX: event.clientX,
+        screenY: event.clientY
+      }
       const before = previous
       previous = here
-      if (!before || at <= before.at || !motionAllowed()) return
+      if (!before || here.at <= before.at) return
+      const seconds = (here.at - before.at) / 1000
+      cloth.brush(here, { x: (here.x - before.x) / seconds, y: (here.y - before.y) / seconds })
       const box = element.getBoundingClientRect()
       const near = Math.hypot(
-        here.x - (box.left + box.width / 2),
-        here.y - (box.top + box.height / 2)
+        here.screenX - (box.left + box.width / 2),
+        here.screenY - (box.top + box.height / 3)
       )
-      if (near > POINTER_WIND_REACH) return
-      const wind = pointerWind(Math.hypot(here.x - before.x, here.y - before.y) / (at - before.at))
-      if (wind > cape.wind) {
-        cape = gust(cape, wind)
-        wake()
-      }
+      const speed =
+        Math.hypot(here.screenX - before.screenX, here.screenY - before.screenY) /
+        (here.at - before.at)
+      if (near < POINTER_WIND_REACH && speed > POINTER_WIND_FROM)
+        gust((speed - POINTER_WIND_FROM) * 0.4)
     }
     flick.current = () => {
-      cape = whip(cape)
-      wake()
+      cloth.flick()
+      gust(0.4)
     }
     window.addEventListener('pointermove', feelPointer)
-    wake()
+    frame = window.requestAnimationFrame(tick)
     scheduleGust()
     return () => {
       window.removeEventListener('pointermove', feelPointer)

@@ -76,12 +76,11 @@ const VISOR_RIGHT = [
 
 // The cape, as offsets from the head's centre on the master's proportions: it fastens under the
 // chin and billows up and back, as if the robot is flying in, ending in a scalloped hem. The
-// lining shows along its lower edge. The neck, where it pivots when it moves, is CAPE_PIVOT.
+// lining shows along its lower edge. In the app, a cloth simulation redraws it as it moves.
 const CAPE =
   'M40 200 C-100 284 -300 282 -440 200 L-404 150 L-502 112 L-452 62 L-548 14 L-482 -30 ' +
   'L-566 -84 C-466 -66 -366 -26 -250 -4 Z'
 const CAPE_LINING = 'M-440 200 C-300 282 -100 284 40 200 C-100 252 -280 248 -404 150 Z'
-const CAPE_PIVOT = [0, 200]
 
 /** Scales every coordinate of an absolute path: x by `sx`, y by `sy`. */
 function scalePath(d, sx, sy) {
@@ -122,13 +121,13 @@ function robot({ small = false, glyph = false } = {}) {
   const sy = ry / 226
   const part = (name) => (glyph ? ` class="peek-${name}"` : '')
   const parts = []
-  const clip = glyph ? `M0 0 H${Math.round(cx + rx * 0.78)} V1024 H0 Z` : TILE
+  // The app's robot is cut straight on the right, and has room below for its cape to hang.
+  const clip = glyph ? `M0 0 H${Math.round(cx + rx * 0.78)} V1400 H0 Z` : TILE
   if (!glyph) parts.push(`<path d="${TILE}" fill="${COLORS.tile}"/>`)
   parts.push(`<clipPath id="sidekick-tile"><path d="${clip}"/></clipPath>`)
   parts.push(`<g clip-path="url(#sidekick-tile)"><g transform="rotate(${tilt} ${cx} ${cy})">`)
-  const [pivotX, pivotY] = CAPE_PIVOT
   parts.push(
-    `<g transform="translate(${cx} ${cy})"><g${part('cape-rig')} data-pivot="${round(pivotX * sx)} ${round(pivotY * sy)}">`,
+    `<g transform="translate(${cx} ${cy})"><g${part('cape-rig')}>`,
     `<path${part('cape')} d="${scalePath(CAPE, sx, sy)}" fill="${COLORS.cape}"/>`,
     `<path${part('cape-lining')} d="${scalePath(CAPE_LINING, sx, sy)}" fill="${COLORS.capeLining}"/>`,
     '</g></g>'
@@ -191,9 +190,9 @@ function windowsSvg(cut) {
   )
 }
 
-// The peek's frame: the head where the icon has it, with room to the left and below for the cape
-// to trail, lift in a gust and sag when the air is still.
-const PEEK_FRAME = { left: 30, top: 224, width: 864, height: 760 }
+// The peek's frame: the head where the icon has it, with room to the left for the cape to stream
+// back in a gust and below for it to hang in still air.
+const PEEK_FRAME = { left: 30, top: 224, width: 864, height: 1140 }
 
 function peekSvg() {
   const { left, top, width, height } = PEEK_FRAME

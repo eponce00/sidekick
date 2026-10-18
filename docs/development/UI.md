@@ -57,10 +57,11 @@ shade, so it stays the one bright thing on screen.
 - The robot appears where it adds character and no information: the icon, the title bar, the
   loading screen, and an empty chat, where it leans out from behind the side panel and blinks now
   and then. It is decoration, hidden from screen readers.
-- On an empty chat its cape is a damped spring (`utils/capePhysics.ts`): gravity holds it in a sag,
-  a gust now and then lifts it and it flutters, a quick pointer passing by makes wind, and a click
-  flicks it up. The loop sleeps whenever the cape is still, and with reduced motion the cape stays
-  as drawn.
+- On an empty chat its cape is cloth (`utils/capeCloth.ts`): a Verlet-integrated chain from the
+  neck to the hem, with the fabric drawn around it so it folds wherever it bends. Gravity drapes
+  it, a light breeze sways it, a gust now and then streams it back with ripples running down it,
+  the pointer pushes the cloth where it brushes through, and a click flicks it up. With reduced
+  motion the cape stays as drawn.
 
 Both dark and light themes must define every shared alias, and every `var(--…)` a component uses
 must exist in `App.css`: an undefined token is not a fallback, it invalidates the whole declaration.

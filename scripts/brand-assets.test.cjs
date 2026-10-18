@@ -11,11 +11,11 @@ const runtimeIconPath = path.join(root, 'resources/icon.png')
 
 const EXPECTED_BRAND_ASSET_HASHES = new Map([
   // Drawn by scripts/generate-brand-assets.cjs: the masters, then everything rendered from them.
-  ['build/icon.svg', 'e518896437ea7b4fc995afe6494a444b299a392d32d7cb5f63ab97cd13897707'],
-  ['build/icon-small.svg', '218e6288c526629a493af1882f6229cf34e3c4ba17570919bc8a02b6bd48c55f'],
+  ['build/icon.svg', 'f87d61a15789786f487e8907c976c9860d58e30766be201cb6fe1421b4a72d16'],
+  ['build/icon-small.svg', '73c2918829c785aababe6b79e7380dd03a44918a3d61381b6acbaca53ae498d0'],
   [
     'src/renderer/src/assets/sidekick-peek.svg',
-    '3345eea8c1873b728c97ba5d6fb850e3f1a0b6062937d2ff71760510d5da955e'
+    '6ce9b0ddbd1b721106ab6229cc6343095cc5e2175d5c51c239a037ff9a45a3db'
   ],
   ['build/icon.icns', '52223a8ab947c9e7d1f2617ea0c22c393c05a93bbd208660094fb73ffe44d149'],
   ['build/icon.ico', 'b58d2aea87d18f265570c7dea7e53ac6d1f8711e47cb2de10781a766a09bc9fd'],
