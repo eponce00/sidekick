@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ACCENT_PALETTES, DARK_ON_ACCENT, applyAccentPalette } from './accentPalettes'
+import {
+  ACCENT_PALETTES,
+  ACCENT_PALETTE_VERSION,
+  DARK_ON_ACCENT,
+  applyAccentPalette,
+  migrateAccentPalette
+} from './accentPalettes'
 
 describe('applyAccentPalette', () => {
   beforeEach(() => document.body.removeAttribute('style'))
@@ -11,6 +17,26 @@ describe('applyAccentPalette', () => {
 
     expect(document.body.style.getPropertyValue('--accent')).toBe('#60a5fa')
     expect(document.body.style.getPropertyValue('--accent-color')).toBe('#60a5fa')
+  })
+
+  it("lights the robot's LEDs in the palette's bright shade, even in the light theme", () => {
+    applyAccentPalette('blue', 'light')
+    expect(document.body.style.getPropertyValue('--brand-led')).toBe('#60a5fa')
+  })
+})
+
+describe('migrateAccentPalette', () => {
+  it('moves a choice made under the old look to the new default once', () => {
+    const migrated = migrateAccentPalette({ accentPalette: 'blue' })
+    expect(migrated).toEqual({
+      accentPalette: 'volt',
+      accentPaletteVersion: ACCENT_PALETTE_VERSION
+    })
+  })
+
+  it('keeps a choice made under the current look', () => {
+    const chosen = { accentPalette: 'blue', accentPaletteVersion: ACCENT_PALETTE_VERSION }
+    expect(migrateAccentPalette(chosen)).toBe(chosen)
   })
 })
 

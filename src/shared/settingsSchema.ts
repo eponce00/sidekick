@@ -194,6 +194,7 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   selectedModel: true,
   planningModelId: true,
   accentPalette: true,
+  accentPaletteVersion: true,
   contentFontSize: true,
   focusChainEnabled: true,
   autoCompactEnabled: true,

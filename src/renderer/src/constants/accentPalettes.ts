@@ -27,6 +27,23 @@ export const DARK_ON_ACCENT = '#0b0c10'
 /** The palette a new install starts with: the robot's LED colour. */
 export const DEFAULT_ACCENT_PALETTE = 'volt'
 
+/**
+ * Bumped when SideKick's look is redrawn as a whole. A choice made under an older look moves to
+ * the new default once, so the redraw is seen; choosing again afterwards sticks.
+ */
+export const ACCENT_PALETTE_VERSION = 2
+
+export function migrateAccentPalette<
+  T extends { accentPalette?: string; accentPaletteVersion?: number }
+>(settings: T): T {
+  if (settings.accentPaletteVersion === ACCENT_PALETTE_VERSION) return settings
+  return {
+    ...settings,
+    accentPalette: DEFAULT_ACCENT_PALETTE,
+    accentPaletteVersion: ACCENT_PALETTE_VERSION
+  }
+}
+
 /* Light accents must read at 4.5:1 as text on --surface-2 and carry white on a
  * fill; dark accents are bright and carry --on-accent. Palettes are applied
  * inline at runtime, so they override App.css and have to meet the same bar. */
@@ -196,4 +213,6 @@ export function applyAccentPalette(paletteId: string, theme: 'dark' | 'light'): 
   // Keep foreground contrast synchronized when the palette changes at runtime.
   el.style.setProperty('--on-accent', theme === 'light' ? '#ffffff' : DARK_ON_ACCENT)
   el.style.setProperty('--focus-ring', colors.focusRing)
+  // The robot's LEDs glow in the palette's bright shade in both themes: they sit on its dark visor.
+  el.style.setProperty('--brand-led', palette.dark.accent)
 }

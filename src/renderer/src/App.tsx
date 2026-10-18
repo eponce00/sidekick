@@ -5,6 +5,7 @@ import ChatPanel from './components/ChatPanel'
 import ActivityPanel from './components/ActivityPanel'
 import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
+import { migrateAccentPalette } from './constants/accentPalettes'
 import appIconUrl from '../../../build/icon.svg?url'
 import smallIconUrl from '../../../build/icon-small.svg?url'
 import type { SettingsSection } from './components/SettingsModal'
@@ -420,7 +421,9 @@ function App(): React.JSX.Element {
       try {
         const savedSettings = await window.api.settings.load()
         const savedModels = await window.api.pinnedModels.load()
-        const mergedSettings = normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
+        const mergedSettings = migrateAccentPalette(
+          normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
+        )
         const providerInstances = migrateLegacyProviderInstances(mergedSettings, savedModels || [])
         const migratedSettings = syncLegacyProviderSettings({
           ...mergedSettings,
@@ -446,7 +449,8 @@ function App(): React.JSX.Element {
         setSelectedModel(selected)
         if (
           !savedSettings?.providerInstances ||
-          savedSettings.toolCallLimitVersion !== TOOL_CALL_LIMIT_POLICY_VERSION
+          savedSettings.toolCallLimitVersion !== TOOL_CALL_LIMIT_POLICY_VERSION ||
+          savedSettings.accentPaletteVersion !== migratedSettings.accentPaletteVersion
         ) {
           void window.api.settings.save(migratedSettings)
         }
