@@ -19,7 +19,6 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     visionAvailable: true,
     isLoading: false,
     isStopping: false,
-    isCompacting: false,
     editingMessageId: null,
     researchSelected: false,
     researchActive: false,

@@ -130,6 +130,8 @@ export interface TokenUsage {
   generatedTokens?: number
   /** The model turn being streamed now, before the server reports its usage. */
   streaming?: { startedAt: number; updatedAt: number; characters: number }
+  /** A compaction is summarizing earlier messages; nothing streams until it ends. */
+  compacting?: { startedAt: number }
 }
 
 export interface Message {
