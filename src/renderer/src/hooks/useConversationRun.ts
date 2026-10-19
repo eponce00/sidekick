@@ -407,6 +407,25 @@ export function useConversationRun({
     }
   }, [attachLatestRun, conversationId])
 
+  // A run can start for the open conversation without this window starting it: a schedule
+  // firing, a queued run getting its turn, or another chat starting a worker. When any run starts
+  // while nothing is followed here, see whether it is this conversation's and follow it; events
+  // that came in meanwhile are buffered above, so none of its work is lost.
+  useEffect(() => {
+    if (!conversationId) return undefined
+    let cancelled = false
+    const unsubscribe = window.api.agentRuns.onEvent(({ event }) => {
+      if (event.type !== 'run.started' || activeRef.current) return
+      void attachLatestRun(conversationId, () => cancelled).catch((error) =>
+        console.error('[AgentRun] Could not follow a run started elsewhere', error)
+      )
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [attachLatestRun, conversationId])
+
   const startRun = useCallback(
     async (input: StartConversationAgentRunInput): Promise<AgentRunPhase> => {
       if (activeRef.current) throw new RunAlreadyActiveError()
