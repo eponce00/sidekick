@@ -185,6 +185,9 @@ test(
       else await page.getByRole('button', { name: 'Open browser activity', exact: true }).click()
       const address = page.getByRole('textbox', { name: 'Browser address' })
       await address.fill(`http://127.0.0.1:${server.address().port}/`)
+      // The new chat focuses its composer a moment after it opens; that must not take the
+      // address bar's keystrokes.
+      assert.equal(await address.inputValue(), `http://127.0.0.1:${server.address().port}/`)
       await address.press('Enter')
       await waitForVisible(
         page.getByRole('tab', { name: 'Shared browser fixture' }),

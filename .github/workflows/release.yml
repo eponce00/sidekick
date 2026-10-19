@@ -39,7 +39,16 @@ jobs:
           node-version-file: '.node-version'
           cache: npm
 
-      - run: npm ci
+      # npm retries a request that fails before its response arrives, but not a connection reset
+      # partway through a download, which fails the whole install. npm ci starts again from an
+      # empty node_modules, so one more attempt rides out a transient registry error.
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        run: npm ci
+      - name: Retry installing dependencies
+        if: steps.install.outcome == 'failure'
+        run: npm ci
       - name: Verify stable tag matches package version
         if: github.ref_type == 'tag'
         shell: pwsh
@@ -141,7 +150,14 @@ jobs:
           node-version-file: '.node-version'
           cache: npm
 
-      - run: npm ci
+      # One more attempt rides out a transient registry error (see the Windows job).
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        run: npm ci
+      - name: Retry installing dependencies
+        if: steps.install.outcome == 'failure'
+        run: npm ci
       - name: Verify stable tag matches package version
         if: github.ref_type == 'tag'
         shell: bash
@@ -220,7 +236,14 @@ jobs:
             libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
             libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
             libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
-      - run: npm ci
+      # One more attempt rides out a transient registry error (see the Windows job).
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        run: npm ci
+      - name: Retry installing dependencies
+        if: steps.install.outcome == 'failure'
+        run: npm ci
       - name: Verify stable tag matches package version
         if: github.ref_type == 'tag'
         shell: bash
@@ -300,7 +323,14 @@ jobs:
           node-version-file: '.node-version'
           cache: npm
 
-      - run: npm ci
+      # One more attempt rides out a transient registry error (see the Windows job).
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        run: npm ci
+      - name: Retry installing dependencies
+        if: steps.install.outcome == 'failure'
+        run: npm ci
       - name: Download validated platform artifacts
         uses: actions/download-artifact@v8
         with:

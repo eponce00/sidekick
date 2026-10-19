@@ -34,7 +34,10 @@ CI runs its work in parallel jobs: one Linux job for the platform-independent ch
 the suite on macOS and on two Windows machines (it runs on one worker there), and a packaging job
 per platform for the runtime journey and smoke tests. The `Validate (…)` checks that branch
 protection requires pass only when every one of those jobs passed. Installed dependencies are cached
-by lockfile, and the Windows runners skip Defender's real-time scanning.
+by the locked dependencies and the Node version; the key leaves out SideKick's own version, so a
+release pull request keeps the cache. The Windows runners skip Defender's real-time scanning. A
+failed `npm ci`, in CI or a release build, gets one more attempt, so a transient registry error does
+not fail the job.
 
 The deterministic suite covers shared policy and contracts, provider stream assembly, durable run
 and interaction recovery, transactional workspace mutations, path and symlink containment,
