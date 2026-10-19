@@ -127,6 +127,8 @@ const REQUIRED_COLUMNS = [
   // The most a chat may do without asking, stricter than the user's setting. A schedule stores
   // one, its chats copy it, and the chats they start inherit it.
   { table: 'schedules', column: 'permission_ceiling', definition: 'TEXT' },
+  // Whether each run starts a new chat or continues the last run's.
+  { table: 'schedules', column: 'chat_mode', definition: "TEXT NOT NULL DEFAULT 'new'" },
   { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' }
 ] as const
 
@@ -148,6 +150,7 @@ const SCHEDULE_TABLES = `
     last_run_at INTEGER,
     run_count INTEGER NOT NULL DEFAULT 0,
     permission_ceiling TEXT,
+    chat_mode TEXT NOT NULL DEFAULT 'new',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );

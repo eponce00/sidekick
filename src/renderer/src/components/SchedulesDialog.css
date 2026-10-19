@@ -566,6 +566,13 @@
   accent-color: var(--accent);
 }
 
+.schedules-editor-hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
 .schedules-editor-note {
   margin: 0;
   color: var(--text-muted);

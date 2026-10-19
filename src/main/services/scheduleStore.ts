@@ -29,6 +29,7 @@ interface ScheduleRow {
   last_run_at: number | null
   run_count: number
   permission_ceiling: string | null
+  chat_mode: string | null
   created_at: number
   updated_at: number
 }
@@ -66,6 +67,7 @@ function toSchedule(row: ScheduleRow): Schedule {
     ...(row.last_run_at ? { lastRunAt: row.last_run_at } : {}),
     runCount: row.run_count,
     permissionCeiling: isPermissionMode(row.permission_ceiling) ? row.permission_ceiling : null,
+    chatMode: row.chat_mode === 'continue' ? 'continue' : 'new',
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -168,8 +170,8 @@ export class ScheduleStore {
       .prepare(
         `INSERT INTO schedules
          (id, name, prompt, project_id, model_id, cadence, hour, minute, weekday, catch_up,
-          enabled, next_run_at, run_count, permission_ceiling, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?)`
+          enabled, next_run_at, run_count, permission_ceiling, chat_mode, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -184,6 +186,7 @@ export class ScheduleStore {
         input.catchUp ? 1 : 0,
         nextRunAt,
         input.permissionCeiling ?? null,
+        input.chatMode ?? 'new',
         now,
         now
       )
@@ -197,7 +200,7 @@ export class ScheduleStore {
         `UPDATE schedules
          SET name = ?, prompt = ?, project_id = ?, model_id = ?, cadence = ?, hour = ?,
              minute = ?, weekday = ?, catch_up = ?, next_run_at = ?, permission_ceiling = ?,
-             updated_at = ?
+             chat_mode = ?, updated_at = ?
          WHERE id = ?`
       )
       .run(
@@ -212,6 +215,7 @@ export class ScheduleStore {
         input.catchUp ? 1 : 0,
         nextRunAt,
         input.permissionCeiling ?? null,
+        input.chatMode ?? 'new',
         now,
         id
       )

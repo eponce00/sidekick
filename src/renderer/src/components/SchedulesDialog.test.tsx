@@ -124,6 +124,23 @@ describe('SchedulesDialog', () => {
     )
   })
 
+  it('saves whether each run starts a new chat or continues the last one', async () => {
+    await render([])
+    const suggestion = [...container.querySelectorAll('.schedules-template')].find((node) =>
+      node.textContent?.includes('Dependency check')
+    ) as HTMLButtonElement
+    await act(async () => suggestion.click())
+    const continueChoice = [...container.querySelectorAll('[role="radio"]')].find(
+      (node) => node.textContent === 'Continue the last chat'
+    ) as HTMLButtonElement
+    expect(continueChoice.getAttribute('aria-checked')).toBe('false')
+    await act(async () => continueChoice.click())
+    expect(continueChoice.getAttribute('aria-checked')).toBe('true')
+    expect(container.textContent).toContain('Each run sees what earlier runs said and did')
+    await act(async () => button('Create schedule').click())
+    expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ chatMode: 'continue' }))
+  })
+
   it('offers only limits at least as strict as the permission setting', async () => {
     await render([], 'sensitive-only')
     await act(async () => button('New schedule').click())

@@ -15,6 +15,9 @@ palette. Choose **New schedule**, or start from one of the suggestions, and fill
 - **Model**, from the models enabled in Provider settings.
 - **Repeat**: Hourly at a minute past the hour, Daily, Weekdays (Monday to Friday), or Weekly on
   one day, each at a time you choose.
+- **Each run**: **Start a new chat**, so every run begins fresh, or **Continue the last chat**, so
+  each run adds the prompt to the previous run's chat and can build on what earlier runs found and
+  did. See [Continuing one chat](#continuing-one-chat).
 - **Without asking, runs may**: the most a run may do before it asks you. It starts at your
   [permission mode](PERMISSIONS.md) and can only be stricter, such as **Ask before every change
   or command** for a schedule you want to review step by step.
@@ -34,13 +37,26 @@ it has. Open the row to see **Run 1**, **Run 2**, and so on, newest first. The r
 marks as a chat: working, unread, or waiting for you. Pinning a run's chat takes it out of the
 group.
 
+## Continuing one chat
+
+A schedule set to **Continue the last chat** keeps one chat, named after the schedule. Each run
+adds the prompt as the next message and works in the same folder or worktree as before, so the
+model sees the earlier runs' answers and tool results. As the chat grows, SideKick condenses older
+turns to fit the model, the same way it does for any long chat.
+
+A run starts a new chat instead, and its history says why, when the last run's chat was deleted or
+archived, its worktree was removed, or the schedule now works in another project. A run is skipped
+while the previous one is still working or waiting for you, or while another chat's agent is
+writing in the folder the schedule's chat works in.
+
 ## Approvals
 
 A scheduled run never gets permissions you have not granted. It follows the
 [permission mode](PERMISSIONS.md) from Settings, made stricter by the schedule's own limit when it
 has one. If you later make Settings stricter, runs follow Settings; making Settings looser never
-loosens a schedule. Each run starts in a new chat, so an earlier **Allow for this chat** does not
-carry over.
+loosens a schedule. A run in a new chat does not inherit an earlier **Allow for this chat**. A run
+that continues the last chat keeps what you allowed in that chat while SideKick stays open; after
+a restart, it asks again.
 
 When a run needs your approval or an answer while you are away, it waits. Nothing is approved or
 refused for you. The chat is marked as needing attention in the sidebar and on the taskbar badge,
