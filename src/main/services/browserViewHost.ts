@@ -20,6 +20,8 @@ interface HostedView {
   fitHeight: number
   /** Where the panel is, while shown; the page may take a centred part of it. */
   panelBounds?: BrowserPanelBounds
+  /** Settles once every layout started so far has been applied to the page. */
+  layout: Promise<void>
 }
 
 export interface BrowserAgentViewport {
@@ -83,6 +85,15 @@ async function relayout(entry: HostedView, force = false): Promise<void> {
   await entry.applyFit({ scale: layout.scale, height: layout.height })
 }
 
+/** Starts a relayout that later captures wait for: mounting and parking cannot wait themselves. */
+function scheduleRelayout(entry: HostedView, force = false): Promise<void> {
+  const next = relayout(entry, force)
+  // Emulation commands are applied in the order they are sent, so the latest one settling after
+  // the earlier ones means the page shows the latest layout.
+  entry.layout = Promise.all([entry.layout, next.catch(() => undefined)]).then(() => undefined)
+  return next
+}
+
 /** Embedded bounds arrive in physical window pixels, so a view left at zoom 1
  * renders the page larger than the surrounding app UI. Matching the host zoom
  * keeps page content on the same scale as everything around it. */
@@ -98,7 +109,15 @@ const views = new Map<number, HostedView>()
 const watchedHosts = new WeakSet<BrowserWindow>()
 
 export function registerBrowserView(view: WebContentsView, parking: BrowserWindow): void {
-  const entry: HostedView = { view, parking, agentInput: 0, zoom: 1, fit: 1, fitHeight: 0 }
+  const entry: HostedView = {
+    view,
+    parking,
+    agentInput: 0,
+    zoom: 1,
+    fit: 1,
+    fitHeight: 0,
+    layout: Promise.resolve()
+  }
   const id = view.webContents.id
   views.set(id, entry)
   // Chromium keeps zoom per origin, so a cross-origin navigation drops the zoom
@@ -184,7 +203,7 @@ export function mountBrowserView(
   entry.zoom = zoom
   entry.panelBounds = bounds
   entry.view.setVisible(true)
-  void relayout(entry).catch(() => undefined)
+  void scheduleRelayout(entry).catch(() => undefined)
 }
 
 /**
@@ -208,7 +227,7 @@ export async function setBrowserViewAgentViewport(
     if (entry.host && entry.panelBounds) entry.view.setBounds(entry.panelBounds)
     return true
   }
-  await relayout(entry, true)
+  await scheduleRelayout(entry, true)
   return true
 }
 
@@ -227,10 +246,18 @@ export function parkBrowserView(id: number): void {
     entry.parking.contentView.addChildView(entry.view)
     const [width, height] = entry.parking.getContentSize()
     entry.view.setBounds({ x: 0, y: 0, width, height })
-    void relayout(entry).catch(() => undefined)
+    void scheduleRelayout(entry).catch(() => undefined)
     entry.parking.setOpacity(process.platform === 'darwin' ? 0.01 : 1)
     entry.parking.showInactive()
   }
+}
+
+/**
+ * Waits until the page is laid out for where it is now. Mounting and parking re-fit an agent
+ * viewport in the background, and a screenshot taken before that lands shows the old scale.
+ */
+export function browserViewLayoutSettled(id: number): Promise<void> {
+  return views.get(id)?.layout ?? Promise.resolve()
 }
 
 export function unmountBrowserHost(host: BrowserWindow): void {

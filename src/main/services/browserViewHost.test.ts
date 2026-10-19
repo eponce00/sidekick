@@ -24,9 +24,11 @@ vi.mock('electron', () => ({
 import {
   browserAgentInput,
   browserDebuggerCommand,
+  browserViewLayoutSettled,
   mountBrowserView,
   parkBrowserView,
   registerBrowserView,
+  setBrowserViewAgentViewport,
   showBrowserPointer
 } from './browserViewHost'
 
@@ -246,6 +248,37 @@ it('returns a parked view to natural scale so automation sizing is unaffected', 
   try {
     parkBrowserView(fixture.contents.id)
     expect(fixture.contents.getZoomFactor()).toBe(1)
+  } finally {
+    fixture.contents.emit('destroyed')
+  }
+})
+
+it('holds captures until a parked agent viewport is back at full scale', async () => {
+  const fixture = hosted()
+  try {
+    const fits: Array<{ scale: number; height: number }> = []
+    let release = (): void => undefined
+    const applyFit = vi.fn(async (layout: { scale: number; height: number }) => {
+      fits.push(layout)
+      if (layout.scale === 1) await new Promise<void>((resolve) => (release = resolve))
+    })
+    await setBrowserViewAgentViewport(
+      fixture.contents.id,
+      { width: 400, height: 300, fillHeight: true },
+      applyFit
+    )
+    expect(fits).toEqual([{ scale: 0.25, height: 400 }])
+
+    // Parking re-fits at full scale in the background; a capture must not run in between.
+    parkBrowserView(fixture.contents.id)
+    expect(fits.at(-1)).toEqual({ scale: 1, height: 300 })
+    let settled = false
+    const waiting = browserViewLayoutSettled(fixture.contents.id).then(() => (settled = true))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(settled).toBe(false)
+    release()
+    await waiting
+    expect(settled).toBe(true)
   } finally {
     fixture.contents.emit('destroyed')
   }
