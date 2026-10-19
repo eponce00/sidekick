@@ -64,7 +64,7 @@ The planner retains a verbatim recent tail of 20% of context, bounded to 2,000â€
 
 ## Complete request budget
 
-The shared context-budget projection accounts for message text, tool calls, multimodal payload estimates, all tool schemas (including MCP), provider framing, in-flight response text, output reserve, and a safety margin. Compaction is evaluated against the lower of the configured threshold and the effective provider input limit. A preflight check runs before every provider boundary, not only after a provider reports a context error.
+The shared context-budget projection accounts for message text, tool calls, multimodal payload estimates, all tool schemas (including MCP), provider framing, in-flight response text, output reserve, and a safety margin. Compaction is evaluated against the lower of the configured threshold, as a share of the whole window, and the effective provider input limit. The output reserve is the model's reply limit up to 32,768 tokens: a larger limit is a ceiling a long reply may reach, and each request's reply limit is cut to the room the window has left, so prompt and reply never exceed it. A preflight check runs before every provider boundary, not only after a provider reports a context error. Compaction keeps up to 32,000 tokens of recent work verbatim, and gives the summary up to 16,384 output tokens so a reasoning model can finish it.
 
 Workspace mutations keep two projections: complete bounded diffs for expandable human review and a
 compact model-facing acknowledgement. The model receives file paths, hashes, change counts, and only

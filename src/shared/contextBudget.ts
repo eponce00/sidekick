@@ -99,7 +99,18 @@ export interface ContextCapacity {
   compactionTriggerTokens: number
 }
 
-/** Shared capacity math used by both the runtime guard and its user-facing indicator. */
+/**
+ * The most a conversation keeps free for the next reply. A larger reply limit is a ceiling a long
+ * answer may reach, not room every request holds back: each request's limit shrinks to the room
+ * actually left, so holding back more would only summarize chats long before their window fills.
+ */
+export const MAX_RESERVED_REPLY_TOKENS = 32_768
+
+/**
+ * Shared capacity math used by both the runtime guard and its user-facing indicator. The
+ * compaction threshold is the share of the whole window a chat may fill, as Settings describes
+ * it, and never so much that the reply's room and the safety margin no longer fit.
+ */
 export function calculateContextCapacity(options: {
   contextLength: number
   reservedOutputTokens: number
@@ -108,7 +119,7 @@ export function calculateContextCapacity(options: {
   const contextLength = Math.max(1_024, Math.floor(options.contextLength))
   const safetyMarginTokens = Math.max(256, Math.floor(contextLength * 0.02))
   const reservedOutputTokens = Math.min(
-    Math.max(256, Math.floor(options.reservedOutputTokens)),
+    Math.max(256, Math.floor(Math.min(options.reservedOutputTokens, MAX_RESERVED_REPLY_TOKENS))),
     Math.max(256, contextLength - safetyMarginTokens - 512)
   )
   const effectiveInputLimit = Math.max(
@@ -121,8 +132,25 @@ export function calculateContextCapacity(options: {
     reservedOutputTokens,
     safetyMarginTokens,
     effectiveInputLimit,
-    compactionTriggerTokens: Math.max(256, Math.floor(effectiveInputLimit * threshold))
+    compactionTriggerTokens: Math.max(
+      256,
+      Math.min(effectiveInputLimit, Math.round(contextLength * threshold))
+    )
   }
+}
+
+/**
+ * How long the next reply may be: the model's reply limit, cut to what the window has left after
+ * the request and the safety margin. Asking for more than fits makes some servers refuse the
+ * request outright.
+ */
+export function replyLimitForRequest(
+  maxOutputTokens: number | undefined,
+  budget: Pick<RequestBudget, 'contextLength' | 'safetyMarginTokens' | 'requestTokens'>
+): number | undefined {
+  if (maxOutputTokens === undefined) return undefined
+  const room = budget.contextLength - budget.safetyMarginTokens - budget.requestTokens
+  return Math.max(1_024, Math.min(maxOutputTokens, Math.floor(room)))
 }
 
 /**

@@ -2771,6 +2771,47 @@ describe('AgentRunKernel', () => {
     expect(rejected).toHaveBeenCalledOnce()
   })
 
+  it('asks for no longer a reply than the window has room for', async () => {
+    // A server refuses a request whose prompt and reply limit together exceed the window.
+    const sampler = sampledTurn({ content: 'Short answer' })
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      replyLimit: vi.fn(() => 512),
+      compact: vi.fn(),
+      observeUsage: vi.fn()
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start({ ...input(), contextManager })
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Short answer' })
+    expect(contextManager.replyLimit).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.any(Array),
+      1_024
+    )
+    expect(vi.mocked(sampler).mock.calls[0][0].maxOutputTokens).toBe(512)
+  })
+
+  it('says a reply was cut by the room left, not by the model limit, when that is the cause', async () => {
+    const sampler = sampledTurn({
+      content: '',
+      usage: { promptTokens: 10, completionTokens: 512, doneReason: 'length' }
+    })
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      replyLimit: vi.fn(() => 512),
+      compact: vi.fn(),
+      observeUsage: vi.fn()
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start({ ...input(), contextManager })
+
+    expect(result.phase).toBe('failed')
+    expect(result.error).toContain('little room left')
+  })
+
   it('believes the window a provider reports over a larger configured one', async () => {
     // The shape seen in the field: a profile swapped on the server left the app
     // budgeting against 180k while the engine actually had 49,152.

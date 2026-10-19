@@ -218,7 +218,7 @@ describe('AgentContextManager', () => {
         [
           ...initial,
           { role: 'assistant', content: 'Continue' },
-          { role: 'tool', content: 'x'.repeat(2_000) }
+          { role: 'tool', content: 'x'.repeat(8_000) }
         ],
         []
       )
@@ -232,7 +232,7 @@ describe('AgentContextManager', () => {
       maxOutputTokens: 2_048,
       threshold: 0.8,
       enabled: true,
-      initialEstimationBiasTokens: 5_000
+      initialEstimationBiasTokens: 6_000
     })
 
     expect(manager.shouldCompact([{ role: 'user', content: 'Continue' }], [])).toBe(true)
@@ -266,5 +266,61 @@ describe('AgentContextManager', () => {
     }
 
     expect(complete).toHaveBeenCalledTimes(5)
+  })
+
+  it('cuts a reply limit to the room left near the end of the window', () => {
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 4_096,
+      threshold: 0.8,
+      enabled: true
+    })
+    const short = [{ role: 'user', content: 'A short request' }] satisfies ProviderChatMessage[]
+    const long = [{ role: 'user', content: 'word '.repeat(6_000) }] satisfies ProviderChatMessage[]
+
+    expect(manager.replyLimit(short, [], 4_096)).toBe(4_096)
+    expect(manager.replyLimit(long, [], 4_096)).toBeLessThan(4_096)
+    expect(manager.replyLimit(long, [], 4_096)).toBeGreaterThanOrEqual(1_024)
+    expect(manager.replyLimit(short, [], undefined)).toBeUndefined()
+  })
+
+  it('keeps the recent work of a large window, and gives the summary room to think', async () => {
+    let summaryLimit: number | undefined
+    const manager = new AgentContextManager({
+      target: { ...target, contextLength: 260_000 },
+      contextLength: 260_000,
+      maxOutputTokens: 100_000,
+      threshold: 0.8,
+      enabled: true,
+      complete: async (request) => {
+        summaryLimit = request.maxOutputTokens
+        return {
+          ok: true,
+          data: {
+            message: { role: 'assistant', content: 'Handoff' },
+            promptTokens: 1000,
+            completionTokens: 3,
+            reasoningTokens: 0,
+            finishReason: 'stop'
+          }
+        }
+      }
+    })
+    const messages: ProviderChatMessage[] = [{ role: 'system', content: 'Policy' }]
+    for (let index = 0; index < 60; index++) {
+      messages.push(
+        { role: 'user', content: `step ${index} ${'detail '.repeat(1_500)}` },
+        { role: 'assistant', content: `done ${index}` }
+      )
+    }
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+    const kept = result.messages.filter((message) => message.content?.startsWith('step '))
+
+    // About 32k tokens of recent steps stay word for word, not the 8k kept before.
+    expect(kept.length).toBeGreaterThanOrEqual(8)
+    expect(kept.length).toBeLessThan(20)
+    expect(summaryLimit).toBe(16_384)
   })
 })
