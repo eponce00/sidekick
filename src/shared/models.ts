@@ -23,6 +23,8 @@ export interface PinnedModel {
   contextLength?: number
   maxInputTokens?: number
   maxOutputTokens?: number
+  /** See `ProviderInstanceModel.outputTokenLimit`. */
+  outputTokenLimit?: number
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean

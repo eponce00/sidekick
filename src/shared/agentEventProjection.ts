@@ -131,6 +131,8 @@ export interface ProjectedAgentRunMessage {
     generatedTokens?: number
     /** The model turn being streamed now, before the server reports its usage. */
     streaming?: { startedAt: number; updatedAt: number; characters: number }
+    /** A compaction is summarizing earlier messages; nothing streams until it ends. */
+    compacting?: { startedAt: number }
   }
   phase: AgentRunPhase | null
 }
@@ -167,6 +169,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let measuredGenerationSeconds = 0
   let generatedTokens = 0
   let streaming: { startedAt: number; updatedAt: number; characters: number } | undefined
+  let compactingSince: number | undefined
   let timeToFirstTokenMs: number | undefined
   const providerTimings: import('./providerRuntime').ProviderRequestTiming[] = []
   let phase: AgentRunPhase | null = null
@@ -184,6 +187,12 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
 
   for (const event of orderedEvents) {
     if (event.type === 'run.started') runStartedAt ??= event.timestamp
+    // A compaction asks the model for a summary of the whole conversation, which on a local
+    // model takes a minute or more with nothing streaming; the live line has to say so.
+    if (event.type === 'compaction.started') compactingSince = event.timestamp
+    if (event.type === 'compaction.completed' || event.type === 'run.completed') {
+      compactingSince = undefined
+    }
     if (event.type === 'run.phase' || event.type === 'run.completed') {
       if (typeof event.payload.phase === 'string') phase = event.payload.phase as AgentRunPhase
       if (event.type === 'run.completed') runCompletedAt = event.timestamp
@@ -743,7 +752,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       ...(runCompletedAt === undefined ? {} : { runCompletedAt }),
       ...(providerTimings.length ? { providerTimings } : {}),
       ...(generatedTokens > 0 ? { generatedTokens } : {}),
-      ...(streaming && runCompletedAt === undefined ? { streaming: { ...streaming } } : {})
+      ...(streaming && runCompletedAt === undefined ? { streaming: { ...streaming } } : {}),
+      ...(compactingSince === undefined ? {} : { compacting: { startedAt: compactingSince } })
     },
     phase
   }

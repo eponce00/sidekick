@@ -15,14 +15,61 @@ const PROVIDER_FRAMING_TOKENS = 256
 export function estimateTextTokens(content: string): number {
   if (!content) return 0
   const proseEstimate = Math.ceil(content.length / 4)
+  // One pass over the characters. The main process estimates the whole transcript before every
+  // model request, and splitting it into a string per word made that cost tens of milliseconds
+  // per megabyte of blocked window.
   let lexicalEstimate = 0
-  for (const part of content.match(/\s+|[A-Za-z_]+|\d+|[^\sA-Za-z_\d]/gu) ?? []) {
-    if (/^\s+$/u.test(part)) continue
-    if (/^[A-Za-z_]+$/u.test(part)) lexicalEstimate += Math.ceil(part.length / 4)
-    else if (/^\d+$/u.test(part)) lexicalEstimate += Math.ceil(part.length / 3)
-    else lexicalEstimate += Array.from(part).length
+  let index = 0
+  while (index < content.length) {
+    const code = content.charCodeAt(index)
+    if (isWordCharacter(code) || isDigit(code)) {
+      // Letters count a token per four, digits a token per three.
+      const inRun = isDigit(code) ? isDigit : isWordCharacter
+      const start = index
+      while (index < content.length && inRun(content.charCodeAt(index))) index++
+      lexicalEstimate += Math.ceil((index - start) / (inRun === isDigit ? 3 : 4))
+    } else if (isWhitespace(code)) {
+      index++
+    } else {
+      // Any other code point is a token of its own; a surrogate pair is one code point.
+      const pair =
+        code >= 0xd800 &&
+        code <= 0xdbff &&
+        index + 1 < content.length &&
+        content.charCodeAt(index + 1) >= 0xdc00 &&
+        content.charCodeAt(index + 1) <= 0xdfff
+      index += pair ? 2 : 1
+      lexicalEstimate++
+    }
   }
   return Math.max(proseEstimate, lexicalEstimate)
+}
+
+/** `[A-Za-z_]` */
+function isWordCharacter(code: number): boolean {
+  return (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95
+}
+
+/** `\d`, which is ASCII only. */
+function isDigit(code: number): boolean {
+  return code >= 48 && code <= 57
+}
+
+/** `\s`: ECMAScript white space and line terminators. */
+function isWhitespace(code: number): boolean {
+  return (
+    (code >= 9 && code <= 13) ||
+    code === 32 ||
+    code === 0xa0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  )
 }
 
 export interface ProviderRequestTokenBreakdown {
@@ -80,12 +127,15 @@ export function calculateContextCapacity(options: {
 
 /**
  * How long one reply may be. Without a configured maximum, a quarter of the context window up to
- * 32,768 tokens. A configured maximum is the user's own and is honored up to half the window, so
- * the conversation keeps room; a reasoning model needs it to think through a large task.
+ * 32,768 tokens, and no more than the most the provider's catalog says the model can write. A
+ * configured maximum is the user's own and is honored up to half the window, so the conversation
+ * keeps room; a reasoning model needs it to think through a large task. A catalog's maximum only
+ * lowers the default: reserving all a model could write would shrink every chat's room.
  */
 export function resolveMaxOutputTokens(
   contextLength: number,
-  configuredMaxOutputTokens?: number
+  configuredMaxOutputTokens?: number,
+  outputTokenLimit?: number
 ): number {
   const normalizedContext = Math.max(1_024, Math.floor(contextLength))
   if (
@@ -93,7 +143,10 @@ export function resolveMaxOutputTokens(
     !Number.isFinite(configuredMaxOutputTokens) ||
     configuredMaxOutputTokens <= 0
   ) {
-    return Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
+    const budget = Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
+    return outputTokenLimit && Number.isFinite(outputTokenLimit) && outputTokenLimit > 0
+      ? Math.min(budget, Math.floor(outputTokenLimit))
+      : budget
   }
   return Math.max(
     1_024,

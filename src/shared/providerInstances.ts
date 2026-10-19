@@ -72,6 +72,31 @@ export function transportForProviderInstance(
   return providerDefinitionForInstance(instance).transport
 }
 
+/**
+ * A provider's fresh model list, keeping what the user set up. Each listed model keeps whether it
+ * is shown in chat; a model the provider no longer lists stays while it is shown in chat or has
+ * overrides, so a refresh never takes away a model the user chose.
+ */
+export function mergeDiscoveredModels(
+  configured: readonly ProviderInstanceModel[],
+  discovered: readonly ProviderInstanceModel[]
+): ProviderInstanceModel[] {
+  const current = new Map(configured.map((model) => [model.id, model]))
+  const listed = new Set(discovered.map(({ id }) => id))
+  const kept = configured.filter(
+    (model) =>
+      !listed.has(model.id) &&
+      (model.enabled || Object.keys(model.metadataOverrides ?? {}).length > 0)
+  )
+  return [
+    ...discovered.map((model) => ({
+      ...model,
+      enabled: current.get(model.id)?.enabled ?? model.enabled
+    })),
+    ...kept
+  ].sort((left, right) => left.id.localeCompare(right.id))
+}
+
 /** Refreshes persisted run targets from the provider model configuration. */
 export function refreshProviderTargetMetadata(
   target: ProviderTarget,
@@ -216,6 +241,7 @@ export function pinnedModelsFromProviderInstances(instances: ProviderInstance[])
         contextLength: model.contextLength,
         maxInputTokens: model.maxInputTokens,
         maxOutputTokens: model.maxOutputTokens,
+        outputTokenLimit: model.outputTokenLimit,
         supportsTools: model.supportsTools,
         supportsVision: model.supportsVision,
         supportsReasoning: model.supportsReasoning,

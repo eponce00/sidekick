@@ -276,12 +276,16 @@ export function durableProviderHistory(
   rows: readonly MessageRow[],
   currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
 ): ProviderChatMessage[] {
+  // Only the events read below. A long conversation's ledger is mostly streamed deltas and
+  // per-run context snapshots; reading and parsing them all blocked the main process, and with
+  // it the whole window, for most of a second each time a message was sent.
   const eventRows = db
     .prepare(
       `SELECT e.run_id, r.provider, r.model, e.type, e.payload_json
        FROM agent_runs r
        JOIN agent_run_events e ON e.run_id = r.id
        WHERE r.thread_id = ?
+         AND e.type IN ('run.started', 'run.steered', 'assistant.completed', 'tool.completed')
        ORDER BY r.started_at ASC, e.sequence ASC`
     )
     .all(conversationId) as ProviderHistoryEventRow[]
@@ -839,7 +843,11 @@ export class ConversationRunPreparer {
       contextReliable: boolean
     } => {
       const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
-      const maxOutputTokens = resolveMaxOutputTokens(contextLength, model.maxOutputTokens)
+      const maxOutputTokens = resolveMaxOutputTokens(
+        contextLength,
+        model.maxOutputTokens,
+        model.outputTokenLimit
+      )
       return {
         provider: target.providerKind,
         model: target.model,

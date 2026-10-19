@@ -7,6 +7,7 @@ import {
   previewSessionWorktrees
 } from './sessionsPreview'
 import type { ProjectConversation } from '../../../shared/projects'
+import type { ProviderInstance, ProviderInstanceModel } from '../../../shared/settings'
 import type { CommandLineToolStatus } from '../../../shared/commandLineTool'
 import type { ManagedWorktreeSummary, WorktreesAPI } from '../../../shared/worktrees'
 import type {
@@ -105,9 +106,121 @@ const previewModels = [
     id: 'openrouter:anthropic/claude-sonnet-4',
     name: 'Claude Sonnet 4',
     provider: 'openrouter' as const,
+    providerModelId: 'anthropic/claude-sonnet-4',
     contextLength: 200_000
   }
 ]
+
+// What a few providers list, so the Providers page has a catalog to browse.
+const catalogModel = (
+  id: string,
+  details: Partial<ProviderInstanceModel>
+): ProviderInstanceModel => ({
+  id,
+  name: id,
+  enabled: false,
+  metadataSource: 'provider',
+  ...details
+})
+
+const previewCatalogs: Partial<Record<ProviderInstance['type'], ProviderInstanceModel[]>> = {
+  ollama: [
+    catalogModel('gemma3:4b', {
+      contextLength: 131_072,
+      supportsTools: false,
+      supportsVision: true,
+      supportsReasoning: false
+    }),
+    catalogModel('gpt-oss:20b', {
+      contextLength: 131_072,
+      supportsTools: true,
+      supportsVision: false,
+      supportsReasoning: true
+    }),
+    catalogModel('qwen2.5-coder:7b', {
+      contextLength: 32_768,
+      supportsTools: true,
+      supportsVision: false,
+      supportsReasoning: false
+    }),
+    catalogModel('qwen3:8b', {
+      contextLength: 40_960,
+      supportsTools: true,
+      supportsVision: false,
+      supportsReasoning: true
+    })
+  ],
+  openrouter: [
+    catalogModel('anthropic/claude-sonnet-4', {
+      name: 'Anthropic: Claude Sonnet 4',
+      contextLength: 1_000_000,
+      outputTokenLimit: 64_000,
+      supportsTools: true,
+      supportsVision: true,
+      supportsReasoning: true,
+      supportsPdfInput: true,
+      pricing: { prompt: 0.000003, completion: 0.000015 }
+    }),
+    catalogModel('deepseek/deepseek-chat-v3.1', {
+      name: 'DeepSeek: DeepSeek V3.1',
+      contextLength: 163_840,
+      supportsTools: true,
+      supportsReasoning: true,
+      pricing: { prompt: 0.0000002, completion: 0.0000008 }
+    }),
+    catalogModel('google/gemini-2.5-flash', {
+      name: 'Google: Gemini 2.5 Flash',
+      contextLength: 1_048_576,
+      outputTokenLimit: 65_536,
+      supportsTools: true,
+      supportsVision: true,
+      supportsReasoning: true,
+      supportsPdfInput: true,
+      supportsAudioInput: true,
+      pricing: { prompt: 0.0000003, completion: 0.0000025 }
+    }),
+    catalogModel('meta-llama/llama-3.3-70b-instruct:free', {
+      name: 'Meta: Llama 3.3 70B Instruct (free)',
+      contextLength: 131_072,
+      supportsTools: true,
+      supportsVision: false,
+      supportsReasoning: false,
+      pricing: { prompt: 0, completion: 0 }
+    }),
+    catalogModel('openai/gpt-5-mini', {
+      name: 'OpenAI: GPT-5 Mini',
+      contextLength: 400_000,
+      outputTokenLimit: 128_000,
+      supportsTools: true,
+      supportsVision: true,
+      supportsReasoning: true,
+      supportsPdfInput: true,
+      pricing: { prompt: 0.00000025, completion: 0.000002 }
+    }),
+    catalogModel('qwen/qwen3-coder', {
+      name: 'Qwen: Qwen3 Coder 480B A35B',
+      contextLength: 262_144,
+      supportsTools: true,
+      supportsReasoning: false,
+      pricing: { prompt: 0.00000022, completion: 0.00000095 }
+    })
+  ]
+}
+
+function previewDiscoverModels(draft: ProviderInstance | undefined): ProviderInstanceModel[] {
+  if (!draft) return []
+  const catalog = previewCatalogs[draft.type]
+  if (!catalog) return draft.models
+  // As the main process does: the user's choice and any name they gave survive a load.
+  return catalog.map((model) => {
+    const configured = draft.models.find(({ id }) => id === model.id)
+    return {
+      ...model,
+      name: configured?.name && configured.name !== model.id ? configured.name : model.name,
+      enabled: configured?.enabled ?? false
+    }
+  })
+}
 
 const previewConversations: ProjectConversation[] = [
   {
@@ -651,7 +764,11 @@ export function installBrowserApiMock(): void {
       probe: async (target) => ({ model: target.model, checks: [] }),
       cancelProbe: async () => undefined,
       complete: async () => ({ ok: false, error: 'UI preview' }),
-      discoverModels: async () => ({ ok: true, models: [] }),
+      discoverModels: async (request) => {
+        // Long enough to see the loading state.
+        await new Promise((resolve) => setTimeout(resolve, 400))
+        return { ok: true, models: previewDiscoverModels(request.draft) }
+      },
       resolveContext: async () => ({
         ok: true,
         contextLength: 32_768,

@@ -1,22 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
-import { Brain, Coins, Hand, Layers, PenLine, Timer, Wrench, Zap } from 'lucide-react'
+import { AlignLeft, Brain, Coins, Hand, Layers, PenLine, Timer, Wrench, Zap } from 'lucide-react'
 import type { ContentSegment, TokenUsage } from '../types/chat.types'
 import { motionAllowed } from '../utils/messageMotion'
 
 /** Characters per token, to count a turn the server has not reported usage for yet. */
 const CHARACTERS_PER_TOKEN = 4
 
-type RunActivity = 'waiting' | 'thinking' | 'tools' | 'writing' | 'you'
+type RunActivity = 'waiting' | 'thinking' | 'tools' | 'writing' | 'you' | 'compacting'
 
 const ACTIVITY_LABELS: Record<RunActivity, string> = {
   waiting: 'Waiting for model',
   thinking: 'Thinking',
   tools: 'Using tools',
   writing: 'Writing',
-  you: 'Waiting for you'
+  you: 'Waiting for you',
+  compacting: 'Compacting context'
 }
 
-function runActivity(segments: readonly ContentSegment[] | undefined): RunActivity {
+function runActivity(
+  segments: readonly ContentSegment[] | undefined,
+  usage: TokenUsage | undefined
+): RunActivity {
+  // The last step stays on screen through a compaction; without this the reply read as stuck
+  // in that step, or in "Waiting for model", for the minute the summary takes.
+  if (usage?.compacting) return 'compacting'
   const last = segments?.findLast((segment) => segment.type !== 'run_status')
   if (!last) return 'waiting'
   if (
@@ -85,7 +92,7 @@ export function AgentRunStats({
     return () => window.clearInterval(timer)
   }, [])
 
-  const activity = runActivity(segments)
+  const activity = runActivity(segments, usage)
   const streaming = usage?.streaming
   const streamedTokens = streaming ? streaming.characters / CHARACTERS_PER_TOKEN : 0
   const generated = useRollingNumber(
@@ -111,8 +118,19 @@ export function AgentRunStats({
           <Hand size={13} aria-hidden="true" />
         ) : activity === 'writing' ? (
           <PenLine size={13} aria-hidden="true" />
+        ) : activity === 'compacting' ? (
+          <AlignLeft size={13} aria-hidden="true" />
         ) : null}
-        <span className="agent-run-stats-label">{ACTIVITY_LABELS[activity]}</span>
+        <span
+          className="agent-run-stats-label"
+          title={
+            activity === 'compacting'
+              ? 'Summarizing earlier messages so the conversation fits in the model’s context. On a local model this can take a minute or more.'
+              : undefined
+          }
+        >
+          {ACTIVITY_LABELS[activity]}
+        </span>
       </span>
       {startedAt !== undefined && (
         <span className="agent-run-stats-item" title="Time since the message was sent">

@@ -75,7 +75,11 @@ function ContextIndicator({
 
   const capacity = calculateContextCapacity({
     contextLength: modelContextWindow,
-    reservedOutputTokens: resolveMaxOutputTokens(modelContextWindow, model?.maxOutputTokens),
+    reservedOutputTokens: resolveMaxOutputTokens(
+      modelContextWindow,
+      model?.maxOutputTokens,
+      model?.outputTokenLimit
+    ),
     compactionThreshold: autoCompactThreshold
   })
   const thresholdTokens = capacity.compactionTriggerTokens

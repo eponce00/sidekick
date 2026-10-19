@@ -73,6 +73,14 @@ describe('calculateRequestBudget', () => {
     expect(resolveMaxOutputTokens(131_072, 100_000)).toBe(65_536)
   })
 
+  it('lets a catalog maximum lower the default reply limit but never raise it', () => {
+    // A catalog that says a model can write 160K must not reserve half of every chat for it.
+    expect(resolveMaxOutputTokens(163_840, undefined, 163_840)).toBe(32_768)
+    expect(resolveMaxOutputTokens(1_000_000, undefined, 128_000)).toBe(32_768)
+    expect(resolveMaxOutputTokens(200_000, undefined, 8_192)).toBe(8_192)
+    expect(resolveMaxOutputTokens(260_000, 100_000, 8_192)).toBe(100_000)
+  })
+
   it('does not treat dense numeric JSON like ordinary prose', () => {
     const dense = JSON.stringify({
       coordinates: Array.from({ length: 4_000 }, (_, index) => [index / 100, -index / 100])
@@ -80,6 +88,84 @@ describe('calculateRequestBudget', () => {
 
     expect(estimateTextTokens(dense)).toBeGreaterThan(dense.length / 2)
     expect(estimateTextTokens('ordinary prose with several readable words')).toBeLessThan(20)
+  })
+
+  it('counts exactly as the word-splitting estimate it replaced', () => {
+    // The previous estimate, kept here as the reference: one string per word, number, or symbol.
+    const reference = (content: string): number => {
+      if (!content) return 0
+      let lexical = 0
+      for (const part of content.match(/\s+|[A-Za-z_]+|\d+|[^\sA-Za-z_\d]/gu) ?? []) {
+        if (/^\s+$/u.test(part)) continue
+        if (/^[A-Za-z_]+$/u.test(part)) lexical += Math.ceil(part.length / 4)
+        else if (/^\d+$/u.test(part)) lexical += Math.ceil(part.length / 3)
+        else lexical += Array.from(part).length
+      }
+      return Math.max(Math.ceil(content.length / 4), lexical)
+    }
+    // Every class the tokenizer distinguishes, plus the edges of each: Unicode white space,
+    // non-ASCII letters and digits, astral symbols, and unpaired surrogates.
+    const pool = [
+      'a',
+      'Z',
+      '_',
+      'word',
+      'identifier_name',
+      '0',
+      '7',
+      '123456',
+      ' ',
+      '\t',
+      '\n',
+      '\r\n',
+      '\v',
+      '\f',
+      '\u00a0',
+      '\u1680',
+      '\u2003',
+      '\u200a',
+      '\u2028',
+      '\u2029',
+      '\u202f',
+      '\u205f',
+      '\u3000',
+      '\ufeff',
+      '\u200b',
+      '{',
+      '"',
+      ':',
+      ',',
+      '.',
+      '-',
+      'é',
+      'ß',
+      'Ж',
+      '中文',
+      '٣',
+      '１',
+      '😀',
+      '👩‍💻',
+      '\ud83d',
+      '\ude00',
+      '\udc00\ud800'
+    ]
+    let seed = 7
+    const random = (): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648
+      return seed / 2_147_483_648
+    }
+    for (let sample = 0; sample < 400; sample++) {
+      let text = ''
+      const pieces = Math.floor(random() * 60)
+      for (let piece = 0; piece < pieces; piece++) text += pool[Math.floor(random() * pool.length)]
+      expect(estimateTextTokens(text), JSON.stringify(text)).toBe(reference(text))
+    }
+    const transcript = JSON.stringify({
+      role: 'tool',
+      content: 'Exit code 1\nError: ENOENT: no such file, open "C:\\work\\a.ts" at line 42:17',
+      tool_calls: [{ id: 'call_1', arguments: { path: 'src/main/index.ts', limit: 2_000 } }]
+    })
+    expect(estimateTextTokens(transcript)).toBe(reference(transcript))
   })
 
   it('applies a positive calibration learned from real provider usage', () => {

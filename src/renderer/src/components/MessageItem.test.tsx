@@ -1381,6 +1381,58 @@ describe('MessageItem shared-channel presentation', () => {
       vi.useRealTimers()
     }
   })
+
+  it('says the reply is compacting context rather than still in its last step', async () => {
+    const render = async (compacting: boolean): Promise<void> =>
+      act(async () => {
+        root.render(
+          <MessageItem
+            message={{
+              id: 'compacting-work',
+              role: 'agent',
+              content: '',
+              timestamp: 1_000,
+              segments: [
+                {
+                  type: 'tool',
+                  tool: { id: 'tool-1', title: 'Read file', command: '', status: 'success' }
+                }
+              ],
+              tokenUsage: {
+                promptTokens: 150_000,
+                completionTokens: 0,
+                runStartedAt: 1_000,
+                ...(compacting ? { compacting: { startedAt: 2_000 } } : {})
+              }
+            }}
+            index={0}
+            isLoading
+            expandedThinking={new Set()}
+            editingMessageId={null}
+            copiedMessageId={null}
+            onToggleThinking={vi.fn()}
+            onHandleArtifactResult={vi.fn()}
+            onEditMessage={vi.fn()}
+            onCopyMessage={vi.fn()}
+            onRetryMessage={vi.fn()}
+            onApproveToolLimitDecision={vi.fn()}
+            onDenyToolLimitDecision={vi.fn()}
+          />
+        )
+      })
+    const stats = (): Element | null => container.querySelector('.agent-run-stats')
+    try {
+      await render(true)
+      expect(stats()?.getAttribute('data-activity')).toBe('compacting')
+      expect(stats()?.textContent).toContain('Compacting context')
+      expect(stats()?.textContent).not.toContain('Using tools')
+
+      await render(false)
+      expect(stats()?.textContent).toContain('Using tools')
+    } finally {
+      await act(async () => root.render(<></>))
+    }
+  })
 })
 
 describe('MessageItem in long conversations', () => {

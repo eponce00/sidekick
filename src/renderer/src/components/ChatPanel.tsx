@@ -292,7 +292,6 @@ function ChatPanel({
     attachments: attachedContext
   })
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
-  const [isCompacting, setIsCompacting] = useState(false)
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
   const [planModelOverrideId, setPlanModelOverrideId] = useState<string | null>(null)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
@@ -367,7 +366,6 @@ function ChatPanel({
     setInputValue,
     onConversationCreated,
     onProjection: (projection) => {
-      setIsCompacting(projection.phase === 'compacting')
       if (!openSubAgent)
         onTokenCountUpdate?.(
           projection.tokenUsage.promptTokens + projection.tokenUsage.completionTokens,
@@ -1799,7 +1797,6 @@ function ChatPanel({
         visionUnavailableReason={visionUnavailableReason}
         isLoading={isLoading}
         isStopping={isStopping}
-        isCompacting={isCompacting}
         editingMessageId={editingMessageId}
         onCancelEdit={handleCancelEditMessage}
         researchSelected={nextRunMode === 'research'}
