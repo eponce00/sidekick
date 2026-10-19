@@ -141,8 +141,7 @@
   background-clip: padding-box;
 }
 
-.messages-container > .message,
-.messages-container > .compacting-indicator {
+.messages-container > .message {
   width: min(100%, 880px);
   margin-inline: auto;
 }
@@ -1274,7 +1273,8 @@ body[data-theme='light'] .message-user .message-action:hover {
   animation: agent-run-stats-shimmer 2.4s linear infinite;
 }
 
-.agent-run-stats[data-activity='thinking'] .agent-run-stats-activity svg {
+.agent-run-stats[data-activity='thinking'] .agent-run-stats-activity svg,
+.agent-run-stats[data-activity='compacting'] .agent-run-stats-activity svg {
   animation: agent-run-stats-breathe 1.6s var(--ease-in-out) infinite;
 }
 
@@ -4318,25 +4318,6 @@ body[data-theme='light'] .tool-approval-command {
 
 .summary-unavailable {
   margin: 0;
-}
-
-/* Compacting Indicator */
-.compacting-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
-  margin: var(--space-3) var(--space-5);
-  background: var(--surface-2);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-  color: var(--text-muted);
-}
-
-.compacting-spinner {
-  animation: summary-spin 1s linear infinite;
-  stroke: var(--accent);
 }
 
 @media (max-width: 700px) {
