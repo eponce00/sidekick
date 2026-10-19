@@ -6,6 +6,11 @@ inputs:
     description: Install the libraries Electron needs on Linux, even to run as Node.
     default: 'true'
 
+outputs:
+  dependencies-hash:
+    description: A hash of the locked dependencies and the Node version, for keying other caches.
+    value: ${{ steps.dependencies.outputs.hash }}
+
 runs:
   using: composite
   steps:
@@ -33,15 +38,31 @@ runs:
           libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
 
     # The whole installed tree, Electron and the rebuilt native modules included, depends only on
-    # the lockfile, the Node version and the platform, so a matching tree skips `npm ci`.
+    # the locked dependencies, the Node version and the platform, so a matching tree skips
+    # `npm ci`. The hash leaves out SideKick's own version, so a release keeps the cache.
+    - name: Hash the locked dependencies
+      id: dependencies
+      shell: bash
+      run: echo "hash=$(node scripts/dependency-cache-key.cjs)" >> "$GITHUB_OUTPUT"
+
     - name: Restore installed dependencies
       id: modules
       uses: actions/cache@v6
       with:
         path: node_modules
-        key: modules-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', '.node-version') }}
+        key: modules-${{ runner.os }}-${{ runner.arch }}-${{ steps.dependencies.outputs.hash }}
 
+    # npm retries a request that fails before its response arrives, but not a connection reset
+    # partway through a download, which fails the whole install. npm ci starts again from an empty
+    # node_modules, so one more attempt rides out a transient registry error.
     - name: Install dependencies
+      id: install
       if: steps.modules.outputs.cache-hit != 'true'
+      continue-on-error: true
+      shell: bash
+      run: npm ci
+
+    - name: Retry installing dependencies
+      if: steps.install.outcome == 'failure'
       shell: bash
       run: npm ci

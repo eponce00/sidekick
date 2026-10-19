@@ -77,6 +77,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/prepare
+        id: prepare
 
       # electron-builder downloads the Electron release it packages on every run otherwise.
       - name: Restore Electron downloads
@@ -89,7 +90,7 @@ jobs:
             ~/Library/Caches/electron-builder
             ~/AppData/Local/electron/Cache
             ~/AppData/Local/electron-builder/Cache
-          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ steps.prepare.outputs.dependencies-hash }}
 
       - run: npm run test:release
       - name: Check packaged PDF runner contracts
