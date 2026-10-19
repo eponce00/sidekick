@@ -10,6 +10,40 @@ function modalIsOpen(): boolean {
   return document.querySelector('[aria-modal="true"]') !== null
 }
 
+const NON_TEXT_INPUT_TYPES = new Set([
+  'button',
+  'checkbox',
+  'color',
+  'file',
+  'image',
+  'radio',
+  'range',
+  'reset',
+  'submit'
+])
+
+/**
+ * Nor does a field the user is typing in elsewhere, such as the browser's address bar or the
+ * terminal. The chat changing or a reply finishing would otherwise move the rest of what they
+ * type into the composer.
+ */
+function typingElsewhere(input: HTMLElement | null): boolean {
+  const active = document.activeElement
+  if (!(active instanceof HTMLElement) || active === input || active.closest('[hidden]')) {
+    return false
+  }
+  if (active instanceof HTMLInputElement) return !NON_TEXT_INPUT_TYPES.has(active.type)
+  return (
+    active instanceof HTMLTextAreaElement ||
+    active instanceof HTMLSelectElement ||
+    active.isContentEditable
+  )
+}
+
+function keyboardTaken(input: HTMLElement | null): boolean {
+  return modalIsOpen() || typingElsewhere(input)
+}
+
 /**
  * Hook that automatically focuses an input element when conditions are met
  * Handles focus after conversation changes, loading completes, etc.
@@ -36,7 +70,7 @@ export function useAutoFocus(
     if (isLoading || isEditing) return
 
     const focusInput = (): void => {
-      if (modalIsOpen()) return
+      if (keyboardTaken(inputRef.current)) return
       if (inputRef.current) {
         inputRef.current.focus()
       } else {
@@ -52,7 +86,7 @@ export function useAutoFocus(
   // Focus when window regains focus
   useEffect(() => {
     const handleWindowFocus = (): void => {
-      if (!isLoading && !isEditing && !modalIsOpen()) {
+      if (!isLoading && !isEditing && !keyboardTaken(inputRef.current)) {
         inputRef.current?.focus()
       }
     }
