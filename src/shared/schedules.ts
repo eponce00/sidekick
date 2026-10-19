@@ -5,6 +5,14 @@ export const SCHEDULE_CADENCES = ['hourly', 'daily', 'weekdays', 'weekly'] as co
 
 export type ScheduleCadence = (typeof SCHEDULE_CADENCES)[number]
 
+/**
+ * Where each run works: a new chat every time, or the chat the last run used, so a run can build
+ * on what earlier runs said and did.
+ */
+export const SCHEDULE_CHAT_MODES = ['new', 'continue'] as const
+
+export type ScheduleChatMode = (typeof SCHEDULE_CHAT_MODES)[number]
+
 /** When a schedule runs, in the computer's local time. */
 export interface ScheduleTiming {
   cadence: ScheduleCadence
@@ -25,6 +33,8 @@ export interface ScheduleInput extends ScheduleTiming {
   modelId: string
   /** Run once when SideKick was closed or asleep at the scheduled time. */
   catchUp: boolean
+  /** A new chat for each run, or the last run's chat continued. Omitted, a new chat. */
+  chatMode?: ScheduleChatMode
   /**
    * The most a run, and any chat it starts, may do without asking: stored when the schedule is
    * saved, never looser than the user's setting then, and made stricter by the setting at run
@@ -223,6 +233,9 @@ export function validateScheduleInput(raw: unknown): ScheduleInput {
   if (typeof value.modelId !== 'string' || !value.modelId || value.modelId.length > 500) {
     throw new Error('Choose a model.')
   }
+  if (value.chatMode != null && !SCHEDULE_CHAT_MODES.includes(value.chatMode as ScheduleChatMode)) {
+    throw new Error('Choose whether each run starts a new chat.')
+  }
   if (value.permissionCeiling != null && !isPermissionMode(value.permissionCeiling)) {
     throw new Error('Choose what a run may do without asking.')
   }
@@ -243,6 +256,7 @@ export function validateScheduleInput(raw: unknown): ScheduleInput {
     minute: value.minute,
     weekday: value.weekday,
     catchUp: value.catchUp !== false,
+    chatMode: value.chatMode === 'continue' ? 'continue' : 'new',
     ...(isPermissionMode(value.permissionCeiling)
       ? { permissionCeiling: value.permissionCeiling }
       : {})

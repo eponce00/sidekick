@@ -503,3 +503,111 @@ describe('ScheduleService and a busy project folder', () => {
     })
   })
 })
+
+describe('ScheduleService and a chat each run continues', () => {
+  const continuing = (overrides: Partial<ScheduleInput> = {}): ScheduleInput =>
+    daily({ chatMode: 'continue', ...overrides })
+  const messages = (db: Database.Database, conversationId: string): string[] =>
+    (
+      db
+        .prepare(
+          "SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' ORDER BY timestamp, rowid"
+        )
+        .all(conversationId) as Array<{ content: string }>
+    ).map(({ content }) => content)
+
+  it('runs again in the last run’s chat, adding the prompt as the next message', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(continuing())
+    const first = await h.service.runNow(schedule.id)
+    h.setPhase(first.agentRunId!, 'completed')
+    h.clock.now = at(17, 9)
+    const second = await h.service.runNow(schedule.id)
+
+    expect(second).toMatchObject({ outcome: 'started', runNumber: 2 })
+    expect(second.conversationId).toBe(first.conversationId)
+    expect(h.starts.map((start) => start.conversationId)).toEqual([
+      first.conversationId,
+      first.conversationId
+    ])
+    expect(messages(h.db, first.conversationId!)).toEqual([
+      'Summarize what changed yesterday.',
+      'Summarize what changed yesterday.'
+    ])
+    // A chat every run continues carries the schedule's name, not one run's number.
+    expect(
+      h.db.prepare('SELECT title FROM conversations WHERE id = ?').get(first.conversationId)
+    ).toEqual({ title: 'Morning check' })
+  })
+
+  it('still starts a new chat for each run by default', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(daily())
+    expect(schedule.chatMode).toBe('new')
+    const first = await h.service.runNow(schedule.id)
+    h.setPhase(first.agentRunId!, 'completed')
+    const second = await h.service.runNow(schedule.id)
+    expect(second.conversationId).not.toBe(first.conversationId)
+  })
+
+  it('starts a new chat, and says why, when the last one was deleted', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(continuing())
+    const first = await h.service.runNow(schedule.id)
+    h.setPhase(first.agentRunId!, 'completed')
+    h.db.prepare('DELETE FROM conversations WHERE id = ?').run(first.conversationId)
+    const second = await h.service.runNow(schedule.id)
+    expect(second).toMatchObject({
+      outcome: 'started',
+      reason: 'Started a new chat: the last run’s chat was deleted.'
+    })
+    expect(second.conversationId).not.toBe(first.conversationId)
+  })
+
+  it('starts a new chat when the schedule moved to another project', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(continuing())
+    const first = await h.service.runNow(schedule.id)
+    h.setPhase(first.agentRunId!, 'completed')
+    h.service.update(schedule.id, continuing({ projectId: null }))
+    const second = await h.service.runNow(schedule.id)
+    expect(second.reason).toBe('Started a new chat: the schedule now works in another project.')
+    expect(
+      h.db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(second.conversationId)
+    ).toEqual({ project_id: null })
+  })
+
+  it('skips while another agent is writing in the chat’s folder', async () => {
+    const fixture: PlacementFixture = {}
+    const h = harness(at(16, 8), fixture)
+    const schedule = h.service.create(continuing())
+    const first = await h.service.runNow(schedule.id)
+    h.setPhase(first.agentRunId!, 'completed')
+    fixture.occupants = [
+      {
+        runId: 'other-run',
+        conversationId: 'other',
+        title: 'Fix the build',
+        workspaceRoot: 'C:/demo'
+      }
+    ]
+    const second = await h.service.runNow(schedule.id)
+    expect(second).toMatchObject({
+      outcome: 'skipped',
+      reason: 'Skipped: “Fix the build” was working in the folder this schedule’s chat works in.'
+    })
+    expect(messages(h.db, first.conversationId!)).toHaveLength(1)
+  })
+
+  it('skips while the chat’s previous run is still working, adding nothing to it', async () => {
+    const h = harness(at(16, 8))
+    const schedule = h.service.create(continuing())
+    const first = await h.service.runNow(schedule.id)
+    const second = await h.service.runNow(schedule.id)
+    expect(second).toMatchObject({
+      outcome: 'skipped',
+      reason: 'Skipped: the previous run is still working.'
+    })
+    expect(messages(h.db, first.conversationId!)).toHaveLength(1)
+  })
+})

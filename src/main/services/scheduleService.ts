@@ -36,6 +36,13 @@ export interface ScheduledRunLauncher {
     projectId: string | null,
     worktreeId?: string | null
   ) => string
+  /**
+   * For a schedule that continues its chat: whether the last run's chat can take this run, as
+   * the chat, a skip with the reason, or a new chat with the reason.
+   */
+  continueConversation?: (schedule: Schedule, conversationId: string) => ScheduledRunContinuation
+  /** Adds the schedule's prompt to a continued chat as the user's next message. */
+  appendPrompt?: (schedule: Schedule, conversationId: string) => void
   /** The run was started but waits for a free run slot, so it has no phase yet. */
   isRunQueued?: (agentRunId: string) => boolean
   /** Starts the agent run through `AgentRuntimeCoordinator`, under the user's permission mode. */
@@ -59,6 +66,12 @@ export type ScheduledRunPlacement =
       discard?: () => Promise<void>
     }
   | { skip: string }
+
+export type ScheduledRunContinuation =
+  | { conversationId: string }
+  | { skip: string }
+  /** Starts a new chat instead, saying why in the run's history. */
+  | { fresh: string }
 
 export interface ScheduleServiceOptions {
   store: ScheduleStore
@@ -385,27 +398,49 @@ export class ScheduleService {
       return run
     }
 
+    // A schedule that continues its chat runs in the last run's chat while it can take the run.
+    let continued: string | null = null
+    let freshReason: string | undefined
+    if (schedule.chatMode === 'continue' && previous) {
+      // Deleting a chat clears its link from the run's record, so a run without one lost its chat.
+      const continuation = previous.conversationId
+        ? this.launcher.continueConversation?.(schedule, previous.conversationId)
+        : { fresh: 'Started a new chat: the last run’s chat was deleted.' }
+      if (continuation && 'skip' in continuation) return skip(continuation.skip)
+      if (continuation && 'conversationId' in continuation) continued = continuation.conversationId
+      else if (continuation) freshReason = continuation.fresh
+    }
+
     this.launching.add(schedule.id)
     try {
-      const placement = this.launcher.placeRun
-        ? await this.launcher.placeRun(schedule)
-        : { projectId: schedule.projectId }
-      if ('skip' in placement) return skip(placement.skip)
-      const runNumber = this.store.claimRunNumber(schedule.id, now)
       let conversationId: string
-      try {
-        conversationId = this.launcher.createConversation(
-          schedule,
-          runNumber,
-          placement.projectId,
-          placement.worktreeId ?? null
-        )
-      } catch (error) {
-        await placement.discard?.().catch(() => undefined)
-        throw error
+      let note: string | undefined
+      let runNumber: number
+      if (continued && this.launcher.appendPrompt) {
+        runNumber = this.store.claimRunNumber(schedule.id, now)
+        conversationId = continued
+        this.launcher.appendPrompt(schedule, conversationId)
+      } else {
+        const placement = this.launcher.placeRun
+          ? await this.launcher.placeRun(schedule)
+          : { projectId: schedule.projectId }
+        if ('skip' in placement) return skip(placement.skip)
+        runNumber = this.store.claimRunNumber(schedule.id, now)
+        try {
+          conversationId = this.launcher.createConversation(
+            schedule,
+            runNumber,
+            placement.projectId,
+            placement.worktreeId ?? null
+          )
+        } catch (error) {
+          await placement.discard?.().catch(() => undefined)
+          throw error
+        }
+        note = placement.note
       }
       const agentRunId = randomUUID()
-      const reason = [occurrence.reason, placement.note].filter(Boolean).join(' ')
+      const reason = [occurrence.reason, freshReason, note].filter(Boolean).join(' ')
       const run = this.store.recordRun(
         {
           ...base,

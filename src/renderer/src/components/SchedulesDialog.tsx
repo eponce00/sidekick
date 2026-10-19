@@ -22,9 +22,11 @@ import type { Project } from '../../../shared/projects'
 import {
   describeScheduleTiming,
   SCHEDULE_CADENCES,
+  SCHEDULE_CHAT_MODES,
   scheduleWeekdayName,
   type Schedule,
   type ScheduleCadence,
+  type ScheduleChatMode,
   type ScheduleInput,
   type ScheduleRun
 } from '../../../shared/schedules'
@@ -75,12 +77,14 @@ function blankDraft(
     hour: 9,
     minute: 0,
     weekday: 1,
-    catchUp: true
+    catchUp: true,
+    chatMode: 'new'
   }
 }
 
 function draftFromSchedule(schedule: Schedule): ScheduleInput {
-  const { name, prompt, projectId, modelId, cadence, hour, minute, weekday, catchUp } = schedule
+  const { name, prompt, projectId, modelId, cadence, hour, minute, weekday, catchUp, chatMode } =
+    schedule
   return {
     name,
     prompt,
@@ -91,12 +95,24 @@ function draftFromSchedule(schedule: Schedule): ScheduleInput {
     minute,
     weekday,
     catchUp,
+    chatMode: chatMode ?? 'new',
     // Schedules saved before ceilings existed keep following the setting.
     ...(schedule.permissionCeiling ? { permissionCeiling: schedule.permissionCeiling } : {})
   }
 }
 
 const PERMISSION_MODES: readonly PermissionMode[] = ['always-ask', 'sensitive-only', 'full-access']
+
+const CHAT_MODE_LABELS: Record<ScheduleChatMode, string> = {
+  new: 'Start a new chat',
+  continue: 'Continue the last chat'
+}
+
+const CHAT_MODE_HINTS: Record<ScheduleChatMode, string> = {
+  new: 'Each run starts fresh.',
+  continue:
+    'Each run sees what earlier runs said and did, so it can build on them. Long chats are condensed to fit the model.'
+}
 
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
@@ -696,6 +712,24 @@ function ScheduleEditor({
             </label>
           )}
         </div>
+        <fieldset className="schedules-cadence">
+          <legend>Each run</legend>
+          <div className="schedules-segmented" role="radiogroup" aria-label="Each run">
+            {SCHEDULE_CHAT_MODES.map((mode) => (
+              <button
+                type="button"
+                key={mode}
+                role="radio"
+                aria-checked={(draft.chatMode ?? 'new') === mode}
+                className={(draft.chatMode ?? 'new') === mode ? 'selected' : ''}
+                onClick={() => set('chatMode', mode)}
+              >
+                {CHAT_MODE_LABELS[mode]}
+              </button>
+            ))}
+          </div>
+          <p className="schedules-editor-hint">{CHAT_MODE_HINTS[draft.chatMode ?? 'new']}</p>
+        </fieldset>
         <label>
           <span>Without asking, runs may</span>
           <Select
@@ -723,9 +757,13 @@ function ScheduleEditor({
           </span>
         </label>
         <p className="schedules-editor-note">
-          {summary}, in this computer&apos;s time zone. Each run opens a new chat and asks for
-          approval as this limit says, and never asks for less than your permission setting. Chats a
-          run starts get the same limit. A run that is waiting for you holds off the next one.
+          {summary}, in this computer&apos;s time zone.{' '}
+          {draft.chatMode === 'continue'
+            ? 'Each run continues the last run\u2019s chat'
+            : 'Each run opens a new chat'}{' '}
+          and asks for approval as this limit says, and never asks for less than your permission
+          setting. Chats a run starts get the same limit. A run that is waiting for you holds off
+          the next one.
         </p>
       </div>
       <footer>

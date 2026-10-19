@@ -7,7 +7,11 @@ import { pinnedModelsFromProviderInstances } from '../../shared/providerInstance
 import type { ProviderSettings } from '../../shared/settings'
 import type { Schedule } from '../../shared/schedules'
 import type { WorkspaceOccupant } from '../../shared/worktrees'
-import type { ScheduledRunLauncher, ScheduledRunPlacement } from './scheduleService'
+import type {
+  ScheduledRunContinuation,
+  ScheduledRunLauncher,
+  ScheduledRunPlacement
+} from './scheduleService'
 
 export interface ScheduledConversationLauncherOptions {
   db: Database.Database
@@ -57,6 +61,55 @@ async function placeScheduledRun(
   }
 }
 
+/**
+ * Whether the last run's chat can take this run, for a schedule that continues its chat. It can
+ * while it still exists in the schedule's project and no other agent is writing in its folder;
+ * otherwise the run starts a new chat, or is skipped while that folder is busy.
+ */
+function continueScheduledConversation(
+  options: ScheduledConversationLauncherOptions,
+  schedule: Schedule,
+  conversationId: string
+): ScheduledRunContinuation {
+  const chat = options.db
+    .prepare(
+      `SELECT c.project_id, c.worktree_id, c.archived_at, p.folder_path, w.worktree_root
+       FROM conversations c
+       LEFT JOIN projects p ON p.id = c.project_id
+       LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
+       WHERE c.id = ? AND c.schedule_id = ?`
+    )
+    .get(conversationId, schedule.id) as
+    | {
+        project_id: string | null
+        worktree_id: string | null
+        archived_at: number | null
+        folder_path: string | null
+        worktree_root: string | null
+      }
+    | undefined
+  if (!chat) return { fresh: 'Started a new chat: the last run’s chat was deleted.' }
+  if (chat.archived_at) return { fresh: 'Started a new chat: the last run’s chat was archived.' }
+  if ((chat.project_id ?? null) !== (schedule.projectId ?? null)) {
+    return { fresh: 'Started a new chat: the schedule now works in another project.' }
+  }
+  if (chat.worktree_id && !chat.worktree_root) {
+    return { fresh: 'Started a new chat: the last run’s worktree was removed.' }
+  }
+  const folder = chat.worktree_root ?? chat.folder_path
+  const others = folder
+    ? (options.folderOccupants?.(folder) ?? []).filter(
+        (occupant) => occupant.conversationId !== conversationId
+      )
+    : []
+  if (others.length) {
+    const names = others.map(({ title }) => `“${title}”`).join(', ')
+    const who = others.length === 1 ? `${names} was` : `${names} were`
+    return { skip: `Skipped: ${who} working in the folder this schedule’s chat works in.` }
+  }
+  return { conversationId }
+}
+
 export function createScheduledConversationLauncher(
   options: ScheduledConversationLauncherOptions
 ): ScheduledRunLauncher {
@@ -70,6 +123,20 @@ export function createScheduledConversationLauncher(
     projectExists: (projectId: string): boolean =>
       Boolean(db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)),
     placeRun: (schedule) => placeScheduledRun(options, schedule),
+    continueConversation: (schedule, conversationId) =>
+      continueScheduledConversation(options, schedule, conversationId),
+    appendPrompt: (schedule, conversationId) =>
+      db.transaction(() => {
+        const timestamp = now()
+        db.prepare(
+          `INSERT INTO messages (id, conversation_id, role, content, run_mode, timestamp)
+           VALUES (?, ?, 'user', ?, 'conversation', ?)`
+        ).run(randomUUID(), conversationId, schedule.prompt, timestamp)
+        db.prepare('UPDATE conversations SET updated_at = ? WHERE id = ?').run(
+          timestamp,
+          conversationId
+        )
+      })(),
     ...(options.isRunQueued ? { isRunQueued: options.isRunQueued } : {}),
     createConversation: (
       schedule: Schedule,
@@ -92,8 +159,9 @@ export function createScheduledConversationLauncher(
              FROM conversations WHERE project_id IS ?`
           )
           .get(projectId) as { sidebar_order: number }
-        // The schedule names its chats; a generated title would hide which run this is. The chat
-        // keeps the schedule's permission ceiling, and the chats it starts inherit it.
+        // The schedule names its chats; a generated title would hide which run this is, and a chat
+        // every run continues is the schedule's own. The chat keeps the schedule's permission
+        // ceiling, and the chats it starts inherit it.
         db.prepare(
           `INSERT INTO conversations
            (id, title, created_at, updated_at, project_id, title_source, title_version,
@@ -102,7 +170,7 @@ export function createScheduledConversationLauncher(
            VALUES (?, ?, ?, ?, ?, 'preserved', ?, ?, 0, ?, ?, ?, ?, ?, 'schedule', ?)`
         ).run(
           id,
-          `${schedule.name} · Run ${runNumber}`,
+          schedule.chatMode === 'continue' ? schedule.name : `${schedule.name} · Run ${runNumber}`,
           timestamp,
           timestamp,
           projectId,

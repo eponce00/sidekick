@@ -92,7 +92,13 @@ describe('validateScheduleInput', () => {
   }
 
   it('trims and keeps a valid schedule', () => {
-    expect(validateScheduleInput(valid)).toEqual({ ...valid, name: 'Morning check' })
+    // A new chat for each run unless the schedule says to continue.
+    expect(validateScheduleInput(valid)).toEqual({
+      ...valid,
+      name: 'Morning check',
+      chatMode: 'new'
+    })
+    expect(validateScheduleInput({ ...valid, chatMode: 'continue' }).chatMode).toBe('continue')
     expect(validateScheduleInput({ ...valid, projectId: null }).projectId).toBeNull()
   })
 
@@ -107,7 +113,8 @@ describe('validateScheduleInput', () => {
       { ...valid, weekday: 7 },
       { ...valid, modelId: '' },
       { ...valid, projectId: 42 },
-      { ...valid, prompt: 'x'.repeat(20_001) }
+      { ...valid, prompt: 'x'.repeat(20_001) },
+      { ...valid, chatMode: 'forever' }
     ]) {
       expect(() => validateScheduleInput(input)).toThrow()
     }
