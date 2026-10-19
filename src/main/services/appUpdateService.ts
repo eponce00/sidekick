@@ -6,7 +6,12 @@ import type {
   AppUpdateState
 } from '../../shared/appUpdates'
 import { PRODUCT_IDENTITY } from '../../shared/productIdentity'
-import { downloadAppUpdate, installAppUpdate, type PreparedAppUpdate } from './appUpdateInstaller'
+import {
+  downloadAppUpdate,
+  installAppUpdate,
+  removeStaleUpdates,
+  type PreparedAppUpdate
+} from './appUpdateInstaller'
 
 const INITIAL_CHECK_DELAY_MS = 15_000
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000
@@ -31,6 +36,7 @@ interface AppUpdateServiceOptions {
   now?: () => number
   downloadUpdate?: typeof downloadAppUpdate | null
   installUpdate?: typeof installAppUpdate
+  removeStaleUpdates?: typeof removeStaleUpdates
   beforeQuit?: () => Promise<void>
   /** Whether the startup and periodic checks run; a check the user asks for always does. */
   automaticChecks?: () => boolean
@@ -131,6 +137,7 @@ export class AppUpdateService {
   private prepared: PreparedAppUpdate | null = null
   private readonly downloadUpdate: typeof downloadAppUpdate | null
   private readonly installUpdate: typeof installAppUpdate
+  private readonly removeStaleUpdates: typeof removeStaleUpdates
   private readonly beforeQuit: () => Promise<void>
   private readonly automaticChecks?: () => boolean
   private controller = new AbortController()
@@ -149,6 +156,7 @@ export class AppUpdateService {
     this.downloadUpdate =
       options.downloadUpdate === undefined ? downloadAppUpdate : options.downloadUpdate
     this.installUpdate = options.installUpdate ?? installAppUpdate
+    this.removeStaleUpdates = options.removeStaleUpdates ?? removeStaleUpdates
     this.beforeQuit = options.beforeQuit ?? (async () => undefined)
     this.automaticChecks = options.automaticChecks
     log.initialize()
@@ -245,6 +253,10 @@ export class AppUpdateService {
 
   start(): void {
     if (this.state.status === 'disabled' || this.initialCheckTimer || this.checkInterval) return
+    const current = this.state.currentVersion
+    void this.removeStaleUpdates((version) => compareStableVersions(version, current) > 0).catch(
+      (error: unknown) => log.warn('[Updates] Could not remove old update downloads', error)
+    )
     this.initialCheckTimer = setTimeout(() => {
       this.initialCheckTimer = null
       void this.check(false)

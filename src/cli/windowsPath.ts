@@ -80,7 +80,10 @@ export async function userPathIncludes(
   return current !== null && current !== 'absent' && pathIncludes(current.value, directory)
 }
 
-/** Returns a process exit code: 0 when PATH is as requested, 1 when it was left untouched. */
+/**
+ * Returns a process exit code: 0 when PATH was changed as requested, 2 when it already was, and 1
+ * when it was left untouched. The installer tells other programs about a change only on 0.
+ */
 export async function updateUserPath(
   action: 'add' | 'remove',
   directory: string,
@@ -95,7 +98,7 @@ export async function updateUserPath(
     action === 'add'
       ? withPathEntry(before.value, directory)
       : withoutPathEntry(before.value, directory)
-  if (value === before.value) return 0
+  if (value === before.value) return 2
   if (value.length > MAX_PATH_LENGTH) return 1
   const written = await run(['add', key, '/v', 'Path', '/t', before.type, '/d', value, '/f'])
   return written.code === 0 ? 0 : 1
