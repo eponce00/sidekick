@@ -44,7 +44,10 @@ updater downloads newer stable packages automatically, streams them to a private
 and verifies the exact asset against that release's `SHA256SUMS.txt`. It permits only the canonical
 GitHub release path and GitHub's release-assets HTTPS host. It never accepts an installer URL or
 file path from the renderer. Installation requires **Restart and update** and a trusted confirmation;
-normal closing does not silently install. The computer is never restarted.
+normal closing does not silently install. The computer is never restarted. On startup the app
+deletes staged installers that are not newer than itself, so an installed update does not keep its
+package. On Windows the installer announces a PATH change to other programs only when it made one,
+and skips windows that do not answer, so an update does not wait on them.
 
 This is an explicit change from the notification-only policy in 0.7.0. Checksums protect against
 corrupt/mismatched downloads, not a compromised publisher or GitHub account. The updater does not

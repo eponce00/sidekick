@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.16.1 — 2026-10-19
+
+- Summarize a long chat when it reaches the share of the model's context that Settings says, not
+  much earlier. A model with a large maximum output was summarized at under half its window, and
+  raising the setting barely moved that point. Each reply's limit now shrinks to the room left
+  instead, so the chat keeps its window.
+- Keep more of the recent work word for word after summarizing, and give the summary room to
+  finish, so the agent no longer re-reads what it had just seen.
+- See where summarizing really happens on the context card: its marker and label match, and it
+  says when room is kept free for the reply.
+
 ## 0.16.0 — 2026-10-19
 
 - Browse each provider's models in Settings → Providers. **Connect** loads what the provider offers,

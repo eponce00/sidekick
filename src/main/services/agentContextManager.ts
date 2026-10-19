@@ -1,7 +1,8 @@
 import {
   calculateRequestBudget,
   estimateConversationTokens,
-  estimateProviderRequestTokens
+  estimateProviderRequestTokens,
+  replyLimitForRequest
 } from '../../shared/contextBudget'
 import {
   COMPACTION_PROMPT_VERSION,
@@ -149,7 +150,9 @@ function compactionMessage(summary: string): ProviderChatMessage {
 }
 
 function chooseSplit(messages: ProviderChatMessage[], contextLength: number): number {
-  const targetRecentTokens = Math.min(8_000, Math.max(2_000, Math.floor(contextLength * 0.2)))
+  // The recent work stays word for word. Keeping only a few thousand tokens of it made the agent
+  // re-read what it had just seen, so a large window filled again soon after each summary.
+  const targetRecentTokens = Math.min(32_000, Math.max(2_000, Math.floor(contextLength * 0.2)))
   let retainedTokens = 0
   let split = messages.length
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -212,6 +215,24 @@ export class AgentContextManager implements AgentKernelContextManager {
     }).shouldCompact
   }
 
+  replyLimit(
+    messages: ProviderChatMessage[],
+    tools: readonly unknown[],
+    maxOutputTokens: number | undefined
+  ): number | undefined {
+    return replyLimitForRequest(
+      maxOutputTokens,
+      calculateRequestBudget({
+        messages,
+        tools,
+        contextLength: this.options.contextLength,
+        reservedOutputTokens: this.options.maxOutputTokens,
+        compactionThreshold: this.options.threshold,
+        estimationBiasTokens: this.estimationBiasTokens
+      })
+    )
+  }
+
   observeUsage(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
@@ -258,16 +279,19 @@ export class AgentContextManager implements AgentKernelContextManager {
     const previous = this.previousSummary || previousSummaryFrom(compactedMessages)
     const originalTokens = estimateConversationTokens(compactedMessages)
     const completion = this.options.complete ?? completeProviderChat
+    // A reasoning model thinks before it writes the summary; with too little room it ran out and
+    // the summary fell back to the deterministic one.
+    const summaryOutputTokens = Math.max(1_024, Math.min(16_384, this.options.maxOutputTokens))
     const summaryInputCharacters = Math.max(
       8_000,
-      (this.options.contextLength - Math.min(4_096, this.options.maxOutputTokens) - 2_048) * 4
+      (this.options.contextLength - summaryOutputTokens - 2_048) * 4
     )
     const summaryInput = serializeMessages(compactedMessages, summaryInputCharacters)
     const result = await completion(
       {
         target: this.options.target,
         purpose: 'compaction',
-        maxOutputTokens: Math.min(4_096, Math.max(1_024, this.options.maxOutputTokens)),
+        maxOutputTokens: summaryOutputTokens,
         temperature: 0.1,
         messages: [
           {

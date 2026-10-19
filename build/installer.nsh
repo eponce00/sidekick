@@ -7,8 +7,12 @@
   nsExec::Exec '"$INSTDIR\${APP_EXECUTABLE_FILENAME}" "$INSTDIR\resources\app.asar\out\main\cli.js" __windows-path ${ACTION} "$INSTDIR\bin"'
   Pop $0
   System::Call 'Kernel32::SetEnvironmentVariable(t "ELECTRON_RUN_AS_NODE", i 0)'
-  ; Open terminals keep their PATH; new ones started from Explorer pick up the change.
-  SendMessage ${HWND_BROADCAST} ${WM_SETTINGCHANGE} 0 "STR:Environment" /TIMEOUT=5000
+  ; Open terminals keep their PATH; new ones started from Explorer pick up the change. Only a
+  ; change (exit code 0) is announced: an update finds PATH already set. Windows that do not
+  ; answer are skipped (SMTO_ABORTIFHUNG) instead of holding the installer for seconds each.
+  ${if} $0 == 0
+    System::Call 'user32::SendMessageTimeout(p ${HWND_BROADCAST}, i ${WM_SETTINGCHANGE}, p 0, t "Environment", i 0x2, i 1000, *p .r1)'
+  ${endIf}
 !macroend
 
 !macro customInstall
