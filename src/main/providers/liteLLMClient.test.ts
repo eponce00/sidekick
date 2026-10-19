@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProviderInstance } from '../../shared/settings'
-import {
-  applyProviderModelOverrides,
-  discoverLiteLLMModels,
-  normalizeOpenAIModelMetadata
-} from './liteLLMClient'
+import { discoverLiteLLMModels, normalizeOpenAIModelMetadata } from './liteLLMClient'
+import { applyProviderModelOverrides } from './modelCatalog'
 import { openAICompatibleHeaders } from './openAICompatibleClient'
 
 function instance(models: ProviderInstance['models'] = []): ProviderInstance {
@@ -181,5 +178,20 @@ describe('LiteLLM provider discovery', () => {
       supportsTools: true,
       metadataSource: 'provider'
     })
+  })
+
+  it('reads the window and output maximum hosted APIs such as Groq report', () => {
+    const model = normalizeOpenAIModelMetadata({
+      id: 'llama-3.3-70b-versatile',
+      context_window: 131_072,
+      max_completion_tokens: 32_768
+    })
+    expect(model).toMatchObject({
+      contextLength: 131_072,
+      outputTokenLimit: 32_768,
+      metadataSource: 'provider'
+    })
+    // A catalog's maximum only caps the default budget; it is not a configured one.
+    expect(model.maxOutputTokens).toBeUndefined()
   })
 })

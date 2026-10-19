@@ -5,6 +5,13 @@ import {
   type OpenAICompatibleModel,
   type OpenAICompatibleResult
 } from './openAICompatibleClient'
+import {
+  applyProviderModelOverrides,
+  boolean,
+  finiteNumber,
+  isChatModelMode,
+  positiveInteger
+} from './modelCatalog'
 
 type FetchImplementation = typeof fetch
 
@@ -45,20 +52,6 @@ const METADATA_FIELDS = [
   'mode'
 ] as const
 
-function positiveInteger(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined
-  return Math.round(value)
-}
-
-function boolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
-
-function finiteNumber(value: unknown): number | undefined {
-  const number = typeof value === 'string' && value.trim() ? Number(value) : value
-  return typeof number === 'number' && Number.isFinite(number) && number >= 0 ? number : undefined
-}
-
 export function openAIModelContextLength(
   model: Partial<OpenAICompatibleModel>
 ): number | undefined {
@@ -66,6 +59,7 @@ export function openAIModelContextLength(
   return (
     positiveInteger(model.context_length) ||
     positiveInteger(info.context_length) ||
+    positiveInteger(model.context_window) ||
     positiveInteger(model.max_model_len) ||
     positiveInteger(info.max_model_len) ||
     positiveInteger(model.max_input_tokens) ||
@@ -92,6 +86,8 @@ export function normalizeOpenAIModelMetadata(model: OpenAICompatibleModel): Prov
     contextLength
   const maxOutputTokens =
     positiveInteger(model.max_output_tokens) || positiveInteger(info.max_output_tokens)
+  // A hosted catalog's maximum, not a gateway's configured budget; see `outputTokenLimit`.
+  const outputTokenLimit = positiveInteger(model.max_completion_tokens)
   const supportsTools =
     boolean(model.supports_function_calling) ??
     boolean(info.supports_function_calling) ??
@@ -110,6 +106,7 @@ export function normalizeOpenAIModelMetadata(model: OpenAICompatibleModel): Prov
   const hasProviderMetadata = [
     contextLength,
     maxOutputTokens,
+    outputTokenLimit,
     supportsTools,
     supportsVision,
     supportsReasoning,
@@ -127,6 +124,7 @@ export function normalizeOpenAIModelMetadata(model: OpenAICompatibleModel): Prov
     contextLength,
     maxInputTokens,
     maxOutputTokens,
+    outputTokenLimit,
     supportsTools,
     supportsVision,
     supportsReasoning,
@@ -198,25 +196,6 @@ async function fetchOptionalMetadata(
   }
 }
 
-export function applyProviderModelOverrides(
-  discovered: ProviderInstanceModel,
-  configured: ProviderInstanceModel | undefined
-): ProviderInstanceModel {
-  const overrides = configured?.metadataOverrides
-  return {
-    ...discovered,
-    enabled: configured?.enabled ?? false,
-    name: configured?.name || discovered.name,
-    editingDialect: configured?.editingDialect,
-    upstreamModel: discovered.upstreamModel || configured?.upstreamModel,
-    editingCalibration: configured?.editingCalibration,
-    ...(overrides || {}),
-    metadataOverrides: overrides,
-    metadataSource:
-      overrides && Object.keys(overrides).length > 0 ? 'configured' : discovered.metadataSource
-  }
-}
-
 export async function discoverLiteLLMModels(
   instance: ProviderInstance,
   headers: Record<string, string>,
@@ -256,6 +235,7 @@ export async function discoverLiteLLMModels(
     ok: true,
     data: {
       models: Array.from(models.values())
+        .filter((model) => isChatModelMode(model.mode ?? model.model_info?.mode))
         .map((model) =>
           applyProviderModelOverrides(
             normalizeOpenAIModelMetadata(model),

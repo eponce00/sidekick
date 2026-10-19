@@ -80,12 +80,15 @@ export function calculateContextCapacity(options: {
 
 /**
  * How long one reply may be. Without a configured maximum, a quarter of the context window up to
- * 32,768 tokens. A configured maximum is the user's own and is honored up to half the window, so
- * the conversation keeps room; a reasoning model needs it to think through a large task.
+ * 32,768 tokens, and no more than the most the provider's catalog says the model can write. A
+ * configured maximum is the user's own and is honored up to half the window, so the conversation
+ * keeps room; a reasoning model needs it to think through a large task. A catalog's maximum only
+ * lowers the default: reserving all a model could write would shrink every chat's room.
  */
 export function resolveMaxOutputTokens(
   contextLength: number,
-  configuredMaxOutputTokens?: number
+  configuredMaxOutputTokens?: number,
+  outputTokenLimit?: number
 ): number {
   const normalizedContext = Math.max(1_024, Math.floor(contextLength))
   if (
@@ -93,7 +96,10 @@ export function resolveMaxOutputTokens(
     !Number.isFinite(configuredMaxOutputTokens) ||
     configuredMaxOutputTokens <= 0
   ) {
-    return Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
+    const budget = Math.max(1_024, Math.min(32_768, Math.floor(normalizedContext / 4)))
+    return outputTokenLimit && Number.isFinite(outputTokenLimit) && outputTokenLimit > 0
+      ? Math.min(budget, Math.floor(outputTokenLimit))
+      : budget
   }
   return Math.max(
     1_024,
