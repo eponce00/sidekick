@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.16.0 — 2026-10-19
+
+- Browse each provider's models in Settings → Providers. **Connect** loads what the provider offers,
+  with each model's context window, maximum output and price, and icons for tools, vision,
+  reasoning, PDF and audio input. Models in chat come first; search and the Tools, Vision and
+  Reasoning filters narrow a long catalog, and a refresh keeps your choices, marking models the
+  provider stopped listing and ones that are new. Anthropic, OpenRouter, Ollama, LM Studio and
+  Groq-style servers now report their real limits instead of "Context unknown".
+- See **Compacting context** while a long chat is condensed, instead of a reply that looks stuck
+  for a minute. Sending a message in a very long chat no longer freezes the window for most of a
+  second.
+- Copy code and command blocks, diffs, tool output, pasted text and terminal output again; their
+  copy buttons did nothing.
+- Watch a scheduled run's work live in its chat, and let a schedule continue the last run's chat
+  so each run builds on what the one before it said and did.
+- Keep the browser agent's screenshots of a page it just put aside current, and the text it types
+  into fields whole.
+
 ## 0.15.0 — 2026-10-18
 
 - Meet the new SideKick: a robot sidekick with a red cape, a domino mask and a badge with a prompt
