@@ -259,3 +259,52 @@ describe('MessageMarkdown rich media', () => {
     expect(container.querySelector('code')?.textContent).toBe('ghost.ts')
   })
 })
+
+describe('MessageMarkdown code blocks', () => {
+  let container: HTMLDivElement
+  let root: Root
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+    root = createRoot(container)
+    // As in the app, where the window refuses the browser's clipboard permission.
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn(async () => Promise.reject(new Error('Write permission denied.'))) }
+    })
+  })
+
+  afterEach(async () => {
+    await act(async () => root.unmount())
+    container.remove()
+  })
+
+  const render = async (writeText: (text: string) => Promise<unknown>): Promise<HTMLElement> => {
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ...window.api, clipboard: { writeText } }
+    })
+    await act(async () => {
+      root.render(<MessageMarkdown content={'```bash\nnpm run dev\n```'} />)
+    })
+    return container.querySelector<HTMLElement>('[aria-label="Copy code"]')!
+  }
+
+  it('copies a code block through SideKick, not the refused browser clipboard', async () => {
+    const writeText = vi.fn(async () => ({ success: true }))
+    const copy = await render(writeText)
+    await act(async () => copy.click())
+
+    expect(writeText).toHaveBeenCalledWith('npm run dev')
+    expect(navigator.clipboard.writeText).not.toHaveBeenCalled()
+    expect(container.querySelector('[aria-label="Code copied"]')?.textContent).toContain('Copied')
+  })
+
+  it('does not claim a copy that failed', async () => {
+    const copy = await render(vi.fn(async () => ({ success: false, error: 'Clipboard busy' })))
+    await act(async () => copy.click())
+
+    expect(container.querySelector('[aria-label="Code copied"]')).toBeNull()
+  })
+})

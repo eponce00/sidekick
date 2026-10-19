@@ -39,6 +39,7 @@ import { requestWorkspaceFileView } from '../utils/workspaceFileViewer'
 import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
 import { SiteIcon } from './SiteIcon'
+import { copyText } from '../utils/clipboard'
 import './MessageMarkdown.css'
 
 interface MarkdownNode {
@@ -142,7 +143,8 @@ function MarkdownCodeBlock({
         <button
           type="button"
           onClick={() => {
-            void navigator.clipboard.writeText(content).then(() => {
+            void copyText(content).then((written) => {
+              if (!written) return
               setCopied(true)
               window.setTimeout(() => setCopied(false), 1_200)
             })

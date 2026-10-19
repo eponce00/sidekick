@@ -61,6 +61,7 @@ import { SubAgentCard } from './SubAgentCard'
 import { SessionProposalsCard } from './SessionProposalsCard'
 import { Reveal } from './Reveal'
 import { AgentRunStats } from './AgentRunStats'
+import { copyText } from '../utils/clipboard'
 
 const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
@@ -211,8 +212,7 @@ function SteerSegment({
 }): React.JSX.Element {
   const [copied, setCopied] = useState(false)
   const copy = async (): Promise<void> => {
-    const result = await window.api.clipboard.writeText(steer.content)
-    if (!result?.success) return
+    if (!(await copyText(steer.content))) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1_500)
   }
@@ -282,8 +282,7 @@ function CompactionSummarySegment({
 
   const copyContext = async (): Promise<void> => {
     if (!modelContext) return
-    const result = await window.api.clipboard.writeText(modelContext)
-    if (!result?.success) return
+    if (!(await copyText(modelContext))) return
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1_500)
   }

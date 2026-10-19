@@ -57,13 +57,10 @@ describe('TurnChangeReview interactions', () => {
     const root = createRoot(container)
     const openFile = vi.fn(async () => undefined)
     const showPathMenu = vi.fn(async () => undefined)
+    const writeText = vi.fn(async () => ({ success: true }))
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { workspace: { openFile, showPathMenu } }
-    })
-    Object.defineProperty(navigator, 'clipboard', {
-      configurable: true,
-      value: { writeText: vi.fn(async () => undefined) }
+      value: { workspace: { openFile, showPathMenu }, clipboard: { writeText } }
     })
     const segments: ContentSegment[] = [
       {
@@ -91,7 +88,7 @@ describe('TurnChangeReview interactions', () => {
     await act(async () => row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true })))
     expect(showPathMenu).toHaveBeenCalledWith('src/App.tsx', 'C:/repo')
     await act(async () => (container.querySelector('.rich-tool-copy') as HTMLButtonElement).click())
-    expect(navigator.clipboard.writeText).toHaveBeenCalled()
+    expect(writeText).toHaveBeenCalledWith('@@ -1 +1 @@\n-old\n+new')
     await act(async () => root.unmount())
     container.remove()
   })
