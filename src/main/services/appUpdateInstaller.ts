@@ -31,6 +31,34 @@ export function updateAssetName(
   throw new Error('No update package for this platform/architecture. Use View release.')
 }
 
+/**
+ * Deletes downloaded installers no longer needed: those for a version that is not newer than the
+ * running one, and folders left without an installer. An installed update otherwise keeps its
+ * installer, about 160 MB each, for good.
+ */
+export async function removeStaleUpdates(
+  isNewer: (version: string) => boolean,
+  root = join(app.getPath('userData'), 'updates')
+): Promise<void> {
+  let entries
+  try {
+    if ((await lstat(root)).isSymbolicLink()) return
+    entries = await readdir(root, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('pending-')) continue
+    const directory = join(root, entry.name)
+    const files = await readdir(directory).catch((): string[] => [])
+    const wanted = files.some((name) => {
+      const version = /^SideKick-(\d+\.\d+\.\d+)-/.exec(name)?.[1]
+      return Boolean(version && isNewer(version))
+    })
+    if (!wanted) await rm(directory, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 export function checksumForAsset(manifest: string, name: string): string {
   const matches = manifest
     .split(/\r?\n/)
