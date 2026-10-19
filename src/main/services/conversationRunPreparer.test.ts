@@ -65,6 +65,84 @@ describe('conversation provider history', () => {
     db.close()
   })
 
+  it('reads only the ledger events history is built from, not streamed deltas or snapshots', () => {
+    const db = new Database(':memory:')
+    db.exec(`
+      CREATE TABLE agent_runs (id TEXT, thread_id TEXT, provider TEXT, model TEXT, started_at INTEGER);
+      CREATE TABLE agent_run_events (run_id TEXT, sequence INTEGER, type TEXT, payload_json TEXT);
+      INSERT INTO agent_runs VALUES ('run-1', 'conversation-1', 'openai-compatible', 'qwen', 1);
+    `)
+    const add = db.prepare('INSERT INTO agent_run_events VALUES (?, ?, ?, ?)')
+    let sequence = 0
+    add.run('run-1', ++sequence, 'run.started', JSON.stringify({ outputMessageId: 'assistant-1' }))
+    // A long reply's ledger is mostly these; sending a message read and parsed every one of them.
+    add.run(
+      'run-1',
+      ++sequence,
+      'context.snapshot',
+      JSON.stringify({ messages: ['x'.repeat(1e4)] })
+    )
+    for (let index = 0; index < 500; index++) {
+      add.run('run-1', ++sequence, 'assistant.delta', JSON.stringify({ content: 'tok ' }))
+    }
+    add.run(
+      'run-1',
+      ++sequence,
+      'assistant.completed',
+      JSON.stringify({ content: '', toolCalls: [{ id: 'c1', name: 'read', arguments: {} }] })
+    )
+    add.run('run-1', ++sequence, 'tool.output.delta', JSON.stringify({ chunk: 'partial' }))
+    add.run(
+      'run-1',
+      ++sequence,
+      'tool.completed',
+      JSON.stringify({ toolCallId: 'c1', name: 'read', result: { modelContent: 'file text' } })
+    )
+    add.run('run-1', ++sequence, 'run.steered', JSON.stringify({ content: 'Also this.' }))
+    add.run('run-1', ++sequence, 'assistant.completed', JSON.stringify({ content: 'Done.' }))
+
+    const read: string[] = []
+    const observed = new Proxy(db, {
+      get(target, key) {
+        if (key !== 'prepare') return Reflect.get(target, key)
+        return (sql: string) => {
+          const statement = target.prepare(sql)
+          return {
+            all: (...args: unknown[]) => {
+              const rows = statement.all(...args) as Array<{ type: string }>
+              read.push(...rows.map(({ type }) => type))
+              return rows
+            }
+          }
+        }
+      }
+    })
+    const history = durableProviderHistory(
+      observed,
+      'conversation-1',
+      [row({ id: 'assistant-1' })],
+      {
+        providerKind: 'openai-compatible',
+        model: 'qwen'
+      }
+    )
+
+    expect(history.map(({ role, content }) => [role, content])).toEqual([
+      ['assistant', null],
+      ['tool', 'file text'],
+      ['user', expect.stringContaining('Also this.')],
+      ['assistant', 'Done.']
+    ])
+    expect(read).toEqual([
+      'run.started',
+      'assistant.completed',
+      'tool.completed',
+      'run.steered',
+      'assistant.completed'
+    ])
+    db.close()
+  })
+
   it('does not duplicate visible text or expose thinking as recorded activity', () => {
     const message = providerMessage(
       row({
