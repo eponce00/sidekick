@@ -6,6 +6,7 @@ import {
   type PastedTextAttachment
 } from '../../../shared/messageContextAttachments'
 import { useModalDialog } from '../hooks/useModalDialog'
+import { copyText } from '../utils/clipboard'
 import './PastedTextAttachment.css'
 
 interface PastedTextAttachmentCardProps {
@@ -140,7 +141,8 @@ function PastedTextDialog({
           <button
             type="button"
             onClick={() => {
-              void navigator.clipboard.writeText(attachment.content).then(() => {
+              void copyText(attachment.content).then((written) => {
+                if (!written) return
                 setCopied(true)
                 window.setTimeout(() => setCopied(false), 1500)
               })

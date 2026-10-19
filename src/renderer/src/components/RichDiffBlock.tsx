@@ -9,6 +9,7 @@ import {
   type DiffLineSelection,
   type DiffRow
 } from '../utils/diffRows'
+import { copyText } from '../utils/clipboard'
 import './ToolExecutionCard.css'
 
 function resultDiff(tool: ToolExecution): string {
@@ -188,7 +189,8 @@ export function RichDiffBlock({
           type="button"
           className="rich-tool-copy"
           onClick={() => {
-            void navigator.clipboard.writeText(diff).then(() => {
+            void copyText(diff).then((written) => {
+              if (!written) return
               setCopied(true)
               window.setTimeout(() => setCopied(false), 1_000)
             })
