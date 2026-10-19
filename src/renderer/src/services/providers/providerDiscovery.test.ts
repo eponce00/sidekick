@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProviderInstance } from '../../../../shared/settings'
-import { discoverProviderModels, testProviderConnection } from './providerDiscovery'
+import { discoverProviderModels } from './providerDiscovery'
 
 const instance = (updates: Partial<ProviderInstance>): ProviderInstance => ({
   id: 'provider-1',
@@ -54,15 +54,18 @@ describe('provider discovery adapters', () => {
   })
 
   it('health-checks manual llama.cpp instances without changing their model inventory', async () => {
-    const discoverModels = vi.fn(async () => ({ ok: true, models: [] }))
-    await testProviderConnection(
+    const configured = [{ id: 'local-model', enabled: true }]
+    const discoverModels = vi.fn(async () => ({ ok: true, models: configured }))
+    const models = await discoverProviderModels(
       { providers: { discoverModels } } as unknown as Window['api'],
       instance({
         type: 'llamacpp',
         baseUrl: 'http://localhost:8080/v1',
-        modelSource: 'manual'
+        modelSource: 'manual',
+        models: configured
       })
     )
+    expect(models).toEqual([expect.objectContaining({ id: 'local-model', enabled: true })])
 
     expect(discoverModels).toHaveBeenCalledWith({
       draft: expect.objectContaining({
@@ -71,5 +74,15 @@ describe('provider discovery adapters', () => {
         modelSource: 'manual'
       })
     })
+  })
+
+  it('says why loading failed', async () => {
+    const discoverModels = vi.fn(async () => ({ ok: false, error: 'HTTP 401: invalid key' }))
+    await expect(
+      discoverProviderModels(
+        { providers: { discoverModels } } as unknown as Window['api'],
+        instance({})
+      )
+    ).rejects.toThrow('HTTP 401: invalid key')
   })
 })

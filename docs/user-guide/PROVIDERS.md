@@ -6,16 +6,16 @@ and select a separate fast/utility model per instance.
 
 ## Supported provider families
 
-| Provider kind     | Protocol                | Credentials | Model inventory | Notes                                                                                     |
-| ----------------- | ----------------------- | ----------- | --------------- | ----------------------------------------------------------------------------------------- |
-| Ollama            | Ollama `/api/*`         | None        | Discovered      | Local or remote host; context comes from `/api/show`                                      |
-| Ollama Cloud      | Ollama `/api/*`         | Required    | Discovered      | Hosted Ollama transport with bearer authentication                                        |
-| LM Studio         | OpenAI-compatible       | Optional    | Discovered      | Uses standard `/v1/models` plus LM Studio context metadata                                |
-| LiteLLM           | OpenAI Chat Completions | Optional    | Discovered      | Virtual keys, aliases/groups, context limits, and model capability metadata               |
-| OpenAI-compatible | OpenAI Chat Completions | Optional    | Discovered      | vLLM, OpenCode gateways, and custom servers                                               |
-| llama.cpp         | OpenAI-compatible       | None        | Manual          | Model is server-managed; context may come from `/props`                                   |
-| OpenRouter        | OpenAI-compatible       | Required    | Discovered      | Catalog metadata, pricing, reasoning controls, and generation cost                        |
-| Anthropic         | Native Messages API     | Required    | Discovered      | Claude streaming, vision, tools, adaptive/manual thinking, and signed thinking continuity |
+| Provider kind     | Protocol                | Credentials | Model inventory | What discovery reports                                                                         |
+| ----------------- | ----------------------- | ----------- | --------------- | ---------------------------------------------------------------------------------------------- |
+| Ollama            | Ollama `/api/*`         | None        | Discovered      | Context, tools, vision, and thinking from `/api/show`; embedding models are left out           |
+| Ollama Cloud      | Ollama `/api/*`         | Required    | Discovered      | As Ollama, where the hosted server answers `/api/show`                                         |
+| LM Studio         | OpenAI-compatible       | Optional    | Discovered      | Context, and from LM Studio 0.4 vision, tool use, and reasoning; embedding models left out     |
+| LiteLLM           | OpenAI Chat Completions | Optional    | Discovered      | Aliases and groups, limits, capabilities, and prices from the gateway; non-chat modes left out |
+| OpenAI-compatible | OpenAI Chat Completions | Optional    | Discovered      | Whatever the server's `/v1/models` carries, such as vLLM's `max_model_len`                     |
+| llama.cpp         | OpenAI-compatible       | None        | Manual          | The model is server-managed; context comes from `/props` when a chat starts                    |
+| OpenRouter        | OpenAI-compatible       | Required    | Discovered      | Context, maximum output, tools, reasoning, image, PDF, and audio input, and prices             |
+| Anthropic         | Native Messages API     | Required    | Discovered      | Context, maximum output, image and PDF input, and thinking from the Models API                 |
 
 The registry in `src/shared/providerRegistry.ts` is the source of truth for protocol, credential,
 discovery, context, health, lifecycle, pricing, thinking, statistics, and vision capabilities.
@@ -56,29 +56,31 @@ and redacted thinking blocks unchanged through tool-result continuations.
 ## Settings and model selection
 
 Settings manages connections and model inventory. Chat only selects from enabled models projected
-from enabled instances. Context length is provider/server metadata. When a gateway omits or
-misreports metadata, an on-demand model editor can store explicit context, output, tool, vision,
-and reasoning overrides. Overrides survive discovery refreshes and are visibly identified as
-manual rather than provider-reported data. Ollama remains the exception for changing server
-context because `num_ctx` is a supported request option.
+from enabled instances.
 
-Discovered model inventories are searchable in real time. Providers without reliable discovery,
-such as a fixed llama.cpp server, support manual model ids. A model can be enabled or hidden without
-deleting its provider connection.
+For a provider that lists its models, **Connect** checks the connection and loads the list in one
+step. It runs by itself when a provider opens with no models yet and needs no key, or when a key is
+entered and the field is left. Afterwards the same button reads **Refresh models**. SideKick never
+polls a provider for its list.
 
-## Active capability checks and timing
+The list shows the models in chat first, then the rest. Each row gives the model's context window,
+maximum output, and price per million tokens when the provider reports them, with icons for tool
+calling, vision, reasoning, PDF input, and audio input. A value the provider does not report stays
+blank rather than being guessed. Search matches names and ids, and the **Tools**, **Vision**, and
+**Reasoning** filters keep only models the provider says have that capability. Newly listed models
+start hidden.
 
-In provider settings, save your connection first, then explicitly choose a model
-under **Test actual model capabilities**. The check sends two synthetic requests;
-the optional vision checkbox adds a third. Each allows up to 1,024 output tokens
-and retains existing thinking defaults. Requests can incur charges or load a model.
-Cancel stops the probe; the overall deadline is two minutes. Proposed tools never
-execute. Observed/not-observed results are smoke checks, not quality benchmarks.
+A refresh keeps each model's choice and overrides. A model the provider no longer lists stays while
+it is in chat or has overrides, marked **Not listed**; after a second load, models that appeared
+since the one before are marked **New**. A model the list leaves out can still be added by id, and
+a provider without a list, such as a fixed llama.cpp server, is set up that way.
 
-Server-reported model names may still be aliases. Missing identity and cache
-telemetry are shown as unreported, not inferred. **Copy anonymous test summary**
-copies only check statuses and metrics, excluding endpoint/model identities and
-generated content.
+When a gateway omits or misreports metadata, Model details can store explicit context, output,
+tool, vision, and reasoning overrides. Overrides survive refreshes and are identified as manual
+rather than provider-reported data. Ollama remains the exception for changing server context
+because `num_ctx` is a supported request option.
+
+## Request timing
 
 Open a response's token statistics and **Model request timeline** to see each
 request's total duration, wait to first output, streaming time and cache counts.

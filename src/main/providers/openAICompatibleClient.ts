@@ -18,6 +18,9 @@ export interface OpenAICompatibleModel {
   max_tokens?: number
   max_input_tokens?: number
   max_output_tokens?: number
+  /** Groq and similar hosted APIs name the window and the most one reply may hold this way. */
+  context_window?: number
+  max_completion_tokens?: number
   input_cost_per_token?: number | string
   output_cost_per_token?: number | string
   supports_function_calling?: boolean
