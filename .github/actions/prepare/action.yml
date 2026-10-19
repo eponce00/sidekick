@@ -1,0 +1,47 @@
+name: Prepare
+description: Node, the repository's installed dependencies, and a runner ready for SideKick's checks.
+
+inputs:
+  linux-desktop:
+    description: Install the libraries Electron needs on Linux, even to run as Node.
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Stop Defender scanning this throwaway Windows runner
+      if: runner.os == 'Windows'
+      shell: pwsh
+      # Scanning every file npm, Vitest and electron-builder write made the Windows job three to
+      # six times slower than the same steps on macOS and Linux. The runner is discarded afterwards.
+      run: |
+        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+        Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:LOCALAPPDATA -ErrorAction SilentlyContinue
+
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: '.node-version'
+
+    - name: Install Linux desktop libraries
+      if: runner.os == 'Linux' && inputs.linux-desktop == 'true'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+          libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+          libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
+
+    # The whole installed tree, Electron and the rebuilt native modules included, depends only on
+    # the lockfile, the Node version and the platform, so a matching tree skips `npm ci`.
+    - name: Restore installed dependencies
+      id: modules
+      uses: actions/cache@v6
+      with:
+        path: node_modules
+        key: modules-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json', '.node-version') }}
+
+    - name: Install dependencies
+      if: steps.modules.outputs.cache-hit != 'true'
+      shell: bash
+      run: npm ci

@@ -26,6 +26,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Scanning every file npm, Vitest and electron-builder write slows this job several times
+      # over. The runner is discarded afterwards; the artifacts are checked and attested below.
+      - name: Stop Defender scanning this throwaway runner
+        shell: pwsh
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:LOCALAPPDATA -ErrorAction SilentlyContinue
+
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.node-version'
