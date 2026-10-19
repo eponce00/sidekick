@@ -13,15 +13,91 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+# The gates run in parallel jobs, each on a fresh runner that installs from a clean `npm ci` and
+# restores no installed dependencies. Nothing is signed or published until every one has passed.
 jobs:
+  # Platform-independent checks run once. Each packaged build typechecks again on its platform.
+  checks:
+    name: Checks (Linux x64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+
+  # The suite on every platform, beside packaging. Windows runs it on one worker (see
+  # scripts/run-vitest.cjs), so it is split across two machines.
+  tests:
+    name: Tests (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64, 1 of 2
+            os: windows-latest
+            shard: 1/2
+          - name: Windows x64, 2 of 2
+            os: windows-latest
+            shard: 2/2
+          - name: macOS arm64
+            os: macos-14
+            shard: 1/1
+          - name: Linux x64
+            os: ubuntu-22.04
+            shard: 1/1
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # Scanning every file npm and Vitest write slows this job several times over. The runner is
+      # discarded afterwards.
+      - name: Stop Defender scanning this throwaway runner
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE, $env:RUNNER_TEMP, $env:LOCALAPPDATA -ErrorAction SilentlyContinue
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+          cache: npm
+
+      # Electron needs these libraries on Linux even to run the suite as Node.
+      - name: Install Linux desktop test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
+      - run: npm ci
+      - run: npm test -- --shard=${{ matrix.shard }}
+
   windows:
-    name: Build Windows x64
+    name: Package (Windows x64)
     runs-on: windows-latest
-    # Signing waits for a maintainer to approve the request in SignPath.
-    timeout-minutes: 100
+    timeout-minutes: 40
     env:
       # Tagged releases are signed once the SignPath Foundation project is configured.
       SIGN_WINDOWS: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    outputs:
+      sign: ${{ env.SIGN_WINDOWS }}
+      unsigned-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
 
     steps:
       - uses: actions/checkout@v7
@@ -51,11 +127,6 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$version") {
             throw "Expected tag v$version, received $env:GITHUB_REF_NAME"
           }
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run docs:check
-      - run: npm run test:docs
-      - run: npm test
       - run: npm run test:release
       - name: Build Windows community artifacts
         env:
@@ -68,59 +139,35 @@ jobs:
       - run: npm run test:native-browser-fixtures
       - run: npm run validate:package -- dist/win-unpacked/resources
       - run: npm run smoke:packaged:windows
-      - name: Upload the unsigned installer for signing
-        if: env.SIGN_WINDOWS == 'true'
-        id: unsigned-installer
-        uses: actions/upload-artifact@v7
-        with:
-          name: SideKick-Windows-x64-unsigned
-          path: dist/SideKick-*-windows-x64-setup.exe
-          if-no-files-found: error
-          retention-days: 1
-      - name: Sign the installer through SignPath Foundation
-        if: env.SIGN_WINDOWS == 'true'
-        uses: SignPath/github-action-submit-signing-request@v3
-        with:
-          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
-          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
-          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
-          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
-          github-artifact-id: ${{ steps.unsigned-installer.outputs.artifact-id }}
-          wait-for-completion-timeout-in-seconds: 3600
-          output-artifact-directory: dist-signed
-      - name: Replace the installer with its signed copy
-        if: env.SIGN_WINDOWS == 'true'
-        shell: pwsh
-        run: |
-          $signed = @(Get-ChildItem dist-signed -File -Recurse -Filter 'SideKick-*-windows-x64-setup.exe')
-          if ($signed.Count -ne 1) { throw 'Expected exactly one signed Windows installer.' }
-          Copy-Item -LiteralPath $signed[0].FullName -Destination (Join-Path dist $signed[0].Name) -Force
-      - name: Verify the installer signature
+      - name: Verify the installer is unsigned
         shell: pwsh
         run: |
           $files = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-setup.exe')
           if ($files.Count -ne 1) { throw 'Expected exactly one Windows NSIS installer.' }
           $signature = Get-AuthenticodeSignature -FilePath $files[0].FullName
-          if ($env:SIGN_WINDOWS -eq 'true') {
-            if ($signature.Status -ne 'Valid') {
-              throw "Expected a valid Authenticode signature, received: $($signature.Status)"
-            }
-            if ($signature.SignerCertificate.Subject -notmatch 'SignPath Foundation') {
-              throw "Unexpected signer: $($signature.SignerCertificate.Subject)"
-            }
-            Write-Host "Verified the SignPath Foundation signature on $($files[0].Name)."
-          } elseif ($signature.Status -ne 'NotSigned') {
+          if ($signature.Status -ne 'NotSigned') {
             throw "Expected an unsigned community installer, received: $($signature.Status)"
-          } else {
-            Write-Host "Verified that $($files[0].Name) is unsigned; SignPath signing is not configured."
           }
+          Write-Host "Verified that $($files[0].Name) is unsigned."
       - name: Validate Windows community installer
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
           npm run validate:release -- --version $version --platform windows dist
 
+      # The publisher takes every artifact named SideKick-*, so the copy awaiting a signature is
+      # named apart from the signed one that replaces it.
+      - name: Upload the unsigned installer for signing
+        if: env.SIGN_WINDOWS == 'true'
+        id: unsigned-installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-for-signing
+          path: dist/SideKick-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 1
       - name: Upload Windows community artifact
+        if: env.SIGN_WINDOWS != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: SideKick-Windows-x64
@@ -129,7 +176,7 @@ jobs:
           retention-days: 14
 
   macos:
-    name: Build macOS arm64
+    name: Package (macOS arm64)
     runs-on: macos-14
     timeout-minutes: 40
 
@@ -155,11 +202,6 @@ jobs:
             echo "::error::Expected tag v$version, received $GITHUB_REF_NAME"
             exit 1
           fi
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run docs:check
-      - run: npm run test:docs
-      - run: npm test
       - run: npm run test:release
       - name: Build ad-hoc signed macOS community artifacts
         env:
@@ -201,7 +243,7 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Build Linux x64
+    name: Package (Linux x64)
     runs-on: ubuntu-22.04
     timeout-minutes: 40
 
@@ -234,11 +276,6 @@ jobs:
             echo "::error::Expected tag v$version, received $GITHUB_REF_NAME"
             exit 1
           fi
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run docs:check
-      - run: npm run test:docs
-      - run: npm test
       - run: npm run test:release
       - name: Build Linux AppImage
         env:
@@ -280,10 +317,82 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # An approver is asked to sign only an installer whose whole release has passed, so this waits
+  # for every other job.
+  sign-windows:
+    name: Sign (Windows x64)
+    needs: [checks, tests, windows, macos, linux]
+    if: needs.windows.outputs.sign == 'true'
+    runs-on: windows-latest
+    # Signing waits up to an hour for a maintainer to approve the request in SignPath.
+    timeout-minutes: 80
+    permissions:
+      # SignPath downloads the unsigned installer with this job's token.
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: '.node-version'
+
+      - name: Sign the installer through SignPath Foundation
+        uses: SignPath/github-action-submit-signing-request@v3
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.windows.outputs.unsigned-artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist-signed
+      - name: Move the signed installer into place
+        shell: pwsh
+        run: |
+          $signed = @(Get-ChildItem dist-signed -File -Recurse -Filter 'SideKick-*-windows-x64-setup.exe')
+          if ($signed.Count -ne 1) { throw 'Expected exactly one signed Windows installer.' }
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Copy-Item -LiteralPath $signed[0].FullName -Destination (Join-Path dist $signed[0].Name)
+      - name: Verify the installer signature
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-setup.exe')
+          if ($files.Count -ne 1) { throw 'Expected exactly one Windows NSIS installer.' }
+          $signature = Get-AuthenticodeSignature -FilePath $files[0].FullName
+          if ($signature.Status -ne 'Valid') {
+            throw "Expected a valid Authenticode signature, received: $($signature.Status)"
+          }
+          if ($signature.SignerCertificate.Subject -notmatch 'SignPath Foundation') {
+            throw "Unexpected signer: $($signature.SignerCertificate.Subject)"
+          }
+          Write-Host "Verified the SignPath Foundation signature on $($files[0].Name)."
+      - name: Validate the signed Windows installer
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          npm run validate:release -- --version $version --platform windows dist
+
+      - name: Upload Windows community artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: SideKick-Windows-x64
+          path: dist/SideKick-*-windows-x64-setup.exe
+          if-no-files-found: error
+          retention-days: 14
+
   publish:
     name: Publish verified community release
-    if: github.ref_type == 'tag'
-    needs: [windows, macos, linux]
+    needs: [checks, tests, windows, macos, linux, sign-windows]
+    # Signing is skipped while SignPath is not configured, and a skipped need would skip this job
+    # too, so each result is checked instead.
+    if: >-
+      !cancelled() && github.ref_type == 'tag' &&
+      needs.checks.result == 'success' && needs.tests.result == 'success' &&
+      needs.windows.result == 'success' && needs.macos.result == 'success' &&
+      needs.linux.result == 'success' &&
+      (needs.sign-windows.result == 'success' || needs.windows.outputs.sign != 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -295,12 +404,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The release validator uses only Node's standard library, so the job that can write
+      # releases and attestations installs and runs no third-party packages.
       - uses: actions/setup-node@v7
         with:
           node-version-file: '.node-version'
-          cache: npm
 
-      - run: npm ci
       - name: Download validated platform artifacts
         uses: actions/download-artifact@v8
         with:
@@ -344,7 +453,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          WINDOWS_SIGNED: ${{ github.ref_type == 'tag' && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+          WINDOWS_SIGNED: ${{ needs.windows.outputs.sign }}
         run: |
           version="$(node -p "require('./package.json').version")"
           if [ "$WINDOWS_SIGNED" = 'true' ]; then

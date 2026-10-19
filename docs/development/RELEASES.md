@@ -221,13 +221,18 @@ are rendered by the same brand-asset script and hash-checked with the other icon
 A manual workflow run builds and tests packages without publishing them. A stable tag matching
 `package.json`, such as `v0.6.0`, runs the same gates and may publish.
 
-All three platform jobs run typechecks, lint, documentation validation, the test suites, release
-validator tests, a packaged build, an isolated real-Electron critical journey, a packaged-content
-audit, and a launch smoke test. Windows verifies that its NSIS installer is unsigned, or, with SignPath configured, that it
-carries a valid SignPath Foundation signature.
-macOS verifies strict bundle integrity, an ad-hoc signature, and the absence of an Apple certificate
-authority. Linux extracts and validates its AppImage metadata and icon identity, then launches the
-final AppImage under Xvfb.
+The gates run in parallel jobs, each on a fresh runner that installs from a clean `npm ci` and
+restores no installed dependencies. One Linux job runs typechecks, lint, and documentation
+validation. The test suite runs on all three platforms, Windows split across two machines. Beside
+them, a packaging job per platform runs the release validator tests, a packaged build (which
+typechecks again), an isolated real-Electron critical journey, a packaged-content audit, and a
+launch smoke test.
+
+Windows verifies that its NSIS installer is unsigned. With SignPath configured, a separate job
+submits it for signing only after every other job has passed, then verifies that the signed copy
+carries a valid SignPath Foundation signature. macOS verifies strict bundle integrity, an ad-hoc
+signature, and the absence of an Apple certificate authority. Linux extracts and validates its
+AppImage metadata and icon identity, then launches the final AppImage under Xvfb.
 
 The desktop journeys explicitly launch the built platform executable through
 `SIDEKICK_E2E_EXECUTABLE`, not development Electron. They use disposable profiles
@@ -244,7 +249,7 @@ those platforms. Windows-hosted contract tests only validate the gate wiring, no
 macOS/Linux execution. Do not label a platform qualified before its jobs and those
 manual checks have actually passed.
 
-The publisher then:
+The publisher starts only after every job has passed. It installs no packages, and:
 
 1. downloads all three validated platform artifact sets;
 2. validates the merged exact set and generates `SHA256SUMS.txt`;
@@ -306,7 +311,7 @@ matrix. Review coverage and sample budgets separately before any readiness claim
 2. Run `npm run check`, `npm run test:release`, and `npm run test:e2e`.
 3. Merge the validated pull request into `main`.
 4. Create and push the matching annotated source tag, for example `v0.6.0`.
-5. Wait for all three platform jobs and the publisher job.
+5. Wait for every check, test, packaging, and signing job, then the publisher job.
 6. Verify the release contains the exact artifact contract and a valid attestation.
 7. Install on clean physical machines and test the documented first-launch warning, app launch,
    permissions, data persistence, release notification, uninstall, and data retention.
