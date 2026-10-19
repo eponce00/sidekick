@@ -147,7 +147,6 @@ interface ChatInputProps {
   visionUnavailableReason?: string
   isLoading: boolean
   isStopping: boolean
-  isCompacting: boolean
   /** A message from the chat is being edited here; sending replaces it and what follows. */
   editingMessageId: string | null
   onCancelEdit?: () => void
@@ -233,7 +232,6 @@ export function ChatInput({
   visionUnavailableReason,
   isLoading,
   isStopping,
-  isCompacting: _isCompacting,
   editingMessageId,
   onCancelEdit,
   researchSelected,

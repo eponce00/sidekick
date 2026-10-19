@@ -55,6 +55,30 @@ describe('projectAgentRunEvents', () => {
     expect(projection.tokenUsage.generatedTokens).toBe(65)
     expect(projection.tokenUsage.streaming).toEqual({ startedAt: 4, updatedAt: 7, characters: 15 })
   })
+
+  it('reports a compaction while it runs, and not once it ends', () => {
+    const started = [
+      event(1, 'run.started', {}),
+      event(2, 'usage.updated', { promptTokens: 150_000, completionTokens: 40 }),
+      event(3, 'run.phase', { phase: 'compacting' }),
+      event(4, 'compaction.started', { messageCount: 240, reason: 'preflight_budget' })
+    ]
+    expect(projectAgentRunEvents(started).tokenUsage.compacting).toEqual({ startedAt: 4 })
+
+    const completed = projectAgentRunEvents([
+      ...started,
+      event(5, 'compaction.completed', { compacted: true, summaryTokens: 1_800 }),
+      event(6, 'run.phase', { phase: 'streaming' })
+    ])
+    expect(completed.tokenUsage.compacting).toBeUndefined()
+    // A run that ends inside one, stopped or interrupted, is not left compacting.
+    const stopped = projectAgentRunEvents([
+      ...started,
+      event(5, 'run.completed', { phase: 'cancelled' })
+    ])
+    expect(stopped.tokenUsage.compacting).toBeUndefined()
+  })
+
   it('projects streamed turns once and preserves tool ordering', () => {
     const projection = projectAgentRunEvents([
       event(1, 'run.started', {}),
