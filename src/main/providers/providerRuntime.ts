@@ -22,18 +22,27 @@ import type {
   ProviderStreamChunk,
   ProviderStreamResult
 } from '../../shared/providerRuntime'
-import type { ProviderInstance } from '../../shared/settings'
+import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
 import { offlineProviderHealth, onlineProviderHealth } from '../../shared/providerHealth'
 import { PRODUCT_IDENTITY, PRODUCT_REPOSITORY_URL } from '../../shared/productIdentity'
 import { abortablePromise } from '../services/abortablePromise'
 import { completeOpenAIChat, streamOpenAICompatibleChat } from './openAIStreamingClient'
 import { fetchOpenAICompatibleModels, openAICompatibleHeaders } from './openAICompatibleClient'
 import {
-  applyProviderModelOverrides,
   discoverLiteLLMModels,
   normalizeOpenAIModelMetadata,
   openAIModelContextLength
 } from './liteLLMClient'
+import {
+  applyProviderModelOverrides,
+  fetchLMStudioModelDetails,
+  isChatModelMode,
+  lmStudioModelChats,
+  normalizeOpenRouterModel,
+  openRouterModelChats,
+  withLMStudioDetails,
+  type OpenRouterCatalogModel
+} from './modelCatalog'
 import {
   completeOllamaChat,
   discoverOllamaModels,
@@ -89,15 +98,6 @@ async function observeProviderRequest<T extends { ok: boolean; error?: string }>
     }
     throw error
   }
-}
-
-interface OpenRouterCatalogModel {
-  id: string
-  name?: string
-  context_length?: number
-  supported_parameters?: string[]
-  architecture?: { modality?: string }
-  pricing?: { prompt?: string | number; completion?: string | number }
 }
 
 type MaterializedToolMedia = ToolResultMediaAttachment & {
@@ -489,10 +489,6 @@ export async function completeProviderChat(
   })
 }
 
-function configuredState(instance: ProviderInstance, id: string): boolean {
-  return instance.models.find((model) => model.id === id)?.enabled ?? false
-}
-
 async function discoverOpenAIModels(instance: ProviderInstance): Promise<ProviderDiscoveryResult> {
   const kind = providerKindForInstance(instance)
   if (kind === 'litellm') {
@@ -501,46 +497,31 @@ async function discoverOpenAIModels(instance: ProviderInstance): Promise<Provide
       ? { ok: true, models: result.data.models }
       : { ok: false, error: result.error, status: result.status }
   }
-  const result = await fetchOpenAICompatibleModels(instance.baseUrl, openAIHeaders(instance))
+  const headers = openAIHeaders(instance)
+  const result = await fetchOpenAICompatibleModels(instance.baseUrl, headers)
   if (!result.ok || !result.data) return result
+  const configured = (id: string): ProviderInstanceModel | undefined =>
+    instance.models.find((model) => model.id === id)
   if (kind === 'openrouter') {
     const models = (result.data.data as OpenRouterCatalogModel[])
+      .filter(openRouterModelChats)
       .map((model) =>
-        applyProviderModelOverrides(
-          {
-            id: model.id,
-            name: model.name || model.id,
-            enabled: configuredState(instance, model.id),
-            contextLength: model.context_length,
-            // OpenRouter lists the parameters each model takes; reasoning is one of them.
-            ...(Array.isArray(model.supported_parameters)
-              ? {
-                  supportsReasoning:
-                    model.supported_parameters.includes('reasoning') ||
-                    model.supported_parameters.includes('include_reasoning')
-                }
-              : {}),
-            supportsVision:
-              typeof model.architecture?.modality === 'string' &&
-              model.architecture.modality.includes('image'),
-            pricing: model.pricing
-              ? {
-                  prompt: Number(model.pricing.prompt),
-                  completion: Number(model.pricing.completion)
-                }
-              : undefined
-          },
-          instance.models.find((configured) => configured.id === model.id)
-        )
+        applyProviderModelOverrides(normalizeOpenRouterModel(model), configured(model.id))
       )
       .sort((left, right) => left.id.localeCompare(right.id))
     return { ok: true, models }
   }
+  const lmStudio =
+    providerDefinitionForInstance(instance).capabilities.context === 'lmstudio-native'
+      ? await fetchLMStudioModelDetails(instance.baseUrl, headers)
+      : undefined
   const models = result.data.data
+    .filter((model) => isChatModelMode(model.mode ?? model.model_info?.mode))
+    .filter((model) => !lmStudio || lmStudioModelChats(lmStudio.get(model.id)))
     .map((model) =>
       applyProviderModelOverrides(
-        normalizeOpenAIModelMetadata(model),
-        instance.models.find((configured) => configured.id === model.id)
+        withLMStudioDetails(normalizeOpenAIModelMetadata(model), lmStudio?.get(model.id)),
+        configured(model.id)
       )
     )
     .sort((left, right) => left.id.localeCompare(right.id))

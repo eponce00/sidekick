@@ -73,6 +73,14 @@ describe('calculateRequestBudget', () => {
     expect(resolveMaxOutputTokens(131_072, 100_000)).toBe(65_536)
   })
 
+  it('lets a catalog maximum lower the default reply limit but never raise it', () => {
+    // A catalog that says a model can write 160K must not reserve half of every chat for it.
+    expect(resolveMaxOutputTokens(163_840, undefined, 163_840)).toBe(32_768)
+    expect(resolveMaxOutputTokens(1_000_000, undefined, 128_000)).toBe(32_768)
+    expect(resolveMaxOutputTokens(200_000, undefined, 8_192)).toBe(8_192)
+    expect(resolveMaxOutputTokens(260_000, 100_000, 8_192)).toBe(100_000)
+  })
+
   it('does not treat dense numeric JSON like ordinary prose', () => {
     const dense = JSON.stringify({
       coordinates: Array.from({ length: 4_000 }, (_, index) => [index / 100, -index / 100])

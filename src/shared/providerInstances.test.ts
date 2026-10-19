@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ProviderSettings } from './settings'
 import {
+  mergeDiscoveredModels,
   migrateLegacyProviderInstances,
   pinnedModelsFromProviderInstances,
   providerInstanceForModel,
@@ -166,5 +167,28 @@ describe('provider instance migration', () => {
       maxOutputTokens: 32_000,
       editingDialect: 'structured-edit'
     })
+  })
+})
+
+describe('mergeDiscoveredModels', () => {
+  it('takes the fresh list but never drops a model the user chose', () => {
+    const merged = mergeDiscoveredModels(
+      [
+        { id: 'kept', enabled: true },
+        { id: 'gone-hidden', enabled: false },
+        { id: 'gone-shown', enabled: true },
+        { id: 'gone-tuned', enabled: false, metadataOverrides: { contextLength: 8192 } }
+      ],
+      [
+        { id: 'kept', enabled: false, contextLength: 131_072 },
+        { id: 'new', enabled: false, contextLength: 32_768 }
+      ]
+    )
+    expect(merged).toEqual([
+      { id: 'gone-shown', enabled: true },
+      { id: 'gone-tuned', enabled: false, metadataOverrides: { contextLength: 8192 } },
+      { id: 'kept', enabled: true, contextLength: 131_072 },
+      { id: 'new', enabled: false, contextLength: 32_768 }
+    ])
   })
 })

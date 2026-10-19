@@ -197,7 +197,8 @@ model-visible `output_truncated` result so the model can retry with a smaller re
 limit cut off while the model was still thinking, before any answer or tool call, ends the run
 with that reason, as Codex treats an incomplete response, instead of completing it empty; the
 model is never told to cut its thinking short. A reply's limit is a quarter of the context window
-up to 32,768 tokens, or the model's configured maximum output, honored up to half the window. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
+up to 32,768 tokens, or the model's configured maximum output, honored up to half the window. A
+public catalog's maximum output, as OpenRouter and Anthropic report it, only lowers the default. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.

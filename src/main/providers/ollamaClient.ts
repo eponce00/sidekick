@@ -10,6 +10,7 @@ import type { ProviderInstance, ProviderInstanceModel } from '../../shared/setti
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
 import { providerConnectionFailureMessage } from '../../shared/providerErrors'
+import { applyProviderModelOverrides, hasReportedMetadata, positiveInteger } from './modelCatalog'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -253,6 +254,57 @@ export async function completeOllamaChat(
   }
 }
 
+interface OllamaShowResponse {
+  capabilities?: string[]
+  model_info?: Record<string, unknown>
+}
+
+async function showOllamaModel(
+  instance: ProviderInstance,
+  model: string,
+  fetchImpl: FetchImplementation
+): Promise<OllamaShowResponse | undefined> {
+  try {
+    const response = await fetchImpl(`${instance.baseUrl}/api/show`, {
+      method: 'POST',
+      headers: headers(instance),
+      body: JSON.stringify({ model })
+    })
+    if (!response.ok) return undefined
+    return (await response.json()) as OllamaShowResponse
+  } catch {
+    return undefined
+  }
+}
+
+/** The trained context window, which `model_info` keys by architecture, as `llama.context_length`. */
+function contextFromModelInfo(info: Record<string, unknown> | undefined): number | undefined {
+  const key = Object.keys(info || {}).find((candidate) => candidate.endsWith('context_length'))
+  return key ? positiveInteger(info?.[key]) : undefined
+}
+
+/**
+ * One installed model, with what `/api/show` says it can do. Null for an embedding model, which
+ * cannot hold a chat.
+ */
+export function normalizeOllamaModel(
+  id: string,
+  show: OllamaShowResponse | undefined
+): ProviderInstanceModel | null {
+  const capabilities = Array.isArray(show?.capabilities) ? show.capabilities : undefined
+  if (capabilities?.includes('embedding') && !capabilities.includes('completion')) return null
+  const normalized: ProviderInstanceModel = {
+    id,
+    name: id,
+    enabled: false,
+    contextLength: contextFromModelInfo(show?.model_info),
+    supportsTools: capabilities ? capabilities.includes('tools') : undefined,
+    supportsVision: capabilities ? capabilities.includes('vision') : undefined,
+    supportsReasoning: capabilities ? capabilities.includes('thinking') : undefined
+  }
+  return { ...normalized, metadataSource: hasReportedMetadata(normalized) ? 'provider' : 'unknown' }
+}
+
 export async function discoverOllamaModels(
   instance: ProviderInstance,
   fetchImpl: FetchImplementation = fetch
@@ -263,16 +315,25 @@ export async function discoverOllamaModels(
       return { ok: false, status: response.status, error: await errorMessage(response) }
     }
     const data = (await response.json()) as { models?: Array<{ name?: string; model?: string }> }
-    const previous = new Map(instance.models.map((model) => [model.id, model]))
-    const models = (data.models || [])
-      .map((model) => model.name || model.model || '')
-      .filter(Boolean)
-      .map((id) => ({
-        ...previous.get(id),
-        id,
-        name: previous.get(id)?.name || id,
-        enabled: previous.get(id)?.enabled ?? false
-      }))
+    const ids = Array.from(
+      new Set((data.models || []).map((model) => model.name || model.model || '').filter(Boolean))
+    )
+    // A few at a time: each lookup reads the model file's header on the server.
+    const shown: Array<OllamaShowResponse | undefined> = new Array(ids.length)
+    let next = 0
+    await Promise.all(
+      Array.from({ length: Math.min(4, ids.length) }, async () => {
+        while (next < ids.length) {
+          const index = next++
+          shown[index] = await showOllamaModel(instance, ids[index], fetchImpl)
+        }
+      })
+    )
+    const configured = new Map(instance.models.map((model) => [model.id, model]))
+    const models = ids
+      .map((id, index) => normalizeOllamaModel(id, shown[index]))
+      .filter((model): model is ProviderInstanceModel => model !== null)
+      .map((model) => applyProviderModelOverrides(model, configured.get(model.id)))
       .sort((left, right) => left.id.localeCompare(right.id))
     return { ok: true, models }
   } catch (error) {
@@ -285,21 +346,5 @@ export async function resolveOllamaContext(
   model: string,
   fetchImpl: FetchImplementation = fetch
 ): Promise<number | undefined> {
-  try {
-    const response = await fetchImpl(`${instance.baseUrl}/api/show`, {
-      method: 'POST',
-      headers: headers(instance),
-      body: JSON.stringify({ model })
-    })
-    if (!response.ok) return undefined
-    const data = (await response.json()) as { model_info?: Record<string, unknown> }
-    const key = Object.keys(data.model_info || {}).find((candidate) =>
-      candidate.includes('context_length')
-    )
-    return key && typeof data.model_info?.[key] === 'number'
-      ? (data.model_info[key] as number)
-      : undefined
-  } catch {
-    return undefined
-  }
+  return contextFromModelInfo((await showOllamaModel(instance, model, fetchImpl))?.model_info)
 }
