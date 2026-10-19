@@ -1,3 +1,4 @@
+import type { ReasoningLevel } from './reasoning'
 import type { PermissionMode } from './permissions'
 import type { McpServerConfig } from './types'
 import type { EditingContractCalibration, EditingDialectPreference } from './workspaceMutations'
@@ -84,8 +85,6 @@ export interface ProviderInstance {
 
 export interface ProviderSettings {
   shellIsolation?: 'host' | 'docker'
-  /** Run agent commands in a terminal so they behave as for the user. Default on. */
-  agentCommandTerminal?: boolean
   /** Explicit user-selected canonical host Python; unset means no direct Office tools. */
   officeHelperInterpreter?: string
   /** Main-owned identity invalidates pending helper requests when configuration changes. */
@@ -105,10 +104,11 @@ export interface ProviderSettings {
   /** Pinned model id used for Plan mode. Empty means use the current chat model. */
   planningModelId?: string
   accentPalette?: string
+  /** The look the accent choice was made under; an older one moves to the current default once. */
+  accentPaletteVersion?: number
   /** Semantic conversation text size. Interface zoom remains an independent window control. */
   contentFontSize?: number
   focusChainEnabled?: boolean
-  focusChainReminderInterval?: number
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number
   notificationsEnabled?: boolean
@@ -131,8 +131,11 @@ export interface ProviderSettings {
   fastModelAnthropic?: string
   fastModelLMStudio?: string
   fastModelLlamaCpp?: string
+  /** The older on/off switches; they now only seed a model's starting reasoning level. */
   ollamaThinkingEnabled?: boolean
   openRouterThinkingEnabled?: boolean
+  /** The reasoning level chosen for each pinned model, by its id. */
+  reasoningLevels?: Record<string, ReasoningLevel>
   toolCallLimit?: number
   /** Runs that may work at once across the app; others wait in line. 1 to 8, four when unset. */
   maxConcurrentRuns?: number

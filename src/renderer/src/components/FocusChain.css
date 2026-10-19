@@ -145,11 +145,11 @@
 @keyframes fcExpandDown {
   from {
     opacity: 0;
-    max-height: 0;
+    transform: translateY(-4px);
   }
   to {
     opacity: 1;
-    max-height: 1000px;
+    transform: translateY(0);
   }
 }
 
@@ -165,7 +165,7 @@
   gap: var(--space-3);
   padding: var(--space-3);
   border-radius: var(--radius-md);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
   background: var(--app-bg);
 }
 
@@ -197,7 +197,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
 }
 
 .todo-checkbox.checked {

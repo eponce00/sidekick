@@ -25,9 +25,10 @@ function fakeStore(ready: VoiceModelId[] = []) {
           downloads.push({ id: manifest.id, resolve, reject, signal })
           signal.addEventListener('abort', () => reject(new Error('aborted')))
         })
-    )
+    ),
+    removeFolder: vi.fn(async () => undefined)
   }
-  return { store: store as unknown as VoiceModelStore, downloads }
+  return { store: store as unknown as VoiceModelStore & typeof store, downloads }
 }
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
@@ -170,5 +171,96 @@ describe('VoiceService', () => {
       ok: false,
       reason: 'disabled'
     })
+  })
+
+  it('says a reply a passage at a time, with a pause between passages', async () => {
+    const { store } = fakeStore(['dictation', 'speech'])
+    const sherpa = fakeSherpa()
+    const said: string[] = []
+    sherpa.OfflineTts.createAsync.mockResolvedValue({
+      sampleRate: 10,
+      generateAsync: vi.fn(
+        async (request: {
+          text: string
+          onProgress: (info: { samples: Float32Array }) => void
+        }) => {
+          said.push(request.text)
+          request.onProgress({ samples: Float32Array.of(1, 1) })
+          return { samples: Float32Array.of(1, 1), sampleRate: 10 }
+        }
+      )
+    })
+    const service = new VoiceService({
+      store,
+      enabled: true,
+      startDelayMs: 0,
+      loadSherpa: async () => sherpa
+    })
+    await service.ready()
+    const audio: number[] = []
+    const result = await service.speak(
+      'speech-1',
+      'First point. Second point.\n\nNext paragraph.\n\n## Sources\n- [Reuters](https://reuters.com/x)',
+      (samples) => audio.push(samples.length)
+    )
+    await (result as { finished: Promise<void> }).finished
+
+    expect(said).toEqual(['First point. Second point.', 'Next paragraph.'])
+    // Speech, a paragraph's pause (0.55 s at 10 Hz), speech; nothing after the last passage.
+    expect(audio).toEqual([2, 6, 2])
+    expect(sherpa.OfflineTts.createAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: expect.objectContaining({
+          kokoro: expect.objectContaining({ lang: 'en-us' })
+        })
+      })
+    )
+  })
+
+  it("reads another language with that language's voice of the same kind", async () => {
+    const { store } = fakeStore(['dictation', 'speech'])
+    const sherpa = fakeSherpa()
+    sherpa.OfflineTts.createAsync.mockResolvedValue({
+      sampleRate: 10,
+      generateAsync: vi.fn(async () => ({ samples: Float32Array.of(1), sampleRate: 10 }))
+    })
+    const service = new VoiceService({
+      store,
+      enabled: true,
+      startDelayMs: 0,
+      loadSherpa: async () => sherpa
+    })
+    await service.ready()
+    const result = await service.speak(
+      'speech-1',
+      'El archivo está listo y las pruebas pasan con este cambio para ti.',
+      () => undefined,
+      { voice: 'am_michael' }
+    )
+    await (result as { finished: Promise<void> }).finished
+    // em_alex, Kokoro's Spanish male voice, through espeak-ng's Spanish.
+    expect(sherpa.GenerationConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ sid: 29, extra: { lang: 'es' } })
+    )
+  })
+
+  it('says which languages it reads instead of reading one it cannot', async () => {
+    const { store } = fakeStore(['dictation', 'speech'])
+    const service = new VoiceService({ store, enabled: true, startDelayMs: 0 })
+    await service.ready()
+    const result = await service.speak(
+      'speech-1',
+      'Der Build ist fertig und die Tests sind grün, aber nicht alle.',
+      () => undefined
+    )
+    expect(result).toMatchObject({ ok: false, reason: 'unavailable' })
+    expect((result as { message: string }).message).toMatch(/does not speak German yet/)
+  })
+
+  it('removes the voice an earlier SideKick read with', async () => {
+    const { store } = fakeStore(['dictation', 'speech'])
+    const service = new VoiceService({ store, enabled: true, startDelayMs: 0 })
+    await service.ready()
+    expect(store.removeFolder).toHaveBeenCalledWith('supertonic-3-int8-2026-05-11')
   })
 })

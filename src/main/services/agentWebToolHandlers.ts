@@ -5,6 +5,7 @@ import {
   type ToolResultImageMimeType,
   type ToolResultMediaAttachment
 } from '../../shared/agentRuntime'
+import { browserNetworkApprovals, type BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { searchImages } from './sidekickSearch/imageSearch'
 import { digestPage } from './sidekickSearch/pageDigest'
 import { readPage } from './sidekickSearch/pageReader'
@@ -24,6 +25,16 @@ const PAGE_READ_TOKENS = 6_000
 export function pageFetchFailure(title: string, page: PageContent): ToolExecutionResult | null {
   if (page.success) return null
   const reason = page.error || 'The page could not be read'
+  if (page.refused) {
+    return toolExecutionFailed({
+      title,
+      code: 'permission_denied',
+      message: reason,
+      retryable: false,
+      recoveryAction: 'change_strategy',
+      data: page
+    })
+  }
   const unsupported = /^Unsupported page content type/i.test(reason)
   const invalid = /^(?:Invalid (?:page )?URL|Only HTTP and HTTPS)/i.test(reason)
   return toolExecutionFailed({
@@ -91,7 +102,8 @@ function bounded(value: unknown, fallback: number, min: number, max: number): nu
 
 export function registerWebToolHandlers(
   registry: AgentToolHandlerRegistry,
-  outputs: ToolOutputStore
+  outputs: ToolOutputStore,
+  networkPolicy: BrowserNetworkPolicy = browserNetworkApprovals
 ): void {
   registry.register('web_search', async ({ title, arguments: args }) => {
     const data = await searchWeb(String(args.query || ''), bounded(args.limit, 8, 1, 20))
@@ -104,8 +116,12 @@ export function registerWebToolHandlers(
     })
     return imageSearchToolResult(title, results)
   })
-  registry.register('web_fetch', async ({ title, arguments: args }) => {
-    const data = await readPage(String(args.url || ''))
+  registry.register('web_fetch', async ({ title, arguments: args, context }) => {
+    // One approval covers the browser and web_fetch, and stopping the run withdraws the question.
+    const data = await readPage(String(args.url || ''), undefined, {
+      policy: networkPolicy,
+      signal: context.signal
+    })
     const failure = pageFetchFailure(title, data)
     if (failure) return failure
     const digest = digestPage(data, String(args.information_needed || ''), PAGE_READ_TOKENS)

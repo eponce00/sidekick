@@ -60,10 +60,12 @@ const workers: PreviewWorker[] = [
 ]
 
 const workerId = (handle: string): string => `preview-worker-${handle}`
-const workerProjectId = (handle: string): string => `preview-worker-project-${handle}`
+const workerWorktreeId = (handle: string): string => `preview-worker-worktree-${handle}`
 const sourceName = (worker: PreviewWorker): string => worker.projectName ?? 'sidekick-demo'
-const worktreeName = (worker: PreviewWorker): string =>
-  `${sourceName(worker)} · sidekick/${worker.handle}`
+const worktreeFolder = (worker: PreviewWorker): string =>
+  worker.projectId
+    ? `${WORKTREES.replace('preview-project-1', worker.projectId)}\\${worker.handle}`
+    : `${WORKTREES}\\${worker.handle}`
 
 /** A manager chat with five workers, one of them in another project. */
 export const previewSessionConversations: ProjectConversation[] = [
@@ -85,12 +87,14 @@ export const previewSessionConversations: ProjectConversation[] = [
       title: worker.title,
       created_at: minutes(80 - index),
       updated_at: minutes(10 - index),
-      // Each worker works in its own worktree, which is a project of its own.
-      project_id: workerProjectId(worker.handle),
+      // Each worker stays in its project and works in its own worktree of it.
+      project_id: worker.projectId ?? 'preview-project-1',
       sidebar_order: 4 + index,
       project_context_version: 0,
-      home_workspace_root: `${worker.root ?? WORKTREES}\\${worker.handle}`,
-      home_project_name: worktreeName(worker),
+      home_workspace_root: worker.root ?? DEMO_ROOT,
+      home_project_name: sourceName(worker),
+      worktree_id: workerWorktreeId(worker.handle),
+      worktree_folder: worktreeFolder(worker),
       unread_completion_at: worker.state === 'done' ? minutes(4) : null,
       started_by_kind: 'session',
       started_by_conversation_id: MANAGER_ID,
@@ -100,18 +104,6 @@ export const previewSessionConversations: ProjectConversation[] = [
     })
   )
 ]
-
-/** The worktree projects the preview workers work in. */
-export const previewSessionProjects = workers.map((worker, index) => ({
-  id: workerProjectId(worker.handle),
-  name: worktreeName(worker),
-  folder_path: `${WORKTREES}\\${worker.handle}`,
-  is_pinned: 0,
-  created_at: minutes(80 - index),
-  updated_at: minutes(10 - index),
-  conversation_count: 1,
-  last_activity_at: minutes(10 - index)
-}))
 
 const branchStatus: Record<string, { ahead: number; changedFiles: number }> = {
   'question-card': { ahead: 1, changedFiles: 0 },
@@ -127,11 +119,9 @@ const statusOf = (handle: string): { ahead: number; changedFiles: number } =>
   branchStatus[handle] ?? { ahead: 0, changedFiles: 0 }
 
 export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((worker, index) => ({
-  id: `preview-worker-worktree-${worker.handle}`,
-  projectId: workerProjectId(worker.handle),
-  projectName: worktreeName(worker),
-  folderPath: `${WORKTREES}\\${worker.handle}`,
-  worktreeRoot: `${WORKTREES}\\${worker.handle}`,
+  id: workerWorktreeId(worker.handle),
+  folderPath: worktreeFolder(worker),
+  worktreeRoot: worktreeFolder(worker),
   sourceProjectId: worker.projectId ?? 'preview-project-1',
   sourceProjectName: sourceName(worker),
   branch: `sidekick/${worker.handle}`,
@@ -146,14 +136,12 @@ export const previewSessionWorktrees: ManagedWorktreeSummary[] = workers.map((wo
       running: worker.state === 'working'
     }
   ],
+  setAsideAt: null,
   status: {
     currentBranch: `sidekick/${worker.handle}`,
     ahead: statusOf(worker.handle).ahead,
-    behind: 0,
-    changedFiles: statusOf(worker.handle).changedFiles,
-    merged: false
-  },
-  blockers: []
+    changedFiles: statusOf(worker.handle).changedFiles
+  }
 }))
 
 // The manager writes the design itself; every other step waits on the chat doing it.

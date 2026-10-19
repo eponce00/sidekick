@@ -5,14 +5,13 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedWorktreeSummary, WorktreeBranchOptions } from '../../../shared/worktrees'
 import { WorktreesDialog } from './WorktreesDialog'
-import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
+import { chooseSelectOption, selectOptions } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 const changed: ManagedWorktreeSummary = {
   id: 'wt-1',
-  projectId: 'project-wt-1',
-  projectName: 'demo · sidekick/cards',
   folderPath: '/data/worktrees/p/cards-1',
   worktreeRoot: '/data/worktrees/p/cards-1',
   sourceProjectId: 'p',
@@ -22,32 +21,21 @@ const changed: ManagedWorktreeSummary = {
   createdAt: 1,
   lastUsedAt: 1,
   owners: [{ kind: 'chat', id: 'chat-1', title: 'Cards chat', running: false }],
-  status: { currentBranch: 'sidekick/cards', ahead: 2, behind: 1, changedFiles: 3, merged: false },
-  blockers: [
-    { code: 'in-use', message: 'A chat uses it.', forceable: true },
-    { code: 'modified', message: '3 uncommitted changes would be lost.', forceable: true },
-    { code: 'unmerged', message: 'sidekick/cards has 2 commits main does not.', forceable: true }
-  ]
+  setAsideAt: null,
+  status: { currentBranch: 'sidekick/cards', ahead: 2, changedFiles: 3 }
 }
 
 const api = {
   list: vi.fn(),
-  diskUsage: vi.fn(async (id: string) => ({ id, bytes: 2048, truncated: false })),
   branchOptions: vi.fn(
     async (): Promise<WorktreeBranchOptions> => ({
       branches: ['main', 'release'],
       currentBranch: 'main',
-      isGitRepository: true,
-      isManagedWorktree: false
+      isGitRepository: true
     })
   ),
   createForConversation: vi.fn(),
-  remove: vi.fn(async () => ({ removed: true, blockers: [] })),
-  sync: vi.fn(async () => ({
-    status: 'conflict' as const,
-    message: 'Merging main conflicts in 1 file. Nothing was changed.',
-    conflicts: ['README.md']
-  })),
+  remove: vi.fn(async (): Promise<{ removed: boolean; reason?: string }> => ({ removed: true })),
   reveal: vi.fn(async () => undefined)
 }
 
@@ -55,6 +43,12 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
   const match = [...container.querySelectorAll('button')].find(
     (candidate) => candidate.textContent?.trim() === label
   )
+  if (!match) throw new Error(`No button labelled ${label}`)
+  return match
+}
+
+function labelled(container: HTMLElement, label: string): HTMLButtonElement {
+  const match = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
   if (!match) throw new Error(`No button labelled ${label}`)
   return match
 }
@@ -76,15 +70,18 @@ describe('worktree UI', () => {
     container.remove()
   })
 
-  const renderDialog = async (onRemoved = vi.fn(async () => undefined)) => {
+  const renderDialog = async (
+    worktrees: ManagedWorktreeSummary[] = [changed],
+    onRemoved = vi.fn(async () => undefined)
+  ) => {
     await act(async () => {
       root.render(
         <WorktreesDialog
           isOpen
-          worktrees={[changed]}
+          worktrees={worktrees}
           onClose={vi.fn()}
           onRefresh={vi.fn(async () => undefined)}
-          onOpenProject={vi.fn()}
+          onOpenChat={vi.fn()}
           onRemoved={onRemoved}
         />
       )
@@ -92,56 +89,52 @@ describe('worktree UI', () => {
     return onRemoved
   }
 
-  it('shows Git state, owners and disk use', async () => {
+  it('shows each worktree by its chat, where it came from, and its changes', async () => {
     await renderDialog()
-    const text = container.textContent ?? ''
-    expect(text).toContain('sidekick/cards')
-    expect(text).toContain('2 ahead')
-    expect(text).toContain('1 behind')
-    expect(text).toContain('3 uncommitted')
-    expect(text).toContain('Cards chat')
-    expect(text).toContain('2.0 KB')
+    expect(container.querySelector('.worktrees-row-title')?.textContent).toBe('Cards chat')
+    const meta = container.querySelector('.worktrees-row-meta')?.textContent ?? ''
+    expect(meta).toContain('demo')
+    expect(meta).toContain('sidekick/cards')
+    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('3 changed')
   })
 
-  it('asks before a forced removal and only deletes the branch when checked', async () => {
-    const onRemoved = await renderDialog()
-    await act(async () => button(container, 'Remove').click())
-    expect(api.remove).not.toHaveBeenCalled()
-    expect(container.textContent).toContain('3 uncommitted changes would be lost.')
+  it('marks a set-aside worktree and has no folder to show for it', async () => {
+    await renderDialog([{ ...changed, setAsideAt: 5, status: null }])
+    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('Set aside')
+    expect(labelled(container, 'Show the folder').disabled).toBe(true)
+  })
 
-    const checkbox = container.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    await act(async () => checkbox.click())
-    await act(async () => button(container, 'Remove anyway').click())
-    expect(api.remove).toHaveBeenCalledWith({ id: 'wt-1', force: true, deleteBranch: true })
+  it('asks once before removing, then removes', async () => {
+    const onRemoved = await renderDialog()
+    await act(async () => labelled(container, 'Remove').click())
+    expect(api.remove).not.toHaveBeenCalled()
+    expect(container.textContent).toContain('and its uncommitted changes')
+    await act(async () => button(container, 'Delete').click())
+    expect(api.remove).toHaveBeenCalledWith('wt-1')
     expect(onRemoved).toHaveBeenCalled()
   })
 
-  it('removes a worktree with nothing to lose without asking', async () => {
-    await act(async () => {
-      root.render(
-        <WorktreesDialog
-          isOpen
-          worktrees={[{ ...changed, owners: [], blockers: [] }]}
-          onClose={vi.fn()}
-          onRefresh={vi.fn(async () => undefined)}
-          onOpenProject={vi.fn()}
-          onRemoved={vi.fn(async () => undefined)}
-        />
-      )
+  it('shows why a worktree was kept', async () => {
+    api.remove.mockResolvedValueOnce({
+      removed: false,
+      reason: 'An agent is working in it. Stop it first.'
     })
-    await act(async () => button(container, 'Remove').click())
-    expect(api.remove).toHaveBeenCalledWith({ id: 'wt-1', force: false, deleteBranch: false })
+    const onRemoved = await renderDialog()
+    await act(async () => labelled(container, 'Remove').click())
+    await act(async () => button(container, 'Delete').click())
+    expect(container.textContent).toContain('Stop it first.')
+    expect(onRemoved).not.toHaveBeenCalled()
   })
 
-  it('reports a conflicting sync with the files involved', async () => {
-    await renderDialog()
-    await act(async () => button(container, 'Sync with base').click())
-    expect(api.sync).toHaveBeenCalledWith('wt-1')
-    expect(container.textContent).toContain('conflicts in 1 file')
-    expect(container.textContent).toContain('README.md')
+  it('does not offer removal while an agent works in it', async () => {
+    await renderDialog([
+      { ...changed, owners: [{ kind: 'chat', id: 'chat-1', title: 'Cards chat', running: true }] }
+    ])
+    expect(container.querySelector('.worktrees-pill')?.textContent).toBe('Working')
+    expect(labelled(container, 'Remove').disabled).toBe(true)
   })
 
-  it('names the worktree a chat works in', async () => {
+  it('shows no bar once a chat works in a worktree; the composer chip names it', async () => {
     await act(async () => {
       root.render(
         <WorkspaceBar
@@ -149,18 +142,39 @@ describe('worktree UI', () => {
           worktree={changed}
           canChoose={false}
           workIn="folder"
-          branchName=""
-          branchPlaceholder=""
           baseRef=""
           onWorkInChange={vi.fn()}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
       )
     })
-    expect(container.textContent).toContain('sidekick/cards')
-    expect(container.textContent).toContain('worktree from main')
+    expect(container.querySelector('.workspace-bar')).toBeNull()
+
+    const onManage = vi.fn()
+    await act(async () => root.render(<WorktreeChip worktree={changed} onManage={onManage} />))
+    const chip = container.querySelector<HTMLButtonElement>('.composer-worktree-chip')!
+    expect(chip.textContent).toBe('sidekick/cards')
+    await act(async () => chip.click())
+    expect(onManage).toHaveBeenCalled()
+  })
+
+  it('names a detached worktree by the base it copies', async () => {
+    await act(async () => {
+      root.render(
+        <WorktreeChip
+          worktree={{
+            ...changed,
+            branch: null,
+            status: changed.status && { ...changed.status, currentBranch: null }
+          }}
+          onManage={vi.fn()}
+        />
+      )
+    })
+    expect(container.querySelector('.composer-worktree-chip')?.textContent).toBe(
+      'detached from main'
+    )
   })
 
   it('lets a new project chat choose a worktree and its base', async () => {
@@ -172,30 +186,52 @@ describe('worktree UI', () => {
           worktree={null}
           canChoose
           workIn="worktree"
-          branchName=""
-          branchPlaceholder="sidekick/fix-it"
           baseRef=""
           onWorkInChange={onWorkInChange}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
       )
     })
     expect(api.branchOptions).toHaveBeenCalledWith('p')
-    expect(container.querySelector('input')?.placeholder).toBe('sidekick/fix-it')
-    const options = [...container.querySelectorAll('option')].map((option) => option.textContent)
-    expect(options).toEqual(['main', 'release'])
+    // A worktree starts as a copy of its base; there is no branch to name.
+    expect(container.querySelector('input')).toBeNull()
+    const base = container.querySelector<HTMLElement>('.ui-select[aria-label="Start from"]')!
+    expect((await selectOptions(base)).map((option) => option.label)).toEqual(['main', 'release'])
     await act(async () => button(container, 'This folder').click())
     expect(onWorkInChange).toHaveBeenCalledWith('folder')
+  })
+
+  it('lets a new chat outside any project pick one, so a worktree can be offered', async () => {
+    const onChooseProject = vi.fn()
+    await act(async () => {
+      root.render(
+        <WorkspaceBar
+          projectId={null}
+          worktree={null}
+          canChoose
+          workIn="worktree"
+          baseRef=""
+          onWorkInChange={vi.fn()}
+          onBaseRefChange={vi.fn()}
+          onManageWorktrees={vi.fn()}
+          projectChoices={[{ id: 'repo', name: 'Repo' }]}
+          onChooseProject={onChooseProject}
+        />
+      )
+    })
+    const select = container.querySelector<HTMLElement>('.ui-select[aria-label="Project"]')!
+    expect((await selectOptions(select)).map(({ label }) => label)).toEqual(['No project', 'Repo'])
+    await chooseSelectOption(select, 'repo')
+    expect(onChooseProject).toHaveBeenCalledWith('repo')
+    expect(api.branchOptions).not.toHaveBeenCalled()
   })
 
   it('offers only the folder when the project is not a Git repository', async () => {
     api.branchOptions.mockResolvedValueOnce({
       branches: [],
       currentBranch: null,
-      isGitRepository: false,
-      isManagedWorktree: false
+      isGitRepository: false
     })
     await act(async () => {
       root.render(
@@ -204,17 +240,14 @@ describe('worktree UI', () => {
           worktree={null}
           canChoose
           workIn="worktree"
-          branchName=""
-          branchPlaceholder=""
           baseRef=""
           onWorkInChange={vi.fn()}
-          onBranchNameChange={vi.fn()}
           onBaseRefChange={vi.fn()}
           onManageWorktrees={vi.fn()}
         />
       )
     })
-    expect(button(container, 'New worktree').disabled).toBe(true)
-    expect(container.querySelector('input')).toBeNull()
+    expect(container.textContent).toContain('Not a Git repository')
+    expect(container.querySelector('[role="radiogroup"]')).toBeNull()
   })
 })

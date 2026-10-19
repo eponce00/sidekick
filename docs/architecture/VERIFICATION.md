@@ -75,6 +75,24 @@ When a run changed the workspace and attempts to finish:
    complete a goal and bypass workspace evidence, and a goal it completed is not told afterwards
    that completion cannot be claimed yet.
 
+## Looking at what renders
+
+A model that can see images, and so has SideKick's browser, is also asked to look at its work. A
+changed file counts as visual when its result is seen rendered: HTML, stylesheets, SVG, and UI
+component files (`.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`), but not tests. Any browser result
+that carried a screenshot marks every change up to that revision as seen. When the run attempts to
+finish with visual changes after the last look, it gets one trusted request to open the result,
+with local file URLs for changed pages, and check it with `browser_verify`. This applies whether or
+not a project check applies, so a standalone page is looked at too. When a project check is also
+due, both are asked for in the same pass: a second pass would keep the first pass's one-line
+result as the answer. The pass follows the same answer rules as above.
+
+`browser_verify` can capture an animation: with `frames` set to 2 to 4, it takes that many viewport
+screenshots `interval_ms` apart and returns them side by side as one JPEG, oldest on the left, at
+most 1536 pixels wide. A request keeps only the latest two images, so one strip shows motion for
+about the cost of one screenshot without pushing the newest image out. When every frame is
+identical, the result says that nothing moved.
+
 The final message shows the verification result as one status in its footer, reconstructed from
 the durable run event, with the checks, the pass's steps, and any note behind it. A pass still
 running shows inline as live progress. Direct chats, worker chats, and child agents all use the same

@@ -1,55 +1,20 @@
 import { useEffect, useId, useState } from 'react'
-import {
-  ArrowDown,
-  ArrowUp,
-  ExternalLink,
-  FolderOpen,
-  GitBranch,
-  GitMerge,
-  HardDrive,
-  Loader2,
-  MessageSquare,
-  RefreshCw,
-  Trash2,
-  X
-} from 'lucide-react'
+import { ExternalLink, FolderGit2, FolderOpen, Loader2, Trash2, X } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
-import type {
-  ManagedWorktreeDiskUsage,
-  ManagedWorktreeSummary,
-  WorktreeRemovalBlocker
-} from '../../../shared/worktrees'
+import { worktreeBranchLabel, type ManagedWorktreeSummary } from '../../../shared/worktrees'
 import './ForkConversationDialog.css'
 import './Worktrees.css'
 
 interface WorktreesDialogProps {
   isOpen: boolean
   worktrees: ManagedWorktreeSummary[]
-  /** Scrolls to and highlights this worktree's project. */
-  focusProjectId?: string | null
+  /** Scrolls to and highlights this worktree. */
+  focusWorktreeId?: string | null
   onClose: () => void
   onRefresh: () => Promise<void>
-  onOpenProject: (projectId: string) => void
+  onOpenChat: (worktree: ManagedWorktreeSummary) => void
   /** Called after a removal so the sidebar drops the project and detached chats. */
   onRemoved: () => Promise<void>
-}
-
-interface RowNotice {
-  tone: 'info' | 'success' | 'error'
-  text: string
-  details?: string[]
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  const units = ['KB', 'MB', 'GB', 'TB']
-  let value = bytes / 1024
-  let unit = 0
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024
-    unit++
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`
 }
 
 function relativeTime(timestamp: number): string {
@@ -61,125 +26,72 @@ function relativeTime(timestamp: number): string {
   return `${Math.round(hours / 24)} d ago`
 }
 
-/** Lists SideKick's worktrees with their Git state, the chats using them, and safe actions. */
+function stateOf(worktree: ManagedWorktreeSummary): { label: string; tone: string } | null {
+  if (worktree.owners.some(({ running }) => running)) return { label: 'Working', tone: 'running' }
+  if (worktree.setAsideAt) return { label: 'Set aside', tone: 'aside' }
+  const changed = worktree.status?.changedFiles ?? 0
+  if (changed) return { label: `${changed} changed`, tone: 'changed' }
+  return null
+}
+
+/**
+ * Lists the chats' worktrees: which chat, where it came from, and whether it is set aside.
+ * SideKick keeps the most recently used on disk by itself, so the only action here is removal.
+ */
 export function WorktreesDialog({
   isOpen,
   worktrees,
-  focusProjectId,
+  focusWorktreeId,
   onClose,
   onRefresh,
-  onOpenProject,
+  onOpenChat,
   onRemoved
 }: WorktreesDialogProps): React.JSX.Element | null {
   const dialogRef = useModalDialog<HTMLDivElement>(isOpen, onClose)
   const titleId = useId()
-  const [disk, setDisk] = useState<Record<string, ManagedWorktreeDiskUsage>>({})
   const [working, setWorking] = useState<string | null>(null)
-  const [refreshing, setRefreshing] = useState(false)
-  const [notices, setNotices] = useState<Record<string, RowNotice>>({})
-  const [confirming, setConfirming] = useState<{ id: string; deleteBranch: boolean } | null>(null)
+  const [confirming, setConfirming] = useState<string | null>(null)
+  const [errors, setErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!isOpen) return
-    setRefreshing(true)
-    void onRefresh().finally(() => setRefreshing(false))
-    // Refresh only when the dialog opens; actions refresh on their own.
+    void onRefresh()
+    // Refresh only when the dialog opens; removal refreshes on its own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   useEffect(() => {
-    if (!isOpen) return
-    let cancelled = false
-    for (const worktree of worktrees) {
-      if (disk[worktree.id]) continue
-      void window.api.worktrees
-        .diskUsage(worktree.id)
-        .then((usage) => {
-          if (!cancelled) setDisk((current) => ({ ...current, [usage.id]: usage }))
-        })
-        .catch(() => undefined)
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [disk, isOpen, worktrees])
-
-  useEffect(() => {
-    if (!isOpen || !focusProjectId) return
-    const target = worktrees.find(({ projectId }) => projectId === focusProjectId)
-    if (!target) return
+    if (!isOpen || !focusWorktreeId) return
     document
-      .getElementById(`worktree-row-${target.id}`)
+      .getElementById(`worktree-row-${focusWorktreeId}`)
       ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [focusProjectId, isOpen, worktrees])
+  }, [focusWorktreeId, isOpen, worktrees])
 
   if (!isOpen) return null
-
-  const notify = (id: string, notice: RowNotice | null): void =>
-    setNotices((current) => {
-      const next = { ...current }
-      if (notice) next[id] = notice
-      else delete next[id]
-      return next
-    })
 
   const run = async (id: string, action: () => Promise<void>): Promise<void> => {
     if (working) return
     setWorking(id)
+    setErrors(({ [id]: _cleared, ...rest }) => rest)
     try {
       await action()
     } catch (error) {
-      notify(id, { tone: 'error', text: error instanceof Error ? error.message : String(error) })
+      setErrors((current) => ({
+        ...current,
+        [id]: error instanceof Error ? error.message : String(error)
+      }))
     } finally {
       setWorking(null)
     }
   }
 
-  const sync = (worktree: ManagedWorktreeSummary): Promise<void> =>
+  const remove = (worktree: ManagedWorktreeSummary): Promise<void> =>
     run(worktree.id, async () => {
-      const result = await window.api.worktrees.sync(worktree.id)
-      notify(worktree.id, {
-        tone:
-          result.status === 'merged' || result.status === 'up-to-date'
-            ? 'success'
-            : result.status === 'conflict'
-              ? 'error'
-              : 'info',
-        text: result.message,
-        details: result.status === 'conflict' ? result.conflicts : undefined
-      })
-      await onRefresh()
-    })
-
-  const remove = (worktree: ManagedWorktreeSummary, force: boolean, deleteBranch = false) =>
-    run(worktree.id, async () => {
-      const result = await window.api.worktrees.remove({ id: worktree.id, force, deleteBranch })
+      const result = await window.api.worktrees.remove(worktree.id)
       setConfirming(null)
-      if (!result.removed) {
-        notify(worktree.id, {
-          tone: 'error',
-          text: 'Kept. ' + result.blockers.map(({ message }) => message).join(' ')
-        })
-        await onRefresh()
-        return
-      }
-      notify(worktree.id, null)
+      if (!result.removed) throw new Error(result.reason ?? 'The worktree was kept.')
       await onRemoved()
     })
-
-  const reveal = (worktree: ManagedWorktreeSummary): Promise<void> =>
-    run(worktree.id, () => window.api.worktrees.reveal(worktree.id))
-
-  const startRemoval = (worktree: ManagedWorktreeSummary): void => {
-    if (!worktree.blockers.length) {
-      void remove(worktree, false)
-      return
-    }
-    setConfirming({ id: worktree.id, deleteBranch: false })
-  }
-
-  const hardBlockers = (blockers: WorktreeRemovalBlocker[]) =>
-    blockers.filter(({ forceable }) => !forceable)
 
   return (
     <div className="fork-dialog-backdrop" role="presentation" onClick={onClose}>
@@ -194,13 +106,13 @@ export function WorktreesDialog({
       >
         <div className="fork-dialog-header">
           <span className="fork-dialog-icon">
-            <GitBranch size={18} />
+            <FolderGit2 size={18} />
           </span>
           <div>
             <h2 id={titleId}>Worktrees</h2>
             <p>
-              Separate folders on their own branches, so agents working in parallel never overwrite
-              each other. They live in SideKick&apos;s data folder, not in your project.
+              Each chat can work in its own copy of the project. SideKick keeps the 15 most recently
+              used; older ones are set aside and come back as they were when their chat continues.
             </p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close">
@@ -208,229 +120,115 @@ export function WorktreesDialog({
           </button>
         </div>
 
-        <div className="worktrees-toolbar">
-          <span className="workspace-bar-muted">
-            {worktrees.length === 1 ? '1 worktree' : `${worktrees.length} worktrees`}
-          </span>
-          <button
-            type="button"
-            className="worktrees-action"
-            disabled={refreshing}
-            onClick={() => {
-              setRefreshing(true)
-              setDisk({})
-              void onRefresh().finally(() => setRefreshing(false))
-            }}
-          >
-            <RefreshCw size={13} className={refreshing ? 'icon-spin' : undefined} />
-            Refresh
-          </button>
-        </div>
-
         {worktrees.length === 0 ? (
           <div className="worktrees-empty">
-            <GitBranch size={20} aria-hidden="true" />
+            <FolderGit2 size={20} aria-hidden="true" />
             <strong>No worktrees yet</strong>
-            <span>
-              Choose “New worktree” before the first message of a project chat, or fork a chat into
-              a new worktree.
-            </span>
+            <span>Choose “New worktree” before the first message of a project chat.</span>
           </div>
         ) : (
           <ul className="worktrees-list">
             {worktrees.map((worktree) => {
-              const status = worktree.status
-              const usage = disk[worktree.id]
-              const notice = notices[worktree.id]
+              const state = stateOf(worktree)
+              const running = state?.tone === 'running'
               const isWorking = working === worktree.id
-              const isConfirming = confirming?.id === worktree.id
-              const hard = hardBlockers(worktree.blockers)
-              const unmerged = worktree.blockers.some(({ code }) => code === 'unmerged')
-              const running = worktree.owners.some((owner) => owner.running)
+              const chat = worktree.owners[0]?.title ?? 'No chat'
+              const error = errors[worktree.id]
               return (
                 <li
                   key={worktree.id}
                   id={`worktree-row-${worktree.id}`}
-                  className={`worktrees-row${focusProjectId === worktree.projectId ? ' is-focused' : ''}`}
+                  className={`worktrees-row${focusWorktreeId === worktree.id ? ' is-focused' : ''}${worktree.setAsideAt ? ' is-aside' : ''}`}
                 >
-                  <div className="worktrees-row-head">
-                    <GitBranch size={15} className="workspace-bar-icon" aria-hidden="true" />
-                    <span className="workspace-bar-branch" title={worktree.worktreeRoot}>
-                      {worktree.branch}
+                  <div className="worktrees-row-main">
+                    <span className="worktrees-row-title" title={chat}>
+                      {chat}
                     </span>
-                    <span className="workspace-bar-muted">
-                      {worktree.sourceProjectName ?? 'Removed project'}
-                      {worktree.baseRef ? ` · from ${worktree.baseRef}` : ''}
-                    </span>
-                    {running && <span className="worktrees-pill is-running">Agent working</span>}
-                  </div>
-
-                  <div className="worktrees-facts">
-                    {status ? (
-                      <>
-                        <span title={`Commits ${worktree.branch} has that its base does not`}>
-                          <ArrowUp size={12} aria-hidden="true" />
-                          {status.ahead ?? '?'} ahead
-                        </span>
-                        <span title="Commits on the base that this branch does not have">
-                          <ArrowDown size={12} aria-hidden="true" />
-                          {status.behind ?? '?'} behind
-                        </span>
-                        <span className={status.changedFiles ? 'is-attention' : undefined}>
-                          {status.changedFiles
-                            ? `${status.changedFiles} uncommitted`
-                            : 'No uncommitted changes'}
-                        </span>
-                        <span>{status.merged ? 'Merged' : 'Not merged'}</span>
-                      </>
-                    ) : (
-                      <span className="is-attention">Git state unavailable</span>
-                    )}
-                    <span title="Disk use, without following links">
-                      <HardDrive size={12} aria-hidden="true" />
-                      {usage
-                        ? `${usage.truncated ? 'over ' : ''}${formatBytes(usage.bytes)}`
-                        : 'Measuring…'}
-                    </span>
-                    <span title={new Date(worktree.lastUsedAt).toLocaleString()}>
-                      Used {relativeTime(worktree.lastUsedAt)}
+                    <span className="worktrees-row-meta" title={worktree.worktreeRoot}>
+                      {worktree.sourceProjectName ?? 'Removed project'} ·{' '}
+                      {worktreeBranchLabel(worktree)} · used {relativeTime(worktree.lastUsedAt)}
                     </span>
                   </div>
-
-                  <div className="worktrees-owners">
-                    <MessageSquare size={12} aria-hidden="true" />
-                    <span>
-                      {worktree.owners.length
-                        ? worktree.owners
-                            .map((owner) => `${owner.title}${owner.running ? ' (working)' : ''}`)
-                            .join(', ')
-                        : 'No chats use it'}
-                    </span>
-                  </div>
-
-                  {notice && (
-                    <div className={`worktrees-notice is-${notice.tone}`} role="status">
-                      {notice.text}
-                      {notice.details?.length ? (
-                        <ul>
-                          {notice.details.map((detail) => (
-                            <li key={detail}>{detail}</li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
+                  {state && (
+                    <span className={`worktrees-pill is-${state.tone}`}>{state.label}</span>
                   )}
-
-                  {isConfirming ? (
+                  {confirming === worktree.id ? (
                     <div
                       className="worktrees-confirm"
                       role="alertdialog"
-                      aria-label="Remove anyway"
+                      aria-label="Remove worktree"
                     >
-                      <strong>Remove this worktree anyway?</strong>
-                      <ul>
-                        {worktree.blockers.map((blocker) => (
-                          <li key={blocker.code}>{blocker.message}</li>
-                        ))}
-                      </ul>
-                      {unmerged && (
-                        <label className="worktrees-checkbox">
-                          <input
-                            type="checkbox"
-                            checked={confirming.deleteBranch}
-                            onChange={(event) =>
-                              setConfirming({ id: worktree.id, deleteBranch: event.target.checked })
-                            }
-                          />
-                          Also delete {worktree.branch} and its unmerged commits
-                        </label>
-                      )}
-                      <div className="worktrees-actions">
-                        <button
-                          type="button"
-                          className="worktrees-action"
-                          onClick={() => setConfirming(null)}
-                          disabled={isWorking}
-                        >
-                          Keep it
-                        </button>
-                        <button
-                          type="button"
-                          className="worktrees-action is-danger"
-                          disabled={isWorking || hard.length > 0}
-                          onClick={() => void remove(worktree, true, confirming.deleteBranch)}
-                        >
-                          {isWorking ? (
-                            <Loader2 size={13} className="icon-spin" />
-                          ) : (
-                            <Trash2 size={13} />
-                          )}
-                          Remove anyway
-                        </button>
-                      </div>
+                      <span>
+                        Delete this folder
+                        {worktree.status?.changedFiles ? ' and its uncommitted changes' : ''}?
+                        Branches stay in the repository.
+                      </span>
+                      <button
+                        type="button"
+                        className="worktrees-action"
+                        disabled={isWorking}
+                        onClick={() => setConfirming(null)}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="worktrees-action is-danger"
+                        disabled={isWorking}
+                        onClick={() => void remove(worktree)}
+                      >
+                        {isWorking ? (
+                          <Loader2 size={13} className="icon-spin" />
+                        ) : (
+                          <Trash2 size={13} />
+                        )}
+                        Delete
+                      </button>
                     </div>
                   ) : (
-                    <>
-                      {hard.length > 0 && (
-                        <div className="worktrees-notice is-info">
-                          {hard.map(({ message }) => message).join(' ')}
-                        </div>
-                      )}
-                      <div className="worktrees-actions">
-                        <button
-                          type="button"
-                          className="worktrees-action"
-                          disabled={Boolean(working)}
-                          onClick={() => onOpenProject(worktree.projectId)}
-                        >
-                          <ExternalLink size={13} />
-                          Open
-                        </button>
-                        <button
-                          type="button"
-                          className="worktrees-action"
-                          disabled={Boolean(working) || !status}
-                          onClick={() => void reveal(worktree)}
-                        >
-                          <FolderOpen size={13} />
-                          Show folder
-                        </button>
-                        <button
-                          type="button"
-                          className="worktrees-action"
-                          disabled={Boolean(working) || !status || running}
-                          title={
-                            running
-                              ? 'Wait for the agent to finish'
-                              : `Merge ${worktree.baseRef ?? 'the base'} into ${worktree.branch}`
-                          }
-                          onClick={() => void sync(worktree)}
-                        >
-                          {isWorking ? (
-                            <Loader2 size={13} className="icon-spin" />
-                          ) : (
-                            <GitMerge size={13} />
-                          )}
-                          Sync with base
-                        </button>
-                        <button
-                          type="button"
-                          className="worktrees-action is-danger"
-                          disabled={Boolean(working) || hard.length > 0}
-                          title={
-                            hard.length
-                              ? hard.map(({ message }) => message).join(' ')
-                              : worktree.blockers.length
-                                ? 'Shows what would be lost before removing'
-                                : 'Nothing would be lost'
-                          }
-                          onClick={() => startRemoval(worktree)}
-                        >
-                          <Trash2 size={13} />
-                          Remove
-                        </button>
-                      </div>
-                    </>
+                    <div className="worktrees-actions">
+                      <button
+                        type="button"
+                        className="worktrees-icon-action"
+                        disabled={Boolean(working)}
+                        onClick={() => onOpenChat(worktree)}
+                        title="Open its chat"
+                        aria-label="Open its chat"
+                      >
+                        <ExternalLink size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="worktrees-icon-action"
+                        disabled={Boolean(working) || Boolean(worktree.setAsideAt)}
+                        onClick={() =>
+                          void run(worktree.id, () => window.api.worktrees.reveal(worktree.id))
+                        }
+                        title={
+                          worktree.setAsideAt
+                            ? 'Set aside: the folder comes back when its chat continues'
+                            : 'Show the folder'
+                        }
+                        aria-label="Show the folder"
+                      >
+                        <FolderOpen size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className="worktrees-icon-action is-danger"
+                        disabled={Boolean(working) || running}
+                        onClick={() => setConfirming(worktree.id)}
+                        title={running ? 'Wait for the agent to finish' : 'Remove'}
+                        aria-label="Remove"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {error && (
+                    <div className="worktrees-notice is-error" role="alert">
+                      {error}
+                    </div>
                   )}
                 </li>
               )

@@ -67,6 +67,12 @@ describe('calculateRequestBudget', () => {
     expect(resolveMaxOutputTokens(180_000)).toBe(32_768)
   })
 
+  it('honors a configured output budget above the default ceiling, up to half the window', () => {
+    // A local reasoning model with a 260k window, set to 100k output, was held to 32,768.
+    expect(resolveMaxOutputTokens(260_000, 100_000)).toBe(100_000)
+    expect(resolveMaxOutputTokens(131_072, 100_000)).toBe(65_536)
+  })
+
   it('does not treat dense numeric JSON like ordinary prose', () => {
     const dense = JSON.stringify({
       coordinates: Array.from({ length: 4_000 }, (_, index) => [index / 100, -index / 100])

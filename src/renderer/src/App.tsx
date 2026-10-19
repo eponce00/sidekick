@@ -5,6 +5,9 @@ import ChatPanel from './components/ChatPanel'
 import ActivityPanel from './components/ActivityPanel'
 import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
+import { migrateAccentPalette } from '../../shared/accentPalettes'
+import appIconUrl from '../../../build/icon.svg?url'
+import smallIconUrl from '../../../build/icon-small.svg?url'
 import type { SettingsSection } from './components/SettingsModal'
 import ContextIndicator from './components/ContextIndicator'
 import SchedulesDialog from './components/SchedulesDialog'
@@ -12,10 +15,12 @@ import { useSchedules } from './hooks/useSchedules'
 import { AppUpdateToast } from './components/AppUpdateControls'
 import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
+import { AppMenuHost } from './components/AppMenuHost'
 import { useManagedWorktrees } from './hooks/useManagedWorktrees'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
+import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { resolveStoredToolCallLimit } from '../../shared/agentLimits'
 import {
@@ -38,10 +43,13 @@ import {
 } from './types/app.types'
 import { resolveFastModel } from './utils/fastModel'
 import { isPlaceholderConversationTitle } from './utils/chatPanelHelpers'
+import { switchThemeFrom } from './utils/themeTransition'
+import { WrittenTitle } from './components/WrittenTitle'
 import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
+import { useUntouchedChatCleanup } from './hooks/useUntouchedChatCleanup'
 import {
   deleteComposerDraft,
   saveComposerDraft,
@@ -55,7 +63,17 @@ import { buildCommandPaletteItems, latestProjectConversationId } from './utils/c
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
 import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
-import { storedActivityPanelWidth, workspaceLayout } from './utils/activityPanelLayout'
+import {
+  LAYOUT_MOTION_MS,
+  PANEL_GLIDE_MS,
+  SIDEBAR_RAIL_WIDTH,
+  SIDEBAR_WIDTH,
+  activityPanelSnapWidths,
+  storedActivityPanelSize,
+  storedActivityPanelWidth,
+  workspaceLayout,
+  type ActivityPanelSize
+} from './utils/activityPanelLayout'
 import './styles/App.css'
 
 const DEFAULT_SETTINGS: ProviderSettings = {
@@ -67,7 +85,6 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   lmStudioApiKey: '',
   llamaCppEndpoint: 'http://localhost:8080/v1',
   focusChainEnabled: true,
-  focusChainReminderInterval: 15,
   autoCompactEnabled: true,
   autoCompactThreshold: 0.8,
   notificationsEnabled: true,
@@ -162,7 +179,7 @@ function App(): React.JSX.Element {
   const [forkBusy, setForkBusy] = useState(false)
   const [forkError, setForkError] = useState<string | null>(null)
   const { worktrees, refreshWorktrees } = useManagedWorktrees()
-  const [worktreesDialog, setWorktreesDialog] = useState<{ focusProjectId: string | null } | null>(
+  const [worktreesDialog, setWorktreesDialog] = useState<{ focusWorktreeId: string | null } | null>(
     null
   )
   const currentConversation = conversations.find(
@@ -211,8 +228,26 @@ function App(): React.JSX.Element {
     return () => window.removeEventListener('resize', update)
   }, [])
   const [activityPanelWidth, setActivityPanelWidth] = useState(() =>
-    storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
+    storedActivityPanelWidth(
+      window.localStorage.getItem('activityPanelWidth'),
+      window.innerWidth,
+      window.localStorage.getItem('activityPanelSize')
+    )
   )
+  const [activityPanelSize, setActivityPanelSize] = useState<ActivityPanelSize>(() =>
+    storedActivityPanelSize(window.localStorage.getItem('activityPanelSize'))
+  )
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelSize', activityPanelSize)
+  }, [activityPanelSize])
+  useEffect(() => {
+    window.localStorage.setItem('activityPanelWidth', String(activityPanelWidth))
+  }, [activityPanelWidth])
+  // Each time the inspector's edge glides to a width, the chat is held still while it moves.
+  const [panelGlide, setPanelGlide] = useState(0)
+  // Where the panel floats over the chat, sizes do not apply.
+  const panelSize: ActivityPanelSize = isCompactLayout ? 'wide' : activityPanelSize
+  const panelIsFull = effectiveActivityPanelPinned && panelSize === 'full'
   // Opening the sidebar while it is folded for room keeps it open; the inspector narrows instead.
   const [isSidebarHeldOpen, setIsSidebarHeldOpen] = useState(false)
   const layout = workspaceLayout({
@@ -220,7 +255,8 @@ function App(): React.JSX.Element {
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth
+    panelWidth: activityPanelWidth,
+    panelSize
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
   const sidebarNeedsRoom = workspaceLayout({
@@ -228,21 +264,81 @@ function App(): React.JSX.Element {
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth
+    panelWidth: activityPanelWidth,
+    panelSize: panelSize === 'full' ? 'wide' : panelSize
   }).sidebarAutoCollapsed
   useEffect(() => {
     if (!sidebarNeedsRoom) setIsSidebarHeldOpen(false)
   }, [sidebarNeedsRoom])
   const effectiveSidebarCollapsed =
     isSidebarCollapsed || layout.sidebarAutoCollapsed || (isCompactLayout && isCompactActivityOpen)
+  // When the sidebar or the inspector opens, closes or changes size, the chat's content is held at
+  // its final width for the animation, centred and clipped, instead of re-wrapping every frame.
+  // Dragging the inspector's edge and resizing the window still re-lay it out live.
+  const collapsedPanelWidth = 48
+  const sidebarTargetWidth = effectiveSidebarCollapsed ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH
+  const panelTargetWidth = !effectiveActivityPanelPinned
+    ? collapsedPanelWidth
+    : panelSize === 'full'
+      ? layout.panelMaxWidth
+      : Math.min(activityPanelWidth, layout.panelMaxWidth)
+  // The widest the inspector fits beside the chat, with the sidebar folded for it: dragged well
+  // past this, it takes the whole window.
+  const panelSideBySideMax = workspaceLayout({
+    viewportWidth,
+    sidebarCollapsed: isSidebarCollapsed,
+    sidebarHeldOpen: isSidebarHeldOpen,
+    panelOpen: true,
+    panelWidth: Number.MAX_SAFE_INTEGER,
+    panelSize: 'wide'
+  }).panelMaxWidth
+  const panelSnapWidths = activityPanelSnapWidths({
+    viewportWidth,
+    sidebarWidth: SIDEBAR_RAIL_WIDTH,
+    sideBySideMax: panelSideBySideMax
+  })
+  const chatTargetWidth = panelIsFull
+    ? 0
+    : Math.max(0, viewportWidth - sidebarTargetWidth - panelTargetWidth)
+  const layoutShape = `${panelSize}|${effectiveActivityPanelPinned}|${effectiveSidebarCollapsed}|${panelGlide}`
+  const [settledLayout, setSettledLayout] = useState({
+    shape: layoutShape,
+    chatWidth: chatTargetWidth,
+    panelGlide
+  })
+  const [layoutMotion, setLayoutMotion] = useState<{
+    chatWidth: number
+    duration: number
+    at: number
+  } | null>(null)
+  if (settledLayout.shape !== layoutShape) {
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth, panelGlide })
+    if (!isCompactLayout)
+      setLayoutMotion({
+        // A chat stepping aside for the full panel keeps the width it had while it fades.
+        chatWidth: chatTargetWidth > 0 ? chatTargetWidth : settledLayout.chatWidth,
+        // The inspector let go of glides a little longer than other layout changes.
+        duration: settledLayout.panelGlide !== panelGlide ? PANEL_GLIDE_MS : LAYOUT_MOTION_MS,
+        at: Date.now()
+      })
+  } else if (settledLayout.chatWidth !== chatTargetWidth) {
+    setSettledLayout({ shape: layoutShape, chatWidth: chatTargetWidth, panelGlide })
+  }
+  useEffect(() => {
+    if (!layoutMotion) return
+    const timer = window.setTimeout(() => setLayoutMotion(null), layoutMotion.duration + 40)
+    return () => window.clearTimeout(timer)
+  }, [layoutMotion])
   const toggleSidebar = (): void => {
     if (isCompactLayout && effectiveSidebarCollapsed) {
       setIsCompactActivityOpen(false)
       setIsSidebarCollapsed(false)
       return
     }
-    // Opening it is a choice to keep it open; only closing hands it back to the layout.
+    // Opening it is a choice to keep it open; only closing hands it back to the layout. The full
+    // panel has no room for it, so opening the sidebar steps the panel back to wide.
     const opening = effectiveSidebarCollapsed
+    if (opening && panelIsFull) setActivityPanelSize('wide')
     setIsSidebarHeldOpen(opening)
     setIsSidebarCollapsed(!opening)
   }
@@ -283,7 +379,6 @@ function App(): React.JSX.Element {
     max: 4096
   })
   const [conversationCost, setConversationCost] = useState<number>(0)
-  const [appIconPath, setAppIconPath] = useState<string>('')
   const [userLocation, setUserLocation] = useState<{
     city?: string
     country?: string
@@ -310,15 +405,25 @@ function App(): React.JSX.Element {
     forgetPanel,
     resetPanels
   } = useConversationPanelRegistry(conversations, currentConversationId)
+  useUntouchedChatCleanup({
+    ready: isReady,
+    conversations,
+    currentConversationId,
+    onDiscarded: (id) => {
+      deleteComposerDraft(id)
+      forgetPanel(id)
+      setConversations((current) => current.filter((conversation) => conversation.id !== id))
+    }
+  })
   // Load settings, pinned models, and conversations on startup
   useEffect(() => {
     const loadData = async (): Promise<void> => {
       try {
-        setAppIconPath(await window.api.app.getIconPath())
-
         const savedSettings = await window.api.settings.load()
         const savedModels = await window.api.pinnedModels.load()
-        const mergedSettings = normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
+        const mergedSettings = migrateAccentPalette(
+          normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
+        )
         const providerInstances = migrateLegacyProviderInstances(mergedSettings, savedModels || [])
         const migratedSettings = syncLegacyProviderSettings({
           ...mergedSettings,
@@ -344,7 +449,8 @@ function App(): React.JSX.Element {
         setSelectedModel(selected)
         if (
           !savedSettings?.providerInstances ||
-          savedSettings.toolCallLimitVersion !== TOOL_CALL_LIMIT_POLICY_VERSION
+          savedSettings.toolCallLimitVersion !== TOOL_CALL_LIMIT_POLICY_VERSION ||
+          savedSettings.accentPaletteVersion !== migratedSettings.accentPaletteVersion
         ) {
           void window.api.settings.save(migratedSettings)
         }
@@ -534,20 +640,26 @@ function App(): React.JSX.Element {
     [projectById]
   )
 
+  const worktreeById = useMemo(
+    () => new Map(worktrees.map((worktree) => [worktree.id, worktree])),
+    [worktrees]
+  )
+  /** Where a chat works: its own worktree's folder, else its project's folder. */
+  const conversationFolder = useCallback(
+    (conversation: Conversation | null | undefined): string | null =>
+      conversation?.worktree_folder ??
+      (conversation?.worktree_id ? worktreeById.get(conversation.worktree_id)?.folderPath : null) ??
+      projectById(conversation?.project_id)?.folder_path ??
+      null,
+    [projectById, worktreeById]
+  )
+
   const refreshProjects = useCallback(async (): Promise<void> => {
     setProjects(await window.api.projects.list())
-    // A project can be a worktree that was just created or removed.
-    void refreshWorktrees()
-  }, [refreshWorktrees])
+  }, [])
 
-  const worktreeByProjectId = useMemo(
-    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree])),
-    [worktrees]
-  )
-  const worktreeSources = useMemo(
-    () => new Map(worktrees.map((worktree) => [worktree.projectId, worktree.sourceProjectId])),
-    [worktrees]
-  )
+  // A chat outside any project can move into one of these.
+  const projectChoices = useMemo(() => projects.map(({ id, name }) => ({ id, name })), [projects])
 
   const markConversationRead = useCallback((id: string): void => {
     setConversations((current) =>
@@ -575,7 +687,7 @@ function App(): React.JSX.Element {
   const handleSelectConversation = async (id: string): Promise<void> => {
     const conversation = conversations.find((candidate) => candidate.id === id)
     markConversationRead(id)
-    await activateProjectWorkspace(conversation?.project_id)
+    await window.api.workspace.setPath(conversationFolder(conversation))
     setCurrentConversationId(id)
     restoreTokenCounts(id)
     setConversationCost(0)
@@ -675,11 +787,14 @@ function App(): React.JSX.Element {
         messageId: pendingFork.messageId,
         workspaceMode
       })
-      await window.api.workspace.setPath(forked.home_workspace_root ?? null)
+      await window.api.workspace.setPath(
+        forked.worktree_folder ?? forked.home_workspace_root ?? null
+      )
       setProjects(await window.api.projects.list())
       setConversations((prev) => [forked, ...prev])
       setCurrentConversationId(forked.id)
       setPendingFork(null)
+      if (forked.worktree_id) void refreshWorktrees()
     } catch (error) {
       setForkError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -689,11 +804,11 @@ function App(): React.JSX.Element {
 
   const handleStartInWorktree = async (
     conversationId: string,
-    options: { branchName?: string; baseRef?: string }
+    options: { baseRef?: string }
   ): Promise<void> => {
     const result = await window.api.worktrees.createForConversation({ conversationId, ...options })
     if (currentConversationIdRef.current === conversationId) {
-      await window.api.workspace.setPath(result.project.folder_path)
+      await window.api.workspace.setPath(result.worktree.folderPath)
     }
     setConversations((current) =>
       current.map((conversation) =>
@@ -702,7 +817,6 @@ function App(): React.JSX.Element {
           : conversation
       )
     )
-    setProjects(await window.api.projects.list())
     await refreshWorktrees()
   }
 
@@ -716,30 +830,27 @@ function App(): React.JSX.Element {
     })
     // The fork's composer opens with the message that could not be sent here.
     saveComposerDraft(forked.id, draft)
-    await window.api.workspace.setPath(forked.home_workspace_root ?? null)
-    setProjects(await window.api.projects.list())
+    await window.api.workspace.setPath(forked.worktree_folder ?? forked.home_workspace_root ?? null)
     setConversations((prev) => [forked, ...prev])
     setCurrentConversationId(forked.id)
     await refreshWorktrees()
   }
 
   const handleWorktreesRemoved = async (): Promise<void> => {
-    const [listedConversations, listedProjects] = await Promise.all([
-      window.api.conversations.list(),
-      window.api.projects.list()
-    ])
+    const listedConversations = await window.api.conversations.list()
     setConversations(listedConversations)
-    setProjects(listedProjects)
     await refreshWorktrees()
     const current = listedConversations.find(({ id }) => id === currentConversationIdRef.current)
-    if (current && !current.project_id) await window.api.workspace.setPath(null)
+    if (current && !current.project_id && !current.worktree_id)
+      await window.api.workspace.setPath(null)
   }
 
-  const openWorktreeProject = (projectId: string): void => {
+  /** Opens a worktree's chat, or a new chat in its project when none is left. */
+  const openWorktreeChat = (worktree: ManagedWorktreeSummary): void => {
     setWorktreesDialog(null)
-    const latest = latestProjectConversationId(conversations, projectId)
-    if (latest) void handleSelectConversation(latest)
-    else void handleNewConversation(projectId)
+    const chat = worktree.owners[0]
+    if (chat) void handleSelectConversation(chat.id)
+    else void handleNewConversation(worktree.sourceProjectId)
   }
 
   const handleConversationCreated = async (id: string, title: string): Promise<void> => {
@@ -888,7 +999,10 @@ function App(): React.JSX.Element {
           toggleSidebar,
           toggleBrowserPanel,
           toggleVoice: toggleVoiceLoop,
-          toggleTheme: () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark')),
+          toggleTheme: () =>
+            switchThemeFrom(document.querySelector('.theme-toggle-button'), () =>
+              setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+            ),
           checkForUpdates: () => void window.api.appUpdates.check(),
           previousConversation: () => showAdjacentConversation(-1),
           nextConversation: () => showAdjacentConversation(1),
@@ -899,7 +1013,7 @@ function App(): React.JSX.Element {
             else void handleNewConversation(projectId)
           },
           manageWorktrees: () =>
-            setWorktreesDialog({ focusProjectId: currentConversation?.project_id ?? null })
+            setWorktreesDialog({ focusWorktreeId: currentConversation?.worktree_id ?? null })
         }
       })
     : []
@@ -1095,8 +1209,9 @@ function App(): React.JSX.Element {
     ? currentConversation?.title || 'Conversation'
     : null
   const historyWorkspaceFolder =
-    activeProject?.folder_path ?? currentConversation?.home_workspace_root ?? null
-  const historyReadOnly = !activeProject && Boolean(currentConversation?.home_workspace_root)
+    conversationFolder(currentConversation) ?? currentConversation?.home_workspace_root ?? null
+  const historyReadOnly =
+    !conversationFolder(currentConversation) && Boolean(currentConversation?.home_workspace_root)
   const welcomeSuggestions = useMemo(() => {
     const currentProjectId = currentConversation?.project_id ?? null
     const recentConversationTitles = conversations
@@ -1141,13 +1256,23 @@ function App(): React.JSX.Element {
           conversationId={panelConversationId}
           conversationTitle={conversation?.title ?? null}
           welcomeSuggestions={visible ? welcomeSuggestions : []}
-          workspaceFolder={panelProject?.folder_path ?? null}
+          workspaceFolder={conversationFolder(conversation)}
           projectName={panelProject?.name ?? null}
           projectId={panelProject?.id ?? null}
-          worktree={panelProject ? (worktreeByProjectId.get(panelProject.id) ?? null) : null}
+          worktree={
+            conversation?.worktree_id ? (worktreeById.get(conversation.worktree_id) ?? null) : null
+          }
           onStartInWorktree={handleStartInWorktree}
           onForkIntoWorktree={handleForkIntoWorktree}
-          onManageWorktrees={() => setWorktreesDialog({ focusProjectId: panelProject?.id ?? null })}
+          onManageWorktrees={() =>
+            setWorktreesDialog({ focusWorktreeId: conversation?.worktree_id ?? null })
+          }
+          projectChoices={projectChoices}
+          onChooseProject={(projectId) =>
+            panelConversationId
+              ? handleMoveConversation({ conversationId: panelConversationId, projectId })
+              : handleNewConversation(projectId)
+          }
           onOpenConversation={(id) => void handleSelectConversation(id)}
           onOpenProject={() => handleOpenProject(true)}
           onUpdateConversationTitle={handleUpdateConversationTitle}
@@ -1192,20 +1317,11 @@ function App(): React.JSX.Element {
           }
           onBusyStateChange={handleConversationBusyStateChange}
           fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
-          ollamaThinkingEnabled={settings.ollamaThinkingEnabled ?? true}
-          openRouterThinkingEnabled={settings.openRouterThinkingEnabled ?? false}
-          onToggleOllamaThinking={() => {
+          reasoningSettings={settings}
+          onReasoningLevelChange={(modelId, level) => {
             const updatedSettings = {
               ...settings,
-              ollamaThinkingEnabled: !(settings.ollamaThinkingEnabled ?? true)
-            }
-            setSettings(updatedSettings)
-            window.api.settings.save(updatedSettings)
-          }}
-          onToggleOpenRouterThinking={() => {
-            const updatedSettings = {
-              ...settings,
-              openRouterThinkingEnabled: !(settings.openRouterThinkingEnabled ?? false)
+              reasoningLevels: { ...settings.reasoningLevels, [modelId]: level }
             }
             setSettings(updatedSettings)
             window.api.settings.save(updatedSettings)
@@ -1230,7 +1346,7 @@ function App(): React.JSX.Element {
     return (
       <div className="app-loading" data-theme={theme}>
         <div className="app-loading-content">
-          {appIconPath && <img src={appIconPath} alt="" className="app-loading-icon" />}
+          <img src={appIconUrl} alt="" className="app-loading-icon" />
           <span className="app-loading-name">SideKick</span>
         </div>
       </div>
@@ -1243,11 +1359,16 @@ function App(): React.JSX.Element {
     >
       <div className="title-bar">
         <div className="title-bar-left">
-          {appIconPath && <img src={appIconPath} alt="SideKick" className="title-bar-icon" />}
+          {/* At 20 px the title bar takes the icon's small cut, drawn to read at that size. */}
+          <img src={smallIconUrl} alt="SideKick" className="title-bar-icon" />
           {titleBarContext && (
             <>
               <span className="title-bar-divider">/</span>
-              <span className="title-bar-context">{titleBarContext}</span>
+              <WrittenTitle
+                className="title-bar-context"
+                text={titleBarContext}
+                identity={currentConversationId}
+              />
             </>
           )}
         </div>
@@ -1264,7 +1385,12 @@ function App(): React.JSX.Element {
             />
             <button
               className="theme-toggle-button"
-              onClick={() => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+              onClick={(event) => {
+                const origin = event.currentTarget
+                switchThemeFrom(origin, () =>
+                  setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+                )
+              }}
               title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
               aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             >
@@ -1316,7 +1442,6 @@ function App(): React.JSX.Element {
       <main className="app-main">
         <Sidebar
           sessionStatuses={sessionStatuses.byId}
-          worktreeSources={worktreeSources}
           conversations={conversations}
           projects={projects}
           currentConversationId={currentConversationId}
@@ -1343,7 +1468,15 @@ function App(): React.JSX.Element {
           scheduleNames={scheduleNames}
           onOpenSchedules={() => setIsSchedulesOpen(true)}
         />
-        <div className="conversation-panel-stack">
+        <div
+          className={`conversation-panel-stack${panelIsFull ? ' is-behind-panel' : ''}${layoutMotion ? ' is-in-motion' : ''}`}
+          aria-hidden={panelIsFull || undefined}
+          style={
+            layoutMotion
+              ? ({ '--frozen-chat-width': `${layoutMotion.chatWidth}px` } as React.CSSProperties)
+              : undefined
+          }
+        >
           {!currentConversationId && renderConversationPanel(null, draftPanelKey, true)}
           {mountedConversationIds.map((id) => {
             const conversation = conversations.find((candidate) => candidate.id === id)
@@ -1362,12 +1495,18 @@ function App(): React.JSX.Element {
           tabRequest={activityTabRequest}
           onActiveTabChange={handleActivityTabChange}
           maxWidth={layout.panelMaxWidth}
+          width={activityPanelWidth}
           onWidthChange={setActivityPanelWidth}
+          size={panelSize}
+          onSizeChange={isCompactLayout ? undefined : setActivityPanelSize}
+          sideBySideMaxWidth={panelSideBySideMax}
+          snapWidths={panelSnapWidths}
+          onSettle={() => setPanelGlide((count) => count + 1)}
           onOpenConversation={(id) => void handleSelectConversation(id)}
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }
-          workspaceFolder={activeProject?.folder_path ?? null}
+          workspaceFolder={conversationFolder(currentConversation)}
           historyWorkspaceFolder={historyWorkspaceFolder}
           historyReadOnly={historyReadOnly}
           checkpointVersion={checkpointVersion}
@@ -1403,10 +1542,10 @@ function App(): React.JSX.Element {
       <WorktreesDialog
         isOpen={worktreesDialog !== null}
         worktrees={worktrees}
-        focusProjectId={worktreesDialog?.focusProjectId}
+        focusWorktreeId={worktreesDialog?.focusWorktreeId}
         onClose={() => setWorktreesDialog(null)}
         onRefresh={refreshWorktrees}
-        onOpenProject={openWorktreeProject}
+        onOpenChat={openWorktreeChat}
         onRemoved={handleWorktreesRemoved}
       />
       <ForkConversationDialog
@@ -1443,6 +1582,7 @@ function App(): React.JSX.Element {
           providerKeyRequest={providerKeyRequest}
         />
       )}
+      <AppMenuHost />
     </div>
   )
 }

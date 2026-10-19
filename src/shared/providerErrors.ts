@@ -8,6 +8,52 @@ export interface ProviderImageLimitErrorDetails {
   maxImages?: number
 }
 
+// Node's fetch (undici) wraps network failures in a TypeError whose cause carries one of these.
+const UNREACHABLE_CODES = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_CONNECT_TIMEOUT'
+])
+const DROPPED_CODES = new Set(['UND_ERR_SOCKET', 'ECONNRESET', 'EPIPE', 'UND_ERR_CLOSED'])
+const UNREACHABLE_PREFIX = 'Could not reach the model server'
+const DROPPED_PREFIX = 'Lost the connection to the model server'
+
+function serverName(endpoint: string): string {
+  try {
+    return new URL(endpoint).host || endpoint
+  } catch {
+    return endpoint
+  }
+}
+
+/**
+ * Says in plain words that the model server could not be reached, or closed the connection while
+ * it replied, naming the server. Other failures return null and keep their own message.
+ */
+export function providerConnectionFailureMessage(error: unknown, endpoint: string): string | null {
+  if (!(error instanceof Error)) return null
+  const cause = error.cause as { code?: unknown } | undefined
+  const code = typeof cause?.code === 'string' ? cause.code : undefined
+  const server = serverName(endpoint)
+  if (code && UNREACHABLE_CODES.has(code))
+    return `${UNREACHABLE_PREFIX} at ${server}. Check that it is running. (${code})`
+  if ((code && DROPPED_CODES.has(code)) || (!code && error.message === 'terminated'))
+    return `${DROPPED_PREFIX} at ${server} while it was replying; the server stopped or restarted.${code ? ` (${code})` : ''}`
+  return null
+}
+
+/** Whether a run failed because the model server was unreachable or dropped the connection. */
+export function providerConnectionFailureKind(
+  message: string | null | undefined
+): 'unreachable' | 'dropped' | null {
+  if (message?.includes(UNREACHABLE_PREFIX)) return 'unreachable'
+  if (message?.includes(DROPPED_PREFIX)) return 'dropped'
+  return null
+}
+
 /** Only classify explicit inference failures, never infer hardware trouble from a timeout. */
 export function providerInferenceFailure(
   message: string | null | undefined

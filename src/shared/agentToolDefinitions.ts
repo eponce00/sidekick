@@ -139,10 +139,10 @@ function exactEditDefinition(name: 'Edit' | 'search_replace' | 'edit'): AgentToo
     function: {
       name,
       description:
-        'Replace exact text in a project file. Read the relevant file first. Set replace_all to false for one unique match or true only when every exact match should change. If a unique edit reports multiple matches, retry once with more surrounding context. Use the write tool to create or intentionally replace a complete file.',
+        'Replace exact text in a project file. Read the relevant file first. old_string must match one location unless replace_all is true; keep it to the lines that change plus enough context to be unique. If an edit reports multiple matches, retry once with more surrounding context. If old_string is not found, copy the differing lines the error shows from the current file. Use the write tool to create or intentionally replace a complete file.',
       parameters: {
         type: 'object',
-        required: ['file_path', 'old_string', 'new_string', 'replace_all'],
+        required: ['file_path', 'old_string', 'new_string'],
         properties: {
           file_path: filePath,
           old_string: {
@@ -156,7 +156,7 @@ function exactEditDefinition(name: 'Edit' | 'search_replace' | 'edit'): AgentToo
           replace_all: {
             type: 'boolean',
             description:
-              'Set false for one uniquely identified occurrence. Set true only when every exact occurrence should change.'
+              'Optional, default false: change one uniquely identified occurrence. Set true only when every occurrence should change.'
           }
         }
       }

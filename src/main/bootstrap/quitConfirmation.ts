@@ -1,4 +1,5 @@
-import { dialog, type BrowserWindow } from 'electron'
+import type { BrowserWindow } from 'electron'
+import { showTrustedDialog } from '../services/trustedDialog'
 
 export function quitConfirmationMessage(count: number): string {
   return count === 1
@@ -20,11 +21,12 @@ export async function confirmQuitWithActiveRuns(
     message: quitConfirmationMessage(count),
     detail: 'Quitting stops their agents. Work saved so far is kept.'
   }
-  // Quitting from the tray leaves the window hidden; a dialog attached to it would be too.
-  const { response } =
-    parent && !parent.isDestroyed() && parent.isVisible()
-      ? await dialog.showMessageBox(parent, options)
-      : await dialog.showMessageBox(options)
+  // Quitting from the tray leaves the window hidden, so it comes back up to ask.
+  const { response } = await showTrustedDialog(
+    parent && !parent.isDestroyed() ? parent : null,
+    options,
+    { reveal: true }
+  )
   return response === 0
 }
 

@@ -48,7 +48,7 @@ function text(chunks: ProviderStreamChunk[], key: 'content' | 'thinking'): strin
 }
 
 describe('provider streaming adapters', () => {
-  it('preserves the network cause when an OpenAI-compatible stream cannot connect', async () => {
+  it('names the server and keeps the network cause when a stream cannot connect', async () => {
     const cause = Object.assign(new Error('connect timed out'), {
       code: 'UND_ERR_CONNECT_TIMEOUT'
     })
@@ -58,7 +58,11 @@ describe('provider streaming adapters', () => {
 
     await expect(
       streamOpenAICompatibleChat('https://provider.test/v1', {}, {}, () => undefined, fetchImpl)
-    ).resolves.toEqual({ ok: false, error: 'fetch failed (UND_ERR_CONNECT_TIMEOUT)' })
+    ).resolves.toEqual({
+      ok: false,
+      error:
+        'Could not reach the model server at provider.test. Check that it is running. (UND_ERR_CONNECT_TIMEOUT)'
+    })
   })
 
   it.each([

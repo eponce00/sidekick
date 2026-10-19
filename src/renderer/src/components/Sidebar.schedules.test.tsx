@@ -65,6 +65,7 @@ describe('Sidebar scheduled runs', () => {
     waiting?: Set<string>
     onSelectConversation?: (id: string) => void
     onOpenSchedules?: () => void
+    collapsed?: boolean
   }): Promise<void> => {
     await act(async () => {
       root.render(
@@ -72,7 +73,7 @@ describe('Sidebar scheduled runs', () => {
           conversations={props.conversations}
           projects={[project]}
           currentConversationId={props.currentConversationId ?? null}
-          isCollapsed={false}
+          isCollapsed={props.collapsed ?? false}
           busyConversationIds={new Set()}
           unreadConversationIds={new Set()}
           waitingConversationIds={props.waiting}
@@ -140,5 +141,27 @@ describe('Sidebar scheduled runs', () => {
     const button = container.querySelector('button[aria-label="Schedules"]') as HTMLButtonElement
     await act(async () => button.click())
     expect(onOpenSchedules).toHaveBeenCalledOnce()
+  })
+
+  it('lists Schedules with the places in the collapsed rail, and keeps More at its foot', async () => {
+    const onOpenSchedules = vi.fn()
+    await render({
+      conversations: [chat('loose', { project_id: null })],
+      onOpenSchedules,
+      collapsed: true
+    })
+    const header = container.querySelector('.sidebar-header')!
+    // Nothing sits beside the expand button any more.
+    expect(header.querySelector('button[aria-label="Schedules"]')).toBeNull()
+    expect(header.querySelector('button[aria-label="More"]')).toBeNull()
+    const nav = container.querySelector('.collapsed-sidebar-nav')!
+    expect(
+      [...nav.querySelectorAll('button')].map((button) => button.getAttribute('title'))
+    ).toEqual(['Projects (1)', 'Standalone chats (1)', 'Schedules'])
+    await act(async () =>
+      nav.querySelector<HTMLButtonElement>('button[aria-label="Schedules"]')!.click()
+    )
+    expect(onOpenSchedules).toHaveBeenCalledOnce()
+    expect(container.querySelector('.sidebar-rail-footer button[aria-label="More"]')).not.toBeNull()
   })
 })

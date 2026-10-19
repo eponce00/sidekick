@@ -3,6 +3,7 @@
 import { act, createRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReasoningLevel } from '../../../shared/reasoning'
 import { ChatInput } from './ChatInput'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -33,8 +34,8 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     goal: null,
     goalArmed: false,
     goalAvailable: true,
-    thinkingEnabled: false,
-    thinkingAvailable: true,
+    reasoningOptions: { levels: ['on', 'off'], initial: 'on' },
+    reasoningLevel: 'off',
     isFeaturesMenuOpen: true,
     isModelMenuOpen: false,
     selectedModel: '',
@@ -61,7 +62,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     onPauseGoal: vi.fn(),
     onResumeGoal: vi.fn(),
     onClearGoal: vi.fn(),
-    onToggleThinking: vi.fn(),
+    onReasoningLevelChange: vi.fn(),
     onToggleFeaturesMenu: vi.fn(),
     onToggleModelMenu: vi.fn(),
     onModelChange: vi.fn(),
@@ -209,7 +210,7 @@ describe('ChatInput add menu', () => {
   })
 })
 
-describe('ChatInput thinking toggle', () => {
+describe('ChatInput reasoning menu', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -224,57 +225,73 @@ describe('ChatInput thinking toggle', () => {
     container.remove()
   })
 
-  const toggle = (): HTMLButtonElement | null =>
-    container.querySelector<HTMLButtonElement>('.composer-thinking-toggle')
+  const button = (): HTMLButtonElement | null =>
+    container.querySelector<HTMLButtonElement>('.composer-reasoning-button')
+  const options = (): string[] =>
+    Array.from(container.querySelectorAll('[role="menuitemradio"] > span > span')).map(
+      (option) => option.textContent || ''
+    )
 
-  function StatefulInput({ initial }: { initial: boolean }): React.JSX.Element {
-    const [enabled, setEnabled] = useState(initial)
+  function StatefulInput({
+    levels,
+    initial
+  }: {
+    levels: ReasoningLevel[]
+    initial: ReasoningLevel
+  }): React.JSX.Element {
+    const [level, setLevel] = useState(initial)
     return (
       <ChatInput
         {...baseProps({ isFeaturesMenuOpen: false })}
-        thinkingEnabled={enabled}
-        onToggleThinking={() => setEnabled((current) => !current)}
+        reasoningOptions={{ levels, initial }}
+        reasoningLevel={level}
+        onReasoningLevelChange={setLevel}
       />
     )
   }
 
-  it('is one labelled icon button that reports its state', async () => {
-    await act(async () => root.render(<StatefulInput initial={false} />))
-    const button = toggle()!
-    expect(button.getAttribute('aria-label')).toBe('Model thinking')
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-    expect(button.title).toContain('Thinking off')
-    expect(button.textContent).toBe('')
-    expect(button.querySelector('svg.lucide-brain')).not.toBeNull()
-
-    await act(async () => button.click())
-    // The same element stays in place; only its state changes.
-    expect(toggle()).toBe(button)
-    expect(button.getAttribute('aria-pressed')).toBe('true')
-    expect(button.classList.contains('is-on')).toBe(true)
-    expect(button.title).toContain('Thinking on')
-
-    await act(async () => button.click())
-    expect(toggle()).toBe(button)
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-    expect(button.classList.contains('is-on')).toBe(false)
-  })
-
-  it('looks the same when it starts on as after it is turned on', async () => {
-    await act(async () => root.render(<StatefulInput initial={true} />))
-    const firstRender = toggle()!.outerHTML
-
-    await act(async () => toggle()!.click())
-    await act(async () => toggle()!.click())
-    expect(toggle()!.outerHTML).toBe(firstRender)
-  })
-
-  it('is absent for a model without a reasoning switch', async () => {
+  it('lists only the levels the model offers and switches between them', async () => {
     await act(async () =>
-      root.render(<ChatInput {...baseProps({ thinkingAvailable: false, thinkingEnabled: true })} />)
+      root.render(<StatefulInput levels={['off', 'low', 'medium', 'high', 'max']} initial="off" />)
     )
-    expect(toggle()).toBeNull()
-    expect(container.textContent).not.toContain('Thinking')
+    const control = button()!
+    expect(control.getAttribute('aria-label')).toBe('Reasoning: Off')
+    expect(control.textContent).toBe('Off')
+    expect(control.classList.contains('is-on')).toBe(false)
+
+    await act(async () => control.click())
+    expect(options()).toEqual(['Off', 'Low', 'Medium', 'High', 'Max'])
+    const high = container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')[3]
+    await act(async () => high.click())
+    // The menu closes and the same button now shows the level.
+    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(button()).toBe(control)
+    expect(control.textContent).toBe('High')
+    expect(control.classList.contains('is-on')).toBe(true)
+  })
+
+  it('offers just on and off where the protocol has no levels', async () => {
+    await act(async () => root.render(<StatefulInput levels={['on', 'off']} initial="on" />))
+    await act(async () => button()!.click())
+    expect(options()).toEqual(['On', 'Off'])
+    expect(
+      container.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent
+    ).toContain('On')
+  })
+
+  it('closes on Escape without changing the level', async () => {
+    await act(async () => root.render(<StatefulInput levels={['auto', 'off']} initial="auto" />))
+    await act(async () => button()!.click())
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(container.querySelector('[role="menu"]')).toBeNull()
+    expect(button()!.textContent).toBe('Auto')
+  })
+
+  it('is absent for a model without reasoning settings', async () => {
+    await act(async () => root.render(<ChatInput {...baseProps({ reasoningOptions: null })} />))
+    expect(button()).toBeNull()
   })
 })
 
@@ -399,7 +416,7 @@ describe('ChatInput long pastes', () => {
     expect(onAddPastedText).toHaveBeenCalledWith(longText)
   })
 
-  it('pastes long text inline with Ctrl+Shift+V or while editing a message', async () => {
+  it('pastes long text inline with Ctrl+Shift+V, also while editing a message', async () => {
     const onAddPastedText = vi.fn()
     await act(async () => root.render(<ChatInput {...baseProps({ onAddPastedText })} />))
     const input = container.querySelector('textarea.message-input')!
@@ -414,8 +431,26 @@ describe('ChatInput long pastes', () => {
     await act(async () =>
       root.render(<ChatInput {...baseProps({ onAddPastedText, editingMessageId: 'message-1' })} />)
     )
-    expect(paste(longText).defaultPrevented).toBe(false)
-    expect(onAddPastedText).not.toHaveBeenCalled()
+    // An edited message is in the box like any draft, so a long paste becomes an attachment.
+    expect(paste(longText).defaultPrevented).toBe(true)
+    expect(onAddPastedText).toHaveBeenCalledOnce()
+  })
+
+  it('shows the edit it holds, and cancels it with Escape or Cancel', async () => {
+    const onCancelEdit = vi.fn()
+    await act(async () =>
+      root.render(<ChatInput {...baseProps({ editingMessageId: 'message-1', onCancelEdit })} />)
+    )
+    const bar = container.querySelector('.composer-editing-bar')!
+    expect(bar.textContent).toContain('Editing your message')
+    const input = container.querySelector<HTMLTextAreaElement>('textarea.message-input')!
+    expect(input.disabled).toBe(false)
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(onCancelEdit).toHaveBeenCalledOnce()
+    await act(async () => bar.querySelector('button')!.click())
+    expect(onCancelEdit).toHaveBeenCalledTimes(2)
   })
 
   it('shows a pasted attachment as a card that can be viewed, inserted, or removed', async () => {

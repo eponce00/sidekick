@@ -1,5 +1,7 @@
 import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/browserDevices'
-import { resolve } from 'path'
+import { dirname, join, resolve } from 'path'
+import { readFile, writeFile } from 'fs/promises'
+import { composeFilmstrip } from './browserFilmstrip'
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
@@ -118,6 +120,27 @@ function stringArgument(args: Record<string, unknown>, key: string): string | un
 function finiteNumber(args: Record<string, unknown>, key: string): number | undefined {
   const value = args[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/** browser_verify captures at most this many frames of an animation. */
+export const MAX_VERIFY_FRAMES = 4
+
+function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolveWait, rejectWait) => {
+    if (signal.aborted) {
+      rejectWait(signal.reason)
+      return
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', abort)
+      resolveWait()
+    }, milliseconds)
+    const abort = (): void => {
+      clearTimeout(timer)
+      rejectWait(signal.reason)
+    }
+    signal.addEventListener('abort', abort, { once: true })
+  })
 }
 
 const FORBIDDEN_BROWSER_EVALUATION_PATTERNS: Array<{
@@ -1612,14 +1635,79 @@ export function registerBrowserToolHandlers(
       } else if (name === 'browser_verify') {
         const criterion = stringArgument(args, 'criterion')
         if (!criterion) throw new Error('browser_verify requires a visual criterion')
+        const frameCount = Math.round(
+          Math.min(MAX_VERIFY_FRAMES, Math.max(1, finiteNumber(args, 'frames') ?? 1))
+        )
+        const intervalMs = Math.round(
+          Math.min(2_000, Math.max(100, finiteNumber(args, 'interval_ms') ?? 400))
+        )
         const observation = await manager.service.observe(
           lease.sessionId,
           {
-            screenshot: args.full_page === true ? 'fullPage' : 'viewport',
+            // Frames of an animation are of the viewport; a full page cannot move between them.
+            screenshot: args.full_page === true && frameCount === 1 ? 'fullPage' : 'viewport',
             includeSemanticSnapshot: true
           },
           { signal: context.signal }
         )
+        if (frameCount > 1 && observation.screenshot) {
+          const shots = [observation.screenshot]
+          for (let frame = 1; frame < frameCount; frame += 1) {
+            await waitFor(intervalMs, context.signal)
+            shots.push(
+              await manager.service.screenshot(
+                {
+                  sessionId: lease.sessionId,
+                  tabId: observation.screenshot.tabId,
+                  kind: 'viewport'
+                },
+                { signal: context.signal }
+              )
+            )
+          }
+          // One image, oldest frame on the left: a request carries few images, and a single
+          // strip shows motion for about the cost of one screenshot.
+          const strip = composeFilmstrip(
+            await Promise.all(shots.map((shot) => readFile(shot.path)))
+          )
+          const stripPath = join(dirname(shots[0].path), `${Date.now()}-filmstrip.jpg`)
+          await writeFile(stripPath, strip.jpeg)
+          const offsets = shots.map((_, index) => `${index * intervalMs} ms`)
+          const moved = new Set(shots.map((shot) => shot.sha256)).size > 1
+          const data = {
+            criterion,
+            status: 'evidence_captured',
+            passed: null,
+            requiresModelJudgement: true,
+            verification: {
+              status: 'evidence',
+              summary: criterion,
+              passed: null,
+              requiresModelJudgement: true
+            },
+            frames: {
+              count: shots.length,
+              intervalMs,
+              offsets,
+              width: strip.width,
+              height: strip.height,
+              changedBetweenFrames: moved
+            },
+            instruction: moved
+              ? `The attached image holds ${shots.length} viewport frames side by side, left to right at ${offsets.join(', ')}. Inspect them before deciding whether this criterion passes.`
+              : `The attached image holds ${shots.length} viewport frames side by side, and every frame is identical: nothing on the page moved in ${(shots.length - 1) * intervalMs} ms. Treat that as evidence against any criterion about motion.`,
+            observation: publicObservation(observation)
+          }
+          return boundedSuccess(outputs, title, data, data, [
+            {
+              type: 'image',
+              mimeType: 'image/jpeg',
+              name: `browser-filmstrip-${shots[0].id}.jpg`,
+              description: `Visual verification frames: ${criterion}`,
+              source: { type: 'file', path: stripPath }
+            }
+          ])
+        }
         const data = {
           criterion,
           status: 'evidence_captured',

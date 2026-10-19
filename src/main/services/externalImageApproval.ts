@@ -16,9 +16,9 @@ export function externalImageApprovalForMode(
 /** Native exact-file consent; never a persisted folder grant. */
 export const approveExternalImage: ExternalImageApproval = async (path, signal) => {
   if (signal.aborted) return false
-  const { BrowserWindow, dialog } = await import('electron')
+  const { showTrustedDialog } = await import('./trustedDialog')
+  const { appState } = await import('../ipc/state')
   if (signal.aborted) return false
-  const owner = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
   const options = {
     type: 'warning' as const,
     title: 'Allow external image access?',
@@ -29,8 +29,6 @@ export const approveExternalImage: ExternalImageApproval = async (path, signal) 
     cancelId: 0,
     noLink: true
   }
-  const result = owner
-    ? await dialog.showMessageBox(owner, options)
-    : await dialog.showMessageBox(options)
+  const result = await showTrustedDialog(appState.mainWindowRef, options, { signal })
   return !signal.aborted && result.response === 1
 }

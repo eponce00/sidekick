@@ -84,6 +84,7 @@
 }
 
 .pasted-text-backdrop {
+  animation: motion-fade-in var(--duration-normal) ease-out;
   position: fixed;
   inset: 0;
   z-index: 10020;

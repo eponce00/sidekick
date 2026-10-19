@@ -237,6 +237,7 @@ describe('SystemTray', () => {
       platform,
       productName: 'SideKick',
       iconPath: 'icon.png',
+      trayIconPath: 'tray.png',
       snapshot: () => state,
       actions: tray
     })

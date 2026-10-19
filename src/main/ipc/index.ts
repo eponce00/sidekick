@@ -17,12 +17,14 @@ import { registerScheduleHandlers } from './schedules'
 import { registerSessionHandlers } from './sessions'
 import { registerPullRequestHandlers } from './pullRequests'
 import { registerWorktreeHandlers } from './worktrees'
+import { registerAppMenuHandlers } from './appMenus'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
  */
 export function registerAllHandlers(): void {
   registerWindowHandlers()
+  registerAppMenuHandlers()
   registerSiteIconHandlers()
   registerProviderRuntimeHandlers()
   registerSettingsHandlers()

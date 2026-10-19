@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   handlers: new Map<string, RegisteredHandler>(),
   db: null as Database.Database | null,
   createWorktree: vi.fn(),
-  discardFreshProject: vi.fn(),
+  discardFresh: vi.fn(),
+  discardWithUnusedChat: vi.fn(),
   setupCreatedWorktree: vi.fn()
 }))
 
@@ -26,8 +27,9 @@ vi.mock('./workspaceUtils', () => ({ resolveKnownWorkspace: vi.fn() }))
 vi.mock('./worktrees', () => ({
   getManagedWorktrees: () => ({
     create: mocks.createWorktree,
-    discardFreshProject: mocks.discardFreshProject,
-    isManagedProject: () => false
+    discardFresh: mocks.discardFresh,
+    discardWithUnusedChat: mocks.discardWithUnusedChat,
+    worktreeIdFor: () => null
   })
 }))
 vi.mock('./worktreeSetup', () => ({ setupCreatedWorktree: mocks.setupCreatedWorktree }))
@@ -38,7 +40,7 @@ describe('conversation fork IPC', () => {
   beforeEach(() => {
     mocks.handlers.clear()
     mocks.createWorktree.mockReset()
-    mocks.discardFreshProject.mockReset()
+    mocks.discardFresh.mockReset()
     mocks.setupCreatedWorktree.mockReset()
     mocks.db = new Database(':memory:')
     applyDatabaseSchema(mocks.db)
@@ -151,8 +153,16 @@ describe('conversation fork IPC', () => {
       )
       .run()
     mocks.createWorktree.mockImplementation(async () => {
-      insertProject.run('fork-project', 'Fork project', '/fork-project')
-      return { id: 'fork-project', name: 'Fork project', folder_path: '/fork-project' }
+      mocks
+        .db!.prepare(
+          `INSERT INTO managed_worktrees
+           (id, source_project_id, repository_root, worktree_root, folder_path, created_at,
+            last_used_at)
+           VALUES ('fork-worktree', 'source-project', '/source-project', '/fork-worktree',
+                   '/fork-worktree', 1, 1)`
+        )
+        .run()
+      return { id: 'fork-worktree', folderPath: '/fork-worktree' }
     })
     let committedForkId: string | undefined
     mocks.setupCreatedWorktree.mockImplementation(async () => {
@@ -178,16 +188,22 @@ describe('conversation fork IPC', () => {
         { sender },
         { sourceId: 'source', workspaceMode: 'worktree' }
       )) as { id: string; project_id: string }
-      expect(forked).toMatchObject({ id: committedForkId, project_id: 'fork-project' })
+      // The fork stays in its project and works in its own new worktree.
+      expect(forked).toMatchObject({
+        id: committedForkId,
+        project_id: 'source-project',
+        worktree_id: 'fork-worktree',
+        worktree_folder: '/fork-worktree'
+      })
       expect(mocks.setupCreatedWorktree).toHaveBeenCalledWith(
         sender,
         '/source-project',
-        '/fork-project'
+        '/fork-worktree'
       )
-      expect(mocks.discardFreshProject).not.toHaveBeenCalled()
+      expect(mocks.discardFresh).not.toHaveBeenCalled()
       expect(
-        mocks.db!.prepare('SELECT id FROM projects WHERE id = ?').get('fork-project')
-      ).toBeDefined()
+        mocks.db!.prepare('SELECT worktree_id FROM conversations WHERE id = ?').get(forked.id)
+      ).toEqual({ worktree_id: 'fork-worktree' })
       expect(
         mocks.db!.prepare('SELECT id FROM conversations WHERE id = ?').get(forked.id)
       ).toBeDefined()
@@ -323,5 +339,85 @@ describe('conversation fork IPC', () => {
       { id: 'objective', startsGoal: true },
       { id: 'ordinary', startsGoal: undefined }
     ])
+  })
+})
+
+describe('discarding a chat left unused', () => {
+  beforeEach(() => {
+    mocks.handlers.clear()
+    mocks.discardWithUnusedChat.mockReset()
+    mocks.db = new Database(':memory:')
+    applyDatabaseSchema(mocks.db)
+    registerDatabaseHandlers()
+  })
+
+  afterEach(() => {
+    mocks.db?.close()
+    mocks.db = null
+  })
+
+  const addChat = (
+    id: string,
+    titleSource = 'placeholder',
+    worktreeId: string | null = null
+  ): void => {
+    const now = Date.now()
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations
+         (id, title, created_at, updated_at, project_id, title_source, title_version,
+          sidebar_order, project_context_version, worktree_id)
+         VALUES (?, 'New Conversation', ?, ?, NULL, ?, 1, 0, 0, ?)`
+      )
+      .run(id, now, now, titleSource, worktreeId)
+  }
+  const discard = (id: unknown): Promise<{ discarded: boolean }> =>
+    (mocks.handlers.get('conversations:discardIfUntouched') as RegisteredHandler)(
+      {},
+      id
+    ) as Promise<{ discarded: boolean }>
+  const exists = (id: string): boolean =>
+    Boolean(mocks.db!.prepare('SELECT 1 FROM conversations WHERE id = ?').get(id))
+
+  it('removes a chat nothing was said in', async () => {
+    addChat('empty')
+    await expect(discard('empty')).resolves.toEqual({ discarded: true })
+    expect(exists('empty')).toBe(false)
+  })
+
+  it('keeps a chat with a message, a run, or a title of its own', async () => {
+    addChat('spoken')
+    mocks
+      .db!.prepare(
+        `INSERT INTO messages (id, conversation_id, role, content, timestamp)
+         VALUES ('m', 'spoken', 'user', 'Hi', 1)`
+      )
+      .run()
+    addChat('ran')
+    mocks
+      .db!.prepare(
+        `INSERT INTO agent_runs
+         (id, thread_id, surface, phase, provider, model, profile_json, started_at, updated_at)
+         VALUES ('r', 'ran', 'conversation', 'running', 'p', 'm', '{}', 1, 1)`
+      )
+      .run()
+    addChat('named', 'user')
+
+    for (const id of ['spoken', 'ran', 'named']) {
+      await expect(discard(id)).resolves.toEqual({ discarded: false })
+      expect(exists(id)).toBe(true)
+    }
+    await expect(discard({ id: 'spoken' })).resolves.toEqual({ discarded: false })
+  })
+
+  it('keeps a chat whose worktree holds changes', async () => {
+    mocks.discardWithUnusedChat.mockResolvedValue(false)
+    addChat('worktree-chat', 'placeholder', null)
+    mocks
+      .db!.prepare("UPDATE conversations SET worktree_id = 'w1' WHERE id = 'worktree-chat'")
+      .run()
+    await expect(discard('worktree-chat')).resolves.toEqual({ discarded: false })
+    expect(mocks.discardWithUnusedChat).toHaveBeenCalledWith('w1', 'worktree-chat')
+    expect(exists('worktree-chat')).toBe(true)
   })
 })

@@ -1,4 +1,5 @@
 import { Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
+import { showAppMenu } from '../services/appMenus'
 
 export const WINDOWS_TITLE_BAR_HEIGHT = 42
 
@@ -31,6 +32,7 @@ export function windowsTitleBarMenuTemplate(
   ]
 }
 
+/** `point` is in the window's CSS pixels; without one the menu opens at the pointer. */
 function showWindowMenu(window: BrowserWindow, point?: { x: number; y: number }): void {
   const actions: WindowMenuActions = {
     restore: () => {
@@ -41,19 +43,18 @@ function showWindowMenu(window: BrowserWindow, point?: { x: number; y: number })
     maximize: () => window.maximize(),
     close: () => window.close()
   }
-  const menu = Menu.buildFromTemplate(
-    windowsTitleBarMenuTemplate(
-      { minimized: window.isMinimized(), maximized: window.isMaximized() },
-      actions
-    )
+  const template = windowsTitleBarMenuTemplate(
+    { minimized: window.isMinimized(), maximized: window.isMaximized() },
+    actions
   )
-  menu.popup({ window, ...point })
+  if (!showAppMenu(window.webContents, template, point))
+    Menu.buildFromTemplate(template).popup({ window })
 }
 
 export function installWindowsTitleBarMenu(window: BrowserWindow): void {
   window.webContents.on('context-menu', (_event, params) => {
     if (params.y > WINDOWS_TITLE_BAR_HEIGHT || params.isEditable || params.selectionText) return
-    showWindowMenu(window)
+    showWindowMenu(window, { x: params.x, y: params.y })
   })
 
   window.webContents.on('before-input-event', (event, input) => {
@@ -61,10 +62,6 @@ export function installWindowsTitleBarMenu(window: BrowserWindow): void {
       input.type === 'keyDown' && input.alt && (input.code === 'Space' || input.key === ' ')
     if (!isAltSpace) return
     event.preventDefault()
-    const bounds = window.getBounds()
-    showWindowMenu(window, {
-      x: bounds.x + 8,
-      y: bounds.y + WINDOWS_TITLE_BAR_HEIGHT
-    })
+    showWindowMenu(window, { x: 8, y: WINDOWS_TITLE_BAR_HEIGHT })
   })
 }

@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   AlertTriangle,
   ArrowUp,
@@ -14,11 +15,14 @@ import {
   ChevronRight,
   File,
   Folder,
+  Columns2,
+  Maximize2,
+  PanelRight,
+  PanelRightClose,
   X,
   History,
   FolderTree,
   MonitorUp,
-  PanelRight,
   RefreshCw,
   RotateCcw,
   SquareTerminal,
@@ -42,13 +46,15 @@ import { useCheckpointTitleBackfill } from '../hooks/useCheckpointTitleBackfill'
 import BrowserActivityPanel from './BrowserActivityPanel'
 import { EMPTY_BROWSER_ACTIVITY, type BrowserActivityState } from '../utils/browserActivity'
 import {
-  ACTIVITY_PANEL_DEFAULT_WIDTH,
-  ACTIVITY_PANEL_MAX_WIDTH,
   ACTIVITY_PANEL_MIN_WIDTH,
-  ACTIVITY_PANEL_WIDE_WIDTH,
+  ACTIVITY_PANEL_NARROW_WIDTH,
+  PANEL_GLIDE_MS,
+  SIDEBAR_RAIL_WIDTH,
+  type ActivityPanelSize,
+  activityPanelDragZone,
   activityPanelMaximumWidth,
   clampActivityPanelWidth,
-  storedActivityPanelWidth
+  snapActivityPanelWidth
 } from '../utils/activityPanelLayout'
 import { WorkspaceFileViewer } from './WorkspaceFileViewer'
 import {
@@ -60,6 +66,9 @@ import { useSessionFamily } from '../hooks/useSessionFamily'
 import './ActivityPanel.css'
 
 type ActivityTab = 'checkpoints' | 'files' | 'browser' | 'terminal' | 'chats'
+
+/** Where a dragged edge would leave the panel if let go now. */
+type PanelLanding = 'fold' | 'full' | 'narrow' | 'split' | 'free'
 
 function storedActivityTab(): ActivityTab {
   const value = window.localStorage.getItem('activityPanelTab')
@@ -88,10 +97,25 @@ interface ActivityPanelProps {
   /** Shows a tab when `at` changes, as when the command palette asks for the browser. */
   tabRequest?: { tab: ActivityTab; at: number } | null
   onActiveTabChange?: (tab: ActivityTab) => void
-  /** The widest the panel may render beside the chat; its preferred width is kept for later. */
+  /** The widest the panel may render now; its preferred width is kept for later. */
   maxWidth?: number
-  /** The width the user chose, so the layout can make room for it. */
+  /** The width the user left it at; the layout keeps it and makes room for it. */
+  width?: number
+  /** Sets the width as the user drags the edge, and where it settles. */
   onWidthChange?: (width: number) => void
+  /** Beside the chat, or across the whole window. */
+  size?: ActivityPanelSize
+  /**
+   * Makes the edge draggable across every size: beside the chat, the whole window, or folded to
+   * the rail. Left out where the panel floats over the chat instead.
+   */
+  onSizeChange?: (size: ActivityPanelSize) => void
+  /** The widest the panel fits beside the chat; dragged well past it, it takes the window. */
+  sideBySideMaxWidth?: number
+  /** Widths the edge snaps to when let go near them. */
+  snapWidths?: readonly number[]
+  /** The edge is about to glide to a new width, so the layout can hold the chat still. */
+  onSettle?: () => void
   /** Opens another chat, from the Chats tab. */
   onOpenConversation?: (conversationId: string) => void
 }
@@ -112,7 +136,13 @@ function ActivityPanel({
   tabRequest = null,
   onActiveTabChange,
   maxWidth,
+  width = ACTIVITY_PANEL_NARROW_WIDTH,
   onWidthChange,
+  size = 'wide',
+  onSizeChange,
+  sideBySideMaxWidth,
+  snapWidths = [ACTIVITY_PANEL_NARROW_WIDTH],
+  onSettle,
   onOpenConversation
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
@@ -130,19 +160,51 @@ function ActivityPanel({
   const [browserActivity, setBrowserActivity] =
     useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const autoOpenedBrowserRunRef = useRef<string | null>(null)
-  const [panelWidth, setPanelWidth] = useState(() =>
-    storedActivityPanelWidth(window.localStorage.getItem('activityPanelWidth'), window.innerWidth)
-  )
-  const [isResizing, setIsResizing] = useState(false)
-  const renderedWidth = Math.min(panelWidth, maxWidth ?? Number.POSITIVE_INFINITY)
-  const maxWidthRef = useRef(maxWidth)
-  maxWidthRef.current = maxWidth
-  const fitWidth = (width: number): number =>
-    Math.min(
-      clampActivityPanelWidth(width, window.innerWidth),
-      maxWidthRef.current ?? Number.POSITIVE_INFINITY
-    )
-  const resizeStartRef = useRef({ x: 0, width: panelWidth })
+  // While the edge is dragged nothing else moves: a phantom shows where the panel will land and
+  // what letting go will do. Let go, the panel glides there once (is-gliding), so the chat and the
+  // sidebar re-lay out a single time instead of on every pointer move.
+  const [landing, setLanding] = useState<PanelLanding | null>(null)
+  const [isGliding, setIsGliding] = useState(false)
+  const isResizing = landing !== null
+  const panelRef = useRef<HTMLElement>(null)
+  const phantomRef = useRef<HTMLDivElement>(null)
+  const widthLimit = maxWidth ?? Number.POSITIVE_INFINITY
+  const renderedWidth =
+    size === 'full' && Number.isFinite(widthLimit) ? widthLimit : Math.min(width, widthLimit)
+  const resizable = Boolean(onSizeChange)
+  const glideTimerRef = useRef<number | undefined>(undefined)
+  const glide = (): void => {
+    setIsGliding(true)
+    window.clearTimeout(glideTimerRef.current)
+    glideTimerRef.current = window.setTimeout(() => setIsGliding(false), PANEL_GLIDE_MS + 40)
+  }
+  useEffect(() => () => window.clearTimeout(glideTimerRef.current), [])
+  const resizeStartRef = useRef({ x: 0, width, landing: 'free' as PanelLanding })
+  // The drag reads the latest layout and callbacks without restarting.
+  const dragContextRef = useRef({
+    isPinned,
+    size,
+    sideBySideMaxWidth,
+    snapWidths,
+    width,
+    onTogglePin,
+    onSizeChange,
+    onWidthChange,
+    onSettle
+  })
+  useEffect(() => {
+    dragContextRef.current = {
+      isPinned,
+      size,
+      sideBySideMaxWidth,
+      snapWidths,
+      width,
+      onTogglePin,
+      onSizeChange,
+      onWidthChange,
+      onSettle
+    }
+  })
   const [checkpoints, setCheckpoints] = useState<CheckpointHistoryItem[]>([])
   const [checkpointsLoading, setCheckpointsLoading] = useState(false)
   const [historyActionError, setHistoryActionError] = useState<{
@@ -166,36 +228,110 @@ function ActivityPanel({
   }, [activeTab, onActiveTabChange])
 
   useEffect(() => {
-    window.localStorage.setItem('activityPanelWidth', String(panelWidth))
-    onWidthChange?.(panelWidth)
-  }, [panelWidth, onWidthChange])
-
-  useEffect(() => {
-    const clampToViewport = (): void => {
-      setPanelWidth((current) => clampActivityPanelWidth(current, window.innerWidth))
-    }
-    window.addEventListener('resize', clampToViewport)
-    return () => window.removeEventListener('resize', clampToViewport)
-  }, [])
-
-  useEffect(() => {
     if (!isResizing) return
     const previousCursor = document.body.style.cursor
     const previousSelection = document.body.style.userSelect
     document.body.style.cursor = 'col-resize'
     document.body.style.userSelect = 'none'
-    const move = (event: PointerEvent): void => {
-      const delta = resizeStartRef.current.x - event.clientX
-      setPanelWidth(fitWidth(resizeStartRef.current.width + delta))
+    const start = resizeStartRef.current
+    const phantom = phantomRef.current
+    const panelBox = panelRef.current?.getBoundingClientRect()
+    const right = panelBox?.right || window.innerWidth
+    if (phantom && panelBox) {
+      phantom.style.top = `${panelBox.top}px`
+      phantom.style.height = `${panelBox.height}px`
+      phantom.style.right = `${window.innerWidth - right}px`
     }
-    const stop = (): void => setIsResizing(false)
+    let current = start.landing
+    let target = start.width
+    let frame = 0
+    // Pointer events can outpace the screen; the phantom is written once a frame, outside React.
+    const paint = (): void => {
+      frame = 0
+      if (!phantom) return
+      phantom.style.width = `${target}px`
+      phantom.dataset.shown = ''
+    }
+    if (phantom) phantom.style.width = `${target}px`
+    const move = (event: PointerEvent): void => {
+      if (event.clientX === start.x && current === start.landing) return
+      const context = dragContextRef.current
+      const pointerWidth = start.width + (start.x - event.clientX)
+      const sideBySideMax =
+        context.sideBySideMaxWidth ?? activityPanelMaximumWidth(window.innerWidth)
+      const zone = activityPanelDragZone(pointerWidth, sideBySideMax)
+      let next: PanelLanding
+      if (zone === 'fold') {
+        next = 'fold'
+        target = SIDEBAR_RAIL_WIDTH
+      } else if (zone === 'full') {
+        next = 'full'
+        target = right - SIDEBAR_RAIL_WIDTH
+      } else {
+        const fitted = Math.min(
+          clampActivityPanelWidth(pointerWidth, window.innerWidth),
+          sideBySideMax
+        )
+        // The phantom settles on a snap width as the panel will when let go there.
+        target = snapActivityPanelWidth(fitted, context.snapWidths)
+        next = !context.snapWidths.includes(target)
+          ? 'free'
+          : target === ACTIVITY_PANEL_NARROW_WIDTH
+            ? 'narrow'
+            : 'split'
+      }
+      if (next !== current) {
+        current = next
+        setLanding(next)
+      }
+      if (!frame) frame = window.requestAnimationFrame(paint)
+    }
+    const finish = (apply: boolean): void => {
+      const context = dragContextRef.current
+      const fromSide = context.isPinned && context.size !== 'full'
+      const settle = (): void => {
+        glide()
+        context.onSettle?.()
+      }
+      if (!apply || (current === start.landing && target === start.width)) {
+        // Let go where it started: nothing changes.
+      } else if (current === 'fold') {
+        // Folded to the rail, it opens again at the width it had.
+        if (context.isPinned) {
+          settle()
+          context.onTogglePin()
+        }
+      } else if (current === 'full') {
+        if (context.size !== 'full' || !context.isPinned) {
+          settle()
+          context.onSizeChange?.('full')
+          if (!context.isPinned) context.onTogglePin()
+        }
+      } else if (!fromSide || target !== start.width) {
+        settle()
+        if (context.size === 'full') context.onSizeChange?.('wide')
+        context.onWidthChange?.(target)
+        if (!context.isPinned) context.onTogglePin()
+      }
+      setLanding(null)
+    }
+    const stop = (): void => finish(true)
+    const cancel = (): void => finish(false)
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      cancel()
+    }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', stop, { once: true })
-    window.addEventListener('pointercancel', stop, { once: true })
+    window.addEventListener('pointercancel', cancel, { once: true })
+    window.addEventListener('keydown', escape, true)
     return () => {
+      window.cancelAnimationFrame(frame)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', stop)
-      window.removeEventListener('pointercancel', stop)
+      window.removeEventListener('pointercancel', cancel)
+      window.removeEventListener('keydown', escape, true)
       document.body.style.cursor = previousCursor
       document.body.style.userSelect = previousSelection
     }
@@ -215,31 +351,58 @@ function ActivityPanel({
   )
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (!isPinned || event.button !== 0) return
-    resizeStartRef.current = { x: event.clientX, width: renderedWidth }
-    setIsResizing(true)
+    if (!resizable || event.button !== 0) return
+    const startLanding: PanelLanding = !isPinned
+      ? 'fold'
+      : size === 'full'
+        ? 'full'
+        : renderedWidth === ACTIVITY_PANEL_NARROW_WIDTH
+          ? 'narrow'
+          : snapWidths.includes(renderedWidth)
+            ? 'split'
+            : 'free'
+    resizeStartRef.current = {
+      x: event.clientX,
+      width: isPinned ? renderedWidth : SIDEBAR_RAIL_WIDTH,
+      landing: startLanding
+    }
+    setLanding(startLanding)
     event.preventDefault()
   }
 
+  // Double-clicking the edge moves between the narrow column and the widest snap width.
+  const toggleSnapWidth = (): void => {
+    if (!resizable || !isPinned) return
+    const widest = snapWidths[snapWidths.length - 1] ?? ACTIVITY_PANEL_NARROW_WIDTH
+    glide()
+    onSettle?.()
+    if (size === 'full') onSizeChange?.('wide')
+    onWidthChange?.(
+      size === 'wide' && Math.abs(renderedWidth - ACTIVITY_PANEL_NARROW_WIDTH) < 8
+        ? widest
+        : ACTIVITY_PANEL_NARROW_WIDTH
+    )
+  }
+
   const resizeFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (!isPinned) return
+    if (!resizable || !isPinned) return
     const step = event.shiftKey ? 50 : 20
+    const sideBySideMax = sideBySideMaxWidth ?? activityPanelMaximumWidth(window.innerWidth)
     let next: number | undefined
     if (event.key === 'ArrowLeft') next = renderedWidth + step
     else if (event.key === 'ArrowRight') next = renderedWidth - step
     else if (event.key === 'Home') next = ACTIVITY_PANEL_MIN_WIDTH
-    else if (event.key === 'End') next = maxWidth ?? activityPanelMaximumWidth(window.innerWidth)
+    else if (event.key === 'End') next = sideBySideMax
     if (next === undefined) return
     event.preventDefault()
-    setPanelWidth(fitWidth(next))
+    if (size === 'full') onSizeChange?.('wide')
+    onWidthChange?.(Math.min(clampActivityPanelWidth(next, window.innerWidth), sideBySideMax))
   }
 
-  // Widening asks for as much as the window allows; the sidebar folds and the chat keeps its
-  // minimum, so the panel ends as wide as that leaves.
-  const widestWidth = clampActivityPanelWidth(ACTIVITY_PANEL_MAX_WIDTH, window.innerWidth)
-  const isWide = panelWidth >= Math.min(widestWidth, ACTIVITY_PANEL_WIDE_WIDTH) - 20
-  const toggleWidePanel = (): void => {
-    setPanelWidth(isWide ? fitWidth(ACTIVITY_PANEL_DEFAULT_WIDTH) : widestWidth)
+  // The tab already showing folds the panel to its rail, as VS Code's side bar does.
+  const selectTab = (tab: ActivityTab): void => {
+    if (isPinned && shownTab === tab) onTogglePin()
+    else setActiveTab(tab)
   }
 
   const openCollapsedTab = (tab: ActivityTab): void => {
@@ -605,10 +768,21 @@ function ActivityPanel({
         <div className="activity-panel-scrim" aria-hidden="true" onClick={onTogglePin} />
       )}
       <aside
-        className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing ? ' is-resizing' : ''}`}
-        style={isPinned ? { width: renderedWidth, minWidth: renderedWidth } : undefined}
+        className={`activity-panel ${isPinned ? 'is-pinned' : 'is-collapsed'}${isResizing && !isGliding ? ' is-resizing' : ''}${isGliding ? ' is-gliding' : ''}`}
+        data-size={isPinned ? size : undefined}
+        ref={panelRef}
+        data-landing={landing ?? undefined}
+        style={
+          isPinned
+            ? ({
+                width: renderedWidth,
+                minWidth: renderedWidth,
+                '--panel-content-width': `${renderedWidth}px`
+              } as React.CSSProperties)
+            : undefined
+        }
       >
-        {isPinned && (
+        {resizable && (
           <div
             className="activity-panel-resize-handle"
             role="separator"
@@ -616,23 +790,54 @@ function ActivityPanel({
             aria-orientation="vertical"
             aria-valuemin={ACTIVITY_PANEL_MIN_WIDTH}
             aria-valuemax={maxWidth ?? activityPanelMaximumWidth(window.innerWidth)}
-            aria-valuenow={renderedWidth}
+            aria-valuenow={isPinned ? renderedWidth : 0}
             tabIndex={0}
             onPointerDown={beginResize}
+            onDoubleClick={toggleSnapWidth}
             onKeyDown={resizeFromKeyboard}
-            title="Drag to resize · Arrow keys adjust width"
+            title={
+              isPinned
+                ? 'Drag to resize, across the window or shut · Double-click to switch width'
+                : 'Drag to open'
+            }
           />
         )}
+        {landing &&
+          createPortal(
+            <div
+              ref={phantomRef}
+              className="activity-panel-phantom"
+              data-landing={landing}
+              aria-hidden="true"
+            >
+              {/* Remounted on each landing, so the edge and the icon pop as it settles. */}
+              <span key={`edge-${landing}`} className="activity-panel-phantom-edge" />
+              {(landing !== 'fold' || isPinned) && landing !== 'free' && (
+                <span key={landing} className="activity-panel-phantom-icon">
+                  {landing === 'fold' ? (
+                    <PanelRightClose size={20} />
+                  ) : landing === 'full' ? (
+                    <Maximize2 size={20} />
+                  ) : landing === 'narrow' ? (
+                    <PanelRight size={20} />
+                  ) : (
+                    <Columns2 size={20} />
+                  )}
+                </span>
+              )}
+            </div>,
+            document.body
+          )}
         <div className="activity-header">
-          <div className="activity-tabs">
+          <div className={`activity-tabs${familyRole ? ' has-chats' : ''}`}>
             {familyRole && (
               <button
                 className={`activity-tab-button ${shownTab === 'chats' ? 'active' : ''}`}
-                onClick={() => setActiveTab('chats')}
+                onClick={() => selectTab('chats')}
                 title={familyRole === 'manager' ? 'Chats started here' : 'This chat and its family'}
               >
                 <span className="activity-tab-icon-wrap">
-                  <Workflow size={15} />
+                  <Workflow size={16} />
                   {sessionFamily.family &&
                     [sessionFamily.family.manager, ...sessionFamily.family.workers].some(
                       (member) =>
@@ -647,29 +852,33 @@ function ActivityPanel({
             )}
             <button
               className={`activity-tab-button ${shownTab === 'files' ? 'active' : ''}`}
-              onClick={() => setActiveTab('files')}
+              onClick={() => selectTab('files')}
               title="Files"
             >
-              <FolderTree size={15} />
+              <span className="activity-tab-icon-wrap">
+                <FolderTree size={16} />
+              </span>
               <span className="tab-label">Files</span>
             </button>
             <button
               className={`activity-tab-button ${shownTab === 'checkpoints' ? 'active' : ''}`}
-              onClick={() => setActiveTab('checkpoints')}
+              onClick={() => selectTab('checkpoints')}
               title="Advanced recovery"
               aria-label="Open advanced recovery"
             >
-              <History size={15} />
+              <span className="activity-tab-icon-wrap">
+                <History size={16} />
+              </span>
               <span className="tab-label">Recovery</span>
             </button>
             <button
               className={`activity-tab-button ${shownTab === 'browser' ? 'active' : ''}`}
-              onClick={() => setActiveTab('browser')}
+              onClick={() => selectTab('browser')}
               title="Browser activity"
               aria-label="Open browser activity"
             >
               <span className="activity-tab-icon-wrap">
-                <MonitorUp size={15} />
+                <MonitorUp size={16} />
                 {browserIsLive && (
                   <span className="browser-live-dot" aria-label="Browser is active" />
                 )}
@@ -678,12 +887,12 @@ function ActivityPanel({
             </button>
             <button
               className={`activity-tab-button ${shownTab === 'terminal' ? 'active' : ''}`}
-              onClick={() => setActiveTab('terminal')}
+              onClick={() => selectTab('terminal')}
               title="Agent commands"
               aria-label="Open the agent's terminal"
             >
               <span className="activity-tab-icon-wrap">
-                <SquareTerminal size={15} />
+                <SquareTerminal size={16} />
                 {terminalIsLive && (
                   <span
                     className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
@@ -696,15 +905,15 @@ function ActivityPanel({
               <span className="tab-label">Terminal</span>
             </button>
           </div>
-          <div className="activity-header-right">
-            <button
-              className="activity-panel-toggle"
-              onClick={onTogglePin}
-              title={isPinned ? 'Collapse panel' : 'Expand panel'}
-            >
-              <PanelRight size={16} />
-            </button>
-          </div>
+          <button
+            type="button"
+            className="activity-panel-fold"
+            onClick={onTogglePin}
+            title="Fold the panel to its rail"
+            aria-label="Fold the panel to its rail"
+          >
+            <PanelRightClose size={16} />
+          </button>
         </div>
 
         {isPinned ? (
@@ -984,8 +1193,6 @@ ${viewedFile.filePath}`}
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
-                isWide={isWide}
-                onToggleWidth={toggleWidePanel}
               />
             </div>
           </div>
@@ -998,7 +1205,7 @@ ${viewedFile.filePath}`}
                 title={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
                 aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
               >
-                <Workflow size={17} />
+                <Workflow size={16} />
               </button>
             )}
             <button
@@ -1007,7 +1214,7 @@ ${viewedFile.filePath}`}
               title="Open Files"
               aria-label="Open Files"
             >
-              <FolderTree size={17} />
+              <FolderTree size={16} />
             </button>
             <button
               className="activity-tab-vertical"
@@ -1015,7 +1222,7 @@ ${viewedFile.filePath}`}
               title="Open Recovery"
               aria-label="Open Recovery"
             >
-              <History size={17} />
+              <History size={16} />
             </button>
             <button
               className="activity-tab-vertical"
@@ -1023,7 +1230,7 @@ ${viewedFile.filePath}`}
               title="Open Browser activity"
               aria-label="Open Browser activity"
             >
-              <MonitorUp size={17} />
+              <MonitorUp size={16} />
               {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
             </button>
             <button
@@ -1032,7 +1239,7 @@ ${viewedFile.filePath}`}
               title="Open the agent's terminal"
               aria-label="Open the agent's terminal"
             >
-              <SquareTerminal size={17} />
+              <SquareTerminal size={16} />
               {terminalIsLive && (
                 <span className="collapsed-tab-badge">{terminalIsWaiting ? 'Input' : 'Live'}</span>
               )}

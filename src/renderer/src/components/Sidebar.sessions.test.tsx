@@ -88,7 +88,6 @@ describe('Sidebar chat families', () => {
       onOrder?: (ids: string[]) => void
       sessionStatuses?: ReadonlyMap<string, SessionStatus>
       projects?: Project[]
-      worktreeSources?: ReadonlyMap<string, string>
     } = {}
   ): Promise<void> => {
     await act(async () => {
@@ -97,7 +96,6 @@ describe('Sidebar chat families', () => {
           sessionStatuses={props.sessionStatuses}
           conversations={props.conversations ?? family}
           projects={props.projects ?? [project('p1', 'alpha'), project('p2', 'beta')]}
-          worktreeSources={props.worktreeSources}
           currentConversationId={null}
           isCollapsed={false}
           busyConversationIds={props.busy ?? new Set()}
@@ -131,27 +129,19 @@ describe('Sidebar chat families', () => {
   const titles = (): string[] =>
     [...container.querySelectorAll('.conversation-title')].map((node) => node.textContent ?? '')
 
-  it('treats a worker in a worktree as in its source project, and hides worktree rows with no chats of their own', async () => {
+  it('lists a chat in its own worktree under its project, marked with a branch icon', async () => {
     await render({
       conversations: [
         chat('manager', { title: 'Design review' }),
-        worker('cards', 1, 'wt-alpha'),
-        worker('api', 2, 'wt-beta')
-      ],
-      projects: [
-        project('p1', 'alpha'),
-        project('p2', 'beta'),
-        project('wt-alpha', 'alpha (cards)'),
-        project('wt-beta', 'beta (api)')
-      ],
-      worktreeSources: new Map([
-        ['wt-alpha', 'p1'],
-        ['wt-beta', 'p2']
-      ])
+        { ...worker('cards', 1, 'p1'), worktree_id: 'wt-alpha' },
+        { ...worker('api', 2, 'p2'), worktree_id: 'wt-beta' }
+      ]
     })
-    // Same source project as the manager: no tag. Another source project: tagged with that name.
+    // Same project as the manager: no tag. Another project: tagged with that name.
     expect(row('cards').querySelector('.session-project-tag')).toBeNull()
     expect(row('api').querySelector('.session-project-tag')?.textContent).toBe('beta')
+    expect(row('cards').querySelector('.conversation-worktree-icon')).not.toBeNull()
+    expect(row('Design review').querySelector('.conversation-worktree-icon')).toBeNull()
     expect(
       [...container.querySelectorAll('.project-name')].map((node) => node.textContent)
     ).toEqual(['alpha', 'beta'])

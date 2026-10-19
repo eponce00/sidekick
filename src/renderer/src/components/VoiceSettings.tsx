@@ -18,6 +18,7 @@ import {
   SPEECH_VOICES,
   voiceModelProgress,
   type SpeechLanguageCode,
+  type SpeechVoiceId,
   type VoiceModelState
 } from '../../../shared/voice'
 import { useSpeechPlayback, useVoiceState } from '../hooks/useVoice'
@@ -30,6 +31,7 @@ import { speechPlayer } from '../services/voice/speechPlayer'
 import { updateVoicePreferences, useVoicePreferences } from '../services/voice/voicePreferences'
 import { voiceShortcutLabel } from '../services/voice/voiceShortcut'
 import { SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
+import { Select } from './Select'
 
 type Device = { deviceId: string; label: string }
 
@@ -38,8 +40,8 @@ const SAMPLES: Partial<Record<SpeechLanguageCode, string>> = {
   es: '¡Hola! Así suena SideKick cuando te lee un mensaje.',
   pt: 'Olá! É assim que o SideKick soa quando lê uma mensagem para você.',
   fr: 'Bonjour ! Voici comment SideKick lit un message à voix haute.',
-  de: 'Hallo! So klingt SideKick, wenn es dir eine Nachricht vorliest.',
-  it: 'Ciao! Ecco come suona SideKick quando ti legge un messaggio.'
+  it: 'Ciao! Ecco come suona SideKick quando ti legge un messaggio.',
+  hi: 'नमस्ते! जब SideKick आपको संदेश पढ़कर सुनाता है, तो ऐसा सुनाई देता है।'
 }
 
 const LANGUAGES = (Object.entries(SPEECH_LANGUAGES) as Array<[SpeechLanguageCode, string]>).sort(
@@ -100,7 +102,7 @@ export function VoiceSettings({
       <ToggleField
         icon={AudioLines}
         label="Dictation and read-aloud"
-        hint="Downloads about 820 MB of speech models in the background: NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) and Supertone Supertonic 3."
+        hint="Downloads about 1 GB of speech models once, in the background: NVIDIA Parakeet (CC BY 4.0) for dictation and Kokoro (Apache 2.0) for read-aloud."
         checked={enabled}
         onChange={onEnabledChange}
       />
@@ -200,7 +202,7 @@ function VoiceDeviceRows(): React.JSX.Element {
         controlId={`${id}-microphone`}
         control={
           <span className="voice-device-control">
-            <select
+            <Select
               id={`${id}-microphone`}
               value={preferences.inputDeviceId}
               onChange={(event) => chooseMicrophone(event.target.value)}
@@ -211,7 +213,7 @@ function VoiceDeviceRows(): React.JSX.Element {
                   {device.label}
                 </option>
               ))}
-            </select>
+            </Select>
             <button
               type="button"
               className="settings-secondary-action"
@@ -247,7 +249,7 @@ function VoiceDeviceRows(): React.JSX.Element {
         controlId={`${id}-speaker`}
         control={
           <span className="voice-device-control">
-            <select
+            <Select
               id={`${id}-speaker`}
               value={preferences.outputDeviceId}
               onChange={(event) => updateVoicePreferences({ outputDeviceId: event.target.value })}
@@ -258,7 +260,7 @@ function VoiceDeviceRows(): React.JSX.Element {
                   {device.label}
                 </option>
               ))}
-            </select>
+            </Select>
             <button
               type="button"
               className="settings-secondary-action"
@@ -280,21 +282,23 @@ function VoiceDeviceRows(): React.JSX.Element {
       <SettingsRow
         icon={UserRound}
         label="Voice"
-        description="One of ten. Device, voice, and language choices apply right away on this machine."
+        description="A reply in another language is read by that language's voice of the same kind."
         controlId={`${id}-voice`}
         control={
-          <select
+          <Select
             id={`${id}-voice`}
             className="voice-wide-select"
             value={preferences.voice}
-            onChange={(event) => updateVoicePreferences({ voice: Number(event.target.value) })}
+            onChange={(event) =>
+              updateVoicePreferences({ voice: event.target.value as SpeechVoiceId })
+            }
           >
-            {SPEECH_VOICES.map((name, index) => (
-              <option key={name} value={index}>
-                {name}
+            {SPEECH_VOICES.map(({ id: voiceId, name, gender }) => (
+              <option key={voiceId} value={voiceId}>
+                {`${name} · ${gender === 'female' ? 'Female' : 'Male'}`}
               </option>
             ))}
-          </select>
+          </Select>
         }
       />
 
@@ -304,7 +308,7 @@ function VoiceDeviceRows(): React.JSX.Element {
         description="Detected from each message unless you choose one."
         controlId={`${id}-language`}
         control={
-          <select
+          <Select
             id={`${id}-language`}
             className="voice-wide-select"
             value={preferences.language}
@@ -320,7 +324,7 @@ function VoiceDeviceRows(): React.JSX.Element {
                 {name}
               </option>
             ))}
-          </select>
+          </Select>
         }
       />
 
@@ -335,7 +339,7 @@ function VoiceDeviceRows(): React.JSX.Element {
       <SettingsRow
         icon={Keyboard}
         label="Mic shortcut"
-        description="Turns the mic on and off. Dictation detects the language you speak, among 25 European languages."
+        description="Turns the mic on and off. Dictation understands 25 European languages."
         control={<kbd className="settings-kbd">{voiceShortcutLabel()}</kbd>}
       />
       {notice && (

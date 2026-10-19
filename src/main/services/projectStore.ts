@@ -116,10 +116,11 @@ export class ProjectStore {
     const conversation = this.db
       .prepare(
         `SELECT c.id, c.project_id, c.project_context_version,
-                c.home_workspace_root, c.home_project_name,
-                p.name, p.folder_path
+                c.home_workspace_root, c.home_project_name, c.worktree_id,
+                p.name, p.folder_path, w.folder_path AS worktree_folder
          FROM conversations c
          LEFT JOIN projects p ON p.id = c.project_id
+         LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
          WHERE c.id = ?`
       )
       .get(conversationId) as
@@ -129,8 +130,10 @@ export class ProjectStore {
           project_context_version: number
           home_workspace_root: string | null
           home_project_name: string | null
+          worktree_id: string | null
           name: string | null
           folder_path: string | null
+          worktree_folder: string | null
         }
       | undefined
     if (!conversation) throw new Error('Conversation not found')
@@ -147,10 +150,16 @@ export class ProjectStore {
       conversationId,
       projectId: conversation.project_id,
       projectName: conversation.name,
-      workspaceRoot: conversation.folder_path,
+      // A chat in its own worktree works there, even if its project was removed since.
+      workspaceRoot: conversation.worktree_folder ?? conversation.folder_path,
+      worktreeId:
+        conversation.worktree_id && conversation.worktree_folder ? conversation.worktree_id : null,
       homeWorkspaceRoot: conversation.home_workspace_root,
       homeProjectName: conversation.home_project_name,
-      isDetached: !conversation.project_id && Boolean(conversation.home_workspace_root),
+      isDetached:
+        !conversation.project_id &&
+        !conversation.worktree_folder &&
+        Boolean(conversation.home_workspace_root),
       contextVersion: conversation.project_context_version,
       latestTransition: event ? mapTransition(event) : null
     }
@@ -257,63 +266,6 @@ export class ProjectStore {
         .prepare('SELECT * FROM conversations WHERE id = ?')
         .get(input.conversationId) as ProjectConversation
       return { conversation, transition }
-    })()
-  }
-
-  /**
-   * Moves a chat that has no messages and has never run into another project, such as its own new
-   * worktree. A chat with history keeps its folder; it forks instead.
-   */
-  rehomeFreshConversation(conversationId: string, projectId: string): ProjectConversation {
-    return this.db.transaction(() => {
-      const current = this.db
-        .prepare('SELECT * FROM conversations WHERE id = ?')
-        .get(conversationId) as ProjectConversation | undefined
-      if (!current) throw new Error('Conversation not found')
-      const destination = this.get(projectId)
-      if (!destination) throw new Error('Project not found')
-      const hasHistory =
-        this.db
-          .prepare('SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1')
-          .get(conversationId) ||
-        this.db.prepare('SELECT 1 FROM agent_runs WHERE thread_id = ? LIMIT 1').get(conversationId)
-      if (hasHistory) throw new Error('Only a chat without messages can move to a new worktree')
-      const sourceProject = current.project_id ? this.get(current.project_id) : undefined
-      this.db
-        .prepare(
-          `UPDATE conversations
-           SET project_id = ?, project_context_version = project_context_version + 1,
-               home_workspace_root = ?, home_project_name = ?
-           WHERE id = ?`
-        )
-        .run(projectId, destination.folder_path, destination.name, conversationId)
-      this.rewriteOrder(projectId, [
-        conversationId,
-        ...this.listConversationPlacement(projectId)
-          .filter(({ id }) => id !== conversationId)
-          .map(({ id }) => id)
-      ])
-      if (current.project_id && current.project_id !== projectId) {
-        this.rewriteOrder(
-          current.project_id,
-          this.listConversationPlacement(current.project_id).map(({ id }) => id)
-        )
-      }
-      this.insertTransition({
-        id: randomUUID(),
-        conversationId,
-        fromProjectId: current.project_id,
-        toProjectId: projectId,
-        fromProjectName: sourceProject?.name ?? null,
-        toProjectName: destination.name,
-        fromWorkspaceRoot: sourceProject?.folder_path ?? null,
-        toWorkspaceRoot: destination.folder_path,
-        movedAt: Date.now()
-      })
-      this.touch(projectId)
-      return this.db
-        .prepare('SELECT * FROM conversations WHERE id = ?')
-        .get(conversationId) as ProjectConversation
     })()
   }
 

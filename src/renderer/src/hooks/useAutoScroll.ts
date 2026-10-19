@@ -1,9 +1,12 @@
 // Custom hook for auto-scrolling to bottom of messages
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
 const FOLLOW_BOTTOM_THRESHOLD = 80
 const SHOW_JUMP_THRESHOLD = 240
+/** Following the end glides only when it moved more than about half a screen of text. */
+const SMOOTH_FOLLOW_MIN_DISTANCE = 320
 
 export interface AutoScrollController {
   showScrollToBottom: boolean
@@ -56,6 +59,8 @@ export function useAutoScroll<T>(
   changeKey?: unknown
 ): AutoScrollController {
   const shouldStickToBottomRef = useRef(true)
+  /** Until then a section the reader opened is unfolding; following the bottom would fight it. */
+  const holdUntilRef = useRef(0)
   /** A jump to the latest message is under way; its own scroll events are not the reader's. */
   const jumpingRef = useRef(false)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
@@ -171,13 +176,17 @@ export function useAutoScroll<T>(
     if (shouldStickToBottomRef.current) {
       const frame = window.requestAnimationFrame(() => {
         setShowScrollToBottom(false)
-        moveToBottom(behavior)
+        // A streaming reply grows a few lines at a time. Restarting a smooth scroll for each makes
+        // the view lurch, so small growth follows at once and only a bigger jump glides.
+        const container = scrollContainerRef.current
+        const distance = container ? scrollDistanceFromBottom(container) : 0
+        moveToBottom(distance > SMOOTH_FOLLOW_MIN_DISTANCE ? behavior : 'auto')
       })
       return () => window.cancelAnimationFrame(frame)
     }
     updatePosition()
     return undefined
-  }, [autoScrollChange, behavior, moveToBottom, updatePosition])
+  }, [autoScrollChange, behavior, moveToBottom, scrollContainerRef, updatePosition])
 
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -186,6 +195,7 @@ export function useAutoScroll<T>(
     let frame: number | null = null
     const observedChildren = new Set<Element>()
     const followSettledLayout = (): void => {
+      if (Date.now() < holdUntilRef.current) return
       if (!shouldStickToBottomRef.current) {
         updatePosition()
         return
@@ -213,8 +223,23 @@ export function useAutoScroll<T>(
     })
     mutationObserver.observe(container, { childList: true, subtree: true })
 
+    // Opening a section unfolds it from where it was clicked, even at the end of the chat; once
+    // it settles, following resumes only if the end is still in view.
+    let settle: ReturnType<typeof setTimeout> | null = null
+    const holdForReveal = (event: Event): void => {
+      const ms = (event as CustomEvent<{ ms?: number }>).detail?.ms ?? 0
+      holdUntilRef.current = Date.now() + ms + 60
+      if (frame !== null) window.cancelAnimationFrame(frame)
+      frame = null
+      if (settle) clearTimeout(settle)
+      settle = setTimeout(updatePosition, ms + 80)
+    }
+    container.addEventListener(SECTION_REVEAL_EVENT, holdForReveal)
+
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame)
+      if (settle) clearTimeout(settle)
+      container.removeEventListener(SECTION_REVEAL_EVENT, holdForReveal)
       mutationObserver.disconnect()
       resizeObserver.disconnect()
     }

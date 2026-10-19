@@ -10,12 +10,135 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  transition: width var(--duration-normal) ease;
+  transition:
+    width var(--duration-layout) var(--ease-out),
+    min-width var(--duration-layout) var(--ease-out);
   border-left: 1px solid var(--panel-border);
 }
 
-.activity-panel.is-resizing {
-  transition: none;
+/* Let go of its edge, it settles where the phantom showed with a slight overshoot. */
+.activity-panel.is-gliding {
+  transition:
+    width var(--duration-glide) var(--ease-spring),
+    min-width var(--duration-glide) var(--ease-spring);
+}
+
+/* Dragged nearly shut, its content dims to show it will fold away when let go. */
+.activity-panel > .activity-content {
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+.activity-panel[data-landing='fold'].is-pinned > .activity-content {
+  opacity: 0.35;
+}
+
+/* Where the panel will land while its edge is dragged. Only this moves with the pointer; it
+   eases onto a snap width, the rail or the whole window with a little spring. */
+.activity-panel-phantom {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+  backdrop-filter: saturate(0.7);
+  opacity: 0;
+  pointer-events: none;
+  will-change: width;
+  transition:
+    width 90ms var(--ease-out),
+    background-color var(--duration-normal) var(--ease-out),
+    opacity var(--duration-fast) ease;
+}
+
+.activity-panel-phantom[data-shown] {
+  opacity: 1;
+}
+
+.activity-panel-phantom:not([data-landing='free']) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  transition:
+    width 320ms var(--ease-spring),
+    background-color var(--duration-normal) var(--ease-out),
+    opacity var(--duration-fast) ease;
+}
+
+.activity-panel-phantom-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  background: var(--accent);
+}
+
+.activity-panel-phantom:not([data-landing='free']) > .activity-panel-phantom-edge {
+  animation: activity-phantom-edge-lock 420ms var(--ease-out);
+}
+
+@keyframes activity-phantom-edge-lock {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  35% {
+    box-shadow: 0 0 14px 3px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* What letting go will do: fold to the rail, take the window, or sit at a snap width. */
+.activity-panel-phantom-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-1));
+  box-shadow: var(--shadow-md);
+  color: var(--accent);
+  animation: activity-phantom-icon-in 320ms var(--ease-spring);
+}
+
+.activity-panel-phantom[data-landing='fold'] > .activity-panel-phantom-icon > svg {
+  animation: activity-phantom-point-right 900ms var(--ease-in-out) 200ms infinite;
+}
+
+.activity-panel-phantom[data-landing='full'] > .activity-panel-phantom-icon > svg {
+  animation: activity-phantom-grow 900ms var(--ease-in-out) 200ms infinite;
+}
+
+@keyframes activity-phantom-icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+@keyframes activity-phantom-point-right {
+  50% {
+    transform: translateX(3px);
+  }
+}
+
+@keyframes activity-phantom-grow {
+  50% {
+    transform: scale(1.18);
+  }
+}
+
+/* Its content is laid out at the width the panel is heading for, so opening or resizing reveals
+   or trims it at the edge instead of re-wrapping it every frame. The window clips the overhang. */
+.activity-panel.is-pinned > .activity-header,
+.activity-panel.is-pinned > .activity-content {
+  width: var(--panel-content-width, auto);
+  min-width: var(--panel-content-width, auto);
 }
 
 .activity-panel-resize-handle {
@@ -57,26 +180,23 @@
 }
 
 .activity-header {
+  /* Its width decides whether tabs have room for their labels. */
+  container-type: inline-size;
   min-height: 48px;
   padding: var(--space-1) var(--space-2);
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.activity-header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
+/* Every tab is the same width with the same gap, left to right; the fold button closes the row. */
 .activity-tabs {
   display: flex;
   flex: 1;
+  align-self: stretch;
   min-width: 0;
-  gap: 0;
+  gap: var(--space-1);
 }
 
 .activity-tabs::-webkit-scrollbar {
@@ -90,10 +210,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  flex: 1;
+  gap: 4px;
+  flex: 0 1 76px;
   min-width: 0;
-  padding: 7px 4px 6px;
+  padding: 6px 4px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: pointer;
@@ -116,6 +236,65 @@
   position: relative;
   display: grid;
   place-items: center;
+  width: 16px;
+  height: 16px;
+}
+
+/* Shaped like a tab without a label: its icon sits on the same line as the tabs' icons, with a
+   blank where a label would be. */
+.activity-panel-fold {
+  all: unset;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  gap: 4px;
+  width: 32px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-ui);
+}
+
+.activity-panel-fold::after {
+  height: var(--text-xs);
+  content: '';
+}
+
+.activity-panel-fold:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.activity-panel-fold:focus-visible,
+.activity-tab-button:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+/* Too narrow for every label, about 60px a tab: the tabs become icons, still equal and evenly
+   spaced. A fifth tab (Chats) needs the room sooner. */
+@container (max-width: 291px) {
+  .activity-tab-button .tab-label,
+  .activity-panel-fold::after {
+    display: none;
+  }
+
+  .activity-tab-button {
+    flex-basis: 40px;
+  }
+}
+
+@container (max-width: 355px) {
+  .activity-tabs.has-chats .tab-label,
+  .activity-tabs.has-chats + .activity-panel-fold::after {
+    display: none;
+  }
+
+  .activity-tabs.has-chats .activity-tab-button {
+    flex-basis: 40px;
+  }
 }
 
 .browser-live-dot {
@@ -179,28 +358,6 @@
   font-weight: 600;
 }
 
-.activity-panel-toggle {
-  width: 30px;
-  height: 30px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    background var(--duration-fast) ease,
-    color var(--duration-fast) ease;
-}
-
-.activity-panel-toggle:hover {
-  background: var(--surface-3);
-  color: var(--text-primary);
-}
-
 .activity-tab-button svg {
   flex-shrink: 0;
 }
@@ -226,7 +383,7 @@
   padding: 0;
   cursor: pointer;
   border-radius: var(--radius-sm);
-  transition: all var(--duration-fast);
+  transition: var(--transition-ui);
   text-align: center;
 }
 

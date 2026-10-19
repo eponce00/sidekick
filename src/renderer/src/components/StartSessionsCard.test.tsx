@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StartSessionsCardRequest } from '../../../shared/sessions'
 import AgentInteractionCard from './AgentInteractionCard'
+import { chooseSelectOption } from './Select.testing'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -81,13 +82,10 @@ describe('StartSessionsCard', () => {
     expect(container.textContent).toContain('schedules')
     expect(container.textContent).toContain('starting allows it to use sidekick-api')
 
-    const workIn = container.querySelector<HTMLSelectElement>(
-      'select[aria-label="Where schedules works"]'
+    const workIn = container.querySelector<HTMLElement>(
+      '.ui-select[aria-label="Where schedules works"]'
     )!
-    await act(async () => {
-      workIn.value = 'read-only'
-      workIn.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    await chooseSelectOption(workIn, 'read-only')
     const start = [...container.querySelectorAll('button')].find((button) =>
       button.textContent?.includes('Start 2 chats')
     )!

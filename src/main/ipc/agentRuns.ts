@@ -1,10 +1,7 @@
-import { app, BrowserWindow, ipcMain, Menu, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, webContents } from 'electron'
+import { showAppMenu } from '../services/appMenus'
+import { browserDeviceMenuTemplate } from './browserDeviceMenu'
 import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
-import {
-  BROWSER_DEVICE_PRESETS,
-  BROWSER_RESPONSIVE_DEVICE,
-  type BrowserDevicePreset
-} from '../../shared/browserDevices'
 import type {
   BrowserHumanTakeoverSnapshot,
   ResolveAgentInteractionInput,
@@ -18,6 +15,7 @@ import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
 import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
+import { getManagedWorktrees } from './worktrees'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
@@ -88,7 +86,9 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       {
         pdfOutputRoot: app.getPath('downloads'),
         publishTerminal: (event) => publishDesktopEvent('terminal:event', event),
-        onPreparationChange: publishPreparation
+        onPreparationChange: publishPreparation,
+        prepareWorkspace: (conversationId) =>
+          getManagedWorktrees().prepareConversation(conversationId)
       }
     )
     coordinator.tools.setAppSettings({
@@ -400,9 +400,9 @@ export function registerAgentRunHandlers(): void {
     if (input.action === 'deviceMenu') {
       const state = manager.workspaceState(input.conversationId)
       if (!state) return null
-      // A native menu: an HTML one would open under the page, which is drawn above the app.
-      const current = state.device?.id ?? BROWSER_RESPONSIVE_DEVICE
-      const choose = (device: string) => () => {
+      // The page is drawn above the app, so SideKick's menu would open under it. The panel shows a
+      // picture of the page instead while the menu is open, and the page hides under the menu.
+      const template = browserDeviceMenuTemplate(state.device, (device) => {
         void manager
           .workspaceAction(input.conversationId, {
             conversationId: input.conversationId,
@@ -410,48 +410,31 @@ export function registerAgentRunHandlers(): void {
             device
           })
           .catch((error) => console.warn('[Browser] Could not change the device size:', error))
-      }
-      const item = (preset: BrowserDevicePreset): MenuItemConstructorOptions => ({
-        label: `${preset.label}    ${preset.width} × ${preset.height}`,
-        type: 'radio',
-        checked: current === preset.id,
-        click: choose(preset.id)
       })
-      const template: MenuItemConstructorOptions[] = [
-        {
-          label: 'Responsive (fit the panel)',
-          type: 'radio',
-          checked: current === BROWSER_RESPONSIVE_DEVICE,
-          click: choose(BROWSER_RESPONSIVE_DEVICE)
-        },
-        ...(state.device?.id === 'custom'
-          ? [
-              {
-                label: `${state.device.label}, set by the agent`,
-                type: 'radio' as const,
-                checked: true,
-                enabled: false
+      const activeTab = state.tabs.find((tab) => tab.active)
+      const page = activeTab ? webContents.fromId(activeTab.webContentsId) : undefined
+      const snapshot =
+        page && !page.isDestroyed()
+          ? await page
+              .capturePage()
+              .then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
+              .catch(() => undefined)
+          : undefined
+      if (!showAppMenu(event.sender, template, input.menuPosition)) {
+        const zoom = event.sender.getZoomFactor()
+        Menu.buildFromTemplate(template).popup({
+          window: host,
+          ...(input.menuPosition
+            ? {
+                x: Math.round(input.menuPosition.x * zoom),
+                y: Math.round(input.menuPosition.y * zoom)
               }
-            ]
-          : []),
-        ...(['Phone', 'Tablet', 'Laptop', 'Desktop'] as const).flatMap((group) => [
-          { type: 'separator' as const },
-          { label: group, enabled: false },
-          ...BROWSER_DEVICE_PRESETS.filter((preset) => preset.group === group).map(item)
-        ])
-      ]
-      const zoom = event.sender.getZoomFactor()
-      Menu.buildFromTemplate(template).popup({
-        window: host,
-        ...(input.menuPosition
-          ? {
-              x: Math.round(input.menuPosition.x * zoom),
-              y: Math.round(input.menuPosition.y * zoom)
-            }
-          : {})
-      })
+            : {})
+        })
+      }
       return {
         ...state,
+        ...(snapshot ? { snapshot } : {}),
         tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
           id,
           title,

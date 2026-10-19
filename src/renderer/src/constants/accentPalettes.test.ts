@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it } from 'vitest'
-import { ACCENT_PALETTES, applyAccentPalette } from './accentPalettes'
+import {
+  ACCENT_PALETTES,
+  ACCENT_PALETTE_VERSION,
+  DARK_ON_ACCENT,
+  accentPalette,
+  migrateAccentPalette
+} from '../../../shared/accentPalettes'
+import { applyAccentPalette } from './accentPalettes'
 
 describe('applyAccentPalette', () => {
   beforeEach(() => document.body.removeAttribute('style'))
@@ -9,8 +16,36 @@ describe('applyAccentPalette', () => {
   it('updates both the canonical accent and legacy panel alias', () => {
     applyAccentPalette('blue', 'dark')
 
-    expect(document.body.style.getPropertyValue('--accent')).toBe('#60a5fa')
-    expect(document.body.style.getPropertyValue('--accent-color')).toBe('#60a5fa')
+    expect(document.body.style.getPropertyValue('--accent')).toBe('#86aee8')
+    expect(document.body.style.getPropertyValue('--accent-color')).toBe('#86aee8')
+  })
+
+  it("lights the robot's LEDs in the palette at full brightness, even in the light theme", () => {
+    applyAccentPalette('blue', 'light')
+    expect(document.body.style.getPropertyValue('--brand-led')).toBe('#60a5fa')
+  })
+})
+
+describe('accentPalette', () => {
+  it('finds a palette by id, and falls back to the default for an unknown one', () => {
+    expect(accentPalette('rose').id).toBe('rose')
+    expect(accentPalette('neon').id).toBe('blue')
+    expect(accentPalette(undefined).id).toBe('blue')
+  })
+})
+
+describe('migrateAccentPalette', () => {
+  it('moves a choice made under the old look to the new default once', () => {
+    const migrated = migrateAccentPalette({ accentPalette: 'blue' })
+    expect(migrated).toEqual({
+      accentPalette: 'blue',
+      accentPaletteVersion: ACCENT_PALETTE_VERSION
+    })
+  })
+
+  it('keeps a choice made under the current look', () => {
+    const chosen = { accentPalette: 'blue', accentPaletteVersion: ACCENT_PALETTE_VERSION }
+    expect(migrateAccentPalette(chosen)).toBe(chosen)
   })
 })
 
@@ -34,9 +69,8 @@ function contrast(a: string, b: string): number {
 }
 
 describe('accent palette contrast', () => {
-  const LIGHT_SURFACE = '#f0f2f4'
-  const DARK_SURFACE = '#191e25'
-  const DARK_ON_ACCENT = '#06201b'
+  const LIGHT_SURFACE = '#eeeeee'
+  const DARK_SURFACE = '#1d1d1d'
 
   it.each(ACCENT_PALETTES.map((p) => [p.id, p] as const))(
     '%s light accent reads as text and carries white on a fill',

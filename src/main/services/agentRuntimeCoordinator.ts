@@ -125,6 +125,7 @@ export class AgentRuntimeCoordinator {
   private conversationInbox: ((conversationId: string, runId: string) => AgentRunSteer[]) | null =
     null
   private readonly onPreparationChange?: (threadId: string) => void
+  private readonly prepareWorkspace?: (conversationId: string) => Promise<void> | undefined
 
   constructor(
     private readonly db: Database.Database,
@@ -139,10 +140,14 @@ export class AgentRuntimeCoordinator {
       publishTerminal?: (event: TerminalSessionEvent) => void
       /** A run began or ended preparing; preparation publishes no run event of its own. */
       onPreparationChange?: (threadId: string) => void
+      /** Makes a chat's folder ready before a run, as when its worktree was set aside. */
+      /** Returns a promise only when there is something to wait for. */
+      prepareWorkspace?: (conversationId: string) => Promise<void> | undefined
     } = {}
   ) {
     this.publishExternal = publish
     this.onPreparationChange = options.onPreparationChange
+    this.prepareWorkspace = options.prepareWorkspace
     this.settings = options.settings ?? (() => loadStoredSettings() as unknown as ProviderSettings)
     this.skillAssetsPath = options.skillAssetsPath ?? getBundledSkillAssetsPath
     this.store = new AgentRunStore(db)
@@ -158,7 +163,8 @@ export class AgentRuntimeCoordinator {
       () => this.settings().shellIsolation === 'docker',
       {
         terminals: new TerminalSessionStore(options.publishTerminal),
-        terminalEnabled: () => this.settings().agentCommandTerminal !== false
+        // A terminal where one can start; the runner falls back to pipes on its own.
+        terminalEnabled: () => true
       }
     )
     this.browser = new NativeBrowserSessionService({
@@ -491,6 +497,8 @@ export class AgentRuntimeCoordinator {
     ) {
       throw new Error('This interrupted reply can no longer be continued')
     }
+    const preparingWorkspace = this.prepareWorkspace?.(input.conversationId)
+    if (preparingWorkspace) await preparingWorkspace
     // Research only reads. Every other run may write, so it must not join a folder where another
     // agent is writing unless the caller explicitly chose to share it.
     const writtenRoot =

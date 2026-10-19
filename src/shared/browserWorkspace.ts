@@ -18,6 +18,11 @@ export interface BrowserWorkspaceState {
   /** A fixed viewport in effect on the active tab; null while it is responsive. */
   device?: BrowserDeviceState | null
   tabs: Array<{ id: string; title: string; url: string; active: boolean; loading: boolean }>
+  /**
+   * A picture of the page, sent with the device menu: the page is drawn above the app, so it hides
+   * while SideKick's menu is open and the panel shows this in its place.
+   */
+  snapshot?: string
 }
 
 export interface BrowserWorkspaceRequest {

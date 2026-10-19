@@ -68,10 +68,13 @@ export function registerScheduleHandlers(): void {
           (await getManagedWorktrees().branchOptions(projectId)).isGitRepository,
         create: async (projectId, title) => {
           const worktrees = getManagedWorktrees()
-          const project = await worktrees.create(projectId, title)
-          return { projectId: project.id, branch: worktrees.branchForProject(project.id) ?? '' }
+          const worktree = await worktrees.create(projectId, title)
+          return {
+            worktreeId: worktree.id,
+            location: worktrees.location(worktree.id) ?? 'from the project'
+          }
         },
-        discard: (projectId) => getManagedWorktrees().discardFreshProject(projectId)
+        discard: (worktreeId) => getManagedWorktrees().discardFresh(worktreeId)
       }
     }),
     onChange: (change) => publishDesktopEvent('schedules:changed', change),

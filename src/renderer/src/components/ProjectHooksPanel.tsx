@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import { FolderOpen, Plus, Trash2, Webhook } from 'lucide-react'
 import type { ProjectStartHook } from '../../../shared/projectHooks'
 import { SettingsEmptyState, SettingsSection, SettingsSwitch } from './SettingsLayout'
+import { Select } from './Select'
 
 export type ProjectHookStage = 'start' | 'completion' | 'worktree'
 
@@ -14,12 +15,12 @@ const STAGES: Array<{ id: ProjectHookStage; label: string; hint: string }> = [
   {
     id: 'completion',
     label: 'Before the final answer',
-    hint: 'Once the agent is done in Act mode, for example to run the tests. Not for goals.'
+    hint: 'When the agent has finished its work, for example to run the tests.'
   },
   {
     id: 'worktree',
     label: 'After creating a worktree',
-    hint: 'Once a fork gets its own folder, for example to install dependencies there.'
+    hint: 'When a chat gets its own worktree, for example to install dependencies there.'
   }
 ]
 
@@ -58,7 +59,7 @@ export function ProjectHooksPanel({
       icon={Webhook}
       title="Project hooks"
       className="project-hooks"
-      description="Commands SideKick runs for you at set moments in one project folder. Each asks for your approval when it runs, even with full access, and they run in the order listed. They never come from a repository, and Plan mode runs none."
+      description="Commands that run at set moments in one project folder, in the order listed. Each asks before it runs, even with full access. Plan mode runs none."
     >
       {listed.length > 0 ? (
         <div>
@@ -99,7 +100,7 @@ export function ProjectHooksPanel({
         <strong className="settings-row-label">Add a hook</strong>
         <label className="modern-field" htmlFor={`${id}-stage`}>
           <span>When</span>
-          <select
+          <Select
             id={`${id}-stage`}
             value={stage}
             onChange={(event) => setStage(event.target.value as ProjectHookStage)}
@@ -109,7 +110,7 @@ export function ProjectHooksPanel({
                 {label}
               </option>
             ))}
-          </select>
+          </Select>
           <small>{STAGES.find(({ id: stageId }) => stageId === stage)!.hint}</small>
         </label>
         <div className="modern-field">
@@ -151,7 +152,7 @@ export function ProjectHooksPanel({
           <small>
             {full
               ? 'This moment already has ten hooks.'
-              : 'A new hook is added switched off. Turn it on in the list to use it.'}
+              : 'New hooks start switched off; turn one on in the list to use it.'}
           </small>
           <button
             type="button"

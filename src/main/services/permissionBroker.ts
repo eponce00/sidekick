@@ -1,5 +1,5 @@
 import { randomUUID, createHash } from 'crypto'
-import { BrowserWindow, dialog, type WebContents } from 'electron'
+import { BrowserWindow, type WebContents } from 'electron'
 import {
   normalizePermissionMode,
   resolvePermissionPolicy,
@@ -9,6 +9,7 @@ import {
   type PermissionOperation
 } from '../../shared/permissions'
 import { getStore } from '../ipc/state'
+import { showTrustedDialog } from './trustedDialog'
 
 interface Grant {
   fingerprint: string
@@ -103,9 +104,7 @@ export class PermissionBroker {
         cancelId: 0,
         noLink: true
       }
-      const result = parent
-        ? await dialog.showMessageBox(parent, options)
-        : await dialog.showMessageBox(options)
+      const result = await showTrustedDialog(parent, options)
       if (result.response !== 1) {
         const audit = this.appendAudit({
           event: 'authorization',

@@ -1231,13 +1231,15 @@ const browserEvaluate = definition(
 
 const browserVerify = definition(
   'browser_verify',
-  'Capture durable visual verification evidence for one explicit UI criterion. Returns a fresh screenshot, semantic snapshot, diagnostics, visual-change state, and a verification record for the run. Inspect the returned image before deciding whether the criterion passes.',
+  'Capture durable visual verification evidence for one explicit UI criterion. Returns a fresh screenshot, semantic snapshot, diagnostics, visual-change state, and a verification record for the run. Inspect the returned image before deciding whether the criterion passes. For an animation or anything that should move, set frames (2-4) to capture that many viewport frames interval_ms apart, returned as one image with the frames side by side, oldest on the left.',
   {
     type: 'object',
     required: ['criterion'],
     properties: {
       criterion: { type: 'string', minLength: 1, maxLength: 2000 },
-      full_page: { type: 'boolean' }
+      full_page: { type: 'boolean' },
+      frames: { type: 'integer', minimum: 1, maximum: 4 },
+      interval_ms: { type: 'integer', minimum: 100, maximum: 2000 }
     }
   }
 )

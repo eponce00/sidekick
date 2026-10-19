@@ -167,7 +167,7 @@ describe('OpenAI-compatible client', () => {
     ).resolves.toEqual({ ok: false, error: 'Bad model', status: 400 })
   })
 
-  it('includes the network error code without leaking request details', async () => {
+  it('names the server and the network error code without leaking request details', async () => {
     const cause = Object.assign(new Error('socket reset'), { code: 'ECONNRESET' })
     const fetchImpl = vi.fn(async () => {
       throw new TypeError('fetch failed', { cause })
@@ -178,6 +178,10 @@ describe('OpenAI-compatible client', () => {
         openAICompatibleHeaders('secret'),
         fetchImpl as typeof fetch
       )
-    ).resolves.toEqual({ ok: false, error: 'fetch failed (ECONNRESET)' })
+    ).resolves.toEqual({
+      ok: false,
+      error:
+        'Lost the connection to the model server at provider.test while it was replying; the server stopped or restarted. (ECONNRESET)'
+    })
   })
 })

@@ -54,13 +54,6 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
     sensitive: 'Leaving docker needs approval in SideKick.'
   },
   {
-    key: 'agentCommandTerminal',
-    section: 'agent',
-    type: 'boolean',
-    default: true,
-    description: 'Run agent commands in a terminal so they behave as they do for you.'
-  },
-  {
     key: 'toolCallLimit',
     section: 'agent',
     type: 'integer',
@@ -142,7 +135,7 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
     type: 'string',
     maxLength: 200,
     default: '',
-    description: 'City the agent uses for local answers; empty detects it.'
+    description: 'City the agent uses for local answers; empty sends only your time zone.'
   },
   {
     key: 'contentFontSize',
@@ -182,7 +175,6 @@ export const EDITABLE_SETTINGS: readonly EditableSettingDescriptor[] = [
 const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSettings, true> = {
   maxConcurrentRuns: true,
   shellIsolation: true,
-  agentCommandTerminal: true,
   officeHelperInterpreter: true,
   officeHelperConfigurationId: true,
   projectStartHooks: true,
@@ -202,9 +194,9 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   selectedModel: true,
   planningModelId: true,
   accentPalette: true,
+  accentPaletteVersion: true,
   contentFontSize: true,
   focusChainEnabled: true,
-  focusChainReminderInterval: true,
   autoCompactEnabled: true,
   autoCompactThreshold: true,
   notificationsEnabled: true,
@@ -221,12 +213,20 @@ const KNOWN_STORED_KEYS: Record<keyof ProviderSettings | keyof PublicProviderSet
   fastModelLlamaCpp: true,
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: true,
+  reasoningLevels: true,
   toolCallLimit: true,
   toolCallLimitVersion: true,
   commandPermissionMode: true,
   mcpServers: true,
   closeToTray: true
 }
+/**
+ * Settings SideKick no longer has. Startup removes them from the stored settings: agent commands
+ * always run in a terminal now (falling back to pipes where one cannot start), and the task-list
+ * reminder interval was never read.
+ */
+export const RETIRED_SETTING_KEYS = ['agentCommandTerminal', 'focusChainReminderInterval'] as const
+
 // Encrypted credentials, written only by the main process.
 const INTERNAL_STORED_KEYS = new Set([
   '__encryptedSecrets',

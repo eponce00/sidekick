@@ -1,15 +1,23 @@
 import { promises as fs } from 'fs'
 import { dirname, resolve } from 'path'
-import type {
-  WorkspaceFileChange,
-  WorkspaceMutationFailure,
-  WorkspaceMutationRequest,
-  WorkspaceMutationResult
+import {
+  workspaceMutationTargetPaths,
+  type WorkspaceFileChange,
+  type WorkspaceMutationFailure,
+  type WorkspaceMutationRequest,
+  type WorkspaceMutationResult
 } from '../../shared/workspaceMutations'
 import { applyCanonicalUpdate, parseCanonicalPatch } from '../utils/canonicalPatch'
 import { createWorkspaceFileChange } from '../utils/workspaceDiff'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import { projectRelativePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  describeMatchLocations,
+  findLineBlockSpans,
+  findNearMiss,
+  reindentLineBlock,
+  trimEditBoundaries
+} from '../utils/lineBlockMatch'
 import {
   carryOriginalCharacters,
   closestRegion,
@@ -173,24 +181,165 @@ function replaceSpans(
   return result + content.slice(cursor)
 }
 
+const LOOSE_MATCH_NOTE =
+  'Matching ignored indentation, inner whitespace and blank lines at the edges of old_string.'
+
+function multipleMatchesError(
+  path: string,
+  content: string,
+  matchCount: number,
+  matchStartLines: number[],
+  note = ''
+): WorkspaceMutationPlanningError {
+  const more = matchCount > matchStartLines.length ? ', …' : ''
+  return new WorkspaceMutationPlanningError(
+    `Edit rejected: old_string has ${matchCount} matches in ${path}; no file changes were made.` +
+      (note ? ` ${note}` : '') +
+      ` Match start lines: ${matchStartLines.join(', ')}${more}.\n` +
+      `${describeMatchLocations(content, matchStartLines)}\n` +
+      'Retry with replace_all=true only if every match should change; otherwise include surrounding lines in old_string so it matches once.',
+    {
+      code: 'multiple_matches',
+      recovery:
+        'Choose the replacement scope explicitly: set replace_all=true for every match, or add surrounding lines to old_string for one unique match. Do not repeat the unchanged call.',
+      matchCount,
+      matchStartLines
+    }
+  )
+}
+
 function notFoundError(
   path: string,
   content: string,
   oldText: string
 ): WorkspaceMutationPlanningError {
+  const header = `Edit rejected: old_string was not found in ${path}; no file changes were made.`
+  const nearMiss = findNearMiss(content, oldText)
+  if (nearMiss) {
+    const range = `${nearMiss.startLine}-${nearMiss.endLine}`
+    return new WorkspaceMutationPlanningError(
+      `${header}\nClosest match: file lines ${range}, where ${nearMiss.sameLines} of ${nearMiss.totalLines} old_string lines match (ignoring indentation and whitespace). These lines differ:\n` +
+        `${nearMiss.differences.join('\n')}\n` +
+        'old_string must copy the current file text. The file may have changed since that text was read, including through an earlier edit in this run.',
+      {
+        code: 'text_not_found',
+        recovery: `Read lines ${range} of ${path} again, then retry with old_string copied from that text. Keep old_string to the lines that change plus a few lines of context; do not rewrite the whole file.`
+      }
+    )
+  }
   const region = closestRegion(content, oldText)
   return new WorkspaceMutationPlanningError(
-    `Edit rejected: old_string was not found in ${path}; no file changes were made.` +
+    header +
       (region
         ? `\nClosest current text (line numbers are for reference only; do not include them in old_string):\n${region}`
-        : ''),
+        : '') +
+      '\nThe file may have changed since that text was read, including through an earlier edit in this run.',
     {
       code: 'text_not_found',
       recovery: region
-        ? 'Copy old_string exactly from the closest current text above (without line numbers), or re-read the relevant range, then retry once.'
-        : 'Re-read the relevant range and retry once with exact current text.'
+        ? 'Copy old_string exactly from the closest current text above (without line numbers), or read the relevant range again, then retry once.'
+        : 'Read the relevant range again and retry once with exact current text.'
     }
   )
+}
+
+/** Replace each span (in ascending order) with text built from the original span. */
+function spliceSpans(
+  content: string,
+  spans: readonly TextSpan[],
+  build: (original: string) => string
+): string {
+  let result = ''
+  let cursor = 0
+  for (const span of spans) {
+    result += content.slice(cursor, span.start) + build(content.slice(span.start, span.end))
+    cursor = span.end
+  }
+  return result + content.slice(cursor)
+}
+
+/** Extend spans over the line ending after them, so deleting lines leaves no blank line. */
+function withFollowingLineEnding(content: string, spans: readonly TextSpan[]): TextSpan[] {
+  return spans.map((span) => ({
+    start: span.start,
+    end: span.end + (/^\r?\n/.exec(content.slice(span.end, span.end + 2))?.[0].length ?? 0)
+  }))
+}
+
+/**
+ * Apply an edit whose old_string matched nowhere exactly. Each fallback is tried in order from
+ * strictest to loosest, and the first that finds any match decides: one match (or replace_all)
+ * is applied, several are rejected with their locations. A looser fallback is never consulted
+ * to break a tie, so tolerance cannot move an edit to a location the model did not mean.
+ */
+function tolerantReplacement(
+  path: string,
+  before: string,
+  request: Extract<WorkspaceMutationRequest, { kind: 'replace' }>
+): string {
+  const variants = [{ oldText: request.oldText, newText: request.newText }]
+  // The model may have copied the read tool's `N: ` prefixes with the text.
+  const unnumbered = stripReadLineNumbers(request.oldText)
+  if (unnumbered !== undefined) {
+    variants.push({
+      oldText: unnumbered,
+      newText: stripReadLineNumbers(request.newText) ?? request.newText
+    })
+  }
+  for (const variant of variants) {
+    const trimmed = trimEditBoundaries(variant.oldText, variant.newText)
+    const edge = (spans: TextSpan[]): TextSpan[] =>
+      trimmed?.droppedTrailingNewline && !trimmed.newText
+        ? withFollowingLineEnding(before, spans)
+        : spans
+    const stages: Array<{
+      find: () => TextSpan[]
+      apply: (spans: TextSpan[]) => string
+      note?: string
+    }> = [
+      {
+        // Typography, trailing whitespace, line endings and invisible marks.
+        find: () => findTolerantSpans(before, variant.oldText),
+        apply: (spans) => replaceSpans(before, spans, variant.oldText, variant.newText)
+      }
+    ]
+    if (trimmed) {
+      stages.push({
+        // Blank lines or a final newline at the edges of old_string that the file lacks there.
+        find: () => edge(findTolerantSpans(before, trimmed.oldText)),
+        apply: (spans) => replaceSpans(before, spans, trimmed.oldText, trimmed.newText)
+      })
+    }
+    const lineOld = trimmed?.oldText ?? variant.oldText
+    const lineNew = trimmed?.newText ?? variant.newText
+    stages.push({
+      // Whole lines retyped with different indentation or inner whitespace.
+      find: () => edge(findLineBlockSpans(before, lineOld)),
+      apply: (spans) =>
+        spliceSpans(before, spans, (original) =>
+          lineNew
+            ? (reindentLineBlock(original, lineOld, lineNew) ??
+              withLineEnding(lineNew, dominantLineEnding(before)))
+            : ''
+        ),
+      note: LOOSE_MATCH_NOTE
+    })
+    for (const stage of stages) {
+      const spans = stage.find()
+      if (!spans.length) continue
+      if (spans.length > 1 && !request.replaceAll) {
+        throw multipleMatchesError(
+          path,
+          before,
+          spans.length,
+          spans.slice(0, 12).map((span) => before.slice(0, span.start).split('\n').length),
+          stage.note
+        )
+      }
+      return stage.apply(spans)
+    }
+  }
+  throw notFoundError(path, before, request.oldText)
 }
 
 async function planSingleFileMutation(
@@ -246,57 +395,22 @@ async function planSingleFileMutation(
   const replacement = adaptReplacementLineEndings(before, request.oldText, request.newText)
   const occurrences = countOccurrences(before, replacement.oldText)
   if (!occurrences) {
-    // The model's copy may differ only in typography, trailing whitespace, line endings,
-    // invisible marks or read-tool line numbers. Accept such a copy only if it is unambiguous.
-    let modelOld = request.oldText
-    let modelNew = request.newText
-    let spans = findTolerantSpans(before, modelOld)
-    const unnumbered = spans.length ? undefined : stripReadLineNumbers(modelOld)
-    if (unnumbered !== undefined) {
-      modelOld = unnumbered
-      modelNew = stripReadLineNumbers(modelNew) ?? modelNew
-      spans = findTolerantSpans(before, modelOld)
-    }
-    if (!spans.length) throw notFoundError(path, before, request.oldText)
-    if (spans.length > 1 && !request.replaceAll) {
-      const matchStartLines = spans
-        .slice(0, 12)
-        .map((span) => before.slice(0, span.start).split('\n').length)
-      throw new WorkspaceMutationPlanningError(
-        `Edit rejected: old_string has ${spans.length} matches in ${path}; no file changes were made. Match start lines: ${matchStartLines.join(', ')}. Retry with replace_all=true only if every match should change; otherwise include surrounding lines in old_string so it matches once.`,
-        {
-          code: 'multiple_matches',
-          recovery:
-            'Choose the replacement scope explicitly: set replace_all=true for every match, or add surrounding lines to old_string for one unique match. Do not repeat the unchanged call.',
-          matchCount: spans.length,
-          matchStartLines
-        }
-      )
-    }
-    const after = replaceSpans(before, spans, modelOld, modelNew)
+    const after = tolerantReplacement(path, before, request)
     if (after === before)
       throw new Error(`Edit rejected: replacement produced no change in ${path}`)
     return [{ action: 'update', path, absolutePath, before, after, beforeVersion }]
   }
   if (occurrences > 1 && !request.replaceAll) {
-    const matchStartLines = occurrenceStartLines(before, replacement.oldText)
-    const lineSummary = matchStartLines.length
-      ? ` Match start lines: ${matchStartLines.join(', ')}${occurrences > matchStartLines.length ? ', …' : ''}.`
-      : ''
-    throw new WorkspaceMutationPlanningError(
-      `Edit rejected: old_string has ${occurrences} matches in ${path}; no file changes were made.${lineSummary} Retry with replace_all=true only if every match should change; otherwise include surrounding lines in old_string so it matches once.`,
-      {
-        code: 'multiple_matches',
-        recovery:
-          'Choose the replacement scope explicitly: set replace_all=true for every match, or add surrounding lines to old_string for one unique match. Do not repeat the unchanged call.',
-        matchCount: occurrences,
-        matchStartLines
-      }
+    throw multipleMatchesError(
+      path,
+      before,
+      occurrences,
+      occurrenceStartLines(before, replacement.oldText)
     )
   }
   const after = request.replaceAll
     ? before.split(replacement.oldText).join(replacement.newText)
-    : before.replace(replacement.oldText, replacement.newText)
+    : before.replace(replacement.oldText, () => replacement.newText)
   if (after === before) throw new Error(`Edit rejected: replacement produced no change in ${path}`)
   return [{ action: 'update', path, absolutePath, before, after, beforeVersion }]
 }
@@ -379,7 +493,7 @@ function verifyReadReceipts(
     }
     if (expected !== change.beforeVersion) {
       throw new WorkspaceMutationPlanningError(
-        `Stale read receipt for ${change.path}; re-read the file and retry`,
+        `Stale read receipt for ${change.path}: the file changed after it was last read, so text copied from that read may no longer match. Re-read the file and retry.`,
         {
           code: 'stale_read',
           recovery: 'The file changed after it was read. Re-read it and rebuild the mutation.'
@@ -387,6 +501,38 @@ function verifyReadReceipts(
       )
     }
   }
+}
+
+/** The read-receipt error for the request's existing target files, if any. */
+async function readReceiptProblem(
+  workspaceRoot: string,
+  request: WorkspaceMutationRequest,
+  options: WorkspaceMutationExecutionOptions
+): Promise<Error | undefined> {
+  if (!options.requireReadReceipt) return undefined
+  for (const target of workspaceMutationTargetPaths(request)) {
+    try {
+      const relativePath = projectRelativePath(workspaceRoot, target)
+      const absolutePath = await secureWorkspacePath(workspaceRoot, relativePath)
+      const beforeVersion = await currentVersion(absolutePath)
+      if (beforeVersion === undefined) continue
+      verifyReadReceipts(
+        [
+          {
+            action: 'update',
+            path: displayPath(relativePath),
+            absolutePath,
+            before: '',
+            beforeVersion
+          }
+        ],
+        options
+      )
+    } catch (error) {
+      if (error instanceof WorkspaceMutationPlanningError) return error
+    }
+  }
+  return undefined
 }
 
 async function planMutation(
@@ -599,7 +745,13 @@ export async function executeWorkspaceMutation(
 ): Promise<WorkspaceMutationResult> {
   return withWorkspaceLock(workspaceRoot, async () => {
     try {
-      const changes = await planMutation(workspaceRoot, request)
+      let changes: PlannedChange[]
+      try {
+        changes = await planMutation(workspaceRoot, request)
+      } catch (error) {
+        // Text that no longer matches is usually a symptom of a stale read; report the cause.
+        throw (await readReceiptProblem(workspaceRoot, request, options)) ?? error
+      }
       verifyReadReceipts(changes, options)
       await applyPlan(changes)
       return resultFromChanges(changes)

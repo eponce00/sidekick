@@ -40,18 +40,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={editMessage}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={copyMessage}
           onRetryMessage={retryMessage}
           onForkMessage={forkMessage}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
           editActionTitle="Edit and resend"
@@ -85,48 +80,38 @@ describe('MessageItem shared-channel presentation', () => {
     expect(forkMessage).toHaveBeenCalledOnce()
   })
 
-  it('keeps an edited message anchored, full-sized, and focused', async () => {
-    container.className = 'messages-container'
-    container.scrollTop = 420
+  it('steps back while it is edited in the message box, with no editor of its own', async () => {
     await act(async () => {
       root.render(
         <MessageItem
           message={{
             id: 'editing-message',
             role: 'user',
-            content: 'A longer message that should keep its visual footprint while being edited.',
+            content: 'Change the tagline',
             timestamp: Date.now()
           }}
           index={0}
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId="editing-message"
-          editingGeometry={{ width: 640, height: 132, viewportTop: 0 }}
-          editingContent="A longer message that should keep its visual footprint while being edited."
+          isRewound
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
-          confirmEditActionTitle="Save and restart from here"
         />
       )
     })
-
-    const bubble = container.querySelector('.message-bubble') as HTMLDivElement
-    const input = container.querySelector('.message-edit-input') as HTMLTextAreaElement
-    expect(bubble.style.width).toBe('640px')
-    expect(bubble.style.minHeight).toBe('132px')
-    expect(input.style.height).toBe('24px')
-    expect(document.activeElement).toBe(input)
-    expect(container.scrollTop).toBe(420)
-    expect(container.querySelector('[aria-label="Save and restart from here"]')).not.toBeNull()
+    const message = container.querySelector('.message') as HTMLElement
+    expect(message.classList.contains('message-editing')).toBe(true)
+    expect(message.classList.contains('message-rewound')).toBe(true)
+    expect(message.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('textarea')).toBeNull()
+    expect(container.textContent).toContain('Change the tagline')
   })
 
   it('keeps compact tool status hints available even when a row has no click action', async () => {
@@ -165,18 +150,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           readOnly
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -214,17 +194,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -253,17 +228,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -293,17 +263,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -347,17 +312,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -416,17 +376,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -454,17 +409,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -500,17 +450,12 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading={isLoading}
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
@@ -518,13 +463,19 @@ describe('MessageItem shared-channel presentation', () => {
       })
     }
 
-    // The model can spend minutes writing its next tool call with nothing new on screen.
+    // The model can spend minutes writing its next tool call with nothing new on screen; the
+    // live line at the foot of the reply keeps counting.
     await render(true)
-    expect(container.querySelector('.agent-work-tail')?.textContent).toMatch(/^Working for 21/)
+    const stats = container.querySelector('.agent-run-stats')
+    expect(stats?.textContent).toContain('Writing')
+    expect(stats?.textContent).toContain('21m')
+    expect(stats?.textContent).toContain('1.4k tokens')
+    expect(stats?.textContent).toContain('13 t/s')
+    expect(stats?.textContent).toContain('48.0k context')
     expect(container.querySelector('.message-meta')).toBeNull()
 
     await render(false)
-    expect(container.querySelector('.agent-work-tail')).toBeNull()
+    expect(container.querySelector('.agent-run-stats')).toBeNull()
     expect(container.querySelector('.message-token-info')?.textContent).toBe('12.5 t/s')
   })
 
@@ -545,19 +496,14 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           workspaceFolder={'C:\\project'}
           onUndoCheckpoint={undo}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -568,6 +514,50 @@ describe('MessageItem shared-channel presentation', () => {
     expect(button).not.toBeNull()
     await act(async () => button.click())
     expect(undo).toHaveBeenCalledWith('abc1234')
+  })
+
+  it('times a reply from the run that wrote it, so a retry starts the clock again', async () => {
+    const props = {
+      index: 0,
+      expandedThinking: new Set<string>(),
+      editingMessageId: null,
+      copiedMessageId: null,
+      onToggleThinking: vi.fn(),
+      onHandleArtifactResult: vi.fn(),
+      onEditMessage: vi.fn(),
+      onCopyMessage: vi.fn(),
+      onRetryMessage: vi.fn(),
+      onApproveToolLimitDecision: vi.fn(),
+      onDenyToolLimitDecision: vi.fn()
+    }
+    const reply = {
+      id: 'long-task',
+      role: 'agent' as const,
+      content: 'Done.',
+      timestamp: 5_000_000,
+      tokenUsage: {
+        promptTokens: 10,
+        completionTokens: 5,
+        // A retry, long after the message it answers was first sent.
+        runStartedAt: 4_000_000,
+        runCompletedAt: 4_200_000
+      },
+      segments: [
+        {
+          type: 'tool' as const,
+          tool: { id: 't', title: 'Read', command: 'read', status: 'success' as const }
+        },
+        { type: 'text' as const, content: 'Done.' }
+      ]
+    }
+    await act(async () => {
+      root.render(<MessageItem {...props} message={reply} isLoading={false} />)
+    })
+    // 200 s from the retry to the end: 3m 20s, once, in the footer.
+    expect(container.querySelector('.message-run-stats')?.textContent).toContain(
+      'Worked for 3m 20s'
+    )
+    expect(container.textContent?.match(/Work(ed|ing) for/g)).toHaveLength(1)
   })
 
   it('collapses completed work and leaves the final answer visible', async () => {
@@ -604,17 +594,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -622,7 +607,11 @@ describe('MessageItem shared-channel presentation', () => {
     })
 
     const toggle = container.querySelector('.agent-work-toggle') as HTMLButtonElement
-    expect(toggle.textContent).toContain('Worked for 3m 21s')
+    // A finished reply carries its time once, in the footer, not inside the reply.
+    expect(toggle.textContent).not.toContain('Worked for')
+    expect(container.querySelector('.message-run-stats')?.textContent).toContain(
+      'Worked for 3m 21s'
+    )
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     expect(container.textContent).toContain('The fix is complete.')
     expect(container.textContent).not.toContain('Read the renderer')
@@ -666,17 +655,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -812,17 +796,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading
           expandedThinking={new Set<string>()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
           onResolveAgentInteraction={vi.fn()}
@@ -850,7 +829,12 @@ describe('MessageItem shared-channel presentation', () => {
       segments: [
         {
           type: 'run_error' as const,
-          runError: { code: 'internal', message: 'fetch failed (UND_ERR_SOCKET)', retryable: true }
+          runError: {
+            code: 'transient',
+            message:
+              'Lost the connection to the model server at 127.0.0.1:4000 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)',
+            retryable: true
+          }
         }
       ]
     }
@@ -862,18 +846,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set<string>()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={onRetryMessage}
           onContinueRun={onContinueRun}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -884,6 +863,10 @@ describe('MessageItem shared-channel presentation', () => {
         (candidate) => candidate.textContent?.trim() === label
       ) as HTMLButtonElement | undefined
 
+    // Says what went wrong in words, not the error code.
+    expect(container.querySelector('.run-error-segment strong')?.textContent).toBe(
+      'Connection lost'
+    )
     await act(async () => button('Retry')!.click())
     expect(onRetryMessage).not.toHaveBeenCalled()
     expect(container.textContent).toContain('file changes it made are undone')
@@ -942,17 +925,12 @@ describe('MessageItem shared-channel presentation', () => {
             ])
           }
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1100,17 +1078,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1180,17 +1153,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1238,17 +1206,12 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1303,17 +1266,12 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading={false}
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
@@ -1350,18 +1308,13 @@ describe('MessageItem shared-channel presentation', () => {
           isLoading={false}
           expandedThinking={new Set()}
           editingMessageId={null}
-          editingGeometry={null}
-          editingContent=""
           copiedMessageId={null}
           onToggleThinking={vi.fn()}
           onHandleArtifactResult={vi.fn()}
           onEditMessage={vi.fn()}
-          onCancelEditMessage={vi.fn()}
-          onConfirmEditMessage={vi.fn()}
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
           onRewindMessage={rewind}
-          onSetEditingContent={vi.fn()}
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />
@@ -1404,32 +1357,25 @@ describe('MessageItem shared-channel presentation', () => {
             isLoading
             expandedThinking={new Set()}
             editingMessageId={null}
-            editingGeometry={null}
-            editingContent=""
             copiedMessageId={null}
             onToggleThinking={vi.fn()}
             onHandleArtifactResult={vi.fn()}
             onEditMessage={vi.fn()}
-            onCancelEditMessage={vi.fn()}
-            onConfirmEditMessage={vi.fn()}
             onCopyMessage={vi.fn()}
             onRetryMessage={vi.fn()}
-            onSetEditingContent={vi.fn()}
             onApproveToolLimitDecision={vi.fn()}
             onDenyToolLimitDecision={vi.fn()}
           />
         )
       })
-      expect(container.querySelector('.agent-work-toggle')?.textContent).toContain(
-        'Waiting for model for 3m 52s'
-      )
+      const stats = (): string => container.querySelector('.agent-run-stats')?.textContent ?? ''
+      expect(stats()).toContain('Waiting for model')
+      expect(stats()).toContain('3m 52s')
 
       await act(async () => {
         vi.advanceTimersByTime(1_000)
       })
-      expect(container.querySelector('.agent-work-toggle')?.textContent).toContain(
-        'Waiting for model for 3m 53s'
-      )
+      expect(stats()).toContain('3m 53s')
     } finally {
       await act(async () => root.render(<></>))
       vi.useRealTimers()
@@ -1479,8 +1425,6 @@ describe('MessageItem in long conversations', () => {
         isLoading={isLoading}
         expandedThinking={expandedThinking}
         editingMessageId={null}
-        editingGeometry={null}
-        editingContent=""
         copiedMessageId={null}
         {...handlers}
       />

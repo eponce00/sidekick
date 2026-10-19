@@ -89,6 +89,8 @@ export interface WorkspaceVerificationTerminalController {
    * a verification pass after it.
    */
   afterToolRound?: () => string | undefined
+  /** The model saw the rendered page: a browser result carried a screenshot. */
+  recordVisualLook?: () => void
 }
 
 export interface WorkspaceChangeRecord {

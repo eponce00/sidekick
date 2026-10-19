@@ -1,3 +1,4 @@
+import type { ReasoningLevel } from './reasoning'
 import type { ProviderKind } from './providerRegistry'
 import type { ProviderInstance, ProviderInstanceHealth, ProviderInstanceModel } from './settings'
 import type { ToolResultMediaAttachment } from './agentRuntime'
@@ -71,7 +72,10 @@ export interface ProviderChatRequest {
   maxOutputTokens?: number
   temperature?: number
   reasoningTokens?: number
+  /** The older on/off switch; `reasoningLevel` takes precedence when both are set. */
   thinkingEnabled?: boolean
+  /** How much to reason, sent in the form this request's protocol expects. */
+  reasoningLevel?: ReasoningLevel
   purpose: ProviderRequestPurpose
 }
 

@@ -930,6 +930,32 @@ describe('AgentRunKernel', () => {
     }
   )
 
+  it('treats a turn that used its whole output allowance as cut off, whatever the server says', async () => {
+    // LM Studio reported `tool_calls` for a write the 32,768-token limit had cut off.
+    const router = { execute: vi.fn(async () => ({ waitedSeconds: 99 })) }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'cut-at-limit',
+            function: { name: 'wait', arguments: { seconds: 99, reason: 'looks valid' } }
+          }
+        ],
+        usage: { promptTokens: 10, completionTokens: 1_024, doneReason: 'tool_calls' }
+      }),
+      sampledTurn({ content: 'Retried in smaller parts.' })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start(input(router))
+
+    expect(result).toMatchObject({ phase: 'completed' })
+    expect(router.execute).not.toHaveBeenCalled()
+    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain(
+      'output_truncated'
+    )
+  })
+
   it('assigns unique durable identities when a provider repeats tool-call ids', async () => {
     const router = { execute: vi.fn(async () => ({ waitedSeconds: 1 })) }
     const sampler = sequence(
@@ -1049,6 +1075,36 @@ describe('AgentRunKernel', () => {
       ['spawn-2', 'denied'],
       ['spawn-3', 'success']
     ])
+  })
+
+  it('ends a turn the output limit cut off while still thinking, without nudging the model', async () => {
+    const cutOff = { promptTokens: 10, completionTokens: 32_768, doneReason: 'length' }
+    const thinkingOnly = sampledTurn({ thinking: 'Planning the horse…', usage: cutOff })
+    const sampler = vi.fn(thinkingOnly)
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start(input())
+
+    expect(result).toMatchObject({ phase: 'failed' })
+    expect((result as { error?: string }).error).toMatch(
+      /reached its output limit.*while still thinking, before it answered or used a tool/
+    )
+    // Asked once: nothing tells the model to stop thinking and act.
+    expect(sampler).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an answer the output limit cut off partway', async () => {
+    const sampler = sequence(
+      sampledTurn({
+        content: 'The first half of the answer',
+        usage: { promptTokens: 10, completionTokens: 4_096, doneReason: 'length' }
+      })
+    )
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+
+    const result = await kernel.start(input())
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'The first half of the answer' })
   })
 
   it('requires a research profile to attempt source retrieval before completing', async () => {

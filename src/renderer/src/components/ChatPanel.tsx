@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { Fragment, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
@@ -24,13 +24,22 @@ import { loadTerminalSessions } from '../utils/terminalSessionStore'
 import { useConversationGoal } from '../hooks/useConversationGoal'
 import { MessageItem } from './MessageItem'
 import { memberName, memberState, useSessionFamily } from '../hooks/useSessionFamily'
-import { sessionTimeline, type SessionTimelineRow } from '../utils/sessionTimeline'
+import { sessionTimeline, workerBriefIds, type SessionTimelineRow } from '../utils/sessionTimeline'
 import { latestRunTodos } from '../utils/runTodos'
 import { FamilyStrip, ReceivedMessagesRow, StartedChatsRow } from './ManagerChatRows'
 import { SessionTodoList } from './SessionTodoList'
-import { BriefCard, SessionMessageRow, WorkerBanner, WorkerChatHeader } from './WorkerChatParts'
+import { BriefCard, SessionMessageRow, WorkerChatHeader } from './WorkerChatParts'
+import { SidekickPeek } from './SidekickPeek'
 import { workerWorkplace } from '../utils/sessionLabels'
 import { WorkerChatContext } from './sessionChatContext'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel,
+  type ReasoningModel,
+  type ReasoningSettings
+} from '../../../shared/reasoning'
+import type { ProviderKind } from '../../../shared/providerRegistry'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
@@ -78,12 +87,11 @@ import { composerDraftKey, useComposerDraft } from '../hooks/useComposerDraft'
 import { ReviewCommentSinkContext } from '../hooks/useReviewCommentSink'
 import { SubAgentNavigation, type SubAgentTarget } from './subAgentNavigation'
 import { SubAgentView } from './SubAgentView'
-import { WorkspaceBar } from './WorkspaceBar'
+import { WorkspaceBar, WorktreeChip } from './WorkspaceBar'
 import { WorkspaceBusyDialog, type WorkspaceBusyChoice } from './WorkspaceBusyDialog'
 import { rememberWorkInChoice, storedWorkInChoice } from '../hooks/useManagedWorktrees'
 import type { ComposerDraft } from '../services/composerDrafts'
 import {
-  suggestWorktreeBranch,
   workspaceBusyDisplayMessage,
   type ManagedWorktreeSummary,
   type WorkInChoice,
@@ -92,6 +100,8 @@ import {
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import './ChatPanel.css'
+import { flyIntoComposer } from '../utils/flyIntoComposer'
+import { dissolveMessages, easeInReply, liftSendArrow, riseIntoChat } from '../utils/messageMotion'
 
 export type { PinnedModel }
 
@@ -107,13 +117,13 @@ interface ChatPanelProps {
   /** Set when the chat's project is one of SideKick's worktrees. */
   worktree?: ManagedWorktreeSummary | null
   /** Moves a chat that has not sent anything yet into its own new worktree. */
-  onStartInWorktree?: (
-    conversationId: string,
-    options: { branchName?: string; baseRef?: string }
-  ) => Promise<void>
+  onStartInWorktree?: (conversationId: string, options: { baseRef?: string }) => Promise<void>
   /** Forks a chat with history into a new worktree, carrying the unsent message along. */
   onForkIntoWorktree?: (conversationId: string, draft: ComposerDraft) => Promise<void>
   onManageWorktrees?: () => void
+  /** Projects a chat outside any project can move into before its first message. */
+  projectChoices?: ReadonlyArray<{ id: string; name: string }>
+  onChooseProject?: (projectId: string) => Promise<void>
   onOpenProject: () => Promise<void> | void
   onUpdateConversationTitle: (
     id: string,
@@ -140,10 +150,9 @@ interface ChatPanelProps {
   focusReplyAt?: number
   onBusyStateChange?: (conversationId: string | null, busy: boolean) => void
   fastModelName?: string
-  ollamaThinkingEnabled?: boolean
-  openRouterThinkingEnabled?: boolean
-  onToggleOllamaThinking: () => void
-  onToggleOpenRouterThinking: () => void
+  /** Chosen reasoning levels, and the older switches that seed a model's first level. */
+  reasoningSettings?: ReasoningSettings
+  onReasoningLevelChange: (modelId: string, level: ReasoningLevel) => void
   onCheckpointCreated?: (restoredHash?: string) => void
   /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
   chatRollbackHash?: string | null
@@ -178,6 +187,8 @@ function ChatPanel({
   onStartInWorktree,
   onForkIntoWorktree,
   onManageWorktrees,
+  projectChoices,
+  onChooseProject,
   onOpenProject,
   onUpdateConversationTitle,
   onConversationTitleApplied,
@@ -194,10 +205,8 @@ function ChatPanel({
   focusReplyAt,
   onBusyStateChange,
   fastModelName,
-  ollamaThinkingEnabled = true,
-  openRouterThinkingEnabled = false,
-  onToggleOllamaThinking,
-  onToggleOpenRouterThinking,
+  reasoningSettings = {},
+  onReasoningLevelChange,
   onCheckpointCreated,
   chatRollbackHash,
   onChatRollbackConsumed,
@@ -223,7 +232,8 @@ function ChatPanel({
   // Where the chat works. A project chat chooses before its first message; afterwards a run that
   // would join a folder another agent is writing in asks first.
   const [workIn, setWorkIn] = useState<WorkInChoice>(storedWorkInChoice)
-  const [worktreeBranch, setWorktreeBranch] = useState('')
+  // A folder without Git keeps the remembered choice but works in the folder.
+  const [worktreesAvailable, setWorktreesAvailable] = useState(true)
   const [worktreeBase, setWorktreeBase] = useState('')
   const [workspaceError, setWorkspaceError] = useState<string | null>(null)
   const [busyPrompt, setBusyPrompt] = useState<{
@@ -304,6 +314,22 @@ function ChatPanel({
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  // The message box's contents while a message is being edited in it, put back on Cancel.
+  const sentAtRef = useRef(0)
+  const riseMessageIdRef = useRef<string | null>(null)
+  const seenMessagesRef = useRef<{
+    conversationId: string | null
+    ids: Set<string>
+    count: number
+    lastId: string | undefined
+  } | null>(null)
+  const editStashRef = useRef<{
+    text: string
+    images: MessageImageAttachment[]
+    attachments: MessageContextAttachment[]
+    mode: ConversationRunMode
+    goalArmed: boolean
+  } | null>(null)
   const featuresMenuRef = useRef<HTMLDivElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   // Track artifact render results for tool response
@@ -415,14 +441,12 @@ function ChatPanel({
 
   const {
     editingMessageId,
-    editingDraft,
-    editingGeometry,
+    steppedBackFromId,
     copiedMessageId,
     pendingCheckpointRestore,
-    setEditingDraft,
     startEditMessage: handleStartEditMessage,
     cancelEditMessage: handleCancelEditMessage,
-    confirmEditMessage: handleConfirmEditMessage,
+    submitEdit,
     copyMessage: handleCopyMessage,
     requestCheckpointRestore: handleUndoCheckpoint,
     cancelCheckpointRestore,
@@ -448,6 +472,66 @@ function ChatPanel({
       setAttachedImages(message.images ?? [])
       setAttachedContext(message.attachments ?? [])
       window.requestAnimationFrame(() => inputRef.current?.focus())
+    },
+    beginEdit: (message, source) => {
+      // What the box held comes back if the edit is cancelled.
+      editStashRef.current ??= {
+        text: inputValue,
+        images: attachedImages,
+        attachments: attachedContext,
+        mode: nextRunMode,
+        goalArmed
+      }
+      setInputValue(message.content)
+      setAttachedImages(message.images ?? [])
+      setAttachedContext(message.attachments ?? [])
+      setNextRunMode(
+        message.runMode === 'plan' || message.runMode === 'research'
+          ? message.runMode
+          : 'conversation'
+      )
+      setGoalArmed(Boolean(message.startsGoal))
+      setPlanModelOverrideId(null)
+      // After the editing bar has rendered, so the message lands where its text now sits.
+      window.requestAnimationFrame(() => {
+        const input = inputRef.current
+        if (!input) return
+        flyIntoComposer(source, input.closest<HTMLElement>('.input-container'))
+        input.focus()
+        input.setSelectionRange(input.value.length, input.value.length)
+      })
+    },
+    cancelEdit: () => {
+      const stash = editStashRef.current
+      editStashRef.current = null
+      setInputValue(stash?.text ?? '')
+      setAttachedImages(stash?.images ?? [])
+      setAttachedContext(stash?.attachments ?? [])
+      setNextRunMode(stash?.mode ?? 'conversation')
+      setGoalArmed(stash?.goalArmed ?? false)
+    },
+    beforeMessagesLeave: (message, kind) => {
+      const container = messagesContainerRef.current
+      if (!container) return
+      // The chat's own messages, not the ones a sub-agent's card shows inside them.
+      const rendered = [
+        ...container.querySelectorAll<HTMLElement>('.message[data-message-id]')
+      ].filter((element) => !element.parentElement?.closest('.message'))
+      const index = rendered.findIndex((element) => element.dataset.messageId === message.id)
+      if (index < 0) return
+      if (kind === 'rewind') {
+        // It heads back into the box it came from.
+        flyIntoComposer(
+          rendered[index].querySelector<HTMLElement>('.message-bubble'),
+          inputRef.current?.closest<HTMLElement>('.input-container') ?? null
+        )
+      }
+      // An edited message comes back into focus with its new words as the old replies go.
+      if (kind === 'edit') riseMessageIdRef.current = message.id
+      return dissolveMessages(
+        rendered.slice(kind === 'rewind' ? index : index + 1),
+        container.getBoundingClientRect()
+      )
     },
     rerunStream: async (truncatedMessages, targetConversationId, mode, rewoundGoal) => {
       if (rewoundGoal.restartObjective !== undefined || rewoundGoal.discardsGoalStart) {
@@ -671,7 +755,7 @@ function ChatPanel({
   }, [conversationId, isLoading, messagesRef])
 
   // Auto-focus input when conversation changes or loading completes
-  useAutoFocus(inputRef, isLoading, editingMessageId !== null, conversationId)
+  useAutoFocus(inputRef, isLoading, false, conversationId)
 
   // Close menus when clicking outside
   useOutsideClick(
@@ -750,23 +834,19 @@ function ChatPanel({
     }
     if (goalArmed && !goalAvailable) setGoalArmed(false)
   }, [goalArmed, goalAvailable, nextRunMode, planAvailable, researchAvailable])
-  const thinkingAvailable =
-    selectedProvider === 'ollama' ||
-    selectedProvider === 'ollama-cloud' ||
-    selectedProvider === 'openrouter'
-  // Gateway/local providers auto-detect thinking from the model response.
-  const thinkingEnabled =
-    selectedProvider === 'openrouter'
-      ? openRouterThinkingEnabled
-      : selectedProvider === 'ollama' || selectedProvider === 'ollama-cloud'
-        ? ollamaThinkingEnabled
-        : selectedProvider === 'anthropic'
-          ? true
-          : selectedProvider === 'litellm' ||
-              selectedProvider === 'lmstudio' ||
-              selectedProvider === 'llamacpp'
-            ? true
-            : false
+  // The same levels and resolution the main process uses when it sends the request.
+  const reasoningModel: ReasoningModel | null = selectedPinnedModel
+    ? {
+        id: selectedPinnedModel.id,
+        providerKind: selectedPinnedModel.providerKind ?? (selectedProvider as ProviderKind),
+        model: selectedPinnedModel.providerModelId || selectedPinnedModel.id,
+        supportsReasoning: selectedPinnedModel.supportsReasoning
+      }
+    : null
+  const selectedReasoningOptions = reasoningModel ? reasoningOptions(reasoningModel) : null
+  const selectedReasoningLevel = reasoningModel
+    ? resolveReasoningLevel(reasoningModel, reasoningSettings)
+    : undefined
 
   const toggleThinking = (messageId: string): void => {
     setExpandedThinking((prev) => {
@@ -1038,12 +1118,7 @@ function ChatPanel({
 
   const startInWorktree = async (targetConversationId: string): Promise<void> => {
     if (!onStartInWorktree) throw new Error('Worktrees are not available here')
-    await onStartInWorktree(targetConversationId, {
-      branchName:
-        worktreeBranch.trim() ||
-        suggestWorktreeBranch(createFallbackConversationTitle(inputValue || 'New chat')),
-      ...(worktreeBase ? { baseRef: worktreeBase } : {})
-    })
+    await onStartInWorktree(targetConversationId, worktreeBase ? { baseRef: worktreeBase } : {})
   }
 
   /**
@@ -1055,7 +1130,7 @@ function ChatPanel({
     if (!conversationId || !projectId) return true
     const fresh = messagesRef.current.length === 0
     const choosing = fresh && !worktree
-    if (choosing && workIn === 'worktree') {
+    if (choosing && workIn === 'worktree' && worktreesAvailable) {
       setWorkspaceError(null)
       try {
         await startInWorktree(conversationId)
@@ -1066,7 +1141,7 @@ function ChatPanel({
         return false
       }
     }
-    if (choosing) rememberWorkInChoice('folder')
+    if (choosing && worktreesAvailable) rememberWorkInChoice('folder')
     if (!goalArmed && nextRunMode === 'research') return true
     const occupants = await window.api.agentRuns
       .workspaceOccupants(conversationId)
@@ -1138,6 +1213,14 @@ function ChatPanel({
     submitMessage()
   }
 
+  const sendArrow = (): Element | null | undefined =>
+    inputRef.current?.closest('.input-container')?.querySelector('.send-button svg')
+  // The next message to appear rises out of the box, even into a chat created by sending it.
+  const markSent = (): void => {
+    sentAtRef.current = Date.now()
+    liftSendArrow(sendArrow())
+  }
+
   const submitMessage = (): void => {
     // What was dictated so far is in the box and goes with the message; with
     // voice on, the mic pauses until the reply has been read aloud.
@@ -1149,6 +1232,28 @@ function ChatPanel({
     }
     const images = attachedImages
     const attachments = attachedContext
+    if (editingMessageId) {
+      // Sending an edit replaces the message and everything after it, then answers again.
+      if (isLoading) return
+      if (goalArmed && !inputValue.trim()) return
+      editStashRef.current = null
+      const edit = {
+        content: inputValue,
+        images,
+        attachments,
+        runMode: goalArmed ? ('conversation' as const) : nextRunMode,
+        startsGoal: goalArmed
+      }
+      setInputValue('')
+      setAttachedImages([])
+      setAttachedContext([])
+      setNextRunMode('conversation')
+      setGoalArmed(false)
+      setPlanModelOverrideId(null)
+      liftSendArrow(sendArrow())
+      submitEdit(edit)
+      return
+    }
     if (isLoading) {
       void handleSendDuringLoading(inputValue, images, attachments)
       return
@@ -1160,6 +1265,7 @@ function ChatPanel({
       setPlanModelOverrideId(null)
       setAttachedImages([])
       setAttachedContext([])
+      markSent()
       void handleStartGoal(inputValue.trim(), images, attachments)
       return
     }
@@ -1168,6 +1274,7 @@ function ChatPanel({
     setPlanModelOverrideId(null)
     setAttachedImages([])
     setAttachedContext([])
+    markSent()
     void sendMessage(inputValue, { clearInput: true, mode, images, attachments })
   }
 
@@ -1318,7 +1425,6 @@ function ChatPanel({
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      if (editingMessageId) return
 
       const queuedMessageId = getQueuedMessageIdForEmptySubmit(
         isLoading,
@@ -1350,8 +1456,6 @@ function ChatPanel({
   //   return undefined
   // }
 
-  const visibleMessages = messages.filter((msg) => !msg.hidden)
-
   // Chats this one started, or the chat that started it, woven into the transcript by time.
   const sessionFamily = useSessionFamily(conversationId)
   const { family: chatFamily, role: familyRole, self: familySelf } = sessionFamily
@@ -1367,6 +1471,17 @@ function ChatPanel({
       ),
     [chatFamily]
   )
+  const briefIds = useMemo(
+    () =>
+      conversationId
+        ? workerBriefIds(conversationId, familyRole, sessionFamily.messages)
+        : new Set<string>(),
+    [familyRole, sessionFamily.messages, conversationId]
+  )
+  const visibleMessages = useMemo(
+    () => messages.filter((msg) => !msg.hidden && !briefIds.has(msg.id)),
+    [messages, briefIds]
+  )
   const familyRows = useMemo(
     () =>
       conversationId
@@ -1374,10 +1489,10 @@ function ChatPanel({
             conversationId,
             familyRole,
             sessionFamily.messages,
-            messages.filter((msg) => !msg.hidden).map((msg) => msg.timestamp)
+            visibleMessages.map((msg) => msg.timestamp)
           )
         : new Map<number, SessionTimelineRow[]>(),
-    [conversationId, familyRole, sessionFamily.messages, messages]
+    [conversationId, familyRole, sessionFamily.messages, visibleMessages]
   )
   const runTodos = useMemo(
     () => (familyRole === 'manager' ? latestRunTodos(messages) : []),
@@ -1413,6 +1528,7 @@ function ChatPanel({
             key={row.key}
             brief={row.message}
             managerTitle={chatFamily?.manager.title ?? 'its manager'}
+            workspaceRoot={workspaceFolder}
           />
         )
       case 'message':
@@ -1450,6 +1566,56 @@ function ChatPanel({
     enabled: virtualizeMessages
   })
 
+  // New messages arrive with a little motion: what you send rises out of the box, replies ease
+  // in. Opening a chat or loading its history shows everything at once.
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current
+    const seen = seenMessagesRef.current
+    const lastId = visibleMessages.at(-1)?.id
+    // A reply streaming in re-renders constantly; only a change of messages needs a look.
+    if (
+      seen?.conversationId === conversationId &&
+      seen.count === visibleMessages.length &&
+      seen.lastId === lastId &&
+      !riseMessageIdRef.current
+    ) {
+      return
+    }
+    const ids = visibleMessages.map((message) => message.id)
+    seenMessagesRef.current = {
+      conversationId,
+      ids: new Set(ids),
+      count: ids.length,
+      lastId
+    }
+    if (!container) return
+    const element = (id: string): HTMLElement | null =>
+      container.querySelector<HTMLElement>(`.message[data-message-id="${CSS.escape(id)}"]`)
+    const riseId = riseMessageIdRef.current
+    if (riseId && ids.includes(riseId)) {
+      riseMessageIdRef.current = null
+      riseIntoChat(element(riseId))
+    }
+    const justSent = Date.now() - sentAtRef.current < 4_000
+    const sameChat = seen?.conversationId === conversationId && seen.ids.size > 0
+    if (!seen || (!sameChat && !justSent)) return
+    // Only what joined the end of the chat: history paged in above is not new.
+    let firstNew = ids.length
+    while (firstNew > 0 && !seen.ids.has(ids[firstNew - 1])) firstNew -= 1
+    if (firstNew === ids.length || ids.length - firstNew > 3) return
+    for (const message of visibleMessages.slice(firstNew)) {
+      if (message.role === 'user' && justSent) {
+        sentAtRef.current = 0
+        riseIntoChat(element(message.id))
+      } else if (message.role !== 'user') easeInReply(element(message.id))
+    }
+  }, [conversationId, visibleMessages])
+
+  // While a message is edited in the box, or replaced by sending it, it and everything after it
+  // step back.
+  const editingIndex = steppedBackFromId
+    ? visibleMessages.findIndex((candidate) => candidate.id === steppedBackFromId)
+    : -1
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem
       key={msg.id}
@@ -1458,13 +1624,10 @@ function ChatPanel({
       isLoading={isLoading && index === visibleMessages.length - 1 && msg.role === 'agent'}
       expandedThinking={expandedThinking}
       editingMessageId={editingMessageId}
-      editingGeometry={editingGeometry}
-      editingContent={editingDraft}
+      isRewound={editingIndex >= 0 && index >= editingIndex}
       onToggleThinking={toggleThinking}
       onHandleArtifactResult={handleArtifactResult}
       onEditMessage={handleStartEditMessage}
-      onCancelEditMessage={handleCancelEditMessage}
-      onConfirmEditMessage={handleConfirmEditMessage}
       onCopyMessage={handleCopyMessage}
       onRetryMessage={handleRetryMessage}
       onContinueRun={
@@ -1475,7 +1638,6 @@ function ChatPanel({
       onForkMessage={forkMessage}
       onRewindMessage={isLoading ? undefined : rewindMessage}
       copiedMessageId={copiedMessageId}
-      onSetEditingContent={setEditingDraft}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
       onDenyToolLimitDecision={handleDenyToolLimitDecision}
       onResolveAgentInteraction={(id, response, cancelled) =>
@@ -1486,6 +1648,7 @@ function ChatPanel({
     />
   )
 
+  const isEmptyChat = messages.length === 0 && !familyRows.size
   const panel = (
     <div className="chat-panel">
       {familyRole === 'worker' && familySelf && chatFamily && (
@@ -1496,19 +1659,19 @@ function ChatPanel({
             state={memberState(familySelf, sessionFamily.statuses)}
             reason={sessionFamily.statuses.get(familySelf.conversationId)?.reason}
             worktree={worktree}
-            onOpenChat={openChat}
-            onStop={() => window.api.sessions.stop(familySelf.conversationId)}
-          />
-          <WorkerBanner
-            manager={chatFamily.manager}
             reportsToManager={Boolean(familySelf.reportToConversationId)}
             onOpenChat={openChat}
+            onStop={() => window.api.sessions.stop(familySelf.conversationId)}
           />
         </div>
       )}
       {/* Messages Area */}
-      <div className="messages-container" ref={messagesContainerRef}>
-        {messages.length === 0 && !familyRows.size ? (
+      <div
+        className={`messages-container${isEmptyChat ? ' is-empty' : ''}`}
+        ref={messagesContainerRef}
+      >
+        {isEmptyChat && <SidekickPeek />}
+        {isEmptyChat ? (
           <div className="empty-state">
             <h2>{workspaceFolder ? projectName || 'Your project' : 'What’s next?'}</h2>
             {pinnedModels.length === 0 && (
@@ -1594,23 +1757,27 @@ function ChatPanel({
       <WorkspaceBar
         projectId={projectId}
         worktree={worktree}
-        canChoose={Boolean(conversationId) && messages.length === 0 && !isLoading}
+        canChoose={(Boolean(conversationId) || !projectId) && messages.length === 0 && !isLoading}
         workIn={workIn}
-        branchName={worktreeBranch}
-        branchPlaceholder={
-          inputValue.trim()
-            ? suggestWorktreeBranch(createFallbackConversationTitle(inputValue))
-            : 'Named from your first message'
-        }
         baseRef={worktreeBase}
         error={workspaceError}
         onWorkInChange={(choice) => {
           setWorkIn(choice)
           setWorkspaceError(null)
         }}
-        onBranchNameChange={setWorktreeBranch}
         onBaseRefChange={setWorktreeBase}
         onManageWorktrees={() => onManageWorktrees?.()}
+        onWorktreesAvailableChange={setWorktreesAvailable}
+        projectChoices={projectChoices}
+        onChooseProject={
+          onChooseProject &&
+          ((id) => {
+            setWorkspaceError(null)
+            onChooseProject(id).catch((error: unknown) =>
+              setWorkspaceError(error instanceof Error ? error.message : String(error))
+            )
+          })
+        }
       />
       <WorkspaceBusyDialog
         isOpen={Boolean(busyPrompt)}
@@ -1634,6 +1801,7 @@ function ChatPanel({
         isStopping={isStopping}
         isCompacting={isCompacting}
         editingMessageId={editingMessageId}
+        onCancelEdit={handleCancelEditMessage}
         researchSelected={nextRunMode === 'research'}
         researchActive={activeMode === 'research'}
         researchPhase={phase}
@@ -1650,8 +1818,8 @@ function ChatPanel({
         goalArmed={goalArmed}
         goalAvailable={goalAvailable}
         goalUnavailableReason={goalUnavailableReason}
-        thinkingEnabled={thinkingEnabled}
-        thinkingAvailable={thinkingAvailable}
+        reasoningOptions={selectedReasoningOptions}
+        reasoningLevel={selectedReasoningLevel}
         isFeaturesMenuOpen={isFeaturesMenuOpen}
         isModelMenuOpen={isModelMenuOpen}
         selectedModel={selectedModel}
@@ -1705,18 +1873,19 @@ function ChatPanel({
         onPauseGoal={() => void pauseGoal()}
         onResumeGoal={() => void handleResumeGoal()}
         onClearGoal={() => void clearGoal()}
-        onToggleThinking={() => {
-          if (selectedProvider === 'openrouter') {
-            onToggleOpenRouterThinking()
-          } else if (selectedProvider === 'ollama' || selectedProvider === 'ollama-cloud') {
-            onToggleOllamaThinking()
-          }
+        onReasoningLevelChange={(level) => {
+          if (selectedPinnedModel) onReasoningLevelChange(selectedPinnedModel.id, level)
         }}
         onToggleFeaturesMenu={() => setIsFeaturesMenuOpen(!isFeaturesMenuOpen)}
         onToggleModelMenu={() => setIsModelMenuOpen(!isModelMenuOpen)}
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
         workspaceFolder={workspaceFolder}
+        toolbarExtra={
+          worktree ? (
+            <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />
+          ) : null
+        }
         workspaceMemoryAvailable={workspaceMemoryLoadedFor === workspaceFolder}
         workspaceMemoryUnavailableReason={
           workspaceMemoryLoadedFor === workspaceFolder

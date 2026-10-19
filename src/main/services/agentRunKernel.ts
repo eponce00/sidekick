@@ -1142,7 +1142,11 @@ The user approved this exact plan revision. Act capabilities are now available a
       const configured = Number(activeRequest.target.contextLength) || reported
       if (reported >= configured) return
       learnedContextLengths.set(imageLimitCacheKey, reported)
-      const maxOutputTokens = resolveMaxOutputTokens(reported, activeRequest.maxOutputTokens)
+      // The smaller window gets the default share; never more than was asked for before.
+      const maxOutputTokens = Math.min(
+        resolveMaxOutputTokens(reported),
+        activeRequest.maxOutputTokens ?? Number.POSITIVE_INFINITY
+      )
       activeRequest = {
         ...activeRequest,
         maxOutputTokens,
@@ -1495,8 +1499,16 @@ The user approved this exact plan revision. Act capabilities are now available a
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
         }
-        const truncatedToolBatch =
-          turn.toolCalls.length > 0 && toolBatchMayBeTruncated(turn.usage.doneReason)
+        // Some servers (LM Studio among them) report a turn the output limit cut off as finished
+        // normally, even `tool_calls`; a turn that used its whole allowance was cut off whatever
+        // the reason says.
+        const hitOutputLimit =
+          toolBatchMayBeTruncated(turn.usage.doneReason) ||
+          Boolean(
+            activeRequest.maxOutputTokens &&
+            turn.usage.completionTokens >= activeRequest.maxOutputTokens
+          )
+        const truncatedToolBatch = turn.toolCalls.length > 0 && hitOutputLimit
         activeContextManager?.observeUsage?.(
           requestMessages,
           toolDefinitions,
@@ -1512,6 +1524,22 @@ The user approved this exact plan revision. Act capabilities are now available a
         const projectedTurnContent =
           separateNextTurn && turn.content ? `\n\n${turn.content}` : turn.content
         separateNextTurn = false
+
+        // A reply the output limit cut off while the model was still thinking produced nothing,
+        // and is not an answer. As in Codex, the turn ends with that reason rather than completing
+        // empty; the model is not told to cut its thinking short.
+        if (
+          !turn.toolCalls.length &&
+          !turn.content.trim() &&
+          !finalContent.trim() &&
+          hitOutputLimit
+        ) {
+          const limit = activeRequest.maxOutputTokens
+          throw new Error(
+            `The model reached its output limit${limit ? ` of ${limit.toLocaleString('en-US')} tokens` : ''} while still thinking, before it answered or used a tool. Raise the model's maximum output in Settings → Providers, or ask it to continue.`
+          )
+        }
+
         const needsResearchSource =
           input.profile.surface === 'research' &&
           !researchSourceAttempted &&

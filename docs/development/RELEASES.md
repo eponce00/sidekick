@@ -43,7 +43,7 @@ The app checks the public GitHub Releases API after startup and every six hours.
 updater downloads newer stable packages automatically, streams them to a private staging directory,
 and verifies the exact asset against that release's `SHA256SUMS.txt`. It permits only the canonical
 GitHub release path and GitHub's release-assets HTTPS host. It never accepts an installer URL or
-file path from the renderer. Installation requires **Restart and update** and a native confirmation;
+file path from the renderer. Installation requires **Restart and update** and a trusted confirmation;
 normal closing does not silently install. The computer is never restarted.
 
 This is an explicit change from the notification-only policy in 0.7.0. Checksums protect against
@@ -112,9 +112,12 @@ installer has no Authenticode signature unless SignPath Foundation signed it. Th
 these facts so an accidental local identity or an undocumented paid dependency cannot change the
 release contract.
 
-Application branding has one vector master at `build/icon.svg`. Its reviewed ICNS, ICO, and runtime
-PNG derivatives are checked in and hash-validated so clean release runners do not depend on an icon
-conversion download and cannot silently fall back to Electron artwork.
+Application branding is drawn once, by `node scripts/generate-brand-assets.cjs`. It writes the
+vector master `build/icon.svg` and its small cut `build/icon-small.svg`, used at 16 to 32 px, and
+renders every derivative from them: the ICNS, the ICO (filling more of its frame, as Windows icons
+do), the runtime and tray PNGs, the Microsoft Store tiles, and the peeking robot the app draws. All
+of them are checked in and hash-validated, so clean release runners do not render or download icons
+and cannot silently fall back to Electron artwork.
 
 Electron-builder may create blockmaps in a platform build folder. They are deliberately excluded
 from the public release, and the final merged-set validator rejects them because the community
@@ -182,9 +185,26 @@ One-time setup, by the maintainer:
 
 Each release, the [Store workflow](../../.github/workflows/store.yml) builds
 `SideKick-<version>-windows-x64-store.appx` from the version tag, checks its identity, and uploads
-it as the `SideKick-Microsoft-Store` workflow artifact. Submit that file in a new Partner Center
-submission. `npm run build:store` builds the same package locally with those three variables set
-in the environment.
+it as the `SideKick-Microsoft-Store` workflow artifact. `npm run build:store` builds the same
+package locally with those variables set in the environment.
+
+Once Partner Center API access is set up, the workflow also submits that package for certification
+with the [Microsoft Store Developer CLI](https://learn.microsoft.com/windows/apps/publish/msstore-dev-cli/overview),
+starting from the last published submission so the listing carries over. Until then, submit the
+artifact by hand in a new Partner Center submission. Setting up API access, once:
+
+1. Link a Microsoft Entra directory to the Partner Center account (**Account settings** ›
+   **Tenants**), creating one if the account has none, and sign in to Partner Center with it.
+2. Under **Account settings** › **User management** › **Microsoft Entra applications**, create an
+   application with the **Manager** role and add a client secret.
+3. Store the directory's tenant ID, the account's seller ID, the application's client ID, and the
+   secret as the repository secrets `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_SELLER_ID`,
+   `PARTNER_CENTER_CLIENT_ID`, and `PARTNER_CENTER_CLIENT_SECRET`, and the Store ID in the variable
+   `SIDEKICK_STORE_PRODUCT_ID`.
+
+A submission copies its publishing options from the last published one, so after the first release
+set **Submission options** to publish as soon as certification passes. Client secrets expire; renew
+the secret in Partner Center and in the repository before then.
 
 The app runs with the `runFullTrust` capability, like any packaged desktop app. To test a package
 before submitting it, unpack it with `makeappx unpack`, register the folder with
@@ -193,9 +213,8 @@ before submitting it, unpack it with `makeappx unpack`, register the folder with
 `store`, the agent ran a PowerShell command shown in the Terminal tab, and the browser panel
 opened a page. Windows does not redirect its data: where `%APPDATA%\SideKick` already exists, the
 Store and installer editions share one profile, so a user can switch between them without losing
-chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx` are
-rendered from `build/icon.svg` by `node scripts/generate-store-assets.cjs` and hash-checked with the
-other icon derivatives.
+chats. Voice model downloads have not been checked in the package. Its tile images in `build/appx`
+are rendered by the same brand-asset script and hash-checked with the other icon derivatives.
 
 ## What the tagged workflow proves
 

@@ -34,6 +34,7 @@ import { testProviderConnection as checkProviderConnection } from '../services/p
 import { ProviderIcon } from './ProviderIcon'
 import { filterModelsByQuery } from '../utils/modelSearch'
 import { SettingsEmptyState, SettingsPageHeader } from './SettingsLayout'
+import { Select } from './Select'
 
 interface Props {
   instances: ProviderInstance[]
@@ -526,7 +527,7 @@ export function ProviderSettingsPanel({
                       />
                       Utility model <em>optional</em>
                     </span>
-                    <select
+                    <Select
                       value={selected.fastModelId || ''}
                       onChange={(event) =>
                         updateSelected({ fastModelId: event.target.value || undefined })
@@ -544,11 +545,11 @@ export function ProviderSettingsPanel({
                             </option>
                           )
                         })}
-                    </select>
+                    </Select>
                   </label>
                   <label className="modern-field provider-fast-model">
                     <span>Sub-agents at once</span>
-                    <select
+                    <Select
                       value={String(selected.subAgentsAtOnce ?? 1)}
                       onChange={(event) => {
                         const count = Number(event.target.value)
@@ -559,7 +560,7 @@ export function ProviderSettingsPanel({
                       <option value="2">Two</option>
                       <option value="3">Three</option>
                       <option value="4">Four</option>
-                    </select>
+                    </Select>
                     <small>
                       Tasks delegated together run side by side up to this limit; the rest wait
                       their turn. More than one helps a server that caches several prompts or serves
@@ -681,7 +682,7 @@ export function ProviderSettingsPanel({
                 ).map(([key, label]) => (
                   <label key={key}>
                     <span>{label}</span>
-                    <select
+                    <Select
                       value={editingModel[key] === undefined ? '' : String(editingModel[key])}
                       onChange={(event) =>
                         updateMetadataOverride(
@@ -694,7 +695,7 @@ export function ProviderSettingsPanel({
                       <option value="">Unknown</option>
                       <option value="true">Supported</option>
                       <option value="false">Not supported</option>
-                    </select>
+                    </Select>
                   </label>
                 ))}
               </div>

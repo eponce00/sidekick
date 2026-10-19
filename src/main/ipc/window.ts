@@ -1,5 +1,4 @@
 import { BrowserWindow, clipboard, ipcMain, Notification } from 'electron'
-import { readFileSync } from 'fs'
 import icon from '../../../resources/icon.png?asset'
 import {
   normalizeDesktopNotificationBody,
@@ -79,16 +78,5 @@ export function registerWindowHandlers(): void {
     })
     notification.show()
     return { ok: true }
-  })
-
-  ipcMain.handle('app:getIconPath', () => {
-    try {
-      const iconBuffer = readFileSync(icon)
-      const base64 = iconBuffer.toString('base64')
-      return `data:image/png;base64,${base64}`
-    } catch (error) {
-      console.error('Failed to load icon:', error)
-      return ''
-    }
   })
 }

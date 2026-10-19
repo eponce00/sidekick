@@ -149,25 +149,24 @@ beforeEach(() => {
   worktreesCreated = []
   const worktrees: SessionWorktrees = {
     isGitProject: async () => true,
-    // Like the worktree service: a new project for the chat, and the chat moved into it.
+    // Like the worktree service: a worktree of the chat's project, which the chat then works in.
     createForConversation: async ({ conversationId }) => {
-      const projectId = `wt-${conversationId}`
-      db.prepare(
-        `INSERT INTO projects (id, name, folder_path, created_at, updated_at) VALUES (?, ?, ?, 1, 1)`
-      ).run(projectId, `sidekick · ${conversationId}`, `/storage/${conversationId}`)
+      const worktreeId = `wt-${conversationId}`
       db.prepare(
         `INSERT INTO managed_worktrees
-         (id, project_id, source_project_id, repository_root, worktree_root, branch, created_at, last_used_at)
-         VALUES (?, ?, 'project', '/repo/sidekick', ?, ?, 1, 1)`
+         (id, source_project_id, repository_root, worktree_root, folder_path, branch, created_at,
+          last_used_at)
+         VALUES (?, 'project', '/repo/sidekick', ?, ?, ?, 1, 1)`
       ).run(
-        randomUUID(),
-        projectId,
+        worktreeId,
+        `/storage/${conversationId}`,
         `/storage/${conversationId}`,
         `sidekick/${conversationId.slice(0, 8)}`
       )
-      db.prepare(
-        'UPDATE conversations SET project_id = ?, home_workspace_root = ? WHERE id = ?'
-      ).run(projectId, `/storage/${conversationId}`, conversationId)
+      db.prepare('UPDATE conversations SET worktree_id = ? WHERE id = ?').run(
+        worktreeId,
+        conversationId
+      )
       worktreesCreated.push(conversationId)
       return {}
     },
@@ -208,7 +207,8 @@ describe('starting, stopping and archiving workers', () => {
       report_to_conversation_id: MANAGER,
       session_handle: 'port-schedules',
       work_in: 'worktree',
-      project_id: `wt-${worker.conversationId}`
+      project_id: 'project',
+      worktree_id: `wt-${worker.conversationId}`
     })
     expect(worktreesCreated).toEqual([worker.conversationId])
     const [run] = runsOf(worker.conversationId)
@@ -298,6 +298,31 @@ describe('starting, stopping and archiving workers', () => {
     expect(service.store.hasGrant(MANAGER, 'other')).toBe(true)
     expect(worker).toMatchObject({ projectId: 'other', workIn: 'folder' })
     expect(runsOf(worker.conversationId)[0].workspaceSharing).toBe('allow')
+  })
+
+  it("shares the manager's worktree when it works in the manager's folder", async () => {
+    db.prepare(
+      `INSERT INTO managed_worktrees
+       (id, source_project_id, repository_root, worktree_root, folder_path, created_at,
+        last_used_at)
+       VALUES ('manager-wt', 'project', '/repo/sidekick', '/storage/manager', '/storage/manager',
+               1, 1)`
+    ).run()
+    db.prepare("UPDATE conversations SET worktree_id = 'manager-wt' WHERE id = ?").run(MANAGER)
+    const [worker] = (
+      await service.start(
+        {
+          managerConversationId: MANAGER,
+          sessions: [{ title: 'Helper', brief: 'Help', workIn: 'folder' }]
+        },
+        'user'
+      )
+    ).started
+    expect(service.store.conversation(worker.conversationId)).toMatchObject({
+      project_id: 'project',
+      worktree_id: 'manager-wt'
+    })
+    expect(worktreesCreated).toEqual([])
   })
 })
 
@@ -703,7 +728,7 @@ describe('chat tools', () => {
         'export type Page = { next: string | null }\n'
       )
       const [sender] = await startWorkers('Sender')
-      db.prepare('UPDATE projects SET folder_path = ? WHERE id = ?').run(
+      db.prepare('UPDATE managed_worktrees SET folder_path = ? WHERE id = ?').run(
         senderRoot,
         `wt-${sender.conversationId}`
       )

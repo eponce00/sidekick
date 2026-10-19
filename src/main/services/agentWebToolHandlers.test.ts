@@ -1,8 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { toOpenAICompatibleMessages } from '../providers/providerRuntime'
-import { imageSearchToolResult, pageFetchFailure } from './agentWebToolHandlers'
+import { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
+import {
+  imageSearchToolResult,
+  pageFetchFailure,
+  registerWebToolHandlers
+} from './agentWebToolHandlers'
 import { structuredTextPage } from './sidekickSearch/pageReader'
 import type { ImageSearchResult, PageContent } from './sidekickSearch/types'
+import type { ToolOutputStore } from './toolOutputStore'
 
 const LARGE_IMAGE_BASE64 = 'QUFB'.repeat(30_000)
 
@@ -99,6 +105,32 @@ describe('agent web page fetches', () => {
       { code: 'transient', retryable: true }
     )
     expect(pageFetchFailure('Fetch: ok', page({ success: true, content: 'Hi' }))).toBeNull()
+    expect(
+      pageFetchFailure('Fetch: router', page({ error: 'Not allowed', refused: true }))?.error
+    ).toMatchObject({
+      code: 'permission_denied',
+      retryable: false,
+      recoveryAction: 'change_strategy'
+    })
+  })
+
+  it("asks the browser's local-network question for a device, under the call's signal", async () => {
+    const policy = { approved: vi.fn(() => false), approve: vi.fn(async () => false) }
+    const registry = new AgentToolHandlerRegistry()
+    registerWebToolHandlers(registry, {} as ToolOutputStore, policy)
+    const run = new AbortController()
+    const result = await registry.execute({
+      name: 'web_fetch',
+      title: 'Fetch: router',
+      arguments: { url: 'http://192.168.1.1/' },
+      context: { runId: 'run-1', signal: run.signal }
+    })
+
+    expect(policy.approve).toHaveBeenCalledWith('http://192.168.1.1', run.signal)
+    expect(result).toMatchObject({
+      status: 'error',
+      error: { code: 'permission_denied', retryable: false }
+    })
   })
 
   it('reads an API response as its data instead of refusing it', () => {
