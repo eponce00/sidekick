@@ -32,6 +32,25 @@ const release: AppUpdateInfo = {
 }
 
 describe('AppUpdateService', () => {
+  it('removes old update downloads when it starts, keeping only newer installers', () => {
+    const removeStaleUpdates = vi.fn(async (_isNewer: (version: string) => boolean) => undefined)
+    const service = new AppUpdateService({
+      fetchLatestRelease: async () => null,
+      downloadUpdate: null,
+      removeStaleUpdates,
+      automaticChecks: () => false
+    })
+
+    service.start()
+    service.stop()
+
+    expect(removeStaleUpdates).toHaveBeenCalledOnce()
+    const isNewer = removeStaleUpdates.mock.calls[0][0]
+    expect(isNewer('1.0.1')).toBe(true)
+    expect(isNewer('1.0.0')).toBe(false)
+    expect(isNewer('0.9.0')).toBe(false)
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.app.isPackaged = true

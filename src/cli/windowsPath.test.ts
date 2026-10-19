@@ -82,9 +82,10 @@ describe('updateUserPath', () => {
     ])
   })
 
-  it('does not write when nothing changes', async () => {
+  it('does not write when nothing changes, and says so', async () => {
+    // An update finds PATH already set; the installer then has nothing to announce.
     const reg = registry(`C:\\a;${BIN}`, 'REG_SZ')
-    expect(await updateUserPath('add', BIN, reg.run)).toBe(0)
+    expect(await updateUserPath('add', BIN, reg.run)).toBe(2)
     expect(reg.run.mock.calls.some(([args]) => args[0] === 'add')).toBe(false)
   })
 

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -44,6 +44,7 @@ import {
   downloadAppUpdate,
   installAppUpdate,
   MAC_UPDATE_SCRIPT,
+  removeStaleUpdates,
   updateAssetName,
   verifyUpdateFile
 } from './appUpdateInstaller'
@@ -178,5 +179,26 @@ describe('verified community updates', () => {
     expect(mocks.error).toHaveBeenCalledOnce()
     expect(mocks.relaunch).toHaveBeenCalledOnce()
     expect(mocks.quit).toHaveBeenCalledOnce()
+  })
+
+  it('deletes downloaded installers this version no longer needs, and keeps a newer one', async () => {
+    const updates = join(mocks.root, 'updates')
+    const pending = async (name: string, file?: string): Promise<void> => {
+      await mkdir(join(updates, name), { recursive: true })
+      if (file) await writeFile(join(updates, name, file), bytes)
+    }
+    await pending('pending-old', 'SideKick-0.15.0-windows-x64-setup.exe')
+    await pending('pending-installed', 'SideKick-0.16.1-windows-x64-setup.exe')
+    await pending('pending-next', 'SideKick-0.17.0-windows-x64-setup.exe')
+    await pending('pending-empty')
+    await mkdir(join(updates, 'unrelated'), { recursive: true })
+
+    await removeStaleUpdates((version) => version === '0.17.0')
+
+    expect((await readdir(updates)).sort()).toEqual(['pending-next', 'unrelated'])
+  })
+
+  it('leaves everything alone when there is no updates folder', async () => {
+    await expect(removeStaleUpdates(() => false)).resolves.toBeUndefined()
   })
 })
