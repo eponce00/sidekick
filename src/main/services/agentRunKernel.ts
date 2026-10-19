@@ -121,6 +121,12 @@ export interface AgentKernelToolRouter {
 
 export interface AgentKernelContextManager {
   shouldCompact(messages: ProviderChatMessage[], tools: readonly unknown[]): boolean
+  /** The reply limit for this request: the model's own, cut to the room the window has left. */
+  replyLimit?(
+    messages: ProviderChatMessage[],
+    tools: readonly unknown[],
+    maxOutputTokens: number | undefined
+  ): number | undefined
   /** Adopt a window the provider reported about itself. */
   applyContextLength?(contextLength: number, maxOutputTokens: number): void
   observeUsage?(
@@ -1383,6 +1389,13 @@ The user approved this exact plan revision. Act capabilities are now available a
           }
         }
 
+        // The model's reply limit, cut to what the window has left after this request.
+        const replyLimit =
+          activeContextManager?.replyLimit?.(
+            requestMessages,
+            toolDefinitions,
+            activeRequest.maxOutputTokens
+          ) ?? activeRequest.maxOutputTokens
         let pendingContent = separateNextTurn ? '\n\n' : ''
         let pendingThinking = ''
         let lastDeltaAt = Date.now()
@@ -1404,6 +1417,7 @@ The user approved this exact plan revision. Act capabilities are now available a
             this.sample(
               {
                 ...activeRequest,
+                maxOutputTokens: replyLimit,
                 messages: requestMessages,
                 tools: toolDefinitions
               },
@@ -1504,10 +1518,7 @@ The user approved this exact plan revision. Act capabilities are now available a
         // the reason says.
         const hitOutputLimit =
           toolBatchMayBeTruncated(turn.usage.doneReason) ||
-          Boolean(
-            activeRequest.maxOutputTokens &&
-            turn.usage.completionTokens >= activeRequest.maxOutputTokens
-          )
+          Boolean(replyLimit && turn.usage.completionTokens >= replyLimit)
         const truncatedToolBatch = turn.toolCalls.length > 0 && hitOutputLimit
         activeContextManager?.observeUsage?.(
           requestMessages,
@@ -1534,9 +1545,16 @@ The user approved this exact plan revision. Act capabilities are now available a
           !finalContent.trim() &&
           hitOutputLimit
         ) {
-          const limit = activeRequest.maxOutputTokens
+          const limit = replyLimit
+          const cutByRoom = Boolean(
+            limit && activeRequest.maxOutputTokens && limit < activeRequest.maxOutputTokens
+          )
           throw new Error(
-            `The model reached its output limit${limit ? ` of ${limit.toLocaleString('en-US')} tokens` : ''} while still thinking, before it answered or used a tool. Raise the model's maximum output in Settings → Providers, or ask it to continue.`
+            `The model reached its output limit${limit ? ` of ${limit.toLocaleString('en-US')} tokens` : ''} while still thinking, before it answered or used a tool. ${
+              cutByRoom
+                ? "The chat had little room left in the model's context for a reply; ask it to continue."
+                : "Raise the model's maximum output in Settings → Providers, or ask it to continue."
+            }`
           )
         }
 

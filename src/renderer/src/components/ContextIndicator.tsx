@@ -209,7 +209,7 @@ function ContextIndicator({
                       <i />
                       Auto-compact
                       <strong>
-                        {Math.round(autoCompactThreshold * 100)}% · {compactTokens(thresholdTokens)}
+                        {Math.round(thresholdPosition)}% · {compactTokens(thresholdTokens)}
                       </strong>
                     </span>
                     <small>
@@ -230,8 +230,9 @@ function ContextIndicator({
               </div>
 
               <p className="context-reserve-note">
-                {compactTokens(capacity.reservedOutputTokens)} reserved for the next response;
-                safety margin included.
+                {autoCompactEnabled && thresholdPosition < autoCompactThreshold * 100 - 0.5
+                  ? `Compacts before your ${Math.round(autoCompactThreshold * 100)}% setting so ${compactTokens(capacity.reservedOutputTokens)} stays free for the next response.`
+                  : `${compactTokens(capacity.reservedOutputTokens)} kept free for the next response; safety margin included.`}
               </p>
             </>
           )}

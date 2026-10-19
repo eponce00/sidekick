@@ -4,6 +4,7 @@ import {
   calculateRequestBudget,
   estimateConversationTokens,
   estimateTextTokens,
+  replyLimitForRequest,
   resolveMaxOutputTokens
 } from './contextBudget'
 
@@ -17,19 +18,59 @@ describe('calculateRequestBudget', () => {
     ).toBe(1_176)
   })
 
-  it('applies the compaction threshold after reserving the configured output budget', () => {
+  it('compacts at the threshold share of the whole window, as Settings describes it', () => {
     const budget = calculateRequestBudget({
       messages: [],
       tools: [],
       contextLength: 180_000,
       reservedOutputTokens: 32_000,
-      compactionThreshold: 0.8
+      compactionThreshold: 0.7
     })
 
     expect(budget.safetyMarginTokens).toBe(3_600)
     expect(budget.effectiveInputLimit).toBe(144_400)
-    expect(budget.compactionTriggerTokens).toBe(115_520)
-    expect(budget.compactionTriggerTokens).toBeLessThan(budget.effectiveInputLimit)
+    expect(budget.compactionTriggerTokens).toBe(126_000)
+  })
+
+  it('never lets a high threshold eat the room kept for the reply', () => {
+    const budget = calculateRequestBudget({
+      messages: [],
+      tools: [],
+      contextLength: 180_000,
+      reservedOutputTokens: 32_000,
+      compactionThreshold: 0.95
+    })
+
+    expect(budget.compactionTriggerTokens).toBe(budget.effectiveInputLimit)
+  })
+
+  it('keeps room for a reply, not the whole of a large reply limit', () => {
+    // A 260k local model set to write up to 100k: holding all of it back compacted every chat at
+    // under half its window, and an 80% or 95% setting barely moved the point.
+    const at = (threshold: number) =>
+      calculateContextCapacity({
+        contextLength: 260_000,
+        reservedOutputTokens: 100_000,
+        compactionThreshold: threshold
+      })
+
+    expect(at(0.8)).toEqual({
+      contextLength: 260_000,
+      reservedOutputTokens: 32_768,
+      safetyMarginTokens: 5_200,
+      effectiveInputLimit: 222_032,
+      compactionTriggerTokens: 208_000
+    })
+    expect(at(0.95).compactionTriggerTokens).toBe(222_032)
+    expect(at(0.5).compactionTriggerTokens).toBe(130_000)
+  })
+
+  it('cuts a reply limit to the room the window has left, never below a usable floor', () => {
+    const budget = { contextLength: 260_000, safetyMarginTokens: 5_200 }
+    expect(replyLimitForRequest(100_000, { ...budget, requestTokens: 40_000 })).toBe(100_000)
+    expect(replyLimitForRequest(100_000, { ...budget, requestTokens: 208_000 })).toBe(46_800)
+    expect(replyLimitForRequest(100_000, { ...budget, requestTokens: 260_000 })).toBe(1_024)
+    expect(replyLimitForRequest(undefined, { ...budget, requestTokens: 1_000 })).toBeUndefined()
   })
 
   it('exposes the same capacity math for the context indicator', () => {
@@ -37,24 +78,24 @@ describe('calculateRequestBudget', () => {
       calculateContextCapacity({
         contextLength: 180_000,
         reservedOutputTokens: 32_000,
-        compactionThreshold: 0.8
+        compactionThreshold: 0.7
       })
     ).toEqual({
       contextLength: 180_000,
       reservedOutputTokens: 32_000,
       safetyMarginTokens: 3_600,
       effectiveInputLimit: 144_400,
-      compactionTriggerTokens: 115_520
+      compactionTriggerTokens: 126_000
     })
   })
 
   it('triggers before the usable input budget is exhausted', () => {
     const budget = calculateRequestBudget({
-      messages: [{ role: 'user', content: 'x'.repeat(116_000 * 4) }],
+      messages: [{ role: 'user', content: 'x'.repeat(130_000 * 4) }],
       tools: [],
       contextLength: 180_000,
       reservedOutputTokens: 32_000,
-      compactionThreshold: 0.8
+      compactionThreshold: 0.7
     })
 
     expect(budget.requestTokens).toBeLessThan(budget.effectiveInputLimit)
