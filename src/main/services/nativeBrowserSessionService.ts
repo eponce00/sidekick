@@ -1251,7 +1251,11 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async insertText(text: string): Promise<void> {
-    await browserAgentInput(this.webContentsId, () => this.contents.insertText(text))
+    // Keys from sendInputEvent() wait in the page's input queue, while contents.insertText()
+    // arrives by frame IPC and can overtake them: a Backspace sent to clear the field then
+    // deletes the end of the new text. Chromium queues this commit behind the keys sent before
+    // it, and answers only once the page has applied it.
+    await this.sendDebuggerCommand('Input.insertText', { text })
   }
 
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void {
@@ -1326,7 +1330,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
-    // The capture path and the agent viewport's scale both depend on where the page now is.
+    // An agent viewport's laid-out height and emulated scale both depend on where the page now is.
     await browserViewLayoutSettled(this.webContentsId)
     this.contents.invalidate()
     if (
@@ -1343,12 +1347,13 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
           if (!isTransientViewportCaptureError(error)) throw error
         })
     }
-    // Shown scaled down in a panel, the view holds the page at that scale. Ask Chromium for the
-    // agent's viewport itself, at full size.
-    const scaledAgentViewport =
-      this.agentViewport && this.agentViewportScale < 1 ? this.agentViewport : undefined
+    // Ask Chromium for the agent's viewport itself, at full size, whether the panel shows it
+    // scaled down or it is parked. Chromium draws a fresh frame for this capture. capturePage()
+    // copies whatever frame the view last showed: just after mounting or parking, that can still
+    // be drawn at the old scale, even once the new metrics have been accepted.
+    const agentViewport = this.agentViewport
     let image = await (
-      scaledAgentViewport
+      agentViewport
         ? this.sendDebuggerCommand<{ data: string }>('Page.captureScreenshot', {
             format: 'png',
             fromSurface: true,
@@ -1356,8 +1361,8 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
             clip: {
               x: 0,
               y: 0,
-              width: scaledAgentViewport.width,
-              height: scaledAgentViewport.height,
+              width: agentViewport.width,
+              height: agentViewport.height,
               scale: 1
             }
           }).then(async (response) =>

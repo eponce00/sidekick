@@ -488,7 +488,7 @@ async function runSmoke(): Promise<SmokeResult> {
       const parkedWide = await service.observe(wide.sessionId, { screenshot: 'viewport' })
       assert.ok(
         hasRedAt(parkedWide.screenshot!.path, 1240, 1280),
-        'A parked page keeps the agent viewport'
+        `A parked page keeps the agent viewport (capture ${parkedWide.screenshot!.width}x${parkedWide.screenshot!.height})`
       )
 
       // A phone preset lays out at its width as a touch, mobile page; responsive gives the page
@@ -891,6 +891,7 @@ async function runSmoke(): Promise<SmokeResult> {
       sessionId: opened.sessionId,
       expression: `(() => ({
         textboxMatches: document.querySelector('#account-token').value === ${JSON.stringify(sensitiveFormValue)},
+        textboxLength: document.querySelector('#account-token').value.length,
         selectMatches: document.querySelector('#preferred-language').value === 'es',
         checkboxMatches: document.querySelector('#product-updates').checked === true,
         radioMatches: document.querySelector('#plan-pro').checked === true,
@@ -899,6 +900,7 @@ async function runSmoke(): Promise<SmokeResult> {
     })
     assert.deepEqual(verifiedFormState.value, {
       textboxMatches: true,
+      textboxLength: sensitiveFormValue.length,
       selectMatches: true,
       checkboxMatches: true,
       radioMatches: true,
