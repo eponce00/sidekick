@@ -8,6 +8,7 @@ import {
   type TerminalSessionSummary
 } from '../../../shared/terminalSessions'
 import { subscribeTerminalOutput, useTerminalSessions } from '../utils/terminalSessionStore'
+import { copyText } from '../utils/clipboard'
 import './TerminalPanel.css'
 
 function stateLabel(session: TerminalSessionSummary): string {
@@ -272,7 +273,8 @@ export function TerminalPanel({
               onClick={() => {
                 const text = copyTextRef.current?.()
                 if (!text) return
-                void navigator.clipboard.writeText(text).then(() => {
+                void copyText(text).then((written) => {
+                  if (!written) return
                   setCopied(true)
                   window.setTimeout(() => setCopied(false), 1_000)
                 })

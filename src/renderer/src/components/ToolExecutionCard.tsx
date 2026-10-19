@@ -17,6 +17,7 @@ import { parseNumberedLines } from '../utils/codeHighlight'
 import { CommandLiveView } from './CommandLiveView'
 import { requestTerminalView, useTerminalSessionForTool } from '../utils/terminalSessionStore'
 import { Reveal } from './Reveal'
+import { copyText } from '../utils/clipboard'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -154,7 +155,8 @@ export function ToolExecutionCard({
                     type="button"
                     className="rich-tool-copy"
                     onClick={() => {
-                      void navigator.clipboard.writeText(output).then(() => {
+                      void copyText(output).then((written) => {
+                        if (!written) return
                         setCopied(true)
                         window.setTimeout(() => setCopied(false), 1_000)
                       })
@@ -172,7 +174,8 @@ export function ToolExecutionCard({
                     type="button"
                     className="rich-tool-copy"
                     onClick={() => {
-                      void navigator.clipboard.writeText(output).then(() => {
+                      void copyText(output).then((written) => {
+                        if (!written) return
                         setCopied(true)
                         window.setTimeout(() => setCopied(false), 1_000)
                       })
