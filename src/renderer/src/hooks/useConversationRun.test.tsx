@@ -36,8 +36,14 @@ describe('useConversationRun', () => {
   let root: Root
   let controller: Controller
   let renderedMessages: Message[]
-  let listener: ((change: AgentRunChangedEvent) => void) | null
+  const listeners = new Set<(change: AgentRunChangedEvent) => void>()
+  const listener = (change: AgentRunChangedEvent): void => {
+    for (const subscriber of [...listeners]) subscriber(change)
+  }
   let durableAdmissions: PromptAdmissionItem[]
+
+  // The conversation the harness has open; most tests start runs from a new chat.
+  let openConversation: string | null = null
 
   function Harness(): null {
     const [messages, setMessages] = useState<Message[]>([
@@ -48,7 +54,7 @@ describe('useConversationRun', () => {
       messagesRef.current = messages
     }, [messages])
     const value = useConversationRun({
-      conversationId: null,
+      conversationId: openConversation,
       messagesRef,
       skipNextLoadRef: { current: false },
       setMessages,
@@ -65,7 +71,8 @@ describe('useConversationRun', () => {
   beforeEach(async () => {
     container = document.createElement('div')
     root = createRoot(container)
-    listener = null
+    openConversation = null
+    listeners.clear()
     durableAdmissions = []
     Object.defineProperty(window, 'api', {
       configurable: true,
@@ -138,10 +145,11 @@ describe('useConversationRun', () => {
             if (next) durableAdmissions = durableAdmissions.filter((item) => item.id !== next.id)
             return next
           }),
+          // Like the real channel, every subscriber hears every event.
           onEvent: (callback: (change: AgentRunChangedEvent) => void) => {
-            listener = callback
+            listeners.add(callback)
             return () => {
-              listener = null
+              listeners.delete(callback)
             }
           }
         }
@@ -328,6 +336,87 @@ describe('useConversationRun', () => {
       })
     ).rejects.toBeInstanceOf(RunAlreadyActiveError)
     expect(window.api.agentRuns.startConversation).toHaveBeenCalledTimes(1)
+  })
+
+  it('follows a run that starts for the open chat without this window starting it', async () => {
+    // A schedule firing, a queued run getting its turn, or another chat starting a worker: the chat
+    // was already open with nothing running, so it never attached and showed none of the work.
+    openConversation = 'scheduled-chat'
+    await act(async () => root.render(<Harness />))
+    expect(controller.isRunActive()).toBe(false)
+
+    const started = {
+      id: 'scheduled-1',
+      runId: 'scheduled',
+      sequence: 1,
+      type: 'run.started' as const,
+      payload: { outputMessageId: 'scheduled-reply' },
+      timestamp: 5
+    }
+    vi.mocked(window.api.agentRuns.latest).mockResolvedValueOnce({
+      run: {
+        id: 'scheduled',
+        threadId: 'scheduled-chat',
+        surface: 'conversation',
+        executionMode: 'act',
+        phase: 'streaming',
+        provider: 'ollama',
+        model: 'test',
+        lastSequence: 1,
+        startedAt: 5,
+        updatedAt: 5
+      },
+      events: [started],
+      pendingInteractions: []
+    })
+    await act(async () => {
+      listener?.({ event: started })
+      await Promise.resolve()
+    })
+    // Text the run streamed while the window was catching up is kept, and more keeps arriving.
+    await act(async () => {
+      listener?.({
+        event: {
+          id: 'scheduled-2',
+          runId: 'scheduled',
+          sequence: 2,
+          type: 'assistant.delta',
+          payload: { content: 'Checking the repository' },
+          timestamp: 6
+        }
+      })
+      await new Promise((resolve) => setTimeout(resolve, 80))
+    })
+
+    expect(controller.isRunActive()).toBe(true)
+    expect(controller.runConversationId).toBe('scheduled-chat')
+    const reply = renderedMessages.find((message) => message.id === 'scheduled-reply')
+    expect(reply?.content).toContain('Checking the repository')
+  })
+
+  it('does not follow a run that starts for another chat', async () => {
+    openConversation = 'open-chat'
+    await act(async () => root.render(<Harness />))
+    vi.mocked(window.api.agentRuns.latest).mockResolvedValueOnce({
+      run: null,
+      events: [],
+      pendingInteractions: []
+    })
+    await act(async () => {
+      listener?.({
+        event: {
+          id: 'elsewhere-1',
+          runId: 'elsewhere',
+          sequence: 1,
+          type: 'run.started',
+          payload: { outputMessageId: 'elsewhere-reply' },
+          timestamp: 5
+        }
+      })
+      await Promise.resolve()
+    })
+    expect(controller.isRunActive()).toBe(false)
+    expect(renderedMessages.map((message) => message.id)).not.toContain('elsewhere-reply')
   })
 
   it('retains queued messages until the finalized run is consumed', async () => {
