@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
+  AudioLines,
+  Brain,
   Check,
   ChevronRight,
+  Eye,
+  FileText,
   Info,
   Plus,
   RefreshCw,
@@ -9,6 +13,7 @@ import {
   Server,
   SlidersHorizontal,
   Trash2,
+  Wrench,
   X
 } from 'lucide-react'
 import type {
@@ -28,11 +33,12 @@ import {
   providerDefinitionForInstance,
   type ProviderDefinition
 } from '../../../shared/providerRegistry'
-import { createProviderInstance } from '../../../shared/providerInstances'
+import { createProviderInstance, mergeDiscoveredModels } from '../../../shared/providerInstances'
 import { getModelDisplayInfo } from '../../../shared/modelDisplay'
-import { testProviderConnection as checkProviderConnection } from '../services/providers/providerDiscovery'
+import { discoverProviderModels } from '../services/providers/providerDiscovery'
 import { ProviderIcon } from './ProviderIcon'
 import { filterModelsByQuery } from '../utils/modelSearch'
+import { formatTokenCount, modelLimitsLabel } from '../utils/modelLimits'
 import { SettingsEmptyState, SettingsPageHeader } from './SettingsLayout'
 import { Select } from './Select'
 
@@ -53,6 +59,33 @@ function createInstance(template: ProviderDefinition, ordinal: number): Provider
     apiKey: ''
   }
 }
+
+type ModelFilter = 'tools' | 'vision' | 'reasoning'
+
+const MODEL_FILTERS: ReadonlyArray<{ key: ModelFilter; label: string }> = [
+  { key: 'tools', label: 'Tools' },
+  { key: 'vision', label: 'Vision' },
+  { key: 'reasoning', label: 'Reasoning' }
+]
+
+/** A capability filter keeps only models the provider says have it; unknown is not enough. */
+function matchesModelFilters(
+  model: ProviderInstanceModel,
+  filters: ReadonlySet<ModelFilter>
+): boolean {
+  if (filters.has('tools') && model.supportsTools !== true) return false
+  if (filters.has('vision') && model.supportsVision !== true) return false
+  if (filters.has('reasoning') && model.supportsReasoning !== true) return false
+  return true
+}
+
+const CAPABILITY_BADGES = [
+  ['supportsTools', 'Tools', Wrench],
+  ['supportsVision', 'Vision', Eye],
+  ['supportsReasoning', 'Reasoning', Brain],
+  ['supportsPdfInput', 'PDF input', FileText],
+  ['supportsAudioInput', 'Audio input', AudioLines]
+] as const
 
 function providerDescription(instance: ProviderInstance): string {
   const shown = instance.models.filter((model) => model.enabled).length
@@ -85,13 +118,49 @@ export function ProviderSettingsPanel({
   const [statusMessage, setStatusMessage] = useState('')
   const [manualModel, setManualModel] = useState('')
   const [modelFilter, setModelFilter] = useState('')
+  const [modelFilters, setModelFilters] = useState<ReadonlySet<ModelFilter>>(() => new Set())
   const [editingModelId, setEditingModelId] = useState<string | null>(null)
+  const modelListId = useId()
   const selected = instances.find((instance) => instance.id === selectedId) ?? instances[0]
   const editingModel = selected?.models.find((model) => model.id === editingModelId)
   const editingModelDisplay = editingModel ? getModelDisplayInfo(editingModel) : undefined
   const effectiveSelectedId = selected?.id ?? null
-  const filteredModels = filterModelsByQuery(selected?.models ?? [], modelFilter)
+  const definition = selected ? providerDefinitionForInstance(selected) : undefined
+  const listsModels = definition ? definition.capabilities.discovery !== 'manual' : false
+  const needsKey = Boolean(
+    selected &&
+    definition?.capabilities.credentials === 'required' &&
+    !selected.apiKey?.trim() &&
+    !selected.apiKeyConfigured
+  )
+  const filteredModels = filterModelsByQuery(selected?.models ?? [], modelFilter).filter((model) =>
+    matchesModelFilters(model, modelFilters)
+  )
   const hasModelFilter = Boolean(modelFilter.trim())
+  const narrowed = hasModelFilter || modelFilters.size > 0
+  const shownCount = selected?.models.filter((model) => model.enabled).length ?? 0
+  // Models in chat come first, so a long catalog never hides what is already chosen.
+  const modelGroups = [
+    { key: 'shown', title: 'In chat', models: filteredModels.filter((model) => model.enabled) },
+    {
+      key: 'other',
+      title: listsModels ? 'Available' : 'Hidden',
+      models: filteredModels.filter((model) => !model.enabled)
+    }
+  ].filter((group) => group.models.length > 0)
+  // What the last load in this window changed: models new since the load before, and models
+  // kept although the provider no longer lists them.
+  const [catalogNotes, setCatalogNotes] = useState<{
+    instanceId: string
+    added: ReadonlySet<string>
+    unlisted: ReadonlySet<string>
+  } | null>(null)
+  // A load finishes after the user may have changed the provider; it applies to what is there now.
+  const instancesRef = useRef(instances)
+  useEffect(() => {
+    instancesRef.current = instances
+  }, [instances])
+  const autoLoaded = useRef(new Set<string>())
 
   const sameTypeCount = useMemo(
     () =>
@@ -115,24 +184,75 @@ export function ProviderSettingsPanel({
         instance.id === selected.id ? { ...instance, ...nextUpdates } : instance
       )
     )
-    setStatus('idle')
+    if (invalidatesHealth) setStatus('idle')
   }
 
-  const testConnection = async (): Promise<void> => {
+  /** Connects, and for a provider with a model list, loads it beside the models already set up. */
+  const loadModels = async (): Promise<void> => {
     if (!selected) return
+    const target = selected
+    const lists = providerDefinitionForInstance(target).capabilities.discovery !== 'manual'
+    const apply = (updates: Partial<ProviderInstance>): void =>
+      onChange(
+        instancesRef.current.map((instance) =>
+          instance.id === target.id ? { ...instance, ...updates } : instance
+        )
+      )
     setStatus('loading')
-    setStatusMessage('Connecting…')
+    setStatusMessage(lists ? 'Loading models…' : 'Connecting…')
     try {
-      await checkProviderConnection(window.api, selected)
-      updateSelected({ health: onlineProviderHealth() })
+      const discovered = await discoverProviderModels(window.api, target)
+      const current = instancesRef.current.find(({ id }) => id === target.id)
+      if (!current) return
+      if (lists) {
+        const models = mergeDiscoveredModels(current.models, discovered)
+        const listed = new Set(discovered.map(({ id }) => id))
+        const known = new Set(current.models.map(({ id }) => id))
+        // Only a list loaded before says what is new; on the first load everything would be.
+        const loadedBefore = current.health?.discoveredModelCount !== undefined
+        setCatalogNotes({
+          instanceId: target.id,
+          added: new Set(loadedBefore ? [...listed].filter((id) => !known.has(id)) : []),
+          unlisted: new Set(models.filter(({ id }) => !listed.has(id)).map(({ id }) => id))
+        })
+        apply({ models, health: onlineProviderHealth(undefined, discovered.length) })
+      } else {
+        apply({ health: onlineProviderHealth() })
+      }
       setStatus('success')
-      setStatusMessage('Connection successful')
+      setStatusMessage(
+        lists
+          ? `Connected · ${discovered.length} model${discovered.length === 1 ? '' : 's'} available`
+          : 'Connection successful'
+      )
     } catch (error) {
-      const message = providerHealthErrorMessage(error)
-      updateSelected({ health: offlineProviderHealth(error) })
+      apply({ health: offlineProviderHealth(error) })
       setStatus('error')
-      setStatusMessage(message)
+      setStatusMessage(providerHealthErrorMessage(error))
     }
+  }
+
+  // Opening a provider that lists its models, before any are set up, loads the list once.
+  useEffect(() => {
+    if (!selected || !listsModels || !selected.enabled || needsKey) return
+    if (selected.models.length > 0 || autoLoaded.current.has(selected.id)) return
+    autoLoaded.current.add(selected.id)
+    void loadModels()
+    // Only opening a provider loads; editing it must not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id])
+
+  const toggleModelFilter = (filter: ModelFilter): void =>
+    setModelFilters((current) => {
+      const next = new Set(current)
+      if (next.has(filter)) next.delete(filter)
+      else next.add(filter)
+      return next
+    })
+
+  const clearModelFilters = (): void => {
+    setModelFilter('')
+    setModelFilters(new Set())
   }
 
   const addManualModel = (): void => {
@@ -219,8 +339,9 @@ export function ProviderSettingsPanel({
                 className={`provider-instance-row ${effectiveSelectedId === instance.id ? 'active' : ''}`}
                 onClick={() => {
                   setSelectedId(instance.id)
-                  setModelFilter('')
+                  clearModelFilters()
                   setEditingModelId(null)
+                  setStatus('idle')
                 }}
               >
                 <ProviderIcon provider={providerDefinitionForInstance(instance).kind} size={18} />
@@ -319,6 +440,18 @@ export function ProviderSettingsPanel({
                       type="password"
                       value={selected.apiKey || ''}
                       onChange={(event) => updateSelected({ apiKey: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && listsModels) {
+                          event.preventDefault()
+                          void loadModels()
+                        }
+                      }}
+                      onBlur={(event) => {
+                        // Pasting a key and moving on loads what it opens up.
+                        if (listsModels && event.target.value.trim() && !selected.models.length) {
+                          void loadModels()
+                        }
+                      }}
                       placeholder={
                         selected.apiKeyConfigured
                           ? 'Saved securely — type to replace'
@@ -334,11 +467,19 @@ export function ProviderSettingsPanel({
                 <button
                   type="button"
                   className="settings-secondary-action"
-                  onClick={() => void testConnection()}
+                  onClick={() => void loadModels()}
                   disabled={status === 'loading'}
                 >
                   <RefreshCw size={14} className={status === 'loading' ? 'icon-spin' : ''} />
-                  {status === 'loading' ? 'Testing…' : 'Test connection'}
+                  {status === 'loading'
+                    ? listsModels
+                      ? 'Loading models…'
+                      : 'Testing…'
+                    : !listsModels
+                      ? 'Test connection'
+                      : selected.models.length > 0
+                        ? 'Refresh models'
+                        : 'Connect'}
                 </button>
                 {status !== 'idle' && (
                   <span
@@ -354,11 +495,11 @@ export function ProviderSettingsPanel({
 
               <div className="provider-model-header">
                 <div>
-                  <h3>Models shown in chat</h3>
+                  <h3>Models</h3>
                   <p>
-                    {selected.type === 'litellm'
-                      ? 'Aliases, limits, and capabilities come from the gateway when available.'
-                      : 'Context limits come from the server or provider metadata.'}
+                    {listsModels
+                      ? `Tick the models to show in chat. Limits and capabilities come from ${selected.name} when it reports them.`
+                      : 'Name the models this server runs. Its context window comes from the server.'}
                   </p>
                 </div>
               </div>
@@ -380,29 +521,7 @@ export function ProviderSettingsPanel({
                   </div>
                 )}
 
-              <div className="manual-model-row">
-                <input
-                  value={manualModel}
-                  onChange={(event) => setManualModel(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      addManualModel()
-                    }
-                  }}
-                  placeholder="Model id, for example local-model"
-                />
-                <button
-                  type="button"
-                  className="settings-secondary-action"
-                  onClick={addManualModel}
-                >
-                  <Plus size={14} aria-hidden="true" />
-                  Add model
-                </button>
-              </div>
-
-              {selected.models.length > 0 && (
+              {selected.models.length > 0 ? (
                 <>
                   <div className="provider-model-search field-shell">
                     <Search size={14} aria-hidden="true" />
@@ -425,11 +544,30 @@ export function ProviderSettingsPanel({
                       </button>
                     )}
                   </div>
+                  {listsModels && (
+                    <div
+                      className="provider-model-filters"
+                      role="group"
+                      aria-label="Show only models with"
+                    >
+                      {MODEL_FILTERS.map(({ key, label }) => (
+                        <button
+                          type="button"
+                          key={key}
+                          aria-pressed={modelFilters.has(key)}
+                          onClick={() => toggleModelFilter(key)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div className="model-visibility-actions">
                     <span>
                       {filteredModels.length === selected.models.length
                         ? `${selected.models.length} model${selected.models.length === 1 ? '' : 's'}`
-                        : `${filteredModels.length} of ${selected.models.length} model${selected.models.length === 1 ? '' : 's'}`}
+                        : `${filteredModels.length} of ${selected.models.length} models`}
+                      {` · ${shownCount} in chat`}
                     </span>
                     <div>
                       <button
@@ -437,88 +575,170 @@ export function ProviderSettingsPanel({
                         onClick={() => setFilteredModelsEnabled(true)}
                         disabled={filteredModels.length === 0}
                       >
-                        {hasModelFilter ? 'Show filtered' : 'Show all'}
+                        {narrowed ? 'Show these' : 'Show all'}
                       </button>
                       <button
                         type="button"
                         onClick={() => setFilteredModelsEnabled(false)}
                         disabled={filteredModels.length === 0}
                       >
-                        {hasModelFilter ? 'Hide filtered' : 'Hide all'}
+                        {narrowed ? 'Hide these' : 'Hide all'}
                       </button>
                     </div>
                   </div>
                   {filteredModels.length > 0 ? (
                     <div className="provider-model-list">
-                      {filteredModels.map((model) => {
-                        const display = getModelDisplayInfo(model)
-                        return (
-                          <div key={model.id} className="provider-model-entry">
-                            <div className="provider-model-row">
-                              <input
-                                type="checkbox"
-                                checked={model.enabled}
-                                onChange={(event) =>
-                                  updateModel(model.id, { enabled: event.target.checked })
-                                }
-                                aria-label={`Show ${display.label} in chat`}
-                              />
-                              <ProviderIcon
-                                provider={providerDefinitionForInstance(selected).kind}
-                                size={14}
-                              />
-                              <span>
-                                <strong title={display.fullName}>{display.label}</strong>
-                                <small title={display.fullId}>
-                                  {display.vendor ? `${display.vendor} · ` : ''}
-                                  {display.modelIdLabel} ·{' '}
-                                  {model.contextLength
-                                    ? `${Math.round(model.contextLength / 1024)}K context`
-                                    : 'Context unknown'}
-                                  {model.maxOutputTokens
-                                    ? ` · ${Math.round(model.maxOutputTokens / 1024)}K output`
-                                    : ''}
-                                </small>
-                              </span>
-                              <span className="provider-model-actions">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingModelId(model.id)
-                                  }}
-                                  aria-label={`Edit metadata for ${display.label}`}
-                                  title="Model metadata"
-                                  className={editingModelId === model.id ? 'active' : ''}
-                                >
-                                  <SlidersHorizontal size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    updateSelected({
-                                      models: selected.models.filter((item) => item.id !== model.id)
-                                    })
-                                  }}
-                                  aria-label={`Remove ${display.label}`}
-                                  title="Remove model"
-                                >
-                                  <X size={13} />
-                                </button>
-                              </span>
-                            </div>
+                      {modelGroups.map((group) => (
+                        <div key={group.key} role="group" aria-label={group.title}>
+                          <div className="provider-model-group" aria-hidden="true">
+                            {group.title}
+                            <span>{group.models.length}</span>
                           </div>
-                        )
-                      })}
+                          {group.models.map((model) => {
+                            const display = getModelDisplayInfo(model)
+                            const checkboxId = `${modelListId}-${filteredModels.indexOf(model)}`
+                            const notes =
+                              catalogNotes?.instanceId === selected.id ? catalogNotes : null
+                            const tag = notes?.unlisted.has(model.id)
+                              ? 'Not listed'
+                              : notes?.added.has(model.id)
+                                ? 'New'
+                                : undefined
+                            return (
+                              <div key={model.id} className="provider-model-entry">
+                                <div className="provider-model-row">
+                                  <input
+                                    id={checkboxId}
+                                    type="checkbox"
+                                    checked={model.enabled}
+                                    onChange={(event) =>
+                                      updateModel(model.id, { enabled: event.target.checked })
+                                    }
+                                    aria-label={`Show ${display.label} in chat`}
+                                  />
+                                  <ProviderIcon
+                                    provider={providerDefinitionForInstance(selected).kind}
+                                    size={14}
+                                  />
+                                  <label htmlFor={checkboxId}>
+                                    <span className="provider-model-name">
+                                      <strong title={display.fullName}>{display.label}</strong>
+                                      {tag && (
+                                        <em
+                                          className="provider-model-tag"
+                                          title={
+                                            tag === 'New'
+                                              ? 'New since the last refresh'
+                                              : `${selected.name} no longer lists this model; it stays because you chose it`
+                                          }
+                                        >
+                                          {tag}
+                                        </em>
+                                      )}
+                                    </span>
+                                    <small title={`${display.fullId} · ${modelLimitsLabel(model)}`}>
+                                      {display.vendor ? `${display.vendor} · ` : ''}
+                                      {display.modelIdLabel} · {modelLimitsLabel(model)}
+                                    </small>
+                                  </label>
+                                  <span className="provider-model-capabilities">
+                                    {CAPABILITY_BADGES.filter(([key]) => model[key] === true).map(
+                                      ([key, label, Icon]) => (
+                                        <span key={key} role="img" aria-label={label} title={label}>
+                                          <Icon size={12} aria-hidden="true" />
+                                        </span>
+                                      )
+                                    )}
+                                  </span>
+                                  <span className="provider-model-actions">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingModelId(model.id)
+                                      }}
+                                      aria-label={`Edit metadata for ${display.label}`}
+                                      title="Model metadata"
+                                      className={editingModelId === model.id ? 'active' : ''}
+                                    >
+                                      <SlidersHorizontal size={13} />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        updateSelected({
+                                          models: selected.models.filter(
+                                            (item) => item.id !== model.id
+                                          )
+                                        })
+                                      }}
+                                      aria-label={`Remove ${display.label}`}
+                                      title="Remove model"
+                                    >
+                                      <X size={13} />
+                                    </button>
+                                  </span>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <div className="provider-model-search-empty">
                       <Search size={18} />
-                      <span>No models match “{modelFilter.trim()}”</span>
-                      <button type="button" onClick={() => setModelFilter('')}>
-                        Clear search
+                      <span>
+                        {hasModelFilter
+                          ? `No models match “${modelFilter.trim()}”`
+                          : 'No models match these filters'}
+                      </span>
+                      <button type="button" onClick={clearModelFilters}>
+                        Clear filters
                       </button>
                     </div>
                   )}
+                </>
+              ) : (
+                listsModels && (
+                  <p className="provider-model-empty">
+                    {status === 'loading'
+                      ? 'Loading models…'
+                      : needsKey
+                        ? 'Enter the API key, then connect to choose from the models it can use.'
+                        : `Connect to choose from the models ${selected.name} offers.`}
+                  </p>
+                )
+              )}
+
+              <div className="manual-model-row">
+                <input
+                  value={manualModel}
+                  onChange={(event) => setManualModel(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      addManualModel()
+                    }
+                  }}
+                  placeholder={
+                    listsModels
+                      ? 'Add a model the list leaves out, by id'
+                      : 'Model id, for example local-model'
+                  }
+                  aria-label="Model id"
+                />
+                <button
+                  type="button"
+                  className="settings-secondary-action"
+                  onClick={addManualModel}
+                >
+                  <Plus size={14} aria-hidden="true" />
+                  Add model
+                </button>
+              </div>
+
+              {selected.models.length > 0 && (
+                <>
                   <label className="modern-field provider-fast-model">
                     <span>
                       <ProviderIcon
@@ -653,7 +873,11 @@ export function ProviderSettingsPanel({
                     min="1"
                     step="1024"
                     value={editingModel.maxOutputTokens || ''}
-                    placeholder="Unknown"
+                    placeholder={
+                      editingModel.outputTokenLimit
+                        ? `Default; the model allows ${formatTokenCount(editingModel.outputTokenLimit)}`
+                        : 'Unknown'
+                    }
                     onChange={(event) => {
                       const value = Number(event.target.value)
                       updateMetadataOverride(
@@ -771,7 +995,8 @@ export function ProviderSettingsPanel({
                       )
                       onChange([...instances, instance])
                       setSelectedId(instance.id)
-                      setModelFilter('')
+                      clearModelFilters()
+                      setStatus('idle')
                       setShowAdd(false)
                     }}
                   >

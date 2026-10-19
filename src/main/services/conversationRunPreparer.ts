@@ -843,7 +843,11 @@ export class ConversationRunPreparer {
       contextReliable: boolean
     } => {
       const contextLength = Math.max(1_024, resolved.contextLength ?? 32_768)
-      const maxOutputTokens = resolveMaxOutputTokens(contextLength, model.maxOutputTokens)
+      const maxOutputTokens = resolveMaxOutputTokens(
+        contextLength,
+        model.maxOutputTokens,
+        model.outputTokenLimit
+      )
       return {
         provider: target.providerKind,
         model: target.model,

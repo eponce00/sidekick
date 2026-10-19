@@ -12,6 +12,7 @@ import { cancelProviderStreamReader, releaseProviderStreamReader } from './provi
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
 import { providerConnectionFailureMessage } from '../../shared/providerErrors'
+import { applyProviderModelOverrides, boolean, positiveInteger } from './modelCatalog'
 
 type FetchImplementation = typeof fetch
 type Emit = (chunk: ProviderStreamChunk) => void
@@ -566,30 +567,77 @@ export async function completeAnthropicChat(
   }
 }
 
+interface AnthropicCatalogModel {
+  id: string
+  display_name?: string
+  lifecycle?: 'active' | 'deprecated' | 'retired'
+  max_input_tokens?: number | null
+  max_tokens?: number | null
+  capabilities?: {
+    image_input?: { supported?: boolean }
+    pdf_input?: { supported?: boolean }
+    thinking?: { supported?: boolean }
+  } | null
+}
+
+/** One Models API entry, with the limits and capabilities the API reports for it. */
+export function normalizeAnthropicModel(model: AnthropicCatalogModel): ProviderInstanceModel {
+  const capabilities = model.capabilities
+  const reported = {
+    contextLength: positiveInteger(model.max_input_tokens),
+    outputTokenLimit: positiveInteger(model.max_tokens),
+    supportsVision: boolean(capabilities?.image_input?.supported),
+    supportsPdfInput: boolean(capabilities?.pdf_input?.supported),
+    supportsReasoning: boolean(capabilities?.thinking?.supported)
+  }
+  const normalized: ProviderInstanceModel = {
+    id: model.id,
+    name: model.display_name || model.id,
+    enabled: false,
+    ...reported,
+    // Every model the Messages API serves takes tools.
+    supportsTools: true
+  }
+  return {
+    ...normalized,
+    metadataSource: Object.values(reported).some((value) => value !== undefined)
+      ? 'provider'
+      : 'unknown'
+  }
+}
+
 export async function discoverAnthropicModels(
   instance: ProviderInstance,
   fetchImpl: FetchImplementation = fetch
 ): Promise<{ ok: boolean; models?: ProviderInstanceModel[]; error?: string; status?: number }> {
   try {
-    const response = await fetchImpl(`${instance.baseUrl}/models?limit=100`, {
-      headers: headers(instance)
-    })
-    if (!response.ok) {
-      return { ok: false, status: response.status, error: await responseError(response) }
+    const listed: AnthropicCatalogModel[] = []
+    let after: string | undefined
+    // The list is paged; a bounded number of pages keeps a misbehaving server from looping.
+    for (let page = 0; page < 10; page += 1) {
+      const query = new URLSearchParams({ limit: '1000' })
+      if (after) query.set('after_id', after)
+      const response = await fetchImpl(`${instance.baseUrl}/models?${query}`, {
+        headers: headers(instance)
+      })
+      if (!response.ok) {
+        return { ok: false, status: response.status, error: await responseError(response) }
+      }
+      const data = (await response.json()) as {
+        data?: AnthropicCatalogModel[]
+        has_more?: boolean
+        last_id?: string | null
+      }
+      listed.push(...(data.data || []))
+      if (!data.has_more || !data.last_id) break
+      after = data.last_id
     }
-    const data = (await response.json()) as {
-      data?: Array<{ id: string; display_name?: string }>
-    }
-    const previous = new Map(instance.models.map((model) => [model.id, model]))
-    const models = (data.data || [])
-      .map((model) => ({
-        ...previous.get(model.id),
-        id: model.id,
-        name: previous.get(model.id)?.name || model.display_name || model.id,
-        enabled: previous.get(model.id)?.enabled ?? false,
-        contextLength: previous.get(model.id)?.contextLength || 200_000,
-        supportsVision: true
-      }))
+    const configured = new Map(instance.models.map((model) => [model.id, model]))
+    const models = listed
+      .filter((model) => typeof model.id === 'string' && model.lifecycle !== 'retired')
+      .map((model) =>
+        applyProviderModelOverrides(normalizeAnthropicModel(model), configured.get(model.id))
+      )
       .sort((left, right) => left.id.localeCompare(right.id))
     return { ok: true, models }
   } catch (error) {

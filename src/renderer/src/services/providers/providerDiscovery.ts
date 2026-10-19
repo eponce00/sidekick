@@ -3,14 +3,10 @@ import { inferVisionSupportFromModelName } from '../../utils/modelCapabilities'
 
 type ProviderAPI = Pick<Window['api'], 'providers'>
 
-export async function testProviderConnection(
-  api: ProviderAPI,
-  instance: ProviderInstance
-): Promise<void> {
-  const result = await api.providers.discoverModels({ draft: instance })
-  if (!result.ok) throw new Error(result.error || 'Connection failed')
-}
-
+/**
+ * Connects to a provider and returns the models it offers. A provider without a model list, such
+ * as a llama.cpp server, is only checked, and its configured models come back unchanged.
+ */
 export async function discoverProviderModels(
   api: ProviderAPI,
   instance: ProviderInstance

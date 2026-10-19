@@ -32,7 +32,13 @@ export interface ProviderInstanceModel {
   enabled: boolean
   contextLength?: number
   maxInputTokens?: number
+  /** A configured output budget, from the user or a gateway's model settings. */
   maxOutputTokens?: number
+  /**
+   * The most a public catalog says the model can write in one reply. It caps the default output
+   * budget and never raises it.
+   */
+  outputTokenLimit?: number
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean
