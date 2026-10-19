@@ -30,6 +30,12 @@ conversation deletion. It never configures a provider or contacts a live service
 runtime journey after creating the unpacked application, then separately smoke-tests the packaged
 executable.
 
+CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
+the suite on macOS and on two Windows machines (it runs on one worker there), and a packaging job
+per platform for the runtime journey and smoke tests. The `Validate (…)` checks that branch
+protection requires pass only when every one of those jobs passed. Installed dependencies are cached
+by lockfile, and the Windows runners skip Defender's real-time scanning.
+
 The deterministic suite covers shared policy and contracts, provider stream assembly, durable run
 and interaction recovery, transactional workspace mutations, path and symlink containment,
 permission enforcement, prompt boundaries, context compaction, plan and goal state, chats that start other chats,

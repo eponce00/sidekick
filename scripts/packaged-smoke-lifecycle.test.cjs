@@ -49,7 +49,12 @@ test('successful observation removes lifecycle listeners', async () => {
 test('CI and release journeys launch packaged binaries on every supported platform', () => {
   const workflow = (name) =>
     YAML.parse(readFileSync(join(__dirname, '..', '.github', 'workflows', name), 'utf8'))
-  const ci = workflow('ci.yml').jobs.validate
+  const jobs = workflow('ci.yml').jobs
+  const ci = jobs.package
+  // The checks branch protection requires gate on every job, and still run when one fails: a
+  // skipped required check would count as passing.
+  assert.deepEqual([...jobs.validate.needs].sort(), ['checks', 'package', 'tests'])
+  assert.equal(jobs.validate.if, 'always()')
   const expected = {
     windows: 'dist/win-unpacked/SideKick.exe',
     macos: 'dist/mac-arm64/SideKick.app/Contents/MacOS/SideKick',

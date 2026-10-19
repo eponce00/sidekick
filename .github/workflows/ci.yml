@@ -9,11 +9,55 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same pull request makes its running checks moot.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  validate:
-    name: Validate (${{ matrix.name }})
+  # Platform-independent checks run once. Coverage is measured here, where it is cheapest.
+  checks:
+    name: Checks (Linux x64)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/prepare
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run docs:check
+      - run: npm run test:docs
+      - run: npm run test:coverage
+      - run: npm audit --omit=dev --audit-level=high
+
+  # The suite on the other platforms. Windows runs it on one worker (see scripts/run-vitest.cjs),
+  # so it is split across two machines instead.
+  tests:
+    name: Tests (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64, 1 of 2
+            os: windows-latest
+            shard: 1/2
+          - name: Windows x64, 2 of 2
+            os: windows-latest
+            shard: 2/2
+          - name: macOS arm64
+            os: macos-14
+            shard: 1/1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/prepare
+      - run: npm test -- --shard=${{ matrix.shard }}
+
+  package:
+    name: Package (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -30,29 +74,23 @@ jobs:
             os: ubuntu-22.04
             smoke: linux
             executable: dist/linux-unpacked/io.github.eponce00.sidekick
-
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/prepare
 
-      - uses: actions/setup-node@v7
+      # electron-builder downloads the Electron release it packages on every run otherwise.
+      - name: Restore Electron downloads
+        uses: actions/cache@v6
         with:
-          node-version-file: '.node-version'
-          cache: npm
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
 
-      - name: Install Linux desktop test dependencies
-        if: matrix.smoke == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
-            libgtk-3-0 libnotify4 libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
-            libxfixes3 libxrandr2 libxss1 libxtst6 xdg-utils xvfb
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run docs:check
-      - run: npm run test:docs
-      - run: npm run test:coverage
       - run: npm run test:release
       - name: Check packaged PDF runner contracts
         run: node --test scripts/electron-packaged-pdf-readonly.contract.test.cjs scripts/electron-packaged-pdf-save.contract.test.cjs scripts/run-publication-directory-linux.test.cjs
@@ -99,4 +137,24 @@ jobs:
       - name: Smoke-test Linux package
         if: matrix.smoke == 'linux'
         run: xvfb-run --auto-servernum npm run smoke:packaged:linux
-      - run: npm audit --omit=dev --audit-level=high
+
+  # The checks branch protection requires. Each passes only when every job above passed, so a
+  # failure anywhere blocks a merge. A skipped job would count as passing, hence `always()`.
+  validate:
+    name: Validate (${{ matrix.name }})
+    needs: [checks, tests, package]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        name: [Windows x64, macOS arm64, Linux x64]
+    steps:
+      - name: Require every check to pass
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Checks, tests, package: $RESULTS"
+          for result in $RESULTS; do
+            [ "$result" = success ] || exit 1
+          done
