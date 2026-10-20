@@ -41,9 +41,11 @@ OpenAI-compatible model on loopback (`scripts/scripted-model.cjs`). The model re
 and each scenario states the requests it expects, so an extra compaction or retry fails it. The
 scenarios check that a chat compacts only past the share of the window Settings names, that every
 request leaves room for the reply it asks for, that the context card marks where compaction fires,
-that a long worker report reaches its manager whole even when streamed in many small pieces, and
-that a report too long to carry keeps its start and end and stays readable with `tool_output`. CI
-runs them in each platform's packaging job.
+that a long worker report reaches its manager whole even when streamed in many small pieces, that
+a report too long to carry keeps its start and end and stays readable with `tool_output`, that a
+reply limit the provider refuses is asked again once at the cap it names, and that a gateway with
+nothing behind it fails the reply with a heading and message saying so. CI runs them in each
+platform's packaging job.
 
 `npm run audit:runs -- --profile installed` (or `--profile dev`, or a database path) reads a
 profile's run journals read-only and reports what looks wrong: compactions before 60% of the window,

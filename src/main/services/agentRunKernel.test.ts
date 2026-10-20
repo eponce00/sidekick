@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, type AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 import { projectAgentRunEvents } from '../../shared/agentEventProjection'
+import { ProviderSetupError } from '../../shared/providerErrors'
 import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import {
@@ -2992,6 +2993,133 @@ describe('AgentRunKernel', () => {
       retryable: false,
       recoveryAction: 'stop'
     })
+  })
+
+  it('retries once at the reply limit a provider states, and remembers it for later runs', async () => {
+    // Groq-style hosts cap a reply below SideKick's default and do not list the cap; every run on
+    // the model failed as "internal" before its first token.
+    const refused: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Answered' })
+    const capped = (id: string): StartAgentKernelRunInput => ({
+      ...input(),
+      id,
+      provider: 'openai-compatible',
+      model: 'hosted-capped-model',
+      request: {
+        target: { providerKind: 'openai-compatible', model: 'hosted-capped-model' },
+        maxOutputTokens: 32_768,
+        purpose: 'conversation'
+      }
+    })
+
+    const result = await new AgentRunKernel(store, undefined, sequence(refused, recovered)).start(
+      capped('run-capped')
+    )
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Answered' })
+    expect(refused).toHaveBeenCalledOnce()
+    expect((refused as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(32_768)
+    expect((recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(16_384)
+    expect(store.listEvents('run-capped')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: {
+            reason: 'output_limit_exceeded',
+            maxOutputTokens: 16_384,
+            requestedOutputTokens: 32_768
+          }
+        })
+      ])
+    )
+
+    // A later run on the same model asks for no more than the provider allows from the start.
+    const later = sampledTurn({ content: 'Straight through' })
+    await new AgentRunKernel(store, undefined, later).start(capped('run-capped-later'))
+    expect((later as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(16_384)
+  })
+
+  it('fails a refused request by what its HTTP status means, not as internal', async () => {
+    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 502, error: 'HTTP 502' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+
+    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
+
+    expect(result.error).toBe(
+      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
+    )
+    expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
+  })
+
+  it('fails a chat whose provider was removed as a setup problem the user can fix', async () => {
+    // resolveProviderInstance throws this inside the sampler before any request is sent.
+    const sampler: AgentKernelProviderSampler = vi.fn(async () => {
+      throw new ProviderSetupError('Provider LiteLLM is not configured')
+    })
+
+    await new AgentRunKernel(store, undefined, sampler).start(input())
+
+    expect(store.get('run-1')?.error).toMatchObject({
+      code: 'not_configured',
+      message:
+        'Provider LiteLLM is not configured. Choose another model for this chat, or set this one up in Settings → Providers.'
+    })
+  })
+
+  it('compacts and retries a prompt-plus-reply overflow worded without "context window"', async () => {
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user' as const, content: 'Compacted' }],
+        compacted: true
+      }))
+    }
+
+    const result = await new AgentRunKernel(
+      store,
+      undefined,
+      sequence(overflow, sampledTurn({ content: 'Fits now' }))
+    ).start({ ...input(), contextManager })
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Fits now' })
+    expect(contextManager.compact).toHaveBeenCalledOnce()
   })
 
   it('settles cancellation even when a provider ignores AbortSignal and drops late chunks', async () => {

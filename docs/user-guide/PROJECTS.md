@@ -115,8 +115,24 @@ commands are never automatically replayed. There are no automatic removal hooks.
 Two agents writing in one folder overwrite each other's work. A worktree is a separate copy of the
 project, so each chat can work without touching another chat's files. A worktree belongs to its
 chat: the chat stays in its project in the sidebar, marked with a branch icon, and only works in a
-different folder. SideKick keeps worktrees in its private data folder, under `worktrees`, never
-inside your project.
+different folder.
+
+#### Where worktrees are kept
+
+SideKick puts a new worktree in a folder beside the project's repository, named after the
+repository with `.worktrees` added. The worktree's own folder has a short name: a few words from
+the chat's title, or a worker's name, and six random characters. A chat titled "Fix the login page"
+in `C:\Code\shop` works in `C:\Code\shop.worktrees\fix-the-login-page-3f9a1c`. The folder is
+outside your checkout, so your editor, file watchers and `git status` in the project never see the
+worktree, and the path stays short enough for Windows tools that cannot open paths longer than 260
+characters. SideKick removes the `.worktrees` folder when its last worktree goes and nothing else is
+in it.
+
+When it cannot make that folder, SideKick keeps the worktree in its private data folder, under
+`worktrees`, where earlier versions kept every worktree. That happens when the repository is at the
+root of a drive, when the folder beside it belongs to another Git repository (so the worktree would
+show up there as untracked files), or when the folder beside it cannot be written. Worktrees made by
+earlier versions stay where they are and keep working there.
 
 #### Starting a chat in a worktree
 
@@ -182,8 +198,8 @@ last used, marked **Working**, **Set aside**, or with its number of changed file
   project.
 
 Deleting a worktree's chat removes the worktree too. SideKick never removes a worktree while an agent works in it, or one it
-cannot prove it created: the folder must have the exact shape SideKick uses inside its storage and
-be registered with Git. Removal goes through `git worktree remove`; there is no recursive-delete
+cannot prove it created: the folder must sit directly inside the repository's `.worktrees` folder or
+SideKick's storage, and be registered with Git. Removal goes through `git worktree remove`; there is no recursive-delete
 fallback. Links inside a worktree, such as a `node_modules` junction to a shared install, are
 deleted as links first, so their targets are never emptied.
 

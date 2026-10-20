@@ -66,7 +66,9 @@ async function stream(response, answer, { chunks = 1, delayMs = 0 } = {}) {
 /**
  * Starts the model. `reply(messages, request)` returns, or resolves to, `{ content }`,
  * `{ toolCall: { name, arguments } }`, or either with a `stream` of `{ chunks, delayMs }` to
- * fragment the answer. A promise holds the answer back until it settles.
+ * fragment the answer. `{ refuse: { status, body, contentType } }` answers with that status
+ * instead, as a provider refusing the request or a gateway with nothing behind it does. A promise
+ * holds the answer back until it settles.
  */
 async function startScriptedModel({ models, reply }) {
   const requests = []
@@ -97,6 +99,12 @@ async function startScriptedModel({ models, reply }) {
       } catch (error) {
         response.writeHead(500, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ error: { message: String(error?.message ?? error) } }))
+        return
+      }
+      if (answer.refuse) {
+        const { status, body, contentType = 'application/json' } = answer.refuse
+        response.writeHead(status, { 'content-type': contentType })
+        response.end(body)
         return
       }
       void stream(response, answer, answer.stream)
