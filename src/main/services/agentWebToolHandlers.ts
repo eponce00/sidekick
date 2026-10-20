@@ -130,7 +130,7 @@ export function registerWebToolHandlers(
       const handle = await outputs.save(digest.full)
       modelContent +=
         `\n\n[The page is longer than one read, so the parts that best match what you asked ` +
-        `for were kept. The whole page in this form is tool_output handle ${handle}; read it ` +
+        `for were kept. The whole page in this form is tool_output handle "${handle}"; read it` +
         `with an offset, or fetch again asking for something else.]`
     }
     // Markdown, not JSON: escaped newlines made headings, lists and code hard to read.

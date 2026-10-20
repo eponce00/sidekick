@@ -10,7 +10,11 @@ import {
 import { applyCanonicalUpdate, parseCanonicalPatch } from '../utils/canonicalPatch'
 import { createWorkspaceFileChange } from '../utils/workspaceDiff'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
-import { projectRelativePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  OutsideProjectError,
+  projectRelativePath,
+  resolveSecureWorkspacePath
+} from '../utils/workspacePaths'
 import {
   describeMatchLocations,
   findLineBlockSpans,
@@ -583,7 +587,11 @@ function failure(error: unknown): WorkspaceMutationResult {
     additions: 0,
     deletions: 0,
     error: error instanceof Error ? error.message : String(error),
-    ...(error instanceof WorkspaceMutationPlanningError ? { failure: error.failure } : {})
+    ...(error instanceof WorkspaceMutationPlanningError
+      ? { failure: error.failure }
+      : error instanceof OutsideProjectError
+        ? { failure: { code: 'outside_project', recovery: 'Use a path inside the project.' } }
+        : {})
   }
 }
 

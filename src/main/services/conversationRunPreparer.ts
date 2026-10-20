@@ -75,7 +75,6 @@ export interface PreparedConversationAgentRun {
   workspaceRoot: string | null
   latestUserMessage: MessageRow | null
   onWorkspaceWillMutate: () => Promise<void>
-  latestCompaction: () => AgentCompactionRecord | null
   goalId?: string
 }
 
@@ -276,6 +275,23 @@ export function durableProviderHistory(
   rows: readonly MessageRow[],
   currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
 ): ProviderChatMessage[] {
+  return durableProviderHistoryByRow(db, conversationId, rows, currentTarget).flatMap(
+    (entry) => entry.messages
+  )
+}
+
+export interface ProviderHistoryRow {
+  row: MessageRow
+  messages: ProviderChatMessage[]
+}
+
+/** The provider history each message row contributes, in order. */
+export function durableProviderHistoryByRow(
+  db: Database.Database,
+  conversationId: string,
+  rows: readonly MessageRow[],
+  currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
+): ProviderHistoryRow[] {
   // Only the events read below. A long conversation's ledger is mostly streamed deltas and
   // per-run context snapshots; reading and parsing them all blocked the main process, and with
   // it the whole window, for most of a second each time a message was sent.
@@ -393,11 +409,59 @@ export function durableProviderHistory(
     artifactResultMessages
   )
 
-  return rows.flatMap((row) => {
-    if (row.role !== 'agent') return [providerMessage(row)]
+  return rows.map((row) => {
+    if (row.role !== 'agent') return { row, messages: [providerMessage(row)] }
     const durable = messagesByOutput.get(row.id)
-    return durable?.length ? durable : [providerMessage(row)]
+    return { row, messages: durable?.length ? durable : [providerMessage(row)] }
   })
+}
+
+/** A message as transcript validation copies it: role, text, and which call it answers or makes. */
+function historyMessageKey(message: ProviderChatMessage): string {
+  return JSON.stringify([
+    message.role,
+    message.content ?? '',
+    message.tool_call_id ?? '',
+    (message.tool_calls ?? []).map((call) => call.function.name)
+  ])
+}
+
+/**
+ * Which history rows a compaction summarized. The summary replaces the messages before its split,
+ * and keeps the rest word for word; a row counts as summarized only when every message it gave
+ * the model is among the replaced ones, so a row the split falls inside stays whole in the next
+ * run. Anchoring every summary at the run's own request instead dropped the verbatim tail from the
+ * next run, and the request with it. `alreadyCovered` rows were summarized earlier in the run.
+ */
+export function historyCoveredByCompaction(
+  history: readonly ProviderHistoryRow[],
+  compacted: readonly ProviderChatMessage[],
+  alreadyCovered = 0
+): { rows: number; beyondHistory: boolean } {
+  const expected = history.slice(alreadyCovered).flatMap((entry) => entry.messages)
+  let matched = 0
+  let lastMatch = -1
+  compacted.forEach((message, index) => {
+    if (
+      matched < expected.length &&
+      historyMessageKey(message) === historyMessageKey(expected[matched])
+    ) {
+      matched++
+      lastMatch = index
+    }
+  })
+  let rows = alreadyCovered
+  let counted = 0
+  for (const entry of history.slice(alreadyCovered)) {
+    counted += entry.messages.length
+    if (counted > matched) break
+    rows++
+  }
+  // Every history message summarized, and more after it: the summary covers this run's own work.
+  return {
+    rows,
+    beyondHistory: matched === expected.length && lastMatch < compacted.length - 1
+  }
 }
 
 /** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
@@ -500,15 +564,30 @@ function withoutEchoedArtifact(content: string): string {
   }
 }
 
-function storedPromptTokens(
-  row: MessageRow,
-  runUsage: ReturnType<typeof loadContextUsageByOutputMessage>
-): number | null {
-  const durableUsage = runUsage.get(row.id)
-  if (durableUsage && durableUsage.promptTokens > 0) return durableUsage.promptTokens
-  const usage = parseJson<Record<string, unknown>>(row.token_usage, {})
-  const promptTokens = Number(usage.promptTokens)
-  return Number.isFinite(promptTokens) && promptTokens > 0 ? Math.ceil(promptTokens) : null
+/**
+ * The calibration a run starts with, from the latest request an earlier run recorded both the
+ * provider's count and SideKick's estimate for. The next request usually holds that one and what
+ * was added since, so it counts as the provider's count plus the estimate of the rest, as within a
+ * run. A request smaller than that one, part of it summarized since, takes the same share of its
+ * estimate instead. Before, the provider's count for a run's last request was compared with an
+ * estimate that left that run's own work out, and only a positive difference was kept.
+ */
+export function initialEstimationBias(
+  rows: readonly MessageRow[],
+  runUsage: ReturnType<typeof loadContextUsageByOutputMessage>,
+  model: string,
+  estimatedTokens: number
+): number {
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const usage = rows[index].role === 'agent' ? runUsage.get(rows[index].id) : undefined
+    if (!usage || usage.promptTokens <= 0) continue
+    const estimated = usage.estimatedPromptTokens
+    if (!estimated || (usage.model && usage.model !== model)) return 0
+    return estimatedTokens >= estimated
+      ? usage.promptTokens - estimated
+      : Math.round(estimatedTokens * (usage.promptTokens / estimated - 1))
+  }
+  return 0
 }
 
 function afterCompaction(
@@ -780,13 +859,16 @@ export class ConversationRunPreparer {
         : []),
       ...(priorCompaction ? [compactionContext(priorCompaction.summary)] : [])
     ]
-    const providerHistory = durableProviderHistory(
+    const historyRows = durableProviderHistoryByRow(
       this.db,
       input.conversationId,
       projected.filter((row) => row.role !== 'system'),
       executionTarget
     )
-    const messages: ProviderChatMessage[] = [...promptPrefix, ...providerHistory]
+    const messages: ProviderChatMessage[] = [
+      ...promptPrefix,
+      ...historyRows.flatMap((entry) => entry.messages)
+    ]
     if (goal && projected.at(-1)?.role === 'agent') {
       messages.push({ role: 'user', content: goalContinuation(goal) })
     }
@@ -795,31 +877,56 @@ export class ConversationRunPreparer {
       resolveProviderContext(planningTarget, signal)
     ])
     signal?.throwIfAborted()
-    const latestUsageIndex = projected.findLastIndex(
-      (row) => row.role === 'agent' && storedPromptTokens(row, runUsage) !== null
+    const initialEstimationBiasTokens = initialEstimationBias(
+      rows,
+      runUsage,
+      executionTarget.model,
+      estimateProviderRequestTokens(messages, toolDefinitions)
     )
-    const latestPromptTokens =
-      latestUsageIndex >= 0 ? storedPromptTokens(projected[latestUsageIndex], runUsage) : null
-    const previousRequestMessages =
-      latestUsageIndex >= 0
-        ? [
-            ...promptPrefix,
-            ...durableProviderHistory(
-              this.db,
-              input.conversationId,
-              projected.slice(0, latestUsageIndex).filter((row) => row.role !== 'system'),
-              executionTarget
-            )
-          ]
-        : []
-    const initialEstimationBiasTokens = latestPromptTokens
-      ? Math.max(
-          0,
-          latestPromptTokens -
-            estimateProviderRequestTokens(previousRequestMessages, toolDefinitions)
-        )
-      : 0
-    let latestRunCompaction: AgentCompactionRecord | null = null
+    // A finished compaction is saved as soon as it completes, so a run stopped or failed after it,
+    // or retried, keeps it instead of summarizing the same history again.
+    let coveredRows = 0
+    let savedCompaction = priorCompaction
+      ? {
+          id: priorCompaction.id,
+          throughMessageId: priorCompaction.compactedThroughMessageId,
+          throughTimestamp: priorCompaction.compactedThroughTimestamp
+        }
+      : null
+    const saveCompaction = (record: AgentCompactionRecord): void => {
+      const covered = historyCoveredByCompaction(historyRows, record.compactedMessages, coveredRows)
+      const anchor = covered.rows > 0 ? historyRows[covered.rows - 1].row : null
+      const throughMessageId = anchor?.id ?? savedCompaction?.throughMessageId ?? null
+      if (!throughMessageId) return
+      // A summary of this run's own work goes with the reply: retrying or rewinding the reply
+      // discards it, as the anchor's own time alone would not.
+      const throughTimestamp = anchor
+        ? covered.beyondHistory
+          ? Math.max(anchor.timestamp, Date.now())
+          : anchor.timestamp
+        : (savedCompaction?.throughTimestamp ?? null)
+      try {
+        const saved = compactionStore.save({
+          conversationId: input.conversationId,
+          summary: record.summary,
+          compactedThroughMessageId: throughMessageId,
+          compactedThroughTimestamp: throughTimestamp,
+          previousCompactionId: savedCompaction?.id ?? null,
+          originalTokens: record.originalTokens,
+          summaryTokens: record.summaryTokens,
+          messagesCompacted: record.messagesCompacted,
+          strategy: record.strategy,
+          promptVersion: record.promptVersion,
+          provider: record.provider,
+          model: record.model
+        })
+        coveredRows = covered.rows
+        savedCompaction = { id: saved.id, throughMessageId, throughTimestamp }
+      } catch (error) {
+        // The run goes on with the summary; only a later run has to summarize again.
+        console.warn('[Compaction] Could not save the summary:', error)
+      }
+    }
     // The level chosen for this model, or its starting level.
     const reasoningLevel = (
       target: ProviderTarget,
@@ -869,9 +976,7 @@ export class ConversationRunPreparer {
           previousSummary: priorCompaction?.summary,
           initialEstimationBiasTokens:
             model.id === input.model.id ? initialEstimationBiasTokens : 0,
-          onCompacted: (record) => {
-            latestRunCompaction = record
-          }
+          onCompacted: saveCompaction
         })
       }
     }
@@ -896,7 +1001,6 @@ export class ConversationRunPreparer {
       workspaceRoot,
       latestUserMessage,
       onWorkspaceWillMutate,
-      latestCompaction: () => latestRunCompaction,
       ...(goal ? { goalId: goal.id } : {}),
       toolSession,
       kernelInput: {

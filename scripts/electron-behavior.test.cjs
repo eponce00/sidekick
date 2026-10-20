@@ -1,7 +1,9 @@
 // Behavior the user would otherwise find in daily use, checked in the built app against a
 // scripted model on loopback (scripts/scripted-model.cjs). The scenarios assert sizes and
-// timing, not only that something finished: when compaction fires, that every request fits the
-// window, that a worker's report reaches its manager whole, and that a long one stays readable.
+// timing, not only that something finished: when compaction fires, by the model's own count, that
+// a summary is kept for the next run, even one after a stopped run, that every request fits the
+// window, that a worker's report reaches its manager whole, and that a long one stays readable,
+// and that a dropped stream is asked again once.
 // Each scenario also states the exact model requests it expects, so an extra compaction or retry
 // fails it. Needs `npm run build` (or `npm run build:unpack`) first.
 const assert = require('node:assert/strict')
@@ -59,9 +61,14 @@ const REPLIES = { whole: workerReply('whole', 30_000), long: workerReply('long',
 // steered into the turn instead of waking the manager with both reports.
 let releaseWorkers
 const workersMayAnswer = new Promise((done) => (releaseWorkers = done))
+let releaseInterrupted
+// The model server closes the first DROP-FIXTURE reply partway through, once.
+let streamDropped = false
 
+const SUMMARY = 'Summary: fixture notes, nothing decided yet.'
 const isCompaction = (messages) =>
   messages.some((message) => text(message.content).includes('<previous_summary'))
+const kind = (record) => (isCompaction(record.messages) ? 'compaction' : 'reply')
 const isWorker = (messages) =>
   messages.some(
     (message) =>
@@ -70,7 +77,7 @@ const isWorker = (messages) =>
 
 function reply(messages, request) {
   const all = messages.map((message) => text(message.content)).join('\n')
-  if (isCompaction(messages)) return { content: 'Summary: fixture notes, nothing decided yet.' }
+  if (isCompaction(messages)) return { content: SUMMARY }
   if (all.includes('REFUSAL-FIXTURE')) {
     // Groq's own words when a reply limit is above its cap.
     const message = `\`max_tokens\` must be less than or equal to \`${HOSTED_REPLY_CAP}\`, the maximum value for \`max_tokens\` is less than the \`context_window\` for this model`
@@ -91,7 +98,36 @@ function reply(messages, request) {
     }))
   }
   if (all.includes('COMPACTION-FIXTURE')) return { content: 'Noted.' }
+  if (all.includes('INTERRUPT-FIXTURE')) {
+    // The first reply waits until the run is stopped; the edited request is answered.
+    if (text(messages.at(-1).content).includes('edited')) return { content: 'Answered the edit.' }
+    return new Promise((done) => (releaseInterrupted = () => done({ content: 'Too late.' })))
+  }
+  if (all.includes('DROP-FIXTURE')) {
+    if (streamDropped) return { content: 'Recovered after the drop.' }
+    streamDropped = true
+    return {
+      content: 'A partial answer that never finishes. '.repeat(10),
+      stream: { chunks: 10 },
+      drop: { afterChunks: 3 }
+    }
+  }
   const last = messages.at(-1)
+  if (all.includes('RUNAWAY-FIXTURE')) {
+    if (last.role === 'tool') return { content: 'Ran it once; the cell answered.' }
+    if (text(last.content).includes('sidekick_runaway_reply'))
+      return {
+        toolCall: { name: 'shell', arguments: { title: 'Once', command: 'echo once-call' } }
+      }
+    // The work PC's runaway: the same call written over and over, a model still streaming it.
+    return {
+      toolCalls: Array.from({ length: 50 }, () => ({
+        name: 'shell',
+        arguments: { title: 'Click', command: 'echo runaway-call' }
+      })),
+      stream: { delayMs: 25 }
+    }
+  }
   if (last.role === 'tool') {
     return all.includes('long finding')
       ? { content: 'Read the whole of both reports.' }
@@ -273,6 +309,16 @@ test(
         }
       }
 
+      /** The latest usage a run recorded: the model's prompt count and SideKick's estimate. */
+      const usageOf = (runId) =>
+        page.evaluate(
+          async (runId) =>
+            (await window.api.agentRuns.events(runId)).events
+              .filter((event) => event.type === 'usage.updated')
+              .at(-1)?.payload,
+          runId
+        )
+
       // --- Compaction waits for the share of the window Settings names -----------------------
       const notes = await page.evaluate(
         async (projectId) =>
@@ -312,6 +358,36 @@ test(
       assert.ok(first[0].maxTokens < REPLY_LIMIT)
       first.forEach(assertFits)
 
+      // SideKick's own estimate runs over what the model counts. Calibrated against the count
+      // the first reply reported, a chat past the threshold only by that estimate is left whole.
+      const trigger = Math.round(WINDOW * TRIGGER_SHARE)
+      const firstUsage = await usageOf('notes-first')
+      const overshoot = firstUsage.estimatedPromptTokens - firstUsage.promptTokens
+      assert.ok(overshoot > 0, `The estimate runs over the model's count: ${overshoot}`)
+      // Notes SideKick estimates at 0.3 tokens a character, putting its estimate past the
+      // threshold by half that overshoot, and the model's count under it by the other half.
+      const pastByEstimate = trigger + overshoot / 2 - firstUsage.estimatedPromptTokens
+      const calibratedStart = model.requests.length
+      await send(
+        notes,
+        'notes-calibrated',
+        `COMPACTION-FIXTURE: more notes. ${FILLER.repeat(Math.ceil(pastByEstimate / 0.3 / FILLER.length))}`,
+        'Noted.'
+      )
+      const calibrated = model.requests.slice(calibratedStart)
+      const calibratedUsage = await usageOf('notes-calibrated')
+      assert.ok(
+        calibratedUsage.estimatedPromptTokens >= trigger,
+        `SideKick's estimate, ${calibratedUsage.estimatedPromptTokens}, is past the ${trigger}-token threshold`
+      )
+      assert.ok(calibratedUsage.promptTokens < trigger, "The model's count is under it")
+      assert.deepEqual(
+        calibrated.map(kind),
+        ['reply'],
+        "Under the threshold by the model's own count, the chat is not compacted"
+      )
+      calibrated.forEach(assertFits)
+
       // Past the threshold, the next run compacts once before it asks the model.
       const middle = model.requests.length
       await send(
@@ -322,7 +398,7 @@ test(
       )
       const second = model.requests.slice(middle)
       assert.deepEqual(
-        second.map((record) => (isCompaction(record.messages) ? 'compaction' : 'reply')),
+        second.map(kind),
         ['compaction', 'reply'],
         'Past the threshold a run compacts exactly once, then answers'
       )
@@ -336,7 +412,22 @@ test(
         'The latest message survives compaction word for word'
       )
 
-      // The context card marks where compaction really fires.
+      // The next run starts from the saved summary, and keeps what the summary left word for
+      // word. Anchored at the compacting run's own request, the summary lost both.
+      const thirdStart = model.requests.length
+      await send(notes, 'notes-third', 'COMPACTION-FIXTURE: and a last note.', 'Noted.')
+      const third = model.requests.slice(thirdStart)
+      assert.deepEqual(third.map(kind), ['reply'], 'The next run does not compact again')
+      const thirdText = third[0].messages.map((message) => text(message.content)).join('\n')
+      assert.ok(thirdText.includes(SUMMARY), 'It starts from the saved summary')
+      assert.ok(thirdText.includes('a long addition'), 'and still has the message kept verbatim')
+      third.forEach(assertFits)
+
+      // The context card marks where compaction really fires. The sidebar lists chats made through
+      // the API after a reload; without one, this chat showed only when the app had loaded its
+      // list later than the test created it.
+      await page.reload()
+      await page.waitForFunction(() => Boolean(window.api?.sessions))
       await page.getByText('COMPACTION-FIXTURE', { exact: true }).first().click()
       const card = await until(
         () =>
@@ -362,6 +453,54 @@ test(
         `The marker sits at ${card.left}%, compaction fires at ${(TRIGGER_SHARE * 100).toFixed(1)}%`
       )
       assert.match(card.line, /73% · 95\.7K/)
+
+      // --- A reply that writes the same call over and over is stopped as it streams -----------
+      // A work PC's 767 refused calls all came from one reply that wrote 784 calls in five
+      // minutes, 781 of them the same click, until its output limit cut it off.
+      const runawayChat = await page.evaluate(
+        async (projectId) => (await window.api.conversations.create('Runaway', projectId)).id,
+        projectId
+      )
+      const runawayStart = model.requests.length
+      await send(
+        runawayChat,
+        'runaway-run',
+        'RUNAWAY-FIXTURE: click the start button.',
+        'Ran it once; the cell answered.'
+      )
+      const runawayRequests = model.requests.slice(runawayStart)
+      assert.equal(
+        runawayRequests.length,
+        3,
+        'The runaway reply, the reply after the notice, and the answer to its one call'
+      )
+      assert.equal(runawayRequests[0].aborted, true, 'SideKick hung up while the reply streamed')
+      const notice = text(runawayRequests[1].messages.at(-1).content)
+      assert.ok(
+        notice.includes(
+          'SideKick stopped your last reply because it wrote the same shell call, with the same arguments, 4 times. None of its tool calls ran.'
+        ),
+        `The next request says why: ${notice}`
+      )
+      const sentAfterStop = runawayRequests[1].messages
+      assert.ok(
+        !sentAfterStop.some((message) => message.tool_calls?.length || message.role === 'tool'),
+        'None of the runaway calls reached the transcript, and none ran'
+      )
+      const once = text(runawayRequests[2].messages.at(-1).content)
+      assert.ok(
+        once.startsWith('Exit code: 0\n') && once.includes('once-call'),
+        `The one call ran, and its output reads as text: ${once.slice(0, 200)}`
+      )
+      assert.ok(!once.includes('\\n'), 'Command output is not JSON-escaped')
+      assert.ok(
+        !runawayRequests.some((record) =>
+          record.messages.some(
+            (message) => message.role === 'tool' && text(message.content).includes('runaway-call')
+          )
+        ),
+        'No runaway command ran'
+      )
 
       // --- A worker's report reaches its manager whole, and a longer one stays readable -------
       const manager = await page.evaluate(
@@ -462,6 +601,128 @@ test(
         stored.includes(REPLIES.long.slice(40_000, 62_000)),
         'tool_output returns the part the report left out'
       )
+
+      // --- A finished summary outlives the run stopped after it, and an edited request -------
+      const interrupted = await page.evaluate(
+        async (projectId) =>
+          (await window.api.conversations.create('INTERRUPT-FIXTURE', projectId)).id,
+        projectId
+      )
+      // Past the threshold by SideKick's own estimate, which a new chat has nothing to calibrate.
+      const baseEstimate = firstUsage.estimatedPromptTokens - history * 0.3
+      const interruptedHistory = Math.round((trigger + 10_000 - baseEstimate) / 0.3)
+      await page.evaluate(
+        async ({ id, filler, size }) => {
+          for (let index = 0; index < 4; index++) {
+            await window.api.conversations.saveMessage({
+              id: `interrupt-history-${index}`,
+              conversation_id: id,
+              role: index % 2 ? 'agent' : 'user',
+              content: `INTERRUPT-FIXTURE ${index} ${filler.repeat(Math.ceil(size / 4 / filler.length))}`,
+              timestamp: Date.now() - 10_000 + index
+            })
+          }
+        },
+        { id: interrupted, filler: FILLER, size: interruptedHistory }
+      )
+      const interruptStart = model.requests.length
+      await send(interrupted, 'interrupt-run', 'INTERRUPT-FIXTURE: the request.')
+      await until(
+        () => model.requests.slice(interruptStart).some((record) => kind(record) === 'reply'),
+        'The run should compact, then ask for its reply'
+      )
+      assert.deepEqual(model.requests.slice(interruptStart).map(kind), ['compaction', 'reply'])
+      await page.evaluate((runId) => window.api.agentRuns.stop(runId), 'interrupt-run')
+      await until(
+        () =>
+          page.evaluate(async (runId) => {
+            const { events } = await window.api.agentRuns.events(runId)
+            return events.some((event) => event.type === 'run.finalized')
+          }, 'interrupt-run'),
+        'The stopped run should finish'
+      )
+      releaseInterrupted()
+      // The user edits the request and sends it again, as the message's Edit does.
+      const retryStart = model.requests.length
+      await page.evaluate(
+        async ({ id, pinned }) => {
+          const request = (await window.api.conversations.getMessages(id)).find(
+            (message) => message.id === 'interrupt-run-user'
+          )
+          await window.api.conversations.updateMessage({
+            id: request.id,
+            conversation_id: id,
+            content: 'INTERRUPT-FIXTURE: the edited request.',
+            timestamp: request.timestamp
+          })
+          await window.api.conversations.deleteMessagesAfter(id, request.timestamp)
+          await window.api.agentRuns.startConversation({
+            id: 'interrupt-retry',
+            conversationId: id,
+            assistantMessageId: 'interrupt-retry-reply',
+            model: pinned
+          })
+        },
+        { id: interrupted, pinned }
+      )
+      await until(
+        () =>
+          page.evaluate(
+            async (id) =>
+              (await window.api.conversations.getMessages(id)).some(
+                (message) =>
+                  message.id === 'interrupt-retry-reply' &&
+                  message.content?.includes('Answered the edit.')
+              ),
+            interrupted
+          ),
+        'The edited request should be answered',
+        90_000
+      )
+      const retried = model.requests.slice(retryStart)
+      assert.deepEqual(
+        retried.map(kind),
+        ['reply'],
+        'The edited request starts from the summary the stopped run saved, without summarizing again'
+      )
+      const retriedText = retried[0].messages.map((message) => text(message.content)).join('\n')
+      assert.ok(retriedText.includes(SUMMARY), 'It is sent the saved summary')
+      assert.ok(retriedText.includes('INTERRUPT-FIXTURE 3 '), 'and the history kept verbatim')
+      assert.ok(retriedText.includes('the edited request'), 'and the edited request')
+      retried.forEach(assertFits)
+
+      // --- A dropped stream is asked again once, and its partial reply discarded -------------
+      const streams = await page.evaluate(
+        async (projectId) => (await window.api.conversations.create('Stream checks', projectId)).id,
+        projectId
+      )
+      const dropStart = model.requests.length
+      await send(
+        streams,
+        'drop-run',
+        'DROP-FIXTURE: answer in one go.',
+        'Recovered after the drop.'
+      )
+      const dropped = model.requests.slice(dropStart)
+      assert.equal(dropped.length, 2, 'A reply whose stream broke off is asked again exactly once')
+      assert.deepEqual(dropped[1].messages, dropped[0].messages, 'with the same request')
+      const recovered = await page.evaluate(
+        async (id) =>
+          (await window.api.conversations.getMessages(id)).find(
+            (message) => message.id === 'drop-run-reply'
+          ),
+        streams
+      )
+      assert.equal(recovered.content, 'Recovered after the drop.', 'Only the whole reply is kept')
+      const recoveredSegments =
+        typeof recovered.segments === 'string' ? JSON.parse(recovered.segments) : recovered.segments
+      assert.ok(
+        recoveredSegments.some(
+          (segment) => segment.type === 'run_status' && segment.status?.reason === 'stream_dropped'
+        ),
+        'The reply says the connection dropped and it asked again'
+      )
+      assert.ok(!JSON.stringify(recoveredSegments).includes('partial answer'))
 
       // --- A provider's refusals: retried where SideKick can, said plainly where it cannot ----
       // Last, because the reply cap it teaches the app holds for this model from then on.

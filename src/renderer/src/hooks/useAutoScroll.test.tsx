@@ -3,12 +3,8 @@
 import { act, useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  scrollDistanceFromBottom,
-  shouldShowScrollToBottom,
-  useAutoScroll,
-  type AutoScrollController
-} from './useAutoScroll'
+import { shouldShowScrollToBottom, useAutoScroll, type AutoScrollController } from './useAutoScroll'
+import { scrollDistanceFromBottom } from '../utils/bottomFollow'
 import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
 let root: Root
@@ -18,17 +14,40 @@ let resizeCallback: ResizeObserverCallback | null
 
 function Harness({ ready }: { ready: boolean }): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  const value = useAutoScroll(endRef, containerRef, [], 'smooth', ready ? 'ready' : 'loading')
+  const value = useAutoScroll(containerRef, [], 'smooth', ready ? 'ready' : 'loading')
   useEffect(() => {
     controller = value
   }, [value])
   if (!ready) return null
-  return (
-    <div ref={containerRef}>
-      <div ref={endRef} />
-    </div>
-  )
+  return <div ref={containerRef} />
+}
+
+/** A timeline without layout: a `client` px window over `height()` px, clamped like a browser. */
+function layOut(
+  timeline: HTMLElement,
+  options: { height: () => number; client: number; top: number }
+): { top: () => number } {
+  let top = options.top
+  Object.defineProperties(timeline, {
+    scrollHeight: { configurable: true, get: options.height },
+    clientHeight: { configurable: true, value: options.client },
+    scrollTop: {
+      configurable: true,
+      get: () => top,
+      set: (value: number) =>
+        (top = Math.max(0, Math.min(value, options.height() - options.client)))
+    }
+  })
+  return { top: () => top }
+}
+
+/** The reader's wheel, then the scroll it causes. */
+function wheel(timeline: HTMLElement, deltaY: number): void {
+  act(() => {
+    timeline.dispatchEvent(new WheelEvent('wheel', { deltaY, bubbles: true }))
+    timeline.scrollTop += deltaY
+    timeline.dispatchEvent(new Event('scroll'))
+  })
 }
 
 beforeEach(() => {
@@ -37,15 +56,7 @@ beforeEach(() => {
   document.body.appendChild(host)
   root = createRoot(host)
   resizeCallback = null
-  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-    callback(0)
-    return 1
-  })
-  vi.stubGlobal('cancelAnimationFrame', vi.fn())
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
-    configurable: true,
-    value: vi.fn()
-  })
+  queueFrames()
   vi.stubGlobal(
     'ResizeObserver',
     class ResizeObserverMock {
@@ -71,19 +82,26 @@ afterEach(async () => {
   vi.unstubAllGlobals()
 })
 
-/** Runs animation frames one at a time, as a browser does, instead of at once. */
+/** Runs animation frames one at a time, 16ms apart, as a browser does. */
 let frames: FrameRequestCallback[] = []
+let clock = 0
 function queueFrames(): void {
   frames = []
+  clock = 0
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
     frames.push(callback)
     return frames.length
   })
+  vi.stubGlobal('cancelAnimationFrame', () => (frames = []))
 }
 function runFrame(): void {
   const pending = frames
   frames = []
-  for (const callback of pending) callback(0)
+  clock += 16
+  for (const callback of pending) callback(clock)
+}
+function runFrames(): void {
+  for (let count = 0; frames.length && count < 200; count += 1) act(() => runFrame())
 }
 
 describe('auto-scroll positioning', () => {
@@ -93,51 +111,36 @@ describe('auto-scroll positioning', () => {
     await act(async () => root.render(<Harness ready />))
     const timeline = host.firstElementChild as HTMLDivElement
     let height = 20_000
-    let top = 2_000
-    const scrollTo = vi.fn(({ top: target }: { top: number }) => {
-      top = Math.min(target, height - 500)
-    })
-    Object.defineProperties(timeline, {
-      scrollHeight: { configurable: true, get: () => height },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, get: () => top, set: (value: number) => (top = value) },
-      scrollTo: { configurable: true, value: scrollTo }
-    })
+    const view = layOut(timeline, { height: () => height, client: 500, top: 2_000 })
+    runFrames()
+    wheel(timeline, -2_000)
+    expect(controller.showScrollToBottom).toBe(true)
 
-    queueFrames()
     act(() => controller.scrollToBottom())
     // Far away: an instant jump, not an animation through thousands of rows.
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 20_000, behavior: 'auto' })
+    act(() => runFrame())
+    expect(view.top()).toBe(19_500)
 
     // Rows measured on arrival make the timeline taller; the jump follows the new end.
     height = 26_000
-    act(() => timeline.dispatchEvent(new Event('scroll')))
     act(() => runFrame())
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 26_000, behavior: 'auto' })
+    expect(view.top()).toBe(25_500)
     expect(scrollDistanceFromBottom(timeline)).toBe(0)
-    for (let frame = 0; frame < 4; frame += 1) act(() => runFrame())
+    runFrames()
     expect(controller.showScrollToBottom).toBe(false)
   })
 
-  it('stops a jump when the reader scrolls themselves', async () => {
+  it('stops a jump when the reader scrolls back up', async () => {
     await act(async () => root.render(<Harness ready />))
     const timeline = host.firstElementChild as HTMLDivElement
-    const height = 20_000
-    let top = 2_000
-    const scrollTo = vi.fn()
-    Object.defineProperties(timeline, {
-      scrollHeight: { configurable: true, get: () => height },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, get: () => top, set: (value: number) => (top = value) },
-      scrollTo: { configurable: true, value: scrollTo }
-    })
-    queueFrames()
+    let height = 20_000
+    const view = layOut(timeline, { height: () => height, client: 500, top: 19_500 })
     act(() => controller.scrollToBottom())
-    scrollTo.mockClear()
-    act(() => timeline.dispatchEvent(new Event('wheel')))
-    top = 5_000
     act(() => runFrame())
-    expect(scrollTo).not.toHaveBeenCalled()
+    height = 26_000
+    wheel(timeline, -300)
+    runFrames()
+    expect(view.top()).toBe(19_200)
   })
 
   it('calculates a bounded distance from the latest message', () => {
@@ -158,36 +161,31 @@ describe('auto-scroll positioning', () => {
     await act(async () => root.render(<Harness ready={false} />))
     await act(async () => root.render(<Harness ready />))
     const timeline = host.firstElementChild as HTMLDivElement
-    Object.defineProperties(timeline, {
-      scrollHeight: { configurable: true, value: 1_400 },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, writable: true, value: 100 },
-      scrollTo: { configurable: true, value: vi.fn() }
-    })
+    const view = layOut(timeline, { height: () => 1_400, client: 500, top: 900 })
+    runFrames()
 
-    act(() => timeline.dispatchEvent(new Event('scroll')))
+    wheel(timeline, -800)
     expect(controller.showScrollToBottom).toBe(true)
 
-    queueFrames()
     act(() => controller.scrollToBottom())
     expect(controller.showScrollToBottom).toBe(false)
-    expect(timeline.scrollTo).toHaveBeenCalledWith({ top: 1_400, behavior: 'smooth' })
+    // Close by, the jump glides there instead of landing at once.
+    act(() => runFrame())
+    expect(view.top()).toBeGreaterThan(100)
+    expect(view.top()).toBeLessThan(900)
+    runFrames()
+    expect(view.top()).toBe(900)
   })
 
   it('keeps following content whose layout grows after the transcript renders', async () => {
     await act(async () => root.render(<Harness ready />))
     const timeline = host.firstElementChild as HTMLDivElement
-    const scrollTo = vi.fn()
-    Object.defineProperties(timeline, {
-      scrollHeight: { configurable: true, value: 1_800 },
-      clientHeight: { configurable: true, value: 500 },
-      scrollTop: { configurable: true, writable: true, value: 1_300 },
-      scrollTo: { configurable: true, value: scrollTo }
-    })
+    const view = layOut(timeline, { height: () => 1_800, client: 500, top: 1_000 })
 
     act(() => resizeCallback?.([], {} as ResizeObserver))
+    runFrames()
 
-    expect(scrollTo).toHaveBeenCalledWith({ top: 1_800, behavior: 'auto' })
+    expect(view.top()).toBe(1_300)
   })
 
   it('lets a section the reader opens unfold from where it was, even at the end', async () => {
@@ -195,27 +193,24 @@ describe('auto-scroll positioning', () => {
     try {
       await act(async () => root.render(<Harness ready />))
       const timeline = host.firstElementChild as HTMLDivElement
-      const scrollTo = vi.fn()
-      Object.defineProperties(timeline, {
-        scrollHeight: { configurable: true, value: 1_800 },
-        clientHeight: { configurable: true, value: 500 },
-        scrollTop: { configurable: true, writable: true, value: 1_300 },
-        scrollTo: { configurable: true, value: scrollTo }
-      })
-      scrollTo.mockClear()
+      let height = 1_800
+      const view = layOut(timeline, { height: () => height, client: 500, top: 1_300 })
+      runFrames()
 
       timeline.dispatchEvent(
         new CustomEvent(SECTION_REVEAL_EVENT, { bubbles: true, detail: { ms: 260 } })
       )
       // The section grows below the end while it opens.
-      Object.defineProperty(timeline, 'scrollHeight', { configurable: true, value: 2_100 })
+      height = 2_100
       act(() => resizeCallback?.([], {} as ResizeObserver))
-      expect(scrollTo).not.toHaveBeenCalled()
+      runFrames()
+      expect(view.top()).toBe(1_300)
 
       // Settled, the end is out of view, so the chat no longer follows it.
       await act(async () => vi.advanceTimersByTimeAsync(400))
       act(() => resizeCallback?.([], {} as ResizeObserver))
-      expect(scrollTo).not.toHaveBeenCalled()
+      runFrames()
+      expect(view.top()).toBe(1_300)
       expect(controller.showScrollToBottom).toBe(true)
     } finally {
       vi.useRealTimers()
@@ -223,34 +218,97 @@ describe('auto-scroll positioning', () => {
   })
 })
 
-function Following({ messages }: { messages: string[] }): React.JSX.Element {
+function Following({ messages, chat }: { messages: string[]; chat: string }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  useAutoScroll(endRef, containerRef, messages, 'smooth', 'chat')
-  return (
-    <div ref={containerRef} data-testid="follow">
-      <div ref={endRef} />
-    </div>
-  )
+  const value = useAutoScroll(containerRef, messages, 'smooth', chat)
+  useEffect(() => {
+    controller = value
+  }, [value])
+  return <div ref={containerRef} data-testid="follow" />
 }
 
 describe('following a growing reply', () => {
+  let container: HTMLDivElement
+  let height: number
+  let view: { top: () => number }
+  let chat: string
+
+  async function open(messages: string[], next: string): Promise<void> {
+    chat = next
+    await act(async () => root.render(<Following messages={messages} chat={chat} />))
+  }
+
+  async function render(messages: string[], grownTo: number): Promise<void> {
+    height = grownTo
+    await act(async () => root.render(<Following messages={messages} chat={chat} />))
+  }
+
+  beforeEach(async () => {
+    await open(['a'], 'chat')
+    container = host.querySelector<HTMLDivElement>('[data-testid="follow"]')!
+    height = 1_000
+    view = layOut(container, { height: () => height, client: 400, top: 600 })
+    runFrames()
+  })
+
   it('follows a few new lines at once and glides only over a bigger jump', async () => {
-    await act(async () => root.render(<Following messages={['a']} />))
-    const container = host.querySelector<HTMLDivElement>('[data-testid="follow"]')!
-    const scrollTo = vi.fn()
-    container.scrollTo = scrollTo as unknown as typeof container.scrollTo
-    let scrollHeight = 1_000
-    Object.defineProperty(container, 'scrollHeight', { get: () => scrollHeight })
-    Object.defineProperty(container, 'clientHeight', { value: 400 })
-    Object.defineProperty(container, 'scrollTop', { value: 600, writable: true })
+    await render(['a', 'b'], 1_060)
+    act(() => runFrame())
+    expect(view.top()).toBe(660)
 
-    scrollHeight = 1_060
-    await act(async () => root.render(<Following messages={['a', 'b']} />))
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_060, behavior: 'auto' })
+    runFrames()
+    await render(['a', 'b', 'c'], 1_600)
+    act(() => runFrame())
+    expect(view.top()).toBeGreaterThan(660)
+    expect(view.top()).toBeLessThan(1_200)
+    runFrames()
+    expect(view.top()).toBe(1_200)
+  })
 
-    scrollHeight = 1_800
-    await act(async () => root.render(<Following messages={['a', 'b', 'c']} />))
-    expect(scrollTo).toHaveBeenLastCalledWith({ top: 1_800, behavior: 'smooth' })
+  it('lands at once on a chat whose history has just loaded', async () => {
+    await open([], 'other')
+    runFrames()
+    await render(['a', 'b', 'c'], 1_600)
+    act(() => runFrame())
+    expect(view.top()).toBe(1_200)
+  })
+
+  it('leaves a reader who scrolled up a little where they are while the reply streams', async () => {
+    // Reported: scrolling up during a reply fought back, pulling the view down with every chunk
+    // until one big scroll got past "near the end".
+    await render(['a', 'b'], 1_040)
+    runFrames()
+    expect(view.top()).toBe(640)
+
+    wheel(container, -4)
+    for (let chunk = 1; chunk <= 12; chunk += 1) {
+      await render(['a', 'b'], 1_040 + chunk * 30)
+      act(() => resizeCallback?.([], {} as ResizeObserver))
+      runFrames()
+      expect(view.top()).toBe(636)
+    }
+    expect(controller.showScrollToBottom).toBe(true)
+
+    // The jump control, or scrolling back down to the end, follows the reply again.
+    act(() => controller.scrollToBottom())
+    runFrames()
+    expect(scrollDistanceFromBottom(container)).toBe(0)
+    await render(['a', 'b', 'c'], 1_500)
+    runFrames()
+    expect(scrollDistanceFromBottom(container)).toBe(0)
+  })
+
+  it('opens another chat at its end, following again', async () => {
+    wheel(container, -300)
+    await render(['a', 'b'], 1_200)
+    runFrames()
+    expect(view.top()).toBe(300)
+
+    await open(['x'], 'other')
+    runFrames()
+    expect(scrollDistanceFromBottom(container)).toBe(0)
+    await render(['x', 'y'], 1_400)
+    runFrames()
+    expect(scrollDistanceFromBottom(container)).toBe(0)
   })
 })

@@ -5,10 +5,21 @@ export interface SecureWorkspacePathOptions {
   rejectSymlinks?: boolean
 }
 
+/**
+ * A path outside the project folder, refused before anything reads or writes it. Agent tools
+ * report it as `workspace_scope`, an expected refusal rather than a fault.
+ */
+export class OutsideProjectError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OutsideProjectError'
+  }
+}
+
 function assertInside(root: string, target: string): void {
   const rel = relative(root, target)
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error(`Path escapes the project root: ${target}`)
+    throw new OutsideProjectError(`Path escapes the project root: ${target}`)
   }
 }
 
@@ -37,9 +48,7 @@ export function projectRelativePath(workspaceRoot: string, requestedPath: string
   if (isAbsolute(path)) {
     const rel = relative(resolve(workspaceRoot), resolve(path))
     if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error(
-        `Path is outside the project: ${requestedPath}. Use a path relative to the project root.`
-      )
+      throw new OutsideProjectError(`Path is outside the project: ${requestedPath}`)
     }
     path = rel
   }

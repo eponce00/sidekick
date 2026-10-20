@@ -27,6 +27,7 @@ import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
 import { WorkspaceVerificationService } from './workspaceVerificationService'
 import { composeFilmstrip } from './browserFilmstrip'
+import { OutsideProjectError } from '../utils/workspacePaths'
 
 // Decoding and resizing PNGs needs Electron's nativeImage, which tests run without.
 vi.mock('./browserFilmstrip', () => ({
@@ -1136,6 +1137,54 @@ describe('native browser agent tool handlers', () => {
       ]
     })
     expect(result.modelContent).toContain('"visualAttachment":"omitted_too_large"')
+  })
+
+  it.each([
+    ['ERR_NAME_NOT_RESOLVED', -105, 'not_found', 'correct_input', 'does not resolve'],
+    ['ERR_CONNECTION_REFUSED', -102, 'transient', 'change_strategy', 'Nothing is listening'],
+    ['ERR_CONNECTION_TIMED_OUT', -118, 'timeout', 'retry_later', 'did not answer in time'],
+    ['ERR_INTERNET_DISCONNECTED', -106, 'transient', 'retry_later', 'network connection failed']
+  ])(
+    'labels a page that failed to load with %s as a network failure',
+    async (chromiumCode, errno, code, recoveryAction, recovery) => {
+      // An address with "invalid" in it must not read as a wrong argument.
+      const url = 'https://invalid-host.example/'
+      const message = `${chromiumCode} (${errno}) loading '${url}'`
+      for (const error of [
+        // Electron's loadURL rejection, and the same text from a wrapper that kept only the message.
+        Object.assign(new Error(message), { code: chromiumCode, errno, url }),
+        new Error(message)
+      ]) {
+        const { registry, service } = setup()
+        service.open.mockRejectedValueOnce(error)
+        const result = await execute(registry, 'browser_open', { url })
+        expect(result).toMatchObject({
+          status: 'error',
+          error: { code, message, retryable: true, recoveryAction }
+        })
+        expect(result.error?.recovery).toContain(recovery)
+      }
+    }
+  )
+
+  it('leaves a path outside the project to the registry, which labels every tool alike', async () => {
+    const { registry, service } = setup()
+    // An upload or file page names a project file; "outside" must not read as a wrong argument.
+    service.open.mockRejectedValueOnce(new OutsideProjectError('Path is outside the project: x'))
+    await expect(
+      execute(registry, 'browser_open', { url: 'https://example.com/' })
+    ).rejects.toBeInstanceOf(OutsideProjectError)
+  })
+
+  it('leaves other browser failures to their own labels', async () => {
+    const { registry, service } = setup()
+    service.open.mockRejectedValueOnce(
+      Object.assign(new Error("ERR_ABORTED (-3) loading 'https://example.com/'"), {
+        code: 'ERR_ABORTED'
+      })
+    )
+    const result = await execute(registry, 'browser_open', { url: 'https://example.com/' })
+    expect(result.error?.code).toBe('internal')
   })
 
   it('clears a stale scope mapping so browser_open can recover', async () => {

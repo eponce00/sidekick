@@ -414,19 +414,13 @@ export async function streamAnthropicChat(
               typeof normalized.arguments === 'string'
                 ? (JSON.parse(normalized.arguments) as Record<string, unknown>)
                 : normalized.arguments
-            emit({
-              message: {
-                tool_calls: [
-                  {
-                    id: tool.id,
-                    index: event.index,
-                    type: 'function',
-                    function: { name: tool.name, arguments: args }
-                  }
-                ]
-              },
-              done: false
-            })
+            const call = {
+              id: tool.id,
+              index: event.index,
+              type: 'function',
+              function: { name: tool.name, arguments: args }
+            }
+            emit({ message: { tool_calls: [call], closed_tool_calls: [call] }, done: false })
             toolBlocks.delete(event.index)
             toolPreviewSignatures.delete(event.index)
           }

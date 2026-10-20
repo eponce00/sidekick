@@ -68,7 +68,9 @@ const RETRY_LABELS: Record<string, string> = {
   context_window_exceeded: 'Context limit reached; compacting and retrying',
   image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
   output_limit_exceeded: 'Reply limit too long for this model; retrying with its maximum',
-  truncated_tool_batch: 'Tool call stream was incomplete; retrying',
+  truncated_tool_batch: 'Reply limit reached while writing tool calls; asking for smaller ones',
+  runaway_tool_calls: 'Stopped a reply that repeated its tool calls; asking for one at a time',
+  stream_dropped: 'Lost the connection to the model server; asking again',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',
@@ -586,7 +588,8 @@ function ThinkingText({
   workspaceRoot?: string | null
   streaming: boolean
 }): React.JSX.Element {
-  const ref = useFollowBottom<HTMLDivElement>(streaming)
+  // The box shows a few lines; reaching its last one follows again.
+  const ref = useFollowBottom<HTMLDivElement>(streaming, 16)
   return (
     <div className="action-text" ref={ref}>
       <MessageMarkdown content={content} richMedia={false} workspaceRoot={workspaceRoot} />

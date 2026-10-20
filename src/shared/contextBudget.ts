@@ -237,6 +237,26 @@ export function providerRequestTokenBreakdown(
   }
 }
 
+/**
+ * The least share of SideKick's own estimate a calibration may bring a request down to. The
+ * estimate counts punctuation one by one, which real tokenizers merge, so a local model's real
+ * prompt ran 20–40% under it; a correction past half would come from a request unlike this one.
+ */
+export const MIN_CALIBRATED_ESTIMATE_SHARE = 0.5
+
+/**
+ * An estimate corrected by what the provider really counted for an earlier request: the real count
+ * of what was already sent, plus the estimate of what was added since. The correction goes either
+ * way, within a floor, so an estimate that runs high no longer compacts a chat early.
+ */
+export function calibratedRequestTokens(estimatedTokens: number, biasTokens = 0): number {
+  const bias = Number.isFinite(biasTokens) ? Math.round(biasTokens) : 0
+  return Math.max(
+    Math.ceil(estimatedTokens * MIN_CALIBRATED_ESTIMATE_SHARE),
+    estimatedTokens + bias
+  )
+}
+
 export function calculateRequestBudget(options: {
   messages: ProviderChatMessage[]
   tools: readonly unknown[]
@@ -244,7 +264,10 @@ export function calculateRequestBudget(options: {
   reservedOutputTokens: number
   compactionThreshold: number
   inFlightCharacters?: number
-  /** Positive correction learned from the provider's latest actual prompt usage. */
+  /**
+   * The provider's real prompt count minus SideKick's estimate for an earlier request, positive
+   * when the provider counted more.
+   */
   estimationBiasTokens?: number
 }): RequestBudget {
   const capacity = calculateContextCapacity(options)
@@ -253,8 +276,10 @@ export function calculateRequestBudget(options: {
     options.tools,
     options.inFlightCharacters
   )
-  const requestTokens =
-    breakdown.requestTokens + Math.max(0, Math.ceil(options.estimationBiasTokens ?? 0))
+  const requestTokens = calibratedRequestTokens(
+    breakdown.requestTokens,
+    options.estimationBiasTokens
+  )
 
   return {
     ...breakdown,
