@@ -111,6 +111,7 @@ export function registerSessionHandlers(): void {
       canContinue: (runId, conversationId) => coordinator.store.canContinue(runId, conversationId),
       isQueued: (conversationId) =>
         coordinator.queuedRuns().some((run) => run.conversationId === conversationId),
+      isPreparing: (conversationId) => coordinator.isPreparing(conversationId),
       stopRun: (runId) => coordinator.stop(runId),
       steer: (conversationId, steer) => coordinator.steerConversation(conversationId, steer),
       latestRun: (conversationId) => coordinator.store.latest(conversationId),
