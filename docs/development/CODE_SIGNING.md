@@ -30,8 +30,9 @@ Every team member uses multi-factor authentication for GitHub and SignPath.
 
 1. A version tag starts the [release workflow](../../.github/workflows/release.yml). It builds the
    installer on a GitHub-hosted runner and runs the full test, packaging, and smoke gates.
-2. The workflow submits the unsigned installer to SignPath through its GitHub Action. SignPath
-   checks that the artifact came from this repository's workflow.
+2. Once those gates have passed on every platform, the workflow submits the unsigned installer to
+   SignPath through its GitHub Action. SignPath checks that the artifact came from this
+   repository's workflow.
 3. An approver approves the request. The workflow verifies that the signed installer carries a
    valid SignPath Foundation signature, then publishes it with the other packages, their
    `SHA256SUMS.txt`, and a provenance attestation.
