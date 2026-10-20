@@ -61,6 +61,8 @@ export interface SessionServiceOptions {
   resolveModel: (conversationId: string, modelId?: string) => PinnedModel | null
   onChange?: (change: SessionsChangedEvent) => void
   now?: () => number
+  /** Keeps a long reply readable with `tool_output`, returning its handle. */
+  saveFullReply?: (text: string) => Promise<string>
 }
 
 /** Who asked: the user's own action may grant a project; an agent needs a grant first. */
@@ -951,7 +953,7 @@ export class SessionService {
         fromConversationId: conversation.id,
         toConversationId: conversation.report_to_conversation_id,
         intent: 'report',
-        body: this.reportBody(conversation, run)
+        body: await this.reportBody(conversation, run)
       })
       this.userSteppedIn.delete(conversation.id)
       notified.add(conversation.report_to_conversation_id)
@@ -964,7 +966,10 @@ export class SessionService {
     this.changed('status', [conversation.id, ...this.managerOf(conversation.id)])
   }
 
-  private reportBody(conversation: ProjectConversation, run: AgentRunSnapshot): string {
+  private async reportBody(
+    conversation: ProjectConversation,
+    run: AgentRunSnapshot
+  ): Promise<string> {
     const verdict =
       run.phase === 'completed'
         ? 'Done.'
@@ -985,14 +990,29 @@ export class SessionService {
     const branch = worktree?.set_aside_branch ?? worktree?.branch
     if (branch) facts.push(`Branch ${branch}`)
     if (this.userSteppedIn.has(conversation.id)) facts.push('The user stepped in')
-    // The manager acts on what the report says and cannot read the worker's chat, so it gets the
-    // whole reply. Cut to 2,000 characters, file-level findings arrived in pieces, cut at the same
-    // place each time the manager asked again.
     const reply = final?.content?.trim() ?? ''
-    const text =
-      reply.length > SESSION_LIMITS.messageMaxLength
-        ? `${excerpt(reply, SESSION_LIMITS.messageMaxLength)}\n\n(The reply goes on past ${SESSION_LIMITS.messageMaxLength.toLocaleString('en-US')} characters; ask for the rest.)`
-        : reply
-    return [verdict, text, facts.join(' · ')].filter(Boolean).join('\n\n')
+    return [verdict, await this.reportText(reply), facts.join(' · ')].filter(Boolean).join('\n\n')
+  }
+
+  /**
+   * The manager acts on what the report says and cannot read the worker's chat, so it gets the
+   * whole reply. Cut to 2,000 characters, file-level findings arrived in pieces, cut at the same
+   * place each time the manager asked again. A reply too long to carry keeps its start and its
+   * end, where conclusions usually are, and the whole of it stays readable with `tool_output`.
+   */
+  private async reportText(reply: string): Promise<string> {
+    if (reply.length <= SESSION_LIMITS.reportMaxLength) return reply
+    const head = reply.slice(0, SESSION_LIMITS.reportHeadLength)
+    const tail = reply.slice(-SESSION_LIMITS.reportTailLength)
+    const omitted = reply.length - head.length - tail.length
+    const handle = await this.options.saveFullReply?.(reply).catch(() => undefined)
+    const length = reply.length.toLocaleString('en-US')
+    const rest = handle
+      ? `Read the rest with tool_output, handle ${handle}, from offset ${Buffer.byteLength(head, 'utf8')}.`
+      : 'Ask the worker for the part you need.'
+    return (
+      `${head}\n\n… ${omitted.toLocaleString('en-US')} characters omitted …\n\n${tail}\n\n` +
+      `(The reply is ${length} characters; this report keeps its start and its end. ${rest})`
+    )
   }
 }

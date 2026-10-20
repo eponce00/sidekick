@@ -124,6 +124,8 @@ let runtime: FakeRuntime
 let service: SessionService
 let changes: SessionsChangedEvent[]
 let worktreesCreated: string[]
+let savedReplies: string[]
+const SAVED_REPLY_HANDLE = '3f1c2b9a-6d4e-4f8a-9b2c-1d0e5a7c8b9f'
 const MANAGER = 'manager'
 
 function runsOf(conversationId: string): StartConversationAgentRunInput[] {
@@ -146,6 +148,7 @@ beforeEach(() => {
   `)
   runtime = new FakeRuntime(db)
   changes = []
+  savedReplies = []
   worktreesCreated = []
   const worktrees: SessionWorktrees = {
     isGitProject: async () => true,
@@ -177,7 +180,11 @@ beforeEach(() => {
     runtime,
     worktrees,
     resolveModel: () => MODEL,
-    onChange: (change) => changes.push(change)
+    onChange: (change) => changes.push(change),
+    saveFullReply: async (text) => {
+      savedReplies.push(text)
+      return SAVED_REPLY_HANDLE
+    }
   })
   runtime.service = service
 })
@@ -365,14 +372,33 @@ describe('reports and wakes', () => {
     expect(report?.body).toContain(reply)
   })
 
-  it('says when a reply was too long to carry whole', async () => {
-    const [worker] = await startWorkers('Verbose')
-    runtime.finish(lastRunId(worker.conversationId), 'completed', 'x'.repeat(25_000))
+  it('carries a reply of up to 50,000 characters whole', async () => {
+    const [worker] = await startWorkers('Thorough')
+    const reply = `${'detail '.repeat(6_000)}Conclusion: add HS 7.`
+    expect(reply.length).toBeGreaterThan(40_000)
+    runtime.finish(lastRunId(worker.conversationId), 'completed', reply)
     await service.idle()
 
     const report = service.messages(MANAGER).find(({ intent }) => intent === 'report')
-    expect(report?.body).toContain('goes on past 20,000 characters; ask for the rest')
-    expect(report!.body.length).toBeLessThan(20_200)
+    expect(report?.body).toContain(reply)
+    expect(savedReplies).toEqual([])
+  })
+
+  it('keeps the start and the end of a longer reply, and the rest readable', async () => {
+    const [worker] = await startWorkers('Verbose')
+    const reply = `START ${'a'.repeat(30_000)}${'m'.repeat(30_000)}${'z'.repeat(10_000)} END`
+    runtime.finish(lastRunId(worker.conversationId), 'completed', reply)
+    await service.idle()
+
+    const report = service.messages(MANAGER).find(({ intent }) => intent === 'report')!
+    expect(report.body).toContain('START ')
+    expect(report.body).toContain(`${'z'.repeat(7_000)} END`)
+    expect(report.body.length).toBeLessThan(49_000)
+    expect(report.body).toContain('characters omitted')
+    expect(report.body).toContain(
+      `Read the rest with tool_output, handle ${SAVED_REPLY_HANDLE}, from offset 40000.`
+    )
+    expect(savedReplies).toEqual([reply])
   })
 
   it('wakes the manager at once for a request, and steers messages into a running chat', async () => {

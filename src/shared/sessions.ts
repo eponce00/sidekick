@@ -70,8 +70,15 @@ export const SESSION_LIMITS = {
   handleMaxLength: 32,
   titleMaxLength: 120,
   briefMaxLength: 20_000,
-  /** The longest message, and the longest reply a report carries to the manager. */
-  messageMaxLength: 20_000
+  /** The longest message a chat sends on purpose; a longer one is refused, not cut. */
+  messageMaxLength: 20_000,
+  /**
+   * The longest worker reply a report carries whole, as Claude Code and OpenCode carry a
+   * sub-agent's result. A longer one keeps its start and its end, and the rest stays readable.
+   */
+  reportMaxLength: 50_000,
+  reportHeadLength: 40_000,
+  reportTailLength: 8_000
 } as const
 
 /** A chat's place in a family, stored on its conversation row. */

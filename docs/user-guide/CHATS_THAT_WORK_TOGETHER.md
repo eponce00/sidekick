@@ -60,9 +60,11 @@ Suggestions expire after a week.
 ## Messages and reports
 
 When a worker's reply ends, its final message goes to the manager as a report, together with the
-facts SideKick knows, such as its branch. The report carries the whole reply, up to 20,000
-characters; past that it says so, and the manager can ask for the rest. A worker that fails or is
-stopped reports that too.
+facts SideKick knows, such as its branch. The report carries the whole reply, up to 50,000
+characters. A longer reply keeps its first 40,000 and last 8,000 characters, and the manager can
+read the rest from the stored reply. A worker that fails or is stopped reports that too. A message
+a chat sends on purpose can be up to 20,000 characters; a longer one is refused, so the chat splits
+it or attaches a file.
 
 The manager wakes to read reports only once none of its workers is still working, so it sees the
 results together. A worker blocked on the manager can send a request, which wakes the manager at

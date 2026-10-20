@@ -122,7 +122,8 @@ export function registerSessionHandlers(): void {
       removeIfUnused: (worktreeId) => worktrees.removeIfUnused(worktreeId)
     },
     resolveModel,
-    onChange: (change) => publishDesktopEvent('sessions:changed', change)
+    onChange: (change) => publishDesktopEvent('sessions:changed', change),
+    saveFullReply: (text) => coordinator.saveToolOutput(text)
   })
   service = sessions
   coordinator.setConversationInbox((conversationId, runId) =>
