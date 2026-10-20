@@ -205,7 +205,8 @@ artifact by hand in a new Partner Center submission. Setting up API access, once
    `PARTNER_CENTER_CLIENT_ID`, and `PARTNER_CENTER_CLIENT_SECRET`, and the Store ID in the variable
    `SIDEKICK_STORE_PRODUCT_ID`.
 
-A submission copies its publishing options from the last published one, so the workflow sets each
+To submit a build without a new tag, run the Store workflow by hand with **Submit** ticked; the
+package version must be higher than the one in the Store. A submission copies its publishing options from the last published one, so the workflow sets each
 of its submissions to publish as soon as certification passes. The client secret expires on
 October 18, 2028; renew it in Partner Center and in the repository before then.
 
