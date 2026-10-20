@@ -104,7 +104,16 @@ jobs:
           msstore reconfigure --tenantId $env:TENANT_ID --sellerId $env:SELLER_ID --clientId $env:CLIENT_ID --clientSecret $env:CLIENT_SECRET
           if ($LASTEXITCODE -ne 0) { throw 'Could not sign in to Partner Center.' }
           $package = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-store.appx')[0]
-          # Starts a submission from the last published one with the new package, and commits it.
-          msstore publish $PWD --inputFile $package.FullName --appId $env:PRODUCT_ID
+          # Starts a draft from the last published submission with the new package. A draft copies
+          # that submission's publishing options, and the first one was held for a manual Publish
+          # now, so the draft is set to publish as soon as it passes certification.
+          msstore publish $PWD --inputFile $package.FullName --appId $env:PRODUCT_ID --noCommit
           if ($LASTEXITCODE -ne 0) { throw 'The Store submission failed.' }
+          $submission = msstore submission get $env:PRODUCT_ID | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $submission) { throw 'Could not read the Store draft.' }
+          $submission | Add-Member -NotePropertyName TargetPublishMode -NotePropertyValue 'Immediate' -Force
+          msstore submission update $env:PRODUCT_ID ($submission | ConvertTo-Json -Depth 100 -Compress)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not set the Store draft to publish when certified.' }
+          msstore submission publish $env:PRODUCT_ID
+          if ($LASTEXITCODE -ne 0) { throw 'Could not commit the Store submission.' }
           msstore submission status $env:PRODUCT_ID

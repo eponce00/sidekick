@@ -205,9 +205,9 @@ artifact by hand in a new Partner Center submission. Setting up API access, once
    `PARTNER_CENTER_CLIENT_ID`, and `PARTNER_CENTER_CLIENT_SECRET`, and the Store ID in the variable
    `SIDEKICK_STORE_PRODUCT_ID`.
 
-A submission copies its publishing options from the last published one, so after the first release
-set **Submission options** to publish as soon as certification passes. Client secrets expire; renew
-the secret in Partner Center and in the repository before then.
+A submission copies its publishing options from the last published one, so the workflow sets each
+of its submissions to publish as soon as certification passes. The client secret expires on
+October 18, 2028; renew it in Partner Center and in the repository before then.
 
 The app runs with the `runFullTrust` capability, like any packaged desktop app. To test a package
 before submitting it, unpack it with `makeappx unpack`, register the folder with
