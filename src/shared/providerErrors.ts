@@ -80,6 +80,18 @@ export function providerConnectionFailureKind(
   return null
 }
 
+/**
+ * Whether a reply stopped because its stream broke off: the connection closed, or the stream ended
+ * before the provider said the reply was complete. A model server or proxy that restarts, or swaps
+ * the loaded model, does this.
+ */
+export function providerStreamDropped(message: string | null | undefined): boolean {
+  return (
+    providerConnectionFailureKind(message) === 'dropped' ||
+    /stream ended before (?:completion|its terminal event)/i.test(message ?? '')
+  )
+}
+
 /** Masks credentials a provider echoed back in an error before SideKick shows or keeps it. */
 export function redactProviderCredentials(message: string): string {
   return message

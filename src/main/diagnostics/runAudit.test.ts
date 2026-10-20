@@ -92,6 +92,38 @@ describe('auditRuns', () => {
     expect(finding('compaction-repeat')).toMatchObject({ severity: 'flag', count: 1 })
   })
 
+  it('says why each fallback summary was used', () => {
+    run('why')
+    compaction('why', 210_000, 2_000, { strategy: 'deterministic', fallbackReason: 'timeout' })
+    compaction('why', 210_000, 70_000, { strategy: 'deterministic', fallbackReason: 'timeout' })
+    // Journals before the reason was recorded.
+    compaction('why', 210_000, 140_000, { strategy: 'deterministic' })
+    expect(finding('compaction-fallback').examples).toEqual(['timeout × 2', 'unrecorded × 1'])
+  })
+
+  it("reports how SideKick's estimate compared with the provider's count", () => {
+    run('estimates')
+    event(
+      'estimates',
+      'usage.updated',
+      { promptTokens: 100_000, estimatedPromptTokens: 130_000 },
+      2_000
+    )
+    event(
+      'estimates',
+      'usage.updated',
+      { promptTokens: 100_000, estimatedPromptTokens: 120_000 },
+      3_000
+    )
+    event('estimates', 'usage.updated', { promptTokens: 100_000 }, 4_000)
+    expect(finding('estimate-accuracy')).toMatchObject({
+      severity: 'info',
+      count: 2,
+      summary:
+        "SideKick's estimate of a request was a median of 125% of the provider's own count (120%–130%)."
+    })
+  })
+
   it('flags requests that did not fit the window, and retry storms', () => {
     run('overflow')
     event('overflow', 'run.retrying', { reason: 'context_window_exceeded' }, 2_000)

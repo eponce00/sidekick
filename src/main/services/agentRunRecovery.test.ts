@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { openApplicationDatabase } from '../bootstrap/database'
+import { AgentMessageMaterializer } from './agentMessageMaterializer'
 import { AgentRunStore } from './agentRunStore'
 import { recoverAgentRunMaterializations } from './agentRunRecovery'
 
@@ -23,9 +24,10 @@ describe('durable run finalization recovery', () => {
           model: 'fixture'
         })
         store.transition('orphan', phase, 'orphan:terminal')
-        const restore = vi.fn()
-        recoverAgentRunMaterializations(db, store, restore)
-        expect(restore).not.toHaveBeenCalled()
+        const materialize = vi.spyOn(AgentMessageMaterializer.prototype, 'materialize')
+        recoverAgentRunMaterializations(db, store)
+        expect(materialize).not.toHaveBeenCalled()
+        materialize.mockRestore()
         expect(db.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 0 })
         expect(store.listAllEvents('orphan').at(-1)?.payload).toMatchObject({
           persisted: false,
@@ -33,7 +35,7 @@ describe('durable run finalization recovery', () => {
         })
         expect(store.get('orphan')?.phase).toBe(phase)
         const events = store.listAllEvents('orphan')
-        recoverAgentRunMaterializations(db, store, restore)
+        recoverAgentRunMaterializations(db, store)
         expect(store.listAllEvents('orphan')).toEqual(events)
       } finally {
         db.close()
@@ -77,12 +79,18 @@ describe('durable run finalization recovery', () => {
       db = openApplicationDatabase(path)
       store = new AgentRunStore(db)
       const originalEvents = store.listAllEvents('active')
-      const injected = vi.fn(() => {
-        if (injected.mock.calls.length === 2) throw new Error('injected recovery failure')
-      })
-      expect(() => recoverAgentRunMaterializations(db!, store, injected)).toThrow(
-        'injected recovery failure'
-      )
+      const materialize = AgentMessageMaterializer.prototype.materialize
+      const injected = vi
+        .spyOn(AgentMessageMaterializer.prototype, 'materialize')
+        .mockImplementation(function (
+          this: AgentMessageMaterializer,
+          ...args: Parameters<typeof materialize>
+        ) {
+          if (injected.mock.calls.length === 2) throw new Error('injected recovery failure')
+          return materialize.apply(this, args)
+        })
+      expect(() => recoverAgentRunMaterializations(db!, store)).toThrow('injected recovery failure')
+      injected.mockRestore()
       expect(store.get('active')?.phase).toBe('queued')
       expect(store.listAllEvents('active')).toEqual(originalEvents)
       expect(
@@ -91,8 +99,8 @@ describe('durable run finalization recovery', () => {
       db.close()
       db = openApplicationDatabase(path)
       store = new AgentRunStore(db)
-      const restore = vi.fn()
-      recoverAgentRunMaterializations(db, store, restore)
+      const restore = vi.spyOn(AgentMessageMaterializer.prototype, 'materialize')
+      recoverAgentRunMaterializations(db, store)
       expect(restore).toHaveBeenCalledTimes(2)
       expect(store.get('active')?.phase).toBe('interrupted')
       expect(store.get('terminal')?.phase).toBe('completed')
@@ -106,8 +114,9 @@ describe('durable run finalization recovery', () => {
         expect(
           store.listAllEvents(id).filter((event) => event.type === 'run.finalized')
         ).toHaveLength(1)
-      recoverAgentRunMaterializations(db, store, restore)
+      recoverAgentRunMaterializations(db, store)
       expect(restore).toHaveBeenCalledTimes(2)
+      restore.mockRestore()
       expect(db.pragma('integrity_check', { simple: true })).toBe('ok')
     } finally {
       if (db?.open) db.close()

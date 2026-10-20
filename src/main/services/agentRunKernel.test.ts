@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, type AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 import { projectAgentRunEvents } from '../../shared/agentEventProjection'
@@ -8,6 +8,7 @@ import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/prov
 import { applyDatabaseSchema } from '../bootstrap/database'
 import {
   AgentRunKernel,
+  STREAM_DROP_RETRY_DELAY_MS,
   type AgentKernelProviderSampler,
   type AgentKernelModelTurn,
   type StartAgentKernelRunInput
@@ -3173,5 +3174,135 @@ describe('AgentRunKernel', () => {
     expect(kernel.activeRunIds()).toEqual([])
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
+  })
+  describe('a stream that breaks off', () => {
+    const DROPPED =
+      'Lost the connection to the model server at 127.0.0.1:1234 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
+    /** A turn that streams some text and a tool call, then loses its connection. */
+    const drops = (content = 'Partial ans'): AgentKernelProviderSampler =>
+      vi.fn(async (_request, _signal, onChunk) => {
+        onChunk({ message: { content } })
+        onChunk({
+          message: {
+            tool_calls: [
+              { id: 'half-call', function: { name: 'tool_output', arguments: { handle: 'x' } } }
+            ]
+          }
+        })
+        return {
+          result: { ok: false, error: DROPPED },
+          turn: {
+            content,
+            thinking: '',
+            thinkingBlocks: [],
+            toolCalls: [],
+            usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+          }
+        }
+      })
+    const settle = async <T>(running: Promise<T>): Promise<T> => {
+      await vi.advanceTimersByTimeAsync(STREAM_DROP_RETRY_DELAY_MS)
+      return running
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('asks again once and discards the partial turn', async () => {
+      const first = drops()
+      const second = sampledTurn({ content: 'Whole answer.' }, [
+        { message: { content: 'Whole answer.' } }
+      ])
+      const sampler = vi.fn(sequence(first, second))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await settle(kernel.start(input()))
+
+      expect(result).toMatchObject({ phase: 'completed', content: 'Whole answer.' })
+      expect(sampler).toHaveBeenCalledTimes(2)
+      expect(sampler.mock.calls[1][0].messages).toEqual(sampler.mock.calls[0][0].messages)
+      const events = store.listEvents('run-1')
+      expect(events.find(({ type }) => type === 'run.retrying')?.payload).toMatchObject({
+        reason: 'stream_dropped',
+        discardsPartialTurn: true,
+        delayMs: STREAM_DROP_RETRY_DELAY_MS
+      })
+      const projection = projectAgentRunEvents(events)
+      expect(projection.content).toBe('Whole answer.')
+      expect(JSON.stringify(projection.segments)).not.toContain('Partial ans')
+      expect(JSON.stringify(projection.segments)).not.toContain('half-call')
+      expect(projection.segments).toContainEqual(
+        expect.objectContaining({
+          type: 'run_status',
+          status: expect.objectContaining({ reason: 'stream_dropped' })
+        })
+      )
+    })
+
+    it('fails as before when the second try breaks off too', async () => {
+      const sampler = vi.fn(sequence(drops(), drops()))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await settle(kernel.start(input()))
+
+      expect(result.phase).toBe('failed')
+      expect(sampler).toHaveBeenCalledTimes(2)
+      expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', message: DROPPED })
+    })
+
+    it('never runs a finished turn’s tools again, and gives each turn its own try', async () => {
+      const router = {
+        execute: vi.fn(async () => ({ content: 'stored output' }))
+      }
+      const sampler = vi.fn(
+        sequence(
+          drops('Let me'),
+          sampledTurn({
+            toolCalls: [
+              { id: 'read-1', function: { name: 'tool_output', arguments: { handle: 'h' } } }
+            ],
+            usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+          }),
+          drops('The output says'),
+          sampledTurn({ content: 'Read it.' })
+        )
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input(router))
+      await vi.advanceTimersByTimeAsync(STREAM_DROP_RETRY_DELAY_MS)
+      const result = await settle(running)
+
+      expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Read it.' })
+      expect(sampler).toHaveBeenCalledTimes(4)
+      expect(router.execute).toHaveBeenCalledTimes(1)
+      // The turn after the tool is asked again with the tool's result, not by running it again.
+      expect(sampler.mock.calls[3][0].messages).toEqual(sampler.mock.calls[2][0].messages)
+      expect(sampler.mock.calls[3][0].messages.at(-1)).toMatchObject({
+        role: 'tool',
+        tool_call_id: 'read-1'
+      })
+      expect(store.listEvents('run-1').filter(({ type }) => type === 'run.retrying')).toHaveLength(
+        2
+      )
+    })
+
+    it('ends cancelled, without asking again, when stopped while it waits', async () => {
+      const sampler = vi.fn(sequence(drops(), sampledTurn({ content: 'Too late.' })))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input())
+      await vi.waitFor(() =>
+        expect(store.listEvents('run-1').some(({ type }) => type === 'run.retrying')).toBe(true)
+      )
+      kernel.stop('run-1')
+
+      await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
+      expect(sampler).toHaveBeenCalledTimes(1)
+    })
   })
 })

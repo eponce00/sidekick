@@ -69,6 +69,7 @@ const RETRY_LABELS: Record<string, string> = {
   image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
   output_limit_exceeded: 'Reply limit too long for this model; retrying with its maximum',
   truncated_tool_batch: 'Tool call stream was incomplete; retrying',
+  stream_dropped: 'Lost the connection to the model server; asking again',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',

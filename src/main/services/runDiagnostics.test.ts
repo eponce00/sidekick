@@ -29,13 +29,32 @@ it('exports only bounded, allowlisted aggregates, never raw run or tool data', (
       'tool.completed',
       JSON.stringify({ result: { error: { code: 'timeout' } } })
     )
+    const compaction = (runId: string, payload: object): void => {
+      insert.run(
+        runId,
+        'compaction.completed',
+        JSON.stringify({ compacted: true, summary: 'private summary', ...payload })
+      )
+    }
+    compaction('secret-id-104', { strategy: 'model' })
+    compaction('secret-id-104', { strategy: 'deterministic', fallbackReason: 'timeout' })
+    compaction('secret-id-103', { strategy: 'deterministic', fallbackReason: 'timeout' })
+    compaction('secret-id-103', { strategy: 'deterministic', fallbackReason: 'private reason' })
+    compaction('secret-id-102', { strategy: 'deterministic' })
+    insert.run('secret-id-102', 'compaction.completed', JSON.stringify({ compacted: false }))
+    insert.run('secret-id-102', 'compaction.completed', 'not json')
     const result = recentRunDiagnostics(db)
     expect(result).toEqual({
       runLimit: 100,
       toolEventLimitPerRun: 10000,
       runs: 100,
       outcomes: { completed: 99, other: 1 },
-      toolErrors: { timeout: 1, unknown: 1 }
+      toolErrors: { timeout: 1, unknown: 1 },
+      compactions: {
+        model: 1,
+        deterministic: 4,
+        fallbackReasons: { timeout: 2, unknown: 1, unrecorded: 1 }
+      }
     })
     expect(JSON.stringify(result)).not.toMatch(/secret|private|sk-/)
   } finally {
