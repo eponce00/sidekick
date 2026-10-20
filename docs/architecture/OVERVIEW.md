@@ -413,6 +413,19 @@ Successful discovery or connection tests persist `online`; failures persist `off
 
 Per-instance API keys are encrypted by the main process before persistence. Renderer settings receive only `apiKeyConfigured`; the main process resolves the instance by stable id and decrypts its credential immediately before a provider request. Normal provider IPC never accepts a raw endpoint or credential from the renderer.
 
+A chat pinned to an instance id that is not stored, because it was removed or is not saved yet,
+fails with a setup error that names it. `src/main/providers/providerResolver.ts` never substitutes
+another instance or the legacy endpoint settings, which would send the prompt to a server the user
+did not choose for that chat. Settings from before provider instances are read through the same
+legacy migration the renderer shows while the keychain is too locked to store it.
+
+Every settings write is a read-modify-write of the stored record in one synchronous step in the
+main process. `settings:save` replaces only the keys it names, applied to what is stored after any
+approval dialog closes, and the renderer sends only the keys a change touched. Migrations (retired
+keys, tool-call limit and accent palette policies, legacy provider instances) run in the main
+process as settings load; the renderer never saves back a copy it read, which would undo a save
+made in between.
+
 SideKick's permanent zero-cost distribution policy rules out paid Apple Developer ID/notarization
 and paid Windows Authenticode certificates. Tagged GitHub releases therefore contain an ad-hoc
 signed macOS DMG/ZIP, an unsigned Windows NSIS installer, and a Linux x64 AppImage. CI verifies

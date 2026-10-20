@@ -39,8 +39,11 @@ import {
   revealSettings,
   confirmSensitiveSettingsChange,
   mcpServersNeedingApproval,
+  loadStoredSettings,
   registerSettingsHandlers
 } from './settings'
+import { ACCENT_PALETTE_VERSION, DEFAULT_ACCENT_PALETTE } from '../../shared/accentPalettes'
+import { DEFAULT_TOOL_CALL_LIMIT, TOOL_CALL_LIMIT_POLICY_VERSION } from '../../shared/agentLimits'
 import { mcpServerFingerprint } from '../services/mcpServerTrust'
 import { dialog, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
@@ -149,12 +152,13 @@ describe('provider secret persistence', () => {
     expect(storeSet).not.toHaveBeenCalled()
   })
 
-  it('IPC load defers legacy migration without writing or revealing secrets when storage is locked', async () => {
+  it('IPC load defers legacy migration without changing or revealing secrets when storage is locked', async () => {
     isEncryptionAvailable.mockReturnValue(false)
-    storeGet.mockReturnValue({
+    const stored = {
       openRouterApiKey: 'SYNTHETIC_LEGACY_PLAINTEXT',
       __encryptedSecrets: { openRouterApiKey: encoded('saved-key') }
-    })
+    }
+    storeGet.mockReturnValue(stored)
     registerSettingsHandlers()
     const handler = vi
       .mocked(ipcMain.handle)
@@ -163,7 +167,11 @@ describe('provider secret persistence', () => {
     expect(JSON.stringify(result)).not.toContain('SYNTHETIC_LEGACY_PLAINTEXT')
     expect(result).not.toHaveProperty('__encryptedSecrets')
     expect(result).toMatchObject({ openRouterApiKeyConfigured: true })
-    expect(storeSet).not.toHaveBeenCalled()
+    // Only the settings that hold no credential move to their current policies.
+    for (const [, written] of storeSet.mock.calls) {
+      expect(written).toMatchObject(stored)
+      expect(written).not.toHaveProperty('providerInstances')
+    }
   })
 
   it('refuses plaintext credential saves when encryption is unavailable', () => {
@@ -523,5 +531,155 @@ describe('retired settings', () => {
     expect(stored).not.toHaveProperty('focusChainReminderInterval')
     expect(stored).toMatchObject({ webSearchEnabled: false })
     expect(loaded).not.toHaveProperty('agentCommandTerminal')
+  })
+})
+
+describe('settings writers', () => {
+  let stored: Record<string, unknown>
+  const handler = (channel: string) =>
+    vi.mocked(ipcMain.handle).mock.calls.findLast(([name]) => name === channel)![1]
+  const save = (changes: Record<string, unknown>) =>
+    handler('settings:save')({ sender: {} } as IpcMainInvokeEvent, changes) as Promise<{
+      success: boolean
+    }>
+  const provider = (id: string, apiKey?: string) => ({
+    id,
+    name: `Provider ${id}`,
+    type: 'openai-compatible',
+    preset: 'generic',
+    enabled: true,
+    baseUrl: `http://127.0.0.1:4000/${id}/v1`,
+    modelSource: 'manual',
+    models: [{ id: 'model', enabled: true }],
+    ...(apiKey ? { apiKey } : {})
+  })
+
+  beforeEach(() => {
+    stored = {}
+    storeGet
+      .mockReset()
+      .mockImplementation((key: string, fallback?: unknown) =>
+        key === 'settings' ? stored : fallback
+      )
+    storeSet.mockReset().mockImplementation((key: string, value: Record<string, unknown>) => {
+      if (key === 'settings') stored = value
+    })
+    vi.mocked(ipcMain.handle).mockClear()
+    vi.mocked(dialog.showMessageBox).mockReset()
+    isEncryptionAvailable.mockReset().mockReturnValue(true)
+    getSelectedStorageBackend.mockReset().mockReturnValue('gnome_libsecret')
+    encryptString.mockReset().mockImplementation((value: string) => Buffer.from(`enc:${value}`))
+    decryptString
+      .mockReset()
+      .mockImplementation((buffer: Buffer) => buffer.toString('utf8').replace(/^enc:/, ''))
+    registerSettingsHandlers()
+  })
+
+  it('keeps a provider another writer added while a save waited for its approval', async () => {
+    stored = { shellIsolation: 'docker', providerInstances: [] }
+    let approve!: (result: { response: number; checkboxChecked: boolean }) => void
+    vi.mocked(dialog.showMessageBox).mockReturnValue(
+      new Promise((done) => (approve = done)) as never
+    )
+    // The first save leaves container isolation, so it waits on the approval dialog. It read the
+    // stored settings before the second save added a provider and its key.
+    const leavingIsolation = save({ shellIsolation: 'host' })
+    await vi.waitFor(() => expect(dialog.showMessageBox).toHaveBeenCalled())
+    expect(await save({ providerInstances: [provider('added', 'added-key')] })).toEqual({
+      success: true
+    })
+    approve({ response: 1, checkboxChecked: false })
+    expect(await leavingIsolation).toEqual({ success: true })
+
+    expect(stored).toMatchObject({
+      shellIsolation: 'host',
+      providerInstances: [expect.objectContaining({ id: 'added' })],
+      __encryptedProviderSecrets: { added: encoded('added-key') }
+    })
+    expect(JSON.stringify(stored)).not.toContain('"added-key"')
+  })
+
+  it('replaces only the settings a save names', async () => {
+    expect(
+      await save({
+        providerInstances: [provider('family-provider', 'family-key')],
+        selectedModel: 'lmstudio:family-provider/model',
+        notificationsEnabled: false
+      })
+    ).toEqual({ success: true })
+    expect(await save({ selectedModel: 'lmstudio:family-provider/other' })).toEqual({
+      success: true
+    })
+    expect(await save({ reasoningLevels: { 'lmstudio:family-provider/other': 'high' } })).toEqual({
+      success: true
+    })
+
+    expect(stored).toMatchObject({
+      providerInstances: [expect.objectContaining({ id: 'family-provider' })],
+      selectedModel: 'lmstudio:family-provider/other',
+      notificationsEnabled: false,
+      reasoningLevels: { 'lmstudio:family-provider/other': 'high' },
+      __encryptedProviderSecrets: { 'family-provider': encoded('family-key') }
+    })
+  })
+
+  it('stores what a load migrates itself, so a later save has nothing to write back', async () => {
+    const loaded = (await handler('settings:load')({} as IpcMainInvokeEvent)) as Record<
+      string,
+      unknown
+    >
+    expect(loaded).toMatchObject({
+      toolCallLimitVersion: TOOL_CALL_LIMIT_POLICY_VERSION,
+      accentPaletteVersion: ACCENT_PALETTE_VERSION,
+      providerInstances: []
+    })
+    expect(stored).toMatchObject({
+      toolCallLimit: DEFAULT_TOOL_CALL_LIMIT,
+      toolCallLimitVersion: TOOL_CALL_LIMIT_POLICY_VERSION,
+      accentPalette: DEFAULT_ACCENT_PALETTE,
+      accentPaletteVersion: ACCENT_PALETTE_VERSION,
+      providerInstances: []
+    })
+
+    // A provider saved right after the window loaded stays through the next load.
+    await save({ providerInstances: [provider('family-provider')] })
+    storeSet.mockClear()
+    await handler('settings:load')({} as IpcMainInvokeEvent)
+    expect(storeSet).not.toHaveBeenCalled()
+    expect(stored.providerInstances).toEqual([provider('family-provider')])
+  })
+
+  it('moves an old tool-call limit to the current policy and keeps a chosen one', async () => {
+    stored = { toolCallLimit: 80, toolCallLimitVersion: 4, providerInstances: [] }
+    await handler('settings:load')({} as IpcMainInvokeEvent)
+    expect(stored).toMatchObject({
+      toolCallLimit: DEFAULT_TOOL_CALL_LIMIT,
+      toolCallLimitVersion: TOOL_CALL_LIMIT_POLICY_VERSION
+    })
+
+    await save({ toolCallLimit: 80 })
+    await handler('settings:load')({} as IpcMainInvokeEvent)
+    expect(stored).toMatchObject({ toolCallLimit: 80 })
+  })
+
+  it('reads pre-instance settings as providers while the keychain is locked, writing none', async () => {
+    isEncryptionAvailable.mockReturnValue(false)
+    stored = { lmStudioEndpoint: 'http://127.0.0.1:1234/v1', toolCallLimitVersion: 5 }
+    storeGet.mockImplementation((key: string, fallback?: unknown) =>
+      key === 'settings'
+        ? stored
+        : key === 'pinnedModels'
+          ? [{ id: 'old', name: 'old-model', provider: 'lmstudio' }]
+          : fallback
+    )
+    expect(loadStoredSettings().providerInstances).toEqual([
+      expect.objectContaining({
+        id: 'lm-studio',
+        baseUrl: 'http://127.0.0.1:1234/v1',
+        models: [expect.objectContaining({ id: 'old-model' })]
+      })
+    ])
+    expect(stored).not.toHaveProperty('providerInstances')
+    expect(storeSet).not.toHaveBeenCalled()
   })
 })
