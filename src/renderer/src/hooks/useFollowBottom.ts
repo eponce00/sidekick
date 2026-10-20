@@ -1,34 +1,31 @@
 import { useEffect, useRef } from 'react'
+import { followBottom } from '../utils/bottomFollow'
 
 /**
  * Keeps a scrolling box at its end while its content grows, as text streams into it, unless the
  * reader scrolled up to read; scrolling back to the end follows again.
  */
 export function useFollowBottom<T extends HTMLElement>(
-  enabled: boolean
+  enabled: boolean,
+  resumeWithin?: number
 ): React.RefObject<T | null> {
   const ref = useRef<T>(null)
-  const pinned = useRef(true)
 
   useEffect(() => {
     const element = ref.current
     if (!element || !enabled) return undefined
-    const onScroll = (): void => {
-      pinned.current = element.scrollHeight - element.scrollTop - element.clientHeight < 8
-    }
+    const follower = followBottom(element, { resumeWithin })
     const follow = (): void => {
-      if (pinned.current) element.scrollTop = element.scrollHeight
+      if (follower.following) element.scrollTop = element.scrollHeight
     }
-    pinned.current = true
     follow()
-    element.addEventListener('scroll', onScroll, { passive: true })
     const observer = new MutationObserver(follow)
     observer.observe(element, { childList: true, subtree: true, characterData: true })
     return () => {
-      element.removeEventListener('scroll', onScroll)
       observer.disconnect()
+      follower.dispose()
     }
-  }, [enabled])
+  }, [enabled, resumeWithin])
 
   return ref
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft, Bot, Loader2, Square } from 'lucide-react'
 import type { Message } from '../types/chat.types'
+import { useFollowBottom } from '../hooks/useFollowBottom'
 import { useSubAgentRun } from '../hooks/useSubAgentRun'
 import { subAgentActivity, subAgentStats, type SubAgentState } from '../utils/subAgentActivity'
 import { MessageItem } from './MessageItem'
@@ -50,8 +51,8 @@ export function SubAgentView({
   const working = activity.state === 'working' || activity.state === 'waiting'
   const [now, setNow] = useState(Date.now)
   const [stopping, setStopping] = useState(false)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const followRef = useRef(true)
+  // Stay at the newest step while the reader is there, as a live log would.
+  const scrollRef = useFollowBottom<HTMLDivElement>(true)
   const backRef = useRef<HTMLButtonElement>(null)
 
   const contextTokens =
@@ -82,12 +83,6 @@ export function SubAgentView({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onBack])
-
-  // Stay at the newest step while the reader is there, as a live log would.
-  useEffect(() => {
-    const element = scrollRef.current
-    if (element && followRef.current) element.scrollTop = element.scrollHeight
-  }, [snapshot])
 
   const message: Message = useMemo(
     () => ({
@@ -165,14 +160,7 @@ export function SubAgentView({
         )}
       </header>
 
-      <div
-        className="messages-container subagent-view__scroll"
-        ref={scrollRef}
-        onScroll={(event) => {
-          const element = event.currentTarget
-          followRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 80
-        }}
-      >
+      <div className="messages-container subagent-view__scroll" ref={scrollRef}>
         {brief && (
           <div className="subagent-view__brief">
             <div className="subagent-view__brief-label">Task from the agent</div>
