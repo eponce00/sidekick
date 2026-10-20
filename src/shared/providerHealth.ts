@@ -1,5 +1,5 @@
 import type { ProviderInstanceHealth } from './settings'
-import { providerInferenceFailure } from './providerErrors'
+import { providerInferenceFailure, redactProviderCredentials } from './providerErrors'
 
 export const PROVIDER_HEALTH_STALE_AFTER_MS = 10 * 60 * 1000
 
@@ -12,12 +12,7 @@ export interface ProviderHealthDisplay {
 }
 
 function safeHealthMessage(value: string): string {
-  return value
-    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, '$1[redacted]')
-    .replace(/((?:api[-_ ]?key|token)\s*[:=]\s*)[^\s,;]+/gi, '$1[redacted]')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 240)
+  return redactProviderCredentials(value).replace(/\s+/g, ' ').trim().slice(0, 240)
 }
 
 export function providerHealthErrorMessage(error: unknown): string {

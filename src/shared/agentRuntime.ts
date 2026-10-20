@@ -131,6 +131,7 @@ export const TOOL_ERROR_CODES = [
   'command_failed',
   'transient',
   'loop_detected',
+  'not_configured',
   'internal'
 ] as const
 

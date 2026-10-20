@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ProviderInstance } from '../../shared/settings'
-import { assertProviderModelAllowed } from './providerResolver'
+import { ProviderSetupError } from '../../shared/providerErrors'
+import { assertProviderModelAllowed, resolveProviderInstance } from './providerResolver'
+
+const settings = vi.hoisted(() => ({ current: {} as Record<string, unknown> }))
+vi.mock('../ipc/settings', () => ({ loadStoredSettings: () => settings.current }))
 
 function instance(models: ProviderInstance['models']): ProviderInstance {
   return {
@@ -27,5 +31,18 @@ describe('provider model authorization', () => {
     const configured = instance([{ id: 'disabled', enabled: false }])
     expect(() => assertProviderModelAllowed(configured, 'disabled')).toThrow('disabled')
     expect(() => assertProviderModelAllowed(configured, 'other')).toThrow('not configured')
+    expect(() => assertProviderModelAllowed(configured, 'other')).toThrow(ProviderSetupError)
+  })
+
+  it('names the provider a chat still points at after it was removed', () => {
+    settings.current = { providerInstances: [instance([])] }
+    const resolve = () =>
+      resolveProviderInstance({
+        providerInstanceId: 'removed',
+        providerKind: 'litellm',
+        model: 'local-model'
+      })
+    expect(resolve).toThrow(ProviderSetupError)
+    expect(resolve).toThrow('Provider LiteLLM is not configured')
   })
 })

@@ -201,6 +201,17 @@ up to 32,768 tokens, or the model's configured maximum output, honored up to hal
 public catalog's maximum output, as OpenRouter and Anthropic report it, only lowers the default. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
 
+A provider failure ends a run with a code that names the cause; `internal` is left for failures
+nothing explains. An unreachable server, a dropped connection, a rate limit, and a 5xx answer are
+`transient`; a server that sent nothing for five minutes (Node's fetch limit) or answered 408 is
+`timeout`; a refused key (401 or 403) is `permission_denied`; an unknown model or address (404) is
+`not_found`; a chat whose provider or model is missing, turned off, or without its key in Settings
+is `not_configured`; other refusals are `invalid_arguments`. The message puts SideKick's
+explanation before the provider's own words, with echoed credentials masked. Before failing, the
+kernel retries once: after compacting when the provider reports a context overflow, after dropping
+older images when it names an image limit, and at the provider's stated maximum when it refuses
+the reply limit. Image and reply limits are remembered per provider and model for the session.
+
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
