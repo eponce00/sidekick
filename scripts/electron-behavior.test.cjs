@@ -52,6 +52,12 @@ function workerReply(handle, length) {
 
 const REPLIES = { whole: workerReply('whole', 30_000), long: workerReply('long', 70_000) }
 
+// Workers answer once the manager's own turn is over, as real workers, which take far longer than
+// one turn, do. An instant worker reports while the manager is still answering, and that report is
+// steered into the turn instead of waking the manager with both reports.
+let releaseWorkers
+const workersMayAnswer = new Promise((done) => (releaseWorkers = done))
+
 const isCompaction = (messages) =>
   messages.some((message) => text(message.content).includes('<previous_summary'))
 const isWorker = (messages) =>
@@ -66,10 +72,10 @@ function reply(messages) {
   if (isWorker(messages)) {
     const handle = /Reply as (\w+)/.exec(all)?.[1]
     // The short report streams in many small pieces, as a slow local model sends it.
-    return {
+    return workersMayAnswer.then(() => ({
       content: REPLIES[handle] ?? 'Unknown brief.',
       stream: handle === 'whole' ? { chunks: 150, delayMs: 2 } : undefined
-    }
+    }))
   }
   if (all.includes('COMPACTION-FIXTURE')) return { content: 'Noted.' }
   const last = messages.at(-1)
@@ -350,7 +356,23 @@ test(
         projectId
       )
       const familyStart = model.requests.length
-      await send(manager, 'manager-run', 'Delegate the report checks.')
+      await send(
+        manager,
+        'manager-run',
+        'Delegate the report checks.',
+        'Started two chats; I will read their reports.'
+      )
+      await until(
+        () =>
+          page.evaluate(async (id) => {
+            const status = (await window.api.sessions.statuses()).find(
+              ({ conversationId }) => conversationId === id
+            )
+            return status?.state !== 'working' && status?.state !== 'queued'
+          }, manager),
+        'The manager should finish its turn'
+      )
+      releaseWorkers()
       await until(
         () =>
           page.evaluate(
@@ -372,10 +394,32 @@ test(
             ? 'worker'
             : 'manager'
       )
+      const intentOf = (message) =>
+        message?.role === 'user'
+          ? /<sidekick_chat_message [^>]*intent="(\w+)"/.exec(text(message.content))?.[1]
+          : undefined
+      // What prompted each request, so a failure says which turn was extra.
+      const trace = family
+        .map((record, index) => {
+          const last = record.messages.at(-1)
+          return `${kinds[index]} after ${intentOf(last) ?? last?.role}`
+        })
+        .join('; ')
       assert.deepEqual(
         [...kinds].sort(),
         ['manager', 'manager', 'manager', 'manager', 'worker', 'worker'],
-        'Start two chats, two worker replies, read the reports, read the stored rest, answer'
+        `Start two chats, two worker replies, read the reports, read the stored rest, answer. Sent: ${trace}`
+      )
+      const woken = family.find((record) =>
+        record.messages.some((message) => intentOf(message) === 'report')
+      )
+      assert.ok(
+        ['BEGIN-whole', 'BEGIN-long'].every((marker) =>
+          woken?.messages.some(
+            (message) => intentOf(message) === 'report' && text(message.content).includes(marker)
+          )
+        ),
+        `The manager wakes once, with both reports. Sent: ${trace}`
       )
 
       const reports = await page.evaluate(

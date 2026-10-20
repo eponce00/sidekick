@@ -64,15 +64,16 @@ async function stream(response, answer, { chunks = 1, delayMs = 0 } = {}) {
 }
 
 /**
- * Starts the model. `reply(messages, request)` returns `{ content }`, `{ toolCall: { name,
- * arguments } }`, or either with a `stream` of `{ chunks, delayMs }` to fragment the answer.
+ * Starts the model. `reply(messages, request)` returns, or resolves to, `{ content }`,
+ * `{ toolCall: { name, arguments } }`, or either with a `stream` of `{ chunks, delayMs }` to
+ * fragment the answer. A promise holds the answer back until it settles.
  */
 async function startScriptedModel({ models, reply }) {
   const requests = []
   const server = createServer((request, response) => {
     let body = ''
     request.on('data', (part) => (body += part))
-    request.on('end', () => {
+    request.on('end', async () => {
       if (request.url === '/v1/models') {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ data: models }))
@@ -92,7 +93,7 @@ async function startScriptedModel({ models, reply }) {
       requests.push(record)
       let answer
       try {
-        answer = reply(parsed.messages, record)
+        answer = await reply(parsed.messages, record)
       } catch (error) {
         response.writeHead(500, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ error: { message: String(error?.message ?? error) } }))
