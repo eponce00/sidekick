@@ -146,6 +146,39 @@ describe('provider streaming adapters', () => {
     })
   })
 
+  it('keeps the HTTP status a gateway names for an error inside the stream', async () => {
+    // LiteLLM reports an upstream failure after it has answered 200, with the status as its code.
+    const stream = (frame: string) =>
+      streamOpenAICompatibleChat(
+        'https://provider.test/v1',
+        {},
+        {},
+        () => undefined,
+        vi.fn(async () =>
+          streamingResponse([
+            `data: ${frame}
+
+`
+          ])
+        ) as unknown as typeof fetch
+      )
+
+    expect(
+      await stream(
+        '{"error":{"message":"litellm.InternalServerError: Connection error.","type":null,"param":null,"code":"500"}}'
+      )
+    ).toEqual({
+      ok: false,
+      error: 'litellm.InternalServerError: Connection error.',
+      status: 500
+    })
+    // OpenAI names error kinds, not statuses, in the same field.
+    expect(await stream('{"error":{"message":"Bad key","code":"invalid_api_key"}}')).toEqual({
+      ok: false,
+      error: 'Bad key'
+    })
+  })
+
   it('terminates on an error frame without waiting for EOF or starting fallback', async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const cancel = vi.fn()

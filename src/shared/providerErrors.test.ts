@@ -4,7 +4,9 @@ import {
   providerConnectionFailureMessage,
   providerContextWindowError,
   providerImageLimitError,
-  providerInferenceFailure
+  providerInferenceFailure,
+  providerOutputLimitError,
+  redactProviderCredentials
 } from './providerErrors'
 
 describe('providerConnectionFailureMessage', () => {
@@ -31,6 +33,24 @@ describe('providerConnectionFailureMessage', () => {
       'Could not reach the model server at localhost:11434. Check that it is running. (ECONNREFUSED)'
     )
     expect(providerConnectionFailureKind(message)).toBe('unreachable')
+  })
+
+  it('says the server went silent when Node gives up waiting, instead of "fetch failed"', () => {
+    // Node's fetch waits five minutes for response headers; the run failed as "internal".
+    const headers = providerConnectionFailureMessage(
+      failure('fetch failed', 'UND_ERR_HEADERS_TIMEOUT'),
+      'http://127.0.0.1:4000/v1'
+    )
+    expect(headers).toBe(
+      'The model server at 127.0.0.1:4000 took the request but sent no reply for 5 minutes, so SideKick stopped waiting. Check that it is not stuck or busy with another request. (UND_ERR_HEADERS_TIMEOUT)'
+    )
+    expect(providerConnectionFailureKind(headers)).toBe('timed-out')
+    const body = providerConnectionFailureMessage(
+      failure('terminated', 'UND_ERR_BODY_TIMEOUT'),
+      'http://127.0.0.1:4000/v1'
+    )
+    expect(body).toContain('went silent for 5 minutes in the middle of its reply')
+    expect(providerConnectionFailureKind(body)).toBe('timed-out')
   })
 
   it('leaves other failures to their own message', () => {
@@ -80,6 +100,15 @@ describe('providerContextWindowError', () => {
     })
   })
 
+  it('reads a prompt-plus-reply overflow that names no window in words', () => {
+    // Seen through LiteLLM; it failed the run instead of compacting and retrying.
+    expect(
+      providerContextWindowError(
+        'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
+      )
+    ).toEqual({ contextLength: 131_072, requestedOutputTokens: 32_768, inputTokens: 99_950 })
+  })
+
   it('recognizes provider variants without misclassifying ordinary errors', () => {
     expect(
       providerContextWindowError('prompt is too long: 205000 tokens > 200000 maximum')
@@ -101,5 +130,50 @@ describe('providerImageLimitError', () => {
       maxImages: 2
     })
     expect(providerImageLimitError('Image download failed with status 404')).toBeNull()
+  })
+})
+
+describe('providerOutputLimitError', () => {
+  it('reads the most a reply may hold from Groq, OpenAI and Anthropic refusals', () => {
+    expect(
+      providerOutputLimitError(
+        '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
+      )
+    ).toEqual({ maxOutputTokens: 16_384 })
+    expect(
+      providerOutputLimitError(
+        'max_tokens is too large: 32768. This model supports at most 4096 completion tokens, whereas you provided 32768.'
+      )
+    ).toEqual({ maxOutputTokens: 4_096 })
+    expect(
+      providerOutputLimitError(
+        'max_tokens: 100000 > 64000, which is the maximum allowed number of output tokens for claude-test'
+      )
+    ).toEqual({ maxOutputTokens: 64_000 })
+  })
+
+  it('does not mistake context overflows or other refusals for a reply limit', () => {
+    for (const message of [
+      null,
+      "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion).",
+      'max_tokens must be at least 1',
+      'Invalid API key'
+    ])
+      expect(providerOutputLimitError(message)).toBeNull()
+  })
+})
+
+describe('redactProviderCredentials', () => {
+  it('masks keys and key hashes a gateway echoes in its refusal', () => {
+    expect(
+      redactProviderCredentials(
+        'Authentication Error, Invalid proxy server token passed. Received API Key = sk-...wxyz, Key Hash (Token) =0123456789abcdef. Unable to find token in cache or `LiteLLM_VerificationTokenTable`'
+      )
+    ).toBe(
+      'Authentication Error, Invalid proxy server token passed. Received API Key = [redacted], Key Hash (Token) =[redacted] Unable to find token in cache or `LiteLLM_VerificationTokenTable`'
+    )
+    expect(redactProviderCredentials('Authorization: Bearer abc.def')).toBe(
+      'Authorization: Bearer [redacted]'
+    )
   })
 })

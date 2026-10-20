@@ -201,6 +201,17 @@ up to 32,768 tokens, or the model's configured maximum output, honored up to hal
 public catalog's maximum output, as OpenRouter and Anthropic report it, only lowers the default. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
 
+A provider failure ends a run with a code that names the cause; `internal` is left for failures
+nothing explains. An unreachable server, a dropped connection, a rate limit, and a 5xx answer are
+`transient`; a server that sent nothing for five minutes (Node's fetch limit) or answered 408 is
+`timeout`; a refused key (401 or 403) is `permission_denied`; an unknown model or address (404) is
+`not_found`; a chat whose provider or model is missing, turned off, or without its key in Settings
+is `not_configured`; other refusals are `invalid_arguments`. The message puts SideKick's
+explanation before the provider's own words, with echoed credentials masked. Before failing, the
+kernel retries once: after compacting when the provider reports a context overflow, after dropping
+older images when it names an image limit, and at the provider's stated maximum when it refuses
+the reply limit. Image and reply limits are remembered per provider and model for the session.
+
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
@@ -437,9 +448,12 @@ one level deep. The user-facing behavior is in
 - **Wakes and reports.** When a worker's run ends, its final message goes to the manager as a
   `report`, with its branch and whether the user stepped in. A `request` wakes an idle recipient, a
   `response` wakes the chat that asked, and reports wake the manager only once none of its workers
-  is working or queued. Updates, status notes and broadcasts never wake. A request left unanswered
-  when its recipient's run ends is reported back to the sender. A chat woken 20 times in a row
-  without the user starting or steering a run pauses until the user does.
+  has a run queued, being prepared or running, or has ended a run whose report is not written yet
+  (it is still being finalized, or waits behind another report). A chat whose run is being
+  prepared is not woken again: that run takes the waiting messages when it starts. Updates, status
+  notes and broadcasts never wake. A request left unanswered when its recipient's run ends is
+  reported back to the sender. A chat woken 20 times in a row without the user starting or
+  steering a run pauses until the user does.
 - **Slots and restarts.** `RunSlots` admits chats, workers, scheduled runs and sub-agents against
   one global limit (`maxConcurrentRuns`, 4 by default) and a per-provider limit; a run waiting for
   the user, a `wait`, or its sub-agents gives its slots back. After a restart, interrupted workers

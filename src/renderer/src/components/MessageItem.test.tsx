@@ -884,6 +884,53 @@ describe('MessageItem shared-channel presentation', () => {
     expect(button('Retry')!.disabled).toBe(true)
   })
 
+  it('titles a failed reply by what went wrong with the model, not by its error code', async () => {
+    const render = async (code: string, message: string): Promise<string | null | undefined> => {
+      await act(async () => {
+        root.render(
+          <MessageItem
+            message={{
+              id: `failed-${code}`,
+              role: 'agent',
+              content: '',
+              timestamp: 1_000,
+              segments: [{ type: 'run_error', runError: { code, message, retryable: true } }]
+            }}
+            index={0}
+            isLoading={false}
+            expandedThinking={new Set<string>()}
+            editingMessageId={null}
+            copiedMessageId={null}
+            onToggleThinking={vi.fn()}
+            onHandleArtifactResult={vi.fn()}
+            onEditMessage={vi.fn()}
+            onCopyMessage={vi.fn()}
+            onRetryMessage={vi.fn()}
+            onApproveToolLimitDecision={vi.fn()}
+            onDenyToolLimitDecision={vi.fn()}
+          />
+        )
+      })
+      return container.querySelector('.run-error-segment strong')?.textContent
+    }
+
+    expect(
+      await render(
+        'timeout',
+        'The model server at 127.0.0.1:4000 took the request but sent no reply for 5 minutes, so SideKick stopped waiting. (UND_ERR_HEADERS_TIMEOUT)'
+      )
+    ).toBe('Model server timed out')
+    expect(await render('transient', 'The model server failed (HTTP 502 Bad Gateway).')).toBe(
+      'Model server unavailable'
+    )
+    expect(await render('not_configured', 'Provider LiteLLM is not configured.')).toBe(
+      'Model not set up'
+    )
+    expect(await render('permission_denied', 'The provider refused the key (HTTP 401).')).toBe(
+      'Provider refused access'
+    )
+  })
+
   it('renders thinking and tool activity in the order it happened', async () => {
     await act(async () => {
       root.render(

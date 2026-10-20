@@ -66,10 +66,10 @@ read the rest from the stored reply. A worker that fails or is stopped reports t
 a chat sends on purpose can be up to 20,000 characters; a longer one is refused, so the chat splits
 it or attaches a file.
 
-The manager wakes to read reports only once none of its workers is still working, so it sees the
-results together. A worker blocked on the manager can send a request, which wakes the manager at
-once. Other messages between chats wait until the receiving chat's next step. A message sent to
-the whole family never wakes anyone.
+The manager wakes to read reports only once none of its workers is still working or finishing its
+report, so it sees the results together, even when workers finish moments apart. A worker blocked
+on the manager can send a request, which wakes the manager at once. Other messages between chats
+wait until the receiving chat's next step. A message sent to the whole family never wakes anyone.
 
 Chats in a family can attach text files of up to 1 MB to a message. The receiving chat can import
 an attachment into its own project as a new file; it never overwrites an existing one.

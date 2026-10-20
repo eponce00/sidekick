@@ -22,7 +22,7 @@ type Emit = (chunk: ProviderStreamChunk) => void
 interface OpenAIStreamEvent {
   id?: string
   model?: string
-  error?: { message?: string; type?: string }
+  error?: { message?: string; type?: string; code?: string | number }
   usage?: {
     prompt_tokens?: number
     completion_tokens?: number
@@ -55,6 +55,13 @@ async function responseError(response: Response): Promise<string> {
   } catch {
     return fallback
   }
+}
+
+/** LiteLLM and vLLM name the HTTP status of an error they report inside a stream as its code. */
+function streamErrorStatus(code: unknown): number | undefined {
+  const status =
+    typeof code === 'number' ? code : typeof code === 'string' && /^\d{3}$/.test(code) ? +code : 0
+  return status >= 400 && status <= 599 ? status : undefined
 }
 
 function retryAfter(response: Response): number | undefined {
@@ -188,6 +195,7 @@ export async function streamOpenAICompatibleChat(
     let generationId: string | undefined
     let reportedModel: string | undefined
     let streamError: string | undefined
+    let streamErrorCode: number | undefined
     let gotContent = false
     let gotThinking = false
     let streamDone = false
@@ -213,6 +221,7 @@ export async function streamOpenAICompatibleChat(
       if (typeof json.model === 'string') reportedModel = json.model
       if (json.error) {
         streamError = json.error.message || json.error.type || 'Provider stream failed'
+        streamErrorCode = streamErrorStatus(json.error.code)
         return
       }
       if (typeof json.id === 'string' && !generationId) generationId = json.id
@@ -337,7 +346,11 @@ export async function streamOpenAICompatibleChat(
         return { ok: true, generationId }
       }
       emit({ done: true, done_reason: 'error', error: streamError })
-      return { ok: false, error: streamError }
+      return {
+        ok: false,
+        error: streamError,
+        ...(streamErrorCode ? { status: streamErrorCode } : {})
+      }
     }
     const requestedTools = Array.isArray(requestBody.tools) && requestBody.tools.length > 0
     if (requestedTools && toolCalls.size === 0 && !gotContent && !gotThinking) {
