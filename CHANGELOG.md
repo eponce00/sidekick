@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.16.2 — 2026-10-20
+
+- Finish an update on Windows without stalling near the end. The installer sat at 80–90% while
+  it told every open window that PATH had changed, although an update leaves PATH as it was; it now
+  does that only when PATH really changes. Installers downloaded for earlier updates, kept until
+  now, are deleted when SideKick starts.
+- Give a manager its worker's whole reply up to 50,000 characters, instead of the first 2,000. A
+  longer reply keeps its start and end, and the manager can read the rest with `tool_output`.
+- Keep typing in the browser's address bar, the terminal or any other field when a reply finishes
+  or a new chat opens; the message box no longer takes the keyboard from a field you are using.
+
 ## 0.16.1 — 2026-10-19
 
 - Summarize a long chat when it reaches the share of the model's context that Settings says, not
