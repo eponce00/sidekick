@@ -29,46 +29,6 @@ function assertEndpoint(value: string): string {
   return normalized
 }
 
-function legacyInstance(
-  kind: ProviderKind,
-  current: ProviderSettings
-): ProviderInstance | undefined {
-  const definition = providerDefinition(kind)
-  const legacy = (() => {
-    switch (kind) {
-      case 'ollama':
-        return { baseUrl: current.ollamaEndpoint }
-      case 'ollama-cloud':
-        return {
-          baseUrl: current.ollamaCloudBaseUrl || definition.defaultBaseUrl,
-          apiKey: current.ollamaCloudApiKey
-        }
-      case 'openrouter':
-        return { baseUrl: definition.defaultBaseUrl, apiKey: current.openRouterApiKey }
-      case 'lmstudio':
-      case 'openai-compatible':
-        return { baseUrl: current.lmStudioEndpoint, apiKey: current.lmStudioApiKey }
-      case 'llamacpp':
-        return { baseUrl: current.llamaCppEndpoint }
-      case 'litellm':
-      case 'anthropic':
-        return undefined
-    }
-  })()
-  if (!legacy?.baseUrl) return undefined
-  return {
-    id: `legacy-${kind}`,
-    name: definition.name,
-    type: definition.type,
-    preset: definition.preset,
-    enabled: true,
-    baseUrl: legacy.baseUrl,
-    apiKey: legacy.apiKey,
-    modelSource: definition.capabilities.discovery === 'manual' ? 'manual' : 'discover',
-    models: []
-  }
-}
-
 function withPersistedSecret(draft: ProviderInstance, current: ProviderSettings): ProviderInstance {
   if (draft.apiKey?.trim() || !draft.apiKeyConfigured) return draft
   const stored = current.providerInstances?.find((instance) => instance.id === draft.id)
@@ -88,17 +48,23 @@ export function resolveProviderInstance(
   target: Pick<ProviderTarget, 'providerInstanceId' | 'providerKind' | 'model'>,
   requireEnabledModel = true
 ): ProviderInstance {
-  const current = settings()
-  const instances = current.providerInstances || []
-  const instance = target.providerInstanceId
-    ? instances.find((candidate) => candidate.id === target.providerInstanceId)
+  const instances = settings().providerInstances || []
+  const id = target.providerInstanceId
+  const resolved = id
+    ? instances.find((candidate) => candidate.id === id)
     : instances.find(
         (candidate) =>
           candidate.enabled && providerKindForInstance(candidate) === target.providerKind
       )
-  const resolved = instance || legacyInstance(target.providerKind, current)
-  if (!resolved)
-    throw new ProviderSetupError(`Provider ${providerName(target.providerKind)} is not configured`)
+  // A chat whose provider was removed, or is not saved yet, stops here. Falling back to another
+  // configured server would send its whole prompt somewhere the user never chose for it.
+  if (!resolved) {
+    throw new ProviderSetupError(
+      id
+        ? `Provider ${id} is not set up`
+        : `Provider ${providerName(target.providerKind)} is not configured`
+    )
+  }
   if (!resolved.enabled) throw new ProviderSetupError(`Provider ${resolved.name} is disabled`)
   const actualKind = providerKindForInstance(resolved)
   if (actualKind !== target.providerKind) {

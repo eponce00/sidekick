@@ -5,7 +5,6 @@ import ChatPanel from './components/ChatPanel'
 import ActivityPanel from './components/ActivityPanel'
 import SettingsModal from './components/SettingsModal'
 import { applyAccentPalette } from './components/SettingsModal'
-import { migrateAccentPalette } from '../../shared/accentPalettes'
 import appIconUrl from '../../../build/icon.svg?url'
 import smallIconUrl from '../../../build/icon-small.svg?url'
 import type { SettingsSection } from './components/SettingsModal'
@@ -48,6 +47,7 @@ import { WrittenTitle } from './components/WrittenTitle'
 import { createWelcomeSuggestions } from './utils/welcomeSuggestions'
 import type { AppCommand } from '../../shared/appCommands'
 import { useConversationTitleBackfill } from './hooks/useConversationTitleBackfill'
+import { changedSettings } from './utils/settingsChanges'
 import { useConversationPanelRegistry } from './hooks/useConversationPanelRegistry'
 import { useUntouchedChatCleanup } from './hooks/useUntouchedChatCleanup'
 import {
@@ -421,9 +421,9 @@ function App(): React.JSX.Element {
       try {
         const savedSettings = await window.api.settings.load()
         const savedModels = await window.api.pinnedModels.load()
-        const mergedSettings = migrateAccentPalette(
-          normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
-        )
+        // The main process migrated and stored these as they loaded. Saving this copy back would
+        // undo any save made since it was read, such as a provider added as the window opened.
+        const mergedSettings = normalizeSettings({ ...DEFAULT_SETTINGS, ...(savedSettings || {}) })
         const providerInstances = migrateLegacyProviderInstances(mergedSettings, savedModels || [])
         const migratedSettings = syncLegacyProviderSettings({
           ...mergedSettings,
@@ -447,16 +447,6 @@ function App(): React.JSX.Element {
         setSettings(migratedSettings)
         setPinnedModels(configuredModels)
         setSelectedModel(selected)
-        if (
-          !savedSettings?.providerInstances ||
-          savedSettings.toolCallLimitVersion !== TOOL_CALL_LIMIT_POLICY_VERSION ||
-          savedSettings.accentPaletteVersion !== migratedSettings.accentPaletteVersion
-        ) {
-          void window.api.settings.save(migratedSettings)
-        }
-        if (!savedSettings?.providerInstances) {
-          void window.api.pinnedModels.save(configuredModels)
-        }
         if (savedSettings) {
           // Apply saved accent palette
           if (migratedSettings.accentPalette) {
@@ -533,7 +523,8 @@ function App(): React.JSX.Element {
   }, [isActivityPanelPinned])
 
   const handleSaveSettings = async (
-    newSettings: ProviderSettings
+    newSettings: ProviderSettings,
+    openedWith: ProviderSettings
   ): Promise<{ success: boolean; error?: string }> => {
     const normalizedSettings = normalizeSettings(syncLegacyProviderSettings(newSettings))
     const configuredModels = pinnedModelsFromProviderInstances(
@@ -543,7 +534,15 @@ function App(): React.JSX.Element {
       ? selectedModel
       : configuredModels[0]?.id || ''
     normalizedSettings.selectedModel = nextSelectedModel
-    const result = await window.api.settings.save(normalizedSettings)
+    // Only what changed since Settings opened, so a change made meanwhile, such as by the
+    // `sidekick` CLI, survives. The chat's current model is always this window's to say.
+    const result = await window.api.settings.save({
+      ...changedSettings(
+        normalizeSettings(syncLegacyProviderSettings(openedWith)),
+        normalizedSettings
+      ),
+      selectedModel: nextSelectedModel
+    })
     if (!result.success) return result
     setPinnedModels(configuredModels)
     setSelectedModel(nextSelectedModel)
@@ -588,9 +587,8 @@ function App(): React.JSX.Element {
 
   const handleModelChange = (modelId: string): void => {
     setSelectedModel(modelId)
-    const updatedSettings = { ...settings, selectedModel: modelId }
-    setSettings(updatedSettings)
-    window.api.settings.save(updatedSettings)
+    setSettings({ ...settings, selectedModel: modelId })
+    window.api.settings.save({ selectedModel: modelId })
   }
 
   // Throttle token count updates to avoid "Maximum update depth exceeded" during rapid streaming.
@@ -1319,12 +1317,9 @@ function App(): React.JSX.Element {
           fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
           reasoningSettings={settings}
           onReasoningLevelChange={(modelId, level) => {
-            const updatedSettings = {
-              ...settings,
-              reasoningLevels: { ...settings.reasoningLevels, [modelId]: level }
-            }
-            setSettings(updatedSettings)
-            window.api.settings.save(updatedSettings)
+            const reasoningLevels = { ...settings.reasoningLevels, [modelId]: level }
+            setSettings({ ...settings, reasoningLevels })
+            window.api.settings.save({ reasoningLevels })
           }}
           onCheckpointCreated={(_restoredHash) => {
             if (currentConversationIdRef.current !== panelConversationId) return

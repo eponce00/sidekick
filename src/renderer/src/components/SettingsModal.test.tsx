@@ -72,7 +72,11 @@ it('says when there are unsaved changes and saves them', async () => {
   expect(button('Blue').getAttribute('aria-checked')).toBe('true')
 
   await act(async () => button('Save changes').click())
-  expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ accentPalette: 'blue' }))
+  // What Settings opened with goes along, so the save can name only what changed.
+  expect(onSave).toHaveBeenCalledWith(
+    expect.objectContaining({ accentPalette: 'blue' }),
+    expect.objectContaining({ accentPalette: 'teal' })
+  )
   expect(onClose).toHaveBeenCalledOnce()
 })
 
