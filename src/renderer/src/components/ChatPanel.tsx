@@ -311,7 +311,6 @@ function ChatPanel({
   const [gitAvailableForWorkspace, setGitAvailableForWorkspace] = useState<boolean>(true) // git check result
   const [gitBannerDismissed, setGitBannerDismissed] = useState(false) // user dismissed git warning
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   // The message box's contents while a message is being edited in it, put back on Cancel.
   const sentAtRef = useRef(0)
@@ -693,7 +692,6 @@ function ChatPanel({
 
   // Auto-scroll to bottom when messages change
   const { showScrollToBottom, scrollToBottom, revealStart } = useAutoScroll(
-    messagesEndRef,
     messagesContainerRef,
     messages,
     'smooth',
@@ -1738,7 +1736,8 @@ function ChatPanel({
                 />
               </div>
             )}
-            <div ref={messagesEndRef} />
+            {/* One more gap of room below the last row. */}
+            <div aria-hidden="true" />
           </>
         )}
       </div>

@@ -1,12 +1,15 @@
-// Custom hook for auto-scrolling to bottom of messages
+// Custom hook that keeps the chat timeline at its latest message while it grows
 
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  followBottom,
+  RESUME_FOLLOW_PX,
+  scrollDistanceFromBottom,
+  type BottomFollower
+} from '../utils/bottomFollow'
 import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
-const FOLLOW_BOTTOM_THRESHOLD = 80
 const SHOW_JUMP_THRESHOLD = 240
-/** Following the end glides only when it moved more than about half a screen of text. */
-const SMOOTH_FOLLOW_MIN_DISTANCE = 320
 
 export interface AutoScrollController {
   showScrollToBottom: boolean
@@ -23,68 +26,52 @@ const REVEAL_MARGIN = 12
 /** How long a jump to the latest message keeps correcting for rows measured on the way. */
 const JUMP_SETTLE_MS = 1_500
 
-export function scrollDistanceFromBottom(
-  container: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'>
-): number {
-  return Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight)
-}
-
 export function shouldShowScrollToBottom(distance: number): boolean {
   return distance > SHOW_JUMP_THRESHOLD
 }
 
 /**
- * Hook that automatically scrolls to the bottom when messages change
- * Useful for chat interfaces to show the latest message
+ * Keeps the timeline at its latest message while messages arrive and replies stream in, until the
+ * reader scrolls up to read; scrolling back to the end, or the jump control, follows it again. How
+ * the reader taking over is told apart from the timeline's own moves is in `followBottom`.
  *
- * @param messagesEndRef - Ref to an element at the bottom of the messages list
- * @param scrollContainerRef - Ref to the scrollable messages container
- * @param messages - Array of messages (triggers scroll when it changes)
- * @param behavior - Scroll behavior: 'smooth' or 'auto' (default: 'smooth')
- *
- * @example
- * const messagesEndRef = useRef<HTMLDivElement>(null)
- * const messagesContainerRef = useRef<HTMLDivElement>(null)
- * useAutoScroll(messagesEndRef, messagesContainerRef, messages)
- *
- * // In JSX:
- * <div ref={messagesEndRef} />
+ * @param scrollContainerRef - The scrolling timeline
+ * @param messages - The messages; a change brings a following timeline to its end
+ * @param behavior - 'smooth' glides over a long way instead of jumping
+ * @param resetKey - Another chat: open it at its end, following
+ * @param changeKey - What changes with the content, when not `messages` itself
  */
 export function useAutoScroll<T>(
-  messagesEndRef: RefObject<HTMLElement | null>,
   scrollContainerRef: RefObject<HTMLElement | null>,
   messages: T[],
   behavior: ScrollBehavior = 'smooth',
   resetKey?: unknown,
   changeKey?: unknown
 ): AutoScrollController {
-  const shouldStickToBottomRef = useRef(true)
-  /** Until then a section the reader opened is unfolding; following the bottom would fight it. */
-  const holdUntilRef = useRef(0)
-  /** A jump to the latest message is under way; its own scroll events are not the reader's. */
-  const jumpingRef = useRef(false)
+  const followerRef = useRef<BottomFollower | null>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const autoScrollChange = changeKey === undefined ? messages : changeKey
 
-  const moveToBottom = useCallback(
-    (scrollBehavior: ScrollBehavior): void => {
-      const container = scrollContainerRef.current
-      if (container && typeof container.scrollTo === 'function') {
-        container.scrollTo({ top: container.scrollHeight, behavior: scrollBehavior })
-        return
-      }
-      messagesEndRef.current?.scrollIntoView({ behavior: scrollBehavior, block: 'nearest' })
-    },
-    [messagesEndRef, scrollContainerRef]
-  )
-
   const updatePosition = useCallback((): void => {
     const container = scrollContainerRef.current
-    if (!container || jumpingRef.current) return
-    const distance = scrollDistanceFromBottom(container)
-    shouldStickToBottomRef.current = distance <= FOLLOW_BOTTOM_THRESHOLD
-    setShowScrollToBottom(shouldShowScrollToBottom(distance))
+    const follower = followerRef.current
+    if (!container || !follower) return
+    setShowScrollToBottom(
+      !follower.following && shouldShowScrollToBottom(scrollDistanceFromBottom(container))
+    )
   }, [scrollContainerRef])
+
+  useEffect(() => {
+    const container = scrollContainerRef.current
+    if (!container) return undefined
+    const follower = followBottom(container, { onUpdate: updatePosition })
+    followerRef.current = follower
+    follower.keepAtEnd()
+    return () => {
+      follower.dispose()
+      if (followerRef.current === follower) followerRef.current = null
+    }
+  }, [resetKey, scrollContainerRef, updatePosition])
 
   /**
    * Jumps to the latest message. A long timeline is virtualized: rows below the view have only
@@ -92,120 +79,54 @@ export function useAutoScroll<T>(
    * runs. Keep landing on the end until it stops moving, unless the reader scrolls themselves.
    */
   const scrollToBottom = useCallback((): void => {
-    shouldStickToBottomRef.current = true
     setShowScrollToBottom(false)
-    const container = scrollContainerRef.current
-    if (!container || typeof container.scrollTo !== 'function') {
-      moveToBottom('smooth')
-      return
-    }
-    // Far away, an animated scroll only shows rows streaming past; land at once.
-    const far = scrollDistanceFromBottom(container) > container.clientHeight * 2
-    moveToBottom(far ? 'auto' : 'smooth')
-    jumpingRef.current = true
-    const startedAt = Date.now()
-    let settledFrames = 0
-    const stop = (): void => {
-      jumpingRef.current = false
-      container.removeEventListener('wheel', stop)
-      container.removeEventListener('touchstart', stop)
-      container.removeEventListener('keydown', stop)
-      updatePosition()
-    }
-    // The reader taking over ends the jump where they are.
-    container.addEventListener('wheel', stop, { passive: true })
-    container.addEventListener('touchstart', stop, { passive: true })
-    container.addEventListener('keydown', stop)
-    const settle = (): void => {
-      if (!jumpingRef.current) return
-      const elapsed = Date.now() - startedAt
-      if (scrollDistanceFromBottom(container) <= 2) settledFrames += 1
-      else {
-        settledFrames = 0
-        // A smooth scroll gets its moment; then, or for a far jump, snap to the new end.
-        if (far || elapsed > 400)
-          container.scrollTo({ top: container.scrollHeight, behavior: 'auto' })
-      }
-      if (settledFrames >= 3 || elapsed > JUMP_SETTLE_MS) stop()
-      else window.requestAnimationFrame(settle)
-    }
-    window.requestAnimationFrame(settle)
-  }, [moveToBottom, scrollContainerRef, updatePosition])
+    const follower = followerRef.current
+    if (!follower) return
+    follower.follow()
+    follower.keepAtEnd({ glide: 'always', settleMs: JUMP_SETTLE_MS })
+  }, [])
 
   const revealStart = useCallback(
     (element: HTMLElement, options: { onlyIfFollowing?: boolean } = {}): void => {
       const container = scrollContainerRef.current
-      if (!container || typeof container.scrollTo !== 'function') return
+      const follower = followerRef.current
+      if (!container || !follower) return
       const offset =
         element.getBoundingClientRect().top - container.getBoundingClientRect().top - REVEAL_MARGIN
       // A follower who can already see where the answer starts stays at the end.
-      if (options.onlyIfFollowing && (!shouldStickToBottomRef.current || offset >= 0)) return
+      if (options.onlyIfFollowing && (!follower.following || offset >= 0)) return
       const bottom = Math.max(0, container.scrollHeight - container.clientHeight)
       const target = Math.max(0, Math.min(container.scrollTop + offset, bottom))
-      shouldStickToBottomRef.current = bottom - target <= FOLLOW_BOTTOM_THRESHOLD
-      setShowScrollToBottom(shouldShowScrollToBottom(bottom - target))
-      // Instant: the scroll events of a smooth scroll start near the bottom and
-      // would resume following it.
-      container.scrollTo({ top: target, behavior: 'auto' })
+      if (bottom - target <= RESUME_FOLLOW_PX) follower.follow()
+      else follower.release()
+      container.scrollTop = target
+      updatePosition()
     },
-    [scrollContainerRef]
+    [scrollContainerRef, updatePosition]
   )
 
+  // A chat's first messages, as its history loads, land at once; later ones may glide.
+  const shownRef = useRef({ resetKey, any: false })
+  const messageCount = messages.length
   useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
-
-    updatePosition()
-    container.addEventListener('scroll', updatePosition, { passive: true })
-
-    return () => {
-      container.removeEventListener('scroll', updatePosition)
-    }
-  }, [resetKey, scrollContainerRef, updatePosition])
-
-  useEffect(() => {
-    shouldStickToBottomRef.current = true
-    const frame = window.requestAnimationFrame(() => {
-      setShowScrollToBottom(false)
-      moveToBottom('auto')
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [moveToBottom, resetKey])
-
-  useEffect(() => {
-    if (shouldStickToBottomRef.current) {
-      const frame = window.requestAnimationFrame(() => {
-        setShowScrollToBottom(false)
-        // A streaming reply grows a few lines at a time. Restarting a smooth scroll for each makes
-        // the view lurch, so small growth follows at once and only a bigger jump glides.
-        const container = scrollContainerRef.current
-        const distance = container ? scrollDistanceFromBottom(container) : 0
-        moveToBottom(distance > SMOOTH_FOLLOW_MIN_DISTANCE ? behavior : 'auto')
-      })
-      return () => window.cancelAnimationFrame(frame)
-    }
-    updatePosition()
-    return undefined
-  }, [autoScrollChange, behavior, moveToBottom, scrollContainerRef, updatePosition])
+    if (shownRef.current.resetKey !== resetKey) shownRef.current = { resetKey, any: false }
+    const glide = behavior === 'smooth' && shownRef.current.any
+    shownRef.current.any = messageCount > 0
+    // A streaming reply grows a few lines at a time. Gliding each of them makes the view lurch,
+    // so small growth follows at once and only a bigger jump glides. Away from the end, the
+    // observers below update the jump control as the content changes.
+    followerRef.current?.keepAtEnd({ glide: glide ? 'long' : 'never' })
+  }, [autoScrollChange, behavior, messageCount, resetKey])
 
   useEffect(() => {
     const container = scrollContainerRef.current
     if (!container || typeof window.ResizeObserver !== 'function') return
 
-    let frame: number | null = null
     const observedChildren = new Set<Element>()
     const followSettledLayout = (): void => {
-      if (Date.now() < holdUntilRef.current) return
-      if (!shouldStickToBottomRef.current) {
-        updatePosition()
-        return
-      }
-      if (frame !== null) window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => {
-        frame = null
-        setShowScrollToBottom(false)
-        moveToBottom('auto')
-      })
+      const follower = followerRef.current
+      if (follower?.following) follower.keepAtEnd()
+      else updatePosition()
     }
     const resizeObserver = new window.ResizeObserver(followSettledLayout)
     const observeTimelineChildren = (): void => {
@@ -224,26 +145,29 @@ export function useAutoScroll<T>(
     mutationObserver.observe(container, { childList: true, subtree: true })
 
     // Opening a section unfolds it from where it was clicked, even at the end of the chat; once
-    // it settles, following resumes only if the end is still in view.
+    // it settles, following goes on only if the end is still in view.
     let settle: ReturnType<typeof setTimeout> | null = null
     const holdForReveal = (event: Event): void => {
       const ms = (event as CustomEvent<{ ms?: number }>).detail?.ms ?? 0
-      holdUntilRef.current = Date.now() + ms + 60
-      if (frame !== null) window.cancelAnimationFrame(frame)
-      frame = null
+      followerRef.current?.hold(ms + 60)
       if (settle) clearTimeout(settle)
-      settle = setTimeout(updatePosition, ms + 80)
+      settle = setTimeout(() => {
+        const follower = followerRef.current
+        if (follower?.following && scrollDistanceFromBottom(container) > RESUME_FOLLOW_PX) {
+          follower.release()
+        }
+        updatePosition()
+      }, ms + 80)
     }
     container.addEventListener(SECTION_REVEAL_EVENT, holdForReveal)
 
     return () => {
-      if (frame !== null) window.cancelAnimationFrame(frame)
       if (settle) clearTimeout(settle)
       container.removeEventListener(SECTION_REVEAL_EVENT, holdForReveal)
       mutationObserver.disconnect()
       resizeObserver.disconnect()
     }
-  }, [moveToBottom, resetKey, scrollContainerRef, updatePosition])
+  }, [resetKey, scrollContainerRef, updatePosition])
 
   return { showScrollToBottom, scrollToBottom, revealStart }
 }
