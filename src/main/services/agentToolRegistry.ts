@@ -14,6 +14,8 @@ import {
   type ToolRecoveryAction
 } from '../../shared/agentRuntime'
 import { readIncompleteToolInputError } from '../../shared/toolCalls'
+import { OutsideProjectError } from '../utils/workspacePaths'
+import { otherHarnessEquivalent } from './otherHarnessTools'
 import {
   ToolExecutionPipeline,
   ToolRuntimeTimeoutError,
@@ -326,7 +328,31 @@ function parseArrayString(value: unknown): unknown {
   }
 }
 
-/** Normalize only unambiguous syntax differences; never invent semantic arguments. */
+/**
+ * Argument names models bring from other agent harnesses, by the SideKick argument that means the
+ * same thing, compared like canonicalArgumentKey: Claude Code's and Gemini CLI's file_path and
+ * absolute_path, OpenCode's filePath, Cursor's target_file, Codex's workdir and Claude Code's
+ * run_in_background.
+ */
+const ARGUMENT_ALIASES: Record<string, readonly string[]> = {
+  path: ['filepath', 'absolutepath', 'targetfile', 'dirpath'],
+  file_path: ['path', 'absolutepath', 'targetfile'],
+  old_string: ['oldtext'],
+  new_string: ['newtext'],
+  cwd: ['workdir', 'workingdirectory', 'directory'],
+  background: ['runinbackground']
+}
+
+function positiveNumber(value: unknown, minimum: number): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= minimum
+    ? Math.trunc(value)
+    : undefined
+}
+
+/**
+ * Normalize unambiguous syntax differences and argument names learned from other harnesses;
+ * never invent semantic arguments.
+ */
 export function normalizeAgentToolArguments(
   tool: AgentToolDefinition,
   args: Record<string, unknown>
@@ -339,27 +365,44 @@ export function normalizeAgentToolArguments(
     const key = canonicalArgumentKey(name)
     expectedByCanonical.set(key, [...(expectedByCanonical.get(key) ?? []), name])
   }
+  for (const [targetName, aliases] of Object.entries(ARGUMENT_ALIASES)) {
+    if (!(targetName in properties) || normalized[targetName] !== undefined) continue
+    const sources = Object.keys(normalized).filter(
+      (name) =>
+        !(name in properties) &&
+        normalized[name] !== undefined &&
+        aliases.includes(canonicalArgumentKey(name))
+    )
+    // Two spellings of one argument are ambiguous; the invalid-argument error lists both.
+    if (sources.length !== 1) continue
+    normalized[targetName] = normalized[sources[0]]
+    delete normalized[sources[0]]
+    repairs.push(`${sources[0]} → ${targetName}`)
+  }
+  // Claude Code, Codex, OpenCode and Gemini CLI read a file from a line offset for a number of
+  // lines. Most count offsets from 1; a 0-based one starts a line early, and the reply's line
+  // numbers show where it starts.
   if (
-    'file_path' in properties &&
-    !('file_path' in normalized) &&
-    typeof normalized.path === 'string'
+    'start_line' in properties &&
+    'end_line' in properties &&
+    !('offset' in properties) &&
+    !('limit' in properties) &&
+    normalized.start_line === undefined &&
+    normalized.end_line === undefined
   ) {
-    normalized.file_path = normalized.path
-    delete normalized.path
-    repairs.push('path → file_path')
-  }
-  const knownAliases: Record<string, string> = {
-    oldText: 'old_string',
-    oldString: 'old_string',
-    newText: 'new_string',
-    newString: 'new_string'
-  }
-  for (const [sourceName, targetName] of Object.entries(knownAliases)) {
-    if (!(targetName in properties) || targetName in normalized || !(sourceName in normalized))
-      continue
-    normalized[targetName] = normalized[sourceName]
-    delete normalized[sourceName]
-    repairs.push(`${sourceName} → ${targetName}`)
+    const offset = positiveNumber(normalized.offset, 0)
+    const limit = positiveNumber(normalized.limit, 1)
+    const startLine = Math.max(1, offset ?? 1)
+    if (offset !== undefined) {
+      normalized.start_line = startLine
+      delete normalized.offset
+      repairs.push('offset → start_line')
+    }
+    if (limit !== undefined) {
+      normalized.end_line = startLine + limit - 1
+      delete normalized.limit
+      repairs.push('limit → end_line')
+    }
   }
   for (const sourceName of Object.keys(normalized)) {
     if (sourceName in properties) continue
@@ -454,12 +497,20 @@ export function validatePreparedAgentToolCall(
 ): ToolExecutionResult | null {
   const catalogEntry = getAgentToolEntry(catalog, call.name)
   if (!catalogEntry) {
+    const equivalent = otherHarnessEquivalent(call.name, toolNames(catalog))
+    const required = equivalent
+      ? (getAgentToolEntry(catalog, equivalent.tool)?.definition.function.parameters.required ?? [])
+      : []
     return toolExecutionFailed({
       title,
       code: 'unknown_tool',
-      message: `Tool is not available in this run: ${call.name}`,
+      message: equivalent
+        ? `Tool is not available in this run: ${call.name}. SideKick's equivalent is ${equivalent.tool}.`
+        : `Tool is not available in this run: ${call.name}`,
       recoveryAction: 'change_strategy',
-      recovery: 'Choose a tool from the current tool catalog.',
+      recovery: equivalent
+        ? `Call ${equivalent.tool}${equivalent.how ? ` ${equivalent.how}` : ''}, with its own arguments${required.length ? ` (required: ${required.join(', ')})` : ''}.`
+        : 'Choose a tool from the current tool catalog.',
       startedAt
     })
   }
@@ -504,14 +555,34 @@ export function validatePreparedAgentToolCall(
   })
 }
 
+function toolNames(catalog: AgentToolCatalogOptions): Set<string> {
+  return new Set(getAgentToolCatalog(catalog).map((entry) => entry.definition.function.name))
+}
+
 /** How this run creates a file, named with the editing tool the model actually has. */
 function newFileHint(catalog: AgentToolCatalogOptions): string {
-  const names = new Set(getAgentToolCatalog(catalog).map((entry) => entry.definition.function.name))
+  const names = toolNames(catalog)
   if (names.has('apply_patch')) return 'use apply_patch Add File'
   const write = ['Write', 'write'].find((name) => names.has(name))
   return write
     ? `use ${write} with the complete content`
     : 'ask the user, since this run cannot create files'
+}
+
+/**
+ * What a path outside the project means for the agent: the folder is not granted to this chat.
+ * The ways forward are the user's: a chat in that folder's project, which this chat can start
+ * and the user grants on the start card, or copying the files in. Never a way around the check.
+ */
+function outsideProjectRecovery(catalog: AgentToolCatalogOptions): string {
+  return (
+    "That folder is not granted to this chat: SideKick's file and command tools reach only this chat's project folder. " +
+    'If you meant a file in this project, use its path relative to the project root. ' +
+    'Do not try to reach the folder another way, such as a path with .., a link, the shell or another tool. ' +
+    (toolNames(catalog).has('start_session')
+      ? 'If the task needs it and the folder is a SideKick project, start a chat there with start_session and that project; the user grants it on the start card. Otherwise tell the user they can add the folder as a project in SideKick, or copy the files they want into this project.'
+      : 'If the task needs it, tell the user: they can add the folder as a project in SideKick and work on it in a chat there, or copy the files they want into this project.')
+  )
 }
 
 function executionError(
@@ -547,6 +618,17 @@ function executionError(
           : error.code === 'permission_denied'
             ? 'denied'
             : 'error',
+      startedAt
+    })
+  }
+  if (error instanceof OutsideProjectError) {
+    return toolExecutionFailed({
+      title,
+      code: 'workspace_scope',
+      message: error.message,
+      retryable: false,
+      recoveryAction: 'change_strategy',
+      recovery: outsideProjectRecovery(catalog),
       startedAt
     })
   }
