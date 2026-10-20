@@ -1,0 +1,295 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ProviderChatMessage, ProviderStreamChunk } from '../../shared/providerRuntime'
+import { validateProviderTranscript } from '../../shared/providerTranscript'
+import type { ProviderSettings } from '../../shared/settings'
+import { openApplicationDatabase } from '../bootstrap/database'
+import { streamProviderChat } from '../providers/providerRuntime'
+import type { AgentToolRuntime } from './agentToolRuntime'
+import { ConversationCompactionStore } from './conversationCompactionStore'
+import { ConversationGoalStore } from './conversationGoalStore'
+import {
+  ConversationRunPreparer,
+  historyCoveredByCompaction,
+  initialEstimationBias,
+  type MessageRow
+} from './conversationRunPreparer'
+
+vi.mock('../providers/providerRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../providers/providerRuntime')>()),
+  streamProviderChat: vi.fn()
+}))
+
+const SUMMARY = 'Summary: the early notes were read; nothing was decided.'
+const databases: ReturnType<typeof openApplicationDatabase>[] = []
+const folders: string[] = []
+afterEach(() => {
+  for (const db of databases.splice(0)) db.close()
+  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true })
+  vi.mocked(streamProviderChat).mockReset()
+})
+
+function summarizes(): void {
+  vi.mocked(streamProviderChat).mockImplementation(async (_request, emit) => {
+    emit({ message: { content: SUMMARY } } as ProviderStreamChunk)
+    emit({ done: true, done_reason: 'stop' })
+    return { ok: true }
+  })
+}
+
+/**
+ * A chat of twelve long turns and the request a run is answering, in a project whose AGENTS.md
+ * says `instructions` when given.
+ */
+function chat(instructions?: string): {
+  db: ReturnType<typeof openApplicationDatabase>
+  request: MessageRow
+} {
+  const db = openApplicationDatabase(':memory:')
+  databases.push(db)
+  db.prepare(
+    "INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('chat', 'Chat', 1, 1)"
+  ).run()
+  if (instructions) {
+    const folder = mkdtempSync(join(tmpdir(), 'sidekick-compaction-'))
+    folders.push(folder)
+    writeFileSync(join(folder, 'AGENTS.md'), instructions)
+    db.prepare(
+      `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+       VALUES ('project', 'Project', ?, 1, 1)`
+    ).run(folder)
+    db.prepare("UPDATE conversations SET project_id = 'project' WHERE id = 'chat'").run()
+  }
+  const add = db.prepare(
+    'INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)'
+  )
+  for (let index = 0; index < 12; index++) {
+    add.run(
+      `turn-${index}`,
+      'chat',
+      index % 2 ? 'agent' : 'user',
+      `TURN-${index} ${'notes on the fixture project '.repeat(300)}`,
+      1_000 + index
+    )
+  }
+  add.run('request', 'chat', 'user', 'REQUEST: carry on with the notes.', 2_000)
+  return { db, request: db.prepare("SELECT * FROM messages WHERE id = 'request'").get() as never }
+}
+
+async function prepare(db: ReturnType<typeof openApplicationDatabase>, runId: string) {
+  const preparer = new ConversationRunPreparer(
+    db,
+    {
+      createSession: async () => ({
+        catalog: () => ({ surface: 'conversation' as const, capabilities: [] }),
+        router: { execute: vi.fn() },
+        persistentSkillIds: () => []
+      })
+    } as unknown as AgentToolRuntime,
+    new ConversationGoalStore(db),
+    () => ({ autoCompactEnabled: true, autoCompactThreshold: 0.8 }) as ProviderSettings,
+    () => 'assets'
+  )
+  return preparer.prepare(
+    {
+      id: runId,
+      conversationId: 'chat',
+      assistantMessageId: `${runId}-reply`,
+      model: {
+        id: 'model',
+        name: 'model',
+        provider: 'lmstudio',
+        providerKind: 'openai-compatible',
+        contextLength: 32_768,
+        maxOutputTokens: 4_096,
+        supportsTools: true
+      }
+    },
+    async () => undefined
+  )
+}
+
+const contents = (messages: readonly ProviderChatMessage[]): string =>
+  messages.map((message) => message.content ?? '').join('\n')
+
+describe('a compaction during a conversation run', () => {
+  it('is saved as it completes, at the last row it summarized, and kept across a retry', async () => {
+    summarizes()
+    const { db, request } = chat()
+    const store = new ConversationCompactionStore(db)
+    const first = await prepare(db, 'first')
+    const manager = first.kernelInput.contextManager!
+    const messages = validateProviderTranscript(first.kernelInput.messages).messages
+    const result = await manager.compact(messages, [], new AbortController().signal)
+    expect(result.compacted).toBe(true)
+
+    // Saved before the run ends, with no finalization: a cancel or failure next keeps it.
+    const saved = store.latest('chat')
+    const kept = result.messages.filter((message) => /^TURN-\d+/.test(message.content ?? ''))
+    const firstKept = Number(/^TURN-(\d+)/.exec(kept[0].content!)![1])
+    expect(firstKept).toBeGreaterThan(0)
+    expect(saved).toMatchObject({
+      summary: SUMMARY,
+      strategy: 'model',
+      compactedThroughMessageId: `turn-${firstKept - 1}`,
+      compactedThroughTimestamp: 1_000 + firstKept - 1
+    })
+
+    // Retrying or editing the request leaves a summary of earlier turns in place.
+    store.invalidateAfterTimestamp('chat', request.timestamp)
+    store.invalidateFromTimestamp('chat', request.timestamp)
+    expect(store.latest('chat')?.id).toBe(saved?.id)
+
+    // The next run starts from the summary and still has the recent turns and the request.
+    const retry = await prepare(db, 'retry')
+    const sent = contents(retry.kernelInput.messages)
+    expect(sent).toContain(SUMMARY)
+    for (const message of kept) expect(sent).toContain(message.content)
+    expect(sent).toContain('REQUEST: carry on with the notes.')
+    expect(sent).not.toContain(`TURN-${firstKept - 1} `)
+    expect(retry.kernelInput.contextManager!.shouldCompact(retry.kernelInput.messages, [])).toBe(
+      false
+    )
+  })
+
+  it('keeps the project instructions word for word, without moving its anchor', async () => {
+    summarizes()
+    const { db } = chat('PROJECT-RULE: run the tests before shipping.')
+    const run = await prepare(db, 'with-rules')
+    const messages = validateProviderTranscript(run.kernelInput.messages).messages
+    expect(messages[1].content).toContain('PROJECT-RULE')
+
+    const result = await run.kernelInput.contextManager!.compact(
+      messages,
+      [],
+      new AbortController().signal
+    )
+
+    // Summarized with the history, the instructions were only a paraphrase for the rest of the run.
+    expect(result.messages[1]).toEqual(messages[1])
+    expect(result.messages[2].content).toContain(SUMMARY)
+    const kept = result.messages.filter((message) => /^TURN-\d+/.test(message.content ?? ''))
+    const firstKept = Number(/^TURN-(\d+)/.exec(kept[0].content!)![1])
+    expect(new ConversationCompactionStore(db).latest('chat')?.compactedThroughMessageId).toBe(
+      `turn-${firstKept - 1}`
+    )
+    const next = await prepare(db, 'after-rules')
+    expect(
+      next.kernelInput.messages.filter((message) => message.content?.includes('PROJECT-RULE'))
+    ).toHaveLength(1)
+  })
+
+  it('goes with the reply when it summarized the run’s own work', async () => {
+    summarizes()
+    const { db, request } = chat()
+    const store = new ConversationCompactionStore(db)
+    const run = await prepare(db, 'run')
+    // The run's own work pushes everything before it out of the recent tail.
+    const own: ProviderChatMessage[] = Array.from({ length: 6 }, (_, index) => ({
+      role: 'assistant',
+      content: `OWN-${index} ${'working through the fixture notes '.repeat(200)}`
+    }))
+    const messages = validateProviderTranscript([...run.kernelInput.messages, ...own]).messages
+    await run.kernelInput.contextManager!.compact(messages, [], new AbortController().signal)
+    const saved = store.latest('chat')
+    expect(saved?.compactedThroughMessageId).toBe('request')
+    expect(saved?.compactedThroughTimestamp).toBeGreaterThan(request.timestamp)
+
+    // Retrying the request discards the reply, and the summary of it.
+    store.invalidateAfterTimestamp('chat', request.timestamp)
+    expect(store.latest('chat')).toBeNull()
+  })
+
+  it('saves nothing when the run is stopped while the summary is written', async () => {
+    const controller = new AbortController()
+    vi.mocked(streamProviderChat).mockImplementation(async (_request, emit) => {
+      emit({ message: { content: 'Summary: half of' } } as ProviderStreamChunk)
+      controller.abort()
+      return { ok: false, error: 'aborted' }
+    })
+    const { db } = chat()
+    const run = await prepare(db, 'run')
+    const messages = validateProviderTranscript(run.kernelInput.messages).messages
+    await expect(
+      run.kernelInput.contextManager!.compact(messages, [], controller.signal)
+    ).rejects.toThrow()
+    expect(new ConversationCompactionStore(db).latest('chat')).toBeNull()
+  })
+})
+
+describe('initialEstimationBias', () => {
+  const rows = [
+    { id: 'old', role: 'agent' },
+    { id: 'ask', role: 'user' },
+    { id: 'latest', role: 'agent' }
+  ] as MessageRow[]
+  const usage = (entries: Record<string, object>) =>
+    new Map(Object.entries(entries)) as Parameters<typeof initialEstimationBias>[1]
+
+  it('counts what an earlier request held at the provider’s count, and the rest at the estimate', () => {
+    const recorded = usage({
+      old: { promptTokens: 50_000, completionTokens: 1, estimatedPromptTokens: 60_000, model: 'm' },
+      latest: {
+        promptTokens: 100_000,
+        completionTokens: 1,
+        estimatedPromptTokens: 130_000,
+        model: 'm'
+      }
+    })
+    // The next request holds the latest one and 5,000 estimated tokens more.
+    expect(initialEstimationBias(rows, recorded, 'm', 135_000)).toBe(-30_000)
+    // Smaller than it, part of it summarized since: the same share of its estimate.
+    expect(initialEstimationBias(rows, recorded, 'm', 65_000)).toBe(-15_000)
+  })
+
+  it('starts uncalibrated for another model, or when the run recorded no estimate', () => {
+    const recorded = usage({
+      latest: {
+        promptTokens: 100_000,
+        completionTokens: 1,
+        estimatedPromptTokens: 130_000,
+        model: 'm'
+      }
+    })
+    expect(initialEstimationBias(rows, recorded, 'other', 135_000)).toBe(0)
+    expect(
+      initialEstimationBias(
+        rows,
+        usage({ latest: { promptTokens: 100_000, completionTokens: 1 } }),
+        'm',
+        1
+      )
+    ).toBe(0)
+    expect(initialEstimationBias(rows, usage({}), 'm', 135_000)).toBe(0)
+  })
+})
+
+describe('historyCoveredByCompaction', () => {
+  const row = (id: string): MessageRow =>
+    ({ id, role: 'agent', content: id, timestamp: 1 }) as MessageRow
+  const user = (content: string): ProviderChatMessage => ({ role: 'user', content })
+  const reply = (content: string): ProviderChatMessage => ({ role: 'assistant', content })
+
+  it('counts a row only when every message it gave the model was summarized', () => {
+    const history = [
+      { row: row('a'), messages: [user('a')] },
+      { row: row('b'), messages: [reply('b1'), reply('b2'), reply('b3')] },
+      { row: row('c'), messages: [user('c')] }
+    ]
+    const summarized = [user('instructions'), user('a'), reply('b1'), reply('b2')]
+    expect(historyCoveredByCompaction(history, summarized)).toEqual({
+      rows: 1,
+      beyondHistory: false
+    })
+    expect(
+      historyCoveredByCompaction(history, [...summarized, reply('b3'), user('c'), reply('own')])
+    ).toEqual({ rows: 3, beyondHistory: true })
+    // A second compaction in the run starts after the rows the first one covered.
+    expect(historyCoveredByCompaction(history, [user('summary'), reply('b1')], 1)).toEqual({
+      rows: 1,
+      beyondHistory: false
+    })
+  })
+})

@@ -142,6 +142,10 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
   const durations: number[] = []
   let compactions = 0
   let fallbacks = 0
+  // Why each fallback summary was used; journals before 0.16.3 did not say.
+  const fallbackReasons = new Map<string, number>()
+  // SideKick's estimate over the provider's count for the same request.
+  const estimateRatios: number[] = []
   const overflows: string[] = []
   const busyRuns: string[] = []
   const retryStorms: string[] = []
@@ -244,6 +248,8 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       case 'usage.updated': {
         const prompt = Number(payload.promptTokens)
         if (Number.isFinite(prompt) && prompt > 0) {
+          const estimated = Number(payload.estimatedPromptTokens)
+          if (Number.isFinite(estimated) && estimated > 0) estimateRatios.push(estimated / prompt)
           if (awaitingAfter) {
             after.push(prompt / awaitingAfter.window)
             awaitingAfter = null
@@ -259,7 +265,12 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
         if (payload.compacted !== true) break
         compactions += 1
         runCompactions += 1
-        if (payload.strategy === 'deterministic') fallbacks += 1
+        if (payload.strategy === 'deterministic') {
+          fallbacks += 1
+          const reason =
+            typeof payload.fallbackReason === 'string' ? payload.fallbackReason : 'unrecorded'
+          fallbackReasons.set(reason, (fallbackReasons.get(reason) ?? 0) + 1)
+        }
         if (startedAt) durations.push((event.timestamp - startedAt) / 1000)
         startedAt = 0
         const window = Number(payload.contextLength)
@@ -328,7 +339,9 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       severity: fallbackShare > settings.maxFallbackShare ? 'flag' : 'info',
       summary: `${fallbacks} of ${compactions} compactions used the deterministic fallback summary (${percent(fallbackShare)}).`,
       count: fallbacks,
-      examples: []
+      examples: [...fallbackReasons.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .map(([reason, count]) => `${reason} × ${count}`)
     })
     add({
       check: 'compaction-time',
@@ -337,6 +350,15 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
         ? `Compactions took a median of ${Math.round(median(durations))} s, at most ${Math.round(Math.max(...durations))} s.`
         : 'No compaction durations were recorded.',
       count: durations.length,
+      examples: []
+    })
+  }
+  if (estimateRatios.length) {
+    add({
+      check: 'estimate-accuracy',
+      severity: 'info',
+      summary: `SideKick's estimate of a request was a median of ${percent(median(estimateRatios))} of the provider's own count (${percent(Math.min(...estimateRatios))}–${percent(Math.max(...estimateRatios))}).`,
+      count: estimateRatios.length,
       examples: []
     })
   }

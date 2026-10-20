@@ -70,6 +70,7 @@ const RETRY_LABELS: Record<string, string> = {
   output_limit_exceeded: 'Reply limit too long for this model; retrying with its maximum',
   truncated_tool_batch: 'Reply limit reached while writing tool calls; asking for smaller ones',
   runaway_tool_calls: 'Stopped a reply that repeated its tool calls; asking for one at a time',
+  stream_dropped: 'Lost the connection to the model server; asking again',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',

@@ -6,6 +6,7 @@ import {
   providerImageLimitError,
   providerInferenceFailure,
   providerOutputLimitError,
+  providerStreamDropped,
   redactProviderCredentials
 } from './providerErrors'
 
@@ -57,6 +58,34 @@ describe('providerConnectionFailureMessage', () => {
     expect(providerConnectionFailureMessage(new Error('Bad model'), 'http://x.test')).toBeNull()
     expect(providerConnectionFailureMessage('nope', 'http://x.test')).toBeNull()
     expect(providerConnectionFailureKind('HTTP 500')).toBeNull()
+  })
+})
+
+describe('providerStreamDropped', () => {
+  it('recognizes a closed connection and a stream that ended before the reply did', () => {
+    expect(
+      providerStreamDropped(
+        'Lost the connection to the model server at 127.0.0.1:4000 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
+      )
+    ).toBe(true)
+    expect(providerStreamDropped('Provider stream ended before completion')).toBe(true)
+    expect(providerStreamDropped('Ollama stream ended before its terminal event')).toBe(true)
+    expect(providerStreamDropped('Anthropic stream ended before its terminal event')).toBe(true)
+  })
+
+  it('leaves a server that cannot be reached, went silent, or refused the request alone', () => {
+    expect(
+      providerStreamDropped(
+        'Could not reach the model server at localhost:11434. Check that it is running. (ECONNREFUSED)'
+      )
+    ).toBe(false)
+    expect(
+      providerStreamDropped(
+        'The model server at 127.0.0.1:4000 went silent for 5 minutes in the middle of its reply, so SideKick stopped waiting. (UND_ERR_BODY_TIMEOUT)'
+      )
+    ).toBe(false)
+    expect(providerStreamDropped('HTTP 502')).toBe(false)
+    expect(providerStreamDropped(undefined)).toBe(false)
   })
 })
 

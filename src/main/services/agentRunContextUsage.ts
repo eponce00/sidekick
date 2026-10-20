@@ -3,6 +3,10 @@ import type Database from 'better-sqlite3'
 export interface AgentRunContextUsage {
   promptTokens: number
   completionTokens: number
+  /** SideKick's own estimate of the same request, when the run recorded it. */
+  estimatedPromptTokens?: number
+  /** The provider's model id the run used. */
+  model?: string
 }
 
 export interface AgentRunUsageEventRow {
@@ -10,6 +14,7 @@ export interface AgentRunUsageEventRow {
   type: string
   payload_json: string
   sequence: number
+  model?: string
 }
 
 function parsePayload(value: string): Record<string, unknown> {
@@ -45,10 +50,13 @@ export function contextUsageByOutputMessage(
     if (row.type === 'usage.updated') {
       const promptTokens = tokenCount(payload.promptTokens)
       const completionTokens = tokenCount(payload.completionTokens)
+      const estimatedPromptTokens = tokenCount(payload.estimatedPromptTokens)
       if (promptTokens !== null || completionTokens !== null) {
         state.usage = {
           promptTokens: promptTokens ?? 0,
-          completionTokens: completionTokens ?? 0
+          completionTokens: completionTokens ?? 0,
+          ...(estimatedPromptTokens ? { estimatedPromptTokens } : {}),
+          ...(row.model ? { model: row.model } : {})
         }
       }
     }
@@ -68,7 +76,7 @@ export function loadContextUsageByOutputMessage(
 ): Map<string, AgentRunContextUsage> {
   const rows = db
     .prepare(
-      `SELECT e.run_id, e.type, e.payload_json, e.sequence
+      `SELECT e.run_id, e.type, e.payload_json, e.sequence, r.model
        FROM agent_run_events e
        JOIN agent_runs r ON r.id = e.run_id
        WHERE r.thread_id = ? AND e.type IN ('run.started', 'usage.updated')

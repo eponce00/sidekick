@@ -3,6 +3,10 @@
 // can check what SideKick actually sent: the prompt, its size, and the reply limit it asked for.
 const { createServer } = require('node:http')
 
+// The model reports its prompt at four characters a token, as real tokenizers read English, so
+// SideKick can calibrate its own estimate against it.
+const CHARS_PER_TOKEN = 4
+
 function text(content) {
   if (typeof content === 'string') return content
   return Array.isArray(content) ? content.map((part) => part.text || '').join('') : ''
@@ -21,8 +25,9 @@ function promptCharacters(messages) {
 }
 
 /**
- * Streams an answer as server-sent events, in `chunks` pieces `delayMs` apart. Marks the request
- * `aborted` when the client hangs up before the answer is complete.
+ * Streams an answer as server-sent events, in `chunks` pieces `delayMs` apart, and then its usage.
+ * Marks the request `aborted` when the client hangs up before the answer is complete. With
+ * `drop`, the connection closes after `afterChunks` pieces, as a server that restarts does.
  */
 async function stream(response, answer, record, { chunks = 1, delayMs = 0 } = {}) {
   response.writeHead(200, { 'content-type': 'text/event-stream' })
@@ -31,6 +36,17 @@ async function stream(response, answer, record, { chunks = 1, delayMs = 0 } = {}
     if (!finished) record.aborted = true
   })
   const send = (body) => response.write(`data: ${JSON.stringify(body)}\n\n`)
+  if (answer.drop) {
+    const content = answer.content ?? ''
+    const size = Math.max(1, Math.ceil(content.length / Math.max(1, chunks)))
+    for (let piece = 0; piece < answer.drop.afterChunks; piece++) {
+      const delta = { content: content.slice(piece * size, (piece + 1) * size) }
+      send({ choices: [{ index: 0, delta, finish_reason: null }] })
+    }
+    await new Promise((done) => setTimeout(done, 50))
+    response.destroy()
+    return
+  }
   const toolCalls = answer.toolCalls ?? (answer.toolCall ? [answer.toolCall] : [])
   if (toolCalls.length) {
     // Each call in its own chunk, in order, as a model writes them; `rawArguments` sends the
@@ -78,6 +94,13 @@ async function stream(response, answer, record, { chunks = 1, delayMs = 0 } = {}
     }
     send({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
   }
+  if (!answer.usage) {
+    const completionTokens = Math.max(1, Math.ceil((answer.content ?? '').length / CHARS_PER_TOKEN))
+    send({
+      choices: [],
+      usage: { prompt_tokens: record.promptTokens, completion_tokens: completionTokens }
+    })
+  }
   finished = true
   response.end('data: [DONE]\n\n')
 }
@@ -87,8 +110,10 @@ async function stream(response, answer, record, { chunks = 1, delayMs = 0 } = {}
  * `{ toolCall: { name, arguments } }`, `{ toolCalls: [{ name, arguments | rawArguments }] }` with
  * an optional `finishReason` and `usage`, or any of them with a `stream` of `{ chunks, delayMs }`
  * to fragment the answer. `{ refuse: { status, body, contentType } }` answers with that status
- * instead, as a provider refusing the request or a gateway with nothing behind it does. A promise
- * holds the answer back until it settles.
+ * instead, as a provider refusing the request or a gateway with nothing behind it does, and
+ * `{ content, drop: { afterChunks } }` closes the connection partway through the content, with
+ * `stream.chunks` setting the pieces. Without `usage`, the answer reports the prompt at four
+ * characters a token. A promise holds the answer back until it settles.
  */
 async function startScriptedModel({ models, reply }) {
   const requests = []
@@ -110,6 +135,11 @@ async function startScriptedModel({ models, reply }) {
         messages: parsed.messages,
         maxTokens: parsed.max_tokens ?? parsed.max_completion_tokens,
         promptCharacters: promptCharacters(parsed.messages),
+        // What the model reports reading: the messages and the tool definitions.
+        promptTokens: Math.ceil(
+          (promptCharacters(parsed.messages) + JSON.stringify(parsed.tools ?? []).length) /
+            CHARS_PER_TOKEN
+        ),
         tools: (parsed.tools ?? []).map((tool) => tool.function?.name)
       }
       requests.push(record)

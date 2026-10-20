@@ -35,7 +35,8 @@ import { validateProviderTranscript } from '../../shared/providerTranscript'
 import {
   providerContextWindowError,
   providerImageLimitError,
-  providerOutputLimitError
+  providerOutputLimitError,
+  providerStreamDropped
 } from '../../shared/providerErrors'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import {
@@ -152,11 +153,12 @@ export interface AgentKernelContextManager {
   ): number | undefined
   /** Adopt a window the provider reported about itself. */
   applyContextLength?(contextLength: number, maxOutputTokens: number): void
+  /** Learns from the provider's real prompt count; returns the estimate it compared against. */
   observeUsage?(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
     promptTokens: number
-  ): void
+  ): number | undefined | void
   compact(
     messages: ProviderChatMessage[],
     tools: readonly unknown[],
@@ -191,6 +193,12 @@ export interface AgentKernelPlanController {
 
 /** Files named in one message that are read up front; more are left for the model to open. */
 const MAX_PRELOADED_READS = 4
+
+/**
+ * How long a turn whose stream broke off waits before it is asked again, once. A local model
+ * proxy that restarts or swaps models dropped four replies in an hour, and each failed its run.
+ */
+export const STREAM_DROP_RETRY_DELAY_MS = 3_000
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
@@ -1225,6 +1233,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     let outputLimitRetryAttempted = false
+    let streamDropRetryAttempted = false
     // A reply that ran away is stopped and the model told once; a second one ends the run.
     let runawayStopped = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1676,11 +1685,30 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
+          // Tools run only once their whole turn has arrived, so a stream that broke off ran none
+          // of this turn's calls, and earlier turns' results are already in the transcript. The
+          // partial turn is discarded and the same request asked again, once.
+          if (providerStreamDropped(providerError) && !streamDropRetryAttempted) {
+            streamDropRetryAttempted = true
+            this.append(input.id, 'run.retrying', {
+              reason: 'stream_dropped',
+              discardsPartialTurn: true,
+              delayMs: STREAM_DROP_RETRY_DELAY_MS,
+              error: providerError
+            })
+            await abortablePromise(
+              new Promise((resolve) => setTimeout(resolve, STREAM_DROP_RETRY_DELAY_MS)),
+              signal,
+              'Agent run cancelled'
+            )
+            continue
+          }
           throw new ProviderRequestError(providerError, sampled.result.status)
         }
         contextOverflowRetryAttempted = false
         imageLimitRetryAttempted = false
         outputLimitRetryAttempted = false
+        streamDropRetryAttempted = false
         const turn = {
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
@@ -1705,7 +1733,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               toolCallCount: turn.toolCalls.length
             }
           : undefined
-        activeContextManager?.observeUsage?.(
+        const estimatedPromptTokens = activeContextManager?.observeUsage?.(
           requestMessages,
           toolDefinitions,
           turn.usage.promptTokens
@@ -1815,7 +1843,11 @@ The user approved this exact plan revision. Act capabilities are now available a
           provisional,
           ...(verificationNote ? { verificationNote: true } : {})
         })
-        this.append(input.id, 'usage.updated', turn.usage)
+        // The estimate beside the real count lets the next run start calibrated.
+        this.append(input.id, 'usage.updated', {
+          ...turn.usage,
+          ...(typeof estimatedPromptTokens === 'number' ? { estimatedPromptTokens } : {})
+        })
         input.goalController?.onUsage?.(turn.usage)
 
         if (needsResearchSource) {
