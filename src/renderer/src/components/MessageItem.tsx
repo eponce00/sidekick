@@ -575,7 +575,8 @@ function ThinkingText({
   workspaceRoot?: string | null
   streaming: boolean
 }): React.JSX.Element {
-  const ref = useFollowBottom<HTMLDivElement>(streaming)
+  // The box shows a few lines; reaching its last one follows again.
+  const ref = useFollowBottom<HTMLDivElement>(streaming, 16)
   return (
     <div className="action-text" ref={ref}>
       <MessageMarkdown content={content} richMedia={false} workspaceRoot={workspaceRoot} />
