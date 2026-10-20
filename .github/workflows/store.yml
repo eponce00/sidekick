@@ -8,6 +8,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      submit:
+        description: Submit this build for certification, as a version tag does
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,9 +27,6 @@ jobs:
     if: vars.SIDEKICK_STORE_IDENTITY_NAME != ''
     runs-on: windows-latest
     timeout-minutes: 40
-    env:
-      # A version tag is submitted for certification once Partner Center API access is set up.
-      SUBMIT_TO_STORE: ${{ github.ref_type == 'tag' && secrets.PARTNER_CENTER_CLIENT_SECRET != '' && vars.SIDEKICK_STORE_PRODUCT_ID != '' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -88,11 +90,26 @@ jobs:
           path: dist/SideKick-*-windows-x64-store.appx
           if-no-files-found: error
           retention-days: 30
+      # A version tag, or a manual run that asks for it, is submitted for certification once
+      # Partner Center API access is set up. Secrets cannot appear in a condition, so a step
+      # reads them and reports whether to submit.
+      - name: Decide whether to submit to the Store
+        id: store
+        shell: pwsh
+        env:
+          CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          PRODUCT_ID: ${{ vars.SIDEKICK_STORE_PRODUCT_ID }}
+          REQUESTED: ${{ github.ref_type == 'tag' || inputs.submit == true }}
+        run: |
+          $access = [bool]$env:CLIENT_SECRET -and [bool]$env:PRODUCT_ID
+          $submit = $access -and $env:REQUESTED -eq 'true'
+          Write-Host "Partner Center API access: $access; submitting: $submit"
+          "submit=$($submit.ToString().ToLower())" >> $env:GITHUB_OUTPUT
       - name: Set up the Microsoft Store Developer CLI
-        if: env.SUBMIT_TO_STORE == 'true'
+        if: steps.store.outputs.submit == 'true'
         uses: microsoft/microsoft-store-apppublisher@v1.4
       - name: Submit the package for certification
-        if: env.SUBMIT_TO_STORE == 'true'
+        if: steps.store.outputs.submit == 'true'
         shell: pwsh
         env:
           TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
@@ -104,7 +121,16 @@ jobs:
           msstore reconfigure --tenantId $env:TENANT_ID --sellerId $env:SELLER_ID --clientId $env:CLIENT_ID --clientSecret $env:CLIENT_SECRET
           if ($LASTEXITCODE -ne 0) { throw 'Could not sign in to Partner Center.' }
           $package = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-store.appx')[0]
-          # Starts a submission from the last published one with the new package, and commits it.
-          msstore publish $PWD --inputFile $package.FullName --appId $env:PRODUCT_ID
+          # Starts a draft from the last published submission with the new package. A draft copies
+          # that submission's publishing options, and the first one was held for a manual Publish
+          # now, so the draft is set to publish as soon as it passes certification.
+          msstore publish $PWD --inputFile $package.FullName --appId $env:PRODUCT_ID --noCommit
           if ($LASTEXITCODE -ne 0) { throw 'The Store submission failed.' }
+          $submission = msstore submission get $env:PRODUCT_ID | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or -not $submission) { throw 'Could not read the Store draft.' }
+          $submission | Add-Member -NotePropertyName TargetPublishMode -NotePropertyValue 'Immediate' -Force
+          msstore submission update $env:PRODUCT_ID ($submission | ConvertTo-Json -Depth 100 -Compress)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not set the Store draft to publish when certified.' }
+          msstore submission publish $env:PRODUCT_ID
+          if ($LASTEXITCODE -ne 0) { throw 'Could not commit the Store submission.' }
           msstore submission status $env:PRODUCT_ID
