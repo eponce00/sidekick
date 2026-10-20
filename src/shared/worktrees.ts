@@ -124,16 +124,28 @@ export function worktreeBranchLabel(
   return shortBase ? `detached from ${shortBase}` : 'detached'
 }
 
-export function worktreeSlug(title: string): string {
-  const slug = title
+/** The longest slug in a worktree folder name, so the whole path stays short on Windows. */
+export const WORKTREE_SLUG_MAX_LENGTH = 20
+
+/**
+ * The readable part of a worktree folder name, from a worker's handle or a chat's title: lowercase
+ * letters, digits and single dashes, so it is a safe single path segment on every platform.
+ */
+export function worktreeSlug(label: string): string {
+  const slug = label
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
-  if (slug.length <= 32) return slug || 'chat'
-  // Cut at a word boundary so a branch never ends in half a word.
-  const cut = slug.slice(0, 33)
+  if (slug.length <= WORKTREE_SLUG_MAX_LENGTH) return slug || 'chat'
+  // Cut at a word boundary so the name never ends in half a word.
+  const cut = slug.slice(0, WORKTREE_SLUG_MAX_LENGTH + 1)
   const boundary = cut.lastIndexOf('-')
-  return (boundary > 8 ? cut.slice(0, boundary) : slug.slice(0, 32)).replace(/-$/, '')
+  return (boundary > 6 ? cut.slice(0, boundary) : slug.slice(0, WORKTREE_SLUG_MAX_LENGTH)).replace(
+    /-$/,
+    ''
+  )
 }
 
 export interface WorktreesAPI {
