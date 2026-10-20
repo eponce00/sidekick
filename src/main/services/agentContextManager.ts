@@ -11,6 +11,7 @@ import {
   getSummarizationPrompt
 } from '../../shared/compactionPrompt'
 import type { CompactionFallbackReason } from '../../shared/conversationCompactions'
+import { isProjectInstructionsMessage } from '../../shared/projectInstructions'
 import {
   providerConnectionFailureKind,
   providerContextWindowError
@@ -390,13 +391,18 @@ export class AgentContextManager implements AgentKernelContextManager {
       }
     }
     const system = messages.filter((message) => message.role === 'system')
-    const conversation = messages.filter((message) => message.role !== 'system')
+    // The project's instructions hold for the whole run and stay word for word. Summarized with
+    // the history, they were left as a paraphrase until the next run loaded them again.
+    const projectInstructions = messages.filter(isProjectInstructionsMessage)
+    const conversation = messages.filter(
+      (message) => message.role !== 'system' && !isProjectInstructionsMessage(message)
+    )
     const split = chooseSplit(conversation, this.options.contextLength)
     const compactedMessages = conversation.slice(0, split)
     const recent = conversation.slice(split)
     if (!compactedMessages.length) {
       return {
-        messages: [...system, ...recent],
+        messages: [...system, ...projectInstructions, ...recent],
         compacted: false,
         details: { reason: 'no_compactable_conversation' }
       }
@@ -479,7 +485,7 @@ export class AgentContextManager implements AgentKernelContextManager {
     }
     this.options.onCompacted?.(record)
     return {
-      messages: [...system, compactionMessage(summary), ...recent],
+      messages: [...system, ...projectInstructions, compactionMessage(summary), ...recent],
       compacted: true,
       details: {
         summary,

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderChatMessage, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
@@ -21,8 +24,10 @@ vi.mock('../providers/providerRuntime', async (importOriginal) => ({
 
 const SUMMARY = 'Summary: the early notes were read; nothing was decided.'
 const databases: ReturnType<typeof openApplicationDatabase>[] = []
+const folders: string[] = []
 afterEach(() => {
   for (const db of databases.splice(0)) db.close()
+  for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true })
   vi.mocked(streamProviderChat).mockReset()
 })
 
@@ -34,13 +39,29 @@ function summarizes(): void {
   })
 }
 
-/** A chat of twelve long turns and the request a run is answering. */
-function chat(): { db: ReturnType<typeof openApplicationDatabase>; request: MessageRow } {
+/**
+ * A chat of twelve long turns and the request a run is answering, in a project whose AGENTS.md
+ * says `instructions` when given.
+ */
+function chat(instructions?: string): {
+  db: ReturnType<typeof openApplicationDatabase>
+  request: MessageRow
+} {
   const db = openApplicationDatabase(':memory:')
   databases.push(db)
   db.prepare(
     "INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('chat', 'Chat', 1, 1)"
   ).run()
+  if (instructions) {
+    const folder = mkdtempSync(join(tmpdir(), 'sidekick-compaction-'))
+    folders.push(folder)
+    writeFileSync(join(folder, 'AGENTS.md'), instructions)
+    db.prepare(
+      `INSERT INTO projects (id, name, folder_path, created_at, updated_at)
+       VALUES ('project', 'Project', ?, 1, 1)`
+    ).run(folder)
+    db.prepare("UPDATE conversations SET project_id = 'project' WHERE id = 'chat'").run()
+  }
   const add = db.prepare(
     'INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)'
   )
@@ -131,6 +152,33 @@ describe('a compaction during a conversation run', () => {
     expect(retry.kernelInput.contextManager!.shouldCompact(retry.kernelInput.messages, [])).toBe(
       false
     )
+  })
+
+  it('keeps the project instructions word for word, without moving its anchor', async () => {
+    summarizes()
+    const { db } = chat('PROJECT-RULE: run the tests before shipping.')
+    const run = await prepare(db, 'with-rules')
+    const messages = validateProviderTranscript(run.kernelInput.messages).messages
+    expect(messages[1].content).toContain('PROJECT-RULE')
+
+    const result = await run.kernelInput.contextManager!.compact(
+      messages,
+      [],
+      new AbortController().signal
+    )
+
+    // Summarized with the history, the instructions were only a paraphrase for the rest of the run.
+    expect(result.messages[1]).toEqual(messages[1])
+    expect(result.messages[2].content).toContain(SUMMARY)
+    const kept = result.messages.filter((message) => /^TURN-\d+/.test(message.content ?? ''))
+    const firstKept = Number(/^TURN-(\d+)/.exec(kept[0].content!)![1])
+    expect(new ConversationCompactionStore(db).latest('chat')?.compactedThroughMessageId).toBe(
+      `turn-${firstKept - 1}`
+    )
+    const next = await prepare(db, 'after-rules')
+    expect(
+      next.kernelInput.messages.filter((message) => message.content?.includes('PROJECT-RULE'))
+    ).toHaveLength(1)
   })
 
   it('goes with the reply when it summarized the run’s own work', async () => {

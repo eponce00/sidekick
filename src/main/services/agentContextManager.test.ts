@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { formatCompactionContext } from '../../shared/compactionPrompt'
 import { estimateProviderRequestTokens } from '../../shared/contextBudget'
+import { formatProjectInstructionsMessage } from '../../shared/projectInstructions'
 import type {
   ProviderChatMessage,
   ProviderChatRequest,
@@ -447,6 +449,55 @@ describe('AgentContextManager', () => {
       expect(record?.fallbackReason).toBe(expected.fallbackReason)
     }
   )
+
+  it('keeps the project instructions word for word, and folds the earlier summary in', async () => {
+    const instructions = formatProjectInstructionsMessage({
+      content: 'PROJECT-RULE: run the tests before shipping.',
+      sources: ['AGENTS.md']
+    })
+    let request: ProviderChatRequest | undefined
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 2_048,
+      threshold: 0.8,
+      enabled: true,
+      complete: async (value) => {
+        request = value
+        return {
+          ok: true,
+          data: {
+            message: { role: 'assistant', content: 'NEW-SUMMARY of the run.' },
+            promptTokens: 1_000,
+            completionTokens: 5,
+            reasoningTokens: 0,
+            finishReason: 'stop'
+          }
+        }
+      }
+    })
+    const [system, ...rest] = transcript()
+    const messages: ProviderChatMessage[] = [
+      system,
+      { role: 'user', content: instructions },
+      { role: 'user', content: formatCompactionContext('OLD-SUMMARY of earlier work.') },
+      ...rest
+    ]
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+
+    // In the order the next run's preparer sends them: instructions, then the summary.
+    expect(result.messages.slice(0, 2)).toEqual([system, { role: 'user', content: instructions }])
+    expect(result.messages[2].content).toContain(
+      formatCompactionContext('NEW-SUMMARY of the run.').split('\n</historical_context>')[0]
+    )
+    expect(result.messages.filter((message) => message.content?.includes('SUMMARY'))).toHaveLength(
+      1
+    )
+    const sent = request!.messages[1].content!
+    expect(sent).not.toContain('PROJECT-RULE')
+    expect(sent).toContain('OLD-SUMMARY of earlier work.')
+  })
 
   it('records no fallback reason for a model summary', async () => {
     const manager = new AgentContextManager({
