@@ -1,16 +1,45 @@
 import { execFile } from 'child_process'
-import { mkdtemp, mkdir, rm, writeFile, readFile, access, chmod, symlink } from 'fs/promises'
+import {
+  mkdtemp,
+  mkdir,
+  rm,
+  writeFile,
+  readFile,
+  readdir,
+  access,
+  chmod,
+  symlink,
+  realpath,
+  unlink,
+  rmdir
+} from 'fs/promises'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, dirname, join, resolve, sep } from 'path'
 import { promisify } from 'util'
 import Database from 'better-sqlite3'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { ProjectStore } from './projectStore'
-import { ManagedWorktreeService } from './managedWorktreeService'
+import { ManagedWorktreeService, siblingWorktreesFolder } from './managedWorktreeService'
+import { WorkspaceOccupancy } from './workspaceOccupancy'
+import { isPathInside } from '../utils/paths'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 
+/** Hex suffixes the next worktree names use, in order, so tests can make names collide. */
+const names = vi.hoisted(() => ({ suffixes: [] as string[] }))
+vi.mock('crypto', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('crypto')>()
+  return {
+    ...actual,
+    randomBytes: (size: number) => {
+      const forced = names.suffixes.shift()
+      return forced ? Buffer.from(forced, 'hex') : actual.randomBytes(size)
+    }
+  }
+})
+
 const execFileAsync = promisify(execFile)
+const FOLDER_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{6}$/
 
 async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], { windowsHide: true })
@@ -56,6 +85,39 @@ async function giveLegacyBranch(
   db.prepare('UPDATE managed_worktrees SET branch = ? WHERE id = ?').run(branch, worktree.id)
 }
 
+/**
+ * A worktree where SideKick used to put every worktree: its storage, under the source project,
+ * with a long name.
+ */
+async function addLegacyWorktree(
+  db: Database.Database,
+  storage: string,
+  repository: string,
+  projectId: string
+): Promise<string> {
+  const worktreeRoot = join(storage, projectId, 'fix-the-cards-in-the-old-place-1234abcd')
+  await mkdir(join(storage, projectId), { recursive: true })
+  await git(repository, ['worktree', 'add', '--detach', worktreeRoot, 'HEAD'])
+  db.prepare(
+    `INSERT INTO managed_worktrees
+     (id, source_project_id, repository_root, worktree_root, folder_path, base_ref, created_at,
+      last_used_at)
+     VALUES ('legacy-worktree', ?, ?, ?, ?, ?, 1, 1)`
+  ).run(
+    projectId,
+    await realpath(repository),
+    worktreeRoot,
+    worktreeRoot,
+    await git(repository, ['rev-parse', 'HEAD'])
+  )
+  return worktreeRoot
+}
+
+/** Removes a link to a folder without touching the folder it leads to. */
+async function removeLink(path: string): Promise<void> {
+  await unlink(path).catch(() => rmdir(path))
+}
+
 async function commitFile(cwd: string, file: string, content: string): Promise<void> {
   await writeFile(join(cwd, file), content, 'utf8')
   await git(cwd, ['add', file])
@@ -66,13 +128,21 @@ describe('ManagedWorktreeService', () => {
   let db: Database.Database
   let root: string
   let storage: string
+  /** Where new worktrees of `root` go: the folder beside it. */
+  let sibling: string
 
   beforeEach(async () => {
+    names.suffixes.length = 0
     db = new Database(':memory:')
     applyDatabaseSchema(db)
     root = await mkdtemp(join(tmpdir(), 'sidekick-worktree-source-'))
     storage = await mkdtemp(join(tmpdir(), 'sidekick-worktree-storage-'))
     await git(root, ['init'])
+    // As the service spells it: Git's path for the repository, which may differ from the
+    // temporary folder's spelling (a short 8.3 name on Windows, a /private prefix on macOS).
+    sibling = siblingWorktreesFolder(
+      await realpath(resolve(await git(root, ['rev-parse', '--show-toplevel'])))
+    )!
     await git(root, ['config', 'user.email', 'sidekick@test.local'])
     await git(root, ['config', 'user.name', 'SideKick Test'])
     await writeFile(join(root, 'README.md'), 'source\n', 'utf8')
@@ -85,6 +155,7 @@ describe('ManagedWorktreeService', () => {
   afterEach(async () => {
     db.close()
     await rm(root, { recursive: true, force: true })
+    await rm(sibling, { recursive: true, force: true })
     await rm(storage, { recursive: true, force: true })
   })
 
@@ -94,7 +165,11 @@ describe('ManagedWorktreeService', () => {
     const service = new ManagedWorktreeService(db, storage)
     const project = await service.create(source.id, 'Fix cards')
 
-    expect(project.folderPath.startsWith(storage)).toBe(true)
+    // Beside the repository, with a short name, never inside the checkout or SideKick's storage.
+    expect(dirname(project.worktreeRoot)).toBe(sibling)
+    expect(basename(project.worktreeRoot)).toMatch(/^fix-cards-[0-9a-f]{6}$/)
+    expect(isPathInside(root, project.worktreeRoot)).toBe(false)
+    expect(isPathInside(storage, project.worktreeRoot)).toBe(false)
     // Detached: the base branch stays checked out in the project folder, where it already is.
     expect(await git(project.folderPath, ['branch', '--show-current'])).toBe('')
     expect(await git(project.folderPath, ['rev-parse', 'HEAD'])).toBe(
@@ -378,6 +453,273 @@ describe('ManagedWorktreeService', () => {
     expect(rows.find(({ id }) => id === child.id)).toMatchObject({
       sourceProjectId: source.id,
       baseRef: 'sidekick/parent'
+    })
+  })
+
+  describe('where worktrees go', () => {
+    it('names a worktree from a worker handle or a chat title, short and safe', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage)
+      addChat(db, 'worker', source.id, 'Write the end-to-end tests for the API contract')
+      db.prepare("UPDATE conversations SET session_handle = 'api-tests' WHERE id = 'worker'").run()
+      const { worktree } = await service.createForConversation({ conversationId: 'worker' })
+      expect(basename(worktree.worktreeRoot)).toMatch(/^api-tests-[0-9a-f]{6}$/)
+
+      for (const title of [
+        'Fix the login page redirect loop on Windows and macOS',
+        '../../escape',
+        'C:\\Windows\\System32',
+        '.git',
+        'CON',
+        '名前のないチャット'
+      ]) {
+        const created = await service.create(source.id, title)
+        const name = basename(created.worktreeRoot)
+        expect(name).toMatch(FOLDER_NAME)
+        expect(name.length).toBeLessThanOrEqual(27)
+        expect(dirname(created.worktreeRoot)).toBe(sibling)
+        // The whole path is the repository's plus at most 38 characters.
+        const repository = join(dirname(sibling), basename(sibling, '.worktrees'))
+        expect(created.worktreeRoot.length - repository.length).toBeLessThanOrEqual(38)
+      }
+    })
+
+    it('never takes a folder name already in use, whoever made it', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage)
+      await mkdir(join(sibling, 'fix-cards-cccccc'), { recursive: true })
+      await writeFile(join(sibling, 'fix-cards-cccccc', 'mine.txt'), 'mine', 'utf8')
+      names.suffixes.push('aaaaaa', 'aaaaaa', 'cccccc', 'bbbbbb')
+
+      const first = await service.create(source.id, 'Fix cards')
+      const second = await service.create(source.id, 'Fix cards')
+      expect(basename(first.worktreeRoot)).toBe('fix-cards-aaaaaa')
+      expect(basename(second.worktreeRoot)).toBe('fix-cards-bbbbbb')
+      expect(await readFile(join(sibling, 'fix-cards-cccccc', 'mine.txt'), 'utf8')).toBe('mine')
+    })
+
+    it("uses SideKick's storage when the place beside the repository is not a plain folder", async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      const elsewhere = await mkdtemp(join(tmpdir(), 'sidekick-worktree-elsewhere-'))
+      try {
+        const source = new ProjectStore(db).create(root, 'Example')
+        const service = new ManagedWorktreeService(db, storage)
+
+        await writeFile(sibling, 'not a folder', 'utf8')
+        const besideFile = await service.create(source.id, 'Fix cards')
+        expect(dirname(besideFile.worktreeRoot)).toBe(join(storage, source.id))
+        expect(basename(besideFile.worktreeRoot)).toMatch(/^fix-cards-[0-9a-f]{6}$/)
+        expect(await readFile(sibling, 'utf8')).toBe('not a folder')
+        expect(warn).toHaveBeenCalledWith(
+          expect.stringContaining("SideKick's storage"),
+          expect.any(String)
+        )
+
+        // A link could lead anywhere, so it is never followed.
+        await rm(sibling)
+        await symlink(elsewhere, sibling, 'junction')
+        const besideLink = await service.create(source.id, 'Fix cards')
+        expect(dirname(besideLink.worktreeRoot)).toBe(join(storage, source.id))
+        expect(await readdir(elsewhere)).toEqual([])
+
+        // Removal works there as before, and the link stays.
+        expect((await service.remove(besideLink.id)).removed).toBe(true)
+        await expect(access(besideLink.worktreeRoot)).rejects.toThrow()
+        await access(sibling)
+      } finally {
+        await removeLink(sibling).catch(() => undefined)
+        await rm(elsewhere, { recursive: true, force: true })
+        warn.mockRestore()
+      }
+    })
+
+    it('keeps worktrees of a repository inside another repository out of the outer one', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      try {
+        const inner = join(root, 'packages', 'inner')
+        await mkdir(inner, { recursive: true })
+        await git(inner, ['init'])
+        await commitFile(inner, 'inner.txt', 'inner\n')
+        const source = new ProjectStore(db).create(inner, 'Inner')
+        const worktree = await new ManagedWorktreeService(db, storage).create(source.id, 'Fix')
+        expect(dirname(worktree.worktreeRoot)).toBe(join(storage, source.id))
+        await expect(access(join(root, 'packages', 'inner.worktrees'))).rejects.toThrow()
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+      'uses storage when the folder holding the repository cannot be written',
+      async () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const parent = await mkdtemp(join(tmpdir(), 'sidekick-worktree-readonly-'))
+        try {
+          const repository = join(parent, 'repo')
+          await mkdir(repository)
+          await git(repository, ['init'])
+          await commitFile(repository, 'a.txt', 'a\n')
+          await chmod(parent, 0o555)
+          const source = new ProjectStore(db).create(repository, 'Read-only parent')
+          const worktree = await new ManagedWorktreeService(db, storage).create(source.id, 'Fix')
+          expect(dirname(worktree.worktreeRoot)).toBe(join(storage, source.id))
+        } finally {
+          await chmod(parent, 0o755)
+          await rm(parent, { recursive: true, force: true })
+          warn.mockRestore()
+        }
+      }
+    )
+
+    it('removes the folder beside the repository with its last worktree, and only then', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage)
+      const first = await service.create(source.id, 'First')
+      const second = await service.create(source.id, 'Second')
+
+      expect(await service.remove(first.id)).toEqual({ removed: true })
+      expect(await readdir(sibling)).toEqual([basename(second.worktreeRoot)])
+      expect(await service.remove(second.id)).toEqual({ removed: true })
+      await expect(access(sibling)).rejects.toThrow()
+      expect(await git(root, ['worktree', 'list', '--porcelain'])).not.toContain('.worktrees')
+
+      // Anything else in it keeps it.
+      const third = await service.create(source.id, 'Third')
+      await writeFile(join(sibling, 'notes.txt'), 'mine', 'utf8')
+      expect(await service.remove(third.id)).toEqual({ removed: true })
+      expect(await readdir(sibling)).toEqual(['notes.txt'])
+    })
+
+    it('brings a set-aside worktree back beside the repository, remaking the folder', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+      const older = await service.create(source.id, 'Older')
+      addWorktreeChat(db, 'older-chat', older)
+      await writeFile(join(older.folderPath, 'draft.txt'), 'draft', 'utf8')
+      const newer = await service.create(source.id, 'Newer')
+      await service.settled()
+      await expect(access(older.worktreeRoot)).rejects.toThrow()
+      expect(await service.remove(newer.id)).toEqual({ removed: true })
+      await expect(access(sibling)).rejects.toThrow()
+
+      await service.prepareConversation('older-chat')
+      expect(await readFile(join(older.worktreeRoot, 'draft.txt'), 'utf8')).toBe('draft')
+      expect(dirname(older.worktreeRoot)).toBe(sibling)
+    })
+
+    it('keeps a worktree made in the old place working there, through set-aside and removal', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+      const legacyRoot = await addLegacyWorktree(db, storage, root, source.id)
+      addChat(db, 'legacy-chat', source.id)
+      db.prepare(
+        "UPDATE conversations SET worktree_id = 'legacy-worktree' WHERE id = 'legacy-chat'"
+      ).run()
+      await writeFile(join(legacyRoot, 'draft.txt'), 'draft', 'utf8')
+      const [listed] = await service.list()
+      expect(listed).toMatchObject({ worktreeRoot: legacyRoot, status: { changedFiles: 1 } })
+
+      // A newer worktree goes beside the repository and sets the old one aside...
+      const newer = await service.create(source.id, 'Newer')
+      expect(dirname(newer.worktreeRoot)).toBe(sibling)
+      await service.settled()
+      await expect(access(legacyRoot)).rejects.toThrow()
+      // ...and its chat brings it back where it was, not beside the repository.
+      await service.prepareConversation('legacy-chat')
+      expect(await readFile(join(legacyRoot, 'draft.txt'), 'utf8')).toBe('draft')
+      await service.settled()
+
+      expect(await service.remove('legacy-worktree')).toEqual({ removed: true })
+      await expect(access(legacyRoot)).rejects.toThrow()
+      expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('source\n')
+    })
+
+    it('acts only on folders directly inside the places it makes worktrees', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage)
+      const outside = await mkdtemp(join(tmpdir(), 'sidekick-user-worktree-'))
+      try {
+        const userWorktree = join(outside, 'mine-123456')
+        const nested = join(sibling, 'deeper', 'mine-123456')
+        const hidden = join(sibling, '.hidden-123456')
+        await mkdir(join(sibling, 'deeper'), { recursive: true })
+        for (const path of [userWorktree, nested, hidden])
+          await git(root, ['worktree', 'add', '--detach', path, 'HEAD'])
+
+        const targets = [
+          root,
+          sibling,
+          userWorktree,
+          nested,
+          hidden,
+          // Unnormalized, so it leads back to the repository from inside the worktrees folder.
+          `${sibling}${sep}x-123456${sep}..${sep}..${sep}${basename(sibling, '.worktrees')}`
+        ]
+        for (const target of targets) {
+          const worktree = await service.create(source.id, 'Target')
+          db.prepare('UPDATE managed_worktrees SET worktree_root = ? WHERE id = ?').run(
+            target,
+            worktree.id
+          )
+          expect(await service.remove(worktree.id)).toMatchObject({ removed: false })
+        }
+        for (const path of [root, userWorktree, nested, hidden]) await access(path)
+        expect(await readFile(join(userWorktree, 'README.md'), 'utf8')).toBe('source\n')
+      } finally {
+        await rm(outside, { recursive: true, force: true })
+      }
+    })
+
+    it('never restores a set-aside worktree outside the places it makes worktrees', async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage, { maxOnDisk: 1 })
+      const older = await service.create(source.id, 'Older')
+      addWorktreeChat(db, 'older-chat', older)
+      await service.create(source.id, 'Newer')
+      await service.settled()
+      for (const escape of [
+        join(root, 'escape-123456'),
+        join(sibling, '..', 'escape-123456'),
+        join(sibling, '.escape-123456')
+      ]) {
+        db.prepare('UPDATE managed_worktrees SET worktree_root = ? WHERE id = ?').run(
+          escape,
+          older.id
+        )
+        await expect(service.prepareConversation('older-chat')).rejects.toThrow(
+          'outside the folders'
+        )
+        await expect(access(escape)).rejects.toThrow()
+      }
+    })
+
+    it("keeps a worker's worktree out of its manager's folder", async () => {
+      const source = new ProjectStore(db).create(root, 'Example')
+      const service = new ManagedWorktreeService(db, storage)
+      addChat(db, 'manager', source.id)
+      addChat(db, 'worker', source.id)
+      const { worktree } = await service.createForConversation({ conversationId: 'worker' })
+      expect(isPathInside(root, worktree.folderPath)).toBe(false)
+      expect(isPathInside(worktree.folderPath, root)).toBe(false)
+
+      // The manager writing in its folder does not hold the worker back from its own.
+      const occupancy = new WorkspaceOccupancy()
+      occupancy.claim({
+        runId: 'manager-run',
+        conversationId: 'manager',
+        title: 'Manager',
+        workspaceRoot: root
+      })
+      expect(() =>
+        occupancy.admit({
+          runId: 'worker-run',
+          conversationId: 'worker',
+          title: 'Worker',
+          workspaceRoot: worktree.folderPath
+        })
+      ).not.toThrow()
+      // Git in the project folder does not see it either.
+      expect(await git(root, ['status', '--porcelain', '--untracked-files=all'])).toBe('')
     })
   })
 })

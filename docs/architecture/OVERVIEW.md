@@ -507,8 +507,14 @@ such as agent-started chats), inventory with Git state and owners, setting the l
 worktrees aside beyond 15 on disk, restoring one before its chat's next run (the coordinator's
 `prepareWorkspace` hook), and removal. Setting aside snapshots HEAD and every unignored file into a
 commit held by `refs/sidekick/worktrees/<id>`, built in a private index so the worktree's own index
-is untouched. It acts only on folders it can prove it created: the exact storage shape under the
-private `worktrees` folder and registration in `git worktree list`. Removal deletes links inside the
+is untouched. New worktrees go in `<repository>.worktrees/<slug>-<6 hex>` beside the repository
+(`siblingWorktreesFolder`): outside the checkout, so the source folder's path containment, occupancy
+and `git status` never include them, and short on Windows. The folder is reserved with an exclusive
+`mkdir` before `git worktree add` fills it, so names never collide. When that place is unusable (a
+drive root, a parent inside another repository, a link, or no write access) the worktree goes in
+private storage, `worktrees/<source project id>/<name>`, where every older worktree also stays. It
+acts only on folders it can prove it created: a direct child of one of those two folders, which
+must not itself be a link, and registration in `git worktree list`. Removal deletes links inside the
 worktree as links before `git worktree remove --force`, so a junction to a shared install never
 loses its target.
 

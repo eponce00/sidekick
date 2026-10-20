@@ -4,9 +4,16 @@
 // SIDEKICK_CHAT_FAMILY_SCREENSHOT=<path> also saves the manager chat as the user sees it.
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
-const { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } = require('node:fs')
+const {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} = require('node:fs')
 const { tmpdir } = require('node:os')
-const { join, resolve, sep } = require('node:path')
+const { basename, dirname, join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
 const { startScriptedModel, text } = require('./scripted-model.cjs')
@@ -169,22 +176,34 @@ test(
         'The manager should start two workers'
       )
       assert.deepEqual(family.workers.map(({ handle }) => handle).sort(), ['alpha', 'beta'])
-      // Each worker moves into its own managed worktree before its first run.
-      await until(
+      // Each worker moves into its own managed worktree before its first run: a folder named after
+      // its handle, beside the project rather than deep in SideKick's data folder.
+      const worktrees = await until(
         () =>
           page.evaluate(async (id) => {
             const [current, worktrees] = await Promise.all([
               window.api.sessions.family(id),
               window.api.worktrees.list()
             ])
-            return current.workers.every(
+            const ready = current.workers.every(
               (worker) =>
                 worker.workIn === 'worktree' &&
-                worktrees.some(({ sourceProjectId }) => sourceProjectId === worker.projectId)
+                worktrees.some(({ owners }) =>
+                  owners.some((owner) => owner.id === worker.conversationId)
+                )
             )
+            return ready ? worktrees : null
           }, managerId),
         'Each worker should work in its own managed worktree'
       )
+      const beside = realpathSync.native(`${workspace}.worktrees`)
+      for (const handle of ['alpha', 'beta']) {
+        const worktree = worktrees.find(({ worktreeRoot }) =>
+          new RegExp(`^${handle}-[0-9a-f]{6}$`).test(basename(worktreeRoot))
+        )
+        assert.ok(worktree, `The ${handle} worker's worktree should be named after its handle`)
+        assert.equal(realpathSync.native(dirname(worktree.worktreeRoot)), beside)
+      }
 
       // Both reports reach the manager in one woken run, which then answers.
       const reports = await until(

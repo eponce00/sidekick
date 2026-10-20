@@ -1,8 +1,8 @@
-import { randomUUID } from 'crypto'
+import { randomBytes, randomUUID } from 'crypto'
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
-import { isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
 import type Database from 'better-sqlite3'
 import type { ProjectConversation } from '../../shared/projects'
@@ -26,6 +26,9 @@ const execFileAsync = promisify(execFile)
  */
 export const MAX_WORKTREES_ON_DISK = 15
 const LINK_WALK_ENTRY_LIMIT = 200_000
+/** Random bytes in a worktree folder name, shown as six hex characters as Claude Code does. */
+const NAME_SUFFIX_BYTES = 3
+const NAME_ATTEMPTS = 5
 /** Holds a set-aside worktree's snapshot, so Git keeps its commits and changes. */
 const SNAPSHOT_REF_PREFIX = 'refs/sidekick/worktrees/'
 const SNAPSHOT_IDENTITY = {
@@ -90,6 +93,73 @@ function samePath(left: string, right: string): boolean {
       : resolved
   }
   return normalize(left) === normalize(right)
+}
+
+/**
+ * The folder next to a repository that holds its worktrees, `<repository>.worktrees`: outside the
+ * checkout, so its tools, watchers and `git status` never see them, and close to it, so paths stay
+ * short. Null for a repository at a drive or filesystem root, which has no folder beside it.
+ */
+export function siblingWorktreesFolder(repositoryRoot: string): string | null {
+  const root = resolve(repositoryRoot)
+  const parent = dirname(root)
+  return samePath(parent, root) ? null : join(parent, `${basename(root)}.worktrees`)
+}
+
+/** A short folder name such as `fix-cards-3f9a1c`: a slug of the handle or title, then random hex. */
+export function worktreeFolderName(label: string): string {
+  return `${worktreeSlug(label)}-${randomBytes(NAME_SUFFIX_BYTES).toString('hex')}`
+}
+
+/**
+ * Makes an empty folder with a fresh name. Making it fails when the name is taken, so two
+ * worktrees never share one.
+ */
+async function reserveFolder(container: string, label: string): Promise<string> {
+  for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt++) {
+    const folder = join(container, worktreeFolderName(label))
+    try {
+      await fs.mkdir(folder)
+      return folder
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+  }
+  throw new Error('No free worktree folder name was found')
+}
+
+/**
+ * A folder's canonical path, only when it is a real folder and not a link that could lead
+ * anywhere: its parent resolved, its own name kept.
+ */
+async function realFolder(folder: string): Promise<string | null> {
+  try {
+    const entry = await fs.lstat(folder)
+    if (!entry.isDirectory() || entry.isSymbolicLink()) return null
+    return join(await fs.realpath(dirname(folder)), basename(folder))
+  } catch {
+    return null
+  }
+}
+
+/** Makes a folder whose parent exists, keeping one that is already there. */
+async function ensureFolder(folder: string): Promise<void> {
+  try {
+    await fs.mkdir(folder)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
+}
+
+/** Removes a plain folder that is empty. A link, or a folder with anything in it, stays. */
+async function removeIfEmpty(folder: string): Promise<void> {
+  if (await realFolder(folder)) await fs.rmdir(folder).catch(() => undefined)
+}
+
+/** Removes the folder next to a repository once its last worktree is gone. */
+async function removeEmptySibling(repositoryRoot: string, worktreeRoot: string): Promise<void> {
+  const sibling = siblingWorktreesFolder(repositoryRoot)
+  if (sibling && samePath(dirname(resolve(worktreeRoot)), sibling)) await removeIfEmpty(sibling)
 }
 
 /** A branch or commit given by the user, never an option Git could misread. */
@@ -234,36 +304,44 @@ export class ManagedWorktreeService {
   }
 
   /**
-   * Where a set-aside worktree's folder goes back: its recorded path, only when that is exactly
-   * where SideKick puts worktrees, inside its storage under the source project.
+   * The folders SideKick puts a worktree of this row's repository in: the one next to the
+   * repository, and its storage under the source project, where worktrees made before that and
+   * worktrees that could not go next to their repository live.
+   */
+  private containers(row: ManagedWorktreeRow): string[] {
+    const sibling = siblingWorktreesFolder(row.repository_root)
+    const storage = join(this.storageRoot, row.source_project_id)
+    return sibling ? [sibling, storage] : [storage]
+  }
+
+  /**
+   * Where a set-aside worktree's folder goes back: its recorded path, only when that is directly
+   * inside a folder where SideKick puts this repository's worktrees.
    */
   private async restorePath(row: ManagedWorktreeRow): Promise<string | null> {
-    const child = relative(resolve(this.storageRoot), resolve(row.worktree_root))
-    const parts = child.split(sep)
-    if (parts.length !== 2 || parts[0] !== row.source_project_id || parts[1].startsWith('.'))
-      return null
+    const recorded = resolve(row.worktree_root)
+    const name = basename(recorded)
+    const container = this.containers(row).find((folder) => samePath(folder, dirname(recorded)))
+    if (!container || !name || name.startsWith('.')) return null
     try {
-      const [storage, parent] = await Promise.all([
-        fs.realpath(this.storageRoot),
-        fs.realpath(join(this.storageRoot, row.source_project_id))
-      ])
-      return samePath(join(storage, row.source_project_id), parent) ? join(parent, parts[1]) : null
+      // The folder next to the repository went with its last worktree, so it may need making.
+      await ensureFolder(container)
     } catch {
       return null
     }
+    const parent = await realFolder(container)
+    return parent ? join(parent, name) : null
   }
 
   /** The worktree folder, only when it exists, is SideKick's, and Git still lists it. */
   private async managedTarget(row: ManagedWorktreeRow): Promise<string | null> {
     try {
-      const [storage, target] = await Promise.all([
-        fs.realpath(this.storageRoot),
-        fs.realpath(row.worktree_root)
-      ])
-      const child = relative(storage, target)
-      if (!child || child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) return null
-      const parts = child.split(sep)
-      if (parts.length !== 2 || parts[0] !== row.source_project_id) return null
+      const target = await fs.realpath(row.worktree_root)
+      const name = basename(target)
+      if (!name || name.startsWith('.')) return null
+      const parents = await Promise.all(this.containers(row).map(realFolder))
+      if (!parents.some((parent) => parent !== null && samePath(parent, dirname(target))))
+        return null
       const listed = (await git(row.repository_root, ['worktree', 'list', '--porcelain']))
         .split('\n')
         .filter((line) => line.startsWith('worktree '))
@@ -417,6 +495,7 @@ export class ManagedWorktreeService {
     }
     for (const link of await findLinks(target)) await unlinkWithoutFollowing(link)
     await git(row.repository_root, ['worktree', 'remove', '--force', target])
+    await removeEmptySibling(row.repository_root, target)
     this.db
       .prepare(
         `UPDATE managed_worktrees
@@ -452,7 +531,9 @@ export class ManagedWorktreeService {
     if (!row?.set_aside_at || !row.set_aside_head || !row.snapshot_commit) return
     const target = await this.restorePath(row)
     if (!target)
-      throw new Error('This worktree is outside SideKick storage, so it was not restored')
+      throw new Error(
+        'This worktree is outside the folders SideKick makes worktrees in, so it was not restored'
+      )
     if (
       await fs.stat(target).then(
         () => true,
@@ -519,11 +600,12 @@ export class ManagedWorktreeService {
    * Creates a SideKick worktree of a project, detached at its base as Codex and OpenCode do: the
    * base branch stays checked out where it already is, and the agent creates a branch when its
    * work needs one. `fromWorktreeId` starts it from another worktree's commit instead, as when a
-   * chat in a worktree forks into a new one.
+   * chat in a worktree forks into a new one. `label`, a worker's handle or a chat's title, names
+   * the folder.
    */
   async create(
     projectId: string,
-    conversationTitle: string,
+    label: string,
     options: { baseRef?: string; fromWorktreeId?: string | null } = {}
   ): Promise<ManagedWorktreeSummary> {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(projectId)) throw new Error('Invalid project identity')
@@ -576,25 +658,12 @@ export class ManagedWorktreeService {
     }
 
     const id = randomUUID()
-    const name = `${worktreeSlug(conversationTitle)}-${id.slice(0, 8)}`
-    const worktreeRoot = join(this.storageRoot, projectId, name)
+    const worktreeRoot = await this.reserveWorktreeFolder(repositoryRoot, projectId, label)
     const folderPath = sourceSubdirectory ? join(worktreeRoot, sourceSubdirectory) : worktreeRoot
-    await fs.mkdir(join(this.storageRoot, projectId), { recursive: true })
-    const [canonicalStorage, canonicalParent] = await Promise.all([
-      fs.realpath(this.storageRoot),
-      fs.realpath(join(this.storageRoot, projectId))
-    ])
-    const parentChild = relative(canonicalStorage, canonicalParent)
-    if (
-      !parentChild ||
-      parentChild === '..' ||
-      parentChild.startsWith(`..${sep}`) ||
-      isAbsolute(parentChild)
-    )
-      throw new Error('Managed worktree parent escapes storage')
     let created = false
 
     try {
+      // Git fills the reserved folder, which is empty.
       await git(repositoryRoot, ['worktree', 'add', '--detach', worktreeRoot, baseRef])
       created = true
       const now = Date.now()
@@ -617,9 +686,56 @@ export class ManagedWorktreeService {
         } catch {
           /* Preserve files and refs for manual recovery. */
         }
+      } else {
+        await fs.rmdir(worktreeRoot).catch(() => undefined)
       }
+      await removeEmptySibling(repositoryRoot, worktreeRoot)
       throw error
     }
+  }
+
+  /**
+   * Reserves an empty folder for a new worktree next to its repository. When SideKick cannot make
+   * one there (the repository is at a drive root, the folder beside it belongs to another
+   * repository, or it cannot be written), the worktree goes in SideKick's storage instead, where
+   * worktrees used to go.
+   */
+  private async reserveWorktreeFolder(
+    repositoryRoot: string,
+    projectId: string,
+    label: string
+  ): Promise<string> {
+    const sibling = siblingWorktreesFolder(repositoryRoot)
+    try {
+      if (!sibling) throw new Error('The repository is at the root of its drive')
+      // Inside another repository, the folder would show up there as untracked files.
+      if (await gitSucceeds(dirname(sibling), ['rev-parse', '--show-toplevel']))
+        throw new Error('The folder beside the repository belongs to another Git repository')
+      await ensureFolder(sibling)
+      if (!(await realFolder(sibling))) throw new Error(`${sibling} is not a plain folder`)
+      return await reserveFolder(sibling, label)
+    } catch (error) {
+      if (sibling) await removeIfEmpty(sibling)
+      console.warn(
+        "[Worktrees] This worktree goes in SideKick's storage, not beside its repository:",
+        error instanceof Error ? error.message : error
+      )
+    }
+    const parent = join(this.storageRoot, projectId)
+    await fs.mkdir(parent, { recursive: true })
+    const [canonicalStorage, canonicalParent] = await Promise.all([
+      fs.realpath(this.storageRoot),
+      fs.realpath(parent)
+    ])
+    const parentChild = relative(canonicalStorage, canonicalParent)
+    if (
+      !parentChild ||
+      parentChild === '..' ||
+      parentChild.startsWith(`..${sep}`) ||
+      isAbsolute(parentChild)
+    )
+      throw new Error('Managed worktree parent escapes storage')
+    return reserveFolder(parent, label)
   }
 
   /**
@@ -631,9 +747,13 @@ export class ManagedWorktreeService {
     input: CreateConversationWorktreeInput
   ): Promise<CreateConversationWorktreeResult> {
     const conversation = this.db
-      .prepare('SELECT id, title, project_id, worktree_id FROM conversations WHERE id = ?')
+      .prepare(
+        'SELECT id, title, session_handle, project_id, worktree_id FROM conversations WHERE id = ?'
+      )
       .get(input.conversationId) as
-      | Pick<ProjectConversation, 'id' | 'title' | 'project_id' | 'worktree_id'>
+      | (Pick<ProjectConversation, 'id' | 'title' | 'project_id' | 'worktree_id'> & {
+          session_handle: string | null
+        })
       | undefined
     if (!conversation) throw new Error('Conversation not found')
     if (!conversation.project_id) throw new Error('Only a chat in a project can use a worktree')
@@ -645,7 +765,9 @@ export class ManagedWorktreeService {
       this.db.prepare('SELECT 1 FROM agent_runs WHERE thread_id = ? LIMIT 1').get(conversation.id)
     if (hasHistory)
       throw new Error('This chat already has messages. Fork it into a new worktree instead.')
-    const worktree = await this.create(conversation.project_id, conversation.title, {
+    // A worker's handle is already short and names what it does.
+    const label = conversation.session_handle ?? conversation.title
+    const worktree = await this.create(conversation.project_id, label, {
       baseRef: input.baseRef
     })
     try {
@@ -743,6 +865,7 @@ export class ManagedWorktreeService {
         await git(row.repository_root, ['worktree', 'prune']).catch(() => undefined)
       }
     }
+    await removeEmptySibling(row.repository_root, row.worktree_root)
     await git(row.repository_root, ['update-ref', '-d', `${SNAPSHOT_REF_PREFIX}${row.id}`]).catch(
       () => undefined
     )
