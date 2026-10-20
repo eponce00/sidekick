@@ -66,6 +66,9 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 
 - Qualify the `sidekick` command on clean installs of every platform and close the other
   [configuration CLI](CONFIGURATION_CLI.md) gaps.
+- Let users store API keys and sign-ins that the agent uses by alias but never reads, with
+  per-entry scope, approvals, redaction of every output path, and an audit of each use. The design
+  and phases are in [Credentials](CREDENTIALS.md).
 
 ## Later work
 
@@ -74,5 +77,5 @@ The exact release contract is in [Releases](../development/RELEASES.md).
 - Android after the prerequisites in the [mobile roadmap](ANDROID.md) are satisfied.
 - iPhone and iPad through the installable-web-app path in the [iOS roadmap](IOS.md).
 
-SSH/SFTP management and a general-purpose secrets vault are intentionally out of scope until their
-trust, auditing, and recovery models can meet the desktop runtime's existing guarantees.
+SSH/SFTP management is intentionally out of scope until its trust, auditing, and recovery models
+can meet the desktop runtime's existing guarantees.

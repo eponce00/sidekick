@@ -1,0 +1,383 @@
+# Credentials the agent can use but not read
+
+Status: design proposal, not implemented. Nothing here describes current behavior.
+
+## Problem
+
+Users want to give the agent an API key or a sign-in for a task, such as a Microsoft Partner
+Center client secret for Store submissions, without pasting it into a chat where the model, the
+provider, the transcript and every later summary keep it. Today the only stored credentials are
+provider keys, MCP server environments and connector OAuth tokens, and the agent's own tools can
+use none of them.
+
+The goal: the user stores a value once under an alias, and the agent uses it by that alias in the
+places the user allowed. No tool, transcript, log or renderer API ever returns the value.
+
+## How other tools do it
+
+Checked October 2026 against official documentation, specifications and source.
+
+| Tool                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Mechanism                                                                                                                                                                                                                                                | Prevents                                                   | Leaks or caveats                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1Password CLI ([secret references](https://www.1password.dev/cli/secret-references/), [`op run`](https://www.1password.dev/cli/secrets-environment-variables/))                                                                                                                                                                                                                                                                                              | `op://vault/item/field` references resolved into one child process's environment; values printed to stdout or stderr are concealed.                                                                                                                      | Plaintext in configuration and Git.                        | The child holds plaintext and can transform it; 1Password warns that same-user processes can read another's environment. How masking matches is undocumented.                                                                                                                                                                                                                               |
+| 1Password for Claude and Secure Agentic Autofill ([support](https://support.1password.com/1password-claude/), [blog](https://1password.com/blog/closing-the-credential-risk-gap-for-browser-use-ai-agents))                                                                                                                                                                                                                                                  | The agent asks for a login; the user approves the item; 1Password fills the page outside the agent's view. The model learns only which login was used.                                                                                                   | The model ever seeing the password.                        | After sign-in the agent acts with the user's session.                                                                                                                                                                                                                                                                                                                                       |
+| GitHub Actions ([secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions), [runner](https://github.com/actions/runner/blob/main/src/Runner.Common/HostContext.cs))                                                                                                                                                                                                                           | Secrets reach steps as inputs or environment. The runner masks each value, each line of it, Base64 at three alignments, and JSON, URI, XML and shell escapes. Environments can require a reviewer; forks get none.                                       | Accidental echo in logs; secrets reaching untrusted forks. | "Automatic redaction is not guaranteed." Structured and derived values escape masking unless registered. Command-line arguments are visible in `ps`.                                                                                                                                                                                                                                        |
+| Bitwarden ([Secrets Manager CLI](https://bitwarden.com/help/secrets-manager-cli/), [URI matching](https://bitwarden.com/help/uri-match-detection/), [MCP server](https://github.com/bitwarden/mcp-server))                                                                                                                                                                                                                                                   | `bws run` injects project-scoped secrets as environment variables. Autofill matches base domain by default, with host and exact options; no autofill in untrusted iframes; warns on HTTP.                                                                | Over-broad access; filling on the wrong site.              | `bws run` "does not create a sandbox". "Starts with" and regex matching are called dangerous. Its MCP server returns passwords to the model.                                                                                                                                                                                                                                                |
+| Chromium and Firefox password managers ([filling rules](https://chromium.googlesource.com/chromium/src/+/main/components/password_manager/core/browser/password_form_filling.cc), [actor login](https://chromium.googlesource.com/chromium/src/+/main/components/password_manager/core/browser/actor_login/actor_login_service.h), [Firefox](https://github.com/mozilla-firefox/firefox/blob/main/toolkit/components/passwordmgr/LoginManagerChild.sys.mjs)) | Fill only a matching origin. Chrome waits for the user on related-domain matches, cross-origin frames, insecure pages and while its own agent acts; its agent login service lists credentials without passwords. Firefox also matches the form's action. | Wrong-origin fills; page script reading autofilled values. | The allowed site's script sees what is typed into it.                                                                                                                                                                                                                                                                                                                                       |
+| Egress substitution: Fly.io [tokenizer](https://github.com/superfly/tokenizer), [Vercel](https://vercel.com/docs/sandbox/concepts/firewall) and [Deno](https://docs.deno.com/sandbox/security/) sandboxes, Claude Code [on the web](https://code.claude.com/docs/en/cloud-environments), Codex credential masking                                                                                                                                            | The process holds a placeholder; a proxy adds the real value only to requests for hosts bound to it. Claude Code's network secrets set the header and are never viewable after saving.                                                                   | The process ever having the value.                         | A bound host that echoes content back (Fly.io's "echo oracle"). Vercel sends unmatched requests on without the credential instead of blocking; Codex falls back to unmasked credentials with a warning.                                                                                                                                                                                     |
+| Claude Code CLI, Codex CLI, OpenCode, Cline, Goose ([Claude Code permissions](https://code.claude.com/docs/en/permissions), [Codex](https://learn.chatgpt.com/docs/config-file/config-advanced), [OpenCode](https://opencode.ai/docs/permissions/))                                                                                                                                                                                                          | Environment variables, configuration substitution, keyring or plaintext files; read deny rules for `.env`. Claude Code's sandbox can mask a credential behind a placeholder for chosen hosts.                                                            | Casual reads of secret files.                              | Deny rules are bypassed by `grep -r` and scripts, as Claude Code documents and [OpenCode](https://github.com/anomalyco/opencode/issues/56545) shows. Secrets are kept verbatim in transcripts: Claude Code closed [secret scrubbing](https://github.com/anthropics/claude-code/issues/50014) as not planned, and [Goose's issue](https://github.com/aaif-goose/goose/issues/12413) is open. |
+| Cursor cloud agents ([security](https://cursor.com/docs/cloud-agent/security-network))                                                                                                                                                                                                                                                                                                                                                                       | Runtime secrets are environment variables replaced with `[REDACTED]` in tool results, transcripts and commits.                                                                                                                                           | Accidental echo.                                           | `od -c`, `base64` and `xxd` bypass it; Cursor calls this a known limitation of substring matching.                                                                                                                                                                                                                                                                                          |
+| Warp ([secret redaction](https://docs.warp.dev/support-and-community/privacy-and-security/secret-redaction/))                                                                                                                                                                                                                                                                                                                                                | Values fetched from a secret manager into the shell; optional regex redaction before text reaches an AI provider.                                                                                                                                        | Known key formats reaching the provider.                   | Anything in the shell reads the values; unknown formats are missed; redaction is off by default.                                                                                                                                                                                                                                                                                            |
+| MCP specification, 2026-07-28 ([authorization](https://modelcontextprotocol.io/specification/latest/basic/authorization), [elicitation](https://modelcontextprotocol.io/specification/latest/client/elicitation))                                                                                                                                                                                                                                            | OAuth 2.1 with audience-bound tokens and no token passthrough. A server must ask for secrets through URL elicitation, opened where neither the client nor the model can inspect what the user types.                                                     | Tokens reused across servers; confused deputies.           | Local servers take credentials from their environment, with no further protection.                                                                                                                                                                                                                                                                                                          |
+
+What SideKick takes from this:
+
+- Add the value where the agent cannot reach it, only for targets the user bound, and refuse a
+  request outside them (egress substitution). Claude Code fails closed; Codex falls back to
+  unmasked credentials, and Vercel sends unmatched requests on.
+- Let the user, not the model, decide where a value goes in a request (Claude Code's network
+  secrets, Vercel's header rules, Fly.io's sealed destinations), which closes the echo oracle.
+- Give the model a list without values and a way to ask SideKick to use one (Chromium's agent
+  login service, 1Password for Claude).
+- Match origins exactly, refuse cross-origin frames and insecure pages, and check the form's target
+  (Chrome, Firefox, Bitwarden, 1Password).
+- Redact with GitHub's set of encodings, but treat redaction as a second line (GitHub's own
+  caveat, Cursor's confirmed bypass), and scrub transcripts and logs, the gap Claude Code and Goose
+  left open.
+- Collect stored values only in SideKick's own Settings window, never through the chat or a page
+  the agent drives (MCP elicitation).
+- Ask a person by default and keep credentials away from untrusted contexts (1Password's
+  approvals, GitHub's required reviewers and fork rule).
+- Fail closed when protected storage is missing.
+
+## Design
+
+### Entries
+
+An entry is one of two kinds:
+
+| Kind    | Fields                             | Typical use                                |
+| ------- | ---------------------------------- | ------------------------------------------ |
+| Secret  | one hidden value                   | An API key, client secret or access token  |
+| Sign-in | username and password, both hidden | A website account, or Basic authentication |
+
+Every entry also has:
+
+- **Alias.** Lowercase letters, digits, `-` and `_`, up to 64 characters, unique. It is how the
+  agent and the audit name the entry, so it is never secret.
+- **Description.** Free text the agent can read, such as "Partner Center client secret for the
+  SideKick Store app; tenant and client IDs are in the release guide." Identifiers that are not
+  secret belong here, not in a field.
+- **Where it can be used** and **when to ask** (see [Scope and approval](#scope-and-approval)).
+- **Username visible to the agent**, off by default for sign-ins. When on, the agent can read the
+  username so it can say which account it used; the password stays hidden either way.
+- Created, last changed and last used times.
+
+A one-time-code (TOTP) field, where SideKick computes the current code at fill time and the seed
+never leaves the main process, is a later addition.
+
+### Storage
+
+- A main-process `CredentialVault` service owns entries. Each entry, values and scope together, is
+  one record encrypted with Electron `safeStorage`, so editing the store file cannot widen an
+  entry's scope or swap its value without the operating system's key. Writes are serialized as in
+  `ConnectorCredentialStore`.
+- Records live under a top-level store key of their own, like `connectorCredentials`, not inside
+  `settings`: a Settings save rebuilds `settings` from the renderer's copy and would drop an unknown
+  key, and the public settings projection would pass one to the renderer.
+- It fails closed: where `isSecureCredentialStorageAvailable()` is false (Linux without libsecret
+  or KWallet), Credentials is unavailable and says why; there is no plaintext fallback.
+- Values are decrypted only for one use and for the redaction set
+  ([Keeping values out of output](#keeping-values-out-of-output)), and never cached elsewhere.
+- The renderer gets a narrow preload API: list metadata, save (values optional, so an edit without
+  a new value keeps the old one), delete, and read the audit. There is no call that returns a value,
+  its length, a hash or its last characters. The development mock implements the same shape.
+- Nothing that reads configuration returns a value: not `settings_read`, not the `sidekick`
+  command, not support diagnostics.
+
+### Settings
+
+A new **Credentials** page in Settings, built from the existing `SettingsSection` and `SettingsRow`
+components and design tokens:
+
+- **List.** One row per entry: a key or person icon for the kind, the alias in monospace, the
+  description, a scope summary such as "api.partner.microsoft.com · commands ask every time", and
+  last use. Row actions are Edit and Delete. The empty state explains what Credentials are for.
+- **Editor.** Kind (Secret or Sign-in), alias, description labelled "The agent sees this", the
+  hidden fields, then where it can be used and when to ask. Value inputs are password fields with
+  spellcheck and autocomplete off. Editing shows "Stored. Type a new value to replace it." in place
+  of the old value; it is never shown again after saving, as in GitHub's secrets settings.
+- **Recent uses** for the entry, from the audit.
+- **Short values.** A value under 8 characters saves with a warning that it cannot be reliably kept
+  out of output.
+
+The agent never fills this form. Its `credentials_request` tool opens the editor with an alias,
+description and suggested host filled in, the way `provider_request_key` opens a provider's key
+field, and the agent learns only whether the user saved it.
+
+### Using a credential
+
+The agent names an alias in a typed argument of the few tools that accept one. It never writes a
+placeholder into free text for SideKick to expand: where the value goes inside a request is set by
+the user on the entry, not chosen by the model. A text template such as `{{secret:alias}}` was
+considered and rejected, because it lets the model put a value in a request body that an allowed
+host publishes back, such as a GitHub issue comment (Fly.io calls this an "echo oracle"), and
+because escaping a value correctly inside JSON, URLs and shell text is error-prone.
+
+| Tool                    | Argument                                     | What SideKick does                                                                                                                                                                                  |
+| ----------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http_request` (new)    | `credential: "partner-center"`               | Adds the value where the entry says (a header with an optional prefix, Basic authentication for a sign-in, a form or JSON body field, or a query parameter), only for the entry's hosts over HTTPS. |
+| `shell`                 | `secrets: { "PC_SECRET": "partner-center" }` | Puts the value in that environment variable of the command. The command text, the process list and the stored command never contain it.                                                             |
+| `browser_sign_in` (new) | `credential: "github-login"`                 | Fills the sign-in's username and password on the current page if its origin matches; see [Browser sign-in](#browser-sign-in).                                                                       |
+| MCP tools (later)       | Server environments and named arguments      | Lets a server's environment point at an entry instead of holding its own copy.                                                                                                                      |
+
+Every other tool, including file writes, messages to other chats, questions to the user, artifacts
+and settings changes, has no way to name a credential. The value never enters a tool's arguments:
+the handler asks the vault for it at the moment it sends the request or starts the process, and the
+vault checks scope again. Arguments, and everything built from them (the run ledger, live previews,
+approval cards, chat grants and the tool's title, which is recomputed from the arguments after
+authorization), therefore hold only the alias.
+
+The model sees `credentials_list`, which returns each entry's alias, kind, description, scope and
+approval setting, and the username where the entry allows it. This mirrors Chromium's agent login
+service, whose credential list carries username and origin but has no password field. A short
+static line in the system prompt says credentials exist, so the prompt and tool list do not change
+as entries change.
+
+**`http_request`.** `web_fetch` reads pages and takes only a URL, so calling an API needs a new tool
+with method, URL, headers, body and a timeout. It is admitted through `webNetworkGuard` like
+`web_fetch`. A request naming a credential does not follow a redirect to another host: the redirect
+response is returned instead, and a host outside scope is refused rather than sent without the
+credential. The model may not set the header, body field or parameter the entry uses itself. The
+response is bounded and passes through redaction.
+
+**Derived tokens.** A token exchange, such as an OAuth client-credentials request to
+`login.microsoftonline.com`, returns a new bearer token the redactor does not know. GitHub's
+documentation warns about exactly this: a value derived from a secret must be registered as a
+secret too. In the response to a request that used a credential, string fields named like
+`access_token`, `refresh_token` or `id_token` are replaced by run-scoped aliases such as
+`partner-center~1`. They are sent as `Authorization: Bearer` only to the hosts the entry lists for
+returned tokens, and expire with the run. A dedicated OAuth client-credentials kind, where SideKick
+performs the exchange itself as Fly.io's tokenizer does, is a later option.
+
+**Commands.** A command that receives a value can reveal it, so the agent can in effect read any
+value it passes to a command. Settings says so on the entry, and commands ask every time by default.
+The variable is added after `shellChildEnvironment` removes secret-looking names inherited from
+SideKick's own environment, and reaches every process the command starts. Variable names that
+change what runs (`PATH`, `NODE_OPTIONS`, `LD_*`, `DYLD_*`, `PSModulePath`, `ComSpec` and similar)
+are refused. In the Docker shell, which has no network, the variable is passed by name, so the
+value never appears on the `docker` command line. Background commands keep it for their lifetime.
+`send_command_input` accepts no credentials; a program prompting for a password is answered by the
+user.
+
+### Scope and approval
+
+Each entry says where it can be used. A use outside that scope is refused without a prompt, and the
+agent is told the user can widen it in Settings. Only the Settings page changes scope: no agent tool,
+approval card or command-line call can.
+
+| Scope           | Choices                                                                                                                                 | Default                                      |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| Web requests    | Exact hosts (port included), HTTPS only; how the value is sent; hosts that may receive tokens it returns                                | None                                         |
+| Browser sign-in | Exact origins                                                                                                                           | None                                         |
+| Commands        | Off, ask every time, or allowed programs (`gh`, `az`, `msstore`): a single simple command, no chaining, pipes, redirection or subshells | Off for sign-ins, ask every time for secrets |
+| Projects        | All, or selected projects                                                                                                               | All                                          |
+| Background runs | Whether schedules and worker chats may use it                                                                                           | Off                                          |
+
+Hosts and origins match exactly. Bitwarden's documentation calls its looser "starts with" and
+regular-expression matching dangerous, and Chrome and Firefox will not fill automatically on a
+merely related domain; a wildcard such as `*.example.com` is allowed only when typed explicitly.
+
+Shells and interpreters (`sh`, `bash`, `pwsh`, `powershell`, `cmd`, `node`, `python` and similar)
+cannot be allowed programs, because they run anything. General network tools such as `curl` can be,
+with a warning that they send anywhere.
+
+**When to ask:** every use, first use in each chat (default for web and browser), or never within
+scope. Commands default to every use. `authorizeTool` makes this decision for any call that names a
+credential, before the permission mode and even for network tools, which skip authorization today,
+so it applies in Full access as `approval: 'always'` does. The card uses the existing handler
+`preview` to name the alias, the tool and the exact target (host, origin, or the full command with
+variable names), never a value. **Allow for this chat** is keyed on the entry and the target, not on
+the call's whole arguments, and covers only those.
+
+### Keeping values out of output
+
+One redactor in the main process knows every stored value, not only the ones a run used, so a token
+the agent finds in a file is hidden too. It also matches common encodings of each value:
+
+- each line of a multi-line value on its own, since output arrives line by line;
+- JSON string escaping, percent-encoding (both `%20` and `+` forms), HTML and XML entities, and
+  Bash and PowerShell quoting;
+- Base64, standard and URL-safe, with and without padding, at all three byte alignments, so a value
+  is caught inside a longer Base64 string such as a Basic `Authorization` header;
+- Base64 of the UTF-16LE form, which PowerShell's `-EncodedCommand` uses;
+- hexadecimal in either case.
+
+This follows the GitHub Actions runner, which registers the same kinds of encodings for every
+secret. GitHub also says plainly that automatic redaction is not guaranteed, and so does this
+design: redaction is the second line, behind scope.
+
+A match is replaced with `[secret: alias]`. Matching uses one multi-pattern automaton. A streaming
+redactor holds back only the trailing bytes that could still be the start of a match, so ordinary
+output is not delayed and a value split across chunks is still caught. A value replaced or deleted
+during this app session stays in the redaction set until restart.
+
+Several tools write output during execution, before any central point sees it, so the redactor
+runs at the source of each stream, then once more for every result, then on every model request:
+
+1. **Command output**, as each chunk leaves `commandRunner`, before it reaches the command log
+   file under `command-outputs`, the terminal store and its `terminal:event` stream, the run
+   ledger's `tool.output.delta` events, background-task records, verification summaries and the
+   screen the model reads. Today all of these hold raw output.
+2. **Retained output**, in `ToolOutputStore.apply`, before the full text is written to
+   `tool-outputs`.
+3. **Browser observations**: semantic snapshot, tab titles and URLs, console messages, network
+   entries and `browser_evaluate` values.
+4. **`http_request` and `web_fetch` responses**, before a page digest is saved.
+5. **Every tool result**, in `AgentToolRegistry.execute` after `normalizeToolExecutionResult`,
+   covering the title, model content, data and errors (HTTP client errors can carry request
+   headers), before `tool.completed` is written. This also covers MCP results, which are not
+   bounded by the output store.
+6. **Files copied between chats** by `import_attachment`, which stores whole file contents.
+7. **Every outgoing model request**, in `materializeProviderRequestMedia`, which catches anything
+   the earlier points missed, including a value the user pasted into a message, compaction summaries
+   and worker reports.
+
+Screenshots cannot be scrubbed, which is why the browser rules below keep values out of them.
+
+### Browser sign-in
+
+A browser password manager fills only on the site a password belongs to. Chromium's own agent
+support goes further: while its agent is acting, Chrome stops filling automatically, and the agent
+must ask its login service to sign in with a credential it picked from a list that has no password.
+SideKick follows that contract with `browser_sign_in`:
+
+- The agent names a sign-in, and optionally the username and password fields by element reference.
+  Without references SideKick finds the form itself, as a password manager does, including a
+  username-only first step.
+- The value is inserted only when the field's own frame origin and the top-level page origin both
+  match one of the entry's origins over HTTPS, with no cross-origin frame in between (Chrome,
+  Firefox and 1Password all refuse cross-origin frames). The check runs at insertion time, inside
+  the existing text-entry check that already refuses a focus or navigation change before a value is
+  inserted, and the attempt stops if the page navigates while filling.
+- A form that submits to an origin outside the entry's scope is refused, as Firefox matches a
+  login's form action.
+- The password goes only into `<input type="password">`, which Chromium paints as dots in
+  screenshots. One sign-in runs per tab at a time. Like `browser_fill_form`, it returns one
+  redacted semantic observation and no screenshot.
+- After a fill the document is marked as holding a secret until it navigates away. While marked,
+  `browser_evaluate` is refused, because its regular-expression filter does not stop page script
+  from reading the field or calling `fetch`, and a screenshot or observation is refused if the
+  password field is no longer a password field, for example after the page's "show password"
+  button is pressed.
+- `browser_type` and `browser_fill_form` cannot use credentials.
+- Usernames may appear in screenshots; redaction covers only text.
+- The existing **Take control** card stays the alternative for a site the user would rather sign in
+  to themselves.
+
+### Audit
+
+Every use is recorded: entry, alias, tool, target (host, origin, or command with variable names),
+conversation, run, tool call, decision (allowed by scope, approved, denied, or refused as out of
+scope) and time. Never the value, its length or a hash. Creating, replacing a value, changing scope
+and deleting are recorded too. Settings shows each entry's recent uses, and the permission audit
+includes credential decisions.
+
+### Backup, moving and deleting
+
+- `safeStorage` binds values to this operating-system account. A profile copied to another
+  computer shows its entries as **Needs a new value** rather than failing.
+- Export writes aliases, kinds, descriptions, scope and approval settings only, and import recreates
+  entries without values, as with GitHub secrets: values are write-only.
+- Delete takes an exact broker grant like other destructive Settings actions, removes the record,
+  and stops further use at once, including in running chats. The audit keeps the alias and
+  marks it deleted.
+
+## Threats and limits
+
+Redaction keeps a value out of what the model reads; it does not stop a process that holds the
+value from sending it somewhere. Once a value is in a command's environment, that command and
+everything it starts can write it to a file, transform it, or send it anywhere, and no output filter
+can prove otherwise. The real boundary is therefore which tool and target receive the value, which
+is why commands ask every time by default and why scope can only be widened in Settings.
+
+| Threat                                                                          | Mitigation                                                                                                                                         | What remains                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `echo $KEY`, `printenv`, `env`                                                  | Every output path is redacted, raw and encoded.                                                                                                    | None for these forms.                                                                                                                                                                                                                           |
+| Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | Commands that receive a value ask every time by default; the card shows the full command.                                                          | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
+| Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                           | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
+| Sending it to an unrelated host with `http_request`                             | Host scope, HTTPS only, no redirect to another host.                                                                                               | A host in scope that relays requests elsewhere.                                                                                                                                                                                                 |
+| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                             | Nothing for `http_request`; a command holding the value can still do it.                                                                                                                                                                        |
+| Sending it to an unrelated host from a command                                  | Commands off or ask every time by default; allowed programs exclude shells and interpreters and refuse chaining, pipes, redirection and subshells. | An allowed program that can itself send anywhere, such as `curl`.                                                                                                                                                                               |
+| Prompt injection asking the agent to use a credential somewhere                 | Out-of-scope uses are refused without a prompt; scope changes only in Settings; the card shows the exact target.                                   | A user approving a command they did not read.                                                                                                                                                                                                   |
+| Filling a password on the wrong site                                            | Frame and top-level origin match at insertion time, HTTPS, form target check.                                                                      | Script on the allowed site can read its own password field, as with any password manager.                                                                                                                                                       |
+| Revealing a filled password on screen                                           | Password fields only; screenshots refused once the field stops being a password field; `browser_evaluate` refused.                                 | Usernames appear in screenshots.                                                                                                                                                                                                                |
+| Misusing a signed-in session                                                    | The sign-in itself asks per the entry's setting; the session stays in that chat's browser.                                                         | Once signed in, the agent can act as the user on that site, as with any agent given a login. Use an account limited to what the task needs.                                                                                                     |
+| Reading SideKick's own store and decrypting it                                  | Records are encrypted; a decrypted value printed as-is is redacted; the Docker shell cannot reach the profile.                                     | On Windows (DPAPI) and Linux (Secret Service) a command running on this computer as the user can decrypt `safeStorage` data, as it can provider keys today, and checking command text cannot reliably stop it. macOS asks through the Keychain. |
+| A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                       | None.                                                                                                                                                                                                                                           |
+| A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                          | It can see what the user types while saving a value.                                                                                                                                                                                            |
+| The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                           | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
+| Short or common values                                                          | Warning under 8 characters.                                                                                                                        | Short values may be missed or cause harmless over-redaction.                                                                                                                                                                                    |
+| Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                      | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
+
+## Tests
+
+Fixtures generate random values at run time; no test, fixture, document or log contains a real
+credential. Each boundary gets adversarial tests:
+
+- **Storage.** No preload call or IPC response contains a stored value (asserted by scanning every
+  response); the store file holds no plaintext; an unavailable backend refuses to save; a tampered
+  record is refused.
+- **Credential arguments.** Only the declared arguments of `http_request`, `shell` and
+  `browser_sign_in` accept an alias, checked by iterating the whole catalog; unknown aliases and
+  `~` aliases from another run are refused; the model cannot set the header, field or parameter an
+  entry uses itself.
+- **Persistence.** The run ledger, approval card, renderer events and transcripts hold
+  the alias, never the value.
+- **Scope.** Hosts: exact and wildcard, case, trailing dot, punycode, userinfo tricks
+  (`https://allowed.example@evil.example`), port and scheme changes, cross-host redirects, and
+  names resolving to private addresses. Commands: chaining and substitution in Bash and PowerShell
+  (`;`, `&&`, `|`, `$()`, backticks, `&`, `iex`), refused variable names, shells as allowed
+  programs. Browser: iframe origin differing from the top frame, navigation between resolving and
+  inserting, form targets.
+- **Approval.** Full access still asks per the entry's setting; a chat grant does not cover another
+  host or command; schedules and worker chats are refused unless allowed; out-of-scope uses never
+  prompt.
+- **Redaction.** Every encoding; a value split across chunks at every offset; overlapping values;
+  values inside ANSI sequences and across UTF-8 boundaries; the retained output store; compaction
+  summaries; HTTP client errors; a value planted in a user message and in a worker reply caught at
+  the provider boundary.
+- **Browser.** A real-Electron smoke on a local fixture page: fill on the right origin succeeds;
+  wrong origin, cross-origin iframe, text field and "show password" followed by a screenshot are
+  refused; `browser_evaluate` is refused after a fill; a page that logs the value has it redacted.
+- **Deletion.** A deleted entry stops working mid-run; a replaced value is still redacted until
+  restart; the audit keeps the alias.
+
+## Phases
+
+Each phase is one pull request with its tests and, when it ships, user documentation.
+
+1. **Vault and redaction.** Storage, the Settings page, `credentials_list`, `credentials_request`,
+   the audit, and redaction at every output path including the provider boundary. Useful alone: a
+   stored token that turns up in a file or command output is hidden from the model.
+2. **API calls.** `http_request` with host scope, approvals and derived tokens.
+3. **Commands.** The `shell` `secrets` argument, command scope and allowed programs.
+4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.
+5. **Later.** MCP server environments and arguments from entries, one-time codes, an OAuth
+   client-credentials kind, and answering a waiting command prompt with a credential the user
+   picks.
+
+## Open decisions
+
+To be settled before the first phase:
+
+1. **When to ask by default.** Proposed: first use of an entry in each chat for web requests and
+   browser sign-in, every use for commands. Alternatives: every use everywhere, or no prompt within
+   scope once the user has set it.
+2. **Order of tools.** Proposed: vault and redaction, then `http_request`, then commands, which
+   covers API keys such as the Partner Center secret first, and browser sign-in after. Alternative:
+   browser sign-in second.
+3. **A use outside scope.** Proposed: refused, with scope widened only in Settings. Alternative: a
+   trusted dialog offering to add that host or origin to the entry.
+4. **Export.** Proposed: settings only, values re-entered on a new computer. Alternative: also a
+   passphrase-encrypted export of values, made only from Settings.
