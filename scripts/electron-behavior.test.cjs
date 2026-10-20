@@ -23,6 +23,8 @@ const MODEL_REF = `lmstudio:${PROVIDER}/${MODEL}`
 const WINDOW = 131_072
 const REPLY_LIMIT = 100_000
 const TRIGGER_SHARE = 95_683 / WINDOW
+// The most one reply may hold on a hosted model that refuses more without listing its cap.
+const HOSTED_REPLY_CAP = 16_384
 // Real tokenizers read English at about four characters a token.
 const CHARS_PER_TOKEN = 4
 const FILLER = 'Notes on the fixture project. '
@@ -66,9 +68,20 @@ const isWorker = (messages) =>
       message.role === 'system' && text(message.content).includes('started by another chat')
   )
 
-function reply(messages) {
+function reply(messages, request) {
   const all = messages.map((message) => text(message.content)).join('\n')
   if (isCompaction(messages)) return { content: 'Summary: fixture notes, nothing decided yet.' }
+  if (all.includes('REFUSAL-FIXTURE')) {
+    // Groq's own words when a reply limit is above its cap.
+    const message = `\`max_tokens\` must be less than or equal to \`${HOSTED_REPLY_CAP}\`, the maximum value for \`max_tokens\` is less than the \`context_window\` for this model`
+    return request.maxTokens > HOSTED_REPLY_CAP
+      ? { refuse: { status: 400, body: JSON.stringify({ error: { message } }) } }
+      : { content: 'Answered within the cap.' }
+  }
+  if (all.includes('GATEWAY-FIXTURE')) {
+    // A gateway whose model is down answers with a bare status page.
+    return { refuse: { status: 502, body: '<html>Bad Gateway</html>', contentType: 'text/html' } }
+  }
   if (isWorker(messages)) {
     const handle = /Reply as (\w+)/.exec(all)?.[1]
     // The short report streams in many small pieces, as a slow local model sends it.
@@ -118,7 +131,7 @@ function assertFits(record) {
 }
 
 test(
-  'compaction, request size, and worker reports behave as configured',
+  'compaction, request size, worker reports, and provider refusals behave as configured',
   { timeout: 240_000 },
   async () => {
     assert.ok(
@@ -448,6 +461,83 @@ test(
       assert.ok(
         stored.includes(REPLIES.long.slice(40_000, 62_000)),
         'tool_output returns the part the report left out'
+      )
+
+      // --- A provider's refusals: retried where SideKick can, said plainly where it cannot ----
+      // Last, because the reply cap it teaches the app holds for this model from then on.
+      const refusals = await page.evaluate(
+        async (projectId) =>
+          (await window.api.conversations.create('Refusal checks', projectId)).id,
+        projectId
+      )
+      const refusalStart = model.requests.length
+      await send(
+        refusals,
+        'refusal-first',
+        'REFUSAL-FIXTURE: answer within the cap.',
+        'Answered within the cap.'
+      )
+      const refused = model.requests.slice(refusalStart).map((record) => record.maxTokens)
+      assert.equal(refused.length, 2, 'A refused reply limit is asked again exactly once')
+      assert.ok(refused[0] > HOSTED_REPLY_CAP, 'The first request asks for more than the cap')
+      assert.equal(refused[1], HOSTED_REPLY_CAP, 'The retry asks for the cap the provider named')
+      const laterStart = model.requests.length
+      await send(
+        refusals,
+        'refusal-later',
+        'REFUSAL-FIXTURE: and once more.',
+        'Answered within the cap.'
+      )
+      assert.deepEqual(
+        model.requests.slice(laterStart).map((record) => record.maxTokens <= HOSTED_REPLY_CAP),
+        [true],
+        'A later run asks for no more than the cap from the start'
+      )
+
+      const gateway = await page.evaluate(
+        async (projectId) =>
+          (await window.api.conversations.create('Gateway checks', projectId)).id,
+        projectId
+      )
+      const gatewayStart = model.requests.length
+      await send(gateway, 'gateway-run', 'GATEWAY-FIXTURE: is anyone there?')
+      const failed = await until(
+        () =>
+          page.evaluate(async (id) => {
+            const reply = (await window.api.conversations.getMessages(id)).find(
+              (message) => message.id === 'gateway-run-reply'
+            )
+            const segments =
+              typeof reply?.segments === 'string' ? JSON.parse(reply.segments) : reply?.segments
+            return segments?.find((segment) => segment.type === 'run_error')?.runError
+          }, gateway),
+        'The gateway run should fail'
+      )
+      assert.equal(failed.code, 'transient', 'A gateway with nothing behind it is not "internal"')
+      // The sidebar lists chats made through the API after a reload.
+      await page.reload()
+      await page.waitForFunction(() => Boolean(window.api?.sessions))
+      await page.getByText('Gateway checks', { exact: true }).first().click()
+      const failure = await until(
+        () =>
+          page.evaluate(() => {
+            const segment = document.querySelector('.run-error-segment')
+            return segment
+              ? {
+                  title: segment.querySelector('strong')?.textContent ?? '',
+                  text: segment.textContent ?? ''
+                }
+              : null
+          }),
+        'The failed reply should say what went wrong'
+      )
+      assert.equal(model.requests.length - gatewayStart, 1, 'A gateway failure is not retried')
+      assert.equal(failure.title, 'Model server unavailable')
+      assert.ok(
+        failure.text.includes(
+          'The server in front of the model got no answer from it (HTTP 502 Bad Gateway).'
+        ),
+        `The failed reply says what the gateway answered: ${failure.text}`
       )
     } finally {
       if (application) await application.close()

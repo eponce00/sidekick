@@ -67,6 +67,7 @@ const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
   context_window_exceeded: 'Context limit reached; compacting and retrying',
   image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
+  output_limit_exceeded: 'Reply limit too long for this model; retrying with its maximum',
   truncated_tool_batch: 'Tool call stream was incomplete; retrying',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
@@ -93,13 +94,23 @@ function RunStatusSegment({
   )
 }
 
+const RUN_ERROR_TITLES: Record<string, string> = {
+  timeout: 'Model server timed out',
+  transient: 'Model server unavailable',
+  permission_denied: 'Provider refused access',
+  not_found: 'Model not found',
+  not_configured: 'Model not set up',
+  invalid_arguments: 'Request refused'
+}
+
 /** A failed reply's heading: what went wrong in words, not the error code. */
 function runErrorTitle(error: { code?: string; message: string }): string {
   const connection = providerConnectionFailureKind(error.message)
   if (connection === 'unreachable') return 'Model server unreachable'
   if (connection === 'dropped') return 'Connection lost'
+  if (connection === 'timed-out') return 'Model server timed out'
   if (!error.code || error.code === 'internal') return 'Reply failed'
-  return error.code.replaceAll('_', ' ')
+  return RUN_ERROR_TITLES[error.code] ?? error.code.replaceAll('_', ' ')
 }
 
 function RunErrorSegment({

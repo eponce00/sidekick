@@ -145,6 +145,16 @@ A reply cut off because SideKick closed ends with **Interrupted** and a **Contin
 picks the work up from what the reply had already done. A step whose outcome is unknown is checked
 before it is repeated. Quitting while agents are working asks for confirmation first.
 
+## When a reply fails
+
+A failed reply's heading says what went wrong, such as **Model server unreachable**, **Model
+server timed out**, **Provider refused access**, or **Model not set up**, and its message says what
+to check. Once that is fixed, for example the model server is running again or the key is
+corrected, **Continue** picks up from where the reply stopped and keeps its work; **Retry** starts
+it over. SideKick retries some refusals itself before failing: a chat too long for the model's
+window is compacted, older images are dropped when the model takes fewer, and a reply limit above
+the provider's maximum is lowered to it.
+
 ## Keyboard
 
 **Ctrl+K** (**⌘K** on macOS) opens the command palette: search conversations, projects, and actions,

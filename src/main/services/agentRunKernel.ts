@@ -1,5 +1,10 @@
 import { randomUUID } from 'crypto'
-import { AgentToolLoopError, classifyAgentKernelFailure, withToolGuard } from './agentKernelFailure'
+import {
+  AgentToolLoopError,
+  classifyAgentKernelFailure,
+  ProviderRequestError,
+  withToolGuard
+} from './agentKernelFailure'
 import {
   getAgentToolDefinitions,
   getAgentToolEntry,
@@ -27,7 +32,11 @@ import type {
   ProviderToolCall
 } from '../../shared/providerRuntime'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
-import { providerContextWindowError, providerImageLimitError } from '../../shared/providerErrors'
+import {
+  providerContextWindowError,
+  providerImageLimitError,
+  providerOutputLimitError
+} from '../../shared/providerErrors'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
 import {
   countTranscriptImages,
@@ -50,7 +59,14 @@ const learnedImageLimits = new Map<string, number>()
  */
 const learnedContextLengths = new Map<string, number>()
 
-function imageLimitKey(provider: string, model: string): string {
+/**
+ * Reply limits a provider stated when it refused a larger one, keyed by provider:model. Hosted
+ * APIs such as Groq cap a reply below what SideKick's default asks for, and many do not report
+ * the cap in their model list.
+ */
+const learnedOutputLimits = new Map<string, number>()
+
+function learnedLimitKey(provider: string, model: string): string {
   return `${provider}:${model}`
 }
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
@@ -1129,14 +1145,15 @@ The user approved this exact plan revision. Act capabilities are now available a
     let reportRequested = false
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
+    let outputLimitRetryAttempted = false
     // Learned from a provider's image-count rejection and enforced on every
     // later request, so one screenshot-heavy session does not fail the same way
     // turn after turn. Seeded from what earlier runs on this model learned.
-    const imageLimitCacheKey = imageLimitKey(input.provider, input.model)
+    const learnedKey = learnedLimitKey(input.provider, input.model)
     // A window an earlier run saw the provider report outranks configuration,
     // so the very first request of a later run is already budgeted correctly.
-    const rememberedContextLength = learnedContextLengths.get(imageLimitCacheKey)
-    let imageBudget: number | null = learnedImageLimits.get(imageLimitCacheKey) ?? null
+    const rememberedContextLength = learnedContextLengths.get(learnedKey)
+    let imageBudget: number | null = learnedImageLimits.get(learnedKey) ?? null
     let activeRequest = input.request
     /**
      * Believe the provider over the configuration when it states its own
@@ -1147,7 +1164,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       if (!reported || !Number.isFinite(reported) || reported <= 0) return
       const configured = Number(activeRequest.target.contextLength) || reported
       if (reported >= configured) return
-      learnedContextLengths.set(imageLimitCacheKey, reported)
+      learnedContextLengths.set(learnedKey, reported)
       // The smaller window gets the default share; never more than was asked for before.
       const maxOutputTokens = Math.min(
         resolveMaxOutputTokens(reported),
@@ -1165,6 +1182,11 @@ The user approved this exact plan revision. Act capabilities are now available a
         configuredContextLength: configured,
         maxOutputTokens
       })
+    }
+    /** Never ask for a longer reply than the provider said it allows. */
+    const applyOutputLimit = (limit: number): void => {
+      if ((activeRequest.maxOutputTokens ?? Number.POSITIVE_INFINITY) <= limit) return
+      activeRequest = { ...activeRequest, maxOutputTokens: limit }
     }
     let activeContextManager = input.contextManager
     let completionHooksRun = false
@@ -1322,6 +1344,8 @@ The user approved this exact plan revision. Act capabilities are now available a
       }
     }
     if (rememberedContextLength) applyReportedContextLength(rememberedContextLength)
+    const rememberedOutputLimit = learnedOutputLimits.get(learnedKey)
+    if (rememberedOutputLimit) applyOutputLimit(rememberedOutputLimit)
     try {
       await runProjectHooks(input.projectStartCommands, 'Project start hook')
       if (input.preloadReads?.length) await preloadReads(input.preloadReads)
@@ -1482,6 +1506,22 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
+          const outputLimit = providerOutputLimitError(providerError)
+          if (
+            outputLimit &&
+            !outputLimitRetryAttempted &&
+            outputLimit.maxOutputTokens < (replyLimit ?? Number.POSITIVE_INFINITY)
+          ) {
+            outputLimitRetryAttempted = true
+            learnedOutputLimits.set(learnedKey, outputLimit.maxOutputTokens)
+            applyOutputLimit(outputLimit.maxOutputTokens)
+            this.append(input.id, 'run.retrying', {
+              reason: 'output_limit_exceeded',
+              maxOutputTokens: outputLimit.maxOutputTokens,
+              requestedOutputTokens: replyLimit
+            })
+            continue
+          }
           const imageLimit = providerImageLimitError(providerError)
           if (imageLimit && !imageLimitRetryAttempted) {
             imageLimitRetryAttempted = true
@@ -1494,7 +1534,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               imageLimit.maxImages ?? Math.max(0, Math.min(FALLBACK_IMAGE_BUDGET, sentImages - 1))
             const budgeted = enforceImageBudget(requestMessages, imageBudget)
             if (budgeted.removed > 0) {
-              learnedImageLimits.set(imageLimitCacheKey, imageBudget)
+              learnedImageLimits.set(learnedKey, imageBudget)
               this.append(input.id, 'run.retrying', {
                 reason: 'image_limit_exceeded',
                 maxImages: imageBudget,
@@ -1505,10 +1545,11 @@ The user approved this exact plan revision. Act capabilities are now available a
               continue
             }
           }
-          throw new Error(providerError)
+          throw new ProviderRequestError(providerError, sampled.result.status)
         }
         contextOverflowRetryAttempted = false
         imageLimitRetryAttempted = false
+        outputLimitRetryAttempted = false
         const turn = {
           ...sampled.turn,
           toolCalls: uniqueToolCallIds(sampled.turn.toolCalls)
