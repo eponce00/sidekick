@@ -16,7 +16,7 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 | Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                        |
 | SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first               |
 | Human input     | `ask_user`                                                                                              | All interactive agent profiles                                         |
-| Retained output | `read_tool_output`                                                                                      | All agent profiles                                                     |
+| Retained output | `tool_output`                                                                                           | All agent profiles                                                     |
 | Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, child-agent, and research runs when enabled              |
 | Visual browser  | `browser_open`, `browser_observe`, `browser_screenshot`, actions, diagnostics, and verification         | Project-bound runs when browser work is enabled                        |
 
@@ -108,8 +108,19 @@ global policy is Full access.
   rolls it back.
 - Foreground and background commands use an explicit project-relative working directory. Background
   commands return an ID that can be read, answered, or cancelled from any reply in the conversation.
-- Tool output is bounded. Overflow is retained in trusted storage and can be read through an opaque
-  handle; it is not silently inserted into the prompt.
+- Tool output is bounded. A long result keeps its start and its end, cut on whole lines, and a
+  note where the middle was left out says that SideKick shortened it, gives an opaque handle and
+  the byte offset where the part left out starts. The whole result is kept in trusted storage, and
+  the agent reads on from that offset with `tool_output`; it is not silently inserted into the
+  prompt.
+- A command's result reaches the agent as text: its exit code, then stdout and stderr (or, in a
+  terminal, the output) as plain lines, each shortened on its own. The note says the command's own
+  output was complete, so a shortened download log is not taken for a short file. The command row
+  in the chat shows the same result, with **Copy** copying the output as text.
+- When a reply reaches its output limit while it writes tool calls, none of them run, and the
+  model is asked for fewer, smaller calls. A reply that writes more than 64 calls, or the same call
+  a fourth time, is stopped as it streams; none of its calls run, and the model is told why and
+  asked to make one call at a time. If it happens again in the same reply to you, the reply ends.
 - Web pages and MCP responses are untrusted content. They cannot promote their text into system
   instructions.
 - Repeated successful calls receive quiet model guidance rather than visible warning banners or

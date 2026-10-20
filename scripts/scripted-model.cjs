@@ -20,33 +20,51 @@ function promptCharacters(messages) {
   )
 }
 
-/** Streams an answer as server-sent events, in `chunks` pieces `delayMs` apart. */
-async function stream(response, answer, { chunks = 1, delayMs = 0 } = {}) {
+/**
+ * Streams an answer as server-sent events, in `chunks` pieces `delayMs` apart. Marks the request
+ * `aborted` when the client hangs up before the answer is complete.
+ */
+async function stream(response, answer, record, { chunks = 1, delayMs = 0 } = {}) {
   response.writeHead(200, { 'content-type': 'text/event-stream' })
+  let finished = false
+  response.on('close', () => {
+    if (!finished) record.aborted = true
+  })
   const send = (body) => response.write(`data: ${JSON.stringify(body)}\n\n`)
-  if (answer.toolCall) {
-    send({
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: `call_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-                type: 'function',
-                function: {
-                  name: answer.toolCall.name,
-                  arguments: JSON.stringify(answer.toolCall.arguments)
+  const toolCalls = answer.toolCalls ?? (answer.toolCall ? [answer.toolCall] : [])
+  if (toolCalls.length) {
+    // Each call in its own chunk, in order, as a model writes them; `rawArguments` sends the
+    // argument text as it is, such as JSON a length limit cut off.
+    for (const [index, call] of toolCalls.entries()) {
+      if (record.aborted) return
+      send({
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: [
+                {
+                  index,
+                  id: `call_${Date.now()}_${index}_${Math.random().toString(16).slice(2, 8)}`,
+                  type: 'function',
+                  function: {
+                    name: call.name,
+                    arguments: call.rawArguments ?? JSON.stringify(call.arguments)
+                  }
                 }
-              }
-            ]
-          },
-          finish_reason: null
-        }
-      ]
+              ]
+            },
+            finish_reason: null
+          }
+        ]
+      })
+      if (delayMs) await new Promise((done) => setTimeout(done, delayMs))
+    }
+    if (record.aborted) return
+    send({
+      choices: [{ index: 0, delta: {}, finish_reason: answer.finishReason ?? 'tool_calls' }],
+      ...(answer.usage ? { usage: answer.usage } : {})
     })
-    send({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
   } else {
     const content = answer.content ?? ''
     const size = Math.max(1, Math.ceil(content.length / Math.max(1, chunks)))
@@ -60,13 +78,15 @@ async function stream(response, answer, { chunks = 1, delayMs = 0 } = {}) {
     }
     send({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
   }
+  finished = true
   response.end('data: [DONE]\n\n')
 }
 
 /**
  * Starts the model. `reply(messages, request)` returns, or resolves to, `{ content }`,
- * `{ toolCall: { name, arguments } }`, or either with a `stream` of `{ chunks, delayMs }` to
- * fragment the answer. `{ refuse: { status, body, contentType } }` answers with that status
+ * `{ toolCall: { name, arguments } }`, `{ toolCalls: [{ name, arguments | rawArguments }] }` with
+ * an optional `finishReason` and `usage`, or any of them with a `stream` of `{ chunks, delayMs }`
+ * to fragment the answer. `{ refuse: { status, body, contentType } }` answers with that status
  * instead, as a provider refusing the request or a gateway with nothing behind it does. A promise
  * holds the answer back until it settles.
  */
@@ -107,7 +127,7 @@ async function startScriptedModel({ models, reply }) {
         response.end(body)
         return
       }
-      void stream(response, answer, answer.stream)
+      void stream(response, answer, record, answer.stream)
     })
   })
   await new Promise((done) => server.listen(0, '127.0.0.1', done))

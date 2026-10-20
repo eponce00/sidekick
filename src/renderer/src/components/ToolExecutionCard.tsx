@@ -17,6 +17,8 @@ import { parseNumberedLines } from '../utils/codeHighlight'
 import { CommandLiveView } from './CommandLiveView'
 import { requestTerminalView, useTerminalSessionForTool } from '../utils/terminalSessionStore'
 import { Reveal } from './Reveal'
+import { CommandResultOutput } from './CommandResultOutput'
+import { commandResultFrom } from '../utils/commandResult'
 import { copyText } from '../utils/clipboard'
 import './ToolExecutionCard.css'
 
@@ -66,6 +68,8 @@ export function ToolExecutionCard({
   const hasSearchOutput = Array.isArray(dataRecord?.results) && dataRecord.results.length > 0
   const hasWebOutput = Boolean(dataRecord && (dataRecord.url || dataRecord.content))
   const hasFileListOutput = Array.isArray(dataRecord?.files) && dataRecord.files.length > 0
+  // A finished command: shown from its recorded streams, not from the agent's shortened copy.
+  const commandResult = view === 'terminal' ? commandResultFrom(tool.data) : null
   // An image the agent looked at, kept as a reduced copy in the app's own image store.
   const previewUrl =
     typeof dataRecord?.previewUrl === 'string' &&
@@ -149,7 +153,13 @@ export function ToolExecutionCard({
                   )}
                 </div>
               )}
-              {output && view === 'terminal' && (
+              {commandResult && (
+                <CommandResultOutput
+                  result={commandResult}
+                  outputReference={tool.outputReference}
+                />
+              )}
+              {output && view === 'terminal' && !commandResult && (
                 <div className={`rich-tool-output is-${view}`}>
                   <button
                     type="button"
@@ -194,7 +204,7 @@ export function ToolExecutionCard({
               {!output && tool.data !== undefined && view === 'generic' && (
                 <JsonTreeView value={tool.data} />
               )}
-              {bounded.omitted > 0 && !numberedOutput && (
+              {bounded.omitted > 0 && !numberedOutput && !commandResult && (
                 <button
                   type="button"
                   className="tool-output-expand"
@@ -222,11 +232,12 @@ export function ToolExecutionCard({
               ))}
             </div>
           )}
-          {tool.outputReference?.truncated && (
+          {tool.outputReference?.truncated && !commandResult && (
             <div className="rich-tool-truncation">
-              Preview bounded to{' '}
-              {tool.outputReference.returnedBytes?.toLocaleString() || 'a safe size'} bytes. The
-              complete output remains available to the agent.
+              The agent was shown a shortened copy:{' '}
+              {tool.outputReference.returnedBytes?.toLocaleString() ?? 'part'} of{' '}
+              {tool.outputReference.originalBytes?.toLocaleString() ?? 'all the'} bytes. It can read
+              the rest.
             </div>
           )}
         </div>

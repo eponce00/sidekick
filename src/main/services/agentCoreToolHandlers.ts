@@ -31,6 +31,18 @@ export function registerCoreToolHandlers(
       bounded(args.offset, 0, 0, Number.MAX_SAFE_INTEGER),
       bounded(args.max_bytes, 50 * 1024, 1_024, 50 * 1024)
     )
-    return toolExecutionSucceeded({ title, data: result, modelContent: result.content })
+    // Without the range, a model reading in pieces could not tell where to go on or that it had
+    // reached the end.
+    const end = result.offset + Buffer.byteLength(result.content, 'utf8')
+    const range =
+      `[tool_output: bytes ${result.offset}–${end} of ${result.totalBytes}. ` +
+      (result.nextOffset === null
+        ? 'This is the end of the stored output.]'
+        : `Continue from offset ${result.nextOffset}.]`)
+    return toolExecutionSucceeded({
+      title,
+      data: result,
+      modelContent: `${result.content}${result.content.endsWith('\n') ? '' : '\n'}${range}`
+    })
   })
 }
