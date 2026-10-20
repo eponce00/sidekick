@@ -1292,6 +1292,13 @@ export class AgentRuntimeCoordinator {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
   }
 
+  /** Whether a run of this conversation is being prepared: waiting for a slot or getting ready. */
+  isPreparing(threadId: string): boolean {
+    for (const { identity } of this.preparations.values())
+      if (identity.threadId === threadId) return true
+    return false
+  }
+
   /** Conversations with a run being prepared or executing.
    * A sub-agent shares its parent's thread, so it is not counted twice. */
   activeThreadIds(): string[] {

@@ -448,9 +448,12 @@ one level deep. The user-facing behavior is in
 - **Wakes and reports.** When a worker's run ends, its final message goes to the manager as a
   `report`, with its branch and whether the user stepped in. A `request` wakes an idle recipient, a
   `response` wakes the chat that asked, and reports wake the manager only once none of its workers
-  is working or queued. Updates, status notes and broadcasts never wake. A request left unanswered
-  when its recipient's run ends is reported back to the sender. A chat woken 20 times in a row
-  without the user starting or steering a run pauses until the user does.
+  has a run queued, being prepared or running, or has ended a run whose report is not written yet
+  (it is still being finalized, or waits behind another report). A chat whose run is being
+  prepared is not woken again: that run takes the waiting messages when it starts. Updates, status
+  notes and broadcasts never wake. A request left unanswered when its recipient's run ends is
+  reported back to the sender. A chat woken 20 times in a row without the user starting or
+  steering a run pauses until the user does.
 - **Slots and restarts.** `RunSlots` admits chats, workers, scheduled runs and sub-agents against
   one global limit (`maxConcurrentRuns`, 4 by default) and a per-provider limit; a run waiting for
   the user, a `wait`, or its sub-agents gives its slots back. After a restart, interrupted workers
