@@ -118,6 +118,13 @@ jobs:
       - name: Verify native browser fixtures on Linux
         if: matrix.smoke == 'linux'
         run: xvfb-run --auto-servernum npm run test:native-browser-fixtures
+      # Compaction, request size and reports between chats, against a scripted model.
+      - name: Check agent behavior
+        if: matrix.smoke != 'linux'
+        run: npm run test:behavior
+      - name: Check agent behavior on Linux
+        if: matrix.smoke == 'linux'
+        run: xvfb-run --auto-servernum npm run test:behavior
       - name: Audit Windows packaged content
         if: matrix.smoke == 'windows'
         run: npm run validate:package -- dist/win-unpacked/resources
