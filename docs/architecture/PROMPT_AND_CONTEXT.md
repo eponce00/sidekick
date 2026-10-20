@@ -52,7 +52,10 @@ after it keeps it. The anchor is the last message row every one of whose provide
 summary replaced; a row the split falls inside stays in the next run's history whole, and the
 recent tail kept word for word stays with it. A summary that reaches into the run's own work is
 anchored at the run's request with the time it was made, so retrying or rewinding that reply
-discards it. A summary the run was stopped in the middle of is not recorded at all.
+discards it, and records how many of that reply's provider messages it replaced
+(`reply_message_id`, `reply_messages_covered`), found in order in the run's ledger. The next run
+is sent only the rest of the reply; sent the whole reply again, it compacted as soon as it
+started. A summary the run was stopped in the middle of is not recorded at all.
 
 At request time, the main-process `ConversationRunPreparer` emits:
 
@@ -75,7 +78,7 @@ The summary request is streamed. Something in front of a slow local model gave u
 
 The shared context-budget projection accounts for message text, tool calls, multimodal payload estimates, all tool schemas (including MCP), provider framing, in-flight response text, output reserve, and a safety margin. Compaction is evaluated against the lower of the configured threshold, as a share of the whole window, and the effective provider input limit. The output reserve is the model's reply limit up to 32,768 tokens: a larger limit is a ceiling a long reply may reach, and each request's reply limit is cut to the room the window has left, so prompt and reply never exceed it. A preflight check runs before every provider boundary, not only after a provider reports a context error. Compaction keeps up to 32,000 tokens of recent work verbatim, and gives the summary up to 16,384 output tokens so a reasoning model can finish it.
 
-The estimate is deliberately conservative: it counts punctuation one by one, which real tokenizers merge, and ran 19–58% over local models' own counts. Each provider-reported prompt count calibrates it, in either direction: the next request is budgeted as the provider's count for what was already sent plus the estimate of what was added since, never under half the plain estimate. `usage.updated` records `estimatedPromptTokens` beside the provider's count, so a run starts from the latest pair an earlier run on the same model recorded, as a share of the estimate when its request has shrunk since. Compaction therefore fires where the context card's marker says, measured the way the provider measures it.
+The estimate is deliberately conservative: it counts punctuation one by one, which real tokenizers merge, and ran 19–58% over local models' own counts. Each provider-reported prompt count calibrates it, in either direction: the next request is budgeted as the provider's count for what was already sent plus the estimate of what was added since, never under half the plain estimate. `usage.updated` records `estimatedPromptTokens` beside the provider's count, so a run starts from the latest pair an earlier run on the same model recorded, passing over runs stopped before any request finished, and as a share of the estimate when its request has shrunk since. Compaction therefore fires where the context card's marker says, measured the way the provider measures it.
 
 Workspace mutations keep two projections: complete bounded diffs for expandable human review and a
 compact model-facing acknowledgement. The model receives file paths, hashes, change counts, and only

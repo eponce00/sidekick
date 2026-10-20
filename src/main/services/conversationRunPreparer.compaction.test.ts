@@ -3,17 +3,22 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderChatMessage, ProviderStreamChunk } from '../../shared/providerRuntime'
+import { getAgentToolDefinitions } from '../../shared/agentToolCatalog'
+import type { AgentRunEventType } from '../../shared/agentRuntime'
+import { calculateRequestBudget, estimateProviderRequestTokens } from '../../shared/contextBudget'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
 import type { ProviderSettings } from '../../shared/settings'
 import { openApplicationDatabase } from '../bootstrap/database'
 import { streamProviderChat } from '../providers/providerRuntime'
 import type { AgentToolRuntime } from './agentToolRuntime'
+import { AgentRunStore } from './agentRunStore'
 import { ConversationCompactionStore } from './conversationCompactionStore'
 import { ConversationGoalStore } from './conversationGoalStore'
 import {
   ConversationRunPreparer,
   historyCoveredByCompaction,
   initialEstimationBias,
+  replyCoveredByCompaction,
   type MessageRow
 } from './conversationRunPreparer'
 
@@ -181,6 +186,145 @@ describe('a compaction during a conversation run', () => {
     ).toHaveLength(1)
   })
 
+  it('is not sent again, in the next run, the part of a reply its summary replaced', async () => {
+    // After a run compacted its own work, the next run was sent that whole reply again and
+    // compacted at once: 6 of 13 run-start compactions in one journal, at 2-5x the real prompt.
+    summarizes()
+    const { db } = chat()
+    const store = new AgentRunStore(db)
+    store.start({
+      id: 'long',
+      threadId: 'chat',
+      outputMessageId: 'long-reply',
+      profile: { surface: 'conversation', executionMode: 'act', capabilities: [] },
+      provider: 'openai-compatible',
+      model: 'model'
+    })
+    const run = await prepare(db, 'long')
+    const own: ProviderChatMessage[] = []
+    for (let index = 0; index < 6; index++) {
+      const id = `call-${index}`
+      const content = `OWN-${index} ${'working through the fixture notes '.repeat(100)}`
+      const output = `RESULT-${index} ${'a line of the file that was read '.repeat(100)}`
+      store.appendEvent({
+        id: `long:turn-${index}`,
+        runId: 'long',
+        type: 'assistant.completed',
+        payload: { content, toolCalls: [{ id, name: 'read', arguments: { path: `${index}.md` } }] }
+      })
+      store.appendEvent({
+        id: `long:result-${index}`,
+        runId: 'long',
+        type: 'tool.completed',
+        payload: { toolCallId: id, name: 'read', result: { modelContent: output } }
+      })
+      own.push(
+        {
+          role: 'assistant',
+          content,
+          tool_calls: [{ id, function: { name: 'read', arguments: { path: `${index}.md` } } }]
+        },
+        { role: 'tool', tool_call_id: id, content: output }
+      )
+    }
+    const messages = validateProviderTranscript([...run.kernelInput.messages, ...own]).messages
+    const result = await run.kernelInput.contextManager!.compact(
+      messages,
+      [],
+      new AbortController().signal
+    )
+    const keptOwn = result.messages
+      .map((message) => message.content ?? '')
+      .filter((content) => /^(OWN|RESULT)-/.test(content))
+    expect(keptOwn.length).toBeGreaterThan(0)
+    expect(keptOwn.length).toBeLessThan(12)
+    expect(new ConversationCompactionStore(db).latest('chat')).toMatchObject({
+      compactedThroughMessageId: 'request',
+      replyMessageId: 'long-reply',
+      replyMessagesCovered: 12 - keptOwn.length
+    })
+
+    // The run finishes after the summary, and the user asks again.
+    store.appendEvent({
+      id: 'long:final',
+      runId: 'long',
+      type: 'assistant.completed',
+      payload: { content: 'FINAL: the notes are read.', toolCalls: [] }
+    })
+    const add = db.prepare(
+      'INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)'
+    )
+    add.run('long-reply', 'chat', 'agent', 'FINAL: the notes are read.', 3_000)
+    add.run('next-user', 'chat', 'user', 'NEXT: and then?', 4_000)
+    const next = await prepare(db, 'next')
+    const sent = next.kernelInput.messages.map((message) => message.content ?? '')
+    expect(sent.join('\n')).toContain(SUMMARY)
+    // What the summary kept word for word, then what came after it, and nothing it replaced.
+    expect(sent.filter((content) => /^(OWN|RESULT)-/.test(content))).toEqual(keptOwn)
+    expect(sent).toContain('FINAL: the notes are read.')
+    expect(sent.at(-1)).toBe('NEXT: and then?')
+    expect(next.kernelInput.contextManager!.shouldCompact(next.kernelInput.messages, [])).toBe(
+      false
+    )
+  })
+
+  it('is not needed after a run stopped mid-turn, when the model counts the chat under the threshold', async () => {
+    const { db } = chat()
+    const tools = getAgentToolDefinitions({ surface: 'conversation', capabilities: [] })
+    // The request the stopped run made, and what the model said it held.
+    const before = validateProviderTranscript((await prepare(db, 'probe')).kernelInput.messages)
+    const estimated = estimateProviderRequestTokens(before.messages, tools)
+    const store = new AgentRunStore(db)
+    store.start({
+      id: 'stopped',
+      threadId: 'chat',
+      outputMessageId: 'stopped-reply',
+      profile: { surface: 'conversation', executionMode: 'act', capabilities: [] },
+      provider: 'openai-compatible',
+      model: 'model'
+    })
+    let sequence = 0
+    const append = (type: AgentRunEventType, payload: Record<string, unknown>): void => {
+      store.appendEvent({ id: `stopped:${++sequence}`, runId: 'stopped', type, payload })
+    }
+    append('assistant.completed', {
+      content: 'Reading the notes.',
+      toolCalls: [{ id: 'call-1', name: 'read', arguments: { path: 'notes.md' } }]
+    })
+    append('usage.updated', {
+      promptTokens: Math.round(estimated * 0.7),
+      completionTokens: 40,
+      estimatedPromptTokens: estimated
+    })
+    append('tool.completed', {
+      toolCallId: 'call-1',
+      name: 'read',
+      result: { modelContent: 'The notes say nothing new.' }
+    })
+    // Stopped while the next turn streamed: part of a reply, never completed.
+    append('assistant.delta', { content: 'Half of an ans' })
+    store.transition('stopped', 'cancelled', 'stopped:cancelled')
+    const add = db.prepare(
+      'INSERT INTO messages (id, conversation_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)'
+    )
+    add.run('stopped-reply', 'chat', 'agent', 'Reading the notes.Half of an ans', 3_000)
+    add.run('again', 'chat', 'user', 'AGAIN: carry on.', 4_000)
+
+    const next = await prepare(db, 'again')
+    const messages = validateProviderTranscript(next.kernelInput.messages).messages
+    // SideKick's own estimate alone is past the threshold; the model's count is well under it.
+    expect(
+      calculateRequestBudget({
+        messages,
+        tools,
+        contextLength: 32_768,
+        reservedOutputTokens: 4_096,
+        compactionThreshold: 0.8
+      }).shouldCompact
+    ).toBe(true)
+    expect(next.kernelInput.contextManager!.shouldCompact(messages, tools)).toBe(false)
+  })
+
   it('goes with the reply when it summarized the run’s own work', async () => {
     summarizes()
     const { db, request } = chat()
@@ -227,41 +371,45 @@ describe('initialEstimationBias', () => {
   ] as MessageRow[]
   const usage = (entries: Record<string, object>) =>
     new Map(Object.entries(entries)) as Parameters<typeof initialEstimationBias>[1]
+  const sample = (promptTokens: number, estimatedPromptTokens: number, model = 'm') => ({
+    promptTokens,
+    completionTokens: 1,
+    calibration: { promptTokens, estimatedPromptTokens },
+    model
+  })
 
   it('counts what an earlier request held at the provider’s count, and the rest at the estimate', () => {
-    const recorded = usage({
-      old: { promptTokens: 50_000, completionTokens: 1, estimatedPromptTokens: 60_000, model: 'm' },
-      latest: {
-        promptTokens: 100_000,
-        completionTokens: 1,
-        estimatedPromptTokens: 130_000,
-        model: 'm'
-      }
-    })
+    const recorded = usage({ old: sample(50_000, 60_000), latest: sample(100_000, 130_000) })
     // The next request holds the latest one and 5,000 estimated tokens more.
     expect(initialEstimationBias(rows, recorded, 'm', 135_000)).toBe(-30_000)
     // Smaller than it, part of it summarized since: the same share of its estimate.
     expect(initialEstimationBias(rows, recorded, 'm', 65_000)).toBe(-15_000)
   })
 
-  it('starts uncalibrated for another model, or when the run recorded no estimate', () => {
-    const recorded = usage({
-      latest: {
-        promptTokens: 100_000,
-        completionTokens: 1,
-        estimatedPromptTokens: 130_000,
-        model: 'm'
-      }
-    })
-    expect(initialEstimationBias(rows, recorded, 'other', 135_000)).toBe(0)
+  it('passes over a run stopped before any request finished, and one on another model', () => {
+    // Stopped before its first request finished: no usage at all, or none it could pair.
+    expect(initialEstimationBias(rows, usage({ old: sample(50_000, 60_000) }), 'm', 70_000)).toBe(
+      -10_000
+    )
     expect(
       initialEstimationBias(
         rows,
-        usage({ latest: { promptTokens: 100_000, completionTokens: 1 } }),
+        usage({
+          old: sample(50_000, 60_000),
+          latest: { promptTokens: 100_000, completionTokens: 1, model: 'm' }
+        }),
         'm',
-        1
+        70_000
       )
-    ).toBe(0)
+    ).toBe(-10_000)
+    expect(
+      initialEstimationBias(
+        rows,
+        usage({ old: sample(50_000, 60_000), latest: sample(100_000, 130_000, 'other') }),
+        'm',
+        70_000
+      )
+    ).toBe(-10_000)
     expect(initialEstimationBias(rows, usage({}), 'm', 135_000)).toBe(0)
   })
 })
@@ -281,15 +429,53 @@ describe('historyCoveredByCompaction', () => {
     const summarized = [user('instructions'), user('a'), reply('b1'), reply('b2')]
     expect(historyCoveredByCompaction(history, summarized)).toEqual({
       rows: 1,
-      beyondHistory: false
+      beyondHistory: false,
+      afterHistory: 4
     })
     expect(
       historyCoveredByCompaction(history, [...summarized, reply('b3'), user('c'), reply('own')])
-    ).toEqual({ rows: 3, beyondHistory: true })
+    ).toEqual({ rows: 3, beyondHistory: true, afterHistory: 6 })
     // A second compaction in the run starts after the rows the first one covered.
     expect(historyCoveredByCompaction(history, [user('summary'), reply('b1')], 1)).toEqual({
       rows: 1,
-      beyondHistory: false
+      beyondHistory: false,
+      afterHistory: 2
     })
+  })
+})
+
+describe('replyCoveredByCompaction', () => {
+  const said = (content: string): ProviderChatMessage => ({ role: 'assistant', content })
+  const call = (id: string): ProviderChatMessage => ({
+    role: 'assistant',
+    content: null,
+    tool_calls: [{ id, function: { name: 'read', arguments: {} } }]
+  })
+  const result = (id: string, content = `result ${id}`): ProviderChatMessage => ({
+    role: 'tool',
+    tool_call_id: id,
+    content
+  })
+  const reply = [call('1'), result('1'), call('2'), result('2'), said('done')]
+
+  it('counts the reply’s leading messages found in order among the summarized ones', () => {
+    // A notice the run added in between is not in the reply, and is passed over.
+    const summarized = [call('1'), result('1'), { role: 'user' as const, content: 'notice' }]
+    expect(replyCoveredByCompaction(reply, summarized)).toBe(2)
+    expect(replyCoveredByCompaction(reply, [...summarized, call('2'), result('2')])).toBe(4)
+    // A second compaction continues from what the first covered.
+    expect(
+      replyCoveredByCompaction(
+        reply,
+        [{ role: 'user', content: 'summary' }, call('2'), result('2')],
+        2
+      )
+    ).toBe(4)
+  })
+
+  it('stops at a message it cannot find, and never between a call and its result', () => {
+    // The run added a reminder to this result after the ledger recorded it.
+    expect(replyCoveredByCompaction(reply, [call('1'), result('1', 'result 1 + reminder')])).toBe(0)
+    expect(replyCoveredByCompaction(reply, [call('1'), result('1'), call('2')])).toBe(2)
   })
 })

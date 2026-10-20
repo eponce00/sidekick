@@ -78,6 +78,14 @@ const REQUIRED_COLUMNS = [
     column: 'model',
     definition: "TEXT NOT NULL DEFAULT 'unknown'"
   },
+  // How far into the reply that follows its anchor a summary reaches, in that reply's provider
+  // messages, so the next run does not send again the turns the summary replaced.
+  { table: 'conversation_compactions', column: 'reply_message_id', definition: 'TEXT' },
+  {
+    table: 'conversation_compactions',
+    column: 'reply_messages_covered',
+    definition: 'INTEGER NOT NULL DEFAULT 0'
+  },
   {
     table: 'conversation_goals',
     column: 'prompt_tokens',
@@ -808,6 +816,8 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       prompt_version TEXT NOT NULL,
       provider TEXT NOT NULL,
       model TEXT NOT NULL,
+      reply_message_id TEXT,
+      reply_messages_covered INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
       FOREIGN KEY (previous_compaction_id) REFERENCES conversation_compactions(id) ON DELETE SET NULL

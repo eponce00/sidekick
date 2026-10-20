@@ -541,6 +541,8 @@ export function registerDatabaseHandlers(): void {
         input.summary.length > 1_000_000 ||
         !validOptionalText(input.compactedThroughMessageId, 100) ||
         !validOptionalText(input.previousCompactionId, 100) ||
+        !validOptionalText(input.replyMessageId, 100) ||
+        !validCount(input.replyMessagesCovered ?? 0) ||
         !validCount(input.compactedThroughTimestamp ?? 0) ||
         !validCount(input.originalTokens) ||
         !validCount(input.summaryTokens) ||

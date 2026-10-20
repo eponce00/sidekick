@@ -292,6 +292,36 @@ export function durableProviderHistoryByRow(
   rows: readonly MessageRow[],
   currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
 ): ProviderHistoryRow[] {
+  const replies = ledgerReplies(
+    db,
+    conversationId,
+    new Set(rows.filter((row) => row.role === 'agent').map((row) => row.id)),
+    currentTarget
+  )
+  return rows.map((row) => {
+    if (row.role !== 'agent') return { row, messages: [providerMessage(row)] }
+    const durable = replies.get(row.id)
+    return { row, messages: durable?.length ? durable : [providerMessage(row)] }
+  })
+}
+
+/** What one reply has given the model so far, as the ledger records it. */
+export function durableReplyHistory(
+  db: Database.Database,
+  conversationId: string,
+  replyId: string,
+  currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
+): ProviderChatMessage[] {
+  return ledgerReplies(db, conversationId, new Set([replyId]), currentTarget).get(replyId) ?? []
+}
+
+/** Each run's provider messages, by the reply it writes, for the replies in `kept`. */
+function ledgerReplies(
+  db: Database.Database,
+  conversationId: string,
+  kept: ReadonlySet<string>,
+  currentTarget: Pick<ProviderTarget, 'providerKind' | 'model'>
+): Map<string, ProviderChatMessage[]> {
   // Only the events read below. A long conversation's ledger is mostly streamed deltas and
   // per-run context snapshots; reading and parsing them all blocked the main process, and with
   // it the whole window, for most of a second each time a message was sent.
@@ -400,7 +430,6 @@ export function durableProviderHistoryByRow(
     }
   }
 
-  const kept = new Set(rows.filter((row) => row.role === 'agent').map((row) => row.id))
   restoreArtifactCode(
     artifactCalls
       .filter(({ outputMessageId }) => kept.has(outputMessageId))
@@ -408,12 +437,7 @@ export function durableProviderHistoryByRow(
     artifactResults,
     artifactResultMessages
   )
-
-  return rows.map((row) => {
-    if (row.role !== 'agent') return { row, messages: [providerMessage(row)] }
-    const durable = messagesByOutput.get(row.id)
-    return { row, messages: durable?.length ? durable : [providerMessage(row)] }
-  })
+  return messagesByOutput
 }
 
 /** A message as transcript validation copies it: role, text, and which call it answers or makes. */
@@ -437,7 +461,7 @@ export function historyCoveredByCompaction(
   history: readonly ProviderHistoryRow[],
   compacted: readonly ProviderChatMessage[],
   alreadyCovered = 0
-): { rows: number; beyondHistory: boolean } {
+): { rows: number; beyondHistory: boolean; afterHistory: number } {
   const expected = history.slice(alreadyCovered).flatMap((entry) => entry.messages)
   let matched = 0
   let lastMatch = -1
@@ -460,8 +484,34 @@ export function historyCoveredByCompaction(
   // Every history message summarized, and more after it: the summary covers this run's own work.
   return {
     rows,
-    beyondHistory: matched === expected.length && lastMatch < compacted.length - 1
+    beyondHistory: matched === expected.length && lastMatch < compacted.length - 1,
+    afterHistory: lastMatch + 1
   }
+}
+
+/**
+ * How many leading messages of the run's own reply a compaction replaced: the reply as the ledger
+ * records it, found in order among the summarized messages that followed the history. The count
+ * stops at the first message it cannot find, so an uncertain end leaves more of the reply to the
+ * next run rather than less, and never between a tool call and its results. Without it, the next
+ * run was sent the whole reply again, every turn the summary had replaced, and compacted at once.
+ */
+export function replyCoveredByCompaction(
+  reply: readonly ProviderChatMessage[],
+  compactedAfterHistory: readonly ProviderChatMessage[],
+  alreadyCovered = 0
+): number {
+  const keys = compactedAfterHistory.map(historyMessageKey)
+  let covered = alreadyCovered
+  let position = 0
+  for (const message of reply.slice(alreadyCovered)) {
+    const found = keys.indexOf(historyMessageKey(message), position)
+    if (found < 0) break
+    covered++
+    position = found + 1
+  }
+  while (covered > alreadyCovered && reply[covered]?.role === 'tool') covered--
+  return covered
 }
 
 /** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
@@ -565,12 +615,13 @@ function withoutEchoedArtifact(content: string): string {
 }
 
 /**
- * The calibration a run starts with, from the latest request an earlier run recorded both the
- * provider's count and SideKick's estimate for. The next request usually holds that one and what
- * was added since, so it counts as the provider's count plus the estimate of the rest, as within a
- * run. A request smaller than that one, part of it summarized since, takes the same share of its
- * estimate instead. Before, the provider's count for a run's last request was compared with an
- * estimate that left that run's own work out, and only a positive difference was kept.
+ * The calibration a run starts with, from the latest request an earlier run on this model recorded
+ * both the provider's count and SideKick's estimate for. A run stopped before any request finished
+ * recorded none, and is passed over. The next request usually holds that one and what was added
+ * since, so it counts as the provider's count plus the estimate of the rest, as within a run. A
+ * request smaller than that one, part of it summarized since, takes the same share of its estimate
+ * instead. Before, the provider's count for a run's last request was compared with an estimate
+ * that left that run's own work out, and only a positive difference was kept.
  */
 export function initialEstimationBias(
   rows: readonly MessageRow[],
@@ -580,12 +631,11 @@ export function initialEstimationBias(
 ): number {
   for (let index = rows.length - 1; index >= 0; index--) {
     const usage = rows[index].role === 'agent' ? runUsage.get(rows[index].id) : undefined
-    if (!usage || usage.promptTokens <= 0) continue
-    const estimated = usage.estimatedPromptTokens
-    if (!estimated || (usage.model && usage.model !== model)) return 0
-    return estimatedTokens >= estimated
-      ? usage.promptTokens - estimated
-      : Math.round(estimatedTokens * (usage.promptTokens / estimated - 1))
+    const pair = usage?.calibration
+    if (!pair || (usage.model && usage.model !== model)) continue
+    return estimatedTokens >= pair.estimatedPromptTokens
+      ? pair.promptTokens - pair.estimatedPromptTokens
+      : Math.round(estimatedTokens * (pair.promptTokens / pair.estimatedPromptTokens - 1))
   }
   return 0
 }
@@ -859,11 +909,16 @@ export class ConversationRunPreparer {
         : []),
       ...(priorCompaction ? [compactionContext(priorCompaction.summary)] : [])
     ]
+    // The part of a reply the latest summary already replaced is not sent again.
     const historyRows = durableProviderHistoryByRow(
       this.db,
       input.conversationId,
       projected.filter((row) => row.role !== 'system'),
       executionTarget
+    ).map((entry) =>
+      entry.row.id === priorCompaction?.replyMessageId
+        ? { ...entry, messages: entry.messages.slice(priorCompaction.replyMessagesCovered) }
+        : entry
     )
     const messages: ProviderChatMessage[] = [
       ...promptPrefix,
@@ -886,6 +941,7 @@ export class ConversationRunPreparer {
     // A finished compaction is saved as soon as it completes, so a run stopped or failed after it,
     // or retried, keeps it instead of summarizing the same history again.
     let coveredRows = 0
+    let coveredReply = 0
     let savedCompaction = priorCompaction
       ? {
           id: priorCompaction.id,
@@ -905,7 +961,15 @@ export class ConversationRunPreparer {
           ? Math.max(anchor.timestamp, Date.now())
           : anchor.timestamp
         : (savedCompaction?.throughTimestamp ?? null)
+      const replyId = covered.beyondHistory ? input.assistantMessageId : undefined
       try {
+        const replyMessagesCovered = replyId
+          ? replyCoveredByCompaction(
+              durableReplyHistory(this.db, input.conversationId, replyId, executionTarget),
+              record.compactedMessages.slice(covered.afterHistory),
+              coveredReply
+            )
+          : 0
         const saved = compactionStore.save({
           conversationId: input.conversationId,
           summary: record.summary,
@@ -918,9 +982,12 @@ export class ConversationRunPreparer {
           strategy: record.strategy,
           promptVersion: record.promptVersion,
           provider: record.provider,
-          model: record.model
+          model: record.model,
+          replyMessageId: replyId ?? null,
+          replyMessagesCovered
         })
         coveredRows = covered.rows
+        coveredReply = replyMessagesCovered
         savedCompaction = { id: saved.id, throughMessageId, throughTimestamp }
       } catch (error) {
         // The run goes on with the summary; only a later run has to summarize again.

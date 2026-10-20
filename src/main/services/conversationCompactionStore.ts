@@ -19,6 +19,8 @@ interface ConversationCompactionRow {
   prompt_version: string
   provider: string
   model: string
+  reply_message_id: string | null
+  reply_messages_covered: number
   created_at: number
 }
 
@@ -37,6 +39,8 @@ function mapCompaction(row: ConversationCompactionRow): ConversationCompactionRe
     promptVersion: row.prompt_version,
     provider: row.provider,
     model: row.model,
+    replyMessageId: row.reply_message_id,
+    replyMessagesCovered: row.reply_messages_covered ?? 0,
     createdAt: row.created_at
   }
 }
@@ -64,8 +68,9 @@ export class ConversationCompactionStore {
         `INSERT INTO conversation_compactions
          (id, conversation_id, summary, compacted_through_message_id,
           compacted_through_timestamp, previous_compaction_id, original_tokens,
-          summary_tokens, messages_compacted, strategy, prompt_version, provider, model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          summary_tokens, messages_compacted, strategy, prompt_version, provider, model,
+          reply_message_id, reply_messages_covered, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -81,6 +86,8 @@ export class ConversationCompactionStore {
         input.promptVersion,
         input.provider,
         input.model,
+        input.replyMessageId ?? null,
+        input.replyMessageId ? Math.max(0, Math.floor(input.replyMessagesCovered ?? 0)) : 0,
         createdAt
       )
     return this.get(id)!
@@ -147,7 +154,12 @@ export class ConversationCompactionStore {
       strategy: row.strategy,
       promptVersion: row.prompt_version,
       provider: row.provider,
-      model: row.model
+      model: row.model,
+      // A reply the fork does not hold has nothing to skip.
+      replyMessageId: row.reply_message_id
+        ? (messageIdMap.get(row.reply_message_id) ?? null)
+        : null,
+      replyMessagesCovered: row.reply_messages_covered
     })
   }
 }
