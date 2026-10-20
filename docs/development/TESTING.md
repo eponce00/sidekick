@@ -39,17 +39,22 @@ sizes and timing instead.
 `npm run test:behavior` drives the built app (after `npm run build`) against a scripted
 OpenAI-compatible model on loopback (`scripts/scripted-model.cjs`). The model records every request,
 and each scenario states the requests it expects, so an extra compaction or retry fails it. The
-scenarios check that a chat compacts only past the share of the window Settings names, that every
-request leaves room for the reply it asks for, that the context card marks where compaction fires,
-that a long worker report reaches its manager whole even when streamed in many small pieces, that
-a report too long to carry keeps its start and end and stays readable with `tool_output`, that a
-reply limit the provider refuses is asked again once at the cap it names, and that a gateway with
-nothing behind it fails the reply with a heading and message saying so. CI runs them in each
-platform's packaging job.
+model reports its prompt at four characters a token, as real tokenizers read English. The
+scenarios check that a chat compacts only past the share of the window Settings names, by the
+model's count rather than SideKick's higher estimate, that the next run starts from the saved
+summary with the recent work kept word for word, that a summary survives the run stopped right
+after it and an edit of the request, that every request leaves room for the reply it asks for,
+that the context card marks where compaction fires, that a long worker report reaches its manager
+whole even when streamed in many small pieces, that a report too long to carry keeps its start and
+end and stays readable with `tool_output`, that a reply whose connection drops partway is asked
+again once and keeps only the whole reply, that a reply limit the provider refuses is asked again
+once at the cap it names, and that a gateway with nothing behind it fails the reply with a heading
+and message saying so. CI runs them in each platform's packaging job.
 
 `npm run audit:runs -- --profile installed` (or `--profile dev`, or a database path) reads a
 profile's run journals read-only and reports what looks wrong: compactions before 60% of the window,
-how much a compaction kept, the share of fallback summaries, runs that compact or retry after
+how much a compaction kept, the share of fallback summaries and why each was used, how SideKick's
+estimate of a request compared with the provider's count, runs that compact or retry after
 failures again and again, requests that did not fit the window, working runs that went quiet for 10
 minutes or more, and worker reports that did not carry the whole reply. It prints counts and run ids,
 never message content, and exits 1 when something is flagged. Thresholds are flags; see `--help`.

@@ -10,6 +10,7 @@ import { ConversationGoalStore } from './conversationGoalStore'
 import {
   ConversationRunPreparer,
   historyCoveredByCompaction,
+  initialEstimationBias,
   type MessageRow
 } from './conversationRunPreparer'
 
@@ -167,6 +168,53 @@ describe('a compaction during a conversation run', () => {
       run.kernelInput.contextManager!.compact(messages, [], controller.signal)
     ).rejects.toThrow()
     expect(new ConversationCompactionStore(db).latest('chat')).toBeNull()
+  })
+})
+
+describe('initialEstimationBias', () => {
+  const rows = [
+    { id: 'old', role: 'agent' },
+    { id: 'ask', role: 'user' },
+    { id: 'latest', role: 'agent' }
+  ] as MessageRow[]
+  const usage = (entries: Record<string, object>) =>
+    new Map(Object.entries(entries)) as Parameters<typeof initialEstimationBias>[1]
+
+  it('counts what an earlier request held at the provider’s count, and the rest at the estimate', () => {
+    const recorded = usage({
+      old: { promptTokens: 50_000, completionTokens: 1, estimatedPromptTokens: 60_000, model: 'm' },
+      latest: {
+        promptTokens: 100_000,
+        completionTokens: 1,
+        estimatedPromptTokens: 130_000,
+        model: 'm'
+      }
+    })
+    // The next request holds the latest one and 5,000 estimated tokens more.
+    expect(initialEstimationBias(rows, recorded, 'm', 135_000)).toBe(-30_000)
+    // Smaller than it, part of it summarized since: the same share of its estimate.
+    expect(initialEstimationBias(rows, recorded, 'm', 65_000)).toBe(-15_000)
+  })
+
+  it('starts uncalibrated for another model, or when the run recorded no estimate', () => {
+    const recorded = usage({
+      latest: {
+        promptTokens: 100_000,
+        completionTokens: 1,
+        estimatedPromptTokens: 130_000,
+        model: 'm'
+      }
+    })
+    expect(initialEstimationBias(rows, recorded, 'other', 135_000)).toBe(0)
+    expect(
+      initialEstimationBias(
+        rows,
+        usage({ latest: { promptTokens: 100_000, completionTokens: 1 } }),
+        'm',
+        1
+      )
+    ).toBe(0)
+    expect(initialEstimationBias(rows, usage({}), 'm', 135_000)).toBe(0)
   })
 })
 

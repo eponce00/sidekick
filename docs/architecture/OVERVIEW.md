@@ -210,7 +210,12 @@ is `not_configured`; other refusals are `invalid_arguments`. The message puts Si
 explanation before the provider's own words, with echoed credentials masked. Before failing, the
 kernel retries once: after compacting when the provider reports a context overflow, after dropping
 older images when it names an image limit, and at the provider's stated maximum when it refuses
-the reply limit. Image and reply limits are remembered per provider and model for the session.
+the reply limit. Image and reply limits are remembered per provider and model for the session. A
+turn whose stream broke off (the connection closed, or the stream ended before the provider
+finished the reply) is asked again once per turn, three seconds later, with the same request: tools
+run only after their whole turn has arrived, so the broken turn ran none of its calls. Its
+`run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
+partial text, thinking and tool previews it streamed.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 

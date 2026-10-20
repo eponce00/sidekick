@@ -565,12 +565,14 @@ function withoutEchoedArtifact(content: string): string {
 }
 
 /**
- * The calibration a run starts with: the share of SideKick's estimate that the provider really
- * counted for the latest request a run recorded both for, applied to this request. An offset
- * carried between runs compared the provider's count for a run's last request with an estimate
- * that left that run's own work out.
+ * The calibration a run starts with, from the latest request an earlier run recorded both the
+ * provider's count and SideKick's estimate for. The next request usually holds that one and what
+ * was added since, so it counts as the provider's count plus the estimate of the rest, as within a
+ * run. A request smaller than that one, part of it summarized since, takes the same share of its
+ * estimate instead. Before, the provider's count for a run's last request was compared with an
+ * estimate that left that run's own work out, and only a positive difference was kept.
  */
-function initialEstimationBias(
+export function initialEstimationBias(
   rows: readonly MessageRow[],
   runUsage: ReturnType<typeof loadContextUsageByOutputMessage>,
   model: string,
@@ -579,8 +581,11 @@ function initialEstimationBias(
   for (let index = rows.length - 1; index >= 0; index--) {
     const usage = rows[index].role === 'agent' ? runUsage.get(rows[index].id) : undefined
     if (!usage || usage.promptTokens <= 0) continue
-    if (!usage.estimatedPromptTokens || (usage.model && usage.model !== model)) return 0
-    return Math.round(estimatedTokens * (usage.promptTokens / usage.estimatedPromptTokens - 1))
+    const estimated = usage.estimatedPromptTokens
+    if (!estimated || (usage.model && usage.model !== model)) return 0
+    return estimatedTokens >= estimated
+      ? usage.promptTokens - estimated
+      : Math.round(estimatedTokens * (usage.promptTokens / estimated - 1))
   }
   return 0
 }
