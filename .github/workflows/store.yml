@@ -124,7 +124,13 @@ jobs:
           # Starts a draft from the last published submission with the new package. A draft copies
           # that submission's publishing options, and the first one was held for a manual Publish
           # now, so the draft is set to publish as soon as it passes certification.
-          msstore publish $PWD --inputFile $package.FullName --appId $env:PRODUCT_ID --noCommit
+          # The CLI publishes a package file by itself when the path it is given ends in .msix, the
+          # same format as .appx, and uploads every package in that file's folder, so the one
+          # package goes alone into a folder of its own.
+          $upload = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'store-upload')
+          $msix = Join-Path $upload.FullName "$($package.BaseName).msix"
+          Copy-Item -LiteralPath $package.FullName -Destination $msix
+          msstore publish $msix --appId $env:PRODUCT_ID --noCommit
           if ($LASTEXITCODE -ne 0) { throw 'The Store submission failed.' }
           $submission = msstore submission get $env:PRODUCT_ID | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0 -or -not $submission) { throw 'Could not read the Store draft.' }
