@@ -185,6 +185,7 @@ export async function streamOpenAICompatibleChat(
       { id: string; type: string; function: { name: string; arguments: string } }
     >()
     const toolPreviewSignatures = new Map<number, string>()
+    const closedToolCalls = new Set<number>()
     let buffer = ''
     let promptTokens = 0
     let cachedPromptTokens: number | undefined
@@ -250,6 +251,24 @@ export async function streamOpenAICompatibleChat(
       if (Array.isArray(delta.tool_calls)) {
         for (const raw of delta.tool_calls) {
           const index = raw.index ?? 0
+          if (!toolCalls.has(index)) {
+            // The model went on to a new call, so the calls before it are finished.
+            const finished = [...toolCalls.entries()].filter(
+              ([earlier, call]) => !closedToolCalls.has(earlier) && call.function.name
+            )
+            for (const [earlier] of finished) closedToolCalls.add(earlier)
+            if (finished.length)
+              emit({
+                message: {
+                  closed_tool_calls: finished.map(([earlier, call]) => ({
+                    ...call,
+                    index: earlier,
+                    function: { ...call.function }
+                  }))
+                },
+                done: false
+              })
+          }
           const existing = toolCalls.get(index) || {
             id: raw.id || `call_${Date.now()}_${index}`,
             type: raw.type || 'function',

@@ -191,9 +191,22 @@ Every normal conversation, worker chat, research run, and child agent executes i
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
 - `AgentContextManager` performs budget-aware model compaction with a deterministic fallback and records the actual strategy and lineage.
 
-The kernel treats a provider output-limit finish reason as a failed tool batch: none of that turn's
-calls execute, even when an argument prefix happens to be valid JSON. Every call receives a
-model-visible `output_truncated` result so the model can retry with a smaller request. A turn the
+The kernel treats a reply the output limit cut off while it wrote tool calls as a failed tool
+batch: it is known by the provider's finish reason (`length`, `max_tokens` and other spellings) or
+by a reply that used its whole allowance whatever the reason says. None of that turn's calls
+execute, even when their JSON happens to parse; every call receives a model-visible
+`output_truncated` result asking for fewer, smaller calls. The turn records the stop reason,
+completion tokens, reply limit and the model's own limit on `assistant.completed`, the refused
+`tool.completed` events and a `run.retrying` event.
+
+A reply that runs away is stopped while it streams. The streaming clients report each call once it
+is whole (`closed_tool_calls`), and the kernel stops the request when a reply has begun more than 64
+calls, or written the same call, same tool and same arguments, a fourth time. None of its calls
+run, the calls the chat showed are closed as refused, and the next request tells the model why and
+asks for one call at a time, as Gemini CLI does; a second runaway in the run ends it as
+`loop_detected`. A reply that arrives whole is checked the same way. The support diagnostics export
+and `npm run audit:runs` count cut-off and runaway replies per reply, not per refused call, without
+content: one runaway reply of 784 calls once read as 767 refusals across a profile. A turn the
 limit cut off while the model was still thinking, before any answer or tool call, ends the run
 with that reason, as Codex treats an incomplete response, instead of completing it empty; the
 model is never told to cut its thinking short. A reply's limit is a quarter of the context window

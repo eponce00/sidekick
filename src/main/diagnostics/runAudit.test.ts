@@ -195,6 +195,123 @@ describe('auditRuns', () => {
     expect(reports.summary).toContain('1 of 2 worker reports')
   })
 
+  it('counts a cut-off reply once, however many calls it refused, and flags a cut that repeats', () => {
+    // A 0.16.2 journal records only the stop reason and the batch size.
+    run('one-cut')
+    event('one-cut', 'assistant.completed', { content: 'SECRET reply' }, 2_000)
+    event(
+      'one-cut',
+      'run.retrying',
+      { reason: 'truncated_tool_batch', doneReason: 'length', toolCallCount: 3 },
+      2_001
+    )
+    expect(finding('cut-off-turns')).toMatchObject({
+      severity: 'info',
+      count: 1,
+      summary: expect.stringContaining(
+        '1 reply was cut off while writing tool calls, with 3 calls refused.'
+      )
+    })
+
+    run('again')
+    for (let index = 0; index < 2; index++) {
+      event('again', 'assistant.completed', {}, 3_000 + index * 10)
+      event(
+        'again',
+        'run.retrying',
+        {
+          reason: 'truncated_tool_batch',
+          trigger: 'stop_reason',
+          doneReason: 'length',
+          completionTokens: 1_024,
+          replyLimit: 1_024,
+          maxOutputTokens: 16_384,
+          toolCallCount: 1
+        },
+        3_001 + index * 10
+      )
+    }
+    const cut = finding('cut-off-turns')
+    expect(cut).toMatchObject({ severity: 'flag', count: 3 })
+    expect(cut.summary).toContain('1 held several calls; 1 came right after another cut.')
+    expect(cut.summary).toContain('Limit: shrunk to the room left 2, the model')
+    expect(cut.examples).toEqual([
+      'again (2 cut-off replies, 2 calls refused, 1 right after another cut)',
+      'one-cut (1 cut-off reply, 3 calls refused)'
+    ])
+    expect(formatRunAudit(auditRuns(db))).not.toContain('SECRET')
+  })
+
+  it('flags a reply that ran away, from the calls it recorded or from SideKick stopping it', () => {
+    // The work PC's reply: 784 calls, 781 of them the same click, recorded as previews.
+    run('runaway')
+    event(
+      'runaway',
+      'assistant.completed',
+      {
+        toolCalls: Array.from({ length: 784 }, (_, index) => ({
+          name: 'browser_click',
+          arguments: index < 781 ? {} : { text: `SECRET ${index}` }
+        }))
+      },
+      2_000
+    )
+    run('stopped')
+    event(
+      'stopped',
+      'assistant.completed',
+      {
+        toolCalls: [],
+        runaway: { kind: 'repeated_call', toolCallCount: 5, identicalCalls: 4, toolName: 'wait' }
+      },
+      3_000
+    )
+    run('healthy')
+    event(
+      'healthy',
+      'assistant.completed',
+      {
+        toolCalls: ['a.ts', 'b.ts', 'c.ts'].map((path) => ({ name: 'read', arguments: { path } }))
+      },
+      4_000
+    )
+
+    const runaway = finding('runaway-tool-calls')
+    expect(runaway).toMatchObject({ severity: 'flag', count: 2 })
+    expect(runaway.summary).toContain('(at most 784 calls, 781 of them the same)')
+    expect(runaway.summary).toContain('SideKick stopped 1 of them as they streamed.')
+    expect(runaway.examples).toEqual([
+      'runaway (1 runaway, up to 784 calls, 781 the same)',
+      'stopped (1 runaway, up to 5 calls, 4 the same)'
+    ])
+    expect(formatRunAudit(auditRuns(db))).not.toContain('SECRET')
+  })
+
+  it('does not count a wait the model asked for as a run going quiet', () => {
+    // All three quiet runs on a work PC were waits of 5 to 15 minutes on a background task.
+    run('waiting')
+    event('waiting', 'run.phase', { phase: 'executing_tool' }, 1_000)
+    event(
+      'waiting',
+      'tool.running',
+      { name: 'wait', arguments: { seconds: 900, taskIds: ['t'] } },
+      2_000
+    )
+    event('waiting', 'tool.completed', { name: 'wait' }, 2_000 + 15 * 60_000)
+    // Past what it asked for, the silence counts.
+    event(
+      'waiting',
+      'tool.running',
+      { name: 'wait', arguments: { seconds: 60 } },
+      2_000 + 16 * 60_000
+    )
+    event('waiting', 'tool.completed', { name: 'wait' }, 2_000 + 16 * 60_000 + 20 * 60_000)
+
+    const quiet = finding('quiet-run')
+    expect(quiet.count).toBe(1)
+    expect(quiet.examples[0]).toContain('20 min')
+  })
+
   it('reads only runs started after the given time', () => {
     run('old', 1_000)
     compaction('old', 95_000, 2_000)

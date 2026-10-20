@@ -29,6 +29,7 @@ import {
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
+import { commandOutputForModel } from './commandOutputForModel'
 import type { TerminalModelRead } from './terminalSessions'
 import {
   MAX_TERMINAL_INPUT_LENGTH,
@@ -194,7 +195,7 @@ function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'waiting_for_input') {
     return (
       `The command stopped at a prompt and is waiting for input, so it now runs in the background as task ${task.id}; ` +
-      'its last lines are in "recentOutput". Answer with send_command_input, read more with read_command_output, or stop it ' +
+      'its last lines are below. Answer with send_command_input, read more with read_command_output, or stop it ' +
       'with cancel_background_task. Ask the user instead when the answer is their decision or a secret.'
     )
   }
@@ -204,7 +205,7 @@ function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'still_running') {
     return (
       `The command was still running when its time was up, so it goes on in the background as task ${task.id}; ` +
-      '"recentOutput" is what it printed so far. Keep working and you will be told when it ends, or call wait with ' +
+      'below is what it printed so far. Keep working and you will be told when it ends, or call wait with ' +
       'its task ID to wait for it. Stop it with cancel_background_task if it is stuck.'
     )
   }
@@ -224,14 +225,29 @@ function stringList(value: unknown): string[] {
   return [...new Set(values.filter((item): item is string => typeof item === 'string' && !!item))]
 }
 
+/** Terminal text as the model reads it: plain lines under a tag, never a JSON string. */
+function outputBlock(text: string): string {
+  return text ? `<output>\n${text}${text.endsWith('\n') ? '' : '\n'}</output>` : 'No new output.'
+}
+
 function commandReadContent(read: TerminalModelRead): string {
-  return JSON.stringify({
-    taskId: read.id,
-    state: read.state,
-    ...(read.exitCode !== undefined ? { exitCode: read.exitCode } : {}),
-    ...(read.omittedLines ? { omittedLines: read.omittedLines } : {}),
-    output: read.text
-  })
+  return [
+    `Task ${read.id}: ${read.state.replaceAll('_', ' ')}` +
+      (read.exitCode !== undefined ? `, exit code ${read.exitCode}` : ''),
+    ...(read.omittedLines
+      ? [`${read.omittedLines} earlier lines are not shown; read with mode "tail" or a pattern.`]
+      : []),
+    outputBlock(read.text)
+  ].join('\n')
+}
+
+/** A command that went on in the background, with what it printed so far. */
+function backgroundContent(task: OwnedBackgroundTask): string {
+  return [
+    `Background task ${task.id}: ${task.status}`,
+    backgroundNote(task),
+    ...(task.recentOutput ? [outputBlock(task.recentOutput)] : [])
+  ].join('\n')
 }
 
 function stringArg(args: Record<string, unknown>, key: string, fallback = ''): string {
@@ -522,7 +538,8 @@ export class AgentToolRuntime {
       mcp: this.mcp,
       available: mcpByFunction,
       enabled: enabledMcpByFunction,
-      readReceipts
+      readReceipts,
+      outputs: this.outputs
     })
     handlers.register(
       [
@@ -983,17 +1000,6 @@ export class AgentToolRuntime {
         onOutput: ({ chunk, stream }) => context.onOutput?.({ chunk, stream })
       })
       const publicResult = { ...result, outputPath: undefined }
-      const content =
-        'stdout' in result
-          ? JSON.stringify({
-              success: result.success,
-              exitCode: result.exitCode,
-              stdout: result.stdout,
-              stderr: result.stderr,
-              error: result.error,
-              cancelled: result.cancelled
-            })
-          : JSON.stringify({ ...publicResult, note: backgroundNote(result) })
       if ('stdout' in result) {
         this.verification.recordCommand(
           input.runId,
@@ -1007,8 +1013,9 @@ export class AgentToolRuntime {
       } else if (verificationSnapshot) {
         this.backgroundVerificationSnapshots.set(result.id, verificationSnapshot)
       }
-      if ('stdout' in result && !result.success) {
-        const bounded = await this.outputs.apply(content, { preview: 'head-tail' })
+      if (!('stdout' in result)) return this.success(title, publicResult, backgroundContent(result))
+      const bounded = await commandOutputForModel(this.outputs, result)
+      if (!result.success) {
         const timedOut = result.error?.toLowerCase().includes('timed out') === true
         const cancelled = result.cancelled === true
         if (result.stoppedByUser) {
@@ -1051,7 +1058,12 @@ export class AgentToolRuntime {
           status: cancelled ? 'cancelled' : 'error'
         })
       }
-      return this.success(title, publicResult, content, { policy: { preview: 'head-tail' } })
+      return toolExecutionSucceeded({
+        title,
+        data: publicResult,
+        modelContent: bounded.content,
+        output: bounded.output
+      })
     }
     // A conversation's background commands outlive the reply that started them.
     const commandScope = { conversationId: context.conversationId, runId: context.runId }
@@ -1295,7 +1307,18 @@ export class AgentToolRuntime {
         : {}),
       ...(read?.text ? { output: read.text } : {})
     }
-    return this.success(title, summary, JSON.stringify(summary))
+    const lines = [
+      `Woke: ${summary.woke.replaceAll('_', ' ')} after ${summary.waitedSeconds} s (asked for ${summary.requestedSeconds} s)`,
+      ...(task
+        ? [
+            `Task ${task.id} (${task.title}): ${String(summary.state).replaceAll('_', ' ')}` +
+              ('exitCode' in summary ? `, exit code ${summary.exitCode}` : '')
+          ]
+        : []),
+      ...(summary.note ? [summary.note] : []),
+      ...(read?.text ? [outputBlock(read.text)] : [])
+    ]
+    return this.success(title, summary, lines.join('\n'))
   }
 
   /** The user sent a message to the run; a wait in it ends so the agent reads it now. */

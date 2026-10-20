@@ -113,6 +113,21 @@ function reply(messages, request) {
     }
   }
   const last = messages.at(-1)
+  if (all.includes('RUNAWAY-FIXTURE')) {
+    if (last.role === 'tool') return { content: 'Ran it once; the cell answered.' }
+    if (text(last.content).includes('sidekick_runaway_reply'))
+      return {
+        toolCall: { name: 'shell', arguments: { title: 'Once', command: 'echo once-call' } }
+      }
+    // The work PC's runaway: the same call written over and over, a model still streaming it.
+    return {
+      toolCalls: Array.from({ length: 50 }, () => ({
+        name: 'shell',
+        arguments: { title: 'Click', command: 'echo runaway-call' }
+      })),
+      stream: { delayMs: 25 }
+    }
+  }
   if (last.role === 'tool') {
     return all.includes('long finding')
       ? { content: 'Read the whole of both reports.' }
@@ -434,6 +449,54 @@ test(
         `The marker sits at ${card.left}%, compaction fires at ${(TRIGGER_SHARE * 100).toFixed(1)}%`
       )
       assert.match(card.line, /73% · 95\.7K/)
+
+      // --- A reply that writes the same call over and over is stopped as it streams -----------
+      // A work PC's 767 refused calls all came from one reply that wrote 784 calls in five
+      // minutes, 781 of them the same click, until its output limit cut it off.
+      const runawayChat = await page.evaluate(
+        async (projectId) => (await window.api.conversations.create('Runaway', projectId)).id,
+        projectId
+      )
+      const runawayStart = model.requests.length
+      await send(
+        runawayChat,
+        'runaway-run',
+        'RUNAWAY-FIXTURE: click the start button.',
+        'Ran it once; the cell answered.'
+      )
+      const runawayRequests = model.requests.slice(runawayStart)
+      assert.equal(
+        runawayRequests.length,
+        3,
+        'The runaway reply, the reply after the notice, and the answer to its one call'
+      )
+      assert.equal(runawayRequests[0].aborted, true, 'SideKick hung up while the reply streamed')
+      const notice = text(runawayRequests[1].messages.at(-1).content)
+      assert.ok(
+        notice.includes(
+          'SideKick stopped your last reply because it wrote the same shell call, with the same arguments, 4 times. None of its tool calls ran.'
+        ),
+        `The next request says why: ${notice}`
+      )
+      const sentAfterStop = runawayRequests[1].messages
+      assert.ok(
+        !sentAfterStop.some((message) => message.tool_calls?.length || message.role === 'tool'),
+        'None of the runaway calls reached the transcript, and none ran'
+      )
+      const once = text(runawayRequests[2].messages.at(-1).content)
+      assert.ok(
+        once.startsWith('Exit code: 0\n') && once.includes('once-call'),
+        `The one call ran, and its output reads as text: ${once.slice(0, 200)}`
+      )
+      assert.ok(!once.includes('\\n'), 'Command output is not JSON-escaped')
+      assert.ok(
+        !runawayRequests.some((record) =>
+          record.messages.some(
+            (message) => message.role === 'tool' && text(message.content).includes('runaway-call')
+          )
+        ),
+        'No runaway command ran'
+      )
 
       // --- A worker's report reaches its manager whole, and a longer one stays readable -------
       const manager = await page.evaluate(
