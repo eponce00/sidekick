@@ -2,7 +2,11 @@ import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { resolve } from 'path'
 import { stat } from 'node:fs/promises'
-import { projectRelativePath, resolveSecureWorkspacePath } from '../utils/workspacePaths'
+import {
+  OutsideProjectError,
+  projectRelativePath,
+  resolveSecureWorkspacePath
+} from '../utils/workspacePaths'
 import {
   normalizeAgentToolParameters,
   type AgentToolDefinition
@@ -50,7 +54,7 @@ import {
   type ToolOutputPolicy
 } from './toolOutputStore'
 import type { AgentKernelToolRouter } from './agentRunKernel'
-import type { AgentToolExecutionContext } from './agentToolRegistry'
+import { AgentToolExecutionError, type AgentToolExecutionContext } from './agentToolRegistry'
 import { resolveWorkspaceInstructionsForPath } from './workspaceRules'
 import type {
   CodeIntelligenceInput,
@@ -83,7 +87,7 @@ import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
 import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
-import { nestedPowerShellHint } from './shellCommandHints'
+import { shellCommandHint } from './shellCommandHints'
 
 /** Starts, messages and lists other chats for a conversation run; see SessionService. */
 export interface AgentSessionToolHandler {
@@ -698,7 +702,14 @@ export class AgentToolRuntime {
   }
 
   private requireWorkspace(input: AgentToolRuntimeSessionInput): string {
-    if (!input.workspaceRoot) throw new Error('This run has no active project workspace')
+    if (!input.workspaceRoot)
+      throw new AgentToolExecutionError(
+        'workspace_scope',
+        'This chat has no project folder, so it cannot use project files or run commands',
+        false,
+        'Continue without this tool. If the task needs files or commands, tell the user: they can move this chat into a project, or ask again in a chat inside one.',
+        'change_strategy'
+      )
     return input.workspaceRoot
   }
 
@@ -858,6 +869,9 @@ export class AgentToolRuntime {
       })
       if (!result.ok) {
         const failureCode = result.failure?.code
+        // Labelled and explained like every other path outside the project.
+        if (failureCode === 'outside_project')
+          throw new OutsideProjectError(result.error ?? 'Path is outside the project')
         const stale = failureCode
           ? failureCode === 'read_required' || failureCode === 'stale_read'
           : /stale|re-?read|read receipt/i.test(result.error || '')
@@ -1035,7 +1049,10 @@ export class AgentToolRuntime {
         }
         // The model reads the command's output, not the recovery field, so a hint about the
         // command itself goes into that output.
-        const hint = cancelled || timedOut ? null : nestedPowerShellHint(command)
+        const hint =
+          cancelled || timedOut
+            ? null
+            : shellCommandHint(command, `${result.stderr}\n${result.stdout}`)
         return toolExecutionFailed({
           title,
           code: cancelled ? 'cancelled' : timedOut ? 'timeout' : 'command_failed',

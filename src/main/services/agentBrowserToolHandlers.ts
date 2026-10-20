@@ -2,10 +2,12 @@ import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/bro
 import { dirname, join, resolve } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import { composeFilmstrip } from './browserFilmstrip'
+import { OutsideProjectError } from '../utils/workspacePaths'
 import {
   toolExecutionFailed,
   toolExecutionSucceeded,
   MAX_TOOL_RESULT_MEDIA_BYTES,
+  type ToolExecutionError,
   type ToolExecutionResult,
   type ToolResultMediaAttachment
 } from '../../shared/agentRuntime'
@@ -564,6 +566,70 @@ function publicFillForm(result: BrowserFillFormResult): unknown {
   return { ...result, observation: publicObservation(result.observation) }
 }
 
+const UNREACHABLE_NETWORK_ERRORS = new Set([
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_ADDRESS_UNREACHABLE',
+  'ERR_NETWORK_CHANGED',
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_CLOSED',
+  'ERR_CONNECTION_ABORTED',
+  'ERR_EMPTY_RESPONSE'
+])
+
+/**
+ * Chromium's network errors from loading a page, labelled like failed model requests: an
+ * unreachable or dropped connection is transient and a connection that gave up is a timeout. A
+ * host name that does not resolve is not found, since the model chose the address and a
+ * misspelled or guessed host is the usual cause.
+ */
+function networkFailure(
+  error: unknown,
+  message: string
+): Required<Omit<ToolExecutionError, 'message'>> | null {
+  const property = (error as { code?: unknown } | null)?.code
+  const code =
+    typeof property === 'string' && property.startsWith('ERR_')
+      ? property
+      : /\b(ERR_[A-Z_]+) \(-\d+\)/.exec(message)?.[1]
+  if (code === 'ERR_NAME_NOT_RESOLVED' || code === 'ERR_NAME_RESOLUTION_FAILED') {
+    return {
+      code: 'not_found',
+      retryable: true,
+      recoveryAction: 'correct_input',
+      recovery:
+        'The host name in this address does not resolve from this computer. Check its spelling, and use addresses from the user, the project or search results rather than guessed ones. If the address is right, the host may only be reachable on another network, such as a VPN, or DNS may be down: tell the user instead of retrying.'
+    }
+  }
+  if (code === 'ERR_CONNECTION_REFUSED') {
+    return {
+      code: 'transient',
+      retryable: true,
+      recoveryAction: 'change_strategy',
+      recovery:
+        'Nothing is listening at that address. For a local server, start it with shell background=true and wait until it is ready before opening the page again; otherwise check the port.'
+    }
+  }
+  if (code === 'ERR_CONNECTION_TIMED_OUT' || code === 'ERR_TIMED_OUT') {
+    return {
+      code: 'timeout',
+      retryable: true,
+      recoveryAction: 'retry_later',
+      recovery:
+        'The server did not answer in time. Retry once; if it still does not answer, tell the user.'
+    }
+  }
+  if (code && UNREACHABLE_NETWORK_ERRORS.has(code)) {
+    return {
+      code: 'transient',
+      retryable: true,
+      recoveryAction: 'retry_later',
+      recovery:
+        'The network connection failed. Retry once; if it fails again, tell the user the network is unavailable.'
+    }
+  }
+  return null
+}
+
 function errorResult(
   title: string,
   error: unknown,
@@ -580,6 +646,10 @@ function errorResult(
       recoveryAction: 'stop'
     })
   }
+  // The registry labels and explains every path outside the project the same way.
+  if (error instanceof OutsideProjectError) throw error
+  const network = networkFailure(error, message)
+  if (network) return toolExecutionFailed({ title, message, ...network })
   if (name === 'TimeoutError' || /timed out|timeout/i.test(message)) {
     return toolExecutionFailed({
       title,

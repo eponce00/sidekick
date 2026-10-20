@@ -129,6 +129,27 @@ model-visible result. MCP schemas pass through the same portable schema normaliz
 reference resolution. Malformed provider JSON becomes an ordinary failed tool result with the
 original call identity; it never aborts the provider loop by itself.
 
+Models bring names from other agent harnesses. The registry renames an argument another harness
+uses for the same thing, such as `file_path` or `filePath` for `read`'s `path`, `offset` and
+`limit` for its line range, or Codex's `workdir` for `cwd`, when exactly one spelling is present,
+and lists each repair in the invalid-argument recovery if the call still fails. A call to another
+harness's tool, such as `apply_patch` in a run with exact-text editing or Claude Code's
+`AskUserQuestion`, is still refused, but the refusal names the SideKick tool that does the job in
+this run and its required arguments.
+
+A refusal says what it is, so the model can act on it and diagnostics do not count expected
+refusals as faults. A path outside the project, whether written with `..`, as an absolute or UNC
+path, or reached through a link, is `workspace_scope` whichever tool named it. Its recovery says
+the folder is not granted to the chat and how the user can grant it: a chat in that folder's
+project, which a manager can start with `start_session` and the user approves on the start card,
+or copying the files in. It never suggests another route to the folder. A chat with no project
+folder refuses file and command tools the same way. A browser page that fails to load is labelled
+like a failed model request: a refused or dropped connection is `transient` and one that gave up
+is `timeout`, while a host name that does not resolve is `not_found`, because the model chose the
+address. `internal` is left for failures nothing explains. A command that failed on a Unix command
+or flag in Windows PowerShell, such as `grep` or `cat -n`, gets the PowerShell equivalent, or `rg`
+when it is installed, in its output.
+
 Errors separate retry permission from the required recovery action: `correct_input`,
 `refresh_state`, `retry_later`, `change_strategy`, or `stop`. The run-scoped
 `AgentToolRecoveryController` independently fingerprints canonical tool arguments and results.
