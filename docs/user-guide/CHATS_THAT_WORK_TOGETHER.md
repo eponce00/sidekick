@@ -60,7 +60,9 @@ Suggestions expire after a week.
 ## Messages and reports
 
 When a worker's reply ends, its final message goes to the manager as a report, together with the
-facts SideKick knows, such as its branch. A worker that fails or is stopped reports that too.
+facts SideKick knows, such as its branch. The report carries the whole reply, up to 20,000
+characters; past that it says so, and the manager can ask for the rest. A worker that fails or is
+stopped reports that too.
 
 The manager wakes to read reports only once none of its workers is still working, so it sees the
 results together. A worker blocked on the manager can send a request, which wakes the manager at

@@ -985,7 +985,14 @@ export class SessionService {
     const branch = worktree?.set_aside_branch ?? worktree?.branch
     if (branch) facts.push(`Branch ${branch}`)
     if (this.userSteppedIn.has(conversation.id)) facts.push('The user stepped in')
-    const text = final?.content ? excerpt(final.content, SESSION_LIMITS.reportExcerptMaxLength) : ''
+    // The manager acts on what the report says and cannot read the worker's chat, so it gets the
+    // whole reply. Cut to 2,000 characters, file-level findings arrived in pieces, cut at the same
+    // place each time the manager asked again.
+    const reply = final?.content?.trim() ?? ''
+    const text =
+      reply.length > SESSION_LIMITS.messageMaxLength
+        ? `${excerpt(reply, SESSION_LIMITS.messageMaxLength)}\n\n(The reply goes on past ${SESSION_LIMITS.messageMaxLength.toLocaleString('en-US')} characters; ask for the rest.)`
+        : reply
     return [verdict, text, facts.join(' · ')].filter(Boolean).join('\n\n')
   }
 }

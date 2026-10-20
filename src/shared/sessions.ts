@@ -70,9 +70,8 @@ export const SESSION_LIMITS = {
   handleMaxLength: 32,
   titleMaxLength: 120,
   briefMaxLength: 20_000,
-  messageMaxLength: 20_000,
-  /** The share of a report shown in the manager's chat; the full text stays in the worker. */
-  reportExcerptMaxLength: 2_000
+  /** The longest message, and the longest reply a report carries to the manager. */
+  messageMaxLength: 20_000
 } as const
 
 /** A chat's place in a family, stored on its conversation row. */

@@ -349,6 +349,32 @@ describe('reports and wakes', () => {
     expect(reports[1].body).toMatch(/^Failed/)
   })
 
+  it('carries the whole of a long reply to the manager, which cannot read the worker', async () => {
+    // File-level findings used to arrive cut at 2,000 characters, at the same place every time.
+    const [worker] = await startWorkers('Investigator')
+    const findings = Array.from(
+      { length: 200 },
+      (_, index) => `- finding ${index}: FB35 network ${index}`
+    )
+    const reply = `${findings.join('\n')}\nLast line: add the HS 7 record.`
+    expect(reply.length).toBeGreaterThan(4_000)
+    runtime.finish(lastRunId(worker.conversationId), 'completed', reply)
+    await service.idle()
+
+    const report = service.messages(MANAGER).find(({ intent }) => intent === 'report')
+    expect(report?.body).toContain(reply)
+  })
+
+  it('says when a reply was too long to carry whole', async () => {
+    const [worker] = await startWorkers('Verbose')
+    runtime.finish(lastRunId(worker.conversationId), 'completed', 'x'.repeat(25_000))
+    await service.idle()
+
+    const report = service.messages(MANAGER).find(({ intent }) => intent === 'report')
+    expect(report?.body).toContain('goes on past 20,000 characters; ask for the rest')
+    expect(report!.body.length).toBeLessThan(20_200)
+  })
+
   it('wakes the manager at once for a request, and steers messages into a running chat', async () => {
     const [asker, busy] = await startWorkers('Asker', 'Busy')
     const [request] = service.send({
