@@ -954,6 +954,8 @@ export function installBrowserApiMock(): void {
         promptVersion: input.promptVersion,
         provider: input.provider,
         model: input.model,
+        replyMessageId: input.replyMessageId ?? null,
+        replyMessagesCovered: input.replyMessagesCovered ?? 0,
         createdAt: Date.now()
       }),
       saveMessage: async () => ({ success: true }),

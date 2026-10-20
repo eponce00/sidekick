@@ -3,8 +3,11 @@ import type Database from 'better-sqlite3'
 export interface AgentRunContextUsage {
   promptTokens: number
   completionTokens: number
-  /** SideKick's own estimate of the same request, when the run recorded it. */
-  estimatedPromptTokens?: number
+  /**
+   * The run's latest request it recorded both counts for: the provider's and SideKick's own
+   * estimate. Its last sample may lack the estimate, as a reply stopped while it streamed does.
+   */
+  calibration?: { promptTokens: number; estimatedPromptTokens: number }
   /** The provider's model id the run used. */
   model?: string
 }
@@ -39,7 +42,11 @@ export function contextUsageByOutputMessage(
 ): Map<string, AgentRunContextUsage> {
   const byRun = new Map<
     string,
-    { outputMessageId: string | null; usage: AgentRunContextUsage | null }
+    {
+      outputMessageId: string | null
+      usage: AgentRunContextUsage | null
+      calibration?: AgentRunContextUsage['calibration']
+    }
   >()
   for (const row of rows) {
     const state = byRun.get(row.run_id) ?? { outputMessageId: null, usage: null }
@@ -51,11 +58,13 @@ export function contextUsageByOutputMessage(
       const promptTokens = tokenCount(payload.promptTokens)
       const completionTokens = tokenCount(payload.completionTokens)
       const estimatedPromptTokens = tokenCount(payload.estimatedPromptTokens)
+      if (promptTokens && estimatedPromptTokens) {
+        state.calibration = { promptTokens, estimatedPromptTokens }
+      }
       if (promptTokens !== null || completionTokens !== null) {
         state.usage = {
           promptTokens: promptTokens ?? 0,
           completionTokens: completionTokens ?? 0,
-          ...(estimatedPromptTokens ? { estimatedPromptTokens } : {}),
           ...(row.model ? { model: row.model } : {})
         }
       }
@@ -64,8 +73,9 @@ export function contextUsageByOutputMessage(
   }
 
   const result = new Map<string, AgentRunContextUsage>()
-  for (const { outputMessageId, usage } of byRun.values()) {
-    if (outputMessageId && usage) result.set(outputMessageId, usage)
+  for (const { outputMessageId, usage, calibration } of byRun.values()) {
+    if (outputMessageId && usage)
+      result.set(outputMessageId, calibration ? { ...usage, calibration } : usage)
   }
   return result
 }

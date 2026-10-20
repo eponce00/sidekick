@@ -35,6 +35,12 @@ export interface ConversationCompactionRecord {
   promptVersion: string
   provider: string
   model: string
+  /**
+   * The reply after the anchor that the summary also reaches into, when it summarized a run's own
+   * work, and how many of that reply's provider messages it replaced.
+   */
+  replyMessageId: string | null
+  replyMessagesCovered: number
   createdAt: number
 }
 
@@ -51,4 +57,6 @@ export interface SaveConversationCompactionInput {
   promptVersion: string
   provider: string
   model: string
+  replyMessageId?: string | null
+  replyMessagesCovered?: number
 }
