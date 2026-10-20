@@ -652,8 +652,9 @@ describe('ManagedWorktreeService', () => {
           userWorktree,
           nested,
           hidden,
-          // Unnormalized, so it leads back to the repository from inside the worktrees folder.
-          `${sibling}${sep}x-123456${sep}..${sep}..${sep}${basename(sibling, '.worktrees')}`
+          // Unnormalized, so it leads back to the repository from inside the worktrees folder. It
+          // passes through a folder that exists, since POSIX resolves `..` on the real folders.
+          `${sibling}${sep}deeper${sep}..${sep}..${sep}${basename(sibling, '.worktrees')}`
         ]
         for (const target of targets) {
           const worktree = await service.create(source.id, 'Target')

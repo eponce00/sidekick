@@ -95,6 +95,10 @@ test(
       reply
     })
     let application
+    // The app's console and the manager's messages say why a step failed, where CI otherwise
+    // shows only the timeout.
+    const appLog = []
+    let managerMessages = async () => null
     try {
       application = await electron.launch({
         args: [ROOT, '--disable-gpu', '--sidekick-e2e'],
@@ -106,6 +110,8 @@ test(
         },
         timeout: 30_000
       })
+      for (const stream of [application.process().stdout, application.process().stderr])
+        stream?.on('data', (chunk) => appLog.push(...String(chunk).split('\n').filter(Boolean)))
       const page = await application.firstWindow()
       await page.waitForFunction(() => Boolean(window.api?.sessions))
       await application.evaluate(({ BrowserWindow }) =>
@@ -166,6 +172,8 @@ test(
         },
         { baseUrl: model.url, workspace, modelId: MODEL_ID }
       )
+      managerMessages = () =>
+        page.evaluate((id) => window.api.conversations.getMessages(id), managerId)
 
       const family = await until(
         () =>
@@ -250,6 +258,11 @@ test(
         await delay(1_000)
         await page.screenshot({ path: resolve(screenshot) })
       }
+    } catch (error) {
+      const messages = await managerMessages().catch(() => null)
+      console.error(`App output (last 100 lines):\n${appLog.slice(-100).join('\n')}`)
+      console.error(`Manager messages:\n${JSON.stringify(messages, null, 1)?.slice(0, 8000)}`)
+      throw error
     } finally {
       if (application) await application.close()
       await model.close()
