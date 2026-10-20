@@ -1206,6 +1206,11 @@ export class AgentRuntimeCoordinator {
     this.sessionTools = tools
   }
 
+  /** Keeps text a model was shown only part of, readable with `tool_output`; returns its handle. */
+  saveToolOutput(content: string): Promise<string> {
+    return this.outputs.save(content)
+  }
+
   /** Pauses a run on a durable question to the user, for tools that confirm their own work. */
   requestUserDecision(
     runId: string,
