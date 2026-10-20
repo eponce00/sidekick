@@ -1359,13 +1359,17 @@ const askUser = definition(
 
 const toolOutput = definition(
   'tool_output',
-  'Read a bounded range from complete tool output retained after truncation. Use the opaque handle returned by the original tool; do not guess filesystem paths.',
+  'Read a bounded range of a complete tool result that SideKick shortened for the chat. Use the handle and offset from the note where the result was shortened; do not guess filesystem paths.',
   {
     type: 'object',
     required: ['handle'],
     properties: {
       handle: { type: 'string', description: 'Opaque full-output handle.' },
-      offset: { type: 'number', description: 'UTF-8 byte offset, default 0.' },
+      offset: {
+        type: 'number',
+        description:
+          'UTF-8 byte offset to read from, default 0. The note gives where the part left out starts.'
+      },
       max_bytes: { type: 'number', description: 'Maximum bytes to return, capped by SideKick.' }
     }
   }

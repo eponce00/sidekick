@@ -3,9 +3,9 @@ import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import type { IPty } from 'node-pty'
 import type { ShellCommandResult } from '../../shared/types'
+import { COMMAND_CAPTURE_BYTES } from '../../shared/terminalSessions'
 import { TERMINAL_COLUMNS, TERMINAL_ROWS } from './terminalScreen'
 
-const DEFAULT_CAPTURE_BYTES = 256 * 1024
 const WINDOWS_EXIT_MARKER = '__SIDEKICK_EXIT_CODE__='
 /** Windows' console host can deliver the last output just after it reports the exit. */
 const PTY_EXIT_SETTLE_MS = 150
@@ -211,7 +211,7 @@ export class CommandRunner {
     options: CommandRunOptions,
     ptyModule: PtyModule
   ): Promise<ShellCommandResult> {
-    const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_BYTES
+    const maxCaptureBytes = options.maxCaptureBytes ?? COMMAND_CAPTURE_BYTES
     mkdirSync(dirname(options.outputPath), { recursive: true })
     const log = createWriteStream(options.outputPath, { flags: 'w' })
     const launch =
@@ -321,7 +321,7 @@ export class CommandRunner {
   }
 
   private runOverPipes(options: CommandRunOptions): Promise<ShellCommandResult> {
-    const maxCaptureBytes = options.maxCaptureBytes ?? DEFAULT_CAPTURE_BYTES
+    const maxCaptureBytes = options.maxCaptureBytes ?? COMMAND_CAPTURE_BYTES
     mkdirSync(dirname(options.outputPath), { recursive: true })
     const log = createWriteStream(options.outputPath, { flags: 'w' })
     const shell = process.platform === 'win32' ? 'powershell.exe' : 'bash'

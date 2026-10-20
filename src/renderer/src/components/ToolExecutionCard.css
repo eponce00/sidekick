@@ -617,6 +617,52 @@
   margin: 7px 0 2px;
 }
 
+.command-result-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 3px 6px 3px 11px;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+.command-result-bar .rich-tool-copy {
+  position: static;
+  margin-left: auto;
+}
+.command-result-exit {
+  font-family: var(--font-mono);
+}
+.command-result-exit.is-failed {
+  color: var(--color-error);
+}
+.command-result-ending {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.command-result-stream + .command-result-stream {
+  border-top: 1px solid var(--border-subtle);
+}
+.command-result-label {
+  padding: 6px 11px 0;
+  background: var(--surface-0);
+  color: var(--text-muted);
+  font: var(--text-xs) / 1.4 var(--font-mono);
+}
+.command-result-stream.is-stderr .command-result-label {
+  color: var(--warning);
+}
+.rich-tool-output.command-result pre {
+  padding: 6px 11px 10px;
+}
+.command-result-empty {
+  padding: 8px 11px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
 .structured-code {
   max-height: 420px;
   margin: 0;

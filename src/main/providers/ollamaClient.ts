@@ -167,6 +167,9 @@ export async function streamOllamaChat(
       if (!chunk || typeof chunk !== 'object') return
       if (chunk.error) streamError = chunk.error
       terminal = chunk.done === true
+      // Ollama sends each tool call whole.
+      if (chunk.message?.tool_calls?.length)
+        chunk.message.closed_tool_calls = chunk.message.tool_calls
       emit(chunk)
     }
     while (!terminal && !streamError && !signal?.aborted) {

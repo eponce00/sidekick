@@ -129,6 +129,27 @@ model-visible result. MCP schemas pass through the same portable schema normaliz
 reference resolution. Malformed provider JSON becomes an ordinary failed tool result with the
 original call identity; it never aborts the provider loop by itself.
 
+Models bring names from other agent harnesses. The registry renames an argument another harness
+uses for the same thing, such as `file_path` or `filePath` for `read`'s `path`, `offset` and
+`limit` for its line range, or Codex's `workdir` for `cwd`, when exactly one spelling is present,
+and lists each repair in the invalid-argument recovery if the call still fails. A call to another
+harness's tool, such as `apply_patch` in a run with exact-text editing or Claude Code's
+`AskUserQuestion`, is still refused, but the refusal names the SideKick tool that does the job in
+this run and its required arguments.
+
+A refusal says what it is, so the model can act on it and diagnostics do not count expected
+refusals as faults. A path outside the project, whether written with `..`, as an absolute or UNC
+path, or reached through a link, is `workspace_scope` whichever tool named it. Its recovery says
+the folder is not granted to the chat and how the user can grant it: a chat in that folder's
+project, which a manager can start with `start_session` and the user approves on the start card,
+or copying the files in. It never suggests another route to the folder. A chat with no project
+folder refuses file and command tools the same way. A browser page that fails to load is labelled
+like a failed model request: a refused or dropped connection is `transient` and one that gave up
+is `timeout`, while a host name that does not resolve is `not_found`, because the model chose the
+address. `internal` is left for failures nothing explains. A command that failed on a Unix command
+or flag in Windows PowerShell, such as `grep` or `cat -n`, gets the PowerShell equivalent, or `rg`
+when it is installed, in its output.
+
 Errors separate retry permission from the required recovery action: `correct_input`,
 `refresh_state`, `retry_later`, `change_strategy`, or `stop`. The run-scoped
 `AgentToolRecoveryController` independently fingerprints canonical tool arguments and results.
@@ -191,9 +212,22 @@ Every normal conversation, worker chat, research run, and child agent executes i
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
 - `AgentContextManager` performs budget-aware model compaction with a deterministic fallback and records the actual strategy and lineage.
 
-The kernel treats a provider output-limit finish reason as a failed tool batch: none of that turn's
-calls execute, even when an argument prefix happens to be valid JSON. Every call receives a
-model-visible `output_truncated` result so the model can retry with a smaller request. A turn the
+The kernel treats a reply the output limit cut off while it wrote tool calls as a failed tool
+batch: it is known by the provider's finish reason (`length`, `max_tokens` and other spellings) or
+by a reply that used its whole allowance whatever the reason says. None of that turn's calls
+execute, even when their JSON happens to parse; every call receives a model-visible
+`output_truncated` result asking for fewer, smaller calls. The turn records the stop reason,
+completion tokens, reply limit and the model's own limit on `assistant.completed`, the refused
+`tool.completed` events and a `run.retrying` event.
+
+A reply that runs away is stopped while it streams. The streaming clients report each call once it
+is whole (`closed_tool_calls`), and the kernel stops the request when a reply has begun more than 64
+calls, or written the same call, same tool and same arguments, a fourth time. None of its calls
+run, the calls the chat showed are closed as refused, and the next request tells the model why and
+asks for one call at a time, as Gemini CLI does; a second runaway in the run ends it as
+`loop_detected`. A reply that arrives whole is checked the same way. The support diagnostics export
+and `npm run audit:runs` count cut-off and runaway replies per reply, not per refused call, without
+content: one runaway reply of 784 calls once read as 767 refusals across a profile. A turn the
 limit cut off while the model was still thinking, before any answer or tool call, ends the run
 with that reason, as Codex treats an incomplete response, instead of completing it empty; the
 model is never told to cut its thinking short. A reply's limit is a quarter of the context window
@@ -210,7 +244,12 @@ is `not_configured`; other refusals are `invalid_arguments`. The message puts Si
 explanation before the provider's own words, with echoed credentials masked. Before failing, the
 kernel retries once: after compacting when the provider reports a context overflow, after dropping
 older images when it names an image limit, and at the provider's stated maximum when it refuses
-the reply limit. Image and reply limits are remembered per provider and model for the session.
+the reply limit. Image and reply limits are remembered per provider and model for the session. A
+turn whose stream broke off (the connection closed, or the stream ended before the provider
+finished the reply) is asked again once per turn, three seconds later, with the same request: tools
+run only after their whole turn has arrived, so the broken turn ran none of its calls. Its
+`run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
+partial text, thinking and tool previews it streamed.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
