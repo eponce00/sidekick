@@ -94,6 +94,13 @@ import type { AgentPlanReview, AgentPlanStage } from '../../shared/agentPlans'
 import type { AgentPlanTerminalDecision } from './agentPlanService'
 import { abortablePromise } from './abortablePromise'
 import { agentWaitTitle } from '../../shared/agentWait'
+import {
+  cutOffLimit,
+  isOutputLimitStop,
+  ToolCallRunawayGuard,
+  type ToolBatchCutOff,
+  type ToolCallRunaway
+} from './toolBatchCutOff'
 
 export interface AgentKernelModelTurn {
   content: string
@@ -327,20 +334,48 @@ function safePreview(call: ProviderToolCall): Record<string, unknown> {
   return preview
 }
 
+const tokenCount = (value: number): string => `${value.toLocaleString('en-US')} tokens`
+
 /**
- * Providers use several spellings for an output-token stop. Tool arguments from
- * such a turn are unsafe even when their JSON happens to parse: the model may
- * have stopped at a syntactically valid but semantically incomplete boundary.
+ * The refusal of every call in a reply the output limit cut off. Arguments from such a reply are
+ * unsafe even when their JSON happens to parse: the model may have stopped at a syntactically
+ * valid but incomplete point, and a reply that ran away writes the same call hundreds of times.
  */
-function toolBatchMayBeTruncated(doneReason: string): boolean {
-  const normalized = doneReason.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_')
-  return (
-    normalized === 'length' ||
-    normalized === 'max_tokens' ||
-    normalized === 'max_output_tokens' ||
-    normalized === 'token_limit' ||
-    normalized === 'model_length'
-  )
+function cutOffToolResult(
+  title: string,
+  cutOff: ToolBatchCutOff,
+  startedAt: number
+): ToolExecutionResult {
+  const room =
+    cutOffLimit(cutOff) === 'shrunk'
+      ? ` The limit was below the model's ${tokenCount(cutOff.maxOutputTokens!)} because the conversation is near the end of the model's context window.`
+      : ''
+  return toolExecutionFailed({
+    title,
+    code: 'output_truncated',
+    message:
+      `Tool was not executed: your reply reached its output limit` +
+      `${cutOff.replyLimit ? ` of ${tokenCount(cutOff.replyLimit)}` : ''} (${cutOff.doneReason}) ` +
+      `while writing tool calls, so none of its ${cutOff.toolCallCount} ${cutOff.toolCallCount === 1 ? 'call' : 'calls'} ran; ` +
+      `their arguments may be incomplete.${room}`,
+    retryable: true,
+    recoveryAction: 'change_strategy',
+    recovery:
+      'Re-issue fewer, smaller calls in a new response. Split a long file into several edits or appends, and save a long script to a file in parts before running it. Do not assume any call from this batch ran.',
+    startedAt
+  })
+}
+
+/**
+ * What the model is told after SideKick stopped a reply that ran away. Gemini CLI does the same:
+ * the first loop stops the stream and tells the model, a second ends the turn.
+ */
+function runawayNotice(runaway: ToolCallRunaway): string {
+  const what =
+    runaway.kind === 'repeated_call'
+      ? `it wrote the same ${runaway.toolName} call, with the same arguments, ${runaway.identicalCalls} times`
+      : `it had written ${runaway.toolCallCount} tool calls, more than one reply may make`
+  return `<sidekick_runaway_reply trust="app-policy">SideKick stopped your last reply because ${what}. None of its tool calls ran. Make one call, read its result, and decide the next step from what it shows. Repeat a call only when something has changed.</sidekick_runaway_reply>`
 }
 
 function uniqueToolCallIds(calls: readonly ProviderToolCall[]): ProviderToolCall[] {
@@ -1079,6 +1114,50 @@ The user approved this exact plan revision. Act capabilities are now available a
     return answer === 'deny_stop' ? 'denied_stop' : 'denied'
   }
 
+  /**
+   * Puts a reply SideKick stopped on record: what it said, why it was stopped, and every call it
+   * had begun, refused, so the chat shows no call still pending and nothing runs.
+   */
+  private stopRunawayReply(
+    input: StartAgentKernelRunInput,
+    turn: AgentKernelModelTurn,
+    runaway: ToolCallRunaway,
+    previews: ReadonlyMap<string, string>,
+    options: { stoppedWhileStreaming: boolean; separate: boolean }
+  ): void {
+    const stopped = { ...runaway, stoppedWhileStreaming: options.stoppedWhileStreaming }
+    this.append(input.id, 'assistant.completed', {
+      content: options.separate && turn.content ? `\n\n${turn.content}` : turn.content,
+      thinking: turn.thinking,
+      thinkingBlocks: [],
+      toolCalls: [],
+      usage: turn.usage,
+      runaway: stopped,
+      generationId: turn.generationId
+    })
+    this.append(input.id, 'usage.updated', turn.usage)
+    input.goalController?.onUsage?.(turn.usage)
+    const message =
+      runaway.kind === 'repeated_call'
+        ? `Not run: SideKick stopped the reply because it wrote the same ${runaway.toolName} call ${runaway.identicalCalls} times.`
+        : `Not run: SideKick stopped the reply because it wrote ${runaway.toolCallCount} tool calls.`
+    for (const [toolCallId, signature] of previews) {
+      const name = String((JSON.parse(signature) as unknown[])[0] ?? '')
+      this.append(input.id, 'tool.completed', {
+        toolCallId,
+        name,
+        result: toolExecutionFailed({
+          title: name.replaceAll('_', ' '),
+          code: 'loop_detected',
+          message,
+          retryable: false,
+          recoveryAction: 'change_strategy'
+        })
+      })
+    }
+    this.append(input.id, 'run.retrying', { reason: 'runaway_tool_calls', ...stopped })
+  }
+
   private async compactContext(
     input: StartAgentKernelRunInput,
     contextManager: AgentKernelContextManager | undefined,
@@ -1146,6 +1225,8 @@ The user approved this exact plan revision. Act capabilities are now available a
     let contextOverflowRetryAttempted = false
     let imageLimitRetryAttempted = false
     let outputLimitRetryAttempted = false
+    // A reply that ran away is stopped and the model told once; a second one ends the run.
+    let runawayStopped = false
     // Learned from a provider's image-count rejection and enforced on every
     // later request, so one screenshot-heavy session does not fail the same way
     // turn after turn. Seeded from what earlier runs on this model learned.
@@ -1436,6 +1517,13 @@ The user approved this exact plan revision. Act capabilities are now available a
         }
         let acceptingChunks = true
         let sampled: Awaited<ReturnType<AgentKernelProviderSampler>>
+        // One reply wrote 784 tool calls for five minutes, 781 of them the same click, until its
+        // output limit cut it off. A reply that runs away is stopped while it streams.
+        const runawayGuard = new ToolCallRunawayGuard()
+        const stopReply = new AbortController()
+        let runaway: ToolCallRunaway | undefined
+        const guardKey = (call: ProviderToolCall, position: number): string =>
+          call.id || `tool_index_${call.index ?? position}`
         try {
           sampled = await abortablePromise(
             this.sample(
@@ -1445,7 +1533,7 @@ The user approved this exact plan revision. Act capabilities are now available a
                 messages: requestMessages,
                 tools: toolDefinitions
               },
-              signal,
+              AbortSignal.any([signal, stopReply.signal]),
               (chunk) => {
                 if (!acceptingChunks || signal.aborted) return
                 pendingContent += chunk.message?.content || ''
@@ -1457,7 +1545,8 @@ The user approved this exact plan revision. Act capabilities are now available a
                 ) {
                   flushDelta()
                 }
-                for (const call of chunk.message?.tool_calls ?? []) {
+                for (const [position, call] of (chunk.message?.tool_calls ?? []).entries()) {
+                  runaway ??= runawayGuard.begin(guardKey(call, position))
                   const id = call.id || `tool_index_${call.index ?? 0}`
                   const preview = safePreview(call)
                   const signature = JSON.stringify([call.function.name, preview])
@@ -1474,6 +1563,17 @@ The user approved this exact plan revision. Act capabilities are now available a
                     )
                   })
                 }
+                for (const [position, call] of (chunk.message?.closed_tool_calls ?? []).entries()) {
+                  runaway ??= runawayGuard.close(
+                    guardKey(call, position),
+                    call.function.name,
+                    call.function.arguments
+                  )
+                }
+                if (runaway) {
+                  acceptingChunks = false
+                  stopReply.abort()
+                }
               }
             ),
             signal,
@@ -1482,6 +1582,37 @@ The user approved this exact plan revision. Act capabilities are now available a
         } finally {
           acceptingChunks = false
           flushDelta()
+        }
+        // A reply that arrived whole, or was not stopped while it streamed, is checked once.
+        runaway ??=
+          stopReply.signal.aborted || !sampled.result.ok
+            ? undefined
+            : runawayGuard.closeAll(sampled.turn.toolCalls)
+        if (runaway) {
+          this.stopRunawayReply(input, sampled.turn, runaway, previewSignatures, {
+            stoppedWhileStreaming: stopReply.signal.aborted,
+            separate: separateNextTurn
+          })
+          if (runawayStopped) {
+            throw new AgentToolLoopError(
+              'The model wrote the same tool calls over and over again after it was stopped once'
+            )
+          }
+          runawayStopped = true
+          const partial =
+            separateNextTurn && sampled.turn.content
+              ? `\n\n${sampled.turn.content}`
+              : sampled.turn.content
+          finalContent += partial
+          separateNextTurn = false
+          messages = [
+            ...requestMessages,
+            ...(sampled.turn.content.trim()
+              ? [{ role: 'assistant' as const, content: sampled.turn.content }]
+              : []),
+            { role: 'user', content: runawayNotice(runaway) }
+          ]
+          continue
         }
         if (!sampled.result.ok) {
           const providerError = sampled.result.error || 'Provider stream failed'
@@ -1557,10 +1688,23 @@ The user approved this exact plan revision. Act capabilities are now available a
         // Some servers (LM Studio among them) report a turn the output limit cut off as finished
         // normally, even `tool_calls`; a turn that used its whole allowance was cut off whatever
         // the reason says.
+        const stoppedForLength = isOutputLimitStop(turn.usage.doneReason)
         const hitOutputLimit =
-          toolBatchMayBeTruncated(turn.usage.doneReason) ||
-          Boolean(replyLimit && turn.usage.completionTokens >= replyLimit)
+          stoppedForLength || Boolean(replyLimit && turn.usage.completionTokens >= replyLimit)
         const truncatedToolBatch = turn.toolCalls.length > 0 && hitOutputLimit
+        // What the journal keeps about a cut, so a diagnostics export can say what cut it off.
+        const cutOff: ToolBatchCutOff | undefined = truncatedToolBatch
+          ? {
+              trigger: stoppedForLength ? 'stop_reason' : 'used_allowance',
+              doneReason: turn.usage.doneReason,
+              completionTokens: turn.usage.completionTokens,
+              ...(replyLimit ? { replyLimit } : {}),
+              ...(activeRequest.maxOutputTokens
+                ? { maxOutputTokens: activeRequest.maxOutputTokens }
+                : {}),
+              toolCallCount: turn.toolCalls.length
+            }
+          : undefined
         activeContextManager?.observeUsage?.(
           requestMessages,
           toolDefinitions,
@@ -1666,6 +1810,7 @@ The user approved this exact plan revision. Act capabilities are now available a
               safePreview(call)
           })),
           usage: turn.usage,
+          ...(cutOff ? { outputLimit: cutOff } : {}),
           generationId: turn.generationId,
           provisional,
           ...(verificationNote ? { verificationNote: true } : {})
@@ -1854,13 +1999,8 @@ The user approved this exact plan revision. Act capabilities are now available a
             })
           }
         }
-        if (truncatedToolBatch) {
-          this.append(input.id, 'run.retrying', {
-            reason: 'truncated_tool_batch',
-            doneReason: turn.usage.doneReason,
-            toolCallCount: turn.toolCalls.length
-          })
-        }
+        if (cutOff)
+          this.append(input.id, 'run.retrying', { reason: 'truncated_tool_batch', ...cutOff })
         const preExecuted = new Map<string, ToolExecutionResult>()
         // Decisions already taken for calls that were authorized ahead of running together.
         const preAuthorized = new Map<
@@ -1966,17 +2106,8 @@ The user approved this exact plan revision. Act capabilities are now available a
           const parallelResult = preExecuted.get(call.id)
           if (parallelResult) {
             result = parallelResult
-          } else if (truncatedToolBatch) {
-            result = toolExecutionFailed({
-              title,
-              code: 'output_truncated',
-              message: `Tool was not executed because the provider stopped this response with ${turn.usage.doneReason} while emitting tool calls. Its arguments may be incomplete.`,
-              retryable: true,
-              recoveryAction: 'change_strategy',
-              recovery:
-                'Re-issue a smaller, focused tool call in a new response. Do not assume any call from this batch ran.',
-              startedAt
-            })
+          } else if (cutOff) {
+            result = cutOffToolResult(title, cutOff, startedAt)
           } else if (goalAlreadyComplete) {
             result = toolExecutionFailed({
               title,
@@ -2127,7 +2258,8 @@ The user approved this exact plan revision. Act capabilities are now available a
               call.name,
               safeArguments,
               result
-            )
+            ),
+            ...(cutOff ? { outputLimit: cutOff } : {})
           })
           lastToolMessage = {
             role: 'tool',

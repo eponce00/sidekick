@@ -43,7 +43,9 @@ scenarios check that a chat compacts only past the share of the window Settings 
 request leaves room for the reply it asks for, that the context card marks where compaction fires,
 that a long worker report reaches its manager whole even when streamed in many small pieces, that
 a report too long to carry keeps its start and end and stays readable with `tool_output`, that a
-reply limit the provider refuses is asked again once at the cap it names, and that a gateway with
+reply writing the same tool call over and over is stopped while it streams, runs none of its calls
+and is told why on the next request, that the model reads a command's output as plain lines,
+that a reply limit the provider refuses is asked again once at the cap it names, and that a gateway with
 nothing behind it fails the reply with a heading and message saying so. CI runs them in each
 platform's packaging job.
 
@@ -51,7 +53,11 @@ platform's packaging job.
 profile's run journals read-only and reports what looks wrong: compactions before 60% of the window,
 how much a compaction kept, the share of fallback summaries, runs that compact or retry after
 failures again and again, requests that did not fit the window, working runs that went quiet for 10
-minutes or more, and worker reports that did not carry the whole reply. It prints counts and run ids,
+minutes or more (a `wait` within the time it asked for is expected), worker reports that did not
+carry the whole reply, replies cut off while they wrote tool calls, counted per reply with their
+cause (cuts that followed another cut, a limit shrunk to the room left, tokens used against the
+limit), and replies that ran away: more than 64 tool calls, or one call more than three times. It
+prints counts and run ids,
 never message content, and exits 1 when something is flagged. Thresholds are flags; see `--help`.
 
 ## Continuous integration

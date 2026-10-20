@@ -3,6 +3,9 @@
  * output tools all read, so each command has one record of what it printed and where it stands.
  */
 
+/** The most of a command's output a run keeps; the rest goes only to its log. */
+export const COMMAND_CAPTURE_BYTES = 256 * 1024
+
 export type TerminalSessionState =
   | 'running'
   /** Running, and its last line looks like a prompt with nothing printed since. */
