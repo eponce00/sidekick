@@ -56,6 +56,8 @@
     "test:agent-eval:configured:comprehensive": "electron scripts/run-configured-agent-eval.cjs --comprehensive",
     "test:openrouter-eval": "node scripts/run-openrouter-model-eval.cjs",
     "test:system-eval": "node scripts/run-agent-system-eval.cjs",
+    "audit:runs": "node scripts/audit-runs.cjs",
+    "test:behavior": "node --test scripts/electron-behavior.test.cjs scripts/electron-chat-family.test.cjs",
     "test:native-browser-smoke": "node scripts/run-native-browser-smoke.cjs",
     "test:native-browser-fixtures": "node scripts/run-native-browser-smoke.cjs --fixture-only",
     "test:artifact-inspector-smoke": "node scripts/run-artifact-inspector-smoke.cjs",

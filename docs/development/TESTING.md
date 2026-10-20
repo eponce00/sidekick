@@ -30,6 +30,30 @@ conversation deletion. It never configures a provider or contacts a live service
 runtime journey after creating the unpacked application, then separately smoke-tests the packaged
 executable.
 
+## Agent behavior
+
+Unit tests show that each part works; they do not show how much or when. A long chat summarized at
+half its window and a worker's report cut to 2,000 characters both passed them. Two tools check
+sizes and timing instead.
+
+`npm run test:behavior` drives the built app (after `npm run build`) against a scripted
+OpenAI-compatible model on loopback (`scripts/scripted-model.cjs`). The model records every request,
+and each scenario states the requests it expects, so an extra compaction or retry fails it. The
+scenarios check that a chat compacts only past the share of the window Settings names, that every
+request leaves room for the reply it asks for, that the context card marks where compaction fires,
+that a long worker report reaches its manager whole even when streamed in many small pieces, and
+that a report too long to carry keeps its start and end and stays readable with `tool_output`. CI
+runs them in each platform's packaging job.
+
+`npm run audit:runs -- --profile installed` (or `--profile dev`, or a database path) reads a
+profile's run journals read-only and reports what looks wrong: compactions before 60% of the window,
+how much a compaction kept, the share of fallback summaries, runs that compact or retry after
+failures again and again, requests that did not fit the window, working runs that went quiet for 10
+minutes or more, and worker reports that did not carry the whole reply. It prints counts and run ids,
+never message content, and exits 1 when something is flagged. Thresholds are flags; see `--help`.
+
+## Continuous integration
+
 CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
 the suite on macOS and on two Windows machines (it runs on one worker there), and a packaging job
 per platform for the runtime journey and smoke tests. The `Validate (…)` checks that branch

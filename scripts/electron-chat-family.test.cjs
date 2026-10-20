@@ -1,15 +1,15 @@
 // Live run of chats that start other chats: a manager starts two workers in worktrees and reads
 // their reports. A scripted OpenAI-compatible server on loopback plays the model, so the run is
-// deterministic and needs no account. Opt in with SIDEKICK_CHAT_FAMILY_RUN=1 after `npm run build`;
+// deterministic and needs no account. Runs with `npm run test:behavior` after `npm run build`;
 // SIDEKICK_CHAT_FAMILY_SCREENSHOT=<path> also saves the manager chat as the user sees it.
 const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } = require('node:fs')
-const { createServer } = require('node:http')
 const { tmpdir } = require('node:os')
 const { join, resolve, sep } = require('node:path')
 const { test } = require('node:test')
 const { _electron: electron } = require('playwright')
+const { startScriptedModel, text } = require('./scripted-model.cjs')
 
 const ROOT = resolve(__dirname, '..')
 const MODEL_ID = 'family-fixture'
@@ -23,11 +23,6 @@ async function until(predicate, message, timeout = 60_000) {
     await delay(200)
   } while (Date.now() < deadline)
   assert.fail(message)
-}
-
-function text(content) {
-  if (typeof content === 'string') return content
-  return Array.isArray(content) ? content.map((part) => part.text || '').join('') : ''
 }
 
 /** What the scripted model says next, from the conversation it was sent. */
@@ -63,42 +58,9 @@ function reply(messages) {
   }
 }
 
-function sse(response, answer) {
-  response.writeHead(200, { 'content-type': 'text/event-stream' })
-  const chunk = (body) => response.write(`data: ${JSON.stringify(body)}\n\n`)
-  if (answer.toolCall) {
-    chunk({
-      choices: [
-        {
-          index: 0,
-          delta: {
-            tool_calls: [
-              {
-                index: 0,
-                id: `call_${Date.now()}`,
-                type: 'function',
-                function: {
-                  name: answer.toolCall.name,
-                  arguments: JSON.stringify(answer.toolCall.arguments)
-                }
-              }
-            ]
-          },
-          finish_reason: null
-        }
-      ]
-    })
-    chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
-  } else {
-    chunk({ choices: [{ index: 0, delta: { content: answer.content }, finish_reason: null }] })
-    chunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
-  }
-  response.end('data: [DONE]\n\n')
-}
-
 test(
   'a manager starts two worker chats in worktrees and reads both reports',
-  { skip: process.env.SIDEKICK_CHAT_FAMILY_RUN !== '1', timeout: 180_000 },
+  { timeout: 180_000 },
   async () => {
     assert.ok(
       existsSync(join(ROOT, 'out', 'main', 'index.js')),
@@ -121,22 +83,10 @@ test(
       'init'
     )
 
-    const requests = []
-    const server = createServer((request, response) => {
-      let body = ''
-      request.on('data', (part) => (body += part))
-      request.on('end', () => {
-        if (request.url === '/v1/models') {
-          response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify({ data: [{ id: MODEL_ID, context_length: 65536 }] }))
-        } else if (request.url === '/v1/chat/completions') {
-          const messages = JSON.parse(body).messages
-          requests.push(messages)
-          sse(response, reply(messages))
-        } else response.writeHead(404).end()
-      })
+    const model = await startScriptedModel({
+      models: [{ id: MODEL_ID, context_length: 65536 }],
+      reply
     })
-    await new Promise((done) => server.listen(0, '127.0.0.1', done))
     let application
     try {
       application = await electron.launch({
@@ -207,7 +157,7 @@ test(
           })
           return conversation.id
         },
-        { baseUrl: `http://127.0.0.1:${server.address().port}/v1`, workspace, modelId: MODEL_ID }
+        { baseUrl: model.url, workspace, modelId: MODEL_ID }
       )
 
       const family = await until(
@@ -230,7 +180,7 @@ test(
             return current.workers.every(
               (worker) =>
                 worker.workIn === 'worktree' &&
-                worktrees.some(({ projectId }) => projectId === worker.projectId)
+                worktrees.some(({ sourceProjectId }) => sourceProjectId === worker.projectId)
             )
           }, managerId),
         'Each worker should work in its own managed worktree'
@@ -283,7 +233,7 @@ test(
       }
     } finally {
       if (application) await application.close()
-      server.close()
+      await model.close()
       const resolved = resolve(profile)
       assert.ok(resolved.startsWith(`${resolve(tmpdir())}${sep}`))
       rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
@@ -317,7 +267,7 @@ const LEGACY_GROUP_TABLES = `
 
 test(
   'a group chat from an earlier version opens as a manager chat with its timeline',
-  { skip: process.env.SIDEKICK_CHAT_FAMILY_RUN !== '1', timeout: 120_000 },
+  { timeout: 120_000 },
   async () => {
     const Database = require('better-sqlite3')
     const profile = mkdtempSync(join(tmpdir(), 'sidekick-e2e-group-upgrade-'))
