@@ -336,7 +336,11 @@ test(
         'The latest message survives compaction word for word'
       )
 
-      // The context card marks where compaction really fires.
+      // The context card marks where compaction really fires. The sidebar lists chats made through
+      // the API after a reload; without one, this chat showed only when the app had loaded its
+      // list later than the test created it.
+      await page.reload()
+      await page.waitForFunction(() => Boolean(window.api?.sessions))
       await page.getByText('COMPACTION-FIXTURE', { exact: true }).first().click()
       const card = await until(
         () =>
