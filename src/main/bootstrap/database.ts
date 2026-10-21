@@ -1038,6 +1038,10 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
   db.exec(SCHEDULE_TABLES)
 
   applyVersionedMigrations(db)
+  // Migrations only reconcile required columns when one of them runs, so a column listed without a
+  // migration of its own never reached an installed database: summaries and schedule modes then
+  // failed to save. Every start reconciles them instead.
+  ensureRequiredColumns(db)
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_background_tasks_run

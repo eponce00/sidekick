@@ -55,7 +55,8 @@ and message saying so. CI runs them in each platform's packaging job.
 
 `npm run audit:runs -- --profile installed` (or `--profile dev`, or a database path) reads a
 profile's run journals read-only and reports what looks wrong: compactions before 60% of the window,
-how much a compaction kept, the share of fallback summaries and why each was used, how SideKick's
+runs that began by compacting after a run that had sent less than that, how much a compaction kept,
+the share of fallback summaries and why each was used, how SideKick's
 estimate of a request compared with the provider's count, runs that compact or retry after
 failures again and again, requests that did not fit the window, working runs that went quiet for 10
 minutes or more (a `wait` within the time it asked for is expected), worker reports that did not
