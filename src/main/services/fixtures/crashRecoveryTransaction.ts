@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3'
 import { applyDatabaseSchema } from '../../bootstrap/database'
+import { AgentMessageMaterializer } from '../agentMessageMaterializer'
 import { AgentRunStore } from '../agentRunStore'
 import { recoverAgentRunMaterializations } from '../agentRunRecovery'
 
@@ -23,17 +24,22 @@ if (process.argv[3] === 'migration') {
 } else {
   const store = new AgentRunStore(db)
   let calls = 0
-  recoverAgentRunMaterializations(db, store, () => {
-    if (++calls !== 2) return
-    const materialized = db.prepare('SELECT count(*) AS count FROM messages').get() as {
-      count: number
+  const materialize = AgentMessageMaterializer.prototype.materialize
+  // Hold the transaction as the second run is about to be materialized.
+  AgentMessageMaterializer.prototype.materialize = function (...args) {
+    if (++calls === 2) {
+      const materialized = db.prepare('SELECT count(*) AS count FROM messages').get() as {
+        count: number
+      }
+      const finalized = db
+        .prepare("SELECT count(*) AS count FROM agent_run_events WHERE type = 'run.finalized'")
+        .get() as { count: number }
+      if (materialized.count !== 1 || finalized.count !== 1)
+        throw new Error('First run must be materialized before kill')
+      holdTransaction()
     }
-    const finalized = db
-      .prepare("SELECT count(*) AS count FROM agent_run_events WHERE type = 'run.finalized'")
-      .get() as { count: number }
-    if (materialized.count !== 1 || finalized.count !== 1)
-      throw new Error('First run must be materialized before kill')
-    holdTransaction()
-  })
+    return materialize.apply(this, args)
+  }
+  recoverAgentRunMaterializations(db, store)
 }
 throw new Error('Fixture did not reach its kill boundary')

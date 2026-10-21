@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { formatProjectInstructionsMessage } from './projectInstructions'
+import {
+  formatProjectInstructionsMessage,
+  isProjectInstructionsMessage
+} from './projectInstructions'
 
 describe('project instruction framing', () => {
   it('prevents repository text from forging or closing the app-owned instruction block', () => {
@@ -25,5 +28,16 @@ describe('project instruction framing', () => {
 
     expect(framed).toContain('requested mutation was not performed')
     expect(framed).toContain('packages/app/AGENTS.md')
+  })
+
+  it('recognizes only the message SideKick framed the instructions in', () => {
+    const framed = formatProjectInstructionsMessage({
+      content: 'Run tests before shipping.',
+      sources: ['AGENTS.md']
+    })
+    expect(isProjectInstructionsMessage({ role: 'user', content: framed })).toBe(true)
+    expect(isProjectInstructionsMessage({ role: 'assistant', content: framed })).toBe(false)
+    expect(isProjectInstructionsMessage({ role: 'user', content: `Quoted: ${framed}` })).toBe(false)
+    expect(isProjectInstructionsMessage({ role: 'user', content: null })).toBe(false)
   })
 })

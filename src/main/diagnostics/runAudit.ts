@@ -1,11 +1,20 @@
 import type Database from 'better-sqlite3'
 import { SESSION_LIMITS } from '../../shared/sessions'
+import { MAX_AGENT_CONDITIONAL_WAIT_SECONDS, MAX_AGENT_WAIT_SECONDS } from '../../shared/agentWait'
+import {
+  MAX_IDENTICAL_TOOL_CALLS,
+  MAX_TOOL_CALLS_PER_REPLY,
+  ToolCallTurnCounter,
+  type CutOffTurnSummary,
+  type RunawayTurnSummary
+} from '../services/toolBatchCutOff'
 
 /**
  * Reads the run journals SideKick already keeps and points out behavior that looks wrong: chats
  * summarized long before their window fills, reports cut short, replies that overflowed the
- * window, runs that went quiet. It reports counts, shares and run ids, never message content, so
- * it can run on any profile's database.
+ * window, replies cut off or run away while they wrote tool calls, runs that went quiet. It
+ * reports counts, shares and run ids, never message content, so it can run on any profile's
+ * database.
  */
 
 export interface RunAuditOptions {
@@ -78,6 +87,21 @@ function shortId(id: string): string {
   return id.slice(0, 8)
 }
 
+/**
+ * How long a `wait` call may be silent: the seconds it asked for, or its default, within the
+ * limits the tool enforces, and a minute for the command that woke it to report.
+ */
+function waitAllowanceMs(args: unknown): number {
+  const record = args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+  const conditional = Boolean(record.taskIds ?? record.taskId ?? record.pattern)
+  const asked = Number(record.seconds)
+  const seconds = Math.min(
+    Number.isFinite(asked) && asked > 0 ? asked : conditional ? 600 : 30,
+    conditional ? MAX_AGENT_CONDITIONAL_WAIT_SECONDS : MAX_AGENT_WAIT_SECONDS
+  )
+  return seconds * 1_000 + 60_000
+}
+
 function parse(json: string): Record<string, unknown> {
   try {
     const value = JSON.parse(json)
@@ -118,11 +142,21 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
   const durations: number[] = []
   let compactions = 0
   let fallbacks = 0
+  // Why each fallback summary was used; journals before 0.16.3 did not say.
+  const fallbackReasons = new Map<string, number>()
+  // SideKick's estimate over the provider's count for the same request.
+  const estimateRatios: number[] = []
   const overflows: string[] = []
   const busyRuns: string[] = []
   const retryStorms: string[] = []
   const quiet: string[] = []
   const failures = new Map<string, number>()
+  const toolTurns = new ToolCallTurnCounter()
+  const cutRuns: string[] = []
+  const runawayRuns: string[] = []
+  let runCutStart: CutOffTurnSummary = structuredClone(toolTurns.cutOff)
+  // A `wait` the model asked for is silent on purpose until its time is up.
+  let waitingUntil = 0
 
   let current = ''
   let phase = ''
@@ -136,6 +170,23 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
 
   const finishRun = (): void => {
     if (!current) return
+    const cut = toolTurns.cutOff
+    const cutTurns = cut.turns - runCutStart.turns
+    if (cutTurns) {
+      const refused = cut.refusedCalls - runCutStart.refusedCalls
+      const repeated = cut.repeatedTurns - runCutStart.repeatedTurns
+      cutRuns.push(
+        `${shortId(current)} (${cutTurns} cut-off ${cutTurns === 1 ? 'reply' : 'replies'}, ${refused} calls refused` +
+          (repeated ? `, ${repeated} right after another cut` : '') +
+          ')'
+      )
+    }
+    const runaway = toolTurns.runRunaway
+    if (runaway.turns) {
+      runawayRuns.push(
+        `${shortId(current)} (${runaway.turns} runaway, up to ${runaway.largestCallCount} calls, ${runaway.largestIdenticalCount} the same)`
+      )
+    }
     if (runCompactions >= settings.maxCompactionsPerRun)
       busyRuns.push(`${shortId(current)} (${runCompactions})`)
     const retries = [...runRetries.values()].reduce((sum, value) => sum + value, 0)
@@ -158,6 +209,9 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       awaitingAfter = null
       runCompactions = 0
       runRetries = new Map()
+      waitingUntil = 0
+      toolTurns.startRun()
+      runCutStart = structuredClone(toolTurns.cutOff)
     }
     const payload = event.type.endsWith('.delta') ? {} : parse(event.payload_json)
     // A run SideKick closed on is marked interrupted at the next start, so the silence before
@@ -170,19 +224,32 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       !closedOn &&
       !WAITING_PHASES.has(phase) &&
       !FINISHED_PHASES.has(phase) &&
-      gap >= settings.maxQuietMinutes * 60_000
+      gap >= settings.maxQuietMinutes * 60_000 &&
+      event.timestamp > waitingUntil
     ) {
       quiet.push(`${shortId(current)} (${Math.round(gap / 60_000)} min while ${phase})`)
     }
     lastAt = event.timestamp
 
     switch (event.type) {
+      case 'assistant.completed':
+        toolTurns.turn(payload.toolCalls, payload.runaway)
+        break
+      case 'tool.running':
+        if (payload.name === 'wait')
+          waitingUntil = event.timestamp + waitAllowanceMs(payload.arguments)
+        break
+      case 'tool.completed':
+        if (payload.name === 'wait') waitingUntil = 0
+        break
       case 'run.phase':
         phase = String(payload.phase ?? '')
         break
       case 'usage.updated': {
         const prompt = Number(payload.promptTokens)
         if (Number.isFinite(prompt) && prompt > 0) {
+          const estimated = Number(payload.estimatedPromptTokens)
+          if (Number.isFinite(estimated) && estimated > 0) estimateRatios.push(estimated / prompt)
           if (awaitingAfter) {
             after.push(prompt / awaitingAfter.window)
             awaitingAfter = null
@@ -198,7 +265,12 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
         if (payload.compacted !== true) break
         compactions += 1
         runCompactions += 1
-        if (payload.strategy === 'deterministic') fallbacks += 1
+        if (payload.strategy === 'deterministic') {
+          fallbacks += 1
+          const reason =
+            typeof payload.fallbackReason === 'string' ? payload.fallbackReason : 'unrecorded'
+          fallbackReasons.set(reason, (fallbackReasons.get(reason) ?? 0) + 1)
+        }
         if (startedAt) durations.push((event.timestamp - startedAt) / 1000)
         startedAt = 0
         const window = Number(payload.contextLength)
@@ -225,6 +297,7 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       case 'run.retrying': {
         const reason = String(payload.reason ?? 'unknown')
         if (!ROUTINE_RETRIES.has(reason)) runRetries.set(reason, (runRetries.get(reason) ?? 0) + 1)
+        if (reason === 'truncated_tool_batch') toolTurns.cutTurn(payload)
         if (reason === 'context_window_exceeded')
           overflows.push(`${shortId(current)} (prompt and reply did not fit)`)
         break
@@ -266,7 +339,9 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       severity: fallbackShare > settings.maxFallbackShare ? 'flag' : 'info',
       summary: `${fallbacks} of ${compactions} compactions used the deterministic fallback summary (${percent(fallbackShare)}).`,
       count: fallbacks,
-      examples: []
+      examples: [...fallbackReasons.entries()]
+        .sort((left, right) => right[1] - left[1])
+        .map(([reason, count]) => `${reason} × ${count}`)
     })
     add({
       check: 'compaction-time',
@@ -275,6 +350,15 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
         ? `Compactions took a median of ${Math.round(median(durations))} s, at most ${Math.round(Math.max(...durations))} s.`
         : 'No compaction durations were recorded.',
       count: durations.length,
+      examples: []
+    })
+  }
+  if (estimateRatios.length) {
+    add({
+      check: 'estimate-accuracy',
+      severity: 'info',
+      summary: `SideKick's estimate of a request was a median of ${percent(median(estimateRatios))} of the provider's own count (${percent(Math.min(...estimateRatios))}–${percent(Math.max(...estimateRatios))}).`,
+      count: estimateRatios.length,
       examples: []
     })
   }
@@ -306,6 +390,8 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
     count: quiet.length,
     examples: quiet
   })
+  add(cutOffFinding(toolTurns.cutOff, cutRuns))
+  add(runawayFinding(toolTurns.runaway, runawayRuns))
   const failed = [...failures.values()].reduce((sum, value) => sum + value, 0)
   add({
     check: 'failed-runs',
@@ -318,6 +404,45 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
   })
   add(auditReports(db, since))
   return { runs: runs.length, findings }
+}
+
+/**
+ * Replies the output limit cut off while they wrote tool calls, counted by reply: one reply that
+ * ran away refused 767 calls, and counted by call it read as a problem in every run. A cut that
+ * follows another means a retry was cut the same way.
+ */
+function cutOffFinding(cut: CutOffTurnSummary, examples: string[]): RunAuditFinding {
+  const parts = [
+    `${cut.turns} ${cut.turns === 1 ? 'reply was' : 'replies were'} cut off while writing tool calls, with ${cut.refusedCalls} calls refused.`
+  ]
+  if (cut.turns) {
+    parts.push(
+      `${cut.multiCallTurns} held several calls; ${cut.repeatedTurns} came right after another cut.`,
+      `Seen by: the provider's stop reason ${cut.byTrigger.stop_reason}, the whole allowance used ${cut.byTrigger.used_allowance}.`,
+      `Limit: shrunk to the room left ${cut.byLimit.shrunk}, the model's own ${cut.byLimit.full}, not recorded ${cut.byLimit.unrecorded}.`,
+      `Tokens used: at the limit ${cut.byUsage.at_limit}, over it ${cut.byUsage.over_limit}, under it ${cut.byUsage.under_limit}, not recorded ${cut.byUsage.unrecorded}.`
+    )
+  }
+  return {
+    check: 'cut-off-turns',
+    severity: cut.repeatedTurns ? 'flag' : 'info',
+    summary: parts.join(' '),
+    count: cut.turns,
+    examples
+  }
+}
+
+/** Replies that wrote far more tool calls than a plan needs, or one call over and over. */
+function runawayFinding(runaway: RunawayTurnSummary, examples: string[]): RunAuditFinding {
+  return {
+    check: 'runaway-tool-calls',
+    severity: runaway.turns ? 'flag' : 'info',
+    summary: runaway.turns
+      ? `${runaway.turns} ${runaway.turns === 1 ? 'reply' : 'replies'} wrote more than ${MAX_TOOL_CALLS_PER_REPLY} tool calls or one call more than ${MAX_IDENTICAL_TOOL_CALLS} times (at most ${runaway.largestCallCount} calls, ${runaway.largestIdenticalCount} of them the same); SideKick stopped ${runaway.stopped} of them as they streamed.`
+      : `No reply wrote more than ${MAX_TOOL_CALLS_PER_REPLY} tool calls or one call more than ${MAX_IDENTICAL_TOOL_CALLS} times.`,
+    count: runaway.turns,
+    examples
+  }
 }
 
 /**

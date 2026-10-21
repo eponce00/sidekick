@@ -206,9 +206,12 @@ artifact by hand in a new Partner Center submission. Setting up API access, once
    `SIDEKICK_STORE_PRODUCT_ID`.
 
 To submit a build without a new tag, run the Store workflow by hand with **Submit** ticked; the
-package version must be higher than the one in the Store. A submission copies its publishing options from the last published one, so the workflow sets each
-of its submissions to publish as soon as certification passes. The client secret expires on
-October 18, 2028; renew it in Partner Center and in the repository before then.
+package version must be higher than the one in the Store. A submission copies its publishing options from the last published one. The first submission
+waited for a manual **Publish now**, so set **Submission options** to publish as soon as
+certification passes on a submission before it is published; later ones then publish on their own.
+Partner Center keeps a client secret for two years; the current one expires October 18, 2028.
+Renew it in Partner Center and in the repository before then, entering the value through GitHub's
+secret form or a script, since `gh secret set`'s hidden prompt can save an empty value.
 
 The app runs with the `runFullTrust` capability, like any packaged desktop app. To test a package
 before submitting it, unpack it with `makeappx unpack`, register the folder with

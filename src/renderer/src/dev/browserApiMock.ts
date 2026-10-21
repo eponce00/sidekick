@@ -640,9 +640,84 @@ const previewMessages = [
             detail: 'Completed in 4.2s'
           },
           output:
-            '> sidekick@0.6.0 typecheck:web\n> tsc --noEmit -p tsconfig.web.json --composite false\n\nType check passed.',
+            'Exit code: 0\n<stdout>\n> sidekick@0.6.0 typecheck:web\n> tsc --noEmit -p tsconfig.web.json --composite false\n\nType check passed.\n</stdout>\n',
+          data: {
+            success: true,
+            exitCode: 0,
+            stdout:
+              '> sidekick@0.6.0 typecheck:web\n> tsc --noEmit -p tsconfig.web.json --composite false\n\nType check passed.\n',
+            stderr: ''
+          },
           startedAt: Date.now() - 130_000,
           completedAt: Date.now() - 126_000
+        }
+      },
+      {
+        type: 'tool' as const,
+        tool: {
+          id: 'preview-tool-download',
+          name: 'shell',
+          title: 'Download the job files',
+          command: 'python fetch_jobs.py --host 192.168.0.20 --dir /md/',
+          status: 'success' as const,
+          accessLevel: 'auto' as const,
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'terminal' as const,
+            title: 'Download the job files',
+            subject: 'python fetch_jobs.py --host 192.168.0.20 --dir /md/',
+            detail: 'Completed in 12.8s'
+          },
+          output: 'Exit code: 0\n<stdout>\n…\n</stdout>\n',
+          data: {
+            success: true,
+            exitCode: 0,
+            stdout: Array.from(
+              { length: 1_200 },
+              (_, line) =>
+                `RETR /md/JOB${String(line).padStart(4, '0')}.LS  ${(2_048 + line * 3).toLocaleString('en-US')} bytes  OK`
+            )
+              .concat('Downloaded 1,200 files, 2,412,160 bytes in total.')
+              .join('\n'),
+            stderr: 'warning: passive mode refused, using active mode\n'
+          },
+          outputReference: {
+            truncated: true,
+            originalBytes: 58_903,
+            returnedBytes: 31_224,
+            fullOutputHandle: '00000000-0000-4000-8000-000000000000',
+            continuation: { offset: 15_812 }
+          },
+          startedAt: Date.now() - 125_000,
+          completedAt: Date.now() - 112_000
+        }
+      },
+      {
+        type: 'tool' as const,
+        tool: {
+          id: 'preview-tool-failed-command',
+          name: 'shell',
+          title: 'Upload the program',
+          command: 'python put_program.py MAIN.TP',
+          status: 'error' as const,
+          accessLevel: 'auto' as const,
+          approvalStatus: 'auto' as const,
+          presentation: {
+            kind: 'terminal' as const,
+            title: 'Upload the program',
+            subject: 'python put_program.py MAIN.TP',
+            detail: 'Failed in 1.1s'
+          },
+          error: 'Command exited with code 2: 550 MAIN.TP: write protected',
+          output: 'Exit code: 2\n<stdout>\nConnected to 192.168.0.20\n</stdout>\n',
+          data: {
+            success: false,
+            exitCode: 2,
+            stdout: 'Connected to 192.168.0.20\nSTOR MAIN.TP\n',
+            stderr: '550 MAIN.TP: write protected\n'
+          },
+          startedAt: Date.now() - 110_000,
+          completedAt: Date.now() - 109_000
         }
       },
       {
@@ -879,6 +954,8 @@ export function installBrowserApiMock(): void {
         promptVersion: input.promptVersion,
         provider: input.provider,
         model: input.model,
+        replyMessageId: input.replyMessageId ?? null,
+        replyMessagesCovered: input.replyMessagesCovered ?? 0,
         createdAt: Date.now()
       }),
       saveMessage: async () => ({ success: true }),

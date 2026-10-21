@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   calculateContextCapacity,
   calculateRequestBudget,
+  calibratedRequestTokens,
   estimateConversationTokens,
   estimateTextTokens,
   replyLimitForRequest,
@@ -228,5 +229,34 @@ describe('calculateRequestBudget', () => {
 
     expect(calibrated.requestTokens).toBeGreaterThan(withoutCalibration.requestTokens)
     expect(calibrated.shouldCompact).toBe(true)
+  })
+
+  it('lowers an estimate that runs over the real count, so compaction waits for the threshold', () => {
+    // A local model's real prompt ran about 25% under SideKick's estimate; with the correction
+    // clamped at zero, a chat set to compact at 80% compacted at about 66% of its window.
+    const options = {
+      messages: [{ role: 'user' as const, content: '{"key": [1, 2, 3]}, '.repeat(17_000) }],
+      tools: [],
+      contextLength: 260_000,
+      reservedOutputTokens: 32_768,
+      compactionThreshold: 0.8
+    }
+    const estimated = calculateRequestBudget(options)
+    expect(estimated.shouldCompact).toBe(true)
+    const real = Math.round(estimated.requestTokens * 0.75)
+    const calibrated = calculateRequestBudget({
+      ...options,
+      estimationBiasTokens: real - estimated.requestTokens
+    })
+    expect(calibrated.requestTokens).toBe(real)
+    expect(calibrated.shouldCompact).toBe(real >= calibrated.compactionTriggerTokens)
+    expect(calibrated.shouldCompact).toBe(false)
+  })
+
+  it('never lets a calibration bring an estimate under half', () => {
+    expect(calibratedRequestTokens(10_000, -9_000)).toBe(5_000)
+    expect(calibratedRequestTokens(10_000, -2_000)).toBe(8_000)
+    expect(calibratedRequestTokens(10_000, 3_000)).toBe(13_000)
+    expect(calibratedRequestTokens(10_000, Number.NaN)).toBe(10_000)
   })
 })

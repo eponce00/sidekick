@@ -146,6 +146,39 @@ describe('provider streaming adapters', () => {
     })
   })
 
+  it('keeps the HTTP status a gateway names for an error inside the stream', async () => {
+    // LiteLLM reports an upstream failure after it has answered 200, with the status as its code.
+    const stream = (frame: string) =>
+      streamOpenAICompatibleChat(
+        'https://provider.test/v1',
+        {},
+        {},
+        () => undefined,
+        vi.fn(async () =>
+          streamingResponse([
+            `data: ${frame}
+
+`
+          ])
+        ) as unknown as typeof fetch
+      )
+
+    expect(
+      await stream(
+        '{"error":{"message":"litellm.InternalServerError: Connection error.","type":null,"param":null,"code":"500"}}'
+      )
+    ).toEqual({
+      ok: false,
+      error: 'litellm.InternalServerError: Connection error.',
+      status: 500
+    })
+    // OpenAI names error kinds, not statuses, in the same field.
+    expect(await stream('{"error":{"message":"Bad key","code":"invalid_api_key"}}')).toEqual({
+      ok: false,
+      error: 'Bad key'
+    })
+  })
+
   it('terminates on an error frame without waiting for EOF or starting fallback', async () => {
     let controller!: ReadableStreamDefaultController<Uint8Array>
     const cancel = vi.fn()
@@ -489,6 +522,61 @@ describe('provider streaming adapters', () => {
       'tool was not executed'
     )
     expect(chunks.at(-1)).toMatchObject({ done: true, done_reason: 'tool_calls' })
+  })
+
+  it('reports each streamed call once, whole, as soon as the model starts the next one', async () => {
+    // The kernel compares whole calls while a reply streams, to stop one that writes the same
+    // call over and over; the previews carry only a few fields.
+    const call = (index: number, part: string): string =>
+      `data: ${JSON.stringify({
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index,
+                  ...(part.startsWith('{') ? { id: `click-${index}`, type: 'function' } : {}),
+                  function: {
+                    ...(part.startsWith('{') ? { name: 'browser_click' } : {}),
+                    arguments: part
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })}\n`
+    const response = streamingResponse([
+      call(0, '{"ref":'),
+      call(0, '"e12"}'),
+      call(1, '{"ref":"e12"}'),
+      call(2, '{"ref":"e1'),
+      'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\ndata: [DONE]\n'
+    ])
+    const chunks: ProviderStreamChunk[] = []
+    await streamOpenAICompatibleChat(
+      'https://provider.test/v1',
+      { model: 'fixture-model', messages: request.messages, tools: request.tools },
+      {},
+      (chunk) => chunks.push(chunk),
+      vi.fn(async () => response) as unknown as typeof fetch
+    )
+
+    const closed = chunks.flatMap((chunk) => chunk.message?.closed_tool_calls ?? [])
+    expect(closed).toEqual([
+      expect.objectContaining({
+        id: 'click-0',
+        index: 0,
+        function: { name: 'browser_click', arguments: '{"ref":"e12"}' }
+      }),
+      expect.objectContaining({
+        id: 'click-1',
+        index: 1,
+        function: { name: 'browser_click', arguments: '{"ref":"e12"}' }
+      })
+    ])
+    // The call the reply was still writing is not reported as finished.
+    expect(closed.some((entry) => entry.id === 'click-2')).toBe(false)
   })
 
   it('recovers tool calls from a non-streaming response when a local stream is empty', async () => {

@@ -104,4 +104,48 @@ describe('ConversationCompactionStore', () => {
       previousCompactionId: null
     })
   })
+
+  it('keeps how far into the reply after its anchor a summary reached, through a fork', () => {
+    db.prepare(
+      'INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)'
+    ).run('conversation-2', 'Fork', 2, 2)
+    const plain = store.save({
+      conversationId: 'conversation-1',
+      summary: 'Earlier turns',
+      compactedThroughMessageId: 'request',
+      originalTokens: 120,
+      summaryTokens: 24,
+      messagesCompacted: 3,
+      ...compactionMetadata
+    })
+    expect(plain).toMatchObject({ replyMessageId: null, replyMessagesCovered: 0 })
+    store.save({
+      conversationId: 'conversation-1',
+      summary: 'Earlier turns and most of the reply',
+      compactedThroughMessageId: 'request',
+      compactedThroughTimestamp: 20,
+      originalTokens: 120,
+      summaryTokens: 24,
+      messagesCompacted: 9,
+      replyMessageId: 'reply',
+      replyMessagesCovered: 6,
+      ...compactionMetadata
+    })
+
+    expect(
+      store.copyLatestForFork(
+        'conversation-1',
+        'conversation-2',
+        new Map([
+          ['request', 'fork-request'],
+          ['reply', 'fork-reply']
+        ]),
+        20
+      )
+    ).toMatchObject({
+      compactedThroughMessageId: 'fork-request',
+      replyMessageId: 'fork-reply',
+      replyMessagesCovered: 6
+    })
+  })
 })

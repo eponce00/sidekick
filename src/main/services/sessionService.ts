@@ -42,6 +42,8 @@ export interface SessionRuntime {
   run: (runId: string) => AgentRunSnapshot | null
   /** The chat has a run waiting for a run slot. */
   isQueued?: (conversationId: string) => boolean
+  /** The chat has a run being prepared, which does not exist as a run yet. */
+  isPreparing?: (conversationId: string) => boolean
   /** Whether this interrupted run is still the one to continue. */
   canContinue?: (runId: string, conversationId: string) => boolean
 }
@@ -146,6 +148,8 @@ export class SessionService {
   private readonly paused = new Set<string>()
   /** Workers the user typed into since their last report. */
   private readonly userSteppedIn = new Set<string>()
+  /** Workers by the run whose report is not written yet, kept from its start to its report. */
+  private readonly reportsDue = new Map<string, string>()
   private work: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: SessionServiceOptions) {
@@ -165,6 +169,8 @@ export class SessionService {
   state(conversationId: string): SessionState {
     if (this.starting.has(conversationId) || this.options.runtime.isQueued?.(conversationId))
       return 'queued'
+    // As the status service has it: a run being prepared is working, though no run exists yet.
+    if (this.options.runtime.isPreparing?.(conversationId)) return 'working'
     const conversation = this.store.conversation(conversationId)
     return sessionStateFromRun(
       this.options.runtime.latestRun(conversationId),
@@ -844,12 +850,25 @@ export class SessionService {
       pending.some(({ intent }) => intent === 'report') &&
       !this.store.workers(conversationId).some(({ id }) => {
         const state = this.state(id)
-        return state === 'queued' || state === 'working'
+        return state === 'queued' || state === 'working' || this.reportOnItsWay(id)
       })
     )
   }
 
+  /**
+   * The worker's run has ended but its report is not written yet: the run is still being
+   * finalized, its checkpoint taken, or its report waits behind another. Two workers finishing
+   * close together woke the manager once per report while the second counted as idle.
+   */
+  private reportOnItsWay(conversationId: string): boolean {
+    const runId = this.reportsDue.get(conversationId)
+    const run = runId ? this.options.runtime.latestRun(conversationId) : null
+    return Boolean(run && run.id === runId && !ACTIVE_PHASES.has(run.phase))
+  }
+
   private async wake(conversationId: string): Promise<void> {
+    // A run being prepared takes the waiting messages when it starts; another would be refused.
+    if (this.options.runtime.isPreparing?.(conversationId)) return
     const turns = (this.automaticTurns.get(conversationId) ?? 0) + 1
     if (turns > SESSION_LIMITS.automaticTurns) {
       this.pause(conversationId)
@@ -911,6 +930,11 @@ export class SessionService {
       return
     const run = this.options.runtime.run(event.runId)
     if (!run || run.surface !== 'conversation') return
+    if (
+      event.type === 'run.started' &&
+      this.store.conversation(run.threadId)?.report_to_conversation_id
+    )
+      this.reportsDue.set(run.threadId, run.id)
     if (event.type === 'run.finalized') {
       this.enqueue(() => this.afterRun(run.id))
       return
@@ -934,29 +958,34 @@ export class SessionService {
     const conversation = this.store.conversation(run.threadId)
     if (!conversation) return
     const notified = new Set<string>()
-    for (const request of this.store.unansweredRequests(run.id, conversation.id)) {
-      if (!request.fromConversationId) continue
-      this.store.insertMessage({
-        fromConversationId: null,
-        toConversationId: request.fromConversationId,
-        intent: 'status',
-        body: `${conversation.session_handle ?? conversation.title} finished its turn without answering: “${excerpt(request.body, 200)}”`,
-        replyToMessageId: request.id
-      })
-      notified.add(request.fromConversationId)
-    }
-    // A chat with something to act on continues instead of reporting.
-    if (run.phase !== 'interrupted' && this.shouldWake(conversation.id)) {
-      await this.wake(conversation.id)
-    } else if (conversation.report_to_conversation_id && run.phase !== 'interrupted') {
-      this.store.insertMessage({
-        fromConversationId: conversation.id,
-        toConversationId: conversation.report_to_conversation_id,
-        intent: 'report',
-        body: await this.reportBody(conversation, run)
-      })
-      this.userSteppedIn.delete(conversation.id)
-      notified.add(conversation.report_to_conversation_id)
+    try {
+      for (const request of this.store.unansweredRequests(run.id, conversation.id)) {
+        if (!request.fromConversationId) continue
+        this.store.insertMessage({
+          fromConversationId: null,
+          toConversationId: request.fromConversationId,
+          intent: 'status',
+          body: `${conversation.session_handle ?? conversation.title} finished its turn without answering: “${excerpt(request.body, 200)}”`,
+          replyToMessageId: request.id
+        })
+        notified.add(request.fromConversationId)
+      }
+      // A chat with something to act on continues instead of reporting.
+      if (run.phase !== 'interrupted' && this.shouldWake(conversation.id)) {
+        await this.wake(conversation.id)
+      } else if (conversation.report_to_conversation_id && run.phase !== 'interrupted') {
+        this.store.insertMessage({
+          fromConversationId: conversation.id,
+          toConversationId: conversation.report_to_conversation_id,
+          intent: 'report',
+          body: await this.reportBody(conversation, run)
+        })
+        this.userSteppedIn.delete(conversation.id)
+        notified.add(conversation.report_to_conversation_id)
+      }
+    } finally {
+      // Written, or not owed for this run: the manager no longer waits for it.
+      if (this.reportsDue.get(conversation.id) === run.id) this.reportsDue.delete(conversation.id)
     }
     if (notified.size) this.changed('messages', [conversation.id, ...notified])
     for (const id of notified) await this.route(id)

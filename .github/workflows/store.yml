@@ -121,22 +121,16 @@ jobs:
           msstore reconfigure --tenantId $env:TENANT_ID --sellerId $env:SELLER_ID --clientId $env:CLIENT_ID --clientSecret $env:CLIENT_SECRET
           if ($LASTEXITCODE -ne 0) { throw 'Could not sign in to Partner Center.' }
           $package = @(Get-ChildItem dist -File -Filter 'SideKick-*-windows-x64-store.appx')[0]
-          # Starts a draft from the last published submission with the new package. A draft copies
-          # that submission's publishing options, and the first one was held for a manual Publish
-          # now, so the draft is set to publish as soon as it passes certification.
+          # Creates a submission from the last published one with the new package, commits it, and
+          # waits for Partner Center to process it, reporting any error. Editing the draft between
+          # upload and commit left the package unprocessed, so the publishing option (publish as
+          # soon as certified) is carried over from the last published submission instead.
           # The CLI publishes a package file by itself when the path it is given ends in .msix, the
           # same format as .appx, and uploads every package in that file's folder, so the one
           # package goes alone into a folder of its own.
           $upload = New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP 'store-upload')
           $msix = Join-Path $upload.FullName "$($package.BaseName).msix"
           Copy-Item -LiteralPath $package.FullName -Destination $msix
-          msstore publish $msix --appId $env:PRODUCT_ID --noCommit
+          msstore publish $msix --appId $env:PRODUCT_ID
           if ($LASTEXITCODE -ne 0) { throw 'The Store submission failed.' }
-          $submission = msstore submission get $env:PRODUCT_ID | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0 -or -not $submission) { throw 'Could not read the Store draft.' }
-          $submission | Add-Member -NotePropertyName TargetPublishMode -NotePropertyValue 'Immediate' -Force
-          msstore submission update $env:PRODUCT_ID ($submission | ConvertTo-Json -Depth 100 -Compress)
-          if ($LASTEXITCODE -ne 0) { throw 'Could not set the Store draft to publish when certified.' }
-          msstore submission publish $env:PRODUCT_ID
-          if ($LASTEXITCODE -ne 0) { throw 'Could not commit the Store submission.' }
           msstore submission status $env:PRODUCT_ID

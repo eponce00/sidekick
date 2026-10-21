@@ -13,7 +13,7 @@ import { agentRunProfile, WEB_ARTIFACTS_SKILL_ID } from '../../shared/agentToolC
 import { getSkillById, getSkillRuntimeGuidance } from '../../shared/skills'
 import { agentPermissionDecision } from '../../shared/permissions'
 import type { ProviderSettings } from '../../shared/settings'
-import { providerKindForTransport, type ProviderKind } from '../../shared/providerRegistry'
+import { providerKindForTransport } from '../../shared/providerRegistry'
 import { abortablePromise } from './abortablePromise'
 import { classifyAgentKernelFailure } from './agentKernelFailure'
 import type { ProviderChatMessage } from '../../shared/providerRuntime'
@@ -23,7 +23,6 @@ import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
 import { CheckpointTitleStore } from './checkpointTitleStore'
-import { ConversationCompactionStore } from './conversationCompactionStore'
 import {
   ConversationRunPreparer,
   steeredProviderMessage,
@@ -200,43 +199,7 @@ export class AgentRuntimeCoordinator {
   }
 
   private recoverInterruptedRuns(): void {
-    recoverAgentRunMaterializations(this.db, this.store, (run, events) => {
-      const latestUserMessage = this.db
-        .prepare(
-          `SELECT id, timestamp FROM messages
-           WHERE conversation_id = ? AND role = 'user' AND timestamp <= ?
-           ORDER BY timestamp DESC, rowid DESC LIMIT 1`
-        )
-        .get(run.threadId, run.startedAt) as { id: string; timestamp: number } | undefined
-      this.persistCompactionFromLedger(run.threadId, events, latestUserMessage)
-    })
-  }
-
-  private persistCompactionFromLedger(
-    conversationId: string,
-    events: readonly AgentRunEvent[],
-    anchor?: { id: string; timestamp: number }
-  ): boolean {
-    const payload = [...events]
-      .reverse()
-      .find(
-        (event) => event.type === 'compaction.completed' && event.payload.compacted === true
-      )?.payload
-    if (!payload || typeof payload.summary !== 'string' || !anchor) return false
-    new ConversationCompactionStore(this.db).save({
-      conversationId,
-      summary: payload.summary,
-      compactedThroughMessageId: anchor.id,
-      compactedThroughTimestamp: anchor.timestamp,
-      originalTokens: Number(payload.originalTokens || 0),
-      summaryTokens: Number(payload.summaryTokens || 0),
-      messagesCompacted: Number(payload.messagesCompacted || 0),
-      strategy: String(payload.strategy || 'deterministic') as 'model' | 'deterministic',
-      promptVersion: String(payload.promptVersion || 'legacy'),
-      provider: String(payload.provider || 'unknown') as ProviderKind,
-      model: String(payload.model || 'unknown')
-    })
-    return true
+    recoverAgentRunMaterializations(this.db, this.store)
   }
 
   private publishEvent(event: AgentRunEvent): void {
@@ -712,7 +675,6 @@ export class AgentRuntimeCoordinator {
     const active = this.activeConversations.get(runId)
     if (!active) return
     try {
-      const events = this.store.listAllEvents(runId)
       const checkpointHash = await this.finishCheckpointCapture(active, result.phase)
       this.messages.materialize(runId, {
         checkpointHash,
@@ -728,32 +690,6 @@ export class AgentRuntimeCoordinator {
           Date.now(),
           active.input.conversationId
         )
-      const compactionPersisted = this.persistCompactionFromLedger(
-        active.input.conversationId,
-        events,
-        active.prepared.latestUserMessage
-          ? {
-              id: active.prepared.latestUserMessage.id,
-              timestamp: active.prepared.latestUserMessage.timestamp
-            }
-          : undefined
-      )
-      const compaction = active.prepared.latestCompaction()
-      if (!compactionPersisted && compaction && active.prepared.latestUserMessage) {
-        new ConversationCompactionStore(this.db).save({
-          conversationId: active.input.conversationId,
-          summary: compaction.summary,
-          compactedThroughMessageId: active.prepared.latestUserMessage.id,
-          compactedThroughTimestamp: active.prepared.latestUserMessage.timestamp,
-          originalTokens: compaction.originalTokens,
-          summaryTokens: compaction.summaryTokens,
-          messagesCompacted: compaction.messagesCompacted,
-          strategy: compaction.strategy,
-          promptVersion: compaction.promptVersion,
-          provider: compaction.provider,
-          model: compaction.model
-        })
-      }
       const finalized = this.store.appendEvent({
         id: `${runId}:finalized`,
         runId,
@@ -1290,6 +1226,13 @@ export class AgentRuntimeCoordinator {
 
   hasActiveRuns(): boolean {
     return this.preparations.size > 0 || this.kernel.hasActiveRuns()
+  }
+
+  /** Whether a run of this conversation is being prepared: waiting for a slot or getting ready. */
+  isPreparing(threadId: string): boolean {
+    for (const { identity } of this.preparations.values())
+      if (identity.threadId === threadId) return true
+    return false
   }
 
   /** Conversations with a run being prepared or executing.

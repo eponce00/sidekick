@@ -13,7 +13,8 @@ import type {
 
 interface SettingsAPI {
   selectOfficeInterpreter: () => Promise<{ canceled: boolean; path?: string; error?: string }>
-  save: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
+  /** Replaces the settings it names; every other setting keeps what is stored. */
+  save: (changes: Partial<ProviderSettings>) => Promise<{ success: boolean; error?: string }>
   load: () => Promise<PublicProviderSettings | null>
   /** Settings were changed outside this window, such as by the `sidekick` CLI. */
   onChanged: (callback: () => void) => () => void

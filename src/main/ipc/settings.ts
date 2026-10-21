@@ -2,7 +2,7 @@ import { BrowserWindow, dialog, ipcMain, safeStorage, type WebContents } from 'e
 import { normalizePermissionMode } from '../../shared/permissions'
 import type { McpServerConfig } from '../../shared/types'
 import type { PinnedModel } from '../../shared/models'
-import type { ProviderInstanceModel, ProviderSettings } from '../../shared/settings'
+import type { ProviderSettings } from '../../shared/settings'
 import {
   migrateLegacyProviderInstances,
   syncLegacyProviderSettings
@@ -20,6 +20,11 @@ import {
 } from '../services/mcpServerTrust'
 import { showTrustedDialog } from '../services/trustedDialog'
 import { RETIRED_SETTING_KEYS } from '../../shared/settingsSchema'
+import { ACCENT_PALETTE_VERSION, migrateAccentPalette } from '../../shared/accentPalettes'
+import {
+  resolveStoredToolCallLimit,
+  TOOL_CALL_LIMIT_POLICY_VERSION
+} from '../../shared/agentLimits'
 
 const CREDENTIAL_STORAGE_ERROR =
   'Secure credential storage is unavailable. Unlock or enable your operating system keychain or password manager, then try again. Settings without new credentials can still be saved.'
@@ -197,36 +202,44 @@ export function revealSettings(value: unknown): unknown {
 }
 
 export function loadStoredSettings(): SettingsRecord {
-  return asSettingsRecord(revealSettings(getStore().get('settings', {})))
+  const store = getStore()
+  const settings = asSettingsRecord(revealSettings(store.get('settings', {})))
+  if (settings.providerInstances) return settings
+  // Settings from before provider instances wait for an unlocked keychain to be migrated. Until
+  // then read them the way the renderer shows them, so a chat on one of those models finds it.
+  const providerInstances = migrateLegacyProviderInstances(
+    settings as unknown as ProviderSettings,
+    store.get('pinnedModels', []) as PinnedModel[]
+  )
+  return { ...settings, providerInstances }
 }
 
-/** Atomically updates one persisted provider model while preserving encrypted secrets. */
-export function updateStoredProviderModel(
-  providerInstanceId: string,
-  modelId: string,
-  update: (model: ProviderInstanceModel) => ProviderInstanceModel
-): ProviderInstanceModel {
+/**
+ * Changes stored settings in one synchronous read-modify-write. Each writer starts from what is
+ * stored at that moment, so none can write back another writer's fields from an older copy.
+ */
+function updateStoredSettings(
+  change: (current: SettingsRecord) => SettingsRecord
+): SettingsRecord {
   const store = getStore()
   const stored = store.get('settings', {})
-  const settings = loadStoredSettings() as unknown as ProviderSettings
-  const instances = settings.providerInstances || []
-  let updated: ProviderInstanceModel | undefined
-  const providerInstances = instances.map((instance) => {
-    if (instance.id !== providerInstanceId) return instance
-    return {
-      ...instance,
-      models: instance.models.map((model) => {
-        if (model.id !== modelId) return model
-        updated = update(model)
-        return updated
-      })
-    }
-  })
-  if (!updated) {
-    throw new Error(`Model ${modelId} was not found in provider ${providerInstanceId}`)
-  }
-  store.set('settings', protectSettings({ ...settings, providerInstances }, stored))
-  return updated
+  const next = asSettingsRecord(change(asSettingsRecord(revealSettings(stored))))
+  store.set('settings', protectSettings(next, stored))
+  return next
+}
+
+/**
+ * `current` with the settings a save names replaced. Settings it leaves out keep their stored
+ * values, and the Office helper identity stays main-owned whatever the save supplies.
+ */
+function applySettingsChanges(current: SettingsRecord, changes: SettingsRecord): SettingsRecord {
+  const next = { ...current, ...changes }
+  next.officeHelperConfigurationId =
+    current.officeHelperInterpreter !== next.officeHelperInterpreter ||
+    current.shellIsolation !== next.shellIsolation
+      ? randomUUID()
+      : current.officeHelperConfigurationId
+  return next
 }
 
 export function publicSettings(value: unknown): unknown {
@@ -255,30 +268,53 @@ export function publicSettings(value: unknown): unknown {
   return settings
 }
 
-function migrateLegacySettingsForStorage(store: ReturnType<typeof getStore>): SettingsRecord {
-  removeRetiredSettings(store)
-  const stored = store.get('settings', {})
-  const revealed = asSettingsRecord(revealSettings(stored)) as unknown as ProviderSettings
-  // Defer migration rather than persisting a credential-less projection while
-  // the keychain is locked. The original encrypted store remains untouched.
-  if (!isSecureCredentialStorageAvailable()) return revealed as unknown as SettingsRecord
-  if (revealed.providerInstances) return revealed as unknown as SettingsRecord
-  const pinnedModels = store.get('pinnedModels', []) as PinnedModel[]
-  const providerInstances = migrateLegacyProviderInstances(revealed, pinnedModels)
-  const migrated = syncLegacyProviderSettings({ ...revealed, providerInstances })
-  store.set('settings', protectSettings(migrated, stored))
-  return asSettingsRecord(revealSettings(store.get('settings', {})))
+/**
+ * Brings stored settings up to date as they load, here in one synchronous step. A renderer that
+ * migrated them and saved its copy back would undo any save made in between, such as a provider
+ * added moments after the window opened.
+ */
+function migrateStoredSettings(store: ReturnType<typeof getStore>): SettingsRecord {
+  const stored = asSettingsRecord(store.get('settings', {}))
+  let next = upgradeSettingsRecord(stored)
+  // Defer the provider migration rather than persisting a credential-less projection while the
+  // keychain is locked. The encrypted credentials stay untouched.
+  if (!next.providerInstances && isSecureCredentialStorageAvailable()) {
+    const revealed = asSettingsRecord(revealSettings(next)) as unknown as ProviderSettings
+    const pinnedModels = store.get('pinnedModels', []) as PinnedModel[]
+    const providerInstances = migrateLegacyProviderInstances(revealed, pinnedModels)
+    const migrated = syncLegacyProviderSettings({ ...revealed, providerInstances })
+    next = protectSettings(migrated, next) as SettingsRecord
+  }
+  if (next !== stored) store.set('settings', next)
+  return asSettingsRecord(revealSettings(next))
 }
 
-/** Drops settings SideKick no longer has, so they do not linger as unknown keys. */
-function removeRetiredSettings(store: ReturnType<typeof getStore>): void {
-  const stored = store.get('settings', {}) as Record<string, unknown>
-  if (!stored || typeof stored !== 'object') return
+/**
+ * Stored settings without the ones SideKick no longer has, and with the tool-call limit and accent
+ * palette moved to their current policies. No credential is touched, so this also runs while the
+ * keychain is locked. Returns `stored` itself when nothing changes.
+ */
+function upgradeSettingsRecord(stored: SettingsRecord): SettingsRecord {
   const retired = RETIRED_SETTING_KEYS.filter((key) => Object.hasOwn(stored, key))
-  if (!retired.length) return
-  const kept = { ...stored }
-  for (const key of retired) delete kept[key]
-  store.set('settings', kept)
+  const toolCallLimitCurrent = stored.toolCallLimitVersion === TOOL_CALL_LIMIT_POLICY_VERSION
+  if (
+    !retired.length &&
+    toolCallLimitCurrent &&
+    stored.accentPaletteVersion === ACCENT_PALETTE_VERSION
+  )
+    return stored
+  const upgraded: SettingsRecord = migrateAccentPalette({
+    ...(stored as SettingsRecord & { accentPalette?: string; accentPaletteVersion?: number })
+  })
+  for (const key of retired) delete upgraded[key]
+  if (!toolCallLimitCurrent) {
+    upgraded.toolCallLimit = resolveStoredToolCallLimit(
+      stored.toolCallLimit,
+      stored.toolCallLimitVersion
+    )
+    upgraded.toolCallLimitVersion = TOOL_CALL_LIMIT_POLICY_VERSION
+  }
+  return upgraded
 }
 
 function asSettingsRecord(value: unknown): SettingsRecord {
@@ -420,24 +456,24 @@ export function registerSettingsHandlers(): void {
     }
   })
 
-  ipcMain.handle('settings:save', async (event, settings) => {
+  // A save names only the settings it changes; every other setting keeps what is stored.
+  ipcMain.handle('settings:save', async (event, changes) => {
     try {
-      const next = asSettingsRecord(settings)
-      if (next.officeHelperInterpreter !== undefined)
-        next.officeHelperInterpreter = await validateOfficeInterpreter(next.officeHelperInterpreter)
+      const patch = asSettingsRecord(changes)
+      if (patch.officeHelperInterpreter !== undefined)
+        patch.officeHelperInterpreter = await validateOfficeInterpreter(
+          patch.officeHelperInterpreter
+        )
       const previous = asSettingsRecord(revealSettings(store.get('settings', {})))
-      next.officeHelperConfigurationId =
-        previous.officeHelperInterpreter !== next.officeHelperInterpreter ||
-        previous.shellIsolation !== next.shellIsolation
-          ? randomUUID()
-          : previous.officeHelperConfigurationId
-      const approvedServers = mcpServersNeedingApproval(previous, next)
-      if (!(await confirmSensitiveSettingsChange(previous, next, event.sender))) {
+      const proposed = { ...previous, ...patch }
+      const approvedServers = mcpServersNeedingApproval(previous, proposed)
+      if (!(await confirmSensitiveSettingsChange(previous, proposed, event.sender))) {
         return { success: false, error: 'Settings change cancelled' }
       }
-      store.set('settings', protectSettings(next, store.get('settings', {})))
+      // The approval dialog can stay open for a while; apply the change to what is stored now.
+      const saved = updateStoredSettings((current) => applySettingsChanges(current, patch))
       if (approvedServers.length) approveMcpServers(approvedServers)
-      notifySettingsSaved(next)
+      notifySettingsSaved(saved)
       return { success: true }
     } catch (error) {
       return { success: false, error: (error as Error).message }
@@ -445,7 +481,7 @@ export function registerSettingsHandlers(): void {
   })
 
   ipcMain.handle('settings:load', async () => {
-    return publicSettings(migrateLegacySettingsForStorage(store))
+    return publicSettings(migrateStoredSettings(store))
   })
 
   ipcMain.handle('pinnedModels:save', async (_, models) => {

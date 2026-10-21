@@ -47,6 +47,16 @@ Compaction never deletes or rewrites messages. `conversation_compactions` stores
 - original/summary token counts and cumulative message count;
 - strategy (`model` or `deterministic`), prompt version, provider, and model.
 
+The preparer saves each compaction the moment it completes, so a run stopped, failed or retried
+after it keeps it. The anchor is the last message row every one of whose provider messages the
+summary replaced; a row the split falls inside stays in the next run's history whole, and the
+recent tail kept word for word stays with it. A summary that reaches into the run's own work is
+anchored at the run's request with the time it was made, so retrying or rewinding that reply
+discards it, and records how many of that reply's provider messages it replaced
+(`reply_message_id`, `reply_messages_covered`), found in order in the run's ledger. The next run
+is sent only the rest of the reply; sent the whole reply again, it compacted as soon as it
+started. A summary the run was stopped in the middle of is not recorded at all.
+
 At request time, the main-process `ConversationRunPreparer` emits:
 
 1. the composed system prompt;
@@ -60,11 +70,15 @@ Editing or rewinding history invalidates affected summaries. Forking a conversat
 
 Prompt version `sidekick-compaction-v2` merges the prior anchored handoff with newly compactable events. Structured message serialization preserves tool input/status/approval/output/error, artifacts, decisions, file results, checkpoints, and bounded text instead of flattening everything into visible prose.
 
-The planner retains a verbatim recent tail of 20% of context, bounded to 2,000–8,000 estimated tokens, always keeps the latest user turn/current assistant work, and will not split an assistant tool request from its provider tool-result run. Large histories are summarized in budgeted chunks. If the utility provider fails, SideKick creates a bounded deterministic handoff with exact references and a warning to verify against the immutable transcript.
+The planner retains a verbatim recent tail of 20% of context, bounded to 2,000–32,000 estimated tokens, always keeps the latest user turn/current assistant work, and will not split an assistant tool request from its provider tool-result run. The initial project-instruction message is never summarized: it stays word for word ahead of the new summary, so a compaction in the middle of a run keeps the rules it started with, while the previous summary is folded into the new one. The summarized history is excerpted fairly across events to at most 120,000 characters, and to what fits the window, measured by the token estimate, beside the instructions, the previous summary and the summary's own room.
+
+The summary request is streamed. Something in front of a slow local model gave up on requests that sent nothing until the whole reply was written, while streamed replies of the same length passed, so SideKick gives up only when the model makes no progress for five minutes. If the summary cannot be used, SideKick creates a bounded deterministic handoff with exact references and a warning to verify against the immutable transcript, and `compaction.completed` records why as `fallbackReason`: `timeout`, `connection_lost`, `server_unreachable`, `context_overflow`, `provider_error` (with `fallbackStatus` when there was one), `output_limit`, `reasoning_only` or `empty_output`.
 
 ## Complete request budget
 
 The shared context-budget projection accounts for message text, tool calls, multimodal payload estimates, all tool schemas (including MCP), provider framing, in-flight response text, output reserve, and a safety margin. Compaction is evaluated against the lower of the configured threshold, as a share of the whole window, and the effective provider input limit. The output reserve is the model's reply limit up to 32,768 tokens: a larger limit is a ceiling a long reply may reach, and each request's reply limit is cut to the room the window has left, so prompt and reply never exceed it. A preflight check runs before every provider boundary, not only after a provider reports a context error. Compaction keeps up to 32,000 tokens of recent work verbatim, and gives the summary up to 16,384 output tokens so a reasoning model can finish it.
+
+The estimate is deliberately conservative: it counts punctuation one by one, which real tokenizers merge, and ran 19–58% over local models' own counts. Each provider-reported prompt count calibrates it, in either direction: the next request is budgeted as the provider's count for what was already sent plus the estimate of what was added since, never under half the plain estimate. `usage.updated` records `estimatedPromptTokens` beside the provider's count, so a run starts from the latest pair an earlier run on the same model recorded, passing over runs stopped before any request finished, and as a share of the estimate when its request has shrunk since. Compaction therefore fires where the context card's marker says, measured the way the provider measures it.
 
 Workspace mutations keep two projections: complete bounded diffs for expandable human review and a
 compact model-facing acknowledgement. The model receives file paths, hashes, change counts, and only
@@ -82,7 +96,7 @@ The renderer stores every durable run event but coalesces live projection at the
 It does not re-sort and rebuild the whole run transcript for every streamed token, and offscreen tool
 rows use Chromium content visibility to avoid unnecessary layout and paint work.
 
-`agent_runs` stores the trusted profile and prompt context, while sequence-numbered compaction events and `conversation_compactions` record actual model/deterministic strategy, prompt version, provider/model, anchors, token counts, and lineage. This makes unexpected compaction decisions diagnosable without logging prompt contents or secrets.
+`agent_runs` stores the trusted profile and prompt context, while sequence-numbered compaction events and `conversation_compactions` record actual model/deterministic strategy and why a fallback was used, prompt version, provider/model, anchors, token counts, and lineage. This makes unexpected compaction decisions diagnosable without logging prompt contents or secrets.
 
 ## Verification
 

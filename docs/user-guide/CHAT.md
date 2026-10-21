@@ -14,10 +14,12 @@
   its context is. The token count for a model step still being written is estimated from its text
   until the server reports it. Once the reply ends, its footer shows the totals when you point at
   it.
-- **Compacting context:** when a long conversation nears the model's context limit, the agent
-  pauses while the model summarizes the earlier messages, then carries on from the summary. On a
-  local model this can take a minute or more, and nothing is written meanwhile. A **Context
-  compacted** row marks the point in the reply.
+- **Compacting context:** when a long conversation reaches the share of the model's context that
+  Settings names, counted the way the model counts it, the agent pauses while the model summarizes
+  the earlier messages, then carries on from the summary and the most recent work. On a local
+  model this can take a minute or more, and nothing is written meanwhile. A **Context compacted**
+  row marks the point in the reply. A finished summary is kept even if you then stop the reply,
+  retry it or edit your message, so the next reply does not summarize the same messages again.
 - **Waiting on you:** a conversation that needs an approval or an answer is marked in the sidebar,
   counted on the taskbar or dock icon and listed in the tray menu, and announced by a notification
   when SideKick is not in front. A failed reply is announced the same way. See
@@ -144,6 +146,19 @@ between the narrow column and the even split; the arrow keys move a focused edge
 A reply cut off because SideKick closed ends with **Interrupted** and a **Continue** button. Continue
 picks the work up from what the reply had already done. A step whose outcome is unknown is checked
 before it is repeated. Quitting while agents are working asks for confirmation first.
+
+## When a reply fails
+
+A failed reply's heading says what went wrong, such as **Model server unreachable**, **Model
+server timed out**, **Provider refused access**, or **Model not set up**, and its message says what
+to check. Once that is fixed, for example the model server is running again or the key is
+corrected, **Continue** picks up from where the reply stopped and keeps its work; **Retry** starts
+it over. SideKick retries some failures itself before failing: a chat too long for the model's
+window is compacted, older images are dropped when the model takes fewer, a reply limit above the
+provider's maximum is lowered to it, and a reply whose connection to the model server drops
+partway, as when a local server restarts or swaps models, is asked again once a few seconds later.
+What it had written is replaced by the new attempt, and a row in the reply says the connection was
+lost.
 
 ## Keyboard
 
