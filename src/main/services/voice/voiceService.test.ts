@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { VoiceModelId, VoiceModelState } from '../../../shared/voice'
-import type { VoiceModelManifest, VoiceModelStore } from './voiceModels'
+import { VOICE_MODELS, type VoiceModelManifest, type VoiceModelStore } from './voiceModels'
 import { DictationAudio, VoiceService, type SherpaModule } from './voiceService'
 
-function fakeStore(ready: VoiceModelId[] = []) {
+const REPLACED_DICTATION = VOICE_MODELS.dictation.replaces!.folder
+
+/** `installed` lists the folders of earlier model revisions that are on disk. */
+function fakeStore(ready: VoiceModelId[] = [], installed: string[] = []) {
   const downloads: Array<{
     id: VoiceModelId
     resolve: () => void
@@ -26,7 +29,8 @@ function fakeStore(ready: VoiceModelId[] = []) {
           signal.addEventListener('abort', () => reject(new Error('aborted')))
         })
     ),
-    removeFolder: vi.fn(async () => undefined)
+    isInstalled: vi.fn(async (manifest: VoiceModelManifest) => installed.includes(manifest.folder)),
+    removeFolder: vi.fn(async (_folder: string) => undefined)
   }
   return { store: store as unknown as VoiceModelStore & typeof store, downloads }
 }
@@ -262,5 +266,85 @@ describe('VoiceService', () => {
     const service = new VoiceService({ store, enabled: true, startDelayMs: 0 })
     await service.ready()
     expect(store.removeFolder).toHaveBeenCalledWith('supertonic-3-int8-2026-05-11')
+  })
+
+  it('removes a replaced dictation model once its replacement is installed', async () => {
+    const { store } = fakeStore(['dictation', 'speech'], [REPLACED_DICTATION])
+    const service = new VoiceService({ store, enabled: true, startDelayMs: 0 })
+    await service.ready()
+    expect(store.removeFolder).toHaveBeenCalledWith(REPLACED_DICTATION)
+  })
+
+  it('dictates with the model it replaces until the new one downloads, then deletes it', async () => {
+    const { store, downloads } = fakeStore(['speech'], [REPLACED_DICTATION])
+    const sherpa = fakeSherpa()
+    const service = new VoiceService({
+      store,
+      enabled: true,
+      startDelayMs: 0,
+      loadSherpa: async () => sherpa
+    })
+    await service.ready()
+    // The update downloads quietly: dictation shows as ready and works meanwhile.
+    expect(service.state().models.dictation.status).toBe('ready')
+    expect(downloads.map((item) => item.id)).toEqual(['dictation'])
+    expect(store.removeFolder).not.toHaveBeenCalledWith(REPLACED_DICTATION)
+    const encoders = (): string[] =>
+      (
+        sherpa.OfflineRecognizer.createAsync.mock.calls as unknown as Array<
+          [{ modelConfig: { transducer: { encoder: string } } }]
+        >
+      ).map(([config]) => config.modelConfig.transducer.encoder)
+
+    const heard: string[] = []
+    expect(await service.startDictation('session-1', (text) => heard.push(text))).toEqual({
+      ok: true
+    })
+    expect(sherpa.Vad).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sileroVad: expect.objectContaining({
+          model: `/models/${REPLACED_DICTATION}/silero_vad.onnx`
+        })
+      }),
+      60
+    )
+    service.pushDictationAudio('session-1', new Float32Array(16_000))
+    // The new model arrives mid-dictation; the one in use finishes it.
+    downloads[0].resolve()
+    await flush()
+    service.pushDictationAudio('session-1', new Float32Array(8_000))
+    await service.stopDictation('session-1')
+    expect(heard).toEqual(['heard 16000', 'heard 8000'])
+    expect(encoders()).toEqual([`/models/${REPLACED_DICTATION}/encoder.int8.onnx`])
+    expect(store.removeFolder).toHaveBeenCalledWith(REPLACED_DICTATION)
+
+    // The next dictation loads the new model.
+    expect(await service.startDictation('session-2', () => undefined)).toEqual({ ok: true })
+    await service.stopDictation('session-2')
+    expect(encoders()).toEqual([
+      `/models/${REPLACED_DICTATION}/encoder.int8.onnx`,
+      `/models/${VOICE_MODELS.dictation.folder}/encoder.int8.onnx`
+    ])
+    expect(sherpa.Vad).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        sileroVad: expect.objectContaining({
+          model: `/models/${VOICE_MODELS.dictation.folder}/silero_vad.onnx`
+        })
+      }),
+      60
+    )
+  })
+
+  it('downloads the new dictation model as usual where the old one never finished', async () => {
+    const { store, downloads } = fakeStore(['speech'])
+    const service = new VoiceService({ store, enabled: true, startDelayMs: 0 })
+    await service.ready()
+    expect(service.state().models.dictation.status).toBe('downloading')
+    expect(downloads.map((item) => item.id)).toEqual(['dictation'])
+    expect(store.removeFolder).toHaveBeenCalledWith(REPLACED_DICTATION)
+    expect(await service.startDictation('session-1', () => undefined)).toMatchObject({
+      ok: false,
+      reason: 'downloading'
+    })
   })
 })

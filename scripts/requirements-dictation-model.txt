@@ -1,0 +1,10 @@
+# The versions scripts/build-dictation-model.py was run with, on Python 3.13.0.
+# On Linux, install torch from https://download.pytorch.org/whl/cpu to skip the CUDA build.
+numpy==2.4.6
+onnx==1.20.1
+onnxruntime==1.30.0
+onnxscript==0.7.2
+safetensors==0.8.0
+tokenizers==0.23.3
+torch==2.8.0
+transformers==5.19.0

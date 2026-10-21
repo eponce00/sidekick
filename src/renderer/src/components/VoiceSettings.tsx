@@ -35,6 +35,11 @@ import { Select } from './Select'
 
 type Device = { deviceId: string; label: string }
 
+// CC BY 4.0 asks for the creators, the license, and what was changed.
+const PARAKEET_ULTRA_URL = 'https://huggingface.co/moondream/parakeet-ultra'
+const NVIDIA_PARAKEET_URL = 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3'
+const CC_BY_URL = 'https://creativecommons.org/licenses/by/4.0/'
+
 const SAMPLES: Partial<Record<SpeechLanguageCode, string>> = {
   en: 'Hi! This is how SideKick sounds when it reads a message to you.',
   es: '¡Hola! Así suena SideKick cuando te lee un mensaje.',
@@ -102,7 +107,23 @@ export function VoiceSettings({
       <ToggleField
         icon={AudioLines}
         label="Dictation and read-aloud"
-        hint="Downloads about 1 GB of speech models once, in the background: NVIDIA Parakeet (CC BY 4.0) for dictation and Kokoro (Apache 2.0) for read-aloud."
+        hint={
+          <>
+            Downloads about 1 GB of speech models once, in the background. Dictation uses{' '}
+            <a href={PARAKEET_ULTRA_URL} target="_blank" rel="noreferrer">
+              Parakeet Ultra
+            </a>{' '}
+            by Moondream, based on{' '}
+            <a href={NVIDIA_PARAKEET_URL} target="_blank" rel="noreferrer">
+              NVIDIA Parakeet
+            </a>
+            , both{' '}
+            <a href={CC_BY_URL} target="_blank" rel="noreferrer">
+              CC BY 4.0
+            </a>
+            ; SideKick converted and quantized it. Read-aloud uses Kokoro (Apache 2.0).
+          </>
+        }
         checked={enabled}
         onChange={onEnabledChange}
       />
