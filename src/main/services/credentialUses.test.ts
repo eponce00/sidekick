@@ -379,4 +379,91 @@ describe('CredentialUses', () => {
       ])
     })
   })
+
+  describe('browser sign-in', () => {
+    const site = (overrides: Partial<CredentialSummary> = {}) =>
+      credential({
+        id: 'site',
+        alias: 'site-login',
+        kind: 'sign_in',
+        usernameVisible: true,
+        username: 'visible-user',
+        ask: 'once_per_chat',
+        scope: {
+          projects: 'all',
+          background: false,
+          browser: { origins: ['https://login.example.com'] }
+        },
+        ...overrides
+      })
+    const page = (target: string): CredentialUseRequest => ({
+      alias: 'site-login',
+      tool: 'browser_sign_in',
+      kind: 'browser',
+      target,
+      conversationId: 'chat-1',
+      runId: 'run-1',
+      toolCallId: 'call-1'
+    })
+
+    it('asks before filling on an allowed site, naming the site and account', () => {
+      const { uses } = setup([site()])
+      const approval = uses.approval(
+        page('https://login.example.com/sign-in?next=/home')
+      ) as CredentialApproval
+      expect(approval).toMatchObject({
+        ask: 'once_per_chat',
+        keys: ['credential:site:browser:https://login.example.com'],
+        label: 'site-login on https://login.example.com'
+      })
+      expect(approval.preview.facts).toEqual(
+        expect.arrayContaining([
+          { label: 'As', value: 'visible-user' },
+          { label: 'On', value: 'https://login.example.com' }
+        ])
+      )
+    })
+
+    it.each([
+      'https://evil.example/sign-in',
+      'https://login.example.com.evil.example/',
+      'https://eu.login.example.com/',
+      'http://login.example.com/',
+      'https://login.example.com:8443/',
+      'about:blank',
+      ''
+    ])('refuses to fill on %s', (target) => {
+      const { uses, approvedTake } = setup([site()])
+      expect('refused' in uses.approval(page(target))).toBe(true)
+      expect(approvedTake(page(target)).ok).toBe(false)
+    })
+
+    it('approves a sign-in for the page’s origin, not one path on it', () => {
+      const { uses } = setup([site()])
+      uses.permit(page('https://login.example.com/sign-in'))
+      expect(uses.take(page('https://other.example.com/sign-in')).ok).toBe(false)
+      expect(uses.take(page('https://login.example.com/sign-in/password')).ok).toBe(true)
+    })
+
+    it('refuses an entry without sign-in sites', () => {
+      const { approvedTake } = setup([site({ scope: { projects: 'all', background: false } })])
+      expect(approvedTake(page('https://login.example.com/'))).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('may not be filled into web pages')
+      })
+    })
+
+    it('reads a sign-in request with the page the browser is on', () => {
+      expect(
+        credentialRequestsFor(
+          'browser_sign_in',
+          { credential: 'site-login' },
+          { conversationId: 'c' },
+          'https://login.example.com/'
+        )
+      ).toEqual([
+        expect.objectContaining({ kind: 'browser', target: 'https://login.example.com/' })
+      ])
+    })
+  })
 })

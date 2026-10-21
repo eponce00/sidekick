@@ -208,3 +208,34 @@ it('saves which commands may receive a credential, warning that a command can re
     })
   )
 })
+
+it('offers browser sign-in only for sign-ins, and saves its sites', async () => {
+  await act(async () => root.render(<CredentialSettings />))
+  await act(async () => button('Add credential').click())
+  expect(container.textContent).not.toContain('Use for browser sign-in')
+  await act(async () => button('Sign-in').click())
+  const alias = container.querySelector<HTMLInputElement>('.credential-alias-input')!
+  const [username, password] = Array.from(
+    container.querySelectorAll<HTMLInputElement>('.credential-value-field input')
+  )
+  await act(async () => {
+    type(alias, 'site-login')
+    type(username, 'generated-user')
+    type(password, 'generated-password-value')
+  })
+  const toggle = Array.from(container.querySelectorAll('label.settings-toggle-row')).find((row) =>
+    row.textContent?.includes('Use for browser sign-in')
+  )!
+  await act(async () => (toggle as HTMLLabelElement).click())
+  const sites = container.querySelector<HTMLInputElement>(
+    'input[placeholder="https://example.com"]'
+  )!
+  await act(async () => type(sites, 'https://login.example.com'))
+  await act(async () => button('Save credential').click())
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: 'sign_in',
+      scope: expect.objectContaining({ browser: { origins: ['https://login.example.com'] } })
+    })
+  )
+})

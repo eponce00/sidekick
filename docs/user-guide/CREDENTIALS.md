@@ -20,6 +20,7 @@ Open **Settings → Credentials** and choose **Add credential**.
 | **Projects**                        | All projects, or only chats in the projects you pick.                                                                                                                                                                                                        |
 | **Use in web requests**             | Lets the agent's `http_request` tool add the credential to API calls; see [Web requests](#web-requests).                                                                                                                                                     |
 | **Use in commands**                 | Lets the agent put the credential in an environment variable of a command it runs; see [Commands](#commands).                                                                                                                                                |
+| **Use for browser sign-in**         | For sign-ins: lets the agent sign in with it on the sites you list; see [Browser sign-in](#browser-sign-in).                                                                                                                                                 |
 | **Allow in background runs**        | Whether chats a schedule or another chat started may use it. Off by default, since nobody may be watching them.                                                                                                                                              |
 
 A secret or password must be at least 4 characters, and one under 8 characters is saved with a
@@ -90,6 +91,29 @@ keeps it until it ends. In the [Docker shell](PERMISSIONS.md#optional-isolated-s
 network, the variable is passed into the container by name. A program that prompts for a password
 is answered by you; the agent cannot type a credential into it.
 
+## Browser sign-in
+
+With **Use for browser sign-in** on, a sign-in can be filled in by the agent's
+[browser](BROWSER.md) on the sites you list, the way a password manager fills a login: the agent
+asks SideKick to sign in by alias, and SideKick types the username and password into the page
+itself. The agent never sees the password.
+
+- **Sites** match exactly: `https://login.example.com` does not cover `https://example.com` or
+  another subdomain. Only HTTPS sites can be listed, plus plain HTTP for a server on this computer
+  such as `http://localhost:3000`, which only programs on this computer can serve.
+- SideKick fills only fields of the page itself, never fields inside a frame, and only when the page
+  is on one of your sites at the moment it types. It refuses a form that would send the sign-in to
+  another site, and puts the password only into a real password field, which shows dots.
+- It finds the form itself, including a first step that asks only for the username; the agent can
+  point at the fields when a page is unusual. Asking before use works as for
+  [web requests](#web-requests), keyed on the site.
+- While a filled password is still on the page, the agent cannot run its own script on the page,
+  and SideKick takes no screenshot if the page shows the password as text, for example after its
+  **Show password** button.
+
+Once you are signed in, the agent can act on that site as you. Use an account limited to what the
+task needs. You can still sign in yourself with **Take control** instead.
+
 ## What the agent sees
 
 The agent can list your credentials: each alias, kind, description, and where it may be used. It
@@ -99,6 +123,7 @@ SideKick also hides every stored value wherever it would otherwise appear: comma
 Terminal, tool results, retained output the agent reads later, and every request sent to the model
 provider, including a message you type yourself. A hidden value reads `[secret: alias]`. Common
 encodings of a value, such as Base64, URL encoding, JSON escaping and hexadecimal, are hidden too.
+A username you let the agent read is not hidden.
 
 Because a file that holds a stored value shows the agent `[secret: alias]` instead, the agent's file
 tools refuse to write that placeholder back, which would replace your value with it. Edit such a

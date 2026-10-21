@@ -55,7 +55,7 @@ import {
   ToolOutputStore,
   type ToolOutputPolicy
 } from './toolOutputStore'
-import type { AgentKernelToolRouter } from './agentRunKernel'
+import type { AgentCredentialContext, AgentKernelToolRouter } from './agentRunKernel'
 import { AgentToolExecutionError, type AgentToolExecutionContext } from './agentToolRegistry'
 import { resolveWorkspaceInstructionsForPath } from './workspaceRules'
 import type {
@@ -94,7 +94,11 @@ import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
 import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
-import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
+import {
+  AgentBrowserSessionManager,
+  browserScope,
+  registerBrowserToolHandlers
+} from './agentBrowserToolHandlers'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { shellCommandHint } from './shellCommandHints'
 
@@ -512,7 +516,9 @@ export class AgentToolRuntime {
     })
     registerVisionToolHandlers(handlers, externalImageApprovalForMode(input.permissionMode))
     if (input.browserEnabled === true && this.browser) {
-      registerBrowserToolHandlers(handlers, this.browser, this.outputs)
+      registerBrowserToolHandlers(handlers, this.browser, this.outputs, {
+        credentials: () => this.credentials?.uses
+      })
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
@@ -650,6 +656,19 @@ export class AgentToolRuntime {
       baselineRevision,
       { visualCheck: catalog().browserEnabled === true && input.surface === 'conversation' }
     )
+    // A sign-in is checked against the page the conversation's browser is on. When that cannot be
+    // read, the address is empty, so the use is refused rather than run without its approval.
+    const credentialRequests = (
+      name: string,
+      args: Record<string, unknown>,
+      context: AgentCredentialContext
+    ) =>
+      credentialRequestsFor(
+        name,
+        args,
+        context,
+        name === 'browser_sign_in' ? this.browser?.activeAddress(browserScope(context)) : undefined
+      )
     return {
       catalog,
       persistentSkillIds: () =>
@@ -673,16 +692,16 @@ export class AgentToolRuntime {
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
           return uses
-            ? credentialApprovalFor(uses, credentialRequestsFor(name, args, context))
+            ? credentialApprovalFor(uses, credentialRequests(name, args, context))
             : undefined
         },
         credentialApproved: (name, args, context) => {
-          for (const request of credentialRequestsFor(name, args, context)) {
+          for (const request of credentialRequests(name, args, context)) {
             this.credentials?.uses?.permit(request)
           }
         },
         credentialDenied: (name, args, context) => {
-          for (const request of credentialRequestsFor(name, args, context)) {
+          for (const request of credentialRequests(name, args, context)) {
             this.credentials?.uses?.denied(request)
           }
         },

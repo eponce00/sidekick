@@ -15,6 +15,7 @@ import {
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import type { ToolOutputStore } from './toolOutputStore'
+import type { CredentialUses } from './credentialUses'
 import {
   NativeBrowserSessionService,
   type BrowserActionResult,
@@ -35,6 +36,7 @@ export const AGENT_BROWSER_TOOL_NAMES = [
   'browser_click',
   'browser_hold',
   'browser_type',
+  'browser_sign_in',
   'browser_select',
   'browser_upload',
   'browser_download',
@@ -200,7 +202,10 @@ function assertBrowserEvaluationIsInspectionOnly(expression: string): void {
   )
 }
 
-function browserScope(context: AgentToolExecutionContext): string {
+/** Which browser a call uses: the conversation's, or the run's when it has none. */
+export function browserScope(
+  context: Pick<AgentToolExecutionContext, 'conversationId' | 'runId'>
+): string {
   return context.conversationId?.trim() || context.runId
 }
 
@@ -776,6 +781,17 @@ export class AgentBrowserSessionManager {
     }
   }
 
+  /** The address the conversation's browser is on, without waiting on its lock. */
+  activeAddress(scope: string): string | undefined {
+    const entry = this.scopes.get(scope)
+    if (!entry) return undefined
+    try {
+      return this.service.pageAddress(entry.sessionId)
+    } catch {
+      return undefined
+    }
+  }
+
   claimUserControl(scope: string): boolean {
     const entry = this.scopes.get(scope)
     if (!entry) return false
@@ -1298,7 +1314,8 @@ async function boundedVisualFormFailure(
 export function registerBrowserToolHandlers(
   registry: AgentToolHandlerRegistry,
   manager: AgentBrowserSessionManager,
-  outputs: ToolOutputStore
+  outputs: ToolOutputStore,
+  options: { credentials?: () => CredentialUses | undefined } = {}
 ): void {
   registry.register(AGENT_BROWSER_TOOL_NAMES, async ({ name, title, arguments: args, context }) => {
     const scope = browserScope(context)
@@ -1509,6 +1526,42 @@ export function registerBrowserToolHandlers(
             })!,
             text: typeof args.value === 'string' ? args.value : '',
             clear: args.clear !== false,
+            submit: args.submit === true
+          },
+          { signal: context.signal }
+        )
+      } else if (name === 'browser_sign_in') {
+        const uses = options.credentials?.()
+        if (!uses) throw new Error('Stored credentials cannot be used in this run.')
+        const taken = uses.take({
+          alias: stringArgument(args, 'credential') || '',
+          tool: 'browser_sign_in',
+          kind: 'browser',
+          target: manager.service.pageAddress(lease.sessionId),
+          conversationId: context.conversationId,
+          runId: context.runId,
+          toolCallId: context.toolCallId
+        })
+        if (!taken.ok) {
+          return toolExecutionFailed({
+            title,
+            code: 'permission_denied',
+            status: 'denied',
+            message: taken.message,
+            retryable: false,
+            recoveryAction: 'change_strategy'
+          })
+        }
+        const usernameRef = stringArgument(args, 'username_ref')
+        const passwordRef = stringArgument(args, 'password_ref')
+        raw = await manager.service.signIn(
+          {
+            sessionId: lease.sessionId,
+            ...(usernameRef ? { usernameTarget: { ref: usernameRef } } : {}),
+            ...(passwordRef ? { passwordTarget: { ref: passwordRef } } : {}),
+            username: taken.values.username,
+            password: taken.values.password,
+            allowedOrigins: taken.summary.scope.browser?.origins ?? [],
             submit: args.submit === true
           },
           { signal: context.signal }

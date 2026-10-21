@@ -47,6 +47,7 @@ function describe(credential: CredentialSummary, context: CredentialUseContext |
     commands: credential.scope.commands
       ? describeCredentialCommands(credential.scope.commands)
       : 'not allowed',
+    browser_sign_in: credential.scope.browser?.origins ?? 'not allowed',
     usable_in_this_chat: refusal === null,
     ...(refusal ? { not_usable_because: refusal } : {}),
     ...(credential.lastUsedAt ? { last_used: new Date(credential.lastUsedAt).toISOString() } : {})

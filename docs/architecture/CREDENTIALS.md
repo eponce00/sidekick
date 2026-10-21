@@ -127,6 +127,21 @@ and refuses when it resolves to a file inside the project or the working directo
 could have written. A command chat grant is keyed on the entry, the variable and the exact
 command.
 
+**Browser sign-in.** `browser_sign_in` takes a sign-in's alias, and optional username and
+password field refs. Before it runs, the approval is keyed on the origin the conversation's browser
+is on (`AgentBrowserSessionManager.activeAddress`); when it runs, `CredentialUses` checks that
+origin (`credentialPageOrigin`: HTTPS, or HTTP on a loopback address) against the entry's
+`CredentialBrowserScope`, and `NativeBrowserSessionService.signIn` checks it again. `signIn` finds
+the fields as a password manager does (`FIND_SIGN_IN_FIELD`), then, for each field and immediately
+before typing, refuses one in a frame, one whose document origin differs, a form whose target is
+outside the entry's origins, and a password field that is not `type="password"`. Text goes through
+the same `enterBrowserText` path as `browser_type`, which refuses a focus or navigation change
+before inserting. The form is sent with `requestSubmit()` in the same page call that reads the
+form's target again; a target outside the entry's origins refuses the submission and clears the
+typed password. The result is one redacted semantic observation with no screenshot. Filled password fields are recorded on the tab: while one still
+holds its value, `browser_evaluate` is refused, and a screenshot or observation is withheld if it
+is no longer a password field.
+
 **Returned tokens.** `aliasResponseTokens` (`credentialResponseTokens.ts`) reads the response to a
 request that used a credential whatever its content type. Every string under a token-like name
 (`access_token`, `accessToken`, `client_token`, `sessionToken`, `SecretAccessKey`, `password` and
@@ -144,8 +159,8 @@ SideKick restarts.
 ## Redaction
 
 `CredentialRedactor` (`src/main/services/credentialRedaction.ts`) holds every stored value except a
-username the agent may read, plus values replaced or deleted since launch, and matches them with
-one Aho–Corasick automaton together
+username the agent may read, plus values replaced or deleted since launch and returned tokens,
+and matches them with one Aho–Corasick automaton together
 with the encodings the GitHub Actions runner registers for its secrets: each line of a multi-line
 value (PEM armor lines excepted), JSON escaping, percent-encoding in both forms and both cases,
 HTML and XML entities, Bash and PowerShell quoting, standard and URL-safe Base64 at all three

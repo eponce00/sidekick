@@ -39,6 +39,11 @@ export interface CredentialCommandScope {
   programs: string[]
 }
 
+/** Pages a sign-in may be filled on: exact origins, as a password manager matches them. */
+export interface CredentialBrowserScope {
+  origins: string[]
+}
+
 export interface CredentialScope {
   /** `all`, or the ids of the projects whose chats may use the entry. */
   projects: 'all' | string[]
@@ -48,6 +53,8 @@ export interface CredentialScope {
   web?: CredentialWebScope
   /** Absent when no command may receive the entry. */
   commands?: CredentialCommandScope
+  /** Absent when the entry may not be filled into a page. Sign-ins only. */
+  browser?: CredentialBrowserScope
 }
 
 /** What the renderer and the agent may know about an entry. */
@@ -461,6 +468,61 @@ export function credentialVariableRefusal(name: string): string | null {
   return null
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+}
+
+/**
+ * The canonical origin of a page the user typed: HTTPS, or plain HTTP only on this computer's
+ * loopback address, with no path. Browsers treat both as secure contexts.
+ */
+export function normalizeCredentialOrigin(raw: string): string | null {
+  const text = raw.trim()
+  if (!text || /\s/.test(text)) return null
+  let url: URL
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`)
+  } catch {
+    return null
+  }
+  if (url.username || url.password || url.search || url.hash) return null
+  if (url.pathname !== '/' && url.pathname !== '') return null
+  const hostname = url.hostname.replace(/\.$/, '')
+  if (!hostname) return null
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHostname(hostname))) {
+    return null
+  }
+  return `${url.protocol}//${hostname}${url.port ? `:${url.port}` : ''}`
+}
+
+/** The origin of a page address, or null when it is not one a sign-in may be filled on. */
+export function credentialPageOrigin(address: string): string | null {
+  try {
+    const url = new URL(address)
+    if (url.username || url.password) return null
+    return normalizeCredentialOrigin(`${url.protocol}//${url.host}`)
+  } catch {
+    return null
+  }
+}
+
+function normalizeBrowser(value: unknown, kind: CredentialKind): CredentialBrowserScope | string {
+  if (kind !== 'sign_in') return 'Only a sign-in can be filled into a page.'
+  if (!isRecord(value) || !Array.isArray(value.origins) || value.origins.length > 20) {
+    return 'Invalid page addresses.'
+  }
+  const origins: string[] = []
+  for (const raw of value.origins) {
+    const origin = typeof raw === 'string' ? normalizeCredentialOrigin(raw) : null
+    if (!origin) {
+      return `${typeof raw === 'string' && raw ? raw : 'That'} is not an HTTPS site address.`
+    }
+    if (!origins.includes(origin)) origins.push(origin)
+  }
+  if (!origins.length) return 'Add the site the sign-in belongs to.'
+  return { origins: origins.sort() }
+}
+
 function normalizeCommands(value: unknown): CredentialCommandScope | string {
   if (!isRecord(value)) return 'Invalid command settings.'
   if (value.mode === 'ask') return { mode: 'ask', programs: [] }
@@ -509,6 +571,11 @@ export function normalizeCredentialScope(
     const commands = normalizeCommands(value.commands)
     if (typeof commands === 'string') return { error: commands }
     scope.commands = commands
+  }
+  if (value.browser !== undefined && value.browser !== null) {
+    const browser = normalizeBrowser(value.browser, kind)
+    if (typeof browser === 'string') return { error: browser }
+    scope.browser = browser
   }
   return { scope }
 }
@@ -644,6 +711,10 @@ export function credentialWidening(
         changes.push(`Commands may use it without asking each time: ${programs.join(', ')}`)
     }
   }
+  const origins = next.scope.browser?.origins.filter(
+    (origin) => !previous.scope.browser?.origins.includes(origin)
+  )
+  if (origins?.length) changes.push(`Filled in on ${origins.join(', ')}`)
   return changes
 }
 

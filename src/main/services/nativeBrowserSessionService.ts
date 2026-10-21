@@ -1,5 +1,6 @@
 import type { BrowserDeviceState } from '../../shared/browserDevices'
 import { browserNetworkOrigin, loopbackHost, privateNetworkHost } from '../../shared/browserNetwork'
+import { credentialPageOrigin } from '../../shared/credentials'
 import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { createHash, randomUUID } from 'crypto'
 import { browserTextTargetOwnsFocus } from './browserTextFocus'
@@ -273,6 +274,64 @@ export interface BrowserFillFormInput {
   /** Ordered fields. Independent fields continue after a field error; page changes stop the batch. */
   fields: BrowserFormFieldInput[]
 }
+
+/** A stored sign-in to fill on the current page, which must be on one of `allowedOrigins`. */
+export interface BrowserSignInInput {
+  sessionId: string
+  /** Found on the page, as a password manager finds them, when absent. */
+  usernameTarget?: BrowserTarget
+  passwordTarget?: BrowserTarget
+  username?: string
+  password?: string
+  allowedOrigins: readonly string[]
+  submit?: boolean
+}
+
+export interface BrowserSignInResult extends BrowserActionResult {
+  action: 'sign_in'
+  origin: string
+  filled: Array<'username' | 'password'>
+  submitted: boolean
+}
+
+/** What a sign-in checks about a field before putting anything in it. */
+interface SignInFieldFacts {
+  connected: boolean
+  tag: string
+  type: string
+  topFrame: boolean
+  origin: string
+  formOrigin: string | null
+  disabled: boolean
+  readOnly: boolean
+}
+
+/**
+ * Finds the fields of a sign-in form in the top document, as a password manager does: a visible
+ * password field, and the username field in its form, by autocomplete hint, name, or position.
+ * With no password field, as on the first step of a two-step sign-in, a lone username field.
+ */
+const FIND_SIGN_IN_FIELD = `(kind) => {
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && !element.disabled;
+  };
+  const passwords = Array.from(document.querySelectorAll('input[type="password" i]')).filter(visible);
+  const password = passwords.find((field) => !/new-password/i.test(field.autocomplete || '')) || passwords[0] || null;
+  if (kind === 'password') return password;
+  const scope = (password && password.form) || document;
+  const candidates = Array.from(scope.querySelectorAll('input')).filter((field) =>
+    visible(field) && ['', 'text', 'email', 'tel'].includes(String(field.getAttribute('type') || '').toLowerCase()));
+  const hinted = candidates.find((field) => /username|email/i.test(field.autocomplete || '')) ||
+    candidates.find((field) => /user|login|email|account|identifier/i.test((field.name || '') + ' ' + (field.id || '')));
+  if (hinted) return hinted;
+  if (password) {
+    const before = candidates.filter((field) => field.compareDocumentPosition(password) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return before[before.length - 1] || null;
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}`
 
 export interface BrowserFormFieldResult {
   index: number
@@ -601,6 +660,11 @@ interface TabState {
   inFlight: Map<string, RequestMetadata>
   actionHistory: ActionRecord[]
   disposers: Array<() => void>
+  /**
+   * Password fields a stored sign-in filled on the current document. While one still holds its
+   * value, screenshots are withheld if it stops being a password field, and evaluation is refused.
+   */
+  secretFields?: number[]
 }
 
 interface OpeningReservation {
@@ -859,6 +923,9 @@ function matchesText(actual: string, expected: string, mode = 'equals'): boolean
 function canonicalFingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex')
 }
+
+const SECRET_SHOWN_MESSAGE =
+  'No screenshot: a stored password on this page is shown as plain text. Hide it again, submit the form, or leave the page first.'
 
 function redactFormObservation(
   observation: BrowserObservation,
@@ -2723,7 +2790,9 @@ export class NativeBrowserSessionService {
     const screenshotKind = options.screenshot ?? 'viewport'
     let screenshot: BrowserScreenshotArtifact | undefined
     let screenshotError: string | undefined
-    if (screenshotKind !== 'none') {
+    if (screenshotKind !== 'none' && (await this.secretShownAsText(tab, signal))) {
+      screenshotError = SECRET_SHOWN_MESSAGE
+    } else if (screenshotKind !== 'none') {
       try {
         screenshot = await this.captureAndStore(session, tab, screenshotKind, undefined, signal)
       } catch (error) {
@@ -2955,6 +3024,7 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session, input.tabId)
+      if (await this.secretShownAsText(tab, signal)) throw new Error(SECRET_SHOWN_MESSAGE)
       return this.captureAndStore(
         session,
         tab,
@@ -4240,6 +4310,292 @@ export class NativeBrowserSessionService {
     })
   }
 
+  /** The address the session's active tab is showing, as Chromium reports it. */
+  pageAddress(sessionId: string): string {
+    return this.getTab(this.getSession(sessionId)).surface.getURL()
+  }
+
+  /**
+   * Fills a stored sign-in into the current page. Values go only into fields of the top document
+   * whose origin, and whose form's target, are among `allowedOrigins`, checked again immediately
+   * before each value is typed; the password only into a password field. The result has no
+   * screenshot, and its semantic snapshot is redacted.
+   */
+  async signIn(
+    input: BrowserSignInInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserSignInResult> {
+    if (!input.username && !input.password) throw new Error('A sign-in needs a value to fill')
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session)
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      const startedAt = this.now()
+      const initialUrl = tab.surface.getURL()
+      const initialRefEpoch = tab.refEpoch
+      const origin = credentialPageOrigin(initialUrl)
+      if (!origin || !input.allowedOrigins.includes(origin)) {
+        throw new Error(
+          `This sign-in is filled in only on ${input.allowedOrigins.join(', ')}; the page is not one of them.`
+        )
+      }
+      const passwordTarget = input.password
+        ? await this.signInField(tab, 'password', input.passwordTarget, signal)
+        : undefined
+      const usernameTarget = input.username
+        ? await this.signInField(tab, 'username', input.usernameTarget, signal)
+        : undefined
+      if (!passwordTarget && !usernameTarget) {
+        throw new Error(
+          'No sign-in field was found on this page. Observe it and pass username_ref or password_ref.'
+        )
+      }
+      const check = async (target: ElementPoint, kind: 'username' | 'password'): Promise<void> => {
+        const facts = await this.callOnNode<SignInFieldFacts>(
+          tab,
+          target.backendNodeId!,
+          `function() {
+            const form = this.form;
+            let formOrigin = null;
+            if (form) {
+              try {
+                formOrigin = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI).origin;
+              } catch { formOrigin = 'invalid'; }
+            }
+            return {
+              connected: this.isConnected === true,
+              tag: String(this.tagName || '').toLowerCase(),
+              type: String(this.getAttribute('type') || 'text').toLowerCase(),
+              topFrame: this.ownerDocument.defaultView === window.top,
+              origin: this.ownerDocument.location.origin,
+              formOrigin,
+              disabled: this.disabled === true,
+              readOnly: this.readOnly === true
+            };
+          }`,
+          [],
+          signal
+        )
+        if (tab.surface.getURL() !== initialUrl || tab.refEpoch !== initialRefEpoch) {
+          throw new Error('The page changed during sign-in; observe it before trying again')
+        }
+        if (!facts.connected || facts.tag !== 'input' || facts.disabled || facts.readOnly) {
+          throw new Error(`The ${kind} field is not an editable input`)
+        }
+        if (!facts.topFrame) throw new Error('A sign-in is never filled into a frame')
+        const fieldOrigin = credentialPageOrigin(facts.origin)
+        if (fieldOrigin !== origin) throw new Error(`The ${kind} field belongs to another site`)
+        if (facts.formOrigin !== null) {
+          const target =
+            facts.formOrigin === 'invalid' ? null : credentialPageOrigin(facts.formOrigin)
+          if (!target || !input.allowedOrigins.includes(target)) {
+            throw new Error('The sign-in form sends to another site, so it was not filled')
+          }
+        }
+        if (kind === 'password' && facts.type !== 'password') {
+          throw new Error('A password goes only into a password field')
+        }
+        if (kind === 'username' && !['text', 'email', 'tel'].includes(facts.type)) {
+          throw new Error('The username field is not a text or email field')
+        }
+      }
+      const filled: Array<'username' | 'password'> = []
+      let fillUsername = Boolean(usernameTarget && input.username)
+      if (fillUsername) {
+        try {
+          await check(usernameTarget!, 'username')
+        } catch (error) {
+          // A field SideKick found itself, such as a read-only username shown on a password step,
+          // is left alone when there is a password to fill; one the agent named must be right.
+          if (input.usernameTarget || !passwordTarget) throw error
+          fillUsername = false
+        }
+      }
+      if (fillUsername) {
+        await this.replaceFormText(
+          tab,
+          usernameTarget!,
+          input.username!,
+          initialUrl,
+          initialRefEpoch,
+          signal
+        )
+        filled.push('username')
+      }
+      if (passwordTarget && input.password) {
+        await check(passwordTarget, 'password')
+        // Marked before typing, so nothing can capture the field between typing and marking.
+        tab.secretFields = [...(tab.secretFields ?? []), passwordTarget.backendNodeId!]
+        await this.replaceFormText(
+          tab,
+          passwordTarget,
+          input.password,
+          initialUrl,
+          initialRefEpoch,
+          signal
+        )
+        filled.push('password')
+      }
+      let submitted = false
+      if (input.submit) {
+        if (tab.surface.getURL() !== initialUrl || tab.refEpoch !== initialRefEpoch) {
+          throw new Error('The page changed during sign-in; it was not submitted')
+        }
+        const last = (passwordTarget ?? usernameTarget)!
+        // The form's own submission, as its default button would send it; a page without a form
+        // gets Enter in the field it listens to. Its target is read again in the same step, since
+        // page script could have changed it after the fields were checked; a refused submission
+        // takes the typed password back out.
+        const submission = await this.callOnNode<'form' | 'none' | 'refused'>(
+          tab,
+          last.backendNodeId!,
+          `function(allowed, clear) {
+            const form = this.form;
+            if (!form) return 'none';
+            let target = null;
+            try {
+              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI).origin;
+            } catch {}
+            if (!target || !allowed.includes(target)) {
+              if (clear) this.value = '';
+              return 'refused';
+            }
+            if (typeof form.requestSubmit === 'function') form.requestSubmit();
+            else form.submit();
+            return 'form';
+          }`,
+          [input.allowedOrigins, last === passwordTarget],
+          signal
+        )
+        if (submission === 'refused') {
+          throw new Error('The sign-in form now sends to another site, so it was not submitted')
+        }
+        if (submission === 'none') {
+          tab.surface.focus()
+          tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' })
+          tab.surface.sendInputEvent({ type: 'char', keyCode: '\r' })
+          tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' })
+        }
+        await abortable(tab.surface.executeJavaScript('0'), signal).catch(() => undefined)
+        submitted = true
+      }
+      const quiescence = await this.waitForQuiescence(tab, {}, signal)
+      const observation = redactFormObservation(
+        await this.observeUnlocked(
+          session,
+          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
+          signal
+        ),
+        new Set([input.username ?? '', input.password ?? ''].filter(Boolean))
+      )
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        action: 'sign_in',
+        targetMode: (passwordTarget ?? usernameTarget)!.mode,
+        coordinateFallbackUsed: false,
+        durationMs: this.now() - startedAt,
+        quiescence,
+        loopProtection: { unchangedRepeatCount: 0, blockedOnNextIdenticalAction: false },
+        observation,
+        origin,
+        filled,
+        submitted
+      }
+    })
+  }
+
+  /** A sign-in field by the agent's target, or found on the page; undefined when there is none. */
+  private async signInField(
+    tab: TabState,
+    kind: 'username' | 'password',
+    target: BrowserTarget | undefined,
+    signal?: AbortSignal
+  ): Promise<ElementPoint | undefined> {
+    if (target) {
+      const point = await this.resolveTarget(tab, target, false, signal)
+      if (!point.backendNodeId) throw new Error(`The ${kind} field could not be resolved`)
+      return point
+    }
+    const found = await abortable(
+      tab.surface.sendDebuggerCommand<{ result?: { objectId?: string; subtype?: string } }>(
+        'Runtime.evaluate',
+        { expression: `(${FIND_SIGN_IN_FIELD})(${JSON.stringify(kind)})`, returnByValue: false }
+      ),
+      signal
+    )
+    const objectId = found.result?.objectId
+    if (!objectId || found.result?.subtype === 'null') return undefined
+    try {
+      const described = await abortable(
+        tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+          objectId
+        }),
+        signal
+      )
+      const backendNodeId = described.node?.backendNodeId
+      if (!backendNodeId) return undefined
+      const rect = await this.elementRect(tab, backendNodeId, signal)
+      return {
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        backendNodeId,
+        mode: 'semantic',
+        fallbackUsed: false
+      }
+    } finally {
+      await tab.surface
+        .sendDebuggerCommand('Runtime.releaseObject', { objectId })
+        .catch(() => undefined)
+    }
+  }
+
+  /** The state of each password field a sign-in filled that this document still has. */
+  private async secretFieldStates(
+    tab: TabState,
+    signal?: AbortSignal
+  ): Promise<Array<{ isPassword: boolean; hasValue: boolean }>> {
+    if (!tab.secretFields?.length) return []
+    const states: Array<{ isPassword: boolean; hasValue: boolean }> = []
+    const kept: number[] = []
+    for (const backendNodeId of tab.secretFields) {
+      try {
+        const state = await this.callOnNode<{
+          connected: boolean
+          isPassword: boolean
+          hasValue: boolean
+        }>(
+          tab,
+          backendNodeId,
+          `function() {
+            return {
+              connected: this.isConnected === true,
+              isPassword: String(this.getAttribute('type') || '').toLowerCase() === 'password' && this.type === 'password',
+              hasValue: String(this.value || '') !== ''
+            };
+          }`,
+          [],
+          signal
+        )
+        if (!state.connected || !state.hasValue) continue
+        kept.push(backendNodeId)
+        states.push(state)
+      } catch {
+        // The node belongs to a document the tab has left, so it no longer holds the value.
+      }
+    }
+    tab.secretFields = kept
+    return states
+  }
+
+  private async secretShownAsText(tab: TabState, signal?: AbortSignal): Promise<boolean> {
+    return (await this.secretFieldStates(tab, signal)).some((state) => !state.isPassword)
+  }
+
+  private async secretStillOnPage(tab: TabState, signal?: AbortSignal): Promise<boolean> {
+    return (await this.secretFieldStates(tab, signal)).length > 0
+  }
+
   async select(
     input: BrowserSelectInput,
     operation: BrowserOperationOptions = {}
@@ -5105,6 +5461,11 @@ export class NativeBrowserSessionService {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session, input.tabId)
+      if (await this.secretStillOnPage(tab, signal)) {
+        throw new Error(
+          'browser_evaluate is unavailable while a stored password is filled in on this page, since page script could read it. Submit the form or leave the page first.'
+        )
+      }
       await this.assertAutomatedMutationAllowed(tab, signal)
       const envelope = await abortable(
         tab.surface.executeJavaScript<{ json: string; truncated: boolean }>(`(async () => {

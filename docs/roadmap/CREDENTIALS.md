@@ -1,10 +1,10 @@
 # Credentials the agent can use but not read
 
 Status: design note. The vault, the Settings page, the agent's list and request tools, the audit,
-redaction, API calls with a credential (`http_request`, approvals and returned tokens) and
-commands that receive one in an environment variable have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
-and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
-still open.
+redaction, API calls with a credential (`http_request`, approvals and returned tokens), commands
+that receive one in an environment variable, and browser sign-in have shipped; they are described in
+[Credentials](../architecture/CREDENTIALS.md) and the [user guide](../user-guide/CREDENTIALS.md).
+This file keeps the reasoning and the work still open.
 
 ## Problem
 
@@ -43,8 +43,9 @@ What SideKick takes from this:
   secrets, Vercel's header rules, Fly.io's sealed destinations), which closes the echo oracle.
 - Give the model a list without values and a way to ask SideKick to use one (Chromium's agent
   login service, 1Password for Claude).
-- Match origins exactly, refuse cross-origin frames and insecure pages, and check the form's target
-  (Chrome, Firefox, Bitwarden, 1Password).
+- Match origins exactly, refuse cross-origin frames and insecure pages (plain HTTP only for a
+  server on this computer the user lists), and check the form's target (Chrome, Firefox,
+  Bitwarden, 1Password).
 - Redact with GitHub's set of encodings, but treat redaction as a second line (GitHub's own
   caveat, Cursor's confirmed bypass), and scrub transcripts and logs, the gap Claude Code and Goose
   left open.
@@ -133,45 +134,17 @@ the call's whole arguments, and covers only those.
 
 ### Browser sign-in
 
-A browser password manager fills only on the site a password belongs to. Chromium's own agent
-support goes further: while its agent is acting, Chrome stops filling automatically, and the agent
-must ask its login service to sign in with a credential it picked from a list that has no password.
-SideKick follows that contract with `browser_sign_in`:
+Shipped; see [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
-- The agent names a sign-in, and optionally the username and password fields by element reference.
-  Without references SideKick finds the form itself, as a password manager does, including a
-  username-only first step.
-- The value is inserted only when the field's own frame origin and the top-level page origin both
-  match one of the entry's origins over HTTPS, with no cross-origin frame in between (Chrome,
-  Firefox and 1Password all refuse cross-origin frames). The check runs at insertion time, inside
-  the existing text-entry check that already refuses a focus or navigation change before a value is
-  inserted, and the attempt stops if the page navigates while filling.
-- A form that submits to an origin outside the entry's scope is refused, as Firefox matches a
-  login's form action.
-- The password goes only into `<input type="password">`, which Chromium paints as dots in
-  screenshots. One sign-in runs per tab at a time. Like `browser_fill_form`, it returns one
-  redacted semantic observation and no screenshot.
-- After a fill the document is marked as holding a secret until it navigates away. While marked,
-  `browser_evaluate` is refused, because its regular-expression filter does not stop page script
-  from reading the field or calling `fetch`, and a screenshot or observation is refused if the
-  password field is no longer a password field, for example after the page's "show password"
-  button is pressed.
-- `browser_type` and `browser_fill_form` cannot use credentials.
-- Usernames may appear in screenshots; redaction covers only text.
-- The existing **Take control** card stays the alternative for a site the user would rather sign in
-  to themselves.
+### Still open
 
-### Audit of uses
+- **Permission audit.** Every use is recorded in the credential audit as `used`, `denied` or
+  `refused`, shown in each entry's Recent activity; **Settings → Agent → Permissions → Recent
+  approvals** does not list credential decisions yet.
 
-Every use a tool makes will be recorded in the existing audit as `used`, `denied` or `refused`,
-with the tool and its target (host, origin, or command with variable names), and the permission
-audit will include credential decisions.
-
-### Export
-
-Export will write aliases, kinds, descriptions, scope and approval settings only, and import will
-recreate entries without values, as with GitHub secrets: values are write-only. A profile copied to
-another computer already lists its entries as **Needs a new value**.
+- **Export.** Export will write aliases, kinds, descriptions, scope and approval settings only,
+  and import will recreate entries without values, as with GitHub secrets: values are write-only. A
+  profile copied to another computer already lists its entries as **Needs a new value**.
 
 ## Threats and limits
 
@@ -181,24 +154,24 @@ everything it starts can write it to a file, transform it, or send it anywhere, 
 can prove otherwise. The real boundary is therefore which tool and target receive the value, which
 is why commands ask every time by default and why scope can only be widened in Settings.
 
-| Threat                                                                          | Mitigation                                                                                                                                         | What remains                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `echo $KEY`, `printenv`, `env`                                                  | Every output path is redacted, raw and encoded.                                                                                                    | None for these forms.                                                                                                                                                                                                                           |
-| Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | Commands that receive a value ask every time by default; the card shows the full command.                                                          | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
-| Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                           | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
-| Sending it to an unrelated host with `http_request`                             | Host scope, HTTPS only, no redirect to another host.                                                                                               | A host in scope that relays requests elsewhere.                                                                                                                                                                                                 |
-| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                             | The method, path and other fields are still the model's choice, so an endpoint on an allowed host that stores what it receives can keep the value. A command holding the value can do it directly.                                              |
-| Sending it to an unrelated host from a command                                  | Commands off or ask every time by default; allowed programs exclude shells and interpreters and refuse chaining, pipes, redirection and subshells. | An allowed program that can itself send anywhere, such as `curl`.                                                                                                                                                                               |
-| Prompt injection asking the agent to use a credential somewhere                 | Out-of-scope uses are refused without a prompt; scope changes only in Settings; the card shows the exact target.                                   | A user approving a command they did not read.                                                                                                                                                                                                   |
-| Filling a password on the wrong site                                            | Frame and top-level origin match at insertion time, HTTPS, form target check.                                                                      | Script on the allowed site can read its own password field, as with any password manager.                                                                                                                                                       |
-| Revealing a filled password on screen                                           | Password fields only; screenshots refused once the field stops being a password field; `browser_evaluate` refused.                                 | Usernames appear in screenshots.                                                                                                                                                                                                                |
-| Misusing a signed-in session                                                    | The sign-in itself asks per the entry's setting; the session stays in that chat's browser.                                                         | Once signed in, the agent can act as the user on that site, as with any agent given a login. Use an account limited to what the task needs.                                                                                                     |
-| Reading SideKick's own store and decrypting it                                  | Records are encrypted; a decrypted value printed as-is is redacted; the Docker shell cannot reach the profile.                                     | On Windows (DPAPI) and Linux (Secret Service) a command running on this computer as the user can decrypt `safeStorage` data, as it can provider keys today, and checking command text cannot reliably stop it. macOS asks through the Keychain. |
-| A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                       | None.                                                                                                                                                                                                                                           |
-| A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                          | It can see what the user types while saving a value.                                                                                                                                                                                            |
-| The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                           | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
-| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                 | Short values may be missed. Over-redaction hides ordinary text that matches, such as a hidden username like `admin`; file tools refuse to write a placeholder back.                                                                             |
-| Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                      | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
+| Threat                                                                          | Mitigation                                                                                                                                                                          | What remains                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `echo $KEY`, `printenv`, `env`                                                  | Every output path is redacted, raw and encoded.                                                                                                                                     | None for these forms.                                                                                                                                                                                                                           |
+| Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | Commands that receive a value ask every time by default; the card shows the full command.                                                                                           | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
+| Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                                                            | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
+| Sending it to an unrelated host with `http_request`                             | Host scope, HTTPS only, no redirect to another host.                                                                                                                                | A host in scope that relays requests elsewhere.                                                                                                                                                                                                 |
+| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                                                              | The method, path and other fields are still the model's choice, so an endpoint on an allowed host that stores what it receives can keep the value. A command holding the value can do it directly.                                              |
+| Sending it to an unrelated host from a command                                  | Commands off or ask every time by default; allowed programs exclude shells and interpreters and refuse chaining, pipes, redirection and subshells.                                  | An allowed program that can itself send anywhere, such as `curl`.                                                                                                                                                                               |
+| Prompt injection asking the agent to use a credential somewhere                 | Out-of-scope uses are refused without a prompt; scope changes only in Settings; the card shows the exact target.                                                                    | A user approving a command they did not read.                                                                                                                                                                                                   |
+| Filling a password on the wrong site                                            | Frame and top-level origin match at insertion time; HTTPS, or plain HTTP only on a loopback origin the user listed; form target checked before filling and again before submitting. | Script on the allowed site can read its own password field, as with any password manager.                                                                                                                                                       |
+| Revealing a filled password on screen                                           | Password fields only; screenshots refused once the field stops being a password field; `browser_evaluate` refused.                                                                  | Usernames appear in screenshots.                                                                                                                                                                                                                |
+| Misusing a signed-in session                                                    | The sign-in itself asks per the entry's setting; the session stays in that chat's browser.                                                                                          | Once signed in, the agent can act as the user on that site, as with any agent given a login. Use an account limited to what the task needs.                                                                                                     |
+| Reading SideKick's own store and decrypting it                                  | Records are encrypted; a decrypted value printed as-is is redacted; the Docker shell cannot reach the profile.                                                                      | On Windows (DPAPI) and Linux (Secret Service) a command running on this computer as the user can decrypt `safeStorage` data, as it can provider keys today, and checking command text cannot reliably stop it. macOS asks through the Keychain. |
+| A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                                                        | None.                                                                                                                                                                                                                                           |
+| A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                                                           | It can see what the user types while saving a value.                                                                                                                                                                                            |
+| The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                                                            | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
+| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                                                  | Short values may be missed. Over-redaction hides ordinary text that matches, such as a hidden username like `admin`; file tools refuse to write a placeholder back.                                                                             |
+| Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                                                       | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
 
 ## Tests
 
@@ -263,7 +236,7 @@ Each phase is one pull request with its tests and, when it ships, user documenta
    boundary.
 2. **API calls** (shipped). `http_request` with host scope, approvals and returned tokens.
 3. **Commands** (shipped). The `shell` `secrets` argument, command scope and allowed programs.
-4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.
+4. **Browser sign-in** (shipped). `browser_sign_in`, origin-bound filling and marked documents.
 5. **Later.** MCP server environments and arguments from entries, one-time codes, an OAuth
    client-credentials kind, and answering a waiting command prompt with a credential the user
    picks.

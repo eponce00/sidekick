@@ -8,6 +8,7 @@ import type { AgentApprovalPreview } from '../../shared/agentRuntime'
 import {
   CREDENTIAL_ASK_LABELS,
   credentialHostMatches,
+  credentialPageOrigin,
   credentialScopeRefusal,
   credentialVariableRefusal,
   describeCredentialSend,
@@ -22,13 +23,13 @@ import {
 } from '../../shared/credentials'
 import type { ResolvedCredential } from './credentialVault'
 
-export type CredentialUseKind = 'web' | 'command'
+export type CredentialUseKind = 'web' | 'command' | 'browser'
 
 export interface CredentialUseRequest {
   alias: string
   tool: string
   kind: CredentialUseKind
-  /** A web request's URL, or a command's text. */
+  /** A web request's URL, a command's text, or the address of the page to sign in on. */
   target: string
   /** For a command: the environment variable that receives the value. */
   variable?: string
@@ -103,6 +104,7 @@ export function credentialWebTarget(url: URL): string {
 /** What the audit and approval card show for a use's target. */
 function shownTarget(request: CredentialUseRequest): string | undefined {
   if (request.kind === 'command') return request.target.slice(0, 300)
+  if (request.kind === 'browser') return credentialPageOrigin(request.target) ?? undefined
   try {
     return credentialWebTarget(new URL(request.target))
   } catch {
@@ -110,17 +112,22 @@ function shownTarget(request: CredentialUseRequest): string | undefined {
   }
 }
 
-/** One approved use: the run, the call, the alias, and the address or command it was approved for. */
+/**
+ * One approved use: the run, the call, the alias, and the address, command or page origin it was
+ * approved for. A sign-in is approved for an origin, since the page's path may change as it loads.
+ */
 function permitKey(request: CredentialUseRequest): string | undefined {
   if (!request.runId || !request.toolCallId) return undefined
-  let target = request.target
-  if (request.kind === 'web') {
+  let target: string | null = request.target
+  if (request.kind === 'browser') target = credentialPageOrigin(request.target)
+  else if (request.kind === 'web') {
     try {
       target = new URL(request.target).href
     } catch {
       return undefined
     }
   }
+  if (target === null) return undefined
   return JSON.stringify([
     request.runId,
     request.toolCallId,
@@ -196,9 +203,36 @@ export class CredentialUses {
         message: `${credential.alias} cannot be used here: ${refusal}.`
       }
     }
-    return request.kind === 'command'
-      ? this.checkCommand(credential, request)
-      : this.checkWeb(credential, request.target)
+    if (request.kind === 'command') return this.checkCommand(credential, request)
+    if (request.kind === 'browser') return this.checkBrowser(credential, request.target)
+    return this.checkWeb(credential, request.target)
+  }
+
+  private checkBrowser(credential: CredentialSummary, address: string): Checked {
+    const browser = credential.scope.browser
+    if (!browser || credential.kind !== 'sign_in') {
+      return {
+        ok: false,
+        credential,
+        message: `${credential.alias} may not be filled into web pages. ${SETTINGS_HINT}`
+      }
+    }
+    const origin = credentialPageOrigin(address)
+    if (!origin) {
+      return {
+        ok: false,
+        credential,
+        message: `${credential.alias} is filled in only on an HTTPS page, or a server on this computer the user listed, and the browser is not on one. Open the sign-in page first.`
+      }
+    }
+    if (!browser.origins.includes(origin)) {
+      return {
+        ok: false,
+        credential,
+        message: `${credential.alias} is filled in only on ${browser.origins.join(', ')}, not on ${origin}. ${SETTINGS_HINT}`
+      }
+    }
+    return { ok: true, credential }
   }
 
   private checkWeb(credential: CredentialSummary, target: string): Checked {
@@ -340,6 +374,26 @@ export class CredentialUses {
         }
       }
     }
+    if (request.kind === 'browser') {
+      const origin = credentialPageOrigin(request.target)!
+      return {
+        alias: request.alias,
+        ask: credential.ask,
+        keys: [`credential:${credential.id}:browser:${origin}`],
+        label: `${credential.alias} on ${origin}`,
+        preview: {
+          summary: `SideKick fills in ${request.alias} on this page itself; the agent never sees the password.`,
+          changes: [],
+          facts: [
+            { label: 'Sign-in', value: request.alias },
+            ...about,
+            ...(credential.username ? [{ label: 'As', value: credential.username }] : []),
+            { label: 'On', value: origin },
+            { label: 'Asks', value: CREDENTIAL_ASK_LABELS[credential.ask] }
+          ]
+        }
+      }
+    }
     const url = checked.url!
     return {
       alias: request.alias,
@@ -476,12 +530,27 @@ export function credentialReference(reference: string): {
     : { alias: reference.trim(), field: undefined }
 }
 
-/** The credential uses a tool call asks for, read from the arguments of the tools that take one. */
+/**
+ * The credential uses a tool call asks for, read from the arguments of the tools that take one.
+ * `browserUrl` is the address the chat's browser is on, which a sign-in is checked against.
+ */
 export function credentialRequestsFor(
   name: string,
   args: Record<string, unknown>,
-  context: { conversationId?: string; runId?: string; toolCallId?: string }
+  context: { conversationId?: string; runId?: string; toolCallId?: string },
+  browserUrl?: string
 ): CredentialUseRequest[] {
+  if (name === 'browser_sign_in' && typeof args.credential === 'string' && args.credential.trim()) {
+    return [
+      {
+        alias: args.credential.trim(),
+        tool: name,
+        kind: 'browser',
+        target: browserUrl ?? '',
+        ...context
+      }
+    ]
+  }
   if (name === 'http_request' && typeof args.credential === 'string' && args.credential.trim()) {
     return [
       {
