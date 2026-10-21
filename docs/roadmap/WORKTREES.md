@@ -27,9 +27,11 @@ documentation did not say.
 
 What SideKick takes from this:
 
-- Keep worktrees in private storage and remove only what SideKick provably created: the exact
-  storage shape, the recorded branch, and registration in `git worktree list` (Cline, OpenCode,
+- Keep worktrees outside the user's checkout and remove only what SideKick provably created: the
+  exact folder shape, the recorded branch, and registration in `git worktree list` (Cline, OpenCode,
   Claude Code).
+- Short generated names: a slug and six random hex characters (Claude Code desktop), or a short
+  generated word (Conductor).
 - Classify before removing and explain each refusal; forced removal keeps unmerged branches unless
   asked (Claude Code, Cline).
 - Choose "Work in" for a new chat's first message, with a remembered default (Cline, Codex).
@@ -43,9 +45,28 @@ What SideKick takes from this:
 One managed-worktree service in the trusted main process owns creation, inventory, setting aside,
 restoring and removal. The renderer only asks for those operations by identity; it never passes paths.
 
-- **Storage and identity.** Worktrees live in SideKick's private data folder,
-  `worktrees/<source project id>/<name>`, outside the user's checkout so editors, file watchers and
-  `git status` in the original folder never see them.
+- **Location and names.** A new worktree lives beside its repository, in
+  `<repository>.worktrees/<slug>-<6 hex>`, where the slug is at most 20 characters of a worker's
+  handle or the chat's title. Worktrees used to live in SideKick's private data folder,
+  `worktrees/<source project id>/<slug up to 32>-<8 hex>`, which on Windows put about 110–130
+  characters in front of every file in the checkout, so deep paths crossed the 260-character limit
+  that some tools still have. Three places were weighed:
+  - Inside the repository, as Claude Code's `.claude/worktrees/<name>`: short and easy to find, but
+    the worktree is then inside the project folder. A manager writing there would count as
+    occupying its workers' folders, its path containment would reach their files, and every tool
+    that walks the project (search, file watchers, indexers, test and build globs) sees each worktree
+    unless the user's ignore files say otherwise. It also needs an entry in `.git/info/exclude`.
+    Claude Code users have asked for another location for these reasons.
+  - Private storage (Codex, Cline, OpenCode): never seen by the project's tools, but the
+    path is long and has nothing to do with the project.
+  - Beside the repository (the layout Git's own documentation and Claude Code's manual-worktree
+    examples use): outside the checkout, so containment, occupancy and `git status` are unchanged,
+    and only about 38 characters longer than the repository's own path.
+
+  SideKick uses the folder beside the repository. When it cannot (a repository at a drive root, a
+  parent folder inside another repository, a link where the folder would go, or no write access) the
+  worktree goes in private storage as before. Existing worktrees are not moved.
+
 - **A worktree belongs to its chat** (Codex, Claude Code, Cursor, Cline). The chat keeps its
   project; `conversations.worktree_id` points at the worktree, and
   `ProjectStore.getConversationContext` resolves the chat's folder to the worktree's. Worktrees
@@ -103,8 +124,8 @@ last chat is deleted. Still open:
   and back, instead of forking without the uncommitted files.
 - **Merge back.** Merging or opening a pull request from a worktree, and then removing it, is left
   to the user or the agent; a one-click flow would pair with the Git status bar.
-- **Settings.** The number kept on disk (15) and the storage folder are fixed. Claude Code and Codex
-  make them configurable.
+- **Settings.** The number kept on disk (15) and the worktree location are fixed. Claude Code and
+  Codex make them configurable.
 - **Per-worktree environment** (Conductor): pass the worktree path, name and a free port range to
   setup hooks so parallel dev servers do not collide.
 - **Concurrent writes inside one worktree.** "Work here anyway" relies on the transactional mutation

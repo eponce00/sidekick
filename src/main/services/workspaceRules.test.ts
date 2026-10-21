@@ -93,7 +93,7 @@ describe('loadWorkspaceRules', () => {
 
       await expect(
         resolveWorkspaceInstructionsForPath(scopeId, root, crossDriveTarget, false, true)
-      ).rejects.toThrow('Instruction target must be inside the project folder')
+      ).rejects.toThrow(`Path is outside the project: ${crossDriveTarget}`)
       clearWorkspaceInstructionScope(scopeId)
     }
   )

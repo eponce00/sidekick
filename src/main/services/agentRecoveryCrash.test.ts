@@ -121,7 +121,7 @@ it.each(['migration', 'recovery'] as const)(
       db.close()
       db = openApplicationDatabase(path)
       const store = new AgentRunStore(db)
-      recoverAgentRunMaterializations(db, store, () => undefined)
+      recoverAgentRunMaterializations(db, store)
       if (mode === 'recovery') {
         expect(db.prepare('SELECT count(*) AS count FROM messages').get()).toEqual({ count: 2 })
         for (const id of ['first', 'second']) {
@@ -142,7 +142,7 @@ it.each(['migration', 'recovery'] as const)(
         ).toBeUndefined()
       }
       const recoveredEvents = db.prepare('SELECT * FROM agent_run_events ORDER BY id').all()
-      recoverAgentRunMaterializations(db, store, () => undefined)
+      recoverAgentRunMaterializations(db, store)
       expect(db.prepare('SELECT * FROM agent_run_events ORDER BY id').all()).toEqual(
         recoveredEvents
       )

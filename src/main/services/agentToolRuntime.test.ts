@@ -277,14 +277,14 @@ describe('AgentToolRuntime file receipts', () => {
         contextFor('run-2', 'chat')
       )) as ToolExecutionResult
       expect(read.status).toBe('success')
-      expect(JSON.parse(read.modelContent!)).toMatchObject({ state: 'running', output: 'ready' })
+      expect(read.modelContent).toBe(`Task ${taskId}: running\n<output>\nready\n</output>`)
 
       const answered = (await later.router.execute(
         'send_command_input',
         { taskId, input: 'hello', accessLevel: 'auto' },
         contextFor('run-2', 'chat')
       )) as ToolExecutionResult
-      expect(JSON.parse(answered.modelContent!).output).toContain('echo hello')
+      expect(answered.modelContent).toContain('echo hello')
 
       const elsewhere = (await later.router.execute(
         'read_command_output',
@@ -346,7 +346,11 @@ describe('AgentToolRuntime file receipts', () => {
     const wait = async (args: Record<string, unknown>) => {
       const startedAt = Date.now()
       const result = (await session.router.execute('wait', args, context)) as ToolExecutionResult
-      return { elapsed: Date.now() - startedAt, ...JSON.parse(result.modelContent!) }
+      return {
+        elapsed: Date.now() - startedAt,
+        ...(result.data as { output?: string } & Record<string, unknown>),
+        text: result.modelContent
+      }
     }
     try {
       const build = await background(
@@ -355,6 +359,9 @@ describe('AgentToolRuntime file receipts', () => {
       const ended = await wait({ taskIds: [build], seconds: 120 })
       expect(ended).toMatchObject({ woke: 'task_ended', taskId: build, exitCode: 1 })
       expect(ended.output).toContain('cannot find symbol')
+      // The model reads the output as lines, not as an escaped JSON string.
+      expect(ended.text).toMatch(/^Woke: task ended after [\d.]+ s \(asked for 120 s\)\n/)
+      expect(ended.text).toContain('<output>\nerror: cannot find symbol')
       expect(ended.elapsed).toBeLessThan(15_000)
       // It was seen ending, so it is not reported again before the next step.
       expect(commands.takeNotices('chat')).toEqual([])
@@ -643,7 +650,9 @@ describe('AgentToolRuntime file receipts', () => {
         fullOutputHandle: expect.any(String)
       }
     })
-    expect(result.modelContent).toContain('"success":false')
+    expect(result.modelContent.startsWith('Exit code: 7\n')).toBe(true)
+    expect(result.modelContent).toContain('<stderr>\n{"coordinates":[[0,0]')
+    expect(result.modelContent).toContain("The command's own output was complete.")
     expect(result.modelContent.length).toBeLessThan(denseError.length)
     expect(result.output?.originalEstimatedTokens).toBeGreaterThan(10_000)
     expect(result.output?.returnedEstimatedTokens).toBeLessThanOrEqual(8_192)

@@ -67,7 +67,10 @@ const RETRY_LABELS: Record<string, string> = {
   provider_transcript_repaired: 'Repaired the provider transcript and retried',
   context_window_exceeded: 'Context limit reached; compacting and retrying',
   image_limit_exceeded: 'Too many images for this model; dropping older ones and retrying',
-  truncated_tool_batch: 'Tool call stream was incomplete; retrying',
+  output_limit_exceeded: 'Reply limit too long for this model; retrying with its maximum',
+  truncated_tool_batch: 'Reply limit reached while writing tool calls; asking for smaller ones',
+  runaway_tool_calls: 'Stopped a reply that repeated its tool calls; asking for one at a time',
+  stream_dropped: 'Lost the connection to the model server; asking again',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',
@@ -93,13 +96,23 @@ function RunStatusSegment({
   )
 }
 
+const RUN_ERROR_TITLES: Record<string, string> = {
+  timeout: 'Model server timed out',
+  transient: 'Model server unavailable',
+  permission_denied: 'Provider refused access',
+  not_found: 'Model not found',
+  not_configured: 'Model not set up',
+  invalid_arguments: 'Request refused'
+}
+
 /** A failed reply's heading: what went wrong in words, not the error code. */
 function runErrorTitle(error: { code?: string; message: string }): string {
   const connection = providerConnectionFailureKind(error.message)
   if (connection === 'unreachable') return 'Model server unreachable'
   if (connection === 'dropped') return 'Connection lost'
+  if (connection === 'timed-out') return 'Model server timed out'
   if (!error.code || error.code === 'internal') return 'Reply failed'
-  return error.code.replaceAll('_', ' ')
+  return RUN_ERROR_TITLES[error.code] ?? error.code.replaceAll('_', ' ')
 }
 
 function RunErrorSegment({
@@ -575,7 +588,8 @@ function ThinkingText({
   workspaceRoot?: string | null
   streaming: boolean
 }): React.JSX.Element {
-  const ref = useFollowBottom<HTMLDivElement>(streaming)
+  // The box shows a few lines; reaching its last one follows again.
+  const ref = useFollowBottom<HTMLDivElement>(streaming, 16)
   return (
     <div className="action-text" ref={ref}>
       <MessageMarkdown content={content} richMedia={false} workspaceRoot={workspaceRoot} />

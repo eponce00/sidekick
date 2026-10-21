@@ -1,14 +1,9 @@
 import type Database from 'better-sqlite3'
-import type { AgentRunEvent, AgentRunSnapshot } from '../../shared/agentRuntime'
 import { AgentRunStore } from './agentRunStore'
 import { AgentMessageMaterializer } from './agentMessageMaterializer'
 
 /** Reconcile durable terminal journals, never re-execute their tools. */
-export function recoverAgentRunMaterializations(
-  db: Database.Database,
-  store: AgentRunStore,
-  restoreCompaction: (run: AgentRunSnapshot, events: AgentRunEvent[]) => void
-): void {
+export function recoverAgentRunMaterializations(db: Database.Database, store: AgentRunStore): void {
   db.transaction(() => {
     const recovered = store.recoverInterrupted()
     // A process may stop after the terminal event but before message finalization.
@@ -41,7 +36,6 @@ export function recoverAgentRunMaterializations(
         (run.surface === 'conversation' || run.surface === 'research') &&
         Boolean(outputMessageId)
       if (persist) {
-        restoreCompaction(run, events)
         const prior = db
           .prepare(
             'SELECT checkpoint_hash, checkpoint_workspace_root FROM messages WHERE id = ? AND conversation_id = ?'

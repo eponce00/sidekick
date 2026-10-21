@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StartConversationAgentRunInput } from '../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunPhase, AgentRunSnapshot } from '../../shared/agentRuntime'
 import type { PinnedModel } from '../../shared/models'
@@ -25,6 +25,8 @@ const MODEL: PinnedModel = { id: 'test:model', name: 'Model', provider: 'openrou
 class FakeRuntime implements SessionRuntime {
   readonly runs = new Map<string, AgentRunSnapshot>()
   readonly started: StartConversationAgentRunInput[] = []
+  /** Chats with a run being prepared, which exists as a run only once its kernel starts. */
+  readonly preparing = new Set<string>()
   service!: SessionService
   private sequence = 0
 
@@ -49,8 +51,12 @@ class FakeRuntime implements SessionRuntime {
     this.started.push(input)
     this.emit(run.id, 'run.started')
     // The kernel takes the chat's waiting messages before its first step.
-    for (const steer of this.service.pendingSteers(input.conversationId, run.id))
-      this.take(run, steer)
+    const waiting = this.service.pendingSteers(input.conversationId, run.id)
+    this.startedWith.set(
+      run.id,
+      waiting.map(({ id }) => id)
+    )
+    for (const steer of waiting) this.take(run, steer)
     return run
   }
 
@@ -66,6 +72,10 @@ class FakeRuntime implements SessionRuntime {
     if (!run || run.phase !== 'streaming') return false
     this.take(run, steer)
     return true
+  }
+
+  isPreparing(conversationId: string): boolean {
+    return this.preparing.has(conversationId)
   }
 
   latestRun(conversationId: string): AgentRunSnapshot | null {
@@ -95,6 +105,8 @@ class FakeRuntime implements SessionRuntime {
   }
 
   steered = new Map<string, string[]>()
+  /** The messages each run took before its first step, as opposed to later steers. */
+  startedWith = new Map<string, string[]>()
 
   private take(run: AgentRunSnapshot, steer: AgentRunSteer): void {
     this.steered.set(run.id, [...(this.steered.get(run.id) ?? []), steer.id])
@@ -125,6 +137,8 @@ let service: SessionService
 let changes: SessionsChangedEvent[]
 let worktreesCreated: string[]
 let savedReplies: string[]
+/** Holds a long reply's save open until the test lets it finish. */
+let saveGate: Promise<void>
 const SAVED_REPLY_HANDLE = '3f1c2b9a-6d4e-4f8a-9b2c-1d0e5a7c8b9f'
 const MANAGER = 'manager'
 
@@ -149,6 +163,7 @@ beforeEach(() => {
   runtime = new FakeRuntime(db)
   changes = []
   savedReplies = []
+  saveGate = Promise.resolve()
   worktreesCreated = []
   const worktrees: SessionWorktrees = {
     isGitProject: async () => true,
@@ -183,6 +198,7 @@ beforeEach(() => {
     onChange: (change) => changes.push(change),
     saveFullReply: async (text) => {
       savedReplies.push(text)
+      await saveGate
       return SAVED_REPLY_HANDLE
     }
   })
@@ -354,6 +370,76 @@ describe('reports and wakes', () => {
     ])
     expect(reports[0].body).toContain('First is done.')
     expect(reports[1].body).toMatch(/^Failed/)
+  })
+
+  it('waits for a worker whose run is still being prepared', async () => {
+    // A local model runs one chat at a time, so workers take turns. The second left the slot
+    // queue as the first one's report arrived, and while its run was prepared it counted as idle:
+    // the manager woke with one report and was handed the other mid-turn.
+    const [first, second] = await startWorkers('First', 'Second')
+    runtime.runs.delete(lastRunId(second.conversationId))
+    runtime.preparing.add(second.conversationId)
+    runtime.finish(lastRunId(first.conversationId), 'completed', 'First is done.')
+    await service.idle()
+    expect(runsOf(MANAGER)).toEqual([])
+
+    runtime.preparing.delete(second.conversationId)
+    await runtime.startRun({
+      id: 'second-run',
+      conversationId: second.conversationId,
+      assistantMessageId: 'second-reply',
+      model: MODEL,
+      mode: 'conversation'
+    })
+    runtime.finish('second-run', 'completed', 'Second is done.')
+    await service.idle()
+    expect(runsOf(MANAGER)).toHaveLength(1)
+    expect(runtime.startedWith.get(lastRunId(MANAGER))).toHaveLength(2)
+  })
+
+  it('does not wake a chat again while its run is being prepared', async () => {
+    // The run takes waiting messages when it starts. A second wake was refused, but counted
+    // toward the automatic-turn limit, so a manager paused after half its turns.
+    const [worker] = await startWorkers('Only')
+    runtime.preparing.add(MANAGER)
+    runtime.finish(lastRunId(worker.conversationId), 'completed', 'Done.')
+    await service.idle()
+    expect(runsOf(MANAGER)).toEqual([])
+    expect(service.store.undelivered(MANAGER).map(({ intent }) => intent)).toEqual(['report'])
+  })
+
+  it('waits for a worker whose run ended but whose report is not written yet', async () => {
+    // Two workers finishing close together woke the manager once per report. The second worker's
+    // run had ended and was still being finalized, its checkpoint taken, when the first report
+    // arrived; it counted as idle although its report was on its way.
+    const [first, second] = await startWorkers('First', 'Second')
+    const finalizing = runtime.run(lastRunId(second.conversationId))!
+    finalizing.phase = 'completed'
+    runtime.finish(lastRunId(first.conversationId), 'completed', 'First is done.')
+    await service.idle()
+    expect(runsOf(MANAGER)).toEqual([])
+
+    runtime.finish(finalizing.id, 'completed', 'Second is done.')
+    await service.idle()
+    expect(runsOf(MANAGER)).toHaveLength(1)
+    expect(runtime.startedWith.get(lastRunId(MANAGER))).toHaveLength(2)
+  })
+
+  it('waits for a report queued behind another before waking the manager', async () => {
+    const [first, second] = await startWorkers('Long', 'Quick')
+    let releaseSave!: () => void
+    saveGate = new Promise((done) => (releaseSave = done))
+    // The long reply is still being saved when the other worker's run is finalized, so its
+    // report is written next, after the first one has already been routed.
+    runtime.finish(lastRunId(first.conversationId), 'completed', 'x'.repeat(60_000))
+    await vi.waitFor(() => expect(savedReplies).toHaveLength(1))
+    runtime.finish(lastRunId(second.conversationId), 'completed', 'Quick is done.')
+    releaseSave()
+    await service.idle()
+
+    // Woken once, with both reports, not woken by the first and handed the second mid-turn.
+    expect(runsOf(MANAGER)).toHaveLength(1)
+    expect(runtime.startedWith.get(lastRunId(MANAGER))).toHaveLength(2)
   })
 
   it('carries the whole of a long reply to the manager, which cannot read the worker', async () => {

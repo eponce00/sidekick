@@ -91,6 +91,11 @@ export interface ProviderStreamChunk {
     content?: string
     thinking?: string
     tool_calls?: ProviderToolCall[]
+    /**
+     * Calls the model has finished writing, with their whole arguments, sent once each while the
+     * reply streams on. `tool_calls` carries only a preview of a call until the reply ends.
+     */
+    closed_tool_calls?: ProviderToolCall[]
     thinking_blocks?: ProviderThinkingBlock[]
   }
   done?: boolean

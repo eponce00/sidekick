@@ -129,6 +129,27 @@ model-visible result. MCP schemas pass through the same portable schema normaliz
 reference resolution. Malformed provider JSON becomes an ordinary failed tool result with the
 original call identity; it never aborts the provider loop by itself.
 
+Models bring names from other agent harnesses. The registry renames an argument another harness
+uses for the same thing, such as `file_path` or `filePath` for `read`'s `path`, `offset` and
+`limit` for its line range, or Codex's `workdir` for `cwd`, when exactly one spelling is present,
+and lists each repair in the invalid-argument recovery if the call still fails. A call to another
+harness's tool, such as `apply_patch` in a run with exact-text editing or Claude Code's
+`AskUserQuestion`, is still refused, but the refusal names the SideKick tool that does the job in
+this run and its required arguments.
+
+A refusal says what it is, so the model can act on it and diagnostics do not count expected
+refusals as faults. A path outside the project, whether written with `..`, as an absolute or UNC
+path, or reached through a link, is `workspace_scope` whichever tool named it. Its recovery says
+the folder is not granted to the chat and how the user can grant it: a chat in that folder's
+project, which a manager can start with `start_session` and the user approves on the start card,
+or copying the files in. It never suggests another route to the folder. A chat with no project
+folder refuses file and command tools the same way. A browser page that fails to load is labelled
+like a failed model request: a refused or dropped connection is `transient` and one that gave up
+is `timeout`, while a host name that does not resolve is `not_found`, because the model chose the
+address. `internal` is left for failures nothing explains. A command that failed on a Unix command
+or flag in Windows PowerShell, such as `grep` or `cat -n`, gets the PowerShell equivalent, or `rg`
+when it is installed, in its output.
+
 Errors separate retry permission from the required recovery action: `correct_input`,
 `refresh_state`, `retry_later`, `change_strategy`, or `stop`. The run-scoped
 `AgentToolRecoveryController` independently fingerprints canonical tool arguments and results.
@@ -191,15 +212,44 @@ Every normal conversation, worker chat, research run, and child agent executes i
 - `AgentRuntimeCoordinator` prepares profiles, composes prompts, resolves credentials/context in the main process, captures private History lazily before the first mutation, persists final messages, and emits `run.finalized` only after durable finalization.
 - `AgentContextManager` performs budget-aware model compaction with a deterministic fallback and records the actual strategy and lineage.
 
-The kernel treats a provider output-limit finish reason as a failed tool batch: none of that turn's
-calls execute, even when an argument prefix happens to be valid JSON. Every call receives a
-model-visible `output_truncated` result so the model can retry with a smaller request. A turn the
+The kernel treats a reply the output limit cut off while it wrote tool calls as a failed tool
+batch: it is known by the provider's finish reason (`length`, `max_tokens` and other spellings) or
+by a reply that used its whole allowance whatever the reason says. None of that turn's calls
+execute, even when their JSON happens to parse; every call receives a model-visible
+`output_truncated` result asking for fewer, smaller calls. The turn records the stop reason,
+completion tokens, reply limit and the model's own limit on `assistant.completed`, the refused
+`tool.completed` events and a `run.retrying` event.
+
+A reply that runs away is stopped while it streams. The streaming clients report each call once it
+is whole (`closed_tool_calls`), and the kernel stops the request when a reply has begun more than 64
+calls, or written the same call, same tool and same arguments, a fourth time. None of its calls
+run, the calls the chat showed are closed as refused, and the next request tells the model why and
+asks for one call at a time, as Gemini CLI does; a second runaway in the run ends it as
+`loop_detected`. A reply that arrives whole is checked the same way. The support diagnostics export
+and `npm run audit:runs` count cut-off and runaway replies per reply, not per refused call, without
+content: one runaway reply of 784 calls once read as 767 refusals across a profile. A turn the
 limit cut off while the model was still thinking, before any answer or tool call, ends the run
 with that reason, as Codex treats an incomplete response, instead of completing it empty; the
 model is never told to cut its thinking short. A reply's limit is a quarter of the context window
 up to 32,768 tokens, or the model's configured maximum output, honored up to half the window. A
 public catalog's maximum output, as OpenRouter and Anthropic report it, only lowers the default. Within a non-truncated batch, only catalog entries explicitly classified as parallel reads may overlap;
 mutations, commands, questions, approvals, and control tools remain ordered behind those reads.
+
+A provider failure ends a run with a code that names the cause; `internal` is left for failures
+nothing explains. An unreachable server, a dropped connection, a rate limit, and a 5xx answer are
+`transient`; a server that sent nothing for five minutes (Node's fetch limit) or answered 408 is
+`timeout`; a refused key (401 or 403) is `permission_denied`; an unknown model or address (404) is
+`not_found`; a chat whose provider or model is missing, turned off, or without its key in Settings
+is `not_configured`; other refusals are `invalid_arguments`. The message puts SideKick's
+explanation before the provider's own words, with echoed credentials masked. Before failing, the
+kernel retries once: after compacting when the provider reports a context overflow, after dropping
+older images when it names an image limit, and at the provider's stated maximum when it refuses
+the reply limit. Image and reply limits are remembered per provider and model for the session. A
+turn whose stream broke off (the connection closed, or the stream ended before the provider
+finished the reply) is asked again once per turn, three seconds later, with the same request: tools
+run only after their whole turn has arrived, so the broken turn ran none of its calls. Its
+`run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
+partial text, thinking and tool previews it streamed.
 
 The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
@@ -363,6 +413,19 @@ Successful discovery or connection tests persist `online`; failures persist `off
 
 Per-instance API keys are encrypted by the main process before persistence. Renderer settings receive only `apiKeyConfigured`; the main process resolves the instance by stable id and decrypts its credential immediately before a provider request. Normal provider IPC never accepts a raw endpoint or credential from the renderer.
 
+A chat pinned to an instance id that is not stored, because it was removed or is not saved yet,
+fails with a setup error that names it. `src/main/providers/providerResolver.ts` never substitutes
+another instance or the legacy endpoint settings, which would send the prompt to a server the user
+did not choose for that chat. Settings from before provider instances are read through the same
+legacy migration the renderer shows while the keychain is too locked to store it.
+
+Every settings write is a read-modify-write of the stored record in one synchronous step in the
+main process. `settings:save` replaces only the keys it names, applied to what is stored after any
+approval dialog closes, and the renderer sends only the keys a change touched. Migrations (retired
+keys, tool-call limit and accent palette policies, legacy provider instances) run in the main
+process as settings load; the renderer never saves back a copy it read, which would undo a save
+made in between.
+
 SideKick's permanent zero-cost distribution policy rules out paid Apple Developer ID/notarization
 and paid Windows Authenticode certificates. Tagged GitHub releases therefore contain an ad-hoc
 signed macOS DMG/ZIP, an unsigned Windows NSIS installer, and a Linux x64 AppImage. CI verifies
@@ -437,9 +500,12 @@ one level deep. The user-facing behavior is in
 - **Wakes and reports.** When a worker's run ends, its final message goes to the manager as a
   `report`, with its branch and whether the user stepped in. A `request` wakes an idle recipient, a
   `response` wakes the chat that asked, and reports wake the manager only once none of its workers
-  is working or queued. Updates, status notes and broadcasts never wake. A request left unanswered
-  when its recipient's run ends is reported back to the sender. A chat woken 20 times in a row
-  without the user starting or steering a run pauses until the user does.
+  has a run queued, being prepared or running, or has ended a run whose report is not written yet
+  (it is still being finalized, or waits behind another report). A chat whose run is being
+  prepared is not woken again: that run takes the waiting messages when it starts. Updates, status
+  notes and broadcasts never wake. A request left unanswered when its recipient's run ends is
+  reported back to the sender. A chat woken 20 times in a row without the user starting or
+  steering a run pauses until the user does.
 - **Slots and restarts.** `RunSlots` admits chats, workers, scheduled runs and sub-agents against
   one global limit (`maxConcurrentRuns`, 4 by default) and a per-provider limit; a run waiting for
   the user, a `wait`, or its sub-agents gives its slots back. After a restart, interrupted workers
@@ -507,8 +573,14 @@ such as agent-started chats), inventory with Git state and owners, setting the l
 worktrees aside beyond 15 on disk, restoring one before its chat's next run (the coordinator's
 `prepareWorkspace` hook), and removal. Setting aside snapshots HEAD and every unignored file into a
 commit held by `refs/sidekick/worktrees/<id>`, built in a private index so the worktree's own index
-is untouched. It acts only on folders it can prove it created: the exact storage shape under the
-private `worktrees` folder and registration in `git worktree list`. Removal deletes links inside the
+is untouched. New worktrees go in `<repository>.worktrees/<slug>-<6 hex>` beside the repository
+(`siblingWorktreesFolder`): outside the checkout, so the source folder's path containment, occupancy
+and `git status` never include them, and short on Windows. The folder is reserved with an exclusive
+`mkdir` before `git worktree add` fills it, so names never collide. When that place is unusable (a
+drive root, a parent inside another repository, a link, or no write access) the worktree goes in
+private storage, `worktrees/<source project id>/<name>`, where every older worktree also stays. It
+acts only on folders it can prove it created: a direct child of one of those two folders, which
+must not itself be a link, and registration in `git worktree list`. Removal deletes links inside the
 worktree as links before `git worktree remove --force`, so a junction to a shared install never
 loses its target.
 

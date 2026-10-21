@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.16.3 — 2026-10-20
+
+- Scroll up to read while a reply streams; the chat no longer pulls you back down. Scrolling back to
+  the end, or **Jump to latest**, follows the reply again.
+- Stop compacting a long chat at the start of every run. After a run summarized its own work, the
+  next run sent the turns the summary had replaced as well. Compaction now also fires at the share
+  of the window Settings names, because SideKick's own token count is checked against the model
+  server's from one run to the next.
+- Keep a finished summary when you stop the run right after it, say why a summary fell back to the
+  basic one, and try once more when the model server drops the connection before any tool ran.
+- Let the agent read command output as plain text, with a note when SideKick shortened it and where
+  the rest starts. A reply that repeats the same tool call is stopped as it streams, not after
+  minutes of identical calls.
+- Tell the agent why a tool was refused, such as a path outside the project, and what to use
+  instead. Common argument names and tool names from other agents are understood, and Unix commands
+  in PowerShell get the PowerShell equivalent.
+- Say why a reply failed instead of "internal", and retry what can be retried.
+- Let a manager read all its workers' reports at once, even when they finish moments apart.
+- Create a worker chat's worktree beside its repository, as `<repo>.worktrees/<short name>`, so
+  paths stay short. Existing worktrees stay where they are.
+- Keep a provider you just added: the window could save an older copy of Settings over it while
+  starting. A chat whose provider is gone stops with a clear message instead of trying a local
+  server.
+- Update a networking dependency for two security fixes.
+- Update the Microsoft Store version with each release.
+
 ## 0.16.2 — 2026-10-20
 
 - Finish an update on Windows without stalling near the end. The installer sat at 80–90% while

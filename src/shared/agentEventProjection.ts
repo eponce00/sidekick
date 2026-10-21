@@ -184,9 +184,27 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
   let deferredAnswer: { contentBefore: string; content: string } | null = null
   let runStartedAt: number | undefined
   let runCompletedAt: number | undefined
+  // Calls the turn being streamed announced; a turn that is asked again drops them.
+  let streamedTurnTools: string[] = []
 
   for (const event of orderedEvents) {
     if (event.type === 'run.started') runStartedAt ??= event.timestamp
+    if (
+      event.type === 'assistant.completed' ||
+      event.type === 'compaction.completed' ||
+      event.type === 'run.steered'
+    ) {
+      streamedTurnTools = []
+    }
+    if (event.type === 'run.retrying' && event.payload.discardsPartialTurn === true) {
+      pendingContent = ''
+      pendingThinking = ''
+      streaming = undefined
+      for (const id of streamedTurnTools) {
+        if (tools.get(id)?.status === 'pending') tools.delete(id)
+      }
+      streamedTurnTools = []
+    }
     // A compaction asks the model for a summary of the whole conversation, which on a local
     // model takes a minute or more with nothing streaming; the live line has to say so.
     if (event.type === 'compaction.started') compactingSince = event.timestamp
@@ -274,6 +292,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     }
     if (event.type === 'tool.pending') {
       const id = toolCallId(event)
+      if (!streamedTurnTools.includes(id)) streamedTurnTools.push(id)
       const known = tools.get(id)
       // A streamed call is announced before its arguments are complete and again once they
       // name their target; the later announcement is the one to show.
@@ -636,6 +655,17 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       })
       turnSegmentStart = segments.length
     }
+    if (event.type === 'run.retrying' && event.payload.discardsPartialTurn === true) {
+      // The turn whose stream broke off is asked again from its start; what it streamed is not
+      // part of the reply.
+      for (let index = segments.length - 1; index >= turnSegmentStart; index--) {
+        const type = segments[index]?.type
+        if (type === 'text' || type === 'thinking') segments.splice(index, 1)
+      }
+      pendingTurnTools.length = 0
+      streamedTurnContent = ''
+      streamedTurnThinking = ''
+    }
     if (event.type === 'run.retrying') {
       const reason = String(event.payload.reason || 'provider_retry')
       const detail =
@@ -668,6 +698,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
         // timeline events. Keep durable events for diagnosis while avoiding noisy
         // banners in both live and historical message projections.
         segments.push(marker)
+        if (event.payload.discardsPartialTurn === true) turnSegmentStart = segments.length
       }
     }
     // A run that ends inside the pass never reached a note; show its work as it happened.

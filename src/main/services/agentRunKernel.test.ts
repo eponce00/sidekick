@@ -1,12 +1,14 @@
 import Database from 'better-sqlite3'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, type AgentToolCatalogOptions } from '../../shared/agentToolCatalog'
 import { toolExecutionFailed, toolExecutionSucceeded } from '../../shared/agentRuntime'
 import { projectAgentRunEvents } from '../../shared/agentEventProjection'
+import { ProviderSetupError } from '../../shared/providerErrors'
 import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/providerRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import {
   AgentRunKernel,
+  STREAM_DROP_RETRY_DELAY_MS,
   type AgentKernelProviderSampler,
   type AgentKernelModelTurn,
   type StartAgentKernelRunInput
@@ -890,70 +892,280 @@ describe('AgentRunKernel', () => {
     )
   })
 
-  it.each(['length', 'max_tokens', 'max-output-tokens'])(
-    'does not execute a tool batch when the provider stops for %s',
-    async (doneReason) => {
-      const router = { execute: vi.fn(async () => ({ waitedSeconds: 99 })) }
+  describe('a reply cut off or run away while it wrote tool calls', () => {
+    const waitCall = (id: string, args: string | Record<string, unknown>) => ({
+      id,
+      function: { name: 'wait', arguments: args }
+    })
+    const waitRouter = () => ({
+      execute: vi.fn(async (_name: string, args: Record<string, unknown>) => ({
+        waited: args.reason
+      }))
+    })
+    const toolMessages = (messages: { role: string; tool_call_id?: string; content?: unknown }[]) =>
+      messages.filter(({ role }) => role === 'tool')
+
+    it.each(['length', 'max_tokens', 'max-output-tokens'])(
+      'runs no call of a batch the provider stopped for %s, and records why',
+      async (doneReason) => {
+        // Arguments that parse are no proof: one such reply wrote 784 calls, 781 of them the
+        // same click, and running the "complete" ones would have clicked 781 times.
+        const router = waitRouter()
+        const sampler = sequence(
+          sampledTurn({
+            toolCalls: [
+              waitCall('first', '{"seconds":1,"reason":"first"}'),
+              waitCall('second', '{"seconds":1,"reason":"second"}'),
+              waitCall('third', '{"seconds":1,"reason":"thi')
+            ],
+            usage: { promptTokens: 10, completionTokens: 1_024, doneReason }
+          }),
+          sampledTurn({ content: 'Retried safely without running the incomplete call.' })
+        )
+        const kernel = new AgentRunKernel(store, undefined, sampler)
+
+        const result = await kernel.start(input(router))
+        const events = store.listEvents('run-1')
+        const results = toolMessages(result.messages)
+
+        expect(result).toMatchObject({ phase: 'completed', toolRounds: 1 })
+        expect(router.execute).not.toHaveBeenCalled()
+        expect(events.some(({ type }) => type === 'tool.running')).toBe(false)
+        expect(results).toHaveLength(3)
+        for (const message of results) {
+          expect(message.content).toContain('output_truncated')
+          expect(message.content).toContain(
+            `reached its output limit of 1,024 tokens (${doneReason}) while writing tool calls, so none of its 3 calls ran`
+          )
+          expect(message.content).toContain('Do not assume any call from this batch ran')
+        }
+        const cutOff = {
+          trigger: 'stop_reason',
+          doneReason,
+          completionTokens: 1_024,
+          replyLimit: 1_024,
+          maxOutputTokens: 1_024,
+          toolCallCount: 3
+        }
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: 'run.retrying',
+            payload: { reason: 'truncated_tool_batch', ...cutOff }
+          })
+        )
+        expect(
+          events
+            .filter(({ type }) => type === 'tool.completed')
+            .map(({ payload }) => payload.outputLimit)
+        ).toEqual([cutOff, cutOff, cutOff])
+        expect(
+          events.find(({ type }) => type === 'assistant.completed')?.payload.outputLimit
+        ).toEqual(cutOff)
+      }
+    )
+
+    it('treats a turn that used its whole output allowance as cut off, whatever the server says', async () => {
+      // LM Studio reported `tool_calls` for a write the 32,768-token limit had cut off.
+      const router = waitRouter()
+      const contextManager = {
+        shouldCompact: vi.fn(() => false),
+        replyLimit: vi.fn(() => 600),
+        compact: vi.fn(),
+        observeUsage: vi.fn()
+      }
       const sampler = sequence(
         sampledTurn({
-          toolCalls: [
-            {
-              id: 'possibly-truncated',
-              function: { name: 'wait', arguments: { seconds: 99, reason: 'looks valid' } }
-            }
-          ],
-          usage: { promptTokens: 10, completionTokens: 1_024, doneReason }
+          toolCalls: [waitCall('cut-at-limit', { seconds: 99, reason: 'looks valid' })],
+          usage: { promptTokens: 10, completionTokens: 600, doneReason: 'tool_calls' }
         }),
-        sampledTurn({ content: 'Retried safely without running the incomplete call.' })
+        sampledTurn({ content: 'Retried in smaller parts.' })
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await kernel.start({ ...input(router), contextManager })
+      const refusal = String(toolMessages(result.messages)[0]?.content)
+
+      expect(result).toMatchObject({ phase: 'completed' })
+      expect(router.execute).not.toHaveBeenCalled()
+      expect(refusal).toContain('output_truncated')
+      // The limit was cut to the room left, and the model is told so.
+      expect(refusal).toContain(
+        "The limit was below the model's 1,024 tokens because the conversation is near the end of the model's context window."
+      )
+      expect(store.listEvents('run-1')).toContainEqual(
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: expect.objectContaining({ trigger: 'used_allowance', replyLimit: 600 })
+        })
+      )
+    })
+
+    /** A sampler that streams `calls` one at a time and stops when its signal is aborted. */
+    function streaming(
+      calls: Array<{ id: string; name: string; arguments: string }>,
+      finishReason = 'tool_calls'
+    ): AgentKernelProviderSampler & { streamed: () => number } {
+      let streamed = 0
+      const sampler = vi.fn(async (_request, signal: AbortSignal, onChunk) => {
+        const toolCalls: AgentKernelModelTurn['toolCalls'] = []
+        for (const [index, call] of calls.entries()) {
+          if (signal.aborted) break
+          const previous = toolCalls[index - 1]
+          if (previous) onChunk({ message: { closed_tool_calls: [previous] }, done: false })
+          const providerCall = {
+            id: call.id,
+            index,
+            function: { name: call.name, arguments: call.arguments }
+          }
+          toolCalls.push(providerCall)
+          onChunk({ message: { tool_calls: [providerCall] }, done: false })
+          streamed++
+          await Promise.resolve()
+        }
+        return {
+          result: signal.aborted ? { ok: false, error: 'aborted' } : { ok: true },
+          turn: {
+            content: 'Clicking the button.',
+            thinking: '',
+            thinkingBlocks: [],
+            toolCalls,
+            usage: {
+              promptTokens: 10,
+              completionTokens: streamed * 20,
+              doneReason: signal.aborted ? 'error' : finishReason
+            }
+          }
+        }
+      }) as unknown as AgentKernelProviderSampler & { streamed: () => number }
+      sampler.streamed = () => streamed
+      return sampler
+    }
+    const clicks = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `click-${index}`,
+        name: 'wait',
+        arguments: '{"seconds":1,"reason":"click the same button"}'
+      }))
+
+    it('stops a reply that writes the same call over and over, runs none of it, and says why', async () => {
+      // A work PC's reply wrote 784 calls in five minutes, 781 of them one `browser_click`.
+      const router = waitRouter()
+      const runaway = streaming(clicks(50))
+      const next = sampledTurn({ content: 'I will click once and look.' })
+      const kernel = new AgentRunKernel(store, undefined, sequence(runaway, next))
+
+      const result = await kernel.start(input(router))
+      const events = store.listEvents('run-1')
+
+      expect(result).toMatchObject({
+        phase: 'completed',
+        content: expect.stringContaining('I will click once')
+      })
+      expect(router.execute).not.toHaveBeenCalled()
+      // Stopped as the fifth copy began, when the fourth was whole, not after all fifty.
+      expect(runaway.streamed()).toBe(5)
+      const retry = events.find(
+        ({ type, payload }) => type === 'run.retrying' && payload.reason === 'runaway_tool_calls'
+      )
+      expect(retry?.payload).toEqual({
+        reason: 'runaway_tool_calls',
+        kind: 'repeated_call',
+        toolCallCount: 4,
+        identicalCalls: 4,
+        toolName: 'wait',
+        stoppedWhileStreaming: true
+      })
+      // Every call the chat showed is closed as refused; none is left pending.
+      const pending = events
+        .filter(({ type }) => type === 'tool.pending')
+        .map(({ payload }) => payload.toolCallId)
+      const refused = events.filter(({ type }) => type === 'tool.completed')
+      expect(new Set(refused.map(({ payload }) => payload.toolCallId))).toEqual(new Set(pending))
+      expect(
+        refused.every(
+          ({ payload }) =>
+            (payload.result as { error?: { code?: string } }).error?.code === 'loop_detected'
+        )
+      ).toBe(true)
+      // The next request explains, and carries none of the calls.
+      const request = vi.mocked(next).mock.calls[0][0]
+      expect(
+        request.messages.some(
+          (message) =>
+            message.tool_calls?.length &&
+            message.role === 'assistant' &&
+            message.content === 'Clicking the button.'
+        )
+      ).toBe(false)
+      expect(request.messages.at(-1)).toMatchObject({ role: 'user' })
+      expect(String(request.messages.at(-1)?.content)).toContain(
+        'SideKick stopped your last reply because it wrote the same wait call, with the same arguments, 4 times. None of its tool calls ran.'
+      )
+    })
+
+    it('stops a reply that writes more calls than any plan needs', async () => {
+      const router = waitRouter()
+      const many = Array.from({ length: 100 }, (_, index) => ({
+        id: `read-${index}`,
+        name: 'wait',
+        arguments: JSON.stringify({ seconds: 1, reason: `step ${index}` })
+      }))
+      const runaway = streaming(many)
+      const next = sampledTurn({ content: 'Fewer steps.' })
+      const kernel = new AgentRunKernel(store, undefined, sequence(runaway, next))
+
+      const result = await kernel.start(input(router))
+
+      expect(result.phase).toBe('completed')
+      expect(router.execute).not.toHaveBeenCalled()
+      expect(runaway.streamed()).toBe(65)
+      expect(String(vi.mocked(next).mock.calls[0][0].messages.at(-1)?.content)).toContain(
+        'it had written 65 tool calls, more than one reply may make'
+      )
+    })
+
+    it('checks a reply that arrived whole, and ends the run when the model runs away again', async () => {
+      const router = waitRouter()
+      const repeated = sampledTurn({
+        toolCalls: clicks(4).map(({ id, name, arguments: args }) => ({
+          id,
+          function: { name, arguments: args }
+        })),
+        usage: { promptTokens: 10, completionTokens: 80, doneReason: 'tool_calls' }
+      })
+      const kernel = new AgentRunKernel(store, undefined, sequence(repeated, repeated))
+
+      const result = await kernel.start(input(router))
+      const retries = store
+        .listEvents('run-1')
+        .filter(
+          ({ type, payload }) => type === 'run.retrying' && payload.reason === 'runaway_tool_calls'
+        )
+
+      expect(router.execute).not.toHaveBeenCalled()
+      expect(retries.map(({ payload }) => payload.stoppedWhileStreaming)).toEqual([false, false])
+      expect(result).toMatchObject({ phase: 'failed' })
+      expect(result.error).toContain('over and over')
+    })
+
+    it('lets a reply repeat a call up to three times', async () => {
+      const router = waitRouter()
+      const sampler = sequence(
+        sampledTurn({
+          toolCalls: clicks(3).map(({ id, name, arguments: args }) => ({
+            id,
+            function: { name, arguments: args }
+          }))
+        }),
+        sampledTurn({ content: 'Done.' })
       )
       const kernel = new AgentRunKernel(store, undefined, sampler)
 
       const result = await kernel.start(input(router))
-      const events = store.listEvents('run-1')
-      const toolResult = result.messages.find(({ role }) => role === 'tool')
 
-      expect(result).toMatchObject({ phase: 'completed', toolRounds: 1 })
-      expect(router.execute).not.toHaveBeenCalled()
-      expect(toolResult?.content).toContain('output_truncated')
-      expect(toolResult?.content).toContain('Do not assume any call from this batch ran')
-      expect(events).toContainEqual(
-        expect.objectContaining({
-          type: 'run.retrying',
-          payload: expect.objectContaining({
-            reason: 'truncated_tool_batch',
-            doneReason,
-            toolCallCount: 1
-          })
-        })
-      )
-      expect(events.some(({ type }) => type === 'tool.running')).toBe(false)
-    }
-  )
-
-  it('treats a turn that used its whole output allowance as cut off, whatever the server says', async () => {
-    // LM Studio reported `tool_calls` for a write the 32,768-token limit had cut off.
-    const router = { execute: vi.fn(async () => ({ waitedSeconds: 99 })) }
-    const sampler = sequence(
-      sampledTurn({
-        toolCalls: [
-          {
-            id: 'cut-at-limit',
-            function: { name: 'wait', arguments: { seconds: 99, reason: 'looks valid' } }
-          }
-        ],
-        usage: { promptTokens: 10, completionTokens: 1_024, doneReason: 'tool_calls' }
-      }),
-      sampledTurn({ content: 'Retried in smaller parts.' })
-    )
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-
-    const result = await kernel.start(input(router))
-
-    expect(result).toMatchObject({ phase: 'completed' })
-    expect(router.execute).not.toHaveBeenCalled()
-    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain(
-      'output_truncated'
-    )
+      expect(result.phase).toBe('completed')
+      expect(router.execute).toHaveBeenCalledTimes(3)
+    })
   })
 
   it('assigns unique durable identities when a provider repeats tool-call ids', async () => {
@@ -2994,6 +3206,133 @@ describe('AgentRunKernel', () => {
     })
   })
 
+  it('retries once at the reply limit a provider states, and remembers it for later runs', async () => {
+    // Groq-style hosts cap a reply below SideKick's default and do not list the cap; every run on
+    // the model failed as "internal" before its first token.
+    const refused: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const recovered = sampledTurn({ content: 'Answered' })
+    const capped = (id: string): StartAgentKernelRunInput => ({
+      ...input(),
+      id,
+      provider: 'openai-compatible',
+      model: 'hosted-capped-model',
+      request: {
+        target: { providerKind: 'openai-compatible', model: 'hosted-capped-model' },
+        maxOutputTokens: 32_768,
+        purpose: 'conversation'
+      }
+    })
+
+    const result = await new AgentRunKernel(store, undefined, sequence(refused, recovered)).start(
+      capped('run-capped')
+    )
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Answered' })
+    expect(refused).toHaveBeenCalledOnce()
+    expect((refused as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(32_768)
+    expect((recovered as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(16_384)
+    expect(store.listEvents('run-capped')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'run.retrying',
+          payload: {
+            reason: 'output_limit_exceeded',
+            maxOutputTokens: 16_384,
+            requestedOutputTokens: 32_768
+          }
+        })
+      ])
+    )
+
+    // A later run on the same model asks for no more than the provider allows from the start.
+    const later = sampledTurn({ content: 'Straight through' })
+    await new AgentRunKernel(store, undefined, later).start(capped('run-capped-later'))
+    expect((later as ReturnType<typeof vi.fn>).mock.calls[0][0].maxOutputTokens).toBe(16_384)
+  })
+
+  it('fails a refused request by what its HTTP status means, not as internal', async () => {
+    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: { ok: false, status: 502, error: 'HTTP 502' },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+
+    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
+
+    expect(result.error).toBe(
+      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
+    )
+    expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
+  })
+
+  it('fails a chat whose provider was removed as a setup problem the user can fix', async () => {
+    // resolveProviderInstance throws this inside the sampler before any request is sent.
+    const sampler: AgentKernelProviderSampler = vi.fn(async () => {
+      throw new ProviderSetupError('Provider LiteLLM is not configured')
+    })
+
+    await new AgentRunKernel(store, undefined, sampler).start(input())
+
+    expect(store.get('run-1')?.error).toMatchObject({
+      code: 'not_configured',
+      message:
+        'Provider LiteLLM is not configured. Choose another model for this chat, or set this one up in Settings → Providers.'
+    })
+  })
+
+  it('compacts and retries a prompt-plus-reply overflow worded without "context window"', async () => {
+    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
+      result: {
+        ok: false,
+        status: 400,
+        error:
+          'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
+      },
+      turn: {
+        content: '',
+        thinking: '',
+        thinkingBlocks: [],
+        toolCalls: [],
+        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+      }
+    }))
+    const contextManager = {
+      shouldCompact: vi.fn(() => false),
+      compact: vi.fn(async () => ({
+        messages: [{ role: 'user' as const, content: 'Compacted' }],
+        compacted: true
+      }))
+    }
+
+    const result = await new AgentRunKernel(
+      store,
+      undefined,
+      sequence(overflow, sampledTurn({ content: 'Fits now' }))
+    ).start({ ...input(), contextManager })
+
+    expect(result).toMatchObject({ phase: 'completed', content: 'Fits now' })
+    expect(contextManager.compact).toHaveBeenCalledOnce()
+  })
+
   it('settles cancellation even when a provider ignores AbortSignal and drops late chunks', async () => {
     let releaseProvider!: () => void
     let emitLateChunk!: () => void
@@ -3045,5 +3384,135 @@ describe('AgentRunKernel', () => {
     expect(kernel.activeRunIds()).toEqual([])
     await expect(first).resolves.toMatchObject({ phase: 'cancelled' })
     await expect(second).resolves.toMatchObject({ phase: 'cancelled' })
+  })
+  describe('a stream that breaks off', () => {
+    const DROPPED =
+      'Lost the connection to the model server at 127.0.0.1:1234 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
+    /** A turn that streams some text and a tool call, then loses its connection. */
+    const drops = (content = 'Partial ans'): AgentKernelProviderSampler =>
+      vi.fn(async (_request, _signal, onChunk) => {
+        onChunk({ message: { content } })
+        onChunk({
+          message: {
+            tool_calls: [
+              { id: 'half-call', function: { name: 'tool_output', arguments: { handle: 'x' } } }
+            ]
+          }
+        })
+        return {
+          result: { ok: false, error: DROPPED },
+          turn: {
+            content,
+            thinking: '',
+            thinkingBlocks: [],
+            toolCalls: [],
+            usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+          }
+        }
+      })
+    const settle = async <T>(running: Promise<T>): Promise<T> => {
+      await vi.advanceTimersByTimeAsync(STREAM_DROP_RETRY_DELAY_MS)
+      return running
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('asks again once and discards the partial turn', async () => {
+      const first = drops()
+      const second = sampledTurn({ content: 'Whole answer.' }, [
+        { message: { content: 'Whole answer.' } }
+      ])
+      const sampler = vi.fn(sequence(first, second))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await settle(kernel.start(input()))
+
+      expect(result).toMatchObject({ phase: 'completed', content: 'Whole answer.' })
+      expect(sampler).toHaveBeenCalledTimes(2)
+      expect(sampler.mock.calls[1][0].messages).toEqual(sampler.mock.calls[0][0].messages)
+      const events = store.listEvents('run-1')
+      expect(events.find(({ type }) => type === 'run.retrying')?.payload).toMatchObject({
+        reason: 'stream_dropped',
+        discardsPartialTurn: true,
+        delayMs: STREAM_DROP_RETRY_DELAY_MS
+      })
+      const projection = projectAgentRunEvents(events)
+      expect(projection.content).toBe('Whole answer.')
+      expect(JSON.stringify(projection.segments)).not.toContain('Partial ans')
+      expect(JSON.stringify(projection.segments)).not.toContain('half-call')
+      expect(projection.segments).toContainEqual(
+        expect.objectContaining({
+          type: 'run_status',
+          status: expect.objectContaining({ reason: 'stream_dropped' })
+        })
+      )
+    })
+
+    it('fails as before when the second try breaks off too', async () => {
+      const sampler = vi.fn(sequence(drops(), drops()))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const result = await settle(kernel.start(input()))
+
+      expect(result.phase).toBe('failed')
+      expect(sampler).toHaveBeenCalledTimes(2)
+      expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', message: DROPPED })
+    })
+
+    it('never runs a finished turn’s tools again, and gives each turn its own try', async () => {
+      const router = {
+        execute: vi.fn(async () => ({ content: 'stored output' }))
+      }
+      const sampler = vi.fn(
+        sequence(
+          drops('Let me'),
+          sampledTurn({
+            toolCalls: [
+              { id: 'read-1', function: { name: 'tool_output', arguments: { handle: 'h' } } }
+            ],
+            usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
+          }),
+          drops('The output says'),
+          sampledTurn({ content: 'Read it.' })
+        )
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input(router))
+      await vi.advanceTimersByTimeAsync(STREAM_DROP_RETRY_DELAY_MS)
+      const result = await settle(running)
+
+      expect(result).toMatchObject({ phase: 'completed', finalResponse: 'Read it.' })
+      expect(sampler).toHaveBeenCalledTimes(4)
+      expect(router.execute).toHaveBeenCalledTimes(1)
+      // The turn after the tool is asked again with the tool's result, not by running it again.
+      expect(sampler.mock.calls[3][0].messages).toEqual(sampler.mock.calls[2][0].messages)
+      expect(sampler.mock.calls[3][0].messages.at(-1)).toMatchObject({
+        role: 'tool',
+        tool_call_id: 'read-1'
+      })
+      expect(store.listEvents('run-1').filter(({ type }) => type === 'run.retrying')).toHaveLength(
+        2
+      )
+    })
+
+    it('ends cancelled, without asking again, when stopped while it waits', async () => {
+      const sampler = vi.fn(sequence(drops(), sampledTurn({ content: 'Too late.' })))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input())
+      await vi.waitFor(() =>
+        expect(store.listEvents('run-1').some(({ type }) => type === 'run.retrying')).toBe(true)
+      )
+      kernel.stop('run-1')
+
+      await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
+      expect(sampler).toHaveBeenCalledTimes(1)
+    })
   })
 })

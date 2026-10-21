@@ -1,6 +1,29 @@
-import { describe, expect, it, vi } from 'vitest'
-import type { ProviderChatMessage } from '../../shared/providerRuntime'
-import { AgentContextManager, type AgentCompactionRecord } from './agentContextManager'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { formatCompactionContext } from '../../shared/compactionPrompt'
+import { estimateProviderRequestTokens } from '../../shared/contextBudget'
+import { formatProjectInstructionsMessage } from '../../shared/projectInstructions'
+import type {
+  ProviderChatMessage,
+  ProviderChatRequest,
+  ProviderCompletionResult,
+  ProviderStreamChunk
+} from '../../shared/providerRuntime'
+import { streamProviderChat } from '../providers/providerRuntime'
+import {
+  AgentContextManager,
+  streamSummaryCompletion,
+  type AgentCompactionRecord
+} from './agentContextManager'
+
+vi.mock('../providers/providerRuntime', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../providers/providerRuntime')>()),
+  streamProviderChat: vi.fn()
+}))
+
+afterEach(() => {
+  vi.mocked(streamProviderChat).mockReset()
+  vi.useRealTimers()
+})
 
 const target = {
   providerKind: 'openai-compatible' as const,
@@ -322,5 +345,365 @@ describe('AgentContextManager', () => {
     expect(kept.length).toBeGreaterThanOrEqual(8)
     expect(kept.length).toBeLessThan(20)
     expect(summaryLimit).toBe(16_384)
+  })
+  it.each<[string, ProviderCompletionResult, Record<string, unknown>]>([
+    [
+      "Node's five-minute limit",
+      {
+        ok: false,
+        error:
+          'The model server at 127.0.0.1:8080 took the request but sent no reply for 5 minutes, so SideKick stopped waiting. (UND_ERR_HEADERS_TIMEOUT)'
+      },
+      { fallbackReason: 'timeout' }
+    ],
+    [
+      'a gateway that gave up',
+      { ok: false, error: 'HTTP 504', status: 504 },
+      { fallbackReason: 'timeout', fallbackStatus: 504 }
+    ],
+    [
+      'a dropped connection',
+      {
+        ok: false,
+        error:
+          'Lost the connection to the model server at 127.0.0.1:8080 while it was replying; the server stopped or restarted. (UND_ERR_SOCKET)'
+      },
+      { fallbackReason: 'connection_lost' }
+    ],
+    [
+      'a request over the window',
+      {
+        ok: false,
+        error:
+          "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens.",
+        status: 400
+      },
+      { fallbackReason: 'context_overflow', fallbackStatus: 400 }
+    ],
+    [
+      'any other refusal',
+      { ok: false, error: 'HTTP 500', status: 500 },
+      { fallbackReason: 'provider_error', fallbackStatus: 500 }
+    ],
+    [
+      'a summary cut off by its limit',
+      {
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: 'Half a summ' },
+          promptTokens: 1_000,
+          completionTokens: 2_048,
+          reasoningTokens: 0,
+          finishReason: 'length'
+        }
+      },
+      { fallbackReason: 'output_limit' }
+    ],
+    [
+      'a model that only reasoned',
+      {
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: '', thinking: 'Let me think about the notes.' },
+          promptTokens: 1_000,
+          completionTokens: 900,
+          reasoningTokens: 0,
+          finishReason: 'stop'
+        }
+      },
+      { fallbackReason: 'reasoning_only' }
+    ],
+    [
+      'an empty reply',
+      {
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: '   ' },
+          promptTokens: 1_000,
+          completionTokens: 1,
+          reasoningTokens: 0,
+          finishReason: 'stop'
+        }
+      },
+      { fallbackReason: 'empty_output' }
+    ]
+  ])(
+    'records why it used the fallback summary after %s, without content',
+    async (_, result, expected) => {
+      let record: AgentCompactionRecord | undefined
+      const manager = new AgentContextManager({
+        target,
+        contextLength: 8_192,
+        maxOutputTokens: 2_048,
+        threshold: 0.8,
+        enabled: true,
+        complete: async () => result,
+        onCompacted: (value) => {
+          record = value
+        }
+      })
+      const compacted = await manager.compact(transcript(), [], new AbortController().signal)
+      expect(compacted.details).toMatchObject({ strategy: 'deterministic', ...expected })
+      if (!('fallbackStatus' in expected))
+        expect(compacted.details).not.toHaveProperty('fallbackStatus')
+      expect(record?.fallbackReason).toBe(expected.fallbackReason)
+    }
+  )
+
+  it('keeps the project instructions word for word, and folds the earlier summary in', async () => {
+    const instructions = formatProjectInstructionsMessage({
+      content: 'PROJECT-RULE: run the tests before shipping.',
+      sources: ['AGENTS.md']
+    })
+    let request: ProviderChatRequest | undefined
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 2_048,
+      threshold: 0.8,
+      enabled: true,
+      complete: async (value) => {
+        request = value
+        return {
+          ok: true,
+          data: {
+            message: { role: 'assistant', content: 'NEW-SUMMARY of the run.' },
+            promptTokens: 1_000,
+            completionTokens: 5,
+            reasoningTokens: 0,
+            finishReason: 'stop'
+          }
+        }
+      }
+    })
+    const [system, ...rest] = transcript()
+    const messages: ProviderChatMessage[] = [
+      system,
+      { role: 'user', content: instructions },
+      { role: 'user', content: formatCompactionContext('OLD-SUMMARY of earlier work.') },
+      ...rest
+    ]
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+
+    // In the order the next run's preparer sends them: instructions, then the summary.
+    expect(result.messages.slice(0, 2)).toEqual([system, { role: 'user', content: instructions }])
+    expect(result.messages[2].content).toContain(
+      formatCompactionContext('NEW-SUMMARY of the run.').split('\n</historical_context>')[0]
+    )
+    expect(result.messages.filter((message) => message.content?.includes('SUMMARY'))).toHaveLength(
+      1
+    )
+    const sent = request!.messages[1].content!
+    expect(sent).not.toContain('PROJECT-RULE')
+    expect(sent).toContain('OLD-SUMMARY of earlier work.')
+  })
+
+  it('records no fallback reason for a model summary', async () => {
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 2_048,
+      threshold: 0.8,
+      enabled: true,
+      complete: async () => ({
+        ok: true,
+        data: {
+          message: { role: 'assistant', content: 'Summary.' },
+          promptTokens: 1_500,
+          completionTokens: 3,
+          reasoningTokens: 0,
+          finishReason: 'stop'
+        }
+      })
+    })
+    const compacted = await manager.compact(transcript(), [], new AbortController().signal)
+    expect(compacted.details).toMatchObject({ strategy: 'model', summaryPromptTokens: 1_500 })
+    expect(compacted.details).not.toHaveProperty('fallbackReason')
+  })
+
+  it('is no compaction at all when the run is stopped while the summary is written', async () => {
+    // Recording the deterministic stand-in as a finished compaction kept it, and a later run
+    // started from the lossy excerpts.
+    const controller = new AbortController()
+    const onCompacted = vi.fn()
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 2_048,
+      threshold: 0.8,
+      enabled: true,
+      complete: async () => {
+        controller.abort()
+        return { ok: false, error: 'aborted' }
+      },
+      onCompacted
+    })
+    await expect(manager.compact(transcript(), [], controller.signal)).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(onCompacted).not.toHaveBeenCalled()
+  })
+
+  it('asks for a summary that fits the window with its reply, even from JSON-heavy history', async () => {
+    let request: ProviderChatRequest | undefined
+    const messages: ProviderChatMessage[] = [{ role: 'system', content: 'Policy' }]
+    for (let index = 0; index < 30; index++) {
+      const id = `call-${index}`
+      messages.push(
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id, function: { name: 'read', arguments: { path: `src/${index}.json` } } }]
+        },
+        {
+          role: 'tool',
+          tool_call_id: id,
+          content: JSON.stringify(
+            Array.from({ length: 400 }, (_, item) => ({ id: item, v: [1, 2] }))
+          )
+        }
+      )
+    }
+    messages.push({ role: 'user', content: 'Continue.' })
+    const manager = new AgentContextManager({
+      target: { ...target, contextLength: 32_768 },
+      contextLength: 32_768,
+      maxOutputTokens: 8_192,
+      threshold: 0.8,
+      enabled: true,
+      previousSummary: 'An earlier summary. '.repeat(200),
+      complete: async (value) => {
+        request = value
+        return {
+          ok: true,
+          data: {
+            message: { role: 'assistant', content: 'Summary.' },
+            promptTokens: 1,
+            completionTokens: 1,
+            reasoningTokens: 0,
+            finishReason: 'stop'
+          }
+        }
+      }
+    })
+    await manager.compact(messages, [], new AbortController().signal)
+    // Sized at four characters a token, as before, this request ran past the window.
+    expect(
+      estimateProviderRequestTokens(request!.messages, []) + request!.maxOutputTokens!
+    ).toBeLessThanOrEqual(32_768)
+  })
+
+  it('lowers its estimate to the real count, so a chat it overestimates is not compacted early', () => {
+    const manager = new AgentContextManager({
+      target: { ...target, contextLength: 32_768 },
+      contextLength: 32_768,
+      maxOutputTokens: 4_096,
+      threshold: 0.8,
+      enabled: true
+    })
+    const messages = [
+      { role: 'user', content: '{"key": [1, 2, 3]}, '.repeat(1_900) }
+    ] satisfies ProviderChatMessage[]
+    expect(manager.shouldCompact(messages, [])).toBe(true)
+    const estimated = manager.observeUsage(messages, [], 20_000)
+    expect(estimated).toBeGreaterThan(26_000)
+    expect(manager.shouldCompact(messages, [])).toBe(false)
+    // What is added later still counts at the full estimate.
+    expect(
+      manager.shouldCompact([...messages, { role: 'tool', content: 'x'.repeat(30_000) }], [])
+    ).toBe(true)
+  })
+
+  it('starts below its own estimate when an earlier run found the estimate high', () => {
+    const options = {
+      target,
+      contextLength: 8_192,
+      maxOutputTokens: 2_048,
+      threshold: 0.8,
+      enabled: true
+    }
+    const messages = [
+      { role: 'user', content: 'word, '.repeat(3_000) }
+    ] satisfies ProviderChatMessage[]
+    expect(new AgentContextManager(options).shouldCompact(messages, [])).toBe(true)
+    expect(
+      new AgentContextManager({ ...options, initialEstimationBiasTokens: -1_500 }).shouldCompact(
+        messages,
+        []
+      )
+    ).toBe(false)
+  })
+})
+
+describe('streamSummaryCompletion', () => {
+  const request = {
+    target,
+    purpose: 'compaction' as const,
+    messages: [{ role: 'user' as const, content: 'Summarize.' }]
+  }
+
+  it('collects the streamed summary, its reasoning, and the provider counts', async () => {
+    vi.mocked(streamProviderChat).mockImplementation(async (_request, emit) => {
+      emit({ message: { thinking: 'Reading the notes.' } } as ProviderStreamChunk)
+      emit({ message: { content: 'Summary ' } })
+      emit({ message: { content: 'of the notes.' } })
+      emit({ done: true, done_reason: 'stop', prompt_eval_count: 12_000, eval_count: 40 })
+      return { ok: true }
+    })
+    await expect(streamSummaryCompletion(request)).resolves.toEqual({
+      ok: true,
+      data: {
+        message: {
+          role: 'assistant',
+          content: 'Summary of the notes.',
+          thinking: 'Reading the notes.'
+        },
+        promptTokens: 12_000,
+        completionTokens: 40,
+        reasoningTokens: 0,
+        finishReason: 'stop'
+      }
+    })
+  })
+
+  it('gives up only after the model makes no progress for the idle limit', async () => {
+    vi.useFakeTimers()
+    vi.mocked(streamProviderChat).mockImplementation(
+      async (_request, emit, signal) =>
+        new Promise((resolve) => {
+          // Progress every 50 seconds for over three minutes, then silence.
+          let sent = 0
+          const tick = setInterval(() => {
+            if (sent++ < 4) emit({ message: { content: '.' } })
+          }, 50_000)
+          signal?.addEventListener('abort', () => {
+            clearInterval(tick)
+            resolve({ ok: false, error: 'aborted' })
+          })
+        })
+    )
+    let settled = false
+    const result = streamSummaryCompletion(request, undefined, 60_000).finally(() => {
+      settled = true
+    })
+    await vi.advanceTimersByTimeAsync(250_000)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(10_000)
+    const value = await result
+    expect(value.ok).toBe(false)
+    expect(value.error).toContain('so SideKick stopped waiting')
+  })
+
+  it('reports a run stopped by the user as aborted, not as a timeout', async () => {
+    const controller = new AbortController()
+    vi.mocked(streamProviderChat).mockImplementation(async () => {
+      controller.abort()
+      return { ok: false, error: 'aborted' }
+    })
+    await expect(streamSummaryCompletion(request, controller.signal)).resolves.toEqual({
+      ok: false,
+      error: 'aborted'
+    })
   })
 })

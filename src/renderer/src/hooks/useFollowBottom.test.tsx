@@ -61,10 +61,28 @@ describe('useFollowBottom', () => {
     expect(box!.scrollTop).toBe(box!.scrollHeight)
 
     // Reading something above: new text no longer pulls the box down.
+    box!.dispatchEvent(new WheelEvent('wheel', { deltaY: -40, bubbles: true }))
     box!.scrollTop = 0
     box!.dispatchEvent(new Event('scroll'))
     await act(async () => setText('first line, then more thinking, and still more'))
     expect(box!.scrollTop).toBe(0)
+
+    // Back down at its end, the box follows the stream again.
+    box!.dispatchEvent(new WheelEvent('wheel', { deltaY: 400, bubbles: true }))
+    box!.scrollTop = box!.scrollHeight - 100
+    box!.dispatchEvent(new Event('scroll'))
+    await act(async () => setText('first line, then more thinking, and still more, and done'))
+    expect(box!.scrollTop).toBe(box!.scrollHeight)
+  })
+
+  it('keeps following when its own content moves it, without the reader', async () => {
+    await act(async () => root.render(<Streaming streaming={false} />))
+    layOut(box!)
+    await act(async () => root.render(<Streaming streaming />))
+    box!.scrollTop = 0
+    box!.dispatchEvent(new Event('scroll'))
+    await act(async () => setText('first line, then more thinking'))
+    expect(box!.scrollTop).toBe(box!.scrollHeight)
   })
 
   it('leaves a finished block where the reader opened it', async () => {

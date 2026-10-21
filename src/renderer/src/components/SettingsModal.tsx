@@ -66,7 +66,11 @@ export type SettingsSection = SettingsSectionId
 
 interface SettingsModalProps {
   settings: ProviderSettings
-  onSave: (settings: ProviderSettings) => Promise<{ success: boolean; error?: string }>
+  /** `openedWith` is what Settings showed when it opened, so the save can name only its changes. */
+  onSave: (
+    settings: ProviderSettings,
+    openedWith: ProviderSettings
+  ) => Promise<{ success: boolean; error?: string }>
   onClose: () => void
   initialSection?: SettingsSection
   /** Shows a provider's key field, when SideKick's agent asked the user for a key. */
@@ -94,6 +98,7 @@ function SettingsModal({
   providerKeyRequest = null
 }: SettingsModalProps): React.JSX.Element {
   const [settings, setSettings] = useState<ProviderSettings>(initialSettings)
+  const [openedWith] = useState<ProviderSettings>(initialSettings)
   const [activeSection, setActiveSection] = useState<SettingsSection>(initialSection)
   const [navigationQuery, setNavigationQuery] = useState('')
   // Set by the version button; the Updates card only exists once General renders.
@@ -163,14 +168,14 @@ function SettingsModal({
     setSaveError(null)
     setSaving(true)
     try {
-      const result = await onSave(
+      const prepared = (value: ProviderSettings): ProviderSettings =>
         syncLegacyProviderSettings({
-          ...settings,
-          mcpServers,
-          toolCallLimit: normalizeToolCallLimit(settings.toolCallLimit),
+          ...value,
+          mcpServers: value.mcpServers ?? [],
+          toolCallLimit: normalizeToolCallLimit(value.toolCallLimit),
           toolCallLimitVersion: TOOL_CALL_LIMIT_POLICY_VERSION
         })
-      )
+      const result = await onSave(prepared(settings), prepared(openedWith))
       if (result.success) onClose()
       else setSaveError(result.error || 'Settings could not be saved.')
     } finally {

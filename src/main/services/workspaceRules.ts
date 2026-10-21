@@ -6,6 +6,7 @@ import type {
   WorkspaceInstructionSource,
   WorkspaceRulesResult
 } from '../../shared/workspaceInstructions'
+import { OutsideProjectError } from '../utils/workspacePaths'
 
 const AGENT_RULE_NAMES = ['AGENTS.override.md', 'AGENTS.md'] as const
 const PROJECT_RULE_PATHS = ['SIDEKICK.md', join('.sidekick', 'rules.md')]
@@ -261,7 +262,9 @@ function targetDirectory(projectRoot: string, targetPath: string, isDirectory: b
     pathFromRoot.startsWith(`..${sep}`) ||
     isAbsolute(pathFromRoot)
   ) {
-    throw new Error('Instruction target must be inside the project folder')
+    // The model named this path for a read, edit or command; the instruction lookup is only the
+    // first place that checks it.
+    throw new OutsideProjectError(`Path is outside the project: ${targetPath}`)
   }
   return isDirectory ? absolute : dirname(absolute)
 }
