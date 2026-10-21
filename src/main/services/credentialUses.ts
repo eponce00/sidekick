@@ -9,6 +9,7 @@ import {
   CREDENTIAL_ASK_LABELS,
   credentialHostMatches,
   credentialScopeRefusal,
+  credentialVariableRefusal,
   describeCredentialSend,
   simpleCommandProgram,
   type CredentialAskPolicy,
@@ -196,7 +197,7 @@ export class CredentialUses {
       }
     }
     return request.kind === 'command'
-      ? this.checkCommand(credential, request.target)
+      ? this.checkCommand(credential, request)
       : this.checkWeb(credential, request.target)
   }
 
@@ -225,7 +226,11 @@ export class CredentialUses {
     return { ok: true, credential, url }
   }
 
-  private checkCommand(credential: CredentialSummary, command: string): Checked {
+  private checkCommand(credential: CredentialSummary, request: CredentialUseRequest): Checked {
+    const command = request.target
+    // Checked here too, so a variable that changes how commands run is refused before any card.
+    const variable = request.variable ? credentialVariableRefusal(request.variable) : null
+    if (variable) return { ok: false, credential, message: variable }
     const commands = credential.scope.commands
     if (!commands) {
       return {

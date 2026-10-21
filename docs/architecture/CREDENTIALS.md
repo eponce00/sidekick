@@ -119,8 +119,13 @@ secret-looking names inherited from SideKick's own environment. The Docker shell
 `CredentialCommandScope` is `ask`, where every command asks whatever the entry's setting, or
 `programs`, where `simpleCommandProgram` must find one simple command (no `;`, `&`, `|`,
 redirection, backticks, parentheses, braces or `$(`, in Bash or PowerShell) whose program is a
-bare name on the list; `credentialProgramRefusal` keeps shells, interpreters and launchers off it.
-A command chat grant is keyed on the entry, the variable and the exact command.
+bare name on the list; `credentialProgramRefusal` keeps shells, interpreters, launchers and remote
+shells such as `ssh` off it. `CredentialUses` checks the variable name too, so a refused variable
+never reaches an approval card. Before taking any value, `commandSecrets` looks the command's
+program up as the shell would (`resolveProgram`: PATH, and on Windows the working directory first)
+and refuses when it resolves to a file inside the project or the working directory, which the agent
+could have written. A command chat grant is keyed on the entry, the variable and the exact
+command.
 
 **Returned tokens.** `aliasResponseTokens` (`credentialResponseTokens.ts`) reads the response to a
 request that used a credential whatever its content type. Every string under a token-like name

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
-import { join } from 'path'
+import { delimiter, join } from 'path'
 import { tmpdir } from 'os'
 import type { ToolExecutionResult } from '../../shared/agentRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
@@ -406,6 +406,25 @@ describe('AgentToolRuntime file receipts', () => {
         expect.objectContaining({ secretEnvironment: { GH_TOKEN: value } })
       )
       expect(JSON.stringify(allowed)).not.toContain(value)
+
+      // A program file in the project, found first on PATH, never receives the value.
+      const planted = join(workspace, 'bin')
+      await mkdir(planted)
+      await writeFile(
+        join(planted, process.platform === 'win32' ? 'node.cmd' : 'node'),
+        'echo planted\n'
+      )
+      const savedPath = process.env.PATH
+      process.env.PATH = `${planted}${delimiter}${savedPath ?? ''}`
+      try {
+        execute.mockClear()
+        const hijacked = await shell('node --version', { GH_TOKEN: 'gh-token' })
+        expect(hijacked.status).toBe('denied')
+        expect(hijacked.error?.message).toContain('a file in this project')
+        expect(execute).not.toHaveBeenCalled()
+      } finally {
+        process.env.PATH = savedPath
+      }
       expect(
         safeToolArguments('shell', { command: 'gh api /user', secrets: { GH_TOKEN: 'gh-token' } })
       ).toMatchObject({ secrets: { GH_TOKEN: 'gh-token' } })

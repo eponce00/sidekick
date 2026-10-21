@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { createHash } from 'crypto'
-import { resolve } from 'path'
+import { statSync } from 'fs'
+import { delimiter, isAbsolute, join, relative, resolve } from 'path'
 import { stat } from 'node:fs/promises'
 import {
   OutsideProjectError,
@@ -85,7 +86,7 @@ import {
 } from './agentCredentialToolHandlers'
 import { registerHttpToolHandlers } from './agentHttpToolHandlers'
 import { credentialApprovalFor, credentialReference, credentialRequestsFor } from './credentialUses'
-import { credentialVariableRefusal } from '../../shared/credentials'
+import { credentialVariableRefusal, simpleCommandProgram } from '../../shared/credentials'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -260,6 +261,44 @@ function backgroundContent(task: OwnedBackgroundTask): string {
     backgroundNote(task),
     ...(task.recentOutput ? [outputBlock(task.recentOutput)] : [])
   ].join('\n')
+}
+
+/**
+ * The file a bare program name runs, looked up as a shell would: each PATH directory, and on
+ * Windows the working directory first, with each PATHEXT extension.
+ */
+export function resolveProgram(
+  program: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const windows = process.platform === 'win32'
+  const directories = [
+    ...(windows ? [cwd] : []),
+    ...(env.PATH ?? '')
+      .split(delimiter)
+      .filter(Boolean)
+      .map((directory) => resolve(cwd, directory))
+  ]
+  const extensions = windows
+    ? ['', ...(env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
+    : ['']
+  for (const directory of directories) {
+    for (const extension of extensions) {
+      const candidate = join(directory, `${program}${extension}`)
+      try {
+        if (statSync(candidate).isFile()) return candidate
+      } catch {
+        // Not here; keep looking.
+      }
+    }
+  }
+  return null
+}
+
+function isInside(path: string, root: string): boolean {
+  const offset = relative(root, path)
+  return Boolean(offset) && !offset.startsWith('..') && !isAbsolute(offset)
 }
 
 function stringArg(args: Record<string, unknown>, key: string, fallback = ''): string {
@@ -668,7 +707,8 @@ export class AgentToolRuntime {
     title: string,
     command: string,
     raw: unknown,
-    context: AgentToolExecutionContext
+    context: AgentToolExecutionContext,
+    where: { workspaceRoot: string; cwd: string }
   ): { environment?: Record<string, string> } | { refused: ToolExecutionResult } {
     if (raw === undefined) return {}
     const refuse = (message: string, denied = false): { refused: ToolExecutionResult } => ({
@@ -687,6 +727,16 @@ export class AgentToolRuntime {
     if (entries.length > 10) return refuse('A command can receive at most 10 credentials')
     const uses = this.credentials?.uses
     if (entries.length && !uses) return refuse('Stored credentials cannot be used in this run.')
+    // A program file the agent could have written must not receive a value in place of the
+    // installed program the user allowed or approved.
+    const program = simpleCommandProgram(command)
+    const found = program ? resolveProgram(program, where.cwd) : null
+    if (found && [where.workspaceRoot, where.cwd].some((root) => isInside(found, root))) {
+      return refuse(
+        `${program} would run ${relative(where.workspaceRoot, found) || found}, a file in this project rather than an installed program, so it is not given credentials.`,
+        true
+      )
+    }
     const environment: Record<string, string> = {}
     for (const [variable, value] of entries) {
       const refusal = credentialVariableRefusal(variable)
@@ -1082,7 +1132,10 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
-      const secrets = this.commandSecrets(title, command, args.secrets, context)
+      const secrets = this.commandSecrets(title, command, args.secrets, context, {
+        workspaceRoot,
+        cwd: resolve(workspaceRoot, stringArg(args, 'cwd') || '.')
+      })
       if ('refused' in secrets) return secrets.refused
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
       if (instructions.retryRequired) {

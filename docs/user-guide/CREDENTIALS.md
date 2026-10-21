@@ -77,9 +77,12 @@ have it:
 - **Only these programs**: commands of the programs you list, such as `gh`, `az` or `msstore`,
   follow **Ask before each use**. Each must be one simple command that runs the program by name:
   no `;`, `&&`, pipes, redirection, subshells, script blocks, or a path to the program. Shells and
-  interpreters such as `bash`, `pwsh`, `node` and `python`, and launchers such as `npx` and
-  `sudo`, cannot be listed, because they run whatever they are given. A program like `curl` can be
-  listed, but it can send the value anywhere.
+  interpreters such as `bash`, `pwsh`, `node` and `python`, launchers such as `npx` and `sudo`,
+  and `ssh` cannot be listed, because they run whatever they are given. A program like `curl` can
+  be listed, but it can send the value anywhere.
+
+A command never receives a credential when its program would run a file inside the project, such
+as a `gh.cmd` placed there, instead of the program installed on this computer.
 
 Variables that change how commands run, such as `PATH`, `NODE_OPTIONS` or `LD_PRELOAD`, cannot
 hold a credential. The variable reaches everything the command starts, and a background command

@@ -2817,6 +2817,91 @@ describe('AgentRunKernel', () => {
       ).toEqual({ refused: expect.stringContaining('not a token this reply received') })
     })
 
+    /** A command credential the entry lets any command use, which therefore asks every time. */
+    function commandRouter(background: boolean) {
+      const credential: CredentialSummary = {
+        ...entry('never'),
+        scope: { projects: 'all', background: false, commands: { mode: 'ask', programs: [] } }
+      }
+      const uses = new CredentialUses(
+        {
+          list: () => [credential],
+          resolve: () => ({ summary: credential, values: { secret: 'generated-for-test' } }),
+          record: vi.fn(),
+          setTransientSecrets: vi.fn()
+        },
+        () => ({ projectId: null, background })
+      )
+      const taken: boolean[] = []
+      return {
+        taken,
+        router: {
+          execute: vi.fn(
+            async (
+              name: string,
+              args: Record<string, unknown>,
+              context: { runId: string; toolCallId?: string; conversationId?: string }
+            ) => {
+              for (const request of credentialRequestsFor(name, args, context)) {
+                taken.push(uses.take(request).ok)
+              }
+              return { ok: true }
+            }
+          ),
+          credentialApproval: (name: string, args: Record<string, unknown>, context: object) =>
+            credentialApprovalFor(uses, credentialRequestsFor(name, args, context)),
+          credentialApproved: (name: string, args: Record<string, unknown>, context: object) => {
+            for (const request of credentialRequestsFor(name, args, context)) uses.permit(request)
+          }
+        }
+      }
+    }
+
+    const command = (id: string): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'shell',
+              arguments: { command: 'gh api /user', secrets: { GH_TOKEN: 'api-key' } }
+            }
+          }
+        ]
+      })
+
+    it('asks before a command receives a credential, even with full access', async () => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const { router, taken } = commandRouter(false)
+      const kernel = new AgentRunKernel(
+        store,
+        undefined,
+        sequence(command('cmd'), sampledTurn({ content: 'Done' }))
+      )
+      const running = kernel.start(input(router))
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const card = store.listPendingInteractions('run-1')[0]
+      expect(card.request).toMatchObject({ toolCallId: 'cmd', credential: 'api-key' })
+      expect(card.request.chatScope).toBeUndefined()
+      kernel.resolveInteraction(card.id, { approved: true, decision: 'allow_once' })
+      expect((await running).phase).toBe('completed')
+      expect(taken).toEqual([true])
+    })
+
+    it('refuses a command credential in a chat a schedule or another chat started', async () => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const { router, taken } = commandRouter(true)
+      const kernel = new AgentRunKernel(
+        store,
+        undefined,
+        sequence(command('cmd'), sampledTurn({ content: 'Done' }))
+      )
+      expect((await kernel.start(input(router))).phase).toBe('completed')
+      expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+      expect(router.execute).not.toHaveBeenCalled()
+      expect(taken).toEqual([])
+    })
+
     it('asks an every-use entry each time, with no chat grant to give', async () => {
       const sampler = sequence(
         call('one', { method: 'GET', url: 'https://api.example.com/1', credential: 'api-key' }),

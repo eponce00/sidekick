@@ -347,6 +347,16 @@ describe('CredentialUses', () => {
       expect(uses.take(command({ target: 'gh api /user/keys' })).ok).toBe(false)
     })
 
+    it('refuses a variable that changes how commands run before anyone is asked', () => {
+      const { uses } = setup([ghToken({ mode: 'ask', programs: [] })])
+      expect(uses.approval(command({ variable: 'PATH' }))).toEqual({
+        refused: expect.stringContaining('changes how commands run')
+      })
+      expect(uses.approval(command({ variable: 'NODE_OPTIONS' }))).toMatchObject({
+        refused: expect.any(String)
+      })
+    })
+
     it('never puts a returned token in a command', () => {
       const { uses, approvedTake } = setup()
       const alias = uses.addDerived('partner-center', 'run-1', randomBytes(8).toString('hex'))
