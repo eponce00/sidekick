@@ -55,7 +55,8 @@ A call that uses a [stored credential](CREDENTIALS.md) asks as that credential s
 the first use in each chat, in every permission mode including Full access. Its card names the
 credential, where it is sent and how; approving it approves the whole call. **Allow for this chat**
 is offered only for credentials set to ask once per chat, and covers the same credential with the
-same host. A use outside the credential's scope is refused without asking.
+same host, or for a command, the same exact command. A credential that any command may use asks
+before every command. A use outside the credential's scope is refused without asking.
 
 ## Changes to SideKick itself
 

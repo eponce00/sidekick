@@ -84,7 +84,8 @@ import {
   type CredentialToolAccess
 } from './agentCredentialToolHandlers'
 import { registerHttpToolHandlers } from './agentHttpToolHandlers'
-import { credentialApprovalFor, credentialRequestsFor } from './credentialUses'
+import { credentialApprovalFor, credentialReference, credentialRequestsFor } from './credentialUses'
+import { credentialVariableRefusal } from '../../shared/credentials'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -322,7 +323,9 @@ export function safeToolArguments(
       cwd: args.cwd,
       timeout: args.timeout,
       background: args.background,
-      accessLevel: args.accessLevel
+      accessLevel: args.accessLevel,
+      // Variable names and aliases only; values never enter the arguments.
+      ...(args.secrets && typeof args.secrets === 'object' ? { secrets: args.secrets } : {})
     }
   }
   if (name === 'browser_type') {
@@ -655,6 +658,64 @@ export class AgentToolRuntime {
           : {})
       }
     }
+  }
+
+  /**
+   * The environment variables a command's stored credentials go in, taken from the vault only now,
+   * after approval, with scope checked again. A refusal is the tool's result.
+   */
+  private commandSecrets(
+    title: string,
+    command: string,
+    raw: unknown,
+    context: AgentToolExecutionContext
+  ): { environment?: Record<string, string> } | { refused: ToolExecutionResult } {
+    if (raw === undefined) return {}
+    const refuse = (message: string, denied = false): { refused: ToolExecutionResult } => ({
+      refused: toolExecutionFailed({
+        title,
+        code: denied ? 'permission_denied' : 'invalid_arguments',
+        message,
+        retryable: false,
+        ...(denied ? { status: 'denied' as const, recoveryAction: 'change_strategy' as const } : {})
+      })
+    })
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      return refuse('secrets must map environment variable names to credential aliases')
+    }
+    const entries = Object.entries(raw as Record<string, unknown>)
+    if (entries.length > 10) return refuse('A command can receive at most 10 credentials')
+    const uses = this.credentials?.uses
+    if (entries.length && !uses) return refuse('Stored credentials cannot be used in this run.')
+    const environment: Record<string, string> = {}
+    for (const [variable, value] of entries) {
+      const refusal = credentialVariableRefusal(variable)
+      if (refusal) return refuse(refusal)
+      if (typeof value !== 'string' || !value.trim()) {
+        return refuse(`secrets.${variable} must be a credential alias`)
+      }
+      const { alias, field } = credentialReference(value)
+      const taken = uses!.take({
+        alias,
+        tool: 'shell',
+        kind: 'command',
+        target: command,
+        variable,
+        conversationId: context.conversationId,
+        runId: context.runId,
+        toolCallId: context.toolCallId
+      })
+      if (!taken.ok) return refuse(taken.message, true)
+      const chosen =
+        field === 'username'
+          ? taken.values.username
+          : field === 'password'
+            ? taken.values.password
+            : (taken.values.secret ?? taken.values.password)
+      if (!chosen) return refuse(`${value} names a field ${alias} does not have`)
+      environment[variable] = chosen
+    }
+    return entries.length ? { environment } : {}
   }
 
   private title(name: string, args: Record<string, unknown>): string {
@@ -1021,6 +1082,8 @@ export class AgentToolRuntime {
     if (name === 'shell') {
       const command = stringArg(args, 'command')
       const workspaceRoot = this.requireWorkspace(input)
+      const secrets = this.commandSecrets(title, command, args.secrets, context)
+      if ('refused' in secrets) return secrets.refused
       const instructions = await this.scopedInstructions(input, stringArg(args, 'cwd'), true, true)
       if (instructions.retryRequired) {
         return this.success(
@@ -1047,6 +1110,7 @@ export class AgentToolRuntime {
         cwd: stringArg(args, 'cwd') || undefined,
         timeoutSecs: boundedNumber(args.timeout, args.background === true ? 3_600 : 30, 1, 86_400),
         background: args.background === true,
+        ...(secrets.environment ? { secretEnvironment: secrets.environment } : {}),
         signal: context.signal,
         onOutput: ({ chunk, stream }) => context.onOutput?.({ chunk, stream })
       })

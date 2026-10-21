@@ -14,6 +14,11 @@ export async function isolatedShellProcess(input: {
   command: string
   timeoutSecs?: number
   env: NodeJS.ProcessEnv
+  /**
+   * Variables in `env` holding stored credentials. Each is passed into the container by name, so
+   * Docker reads its value from its own environment and the value never appears on its command line.
+   */
+  secretNames?: readonly string[]
   /** Trusted app configuration only; never derive a mount from ambient shell variables. */
   skillAssetsPath?: string
 }): Promise<{ file: string; args: string[]; cleanup: () => Promise<void> }> {
@@ -79,6 +84,13 @@ export async function isolatedShellProcess(input: {
       'SIDEKICK_SKILLS=/sidekick-skills'
     )
   }
+  const secretArgs: string[] = []
+  for (const name of input.secretNames ?? []) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || input.env[name] === undefined) {
+      throw new Error('Invalid credential variable for the isolated shell')
+    }
+    secretArgs.push('--env', name)
+  }
   const name = `sidekick-shell-${input.id}`
   return {
     file: 'docker',
@@ -115,6 +127,7 @@ export async function isolatedShellProcess(input: {
       `/workspace/${child.split(sep).join('/')}`,
       '--env',
       'HOME=/tmp',
+      ...secretArgs,
       '--entrypoint',
       '/usr/bin/timeout',
       SHELL_SANDBOX_IMAGE,

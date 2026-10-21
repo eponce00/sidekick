@@ -7,6 +7,7 @@ import type { ToolExecutionResult } from '../../shared/agentRuntime'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { AgentToolRuntime, safeToolArguments } from './agentToolRuntime'
 import { CommandService } from './commandService'
+import { CredentialUses } from './credentialUses'
 import { McpClientManager } from './mcpClientManager'
 import { ToolOutputStore } from './toolOutputStore'
 import { WorkspaceReadService } from './workspaceReadService'
@@ -301,6 +302,113 @@ describe('AgentToolRuntime file receipts', () => {
       await vi.waitFor(() => expect(commands.terminals.get(taskId)?.state).toBe('stopped'), {
         timeout: 10_000
       })
+    } finally {
+      commands.cancelAll()
+      await runtime.close()
+      db.close()
+    }
+  }, 30_000)
+
+  it('puts a stored credential in a command variable only after checking it again', async () => {
+    const workspace = await temporaryRoot('sidekick-tool-runtime-secret-')
+    const data = await temporaryRoot('sidekick-tool-runtime-secret-data-')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const commands = new CommandService(db, join(data, 'commands'))
+    const execute = vi.spyOn(commands, 'execute')
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      commands,
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    const value = `generated-${Date.now().toString(36)}`
+    const entry = {
+      id: 'gh',
+      alias: 'gh-token',
+      kind: 'secret' as const,
+      description: '',
+      usernameVisible: false,
+      ask: 'never' as const,
+      scope: {
+        projects: 'all' as const,
+        background: false,
+        commands: { mode: 'programs' as const, programs: ['node'] }
+      },
+      createdAt: 1,
+      updatedAt: 1,
+      needsValue: false
+    }
+    runtime.setCredentials({
+      list: () => [entry],
+      useContext: () => ({ projectId: null, background: false }),
+      openEditor: () => true,
+      uses: new CredentialUses(
+        {
+          list: () => [entry],
+          resolve: () => ({ summary: entry, values: { secret: value } }),
+          record: vi.fn(),
+          setTransientSecrets: vi.fn()
+        },
+        () => ({ projectId: null, background: false })
+      )
+    })
+    const session = await runtime.createSession({
+      runId: 'run-secret',
+      surface: 'conversation',
+      workspaceRoot: workspace,
+      webSearchEnabled: false,
+      capabilities: ['command.execute', 'credentials']
+    })
+    const context = {
+      runId: 'run-secret',
+      conversationId: 'chat',
+      workspaceRoot: workspace,
+      signal: new AbortController().signal
+    }
+    let calls = 0
+    const shell = (command: string, secrets: Record<string, unknown>) => {
+      const args = { title: 'Use token', command, secrets, accessLevel: 'auto' }
+      const toolCallId = `call-${++calls}`
+      // What the kernel does once it approves the call.
+      session.router.credentialApproved?.('shell', args, {
+        conversationId: 'chat',
+        runId: 'run-secret',
+        toolCallId
+      })
+      return session.router.execute('shell', args, {
+        ...context,
+        toolCallId
+      }) as Promise<ToolExecutionResult>
+    }
+    try {
+      const reserved = await shell('node -v', { PATH: 'gh-token' })
+      expect(reserved.status).toBe('error')
+      expect(reserved.error?.message).toContain('changes how commands run')
+
+      // The kernel refuses this before any card; the tool checks again when it runs.
+      expect(
+        session.router.credentialApproval?.(
+          'shell',
+          { command: 'node -v; echo done', secrets: { GH_TOKEN: 'gh-token' } },
+          { conversationId: 'chat', runId: 'run-secret', toolCallId: 'call-0' }
+        )
+      ).toEqual({ refused: expect.stringContaining('one simple command') })
+      const chained = await shell('node -v; echo done', { GH_TOKEN: 'gh-token' })
+      expect(chained.status).toBe('denied')
+      expect(chained.error?.message).toContain('one simple command')
+      expect(execute).not.toHaveBeenCalled()
+
+      const allowed = await shell('node --version', { GH_TOKEN: 'gh-token' })
+      expect(allowed.status).toBe('success')
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ secretEnvironment: { GH_TOKEN: value } })
+      )
+      expect(JSON.stringify(allowed)).not.toContain(value)
+      expect(
+        safeToolArguments('shell', { command: 'gh api /user', secrets: { GH_TOKEN: 'gh-token' } })
+      ).toMatchObject({ secrets: { GH_TOKEN: 'gh-token' } })
     } finally {
       commands.cancelAll()
       await runtime.close()

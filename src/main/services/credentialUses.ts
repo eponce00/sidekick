@@ -10,6 +10,7 @@ import {
   credentialHostMatches,
   credentialScopeRefusal,
   describeCredentialSend,
+  simpleCommandProgram,
   type CredentialAskPolicy,
   type CredentialEvent,
   type CredentialEventKind,
@@ -20,14 +21,16 @@ import {
 } from '../../shared/credentials'
 import type { ResolvedCredential } from './credentialVault'
 
-export type CredentialUseKind = 'web'
+export type CredentialUseKind = 'web' | 'command'
 
 export interface CredentialUseRequest {
   alias: string
   tool: string
   kind: CredentialUseKind
-  /** A web request's URL. */
+  /** A web request's URL, or a command's text. */
   target: string
+  /** For a command: the environment variable that receives the value. */
+  variable?: string
   conversationId?: string
   runId?: string
   /** Set by the tool registry from the call, never from its arguments. */
@@ -51,7 +54,7 @@ export interface CredentialApproval {
 }
 
 export type CredentialTake =
-  | { ok: true; summary: CredentialSummary; values: CredentialValues; send: CredentialSend }
+  | { ok: true; summary: CredentialSummary; values: CredentialValues; send?: CredentialSend }
   | { ok: false; message: string }
 
 /** The vault calls this service relies on. */
@@ -76,25 +79,55 @@ interface DerivedToken {
   expiresAt: number
 }
 
+type Checked =
+  | {
+      ok: true
+      credential: CredentialSummary
+      /** For web uses. */
+      url?: URL
+      derived?: DerivedToken
+    }
+  | { ok: false; message: string; credential?: CredentialSummary }
+
 /** A returned token is usable for at most this long, or less when the response says so. */
 const DERIVED_TOKEN_LIFETIME_MS = 60 * 60 * 1_000
 const DERIVED_ALIAS = /^([a-z0-9][a-z0-9_-]{0,63})~(\d+)$/
+const SETTINGS_HINT = 'The user can change this in Settings → Credentials.'
 
 /** Where a web request goes, without its query: a value sent as a parameter must not be kept. */
 export function credentialWebTarget(url: URL): string {
   return `${url.protocol}//${url.host}${url.pathname}`
 }
 
-/** One approved use: the run, the call, the alias and the address it was approved for. */
-function permitKey(request: CredentialUseRequest): string | undefined {
-  if (!request.runId || !request.toolCallId) return undefined
-  let target: string
+/** What the audit and approval card show for a use's target. */
+function shownTarget(request: CredentialUseRequest): string | undefined {
+  if (request.kind === 'command') return request.target.slice(0, 300)
   try {
-    target = new URL(request.target).href
+    return credentialWebTarget(new URL(request.target))
   } catch {
     return undefined
   }
-  return JSON.stringify([request.runId, request.toolCallId, request.kind, request.alias, target])
+}
+
+/** One approved use: the run, the call, the alias, and the address or command it was approved for. */
+function permitKey(request: CredentialUseRequest): string | undefined {
+  if (!request.runId || !request.toolCallId) return undefined
+  let target = request.target
+  if (request.kind === 'web') {
+    try {
+      target = new URL(request.target).href
+    } catch {
+      return undefined
+    }
+  }
+  return JSON.stringify([
+    request.runId,
+    request.toolCallId,
+    request.kind,
+    request.alias,
+    target,
+    request.variable ?? ''
+  ])
 }
 
 export class CredentialUses {
@@ -144,46 +177,9 @@ export class CredentialUses {
    * Checks every rule that decides whether this use may happen, without asking anyone: the entry
    * exists, its project and background scope admit the chat, and the target is in its scope.
    */
-  private check(
-    request: CredentialUseRequest
-  ):
-    | { ok: true; credential: CredentialSummary; target: URL; derived?: DerivedToken }
-    | { ok: false; message: string; credential?: CredentialSummary } {
-    let target: URL
-    try {
-      target = new URL(request.target)
-    } catch {
-      return { ok: false, message: 'The request address is not a valid URL.' }
-    }
+  private check(request: CredentialUseRequest): Checked {
     const derivedMatch = DERIVED_ALIAS.exec(request.alias)
-    if (derivedMatch) {
-      const token = this.liveDerived(request.alias)
-      const parent = this.find(derivedMatch[1])
-      if (!token || !parent || !request.runId || token.runId !== request.runId) {
-        return {
-          ok: false,
-          message: `${request.alias} is not a token this reply received, or it has expired. Request a new one.`
-        }
-      }
-      const refusal = credentialScopeRefusal(parent, this.useContext(request.conversationId))
-      if (refusal)
-        return {
-          ok: false,
-          credential: parent,
-          message: `${parent.alias} cannot be used here: ${refusal}.`
-        }
-      const hosts = parent.scope.web?.tokenHosts ?? []
-      if (!credentialHostMatches(hosts, target)) {
-        return {
-          ok: false,
-          credential: parent,
-          message: hosts.length
-            ? `Tokens from ${parent.alias} may be sent only over HTTPS to ${hosts.join(', ')}. The user can add hosts in Settings → Credentials.`
-            : `${parent.alias} does not allow the tokens it returns to be sent anywhere. The user can add hosts in Settings → Credentials.`
-        }
-      }
-      return { ok: true, credential: parent, target, derived: token }
-    }
+    if (derivedMatch) return this.checkDerived(request, derivedMatch[1])
     const credential = this.find(request.alias)
     if (!credential) {
       return {
@@ -199,22 +195,106 @@ export class CredentialUses {
         message: `${credential.alias} cannot be used here: ${refusal}.`
       }
     }
+    return request.kind === 'command'
+      ? this.checkCommand(credential, request.target)
+      : this.checkWeb(credential, request.target)
+  }
+
+  private checkWeb(credential: CredentialSummary, target: string): Checked {
+    let url: URL
+    try {
+      url = new URL(target)
+    } catch {
+      return { ok: false, credential, message: 'The request address is not a valid URL.' }
+    }
     const web = credential.scope.web
     if (!web) {
       return {
         ok: false,
         credential,
-        message: `${credential.alias} may not be sent in web requests. The user can allow it in Settings → Credentials.`
+        message: `${credential.alias} may not be sent in web requests. ${SETTINGS_HINT}`
       }
     }
-    if (!credentialHostMatches(web.hosts, target)) {
+    if (!credentialHostMatches(web.hosts, url)) {
       return {
         ok: false,
         credential,
-        message: `${credential.alias} may be sent only over HTTPS to ${web.hosts.join(', ')}, not to ${target.protocol}//${target.host}. The user can add a host in Settings → Credentials.`
+        message: `${credential.alias} may be sent only over HTTPS to ${web.hosts.join(', ')}, not to ${url.protocol}//${url.host}. ${SETTINGS_HINT}`
       }
     }
-    return { ok: true, credential, target }
+    return { ok: true, credential, url }
+  }
+
+  private checkCommand(credential: CredentialSummary, command: string): Checked {
+    const commands = credential.scope.commands
+    if (!commands) {
+      return {
+        ok: false,
+        credential,
+        message: `${credential.alias} may not be given to commands. ${SETTINGS_HINT}`
+      }
+    }
+    if (commands.mode === 'programs') {
+      const program = simpleCommandProgram(command)
+      if (!program) {
+        return {
+          ok: false,
+          credential,
+          message: `${credential.alias} is given only to one simple command at a time: no chaining, pipes, redirection, subshells or paths to a program. Run ${commands.programs.join(' or ')} on its own.`
+        }
+      }
+      if (!commands.programs.includes(program)) {
+        return {
+          ok: false,
+          credential,
+          message: `${credential.alias} may be given only to ${commands.programs.join(', ')}, not ${program}. ${SETTINGS_HINT}`
+        }
+      }
+    }
+    return { ok: true, credential }
+  }
+
+  private checkDerived(request: CredentialUseRequest, parentAlias: string): Checked {
+    const token = this.liveDerived(request.alias)
+    const parent = this.find(parentAlias)
+    if (!token || !parent || !request.runId || token.runId !== request.runId) {
+      return {
+        ok: false,
+        message: `${request.alias} is not a token this reply received, or it has expired. Request a new one.`
+      }
+    }
+    if (request.kind !== 'web') {
+      return {
+        ok: false,
+        credential: parent,
+        message: `${request.alias} is a token a request returned; it can be sent only in web requests.`
+      }
+    }
+    const refusal = credentialScopeRefusal(parent, this.useContext(request.conversationId))
+    if (refusal) {
+      return {
+        ok: false,
+        credential: parent,
+        message: `${parent.alias} cannot be used here: ${refusal}.`
+      }
+    }
+    let url: URL
+    try {
+      url = new URL(request.target)
+    } catch {
+      return { ok: false, credential: parent, message: 'The request address is not a valid URL.' }
+    }
+    const hosts = parent.scope.web?.tokenHosts ?? []
+    if (!credentialHostMatches(hosts, url)) {
+      return {
+        ok: false,
+        credential: parent,
+        message: hosts.length
+          ? `Tokens from ${parent.alias} may be sent only over HTTPS to ${hosts.join(', ')}. ${SETTINGS_HINT}`
+          : `${parent.alias} does not allow the tokens it returns to be sent anywhere. ${SETTINGS_HINT}`
+      }
+    }
+    return { ok: true, credential: parent, url, derived: token }
   }
 
   /**
@@ -232,42 +312,58 @@ export class CredentialUses {
       }
       return { refused: checked.message }
     }
-    const { credential, target } = checked
-    const send = credential.scope.web!.send
-    const where = credentialWebTarget(target)
-    const facts = [
-      { label: 'Credential', value: request.alias },
-      ...(credential.description ? [{ label: 'About', value: credential.description }] : []),
-      { label: 'Sent to', value: where },
-      {
-        label: 'How',
-        value: checked.derived ? 'as a bearer token it returned' : describeCredentialSend(send)
-      },
-      { label: 'Asks', value: CREDENTIAL_ASK_LABELS[credential.ask] }
-    ]
+    const { credential } = checked
+    const about = credential.description ? [{ label: 'About', value: credential.description }] : []
+    if (request.kind === 'command') {
+      // A command that holds a value can reveal it, so "ask" means every command.
+      const ask = credential.scope.commands?.mode === 'programs' ? credential.ask : 'every_use'
+      return {
+        alias: request.alias,
+        ask,
+        keys: [`credential:${credential.id}:command:${request.variable ?? ''}:${request.target}`],
+        label: `${credential.alias} with this exact command`,
+        preview: {
+          summary: `SideKick puts ${request.alias} in ${request.variable ?? 'an environment variable'} for this command. The command can print or send the value, so read it before allowing it.`,
+          changes: [],
+          facts: [
+            { label: 'Credential', value: request.alias },
+            ...about,
+            { label: 'Variable', value: request.variable ?? '' },
+            { label: 'Command', value: request.target.slice(0, 300) },
+            { label: 'Asks', value: CREDENTIAL_ASK_LABELS[ask] }
+          ]
+        }
+      }
+    }
+    const url = checked.url!
     return {
       alias: request.alias,
       ask: credential.ask,
-      keys: [`credential:${credential.id}:${request.kind}:${target.protocol}//${target.host}`],
-      label: `${credential.alias} with ${target.host}`,
+      keys: [`credential:${credential.id}:web:${url.protocol}//${url.host}`],
+      label: `${credential.alias} with ${url.host}`,
       preview: {
         summary: `SideKick adds ${request.alias} to this request itself; the agent never sees the value.`,
         changes: [],
-        facts
+        facts: [
+          { label: 'Credential', value: request.alias },
+          ...about,
+          { label: 'Sent to', value: credentialWebTarget(url) },
+          {
+            label: 'How',
+            value: checked.derived
+              ? 'as a bearer token it returned'
+              : describeCredentialSend(credential.scope.web!.send)
+          },
+          { label: 'Asks', value: CREDENTIAL_ASK_LABELS[credential.ask] }
+        ]
       }
     }
   }
 
   private details(request: CredentialUseRequest) {
-    let target: string | undefined
-    try {
-      target = credentialWebTarget(new URL(request.target))
-    } catch {
-      target = undefined
-    }
     return {
       tool: request.tool,
-      target,
+      target: shownTarget(request),
       conversationId: request.conversationId,
       runId: request.runId
     }
@@ -313,12 +409,15 @@ export class CredentialUses {
     if (!resolved) {
       return { ok: false, message: `${checked.credential.alias} has no value on this computer.` }
     }
-    this.store.record('used', checked.credential, details)
+    this.store.record('used', checked.credential, {
+      ...details,
+      ...(request.variable ? { detail: `In ${request.variable}` } : {})
+    })
     return {
       ok: true,
       summary: checked.credential,
       values: resolved.values,
-      send: checked.credential.scope.web!.send
+      ...(request.kind === 'web' ? { send: checked.credential.scope.web!.send } : {})
     }
   }
 
@@ -361,6 +460,17 @@ export class CredentialUses {
   }
 }
 
+/** A sign-in's field named after its alias, as in `site.username`; plain aliases mean the secret. */
+export function credentialReference(reference: string): {
+  alias: string
+  field: 'secret' | 'username' | 'password' | undefined
+} {
+  const match = /^(.+?)\.(username|password)$/.exec(reference.trim())
+  return match
+    ? { alias: match[1], field: match[2] as 'username' | 'password' }
+    : { alias: reference.trim(), field: undefined }
+}
+
 /** The credential uses a tool call asks for, read from the arguments of the tools that take one. */
 export function credentialRequestsFor(
   name: string,
@@ -377,6 +487,22 @@ export function credentialRequestsFor(
         ...context
       }
     ]
+  }
+  if (name === 'shell' && args.secrets && typeof args.secrets === 'object') {
+    return Object.entries(args.secrets as Record<string, unknown>).flatMap(([variable, value]) =>
+      typeof value === 'string' && value.trim()
+        ? [
+            {
+              alias: credentialReference(value).alias,
+              tool: name,
+              kind: 'command' as const,
+              target: String(args.command ?? ''),
+              variable,
+              ...context
+            }
+          ]
+        : []
+    )
   }
   return []
 }

@@ -55,6 +55,8 @@ plain pipes instead.
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
   waiting until it times out.
+- **Stored credentials.** A command can receive a [stored credential](CREDENTIALS.md#commands) in
+  an environment variable; SideKick sets it, and the command text never holds the value.
 - **Background commands** belong to the conversation, so a later reply can still read, answer,
   or stop a dev server an earlier reply started. The agent reads a running command with
   `read_command_output`, which by default returns the output since its last look, and answers

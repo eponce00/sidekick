@@ -29,6 +29,16 @@ export interface CredentialWebScope {
   tokenHosts: string[]
 }
 
+/**
+ * Commands that may receive the value in an environment variable. A command that holds a value can
+ * reveal it, so `ask` asks before every command, and `programs` admits only a single simple command
+ * whose program is one the user named.
+ */
+export interface CredentialCommandScope {
+  mode: 'ask' | 'programs'
+  programs: string[]
+}
+
 export interface CredentialScope {
   /** `all`, or the ids of the projects whose chats may use the entry. */
   projects: 'all' | string[]
@@ -36,6 +46,8 @@ export interface CredentialScope {
   background: boolean
   /** Absent when the entry may not be sent in web requests. */
   web?: CredentialWebScope
+  /** Absent when no command may receive the entry. */
+  commands?: CredentialCommandScope
 }
 
 /** What the renderer and the agent may know about an entry. */
@@ -295,6 +307,169 @@ export function normalizeCredentialWebScope(
   return { web: { hosts, send, tokenHosts } }
 }
 
+/**
+ * Programs that run whatever they are given, so allowing one would allow every command: shells,
+ * interpreters, launchers and package runners.
+ */
+const UNSAFE_PROGRAMS = new Set([
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'dash',
+  'ksh',
+  'csh',
+  'tcsh',
+  'pwsh',
+  'powershell',
+  'cmd',
+  'wsl',
+  'node',
+  'deno',
+  'bun',
+  'python',
+  'python3',
+  'py',
+  'ruby',
+  'perl',
+  'php',
+  'lua',
+  'osascript',
+  'wscript',
+  'cscript',
+  'mshta',
+  'rundll32',
+  'regsvr32',
+  'start',
+  'env',
+  'sudo',
+  'doas',
+  'runas',
+  'nohup',
+  'time',
+  'xargs',
+  'find',
+  'awk',
+  'sed',
+  'make',
+  'npm',
+  'npx',
+  'pnpm',
+  'yarn',
+  'invoke-expression',
+  'iex',
+  'invoke-command',
+  'start-process'
+])
+
+/** Why a program cannot be allowed, or null. */
+export function credentialProgramRefusal(program: string): string | null {
+  const name = program.trim().toLowerCase()
+  if (!/^[a-z0-9][a-z0-9._+-]{0,63}$/.test(name)) return `${program} is not a program name.`
+  if (UNSAFE_PROGRAMS.has(name.replace(/\.(exe|cmd|bat|ps1)$/, ''))) {
+    return `${name} runs whatever it is given, so allowing it would allow every command.`
+  }
+  return null
+}
+
+/**
+ * The program a command runs when it is one simple command: no chaining, pipes, redirection,
+ * subshells, script blocks or command substitution, in Bash or PowerShell. Null otherwise.
+ * Variables may be referenced, as `$NAME`, `${NAME}` or `$env:NAME`.
+ */
+export function simpleCommandProgram(command: string): string | null {
+  const text = command.trim()
+  if (!text || text.length > 4_000) return null
+  const withoutVariables = text.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/g, '$V')
+  if (/[;|&<>`\r\n(){}]|\$\(/.test(withoutVariables)) return null
+  const first = /^(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(text)
+  const program = (first?.[1] ?? first?.[2] ?? first?.[3] ?? '').toLowerCase()
+  // A bare name, found on PATH: a path could point at a script the agent wrote under that name.
+  if (!/^[a-z0-9][a-z0-9._+-]*$/.test(program)) return null
+  return program.replace(/\.(exe|cmd|bat|ps1|com)$/, '') || null
+}
+
+/**
+ * Environment variables a credential may not be put in, because they change which program runs,
+ * where code is loaded from, or how the shell behaves.
+ */
+const RESERVED_VARIABLES = new Set([
+  'PATH',
+  'PATHEXT',
+  'HOME',
+  'USERPROFILE',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'SHELL',
+  'BASH_ENV',
+  'ENV',
+  'IFS',
+  'PROMPT_COMMAND',
+  'COMSPEC',
+  'PSMODULEPATH',
+  'SYSTEMROOT',
+  'WINDIR',
+  'EDITOR',
+  'VISUAL',
+  'PAGER',
+  'GIT_PAGER',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'GIT_EXEC_PATH',
+  'GIT_ASKPASS',
+  'SSH_ASKPASS',
+  'WORKSPACE_FOLDER',
+  'TERM'
+])
+const RESERVED_VARIABLE_PREFIXES = [
+  'LD_',
+  'DYLD_',
+  'NODE_',
+  'PYTHON',
+  'PERL',
+  'RUBY',
+  'SIDEKICK_',
+  'GIT_CONFIG',
+  'NPM_CONFIG_'
+]
+
+/** Why a credential cannot go in this environment variable, or null. */
+export function credentialVariableRefusal(name: string): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name)) {
+    return `${name} is not a valid environment variable name.`
+  }
+  const upper = name.toUpperCase()
+  if (
+    RESERVED_VARIABLES.has(upper) ||
+    RESERVED_VARIABLE_PREFIXES.some((prefix) => upper.startsWith(prefix))
+  ) {
+    return `${name} changes how commands run, so a credential cannot go in it. Choose another name.`
+  }
+  return null
+}
+
+function normalizeCommands(value: unknown): CredentialCommandScope | string {
+  if (!isRecord(value)) return 'Invalid command settings.'
+  if (value.mode === 'ask') return { mode: 'ask', programs: [] }
+  if (value.mode !== 'programs') return 'Choose how commands may use it.'
+  if (!Array.isArray(value.programs) || !value.programs.length || value.programs.length > 20) {
+    return 'Name at least one program.'
+  }
+  const programs: string[] = []
+  for (const raw of value.programs) {
+    if (typeof raw !== 'string') return 'Invalid program.'
+    const refusal = credentialProgramRefusal(raw)
+    if (refusal) return refusal
+    const name = raw
+      .trim()
+      .toLowerCase()
+      .replace(/\.(exe|cmd|bat|ps1|com)$/, '')
+    if (!programs.includes(name)) programs.push(name)
+  }
+  return { mode: 'programs', programs: programs.sort() }
+}
+
 /** Returns a normalized scope, or a reason it is invalid. */
 export function normalizeCredentialScope(
   value: unknown,
@@ -317,6 +492,11 @@ export function normalizeCredentialScope(
     const web = normalizeCredentialWebScope(value.web, kind)
     if ('error' in web) return web
     scope.web = web.web
+  }
+  if (value.commands !== undefined && value.commands !== null) {
+    const commands = normalizeCommands(value.commands)
+    if (typeof commands === 'string') return { error: commands }
+    scope.commands = commands
   }
   return { scope }
 }
@@ -438,7 +618,28 @@ export function credentialWidening(
       changes.push(`Sent ${describeCredentialSend(web.send)}`)
     }
   }
+  const commands = next.scope.commands
+  const previousCommands = previous.scope.commands
+  if (commands) {
+    if (!previousCommands)
+      changes.push(`Usable in commands: ${describeCredentialCommands(commands)}`)
+    else if (commands.mode === 'programs') {
+      const programs = commands.programs.filter(
+        (program) =>
+          previousCommands.mode !== 'programs' || !previousCommands.programs.includes(program)
+      )
+      if (programs.length)
+        changes.push(`Commands may use it without asking each time: ${programs.join(', ')}`)
+    }
+  }
   return changes
+}
+
+/** Which commands may receive a value, in words. */
+export function describeCredentialCommands(commands: CredentialCommandScope): string {
+  return commands.mode === 'ask'
+    ? 'any command, asking every time'
+    : `${commands.programs.join(', ')} only, one simple command at a time`
 }
 
 /** How a value travels, in words, for Settings and approval cards. */

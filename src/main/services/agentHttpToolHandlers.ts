@@ -225,7 +225,7 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
-      const refusal = place(taken.send, taken.values, url, headers, body)
+      const refusal = place(taken.send!, taken.values, url, headers, body)
       if (refusal) return invalid(title, refusal)
       usedAlias = alias.replace(/~\d+$/, '')
     }
