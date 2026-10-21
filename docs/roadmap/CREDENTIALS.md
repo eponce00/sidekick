@@ -1,6 +1,6 @@
 # Credentials the agent can use but not read
 
-Status: design proposal, not implemented. Nothing here describes current behavior.
+Status: design agreed, not implemented. Nothing here describes current behavior.
 
 ## Problem
 
@@ -367,17 +367,18 @@ Each phase is one pull request with its tests and, when it ships, user documenta
    client-credentials kind, and answering a waiting command prompt with a credential the user
    picks.
 
-## Open decisions
+## Decisions
 
-To be settled before the first phase:
+Settled before the first phase:
 
-1. **When to ask by default.** Proposed: first use of an entry in each chat for web requests and
-   browser sign-in, every use for commands. Alternatives: every use everywhere, or no prompt within
-   scope once the user has set it.
-2. **Order of tools.** Proposed: vault and redaction, then `http_request`, then commands, which
-   covers API keys such as the Partner Center secret first, and browser sign-in after. Alternative:
-   browser sign-in second.
-3. **A use outside scope.** Proposed: refused, with scope widened only in Settings. Alternative: a
-   trusted dialog offering to add that host or origin to the entry.
-4. **Export.** Proposed: settings only, values re-entered on a new computer. Alternative: also a
-   passphrase-encrypted export of values, made only from Settings.
+1. **When to ask by default.** First use of an entry in each chat for web requests and browser
+   sign-in, and every use for commands. Asking every time everywhere and never asking within scope
+   were rejected: the first trains users to approve without reading, and the second gives a command
+   the value with no one looking.
+2. **Order of tools.** Vault and redaction, then `http_request`, then commands, then browser
+   sign-in. API keys such as the Partner Center secret are covered first.
+3. **A use outside scope.** Refused, and the agent is told the user can widen the scope in
+   Settings. No dialog offers to widen it, so prompt injection cannot turn a refusal into an
+   approval.
+4. **Export.** Settings only. Values are re-entered on a new computer, and no file outside the
+   encrypted store ever holds one.
