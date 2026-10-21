@@ -2,9 +2,9 @@
 
 Status: design note. The vault, the Settings page, the agent's list and request tools, the audit,
 redaction, API calls with a credential (`http_request`, approvals and returned tokens), commands
-that receive one in an environment variable, and browser sign-in have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
-and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
-still open.
+that receive one in an environment variable, and browser sign-in have shipped; they are described in
+[Credentials](../architecture/CREDENTIALS.md) and the [user guide](../user-guide/CREDENTIALS.md).
+This file keeps the reasoning and the work still open.
 
 ## Problem
 
@@ -135,17 +135,15 @@ the call's whole arguments, and covers only those.
 
 Shipped; see [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
-### Audit of uses
+### Still open
 
-Every use a tool makes will be recorded in the existing audit as `used`, `denied` or `refused`,
-with the tool and its target (host, origin, or command with variable names), and the permission
-audit will include credential decisions.
+- **Permission audit.** Every use is recorded in the credential audit as `used`, `denied` or
+  `refused`, shown in each entry's Recent activity; **Settings → Agent → Permissions → Recent
+  approvals** does not list credential decisions yet.
 
-### Export
-
-Export will write aliases, kinds, descriptions, scope and approval settings only, and import will
-recreate entries without values, as with GitHub secrets: values are write-only. A profile copied to
-another computer already lists its entries as **Needs a new value**.
+- **Export.** Export will write aliases, kinds, descriptions, scope and approval settings only,
+  and import will recreate entries without values, as with GitHub secrets: values are write-only. A
+  profile copied to another computer already lists its entries as **Needs a new value**.
 
 ## Threats and limits
 
