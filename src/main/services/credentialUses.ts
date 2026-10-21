@@ -222,7 +222,7 @@ export class CredentialUses {
       return {
         ok: false,
         credential,
-        message: `${credential.alias} is filled in only on secure pages, and the browser is not on one. Open the sign-in page first.`
+        message: `${credential.alias} is filled in only on an HTTPS page, or a server on this computer the user listed, and the browser is not on one. Open the sign-in page first.`
       }
     }
     if (!browser.origins.includes(origin)) {

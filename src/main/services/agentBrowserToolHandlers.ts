@@ -202,7 +202,10 @@ function assertBrowserEvaluationIsInspectionOnly(expression: string): void {
   )
 }
 
-function browserScope(context: AgentToolExecutionContext): string {
+/** Which browser a call uses: the conversation's, or the run's when it has none. */
+export function browserScope(
+  context: Pick<AgentToolExecutionContext, 'conversationId' | 'runId'>
+): string {
   return context.conversationId?.trim() || context.runId
 }
 

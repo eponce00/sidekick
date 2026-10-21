@@ -332,7 +332,7 @@ describe('credential sign-in sites', () => {
         usernameVisible: false,
         ask: 'once_per_chat',
         scope: { projects: 'all', background: false, browser: { origins: ['GitHub.com'] } },
-        values: kind === 'secret' ? { secret: 'x-generated' } : { username: 'u', password: 'p' }
+        values: kind === 'secret' ? { secret: 'x-generated' } : { username: 'u', password: 'p-generated' }
       })
     expect(input('secret')).toEqual({ error: 'Only a sign-in can be filled into a page.' })
     expect(input('sign_in')).toMatchObject({

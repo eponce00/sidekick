@@ -136,8 +136,9 @@ the fields as a password manager does (`FIND_SIGN_IN_FIELD`), then, for each fie
 before typing, refuses one in a frame, one whose document origin differs, a form whose target is
 outside the entry's origins, and a password field that is not `type="password"`. Text goes through
 the same `enterBrowserText` path as `browser_type`, which refuses a focus or navigation change
-before inserting. The form is sent with `requestSubmit()`. The result is one redacted semantic
-observation with no screenshot. Filled password fields are recorded on the tab: while one still
+before inserting. The form is sent with `requestSubmit()` in the same page call that reads the
+form's target again; a target outside the entry's origins refuses the submission and clears the
+typed password. The result is one redacted semantic observation with no screenshot. Filled password fields are recorded on the tab: while one still
 holds its value, `browser_evaluate` is refused, and a screenshot or observation is withheld if it
 is no longer a password field.
 

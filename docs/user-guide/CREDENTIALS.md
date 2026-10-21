@@ -99,8 +99,8 @@ asks SideKick to sign in by alias, and SideKick types the username and password 
 itself. The agent never sees the password.
 
 - **Sites** match exactly: `https://login.example.com` does not cover `https://example.com` or
-  another subdomain. Only HTTPS sites, or a server on this computer such as
-  `http://localhost:3000`, can be listed.
+  another subdomain. Only HTTPS sites can be listed, plus plain HTTP for a server on this computer
+  such as `http://localhost:3000`, which only programs on this computer can serve.
 - SideKick fills only fields of the page itself, never fields inside a frame, and only when the page
   is on one of your sites at the moment it types. It refuses a form that would send the sign-in to
   another site, and puts the password only into a real password field, which shows dots.

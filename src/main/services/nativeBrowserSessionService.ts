@@ -4443,21 +4443,34 @@ export class NativeBrowserSessionService {
         }
         const last = (passwordTarget ?? usernameTarget)!
         // The form's own submission, as its default button would send it; a page without a form
-        // gets Enter in the field it listens to.
-        const viaForm = await this.callOnNode<boolean>(
+        // gets Enter in the field it listens to. Its target is read again in the same step, since
+        // page script could have changed it after the fields were checked; a refused submission
+        // takes the typed password back out.
+        const submission = await this.callOnNode<'form' | 'none' | 'refused'>(
           tab,
           last.backendNodeId!,
-          `function() {
+          `function(allowed, clear) {
             const form = this.form;
-            if (!form) return false;
+            if (!form) return 'none';
+            let target = null;
+            try {
+              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI).origin;
+            } catch {}
+            if (!target || !allowed.includes(target)) {
+              if (clear) this.value = '';
+              return 'refused';
+            }
             if (typeof form.requestSubmit === 'function') form.requestSubmit();
             else form.submit();
-            return true;
+            return 'form';
           }`,
-          [],
+          [input.allowedOrigins, last === passwordTarget],
           signal
         )
-        if (!viaForm) {
+        if (submission === 'refused') {
+          throw new Error('The sign-in form now sends to another site, so it was not submitted')
+        }
+        if (submission === 'none') {
           tab.surface.focus()
           tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' })
           tab.surface.sendInputEvent({ type: 'char', keyCode: '\r' })

@@ -94,7 +94,11 @@ import { registerMcpToolHandlers } from './agentMcpToolHandlers'
 import { registerVisionToolHandlers } from './agentVisionToolHandlers'
 import { externalImageApprovalForMode } from './externalImageApproval'
 import type { PermissionMode } from '../../shared/permissions'
-import { AgentBrowserSessionManager, registerBrowserToolHandlers } from './agentBrowserToolHandlers'
+import {
+  AgentBrowserSessionManager,
+  browserScope,
+  registerBrowserToolHandlers
+} from './agentBrowserToolHandlers'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { shellCommandHint } from './shellCommandHints'
 
@@ -652,7 +656,8 @@ export class AgentToolRuntime {
       baselineRevision,
       { visualCheck: catalog().browserEnabled === true && input.surface === 'conversation' }
     )
-    // A sign-in is checked against the page the conversation's browser is on.
+    // A sign-in is checked against the page the conversation's browser is on. When that cannot be
+    // read, the address is empty, so the use is refused rather than run without its approval.
     const credentialRequests = (
       name: string,
       args: Record<string, unknown>,
@@ -662,9 +667,7 @@ export class AgentToolRuntime {
         name,
         args,
         context,
-        name === 'browser_sign_in'
-          ? this.browser?.activeAddress(context.conversationId || context.runId)
-          : undefined
+        name === 'browser_sign_in' ? this.browser?.activeAddress(browserScope(context)) : undefined
       )
     return {
       catalog,
