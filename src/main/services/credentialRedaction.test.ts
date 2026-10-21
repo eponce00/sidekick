@@ -144,7 +144,10 @@ describe('CredentialRedactionStream', () => {
     expect(stream.holding).toBe(false)
     expect(stream.push(`ok ${value.slice(0, 5)}`)).toBe('ok ')
     expect(stream.holding).toBe(true)
-    expect(stream.push(`${value.slice(5)} done`)).toBe('[secret: entry-0] done')
+    // The last character may wait too, when it could begin an encoded form of the random value.
+    const rest = stream.push(`${value.slice(5)} done`)
+    expect(rest.startsWith('[secret: entry-0] don')).toBe(true)
+    expect(rest + stream.flush()).toBe('[secret: entry-0] done')
   })
 
   it('never splits a surrogate pair at the hold-back boundary', () => {
