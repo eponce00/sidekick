@@ -54,6 +54,8 @@ behavior, and the development guide when testing or publishing it.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
 - [Configuration CLI](roadmap/CONFIGURATION_CLI.md) — remaining packaging and qualification work for the command line.
+- [Credentials](roadmap/CREDENTIALS.md) — stored keys and sign-ins the agent can use by alias but
+  never read, and the phases to build them.
 
 Roadmap documents describe intent, not current behavior. A planned feature belongs there until its
 implementation, tests, and user documentation land together.
