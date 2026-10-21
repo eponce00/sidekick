@@ -1026,10 +1026,7 @@ async function runSmoke(): Promise<SmokeResult> {
       passwordTarget: { selector: '#password' }
     })
     await refused('/login-framed', /No sign-in field/)
-    await refused(
-      '/login-navigates',
-      /page changed|no longer connected|retain focus|does not belong to the document/i
-    )
+    await refused('/login-navigates', /page changed|no longer connected|retain focus/i)
     await refused('/login-retarget', /now sends to another site/, { submit: true })
 
     // A field inside a frame, even the same site's, is out of the agent's reach: observations and

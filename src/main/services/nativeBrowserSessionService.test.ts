@@ -78,6 +78,8 @@ class FakeSurface implements NativeBrowserSurface {
   failBlankBeforeCommitAttempts = 0
   focused = false
   humanTakeoverVisible = false
+  /** A protocol method that fails as if the page navigated away while it ran. */
+  lostContextOn: string | null = null
   humanVerificationMarkerVisible = false
   humanVerificationSolved = false
   humanVerificationAdditionalUnresolved = false
@@ -364,6 +366,7 @@ class FakeSurface implements NativeBrowserSurface {
 
   async sendDebuggerCommand<T>(method: string, params?: Record<string, unknown>): Promise<T> {
     this.commands.push({ method, params })
+    if (method === this.lostContextOn) throw new Error('Cannot find context with specified id')
     if (method === 'Accessibility.getFullAXTree') {
       return {
         nodes: [
@@ -733,6 +736,25 @@ afterEach(async () => {
 })
 
 describe('NativeBrowserSessionService', () => {
+  it.each(['Runtime.callFunctionOn', 'DOM.resolveNode'])(
+    'explains a page that navigated during an action instead of passing on %s errors',
+    async (method) => {
+      const { service, runtime } = await testService()
+      const opened = await service.open({ runId: 'lost-context', url: 'https://example.com/' })
+      runtime.surfaces[0].lostContextOn = method
+      const typed = service.type({
+        sessionId: opened.sessionId,
+        target: { role: 'textbox', name: 'Email' },
+        text: 'never-typed',
+        clear: true
+      })
+      await expect(typed).rejects.toThrow(/page changed during this action/)
+      await expect(typed).rejects.not.toThrow(/Cannot find context/)
+      expect(runtime.surfaces[0].insertedText).toBe('')
+      await service.dispose()
+    }
+  )
+
   it('settles an initial delayed focus before dispatching keyboard input', async () => {
     const { service, runtime } = await testService()
     const opened = await service.open({ runId: 'focus-settle', url: 'https://example.com/' })
