@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { createHash } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema, openApplicationDatabase } from './database'
+import { ConversationCompactionStore } from '../services/conversationCompactionStore'
 import { mkdtemp, readdir, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -37,6 +38,63 @@ describe('database schema migrations', () => {
         disk.prepare('PRAGMA table_info(messages)').all() as Array<{ name: string }>
       ).map(({ name }) => name)
       expect(columns).toContain('notice_tone')
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('adds required columns to an installed database even when no migration lists them', async () => {
+    // Installed databases had applied every migration before these columns were listed, so they
+    // lacked them, and saving a summary or a schedule's chat mode failed on every attempt.
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-columns-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      const migrations = disk.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()
+      disk.exec('ALTER TABLE conversation_compactions DROP COLUMN reply_message_id')
+      disk.exec('ALTER TABLE conversation_compactions DROP COLUMN reply_messages_covered')
+      disk.exec('ALTER TABLE schedules DROP COLUMN chat_mode')
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      const columns = (table: string): string[] =>
+        (disk!.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(
+          ({ name }) => name
+        )
+      expect(columns('conversation_compactions')).toEqual(
+        expect.arrayContaining(['reply_message_id', 'reply_messages_covered'])
+      )
+      expect(columns('schedules')).toContain('chat_mode')
+      // Nothing was replayed: the columns came from the start-up check, not a migration.
+      expect(disk.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get()).toEqual(migrations)
+
+      disk.exec(
+        "INSERT INTO conversations (id, title, created_at, updated_at) VALUES ('chat', 'Chat', 1, 1)"
+      )
+      const store = new ConversationCompactionStore(disk)
+      const saved = store.save({
+        conversationId: 'chat',
+        summary: 'Summary of the earlier work.',
+        compactedThroughMessageId: null,
+        compactedThroughTimestamp: null,
+        previousCompactionId: null,
+        originalTokens: 1_000,
+        summaryTokens: 100,
+        messagesCompacted: 10,
+        strategy: 'model',
+        promptVersion: 'test',
+        provider: 'test',
+        model: 'test',
+        replyMessageId: 'reply',
+        replyMessagesCovered: 3
+      })
+      expect(store.latest('chat')).toMatchObject({
+        id: saved.id,
+        replyMessageId: 'reply',
+        replyMessagesCovered: 3
+      })
     } finally {
       if (disk?.open) disk.close()
       await rm(root, { recursive: true, force: true })

@@ -402,8 +402,60 @@ export function auditRuns(db: Database.Database, options: RunAuditOptions = {}):
       .sort((left, right) => right[1] - left[1])
       .map(([code, count]) => `${code} × ${count}`)
   })
+  if (compactions) add(auditStartCompactions(db, since, settings.minCompactionShare))
   add(auditReports(db, since))
   return { runs: runs.length, findings }
+}
+
+/**
+ * A run that summarizes the chat before its first request, although the chat's previous run sent
+ * the model only a small share of the window, rebuilt more history than the model had seen: a
+ * summary that was not kept, or turns it had replaced sent again. Users see it as a chat that
+ * compacts every time it is started again.
+ */
+function auditStartCompactions(
+  db: Database.Database,
+  since: number,
+  minShare: number
+): RunAuditFinding {
+  const starts = db
+    .prepare(
+      `SELECT r.id, r.thread_id, r.started_at, json_extract(e.payload_json, '$.contextLength') AS window
+       FROM agent_run_events e JOIN agent_runs r ON r.id = e.run_id
+       WHERE r.started_at >= ? AND r.surface = 'conversation' AND e.type = 'compaction.completed'
+         AND json_valid(e.payload_json) AND json_extract(e.payload_json, '$.compacted') = 1
+         AND NOT EXISTS (SELECT 1 FROM agent_run_events u WHERE u.run_id = e.run_id
+                           AND u.type = 'usage.updated' AND u.sequence < e.sequence)`
+    )
+    .all(since) as Array<{ id: string; thread_id: string; started_at: number; window: number }>
+  const previousPrompt = db.prepare(
+    `SELECT json_extract(u.payload_json, '$.promptTokens') AS prompt
+     FROM agent_runs p JOIN agent_run_events u ON u.run_id = p.id AND u.type = 'usage.updated'
+     WHERE p.thread_id = ? AND p.started_at < ?
+     ORDER BY p.started_at DESC, u.sequence DESC LIMIT 1`
+  )
+  const needless: string[] = []
+  let judged = 0
+  for (const start of starts) {
+    const prompt = Number(
+      (previousPrompt.get(start.thread_id, start.started_at) as { prompt: unknown } | undefined)
+        ?.prompt
+    )
+    if (!Number.isFinite(prompt) || prompt <= 0 || !(start.window > 0)) continue
+    judged += 1
+    const share = prompt / start.window
+    if (share < minShare)
+      needless.push(
+        `${shortId(start.id)} (the previous run sent ${percent(share)} of ${start.window.toLocaleString('en-US')})`
+      )
+  }
+  return {
+    check: 'compaction-at-start',
+    severity: needless.length ? 'flag' : 'info',
+    summary: `${needless.length} of ${judged} runs that began by summarizing the chat followed a run that had sent less than ${percent(minShare)} of the window.`,
+    count: needless.length,
+    examples: needless
+  }
 }
 
 /**
