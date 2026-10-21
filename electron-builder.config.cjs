@@ -77,6 +77,10 @@ module.exports = {
     // The tile images are transparent, so Start draws them on the user's accent colour.
     backgroundColor: 'transparent',
     languages: ['en-US'],
+    // The Store refuses an MSIX for Windows 10 1803 (10.0.17134) or older, and electron-builder
+    // defaults to 1607. 1809 is the oldest Windows 10 release Electron still supports.
+    minVersion: '10.0.17763.0',
+    maxVersionTested: '10.0.26100.0',
     artifactName: '${productName}-${version}-windows-x64-store.${ext}'
   },
   mac: {
