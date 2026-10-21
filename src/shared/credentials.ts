@@ -10,11 +10,32 @@ export type CredentialKind = (typeof CREDENTIAL_KINDS)[number]
 export const CREDENTIAL_ASK_POLICIES = ['every_use', 'once_per_chat', 'never'] as const
 export type CredentialAskPolicy = (typeof CREDENTIAL_ASK_POLICIES)[number]
 
+/**
+ * Where a value goes in a request. The user decides this, not the model, so the model cannot put a
+ * value somewhere an allowed host would publish it, such as an issue comment's body.
+ */
+export type CredentialSend =
+  | { as: 'header'; name: string; prefix: string }
+  | { as: 'basic' }
+  | { as: 'query'; name: string }
+  | { as: 'form'; name: string; usernameName?: string }
+  | { as: 'json'; name: string; usernameName?: string }
+
+export interface CredentialWebScope {
+  /** Exact hosts, with a port when it is not 443, or `*.example.com` for its subdomains. */
+  hosts: string[]
+  send: CredentialSend
+  /** Hosts that may receive tokens returned by a request that used this credential. */
+  tokenHosts: string[]
+}
+
 export interface CredentialScope {
   /** `all`, or the ids of the projects whose chats may use the entry. */
   projects: 'all' | string[]
   /** Whether chats a schedule or another chat started may use it. */
   background: boolean
+  /** Absent when the entry may not be sent in web requests. */
+  web?: CredentialWebScope
 }
 
 /** What the renderer and the agent may know about an entry. */
@@ -138,9 +159,146 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
+/** Headers a credential may never be placed in: they decide how the request itself travels. */
+const RESERVED_HEADERS = new Set([
+  'host',
+  'content-length',
+  'content-type',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'te',
+  'trailer',
+  'expect'
+])
+const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/
+const FIELD_NAME = /^[\w.\-[\]]{1,100}$/
+
+export function isReservedCredentialHeader(name: string): boolean {
+  const lower = name.toLowerCase()
+  return RESERVED_HEADERS.has(lower) || lower.startsWith('proxy-')
+}
+
+/**
+ * The canonical form of a host the user typed: lowercase, punycode, no trailing dot, and a port
+ * only when it is not 443. `*.example.com` stands for the subdomains of a domain. Anything with a
+ * path, user name, another scheme or a wildcard elsewhere is refused.
+ */
+export function normalizeCredentialHost(raw: string): string | null {
+  let text = raw.trim().toLowerCase()
+  if (text.startsWith('https://')) text = text.slice('https://'.length).replace(/\/$/, '')
+  if (!text || /[\s/@?#\\]/.test(text)) return null
+  const wildcard = text.startsWith('*.')
+  if (wildcard) text = text.slice(2)
+  if (text.includes('*')) return null
+  let url: URL
+  try {
+    url = new URL(`https://${text}`)
+  } catch {
+    return null
+  }
+  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null
+  const host = url.hostname.replace(/\.$/, '')
+  if (!host) return null
+  if (wildcard) {
+    // A wildcard covers a domain's subdomains, never an address or a bare suffix.
+    if (host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host) || host.split('.').length < 2) {
+      return null
+    }
+  }
+  return `${wildcard ? '*.' : ''}${host}${url.port ? `:${url.port}` : ''}`
+}
+
+function splitHostPort(pattern: string): { host: string; port: string } {
+  if (pattern.startsWith('[')) {
+    const end = pattern.indexOf(']')
+    return { host: pattern.slice(0, end + 1), port: pattern.slice(end + 2) }
+  }
+  const colon = pattern.lastIndexOf(':')
+  return colon < 0
+    ? { host: pattern, port: '' }
+    : { host: pattern.slice(0, colon), port: pattern.slice(colon + 1) }
+}
+
+/** Whether `url` is an HTTPS address on one of `patterns`, port included. */
+export function credentialHostMatches(patterns: readonly string[], url: URL): boolean {
+  if (url.protocol !== 'https:' || url.username || url.password) return false
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
+  return patterns.some((pattern) => {
+    const expected = splitHostPort(pattern)
+    if (expected.port !== url.port) return false
+    if (expected.host.startsWith('*.')) return host.endsWith(`.${expected.host.slice(2)}`)
+    return host === expected.host
+  })
+}
+
+function normalizeHosts(value: unknown, label: string, allowEmpty: boolean): string[] | string {
+  if (!Array.isArray(value) || value.length > 50) return `Invalid ${label} list.`
+  const hosts: string[] = []
+  for (const raw of value) {
+    const host = typeof raw === 'string' ? normalizeCredentialHost(raw) : null
+    if (!host) return `${typeof raw === 'string' && raw ? raw : 'That'} is not a host name.`
+    if (!hosts.includes(host)) hosts.push(host)
+  }
+  if (!allowEmpty && !hosts.length) return `Add at least one ${label}.`
+  return hosts.sort()
+}
+
+function normalizeSend(value: unknown, kind: CredentialKind): CredentialSend | string {
+  if (!isRecord(value)) return 'Choose how the value is sent.'
+  const name = typeof value.name === 'string' ? value.name.trim() : ''
+  const usernameName = typeof value.usernameName === 'string' ? value.usernameName.trim() : ''
+  switch (value.as) {
+    case 'header': {
+      if (!HEADER_NAME.test(name) || isReservedCredentialHeader(name)) {
+        return 'Enter a header name SideKick can send, such as Authorization or X-Api-Key.'
+      }
+      const prefix = typeof value.prefix === 'string' ? value.prefix : ''
+      if (prefix.length > 50 || /[\r\n\0]/.test(prefix)) return 'Invalid header prefix.'
+      return { as: 'header', name, prefix }
+    }
+    case 'basic':
+      if (kind !== 'sign_in') return 'Basic authentication needs a sign-in.'
+      return { as: 'basic' }
+    case 'query':
+      if (!FIELD_NAME.test(name)) return 'Enter the query parameter name.'
+      return { as: 'query', name }
+    case 'form':
+    case 'json': {
+      if (!FIELD_NAME.test(name)) return 'Enter the field name.'
+      if (kind === 'sign_in') {
+        if (!FIELD_NAME.test(usernameName) || usernameName === name) {
+          return 'Enter the username field name, different from the password field.'
+        }
+        return { as: value.as, name, usernameName }
+      }
+      return { as: value.as, name }
+    }
+    default:
+      return 'Choose how the value is sent.'
+  }
+}
+
+/** Returns a normalized web scope, or a reason it is invalid. */
+export function normalizeCredentialWebScope(
+  value: unknown,
+  kind: CredentialKind
+): { web: CredentialWebScope } | { error: string } {
+  if (!isRecord(value)) return { error: 'Invalid web request settings.' }
+  const hosts = normalizeHosts(value.hosts, 'host', false)
+  if (typeof hosts === 'string') return { error: hosts }
+  const tokenHosts = normalizeHosts(value.tokenHosts ?? [], 'token host', true)
+  if (typeof tokenHosts === 'string') return { error: tokenHosts }
+  const send = normalizeSend(value.send, kind)
+  if (typeof send === 'string') return { error: send }
+  return { web: { hosts, send, tokenHosts } }
+}
+
 /** Returns a normalized scope, or a reason it is invalid. */
 export function normalizeCredentialScope(
-  value: unknown
+  value: unknown,
+  kind: CredentialKind = 'secret'
 ): { scope: CredentialScope } | { error: string } {
   if (!isRecord(value)) return { error: 'Choose where the credential can be used.' }
   let projects: CredentialScope['projects']
@@ -154,7 +312,13 @@ export function normalizeCredentialScope(
     projects = [...new Set(value.projects as string[])].sort()
   } else return { error: 'Choose all projects or at least one project.' }
   if (typeof value.background !== 'boolean') return { error: 'Invalid background setting.' }
-  return { scope: { projects, background: value.background } }
+  const scope: CredentialScope = { projects, background: value.background }
+  if (value.web !== undefined && value.web !== null) {
+    const web = normalizeCredentialWebScope(value.web, kind)
+    if ('error' in web) return web
+    scope.web = web.web
+  }
+  return { scope }
 }
 
 /**
@@ -185,7 +349,7 @@ export function validateCredentialInput(
     return { error: 'Choose when SideKick asks before a use.' }
   }
   if (typeof input.usernameVisible !== 'boolean') return { error: 'Invalid username setting.' }
-  const scope = normalizeCredentialScope(input.scope)
+  const scope = normalizeCredentialScope(input.scope, kind)
   if ('error' in scope) return scope
   if (input.id !== undefined && (typeof input.id !== 'string' || !input.id)) {
     return { error: 'Invalid credential id.' }
@@ -263,5 +427,56 @@ export function credentialWidening(
   if (next.usernameVisible && !previous.usernameVisible) {
     changes.push('The agent can read the username')
   }
+  const web = next.scope.web
+  const previousWeb = previous.scope.web
+  if (web) {
+    const hosts = web.hosts.filter((host) => !previousWeb?.hosts.includes(host))
+    if (hosts.length) changes.push(`Sent in web requests to ${hosts.join(', ')}`)
+    const tokenHosts = web.tokenHosts.filter((host) => !previousWeb?.tokenHosts.includes(host))
+    if (tokenHosts.length) changes.push(`Tokens it returns sent to ${tokenHosts.join(', ')}`)
+    if (previousWeb && JSON.stringify(previousWeb.send) !== JSON.stringify(web.send)) {
+      changes.push(`Sent ${describeCredentialSend(web.send)}`)
+    }
+  }
   return changes
+}
+
+/** How a value travels, in words, for Settings and approval cards. */
+export function describeCredentialSend(send: CredentialSend): string {
+  switch (send.as) {
+    case 'header':
+      return `in the ${send.name} header${send.prefix.trim() ? ` after "${send.prefix.trim()}"` : ''}`
+    case 'basic':
+      return 'as Basic authentication'
+    case 'query':
+      return `as the ${send.name} query parameter`
+    case 'form':
+      return `as the ${send.name} form field`
+    case 'json':
+      return `as the ${send.name} JSON field`
+  }
+}
+
+/** Which chat wants to use an entry: its project, and whether the user started it. */
+export interface CredentialUseContext {
+  projectId: string | null
+  /** Started by a schedule or by another chat rather than by the user. */
+  background: boolean
+}
+
+/** Why an entry's project and background scope keep it out of this chat, or null. */
+export function credentialScopeRefusal(
+  credential: Pick<CredentialSummary, 'needsValue' | 'scope'>,
+  context: CredentialUseContext | undefined
+): string | null {
+  if (credential.needsValue) return 'its value has to be entered again on this computer'
+  if (credential.scope.projects !== 'all') {
+    if (!context?.projectId || !credential.scope.projects.includes(context.projectId)) {
+      return "it is not allowed in this chat's project"
+    }
+  }
+  if (context?.background && !credential.scope.background) {
+    return 'it is not allowed in chats a schedule or another chat started'
+  }
+  return null
 }

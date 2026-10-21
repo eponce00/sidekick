@@ -17,6 +17,7 @@ import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
 import { conversationCredentialContext, openCredentialEditor } from './credentials'
 import { getCredentialVault } from '../services/credentialVaultInstance'
+import { CredentialUses } from '../services/credentialUses'
 import { getManagedWorktrees } from './worktrees'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
@@ -97,10 +98,13 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       control: createAppControlHandlers("SideKick's agent"),
       openProviderKeyPrompt
     })
+    const useContext = (conversationId: string | undefined) =>
+      conversationCredentialContext(getDb(), conversationId)
     coordinator.tools.setCredentials({
       list: () => getCredentialVault().list(),
-      useContext: (conversationId) => conversationCredentialContext(getDb(), conversationId),
-      openEditor: openCredentialEditor
+      useContext,
+      openEditor: openCredentialEditor,
+      uses: new CredentialUses(getCredentialVault(), useContext)
     })
   }
   return coordinator

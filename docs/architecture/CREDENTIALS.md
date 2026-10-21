@@ -69,7 +69,44 @@ The `credentials` capability (conversation runs, not planning, not sub-agents or
   that lists credentials reads it. The agent learns only that the editor opened.
 
 `CREDENTIAL_CONSUMER_TOOLS` in `src/shared/credentialTools.ts` names the tools that take an alias and
-add the value themselves; `credentials_list` reports it to the model.
+add the value themselves; `credentials_list` reports it to the model, with each entry's web hosts,
+placement and token hosts.
+
+## Using a credential
+
+The value never enters a tool's arguments. A tool takes an alias in a typed argument, and its
+handler asks `CredentialUses` (`src/main/services/credentialUses.ts`) for the value at the moment it
+sends the request. Arguments, and everything built from them (the run ledger, live previews,
+approval cards, chat grants and the tool's title, which is recomputed from the arguments after
+authorization), hold only the alias.
+
+`CredentialUses` checks every rule each time: the entry exists, `credentialScopeRefusal` admits the
+chat's project and how it was started, and the target is in scope. `take` returns the values and
+records `used`, or records `refused` with the reason the tool returns to the model. Its audit
+target is the URL without its query string, so a value sent as a parameter is never kept.
+
+**Approval.** `credentialRequestsFor` reads the uses a call asks for and `credentialApprovalFor`
+turns them into one `AgentCredentialApproval`. `AgentRunKernel.authorizeCredential` runs before the
+permission policy: an entry that asks every use, or once per chat without a grant yet, suspends the
+run with a permission card whose `preview.facts` name the credential, the target and how it is
+sent. Approving it approves the whole call. A once-per-chat grant is keyed on the entry and the
+target's origin. A use outside scope produces no approval at all, so it is never asked about; the
+tool refuses it. A denial records `denied`.
+
+**`http_request`** (`agentHttpToolHandlers.ts`, capability `web.request`, execute risk with GET and
+HEAD requested as auto) sends one request through `requestAdmitted` in `webNetworkGuard.ts`, the
+same local-network policy as `web_fetch`, and never follows a redirect. With a credential, the
+URL must be HTTPS on one of the entry's hosts (`credentialHostMatches`: exact host and port, or
+`*.domain` for subdomains), and the handler places the value as the entry's `CredentialSend` says:
+a header with a prefix, Basic authentication, a query parameter, or a form or JSON field. It refuses
+a request that already sets that header, parameter or field. A failed request is reported by its
+message alone, because an HTTP client error object carries the request.
+
+**Returned tokens.** In the JSON response to a request that used a credential, `access_token`,
+`refresh_token` and `id_token` values are replaced by aliases such as `partner-center~1`.
+`CredentialUses` keeps them in memory for the chat that received them, for the response's
+`expires_in` or at most an hour, sends them only as `Authorization: Bearer` to the entry's token
+hosts, and gives them to the redactor through `CredentialVault.setTransientSecrets`.
 
 ## Redaction
 

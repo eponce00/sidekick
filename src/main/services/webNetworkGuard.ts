@@ -226,3 +226,27 @@ export async function getAdmitted<T>(
   }
   throw new Error(`The page redirected more than ${MAX_REDIRECTS} times`)
 }
+
+/**
+ * Sends one request of any method under the network policy. It never follows a redirect: the
+ * caller gets the redirect response, so a request carrying a credential cannot be led elsewhere.
+ */
+export async function requestAdmitted<T>(
+  url: URL,
+  config: AxiosRequestConfig,
+  options: WebNetworkOptions = {}
+): Promise<AxiosResponse<T>> {
+  const admission = await admitWebUrl(url, options)
+  const lookup = admittedLookup(admission, options)
+  return axios.request<T>({
+    ...config,
+    url: url.href,
+    // A fresh connection for each request, so its name is looked up, and checked, every time.
+    httpAgent: new HttpAgent({ keepAlive: false, lookup }),
+    httpsAgent: new HttpsAgent({ keepAlive: false, lookup }),
+    proxy: false,
+    maxRedirects: 0,
+    signal: options.signal,
+    validateStatus: () => true
+  })
+}

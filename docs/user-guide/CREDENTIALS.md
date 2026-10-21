@@ -18,6 +18,7 @@ Open **Settings → Credentials** and choose **Add credential**.
 | **Let the agent read the username** | For sign-ins: lets the agent see the username, so it can say which account it used. The password stays hidden either way. While the username is hidden, it is replaced wherever it appears in output, so a common name such as `admin` is hidden everywhere. |
 | **Ask before each use**             | Every use, the first use in each chat, or never within its scope. It applies in every permission mode, including Full access.                                                                                                                                |
 | **Projects**                        | All projects, or only chats in the projects you pick.                                                                                                                                                                                                        |
+| **Use in web requests**             | Lets the agent's `http_request` tool add the credential to API calls; see [Web requests](#web-requests).                                                                                                                                                     |
 | **Allow in background runs**        | Whether chats a schedule or another chat started may use it. Off by default, since nobody may be watching them.                                                                                                                                              |
 
 A secret or password must be at least 4 characters, and one under 8 characters is saved with a
@@ -28,6 +29,31 @@ When a task needs a credential you have not stored, the agent opens this editor 
 suggested alias and description. The editor marks a description the agent wrote; check it before
 saving, since every chat that lists your credentials reads it. The agent cannot fill in the value,
 and it never asks you to paste one into the chat; if anything ever does, add it here instead.
+
+## Web requests
+
+With **Use in web requests** on, the agent can call an API with `http_request` and name the
+credential by its alias. SideKick adds the value itself, so the agent, the chat and the model
+provider never see it. You decide:
+
+- **Hosts**: where it may be sent, over HTTPS only. A host matches exactly, port included;
+  `*.example.com` covers that domain's subdomains. A request to any other host, or over plain HTTP,
+  is refused before anything is sent, and the agent is told you can add the host here.
+- **Sent as**: a header (such as `Authorization` with `Bearer ` before the value, or `X-Api-Key`),
+  a query parameter, a form field, a JSON field, or, for a sign-in, Basic authentication. The agent
+  cannot choose a different place, and cannot set that header or field itself.
+- **Tokens it returns may go to**: some services exchange a secret for a short-lived access token,
+  as Microsoft's sign-in endpoint does for Partner Center. When a request that used the credential
+  returns one, the agent gets an alias such as `partner-center~1` instead, usable only with the
+  hosts you list here, only in that chat, and for at most an hour.
+
+`http_request` never follows a redirect, so a response cannot lead a credential to another host;
+the agent sees where the redirect points and can make a new request.
+
+Before a credential is used, SideKick asks as the entry says: every use, or the first use in each
+chat, where **Allow for this chat** covers the same credential with the same host. The approval
+names the credential, where it goes and how, and it asks even in Full access. An entry set to never
+ask follows your permission mode like any other request.
 
 ## What the agent sees
 
@@ -44,7 +70,7 @@ tools refuse to write that placeholder back, which would replace your value with
 line yourself.
 
 This is a safety net, not a guarantee. A program that is given a value can always transform it
-beyond recognition, which is why where a credential may be used is limited and asked about.
+beyond recognition, which is why where a credential may be sent is limited and asked about.
 
 ## Changing, deleting, and moving
 

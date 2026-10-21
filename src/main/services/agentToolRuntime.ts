@@ -83,6 +83,8 @@ import {
   registerCredentialToolHandlers,
   type CredentialToolAccess
 } from './agentCredentialToolHandlers'
+import { registerHttpToolHandlers } from './agentHttpToolHandlers'
+import { credentialApprovalFor, credentialRequestsFor } from './credentialUses'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -462,6 +464,10 @@ export class AgentToolRuntime {
     const handlers = new AgentToolHandlerRegistry()
     registerCoreToolHandlers(handlers, this.outputs)
     registerWebToolHandlers(handlers, this.outputs)
+    registerHttpToolHandlers(handlers, {
+      outputs: this.outputs,
+      credentials: () => this.credentials?.uses
+    })
     registerVisionToolHandlers(handlers, externalImageApprovalForMode(input.permissionMode))
     if (input.browserEnabled === true && this.browser) {
       registerBrowserToolHandlers(handlers, this.browser, this.outputs)
@@ -622,6 +628,17 @@ export class AgentToolRuntime {
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,
         approvalPreview: (name, args) => handlers.preview(name, args),
+        credentialApproval: (name, args, context) => {
+          const uses = this.credentials?.uses
+          return uses
+            ? credentialApprovalFor(uses, credentialRequestsFor(name, args, context))
+            : undefined
+        },
+        credentialDenied: (name, args, context) => {
+          for (const request of credentialRequestsFor(name, args, context)) {
+            this.credentials?.uses?.denied(request)
+          }
+        },
         ...(this.browser
           ? {
               reserveBrowserHumanTakeover: (conversationId: string) =>

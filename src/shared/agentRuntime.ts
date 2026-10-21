@@ -30,7 +30,8 @@ export const AGENT_CAPABILITIES = [
   'browser',
   'settings',
   'sessions',
-  'credentials'
+  'credentials',
+  'web.request'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
@@ -98,6 +99,8 @@ export interface AgentToolCatalogEntry {
 export interface AgentApprovalPreview {
   summary?: string
   changes: Array<{ label: string; before: string; after: string }>
+  /** Plain facts about the request, such as which credential it uses and where it goes. */
+  facts?: Array<{ label: string; value: string }>
 }
 
 export interface AgentRunProfile {

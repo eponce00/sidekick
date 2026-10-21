@@ -169,3 +169,26 @@ it('explains when the computer has no protected storage', async () => {
   expect(container.textContent).toContain('Credentials are unavailable')
   expect(container.textContent).toContain('No keychain.')
 })
+
+it('saves where a credential may be sent in web requests', async () => {
+  await act(async () => root.render(<CredentialSettings />))
+  await act(async () => button('Edit partner-center').click())
+  const toggle = Array.from(container.querySelectorAll('label.settings-toggle-row')).find((row) =>
+    row.textContent?.includes('Use in web requests')
+  )!
+  await act(async () => (toggle as HTMLLabelElement).click())
+  const hosts = container.querySelector<HTMLInputElement>('input[placeholder="api.example.com"]')!
+  await act(async () => type(hosts, 'login.microsoftonline.com, api.partner.microsoft.com'))
+  await act(async () => button('Save credential').click())
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      scope: expect.objectContaining({
+        web: {
+          hosts: ['login.microsoftonline.com', 'api.partner.microsoft.com'],
+          tokenHosts: [],
+          send: { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
+        }
+      })
+    })
+  )
+})

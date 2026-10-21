@@ -3,10 +3,10 @@ import type Database from 'better-sqlite3'
 import {
   validateCredentialInput,
   type CredentialRequest,
-  type CredentialSaveResult
+  type CredentialSaveResult,
+  type CredentialUseContext
 } from '../../shared/credentials'
 import { revealWindow } from '../bootstrap/windowActivation'
-import type { CredentialUseContext } from '../services/agentCredentialToolHandlers'
 import { CredentialUnavailableError } from '../services/credentialVault'
 import { getCredentialVault } from '../services/credentialVaultInstance'
 import { showTrustedDialog } from '../services/trustedDialog'

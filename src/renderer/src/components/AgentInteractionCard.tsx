@@ -131,10 +131,14 @@ function approvalPreview(value: unknown): AgentApprovalPreview | null {
         typeof change.after === 'string'
     )
     .slice(0, 10)
-  if (!changes.length) return null
+  const facts = (Array.isArray(preview.facts) ? preview.facts : [])
+    .filter((fact) => fact && typeof fact.label === 'string' && typeof fact.value === 'string')
+    .slice(0, 10)
+  if (!changes.length && !facts.length) return null
   return {
     ...(typeof preview.summary === 'string' ? { summary: preview.summary.slice(0, 600) } : {}),
-    changes
+    changes,
+    ...(facts.length ? { facts } : {})
   }
 }
 
@@ -350,6 +354,12 @@ export default function AgentInteractionCard({
           <div className="agent-interaction-preview">
             {preview.summary && <p>{preview.summary}</p>}
             <dl>
+              {preview.facts?.map((fact) => (
+                <div key={fact.label} className="agent-interaction-change agent-interaction-fact">
+                  <dt>{fact.label}</dt>
+                  <dd>{fact.value.slice(0, 300)}</dd>
+                </div>
+              ))}
               {preview.changes.map((change) => (
                 <div key={change.label} className="agent-interaction-change">
                   <dt>{change.label}</dt>

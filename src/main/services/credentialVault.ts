@@ -163,6 +163,8 @@ export class CredentialVault {
   private entries = new Map<string, OpenEntry>()
   /** Values replaced or deleted since launch stay redacted until SideKick restarts. */
   private readonly retired: Array<{ alias: string; value: string }> = []
+  /** Values that exist only in memory, such as tokens a request returned; redacted the same way. */
+  private transient: Array<{ alias: string; value: string }> = []
   private loaded = false
   private locked = false
 
@@ -231,7 +233,14 @@ export class CredentialVault {
     const current = [...this.entries.values()].flatMap(({ record }) =>
       hiddenValues(record).map(([, value]) => ({ alias: record.alias, value }))
     )
-    this.redactor.setSecrets([...current, ...this.retired])
+    this.redactor.setSecrets([...current, ...this.retired, ...this.transient])
+  }
+
+  /** Replaces the in-memory values redacted alongside stored ones. */
+  setTransientSecrets(secrets: ReadonlyArray<{ alias: string; value: string }>): void {
+    this.ensureLoaded()
+    this.transient = [...secrets]
+    this.refreshRedactor()
   }
 
   /** Reads the store for a change, refusing one that would overwrite what it cannot read. */

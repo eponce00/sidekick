@@ -8,40 +8,22 @@ import {
   CREDENTIAL_ALIAS_PATTERN,
   CREDENTIAL_ASK_LABELS,
   MAX_CREDENTIAL_DESCRIPTION,
+  describeCredentialSend,
+  credentialScopeRefusal,
   type CredentialRequest,
-  type CredentialSummary
+  type CredentialSummary,
+  type CredentialUseContext
 } from '../../shared/credentials'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
-
-/** Who is asking: decides whether an entry's project and background scope admit this chat. */
-export interface CredentialUseContext {
-  projectId: string | null
-  /** Started by a schedule or by another chat rather than by the user. */
-  background: boolean
-}
+import type { CredentialUses } from './credentialUses'
 
 /** What the credential tools may use: summaries without values, and Settings. */
 export interface CredentialToolAccess {
   list: () => CredentialSummary[]
   useContext: (conversationId: string | undefined) => CredentialUseContext | undefined
   openEditor: (request: CredentialRequest) => boolean
-}
-
-/** Why `credential` cannot be used in this chat, or null when its scope admits it. */
-export function credentialScopeRefusal(
-  credential: CredentialSummary,
-  context: CredentialUseContext | undefined
-): string | null {
-  if (credential.needsValue) return 'its value has to be entered again on this computer'
-  if (credential.scope.projects !== 'all') {
-    if (!context?.projectId || !credential.scope.projects.includes(context.projectId)) {
-      return "it is not allowed in this chat's project"
-    }
-  }
-  if (context?.background && !credential.scope.background) {
-    return 'it is not allowed in chats a schedule or another chat started'
-  }
-  return null
+  /** Decides and records each use a tool makes of a credential. */
+  uses?: CredentialUses
 }
 
 function describe(credential: CredentialSummary, context: CredentialUseContext | undefined) {
@@ -54,6 +36,13 @@ function describe(credential: CredentialSummary, context: CredentialUseContext |
     ask_before_use: CREDENTIAL_ASK_LABELS[credential.ask],
     projects: credential.scope.projects === 'all' ? 'all' : credential.scope.projects.length,
     background_runs: credential.scope.background,
+    web_requests: credential.scope.web
+      ? {
+          hosts: credential.scope.web.hosts,
+          sent: describeCredentialSend(credential.scope.web.send),
+          returned_tokens_to: credential.scope.web.tokenHosts
+        }
+      : 'not allowed',
     usable_in_this_chat: refusal === null,
     ...(refusal ? { not_usable_because: refusal } : {}),
     ...(credential.lastUsedAt ? { last_used: new Date(credential.lastUsedAt).toISOString() } : {})

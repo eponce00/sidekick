@@ -23,6 +23,8 @@ The stricter modes are available per conversation from the composer and in Setti
 | Agent shell command               | Agent-selected           | Kernel policy before canonical command service                                      |
 | Agent workspace mutation          | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation              |
 | Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
+| Agent API call (`http_request`)   | Auto for GET and HEAD    | Kernel policy before the guarded request                                            |
+| Agent use of a stored credential  | The entry's own setting  | Kernel approval before the permission mode, then scope checked again when used      |
 | Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
 | MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |
 | Agent and child-agent tools       | Shared catalog policy    | Same kernel suspension and result envelope                                          |
@@ -46,6 +48,14 @@ request that reaches anything more still asks. Grants last until SideKick restar
 other conversations, and are recorded in the audit, including the requests they covered. A
 conversation waiting on an approval is marked in the sidebar, counted on the taskbar or dock icon,
 and announced by a notification when SideKick is not in front.
+
+## Stored credentials
+
+A call that uses a [stored credential](CREDENTIALS.md) asks as that credential says, every use or
+the first use in each chat, in every permission mode including Full access. Its card names the
+credential, where it is sent and how; approving it approves the whole call. **Allow for this chat**
+is offered only for credentials set to ask once per chat, and covers the same credential with the
+same host. A use outside the credential's scope is refused without asking.
 
 ## Changes to SideKick itself
 

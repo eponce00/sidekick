@@ -4718,6 +4718,19 @@ body[data-theme='light'] .tool-approval-command {
   color: var(--error);
 }
 
+/* A fact, such as where a credential is sent, reads as text; its label stays aligned. */
+.agent-interaction-fact dt {
+  min-width: 64px;
+  color: var(--text-secondary);
+  font: 600 var(--text-xs) / 1.45 var(--font-sans);
+}
+
+.agent-interaction-fact dd {
+  color: var(--text-primary);
+  font: var(--text-xs) / 1.45 var(--font-sans);
+  overflow-wrap: anywhere;
+}
+
 .agent-interaction-change ins {
   color: var(--color-success);
   text-decoration: none;
