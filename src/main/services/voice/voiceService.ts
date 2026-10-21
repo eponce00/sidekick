@@ -15,7 +15,12 @@ import {
   type SpeechOptions
 } from '../../../shared/voice'
 import { detectSpeechLanguage, speakableParagraphs, speechChunks } from '../../../shared/voiceText'
-import { SUPERSEDED_VOICE_FOLDERS, VOICE_MODELS, VoiceModelStore } from './voiceModels'
+import {
+  SUPERSEDED_VOICE_FOLDERS,
+  VOICE_MODELS,
+  VoiceModelStore,
+  type VoiceModelManifest
+} from './voiceModels'
 
 /** The slice of sherpa-onnx-node this service uses. */
 export interface SherpaModule {
@@ -178,10 +183,11 @@ const DEFAULT_RETRY_DELAYS = [60_000, 5 * 60_000, 30 * 60_000]
 
 /**
  * Owns the local speech models: downloads them quietly in the background,
- * loads them on first use, and drops them after a while unused. Dictation
- * finds speech with Silero VAD and transcribes each stretch with Parakeet as
- * the user talks, so stopping leaves only the last stretch to decode.
- * Read-aloud streams Kokoro audio passage by passage.
+ * loads them on first use, and drops them after a while unused. A model an
+ * earlier SideKick downloaded keeps working while its replacement downloads.
+ * Dictation finds speech with Silero VAD and transcribes each stretch with
+ * Parakeet Ultra as the user talks, so stopping leaves only the last stretch to
+ * decode. Read-aloud streams Kokoro audio passage by passage.
  */
 export class VoiceService {
   private readonly store: VoiceModelStore
@@ -191,10 +197,13 @@ export class VoiceService {
   private readonly retryDelays: number[]
   private readonly idleUnloadMs: number
   private enabled: boolean
+  /** Download state of each current model revision. */
   private models: Record<VoiceModelId, VoiceModelState> = {
     dictation: { status: 'missing', receivedBytes: 0, totalBytes: 0 },
     speech: { status: 'missing', receivedBytes: 0, totalBytes: 0 }
   }
+  /** Installed earlier revisions that serve until the current one has downloaded. */
+  private readonly previous: Partial<Record<VoiceModelId, VoiceModelManifest>> = {}
   private readonly listeners = new Set<(state: VoiceState) => void>()
   private queue: VoiceModelId[] = []
   private active?: { id: VoiceModelId; controller: AbortController }
@@ -203,6 +212,8 @@ export class VoiceService {
   private initialized?: Promise<void>
   private sherpa?: Promise<SherpaModule>
   private recognizer?: Promise<SherpaRecognizer>
+  /** The model folder the recognizer was loaded from. */
+  private recognizerFolder?: string
   private tts?: Promise<SherpaTts>
   private idleTimer?: ReturnType<typeof setTimeout>
   private readonly dictations = new Map<string, DictationSession>()
@@ -230,17 +241,29 @@ export class VoiceService {
   }
 
   private async initialize(): Promise<void> {
+    const unused = [...SUPERSEDED_VOICE_FOLDERS]
     for (const id of DOWNLOAD_ORDER) {
-      this.models[id] = await this.store.initialState(VOICE_MODELS[id]).catch(() => ({
+      const manifest = VOICE_MODELS[id]
+      this.models[id] = await this.store.initialState(manifest).catch(() => ({
         status: 'missing' as const,
         receivedBytes: 0,
         totalBytes: 0
       }))
+      const replaced = manifest.replaces
+      if (!replaced) continue
+      if (
+        this.models[id].status !== 'ready' &&
+        (await this.store.isInstalled(replaced).catch(() => false))
+      ) {
+        this.previous[id] = replaced
+      } else {
+        // Replaced, or never finished downloading: it will not be used again.
+        unused.push(replaced.folder)
+      }
     }
     this.queue = DOWNLOAD_ORDER.filter((id) => this.models[id].status !== 'ready')
     this.publish()
-    // The voice an earlier SideKick read with is no longer used; its download goes.
-    for (const folder of SUPERSEDED_VOICE_FOLDERS) {
+    for (const folder of unused) {
       await this.store.removeFolder(folder).catch(() => undefined)
     }
   }
@@ -250,7 +273,32 @@ export class VoiceService {
   }
 
   state(): VoiceState {
-    return { enabled: this.enabled, models: structuredClone(this.models) }
+    const models = structuredClone(this.models)
+    // A model that keeps working while its replacement downloads is updated quietly.
+    for (const id of DOWNLOAD_ORDER) {
+      if (!this.previous[id]) continue
+      models[id] = {
+        status: 'ready',
+        receivedBytes: models[id].totalBytes,
+        totalBytes: models[id].totalBytes
+      }
+    }
+    return { enabled: this.enabled, models }
+  }
+
+  /** The installed revision of a model to load: the current one, or the one it replaces. */
+  private serving(id: VoiceModelId): VoiceModelManifest {
+    return this.previous[id] ?? VOICE_MODELS[id]
+  }
+
+  /** Switches to a revision that just downloaded and deletes the one it replaces. */
+  private async retire(id: VoiceModelId): Promise<void> {
+    const replaced = this.previous[id]
+    if (!replaced) return
+    delete this.previous[id]
+    // A recognizer still reading the old files finishes first; once loaded, it no longer needs them.
+    if (id === 'dictation') await this.recognizer?.catch(() => undefined)
+    await this.store.removeFolder(replaced.folder).catch(() => undefined)
   }
 
   onState(listener: (state: VoiceState) => void): () => void {
@@ -326,6 +374,7 @@ export class VoiceService {
       .then(() => {
         this.retryAttempt = 0
         this.setModel(id, { status: 'ready', receivedBytes: this.models[id].totalBytes })
+        void this.retire(id)
       })
       .catch((error: Error) => {
         if (controller.signal.aborted) {
@@ -354,7 +403,7 @@ export class VoiceService {
       }
     }
     const model = this.models[id]
-    if (model.status === 'ready') return { ok: true }
+    if (model.status === 'ready' || this.previous[id]) return { ok: true }
     this.prioritize(id)
     const percent = Math.floor(
       (model.totalBytes ? model.receivedBytes / model.totalBytes : 0) * 100
@@ -391,8 +440,14 @@ export class VoiceService {
   }
 
   private loadRecognizer(): Promise<SherpaRecognizer> {
-    const manifest = VOICE_MODELS.dictation
-    this.recognizer ??= this.module()
+    const manifest = this.serving('dictation')
+    // A newly downloaded revision takes over between dictations, never in the middle of one.
+    if (this.recognizer && this.recognizerFolder !== manifest.folder && !this.dictations.size) {
+      this.recognizer = undefined
+    }
+    if (this.recognizer) return this.recognizer
+    this.recognizerFolder = manifest.folder
+    const loading: Promise<SherpaRecognizer> = this.module()
       .then((sherpa) =>
         sherpa.OfflineRecognizer.createAsync({
           featConfig: { sampleRate: VOICE_SAMPLE_RATE, featureDim: 80 },
@@ -411,10 +466,11 @@ export class VoiceService {
         })
       )
       .catch((error) => {
-        this.recognizer = undefined
+        if (this.recognizer === loading) this.recognizer = undefined
         throw error
       })
-    return this.recognizer
+    this.recognizer = loading
+    return loading
   }
 
   private loadTts(): Promise<SherpaTts> {
@@ -466,7 +522,7 @@ export class VoiceService {
       const vad = new sherpa.Vad(
         {
           sileroVad: {
-            model: this.store.path(VOICE_MODELS.dictation, 'silero_vad.onnx'),
+            model: this.store.path(this.serving('dictation'), 'silero_vad.onnx'),
             threshold: 0.45,
             minSilenceDuration: 0.5,
             minSpeechDuration: 0.2,

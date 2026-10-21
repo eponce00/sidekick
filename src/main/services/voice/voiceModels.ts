@@ -18,56 +18,99 @@ export interface VoiceModelManifest {
   /** Folder under the models root; a new revision downloads beside the old one. */
   folder: string
   files: VoiceModelFile[]
+  /**
+   * The revision an earlier SideKick downloaded. Where it is installed it keeps working until
+   * this one has downloaded, and is deleted then.
+   */
+  replaces?: Omit<VoiceModelManifest, 'replaces'>
 }
 
+// SideKick's own conversion: scripts/build-dictation-model.py, docs/development/VOICE_MODELS.md.
+const PARAKEET_ULTRA =
+  'https://huggingface.co/erponce/sherpa-onnx-parakeet-ultra-tdt-0.6b-v3-int8/resolve/a2d3be97d0b5d3f01a5cf5829d25bcf690aa1be9'
 const PARAKEET =
   'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78'
 const KOKORO =
   'https://huggingface.co/csukuangfj/kokoro-multi-lang-v1_0/resolve/f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b'
 
+const SILERO_VAD: VoiceModelFile = {
+  name: 'silero_vad.onnx',
+  url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx',
+  size: 643_854,
+  sha256: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6'
+}
+
 /**
  * Pinned to exact revisions and hashes: a model that changes upstream is
- * refused rather than loaded. Parakeet TDT 0.6B v3 (CC-BY-4.0, NVIDIA) for
- * dictation with Silero VAD (MIT) to find speech; Kokoro 82M v1.0 (Apache-2.0,
- * hexgrad) to read replies aloud, with the espeak-ng data (GPL-3.0) for the
- * languages it reads.
+ * refused rather than loaded. Moondream Parakeet Ultra (CC-BY-4.0), a
+ * post-trained NVIDIA Parakeet TDT 0.6B v3 (CC-BY-4.0) that SideKick converts
+ * and quantizes, for dictation with Silero VAD (MIT) to find speech; Kokoro 82M
+ * v1.0 (Apache-2.0, hexgrad) to read replies aloud, with the espeak-ng data
+ * (GPL-3.0) for the languages it reads.
  */
 export const VOICE_MODELS: Record<VoiceModelId, VoiceModelManifest> = {
   dictation: {
     id: 'dictation',
-    folder: 'parakeet-tdt-0.6b-v3-int8',
+    folder: 'parakeet-ultra-tdt-0.6b-v3-int8',
     files: [
       {
         name: 'encoder.int8.onnx',
-        url: `${PARAKEET}/encoder.int8.onnx`,
-        size: 652_184_281,
-        sha256: 'acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247'
+        url: `${PARAKEET_ULTRA}/encoder.int8.onnx`,
+        size: 630_748_061,
+        sha256: '677ec8e965d3319f7094548231a56efe4c08b16f90fddd064db2de277dcb6325'
       },
       {
         name: 'decoder.int8.onnx',
-        url: `${PARAKEET}/decoder.int8.onnx`,
-        size: 11_845_275,
-        sha256: '179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e'
+        url: `${PARAKEET_ULTRA}/decoder.int8.onnx`,
+        size: 47_658_545,
+        sha256: 'bd806df64c71fce9269769d825da80542c2761b946be4fafa30e0dabdb85025a'
       },
       {
         name: 'joiner.int8.onnx',
-        url: `${PARAKEET}/joiner.int8.onnx`,
-        size: 6_355_277,
-        sha256: '3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3'
+        url: `${PARAKEET_ULTRA}/joiner.int8.onnx`,
+        size: 6_123_465,
+        sha256: 'd90a4d2a41a081c6255b19a5b102fd7289feb648374a1e745392380781e1578f'
       },
       {
         name: 'tokens.txt',
-        url: `${PARAKEET}/tokens.txt`,
+        url: `${PARAKEET_ULTRA}/tokens.txt`,
         size: 93_939,
         sha256: 'd58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d'
       },
-      {
-        name: 'silero_vad.onnx',
-        url: 'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx',
-        size: 643_854,
-        sha256: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6'
-      }
-    ]
+      SILERO_VAD
+    ],
+    // NVIDIA's model, as k2-fsa converted it. SideKick 0.17.0 and earlier dictated with it.
+    replaces: {
+      id: 'dictation',
+      folder: 'parakeet-tdt-0.6b-v3-int8',
+      files: [
+        {
+          name: 'encoder.int8.onnx',
+          url: `${PARAKEET}/encoder.int8.onnx`,
+          size: 652_184_281,
+          sha256: 'acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247'
+        },
+        {
+          name: 'decoder.int8.onnx',
+          url: `${PARAKEET}/decoder.int8.onnx`,
+          size: 11_845_275,
+          sha256: '179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e'
+        },
+        {
+          name: 'joiner.int8.onnx',
+          url: `${PARAKEET}/joiner.int8.onnx`,
+          size: 6_355_277,
+          sha256: '3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3'
+        },
+        {
+          name: 'tokens.txt',
+          url: `${PARAKEET}/tokens.txt`,
+          size: 93_939,
+          sha256: 'd58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d'
+        },
+        SILERO_VAD
+      ]
+    }
   },
   speech: {
     id: 'speech',

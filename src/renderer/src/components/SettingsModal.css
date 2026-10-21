@@ -499,6 +499,22 @@
   line-height: 1.45;
 }
 
+.settings-row-description a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.settings-row-description a:hover {
+  color: var(--text-primary);
+}
+
+.settings-row-description a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-xs);
+}
+
 .settings-row-control {
   grid-area: control;
   min-width: 0;

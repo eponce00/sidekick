@@ -41,11 +41,15 @@ describe('VoiceModelStore', () => {
 
   it('pins every shipped model file to a size and hash', () => {
     for (const model of Object.values(VOICE_MODELS)) {
-      for (const file of model.files) {
-        expect(file.url).toMatch(/^https:\/\/(huggingface\.co|github\.com)\//)
+      for (const file of [...model.files, ...(model.replaces?.files ?? [])]) {
+        expect(file.url).toMatch(
+          /^https:\/\/(huggingface\.co|github\.com)\/.+\/(resolve\/[0-9a-f]{40}|releases\/download)\//
+        )
         expect(file.sha256).toMatch(/^[0-9a-f]{64}$/)
         expect(file.size).toBeGreaterThan(0)
       }
+      // A new revision downloads beside the one it replaces, which keeps working meanwhile.
+      if (model.replaces) expect(model.replaces.folder).not.toBe(model.folder)
     }
   })
 

@@ -42,6 +42,7 @@ behavior, and the development guide when testing or publishing it.
 - [Releases](development/RELEASES.md) — permanent zero-cost distribution, packaging, provenance, and release checks.
 - [Code signing policy](development/CODE_SIGNING.md) — what is signed through SignPath Foundation, by whom, and how.
 - [Reference repositories](development/REFERENCES.md) — upstream research and attribution policy.
+- [Voice models](development/VOICE_MODELS.md) — where the speech models come from, how the dictation model is built, and how to replace one.
 - [Contributing](../CONTRIBUTING.md) — development setup, change requirements, and pull requests.
 - [Privacy](../PRIVACY.md) — local data, external service boundaries, retention, and deletion.
 - [Security policy](../SECURITY.md) — private vulnerability reporting and supported versions.

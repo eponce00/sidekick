@@ -61,14 +61,22 @@ allow SideKick under the system's microphone privacy settings.
 ## Setup
 
 The speech models download quietly in the background shortly after SideKick starts: about
-670 MB for dictation and 360 MB for read-aloud. Downloads resume after an interruption and are
+690 MB for dictation and 360 MB for read-aloud. Downloads resume after an interruption and are
 checked against pinned hashes before use. Until a model is ready its button shows a progress
 ring, and clicking it moves that model to the front of the download.
 
+When an update brings a new model, the one already downloaded keeps working until the new one has
+downloaded. SideKick then deletes the old one.
+
 ## Models
 
-- Dictation: [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
-  CC BY 4.0, with [Silero VAD](https://github.com/snakers4/silero-vad) to find speech.
+- Dictation: [Parakeet Ultra](https://huggingface.co/moondream/parakeet-ultra) by Moondream, a
+  post-trained version of
+  [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3). Both are
+  licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). SideKick converted
+  the model to ONNX and quantized it to 8 bits; the
+  [converted files](https://huggingface.co/erponce/sherpa-onnx-parakeet-ultra-tdt-0.6b-v3-int8)
+  carry the same license. [Silero VAD](https://github.com/snakers4/silero-vad) finds speech.
 - Read aloud: [Kokoro 82M v1.0](https://huggingface.co/hexgrad/Kokoro-82M), Apache 2.0, with
   [espeak-ng](https://github.com/espeak-ng/espeak-ng) data (GPL-3.0) for pronunciation.
 
