@@ -37,15 +37,19 @@ credential by its alias. SideKick adds the value itself, so the agent, the chat 
 provider never see it. You decide:
 
 - **Hosts**: where it may be sent, over HTTPS only. A host matches exactly, port included;
-  `*.example.com` covers that domain's subdomains. A request to any other host, or over plain HTTP,
-  is refused before anything is sent, and the agent is told you can add the host here.
+  `*.example.com` covers that domain's subdomains. A wildcard over a suffix anyone can register
+  under, such as `*.co.uk` or `*.github.io`, is refused. A request to any other host, or over plain
+  HTTP, is refused before anything is sent, and the agent is told you can add the host here.
 - **Sent as**: a header (such as `Authorization` with `Bearer ` before the value, or `X-Api-Key`),
   a query parameter, a form field, a JSON field, or, for a sign-in, Basic authentication. The agent
-  cannot choose a different place, and cannot set that header or field itself.
+  cannot choose a different place, and cannot set that header, parameter or field itself, in any
+  letter case, nor the body's type when the value goes in the body.
 - **Tokens it returns may go to**: some services exchange a secret for a short-lived access token,
   as Microsoft's sign-in endpoint does for Partner Center. When a request that used the credential
   returns one, the agent gets an alias such as `partner-center~1` instead, usable only with the
-  hosts you list here, only in that chat, and for at most an hour.
+  hosts you list here, only until the reply that received it ends, and for at most an hour. If
+  SideKick cannot tell whether such a response holds a token it could not replace, the agent gets
+  the status and headers but not the body.
 
 `http_request` never follows a redirect, so a response cannot lead a credential to another host;
 the agent sees where the redirect points and can make a new request.

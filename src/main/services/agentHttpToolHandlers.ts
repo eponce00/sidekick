@@ -4,6 +4,7 @@ import type { CredentialSend } from '../../shared/credentials'
 import { HTTP_REQUEST_METHODS, HTTP_REQUEST_TOOL } from '../../shared/httpRequestTool'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { browserNetworkApprovals, type BrowserNetworkPolicy } from './browserNetworkApprovals'
+import { aliasResponseTokens } from './credentialResponseTokens'
 import type { CredentialUses } from './credentialUses'
 import type { ToolOutputStore } from './toolOutputStore'
 import { requestAdmitted, webNetworkRefusal, type WebNetworkOptions } from './webNetworkGuard'
@@ -40,9 +41,6 @@ const SHOWN_HEADERS = [
   'x-ratelimit-remaining',
   'x-ratelimit-reset'
 ]
-/** Response fields that hold a token derived from the credential the request used. */
-const TOKEN_FIELDS = new Set(['access_token', 'refresh_token', 'id_token'])
-
 function invalid(title: string, message: string) {
   return toolExecutionFailed({ title, code: 'invalid_arguments', message, retryable: false })
 }
@@ -68,43 +66,23 @@ function textual(contentType: string): boolean {
 }
 
 /**
- * Replaces tokens a credential's response returned with aliases the agent passes back, so the
- * new bearer token is as hidden as the secret that obtained it.
+ * Decodes a response by its byte-order mark, then its declared charset, then as UTF-8. Text in an
+ * encoding SideKick misreads would show a token in a form the redactor does not know.
  */
-function replaceTokens(
-  value: unknown,
-  derive: (token: string, expiresIn?: number) => string,
-  expiresIn?: number,
-  depth = 0
-): { value: unknown; replaced: string[] } {
-  if (!value || typeof value !== 'object' || depth > 3) return { value, replaced: [] }
-  const replaced: string[] = []
-  if (Array.isArray(value)) {
-    return {
-      value: value.map((item) => {
-        const result = replaceTokens(item, derive, undefined, depth + 1)
-        replaced.push(...result.replaced)
-        return result.value
-      }),
-      replaced
-    }
+function decodeBody(bytes: Buffer, contentType: string): string {
+  let charset = /charset\s*=\s*"?([\w.:-]+)/i.exec(contentType)?.[1] ?? 'utf-8'
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) charset = 'utf-8'
+  else if (bytes[0] === 0xff && bytes[1] === 0xfe) charset = 'utf-16le'
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) charset = 'utf-16be'
+  try {
+    return new TextDecoder(charset).decode(bytes)
+  } catch {
+    return new TextDecoder('utf-8').decode(bytes)
   }
-  const record = value as Record<string, unknown>
-  const ownExpiry = typeof record.expires_in === 'number' ? record.expires_in : expiresIn
-  const next: Record<string, unknown> = {}
-  for (const [key, item] of Object.entries(record)) {
-    if (TOKEN_FIELDS.has(key.toLowerCase()) && typeof item === 'string' && item) {
-      const alias = derive(item, key.toLowerCase() === 'access_token' ? ownExpiry : undefined)
-      replaced.push(alias)
-      next[key] = alias
-    } else {
-      const result = replaceTokens(item, derive, ownExpiry, depth + 1)
-      replaced.push(...result.replaced)
-      next[key] = result.value
-    }
-  }
-  return { value: next, replaced }
 }
+
+const sameName = (names: Iterable<string>, name: string): string | undefined =>
+  [...names].find((item) => item.toLowerCase() === name.toLowerCase())
 
 interface Body {
   kind: 'none' | 'raw' | 'json' | 'form'
@@ -113,7 +91,10 @@ interface Body {
   form?: Record<string, string>
 }
 
-/** Puts the credential where its entry says, refusing anything the model already set there. */
+/**
+ * Puts the credential where its entry says, refusing anything the model already set there in any
+ * letter case, and any header that would change how the server reads the part holding the value.
+ */
 function place(
   send: CredentialSend,
   values: { secret?: string; username?: string; password?: string },
@@ -122,8 +103,10 @@ function place(
   body: Body
 ): string | null {
   const secret = values.secret ?? values.password ?? ''
-  const headerSet = (name: string): boolean =>
-    Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase())
+  const headerSet = (name: string): boolean => sameName(Object.keys(headers), name) !== undefined
+  if (headerSet('Content-Encoding')) {
+    return 'Leave out the Content-Encoding header in a request that uses a credential.'
+  }
   switch (send.as) {
     case 'header':
       if (headerSet(send.name)) return `Leave out the ${send.name} header; SideKick sets it.`
@@ -133,20 +116,23 @@ function place(
       if (headerSet('Authorization')) return 'Leave out the Authorization header; SideKick sets it.'
       headers.Authorization = `Basic ${Buffer.from(`${values.username ?? ''}:${values.password ?? ''}`).toString('base64')}`
       return null
-    case 'query':
-      if (url.searchParams.has(send.name)) {
-        return `Leave out the ${send.name} query parameter; SideKick sets it.`
-      }
+    case 'query': {
+      const taken = sameName(url.searchParams.keys(), send.name)
+      if (taken) return `Leave out the ${taken} query parameter; SideKick sets ${send.name}.`
       url.searchParams.set(send.name, secret)
       return null
+    }
     case 'form':
     case 'json': {
       const names = [send.name, ...(send.usernameName ? [send.usernameName] : [])]
       if (body.kind !== 'none' && body.kind !== send.as) {
         return `This credential is sent as a ${send.as === 'form' ? 'form' : 'JSON'} field; send the other fields in ${send.as}.`
       }
+      if (headerSet('Content-Type')) {
+        return 'Leave out the Content-Type header; SideKick sets it for the body that holds the credential.'
+      }
       const fields: Record<string, unknown> = (send.as === 'form' ? body.form : body.json) ?? {}
-      const taken = names.find((name) => name in fields)
+      const taken = names.map((name) => sameName(Object.keys(fields), name)).find(Boolean)
       if (taken) return `Leave out the ${taken} field; SideKick sets it.`
       fields[send.name] = secret
       if (send.usernameName) fields[send.usernameName] = values.username ?? ''
@@ -226,7 +212,8 @@ export function registerHttpToolHandlers(
         kind: 'web',
         target: url.href,
         conversationId: context.conversationId,
-        runId: context.runId
+        runId: context.runId,
+        toolCallId: context.toolCallId
       })
       if (!taken.ok) {
         return toolExecutionFailed({
@@ -266,6 +253,7 @@ export function registerHttpToolHandlers(
     }
     if (!lower.includes('user-agent')) headers['User-Agent'] = 'SideKick'
 
+    // A deadline for the whole exchange: a server that trickles a reply never goes quiet.
     const timeout = Math.max(1, Math.min(120, Number(args.timeout) || 30)) * 1_000
     let response: AxiosResponse<ArrayBuffer>
     try {
@@ -293,6 +281,14 @@ export function registerHttpToolHandlers(
           retryable: false
         })
       }
+      if (!context.signal.aborted && (error as { code?: unknown })?.code === 'ERR_CANCELED') {
+        return toolExecutionFailed({
+          title,
+          code: 'timeout',
+          message: `The request did not finish within ${timeout / 1_000} seconds.`,
+          retryable: true
+        })
+      }
       // Only the message: an HTTP client error object carries the request, credential included.
       const message = error instanceof Error ? error.message : 'The request failed'
       return toolExecutionFailed({
@@ -307,33 +303,38 @@ export function registerHttpToolHandlers(
     const contentType = String(responseHeaders['content-type'] ?? '')
     const bytes = Buffer.from(response.data ?? new ArrayBuffer(0))
     let text = textual(contentType)
-      ? bytes.toString('utf8')
+      ? decodeBody(bytes, contentType)
       : `[${bytes.byteLength} bytes of ${contentType || 'binary content'}]`
+    let location =
+      responseHeaders.location !== undefined ? String(responseHeaders.location) : undefined
     let tokens: string[] = []
-    if (usedAlias && /json/i.test(contentType)) {
-      try {
-        const uses = options.credentials?.()
-        const parsed = JSON.parse(text) as unknown
-        if (uses) {
-          const result = replaceTokens(parsed, (token, expiresIn) =>
-            uses.addDerived(usedAlias!, context.conversationId, token, expiresIn)
-          )
-          if (result.replaced.length) {
-            tokens = result.replaced
-            text = JSON.stringify(result.value, null, 2)
-          }
+    let note = ''
+    if (usedAlias) {
+      const uses = options.credentials?.()
+      const aliased = aliasResponseTokens(
+        { body: textual(contentType) ? text : '', contentType, location },
+        (token, expiresIn) => {
+          if (!uses) throw new Error('Stored credentials are unavailable.')
+          return uses.addDerived(usedAlias!, context.runId, token, expiresIn)
         }
-      } catch {
-        // Not JSON after all; the redactor still hides the credential itself.
+      )
+      if (aliased.ok) {
+        if (textual(contentType)) text = aliased.body
+        location = aliased.location
+        tokens = aliased.tokens
+        if (tokens.length) {
+          note = `\nTokens in this response are aliases: pass ${tokens.join(', ')} as credential to use them until this reply ends.`
+        }
+      } else {
+        text = `[SideKick withheld the response body because ${aliased.reason}.]`
+        location = undefined
       }
     }
-    const shown = SHOWN_HEADERS.flatMap((name) =>
-      responseHeaders[name] !== undefined ? [`${name}: ${String(responseHeaders[name])}`] : []
-    )
+    const shown = SHOWN_HEADERS.flatMap((name) => {
+      const value = name === 'location' ? location : responseHeaders[name]
+      return value !== undefined ? [`${name}: ${String(value)}`] : []
+    })
     const status = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`
-    const note = tokens.length
-      ? `\nTokens in this response are aliases: pass ${tokens.join(', ')} as credential to use them.`
-      : ''
     const bounded = await options.outputs.apply(
       `${status}\n${shown.join('\n')}${note}\n\n${method === 'HEAD' ? '' : text}`
     )

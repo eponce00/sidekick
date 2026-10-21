@@ -634,11 +634,17 @@ export class AgentToolRuntime {
             ? credentialApprovalFor(uses, credentialRequestsFor(name, args, context))
             : undefined
         },
+        credentialApproved: (name, args, context) => {
+          for (const request of credentialRequestsFor(name, args, context)) {
+            this.credentials?.uses?.permit(request)
+          }
+        },
         credentialDenied: (name, args, context) => {
           for (const request of credentialRequestsFor(name, args, context)) {
             this.credentials?.uses?.denied(request)
           }
         },
+        releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
         ...(this.browser
           ? {
               reserveBrowserHumanTakeover: (conversationId: string) =>

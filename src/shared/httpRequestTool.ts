@@ -10,7 +10,7 @@ export const httpRequestTool: AgentToolDefinition = {
   function: {
     name: HTTP_REQUEST_TOOL,
     description:
-      "Send one HTTP request to an API and read the response. Use web_fetch to read a web page instead. To authenticate with a credential the user stored, pass its alias as credential: SideKick adds the value where the user set it up, only over HTTPS to that credential's hosts, and you never see it. Never put a key, token or password in headers, the URL or the body yourself. Redirects are not followed; the response says where one points. Tokens in the response to a request that used a credential come back as aliases such as name~1, which you pass as credential in later requests.",
+      "Send one HTTP request to an API and read the response. Use web_fetch to read a web page instead. To authenticate with a credential the user stored, pass its alias as credential: SideKick adds the value where the user set it up, only over HTTPS to that credential's hosts, and you never see it. Never put a key, token or password in headers, the URL or the body yourself. Redirects are not followed; the response says where one points. Tokens in the response to a request that used a credential come back as aliases such as name~1, which you pass as credential in later requests during this reply.",
     parameters: {
       type: 'object',
       required: ['method', 'url'],

@@ -142,20 +142,34 @@ export interface AgentKernelToolRouter {
   reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
   releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
   /**
-   * The approval a call that names a stored credential needs. Undefined when it names none, or
-   * one its scope does not allow here: the tool refuses that use itself, without asking.
+   * The approval a call that names a stored credential needs, or why the call is refused when its
+   * scope does not allow that use here. Undefined when it names none.
    */
   credentialApproval?: (
     name: string,
     args: Record<string, unknown>,
-    context: { conversationId: string; runId: string }
-  ) => AgentCredentialApproval | undefined
+    context: AgentCredentialContext
+  ) => AgentCredentialApproval | { refused: string } | undefined
+  /** The call was approved; only an approved call is given the credentials it names. */
+  credentialApproved?: (
+    name: string,
+    args: Record<string, unknown>,
+    context: AgentCredentialContext
+  ) => void
   /** Records that the user refused a credential use. */
   credentialDenied?: (
     name: string,
     args: Record<string, unknown>,
-    context: { conversationId: string; runId: string }
+    context: AgentCredentialContext
   ) => void
+  /** The run ended: what it was given for its own use, such as returned tokens, lapses. */
+  releaseRun?: (runId: string) => void
+}
+
+export interface AgentCredentialContext {
+  conversationId: string
+  runId: string
+  toolCallId: string
 }
 
 /** What a call that uses a credential shows before it runs. */
@@ -594,6 +608,11 @@ export class AgentRunKernel {
     const controller = new AbortController()
     const promise = this.execute(input, controller.signal).finally(() => {
       if (this.active.get(input.id)?.controller === controller) this.active.delete(input.id)
+      try {
+        input.toolRouter.releaseRun?.(input.id)
+      } catch (error) {
+        console.warn('[AgentRun] Could not release what the run was given:', error)
+      }
       // A message the run ended before taking stays with the caller, who sends it next.
       this.steers.delete(input.id)
       for (const [id, pending] of this.pendingResolvers) {
@@ -1076,7 +1095,24 @@ The user approved this exact plan revision. Act capabilities are now available a
     call: AgentToolCall,
     title: string,
     signal: AbortSignal
-  ): Promise<'approved' | 'denied' | 'denied_stop'> {
+  ): Promise<'approved' | 'denied' | 'denied_stop' | { refused: string }> {
+    const decision = await this.decideTool(input, call, title, signal)
+    if (decision === 'approved') {
+      input.toolRouter.credentialApproved?.(call.name, call.arguments, {
+        conversationId: input.threadId,
+        runId: input.id,
+        toolCallId: call.id
+      })
+    }
+    return decision
+  }
+
+  private async decideTool(
+    input: StartAgentKernelRunInput,
+    call: AgentToolCall,
+    title: string,
+    signal: AbortSignal
+  ): Promise<'approved' | 'denied' | 'denied_stop' | { refused: string }> {
     const catalog = currentCatalog(input)
     const credential = await this.authorizeCredential(input, call, title, signal)
     if (credential !== 'unasked') return credential
@@ -1156,17 +1192,20 @@ The user approved this exact plan revision. Act capabilities are now available a
   /**
    * A stored credential's own approval setting applies before the permission mode, so it asks
    * even in Full access. Its card stands for the whole call: once approved, the call needs no
-   * second approval. `unasked` lets the usual policy decide, as when the entry never asks.
+   * second approval. A use outside scope is refused here, before any card, whatever the mode.
+   * `unasked` lets the usual policy decide, as when the entry never asks.
    */
   private async authorizeCredential(
     input: StartAgentKernelRunInput,
     call: AgentToolCall,
     title: string,
     signal: AbortSignal
-  ): Promise<'approved' | 'denied' | 'denied_stop' | 'unasked'> {
-    const context = { conversationId: input.threadId, runId: input.id }
+  ): Promise<'approved' | 'denied' | 'denied_stop' | 'unasked' | { refused: string }> {
+    const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
     const credential = input.toolRouter.credentialApproval?.(call.name, call.arguments, context)
-    if (!credential || credential.ask === 'never') return 'unasked'
+    if (!credential) return 'unasked'
+    if ('refused' in credential) return { refused: credential.refused }
+    if (credential.ask === 'never') return 'unasked'
     const grants = this.chatGrants.get(input.threadId)
     if (credential.ask === 'once_per_chat' && credential.keys.every((key) => grants?.has(key))) {
       return 'unasked'
@@ -2311,15 +2350,26 @@ The user approved this exact plan revision. Act capabilities are now available a
                 (await this.authorizeTool(input, call, title, signal))) !== 'approved'
             ) {
               stopAfterDenial = authorization === 'denied_stop'
-              result = toolExecutionFailed({
-                title,
-                code: 'permission_denied',
-                message: stopAfterDenial
-                  ? 'Operation denied by the user, who also stopped the run'
-                  : 'Operation denied by the user',
-                status: 'denied',
-                startedAt
-              })
+              result =
+                typeof authorization === 'object'
+                  ? toolExecutionFailed({
+                      title,
+                      code: 'permission_denied',
+                      message: authorization.refused,
+                      status: 'denied',
+                      retryable: false,
+                      recoveryAction: 'change_strategy',
+                      startedAt
+                    })
+                  : toolExecutionFailed({
+                      title,
+                      code: 'permission_denied',
+                      message: stopAfterDenial
+                        ? 'Operation denied by the user, who also stopped the run'
+                        : 'Operation denied by the user',
+                      status: 'denied',
+                      startedAt
+                    })
             } else {
               result = await runPrepared(item)
             }

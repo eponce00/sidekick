@@ -6,6 +6,7 @@ import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
 import {
   admitWebUrl,
   getAdmitted,
+  requestAdmitted,
   resolveAdmitted,
   webNetworkRefusal,
   WebNetworkRefusal,
@@ -362,5 +363,102 @@ describe('getAdmitted', () => {
     const error = await get('/secret', {}, 'rebind.test').catch((caught: unknown) => caught)
     expect(error).not.toBeInstanceOf(WebNetworkRefusal)
     expect(webNetworkRefusal(error)).toBeInstanceOf(WebNetworkRefusal)
+  })
+})
+
+describe('requestAdmitted', () => {
+  let server: Server
+  let port = 0
+  const hits: string[] = []
+  const trickles = new Set<NodeJS.Timeout>()
+  const names: Record<string, string[]> = { 'public.test': ['127.0.0.1'] }
+  const network = (extra: WebNetworkOptions = {}): WebNetworkOptions => ({
+    resolve: async (hostname) =>
+      (names[hostname] ?? []).map((address) => ({
+        address,
+        family: address.includes(':') ? 6 : 4
+      })),
+    addressKind: (address) => (address === '127.0.0.1' ? 'public' : networkAddressKind(address)),
+    ...extra
+  })
+
+  beforeAll(async () => {
+    server = createServer((request, response) => {
+      hits.push(`${request.method} ${request.url}`)
+      if (request.url === '/redirect') {
+        response.writeHead(302, { location: `http://public.test:${port}/landed` }).end()
+        return
+      }
+      if (request.url === '/trickle') {
+        // A reply that never goes quiet for long, so only a deadline for the whole exchange ends it.
+        response.writeHead(200, { 'content-type': 'text/plain' })
+        const timer = setInterval(() => response.write('.'), 50)
+        trickles.add(timer)
+        response.on('close', () => clearInterval(timer))
+        return
+      }
+      response.writeHead(200, { 'content-type': 'text/plain' }).end(`read ${request.url}`)
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    port = (server.address() as AddressInfo).port
+  })
+
+  afterAll(() => {
+    for (const timer of trickles) clearInterval(timer)
+    server.closeAllConnections()
+    return new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+
+  beforeEach(() => {
+    hits.length = 0
+  })
+
+  it('hands back a redirect instead of following it', async () => {
+    const response = await requestAdmitted<string>(
+      new URL(`http://public.test:${port}/redirect`),
+      { method: 'POST', data: 'x', responseType: 'text' },
+      network()
+    )
+    expect(response.status).toBe(302)
+    expect(response.headers.location).toBe(`http://public.test:${port}/landed`)
+    expect(hits).toEqual(['POST /redirect'])
+  })
+
+  it('refuses a name that resolves into the local network or to this computer', async () => {
+    names['rebind.test'] = ['10.255.255.1']
+    names['loop.test'] = ['::1']
+    expect(
+      await refusal(
+        requestAdmitted(new URL(`http://rebind.test:${port}/secret`), { method: 'GET' }, network())
+      )
+    ).toMatch(/into the local network/)
+    expect(
+      await refusal(
+        requestAdmitted(new URL(`http://loop.test:${port}/secret`), { method: 'GET' }, network())
+      )
+    ).toMatch(/on this computer/)
+    expect(hits).toEqual([])
+  })
+
+  it('never reaches this computer by its loopback address', async () => {
+    const ask = policy(true)
+    for (const address of [`http://127.0.0.1:${port}/x`, `http://localhost:${port}/x`]) {
+      expect(
+        await refusal(requestAdmitted(new URL(address), { method: 'GET' }, { policy: ask }))
+      ).toMatch(/on this computer/)
+    }
+    expect(ask.approve).not.toHaveBeenCalled()
+    expect(hits).toEqual([])
+  })
+
+  it('stops a reply that trickles past the deadline', async () => {
+    const started = Date.now()
+    const error = await requestAdmitted(
+      new URL(`http://public.test:${port}/trickle`),
+      { method: 'GET', timeout: 300, responseType: 'text' },
+      network()
+    ).catch((caught: unknown) => caught)
+    expect((error as { code?: string }).code).toBe('ERR_CANCELED')
+    expect(Date.now() - started).toBeLessThan(3_000)
   })
 })

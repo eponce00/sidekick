@@ -1,7 +1,8 @@
 /**
  * How a tool uses a stored credential: whether the call needs the user's approval first, and, at
  * the moment the tool sends a request or starts a process, the values, after checking scope again.
- * Every use, denial and refusal is audited by alias and target, never by value.
+ * Values go only to a call the kernel approved for exactly that use. Every use, denial and refusal
+ * is audited by alias and target, never by value.
  */
 import type { AgentApprovalPreview } from '../../shared/agentRuntime'
 import {
@@ -29,6 +30,13 @@ export interface CredentialUseRequest {
   target: string
   conversationId?: string
   runId?: string
+  /** Set by the tool registry from the call, never from its arguments. */
+  toolCallId?: string
+}
+
+/** A use the kernel refuses before the call runs, without asking anyone. */
+export interface CredentialRefusal {
+  refused: string
 }
 
 /** What the kernel shows before a call that names a credential runs. */
@@ -63,7 +71,7 @@ export interface CredentialStore {
 interface DerivedToken {
   alias: string
   parentAlias: string
-  conversationId: string | undefined
+  runId: string
   value: string
   expiresAt: number
 }
@@ -77,8 +85,23 @@ export function credentialWebTarget(url: URL): string {
   return `${url.protocol}//${url.host}${url.pathname}`
 }
 
+/** One approved use: the run, the call, the alias and the address it was approved for. */
+function permitKey(request: CredentialUseRequest): string | undefined {
+  if (!request.runId || !request.toolCallId) return undefined
+  let target: string
+  try {
+    target = new URL(request.target).href
+  } catch {
+    return undefined
+  }
+  return JSON.stringify([request.runId, request.toolCallId, request.kind, request.alias, target])
+}
+
 export class CredentialUses {
   private readonly derived = new Map<string, DerivedToken>()
+  /** Tokens that expired or whose run ended, still redacted until SideKick restarts. */
+  private readonly retiredDerived: Array<{ alias: string; value: string }> = []
+  private readonly permits = new Set<string>()
   private derivedCount = 0
 
   constructor(
@@ -97,15 +120,24 @@ export class CredentialUses {
     const token = this.derived.get(alias)
     if (!token) return undefined
     if (token.expiresAt > this.now()) return token
-    this.derived.delete(alias)
-    this.publishDerived()
+    this.retire([token])
     return undefined
   }
 
+  /** A token stops working but stays redacted: the model must not learn it later from output. */
+  private retire(tokens: readonly DerivedToken[]): void {
+    for (const token of tokens) {
+      this.derived.delete(token.alias)
+      this.retiredDerived.push({ alias: token.alias, value: token.value })
+    }
+    if (tokens.length) this.publishDerived()
+  }
+
   private publishDerived(): void {
-    this.store.setTransientSecrets(
-      [...this.derived.values()].map(({ alias, value }) => ({ alias, value }))
-    )
+    this.store.setTransientSecrets([
+      ...[...this.derived.values()].map(({ alias, value }) => ({ alias, value })),
+      ...this.retiredDerived
+    ])
   }
 
   /**
@@ -127,10 +159,10 @@ export class CredentialUses {
     if (derivedMatch) {
       const token = this.liveDerived(request.alias)
       const parent = this.find(derivedMatch[1])
-      if (!token || !parent || token.conversationId !== request.conversationId) {
+      if (!token || !parent || !request.runId || token.runId !== request.runId) {
         return {
           ok: false,
-          message: `${request.alias} is not a token this chat received, or it has expired. Request a new one.`
+          message: `${request.alias} is not a token this reply received, or it has expired. Request a new one.`
         }
       }
       const refusal = credentialScopeRefusal(parent, this.useContext(request.conversationId))
@@ -186,12 +218,20 @@ export class CredentialUses {
   }
 
   /**
-   * The approval a call needs before it runs, or undefined when it names no usable credential: a
-   * use outside scope is refused by the tool itself, with the reason, and never asked about.
+   * The approval a call needs before it runs, or the reason it is refused: a use outside scope is
+   * refused then, never asked about, so no approval card can stand in for it.
    */
-  approval(request: CredentialUseRequest): CredentialApproval | undefined {
+  approval(request: CredentialUseRequest): CredentialApproval | CredentialRefusal {
     const checked = this.check(request)
-    if (!checked.ok) return undefined
+    if (!checked.ok) {
+      if (checked.credential) {
+        this.store.record('refused', checked.credential, {
+          ...this.details(request),
+          detail: checked.message
+        })
+      }
+      return { refused: checked.message }
+    }
     const { credential, target } = checked
     const send = credential.scope.web!.send
     const where = credentialWebTarget(target)
@@ -218,21 +258,39 @@ export class CredentialUses {
     }
   }
 
-  /** The values for a use about to happen, checked again now; records the use or refusal. */
-  take(request: CredentialUseRequest): CredentialTake {
-    const checked = this.check(request)
-    const details = {
+  private details(request: CredentialUseRequest) {
+    let target: string | undefined
+    try {
+      target = credentialWebTarget(new URL(request.target))
+    } catch {
+      target = undefined
+    }
+    return {
       tool: request.tool,
-      target: (() => {
-        try {
-          return credentialWebTarget(new URL(request.target))
-        } catch {
-          return undefined
-        }
-      })(),
+      target,
       conversationId: request.conversationId,
       runId: request.runId
     }
+  }
+
+  /** The kernel approved this use for this call; `take` hands values only to approved uses. */
+  permit(request: CredentialUseRequest): void {
+    const key = permitKey(request)
+    if (key) this.permits.add(key)
+  }
+
+  /** The values for an approved use about to happen, checked again now; records the outcome. */
+  take(request: CredentialUseRequest): CredentialTake {
+    const key = permitKey(request)
+    const permitted = key !== undefined && this.permits.delete(key)
+    const checked: ReturnType<CredentialUses['check']> = permitted
+      ? this.check(request)
+      : {
+          ok: false,
+          credential: this.find(DERIVED_ALIAS.exec(request.alias)?.[1] ?? request.alias),
+          message: `SideKick did not approve ${request.alias} for this call. Make the call again.`
+        }
+    const details = this.details(request)
     if (!checked.ok) {
       if (checked.credential) {
         this.store.record('refused', checked.credential, { ...details, detail: checked.message })
@@ -269,30 +327,23 @@ export class CredentialUses {
     const parent = DERIVED_ALIAS.exec(request.alias)?.[1] ?? request.alias
     const credential = this.find(parent)
     if (!credential) return
-    let target: string | undefined
-    try {
-      target = credentialWebTarget(new URL(request.target))
-    } catch {
-      target = undefined
+    this.store.record('denied', credential, this.details(request))
+  }
+
+  /** A run ended: its returned tokens stop working, and approvals it did not use lapse. */
+  releaseRun(runId: string): void {
+    for (const key of this.permits) {
+      if ((JSON.parse(key) as string[])[0] === runId) this.permits.delete(key)
     }
-    this.store.record('denied', credential, {
-      tool: request.tool,
-      target,
-      conversationId: request.conversationId,
-      runId: request.runId
-    })
+    this.retire([...this.derived.values()].filter((token) => token.runId === runId))
   }
 
   /**
-   * Keeps a token a request returned under a new alias, usable only in this chat, only with its
-   * entry's token hosts, and redacted like a stored value until it expires.
+   * Keeps a token a request returned under a new alias, usable only in this run, only with its
+   * entry's token hosts, and redacted like a stored value until SideKick restarts.
    */
-  addDerived(
-    parentAlias: string,
-    conversationId: string | undefined,
-    value: string,
-    expiresInSeconds?: number
-  ): string {
+  addDerived(parentAlias: string, runId: string, value: string, expiresInSeconds?: number): string {
+    if (!runId) throw new Error('A returned token needs the run that received it.')
     const alias = `${parentAlias}~${++this.derivedCount}`
     const lifetime =
       typeof expiresInSeconds === 'number' && expiresInSeconds > 0
@@ -301,7 +352,7 @@ export class CredentialUses {
     this.derived.set(alias, {
       alias,
       parentAlias,
-      conversationId,
+      runId,
       value,
       expiresAt: this.now() + lifetime
     })
@@ -314,7 +365,7 @@ export class CredentialUses {
 export function credentialRequestsFor(
   name: string,
   args: Record<string, unknown>,
-  context: { conversationId?: string; runId?: string }
+  context: { conversationId?: string; runId?: string; toolCallId?: string }
 ): CredentialUseRequest[] {
   if (name === 'http_request' && typeof args.credential === 'string' && args.credential.trim()) {
     return [
@@ -338,16 +389,18 @@ const ASK_STRICTNESS: Record<CredentialAskPolicy, number> = {
 
 /**
  * One approval for every credential a call uses: the strictest setting decides, and a chat grant
- * must cover each of them. Uses outside scope are left to the tool, which refuses them.
+ * must cover each of them. One use outside scope refuses the whole call.
  */
 export function credentialApprovalFor(
   uses: CredentialUses,
   requests: readonly CredentialUseRequest[]
-): CredentialApproval | undefined {
-  const approvals = requests.flatMap((request) => {
+): CredentialApproval | CredentialRefusal | undefined {
+  const approvals: CredentialApproval[] = []
+  for (const request of requests) {
     const approval = uses.approval(request)
-    return approval ? [approval] : []
-  })
+    if ('refused' in approval) return approval
+    approvals.push(approval)
+  }
   if (!approvals.length) return undefined
   if (approvals.length === 1) return approvals[0]
   const ask = approvals.reduce<CredentialAskPolicy>(

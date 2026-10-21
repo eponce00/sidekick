@@ -230,6 +230,7 @@ export async function getAdmitted<T>(
 /**
  * Sends one request of any method under the network policy. It never follows a redirect: the
  * caller gets the redirect response, so a request carrying a credential cannot be led elsewhere.
+ * `config.timeout` bounds the whole exchange once admitted, not only a quiet connection.
  */
 export async function requestAdmitted<T>(
   url: URL,
@@ -238,6 +239,11 @@ export async function requestAdmitted<T>(
 ): Promise<AxiosResponse<T>> {
   const admission = await admitWebUrl(url, options)
   const lookup = admittedLookup(admission, options)
+  const deadline = config.timeout ? AbortSignal.timeout(config.timeout) : undefined
+  const signal =
+    deadline && options.signal
+      ? AbortSignal.any([options.signal, deadline])
+      : (deadline ?? options.signal)
   return axios.request<T>({
     ...config,
     url: url.href,
@@ -246,7 +252,7 @@ export async function requestAdmitted<T>(
     httpsAgent: new HttpsAgent({ keepAlive: false, lookup }),
     proxy: false,
     maxRedirects: 0,
-    signal: options.signal,
+    signal,
     validateStatus: () => true
   })
 }

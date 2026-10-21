@@ -7,6 +7,7 @@ import {
   type CredentialUseContext
 } from '../../shared/credentials'
 import { revealWindow } from '../bootstrap/windowActivation'
+import { publicSuffixWildcardRefusal } from '../services/credentialPublicSuffix'
 import { CredentialUnavailableError } from '../services/credentialVault'
 import { getCredentialVault } from '../services/credentialVaultInstance'
 import { showTrustedDialog } from '../services/trustedDialog'
@@ -67,6 +68,8 @@ export function registerCredentialHandlers(): void {
     if (id && !existing) return { ok: false, error: 'That credential no longer exists.' }
     const validated = validateCredentialInput(raw, existing)
     if ('error' in validated) return { ok: false, error: validated.error }
+    const suffix = publicSuffixWildcardRefusal(validated.input.scope)
+    if (suffix) return { ok: false, error: suffix }
     // The renderer is not trusted to widen where a stored value may go on its own.
     const widening = vault.widening(validated.input)
     if (widening.length) {
