@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.1 — 2026-10-21
+
+- Keep each chat's summary again, so a long chat no longer compacts at the start of every run.
+  Since 0.16.3 an installed copy could not save a summary, so each run summarized the whole chat
+  again; a schedule could not save whether it continues its last chat either.
+
 ## 0.17.0 — 2026-10-21
 
 - Store API keys and sign-ins in **Settings → Credentials** and let the agent use them by name
