@@ -8,7 +8,7 @@ export const CREDENTIALS_LIST_TOOL = 'credentials_list'
 export const CREDENTIALS_REQUEST_TOOL = 'credentials_request'
 
 /** The tools that take a credential's alias and add its value themselves. */
-export const CREDENTIAL_CONSUMER_TOOLS: readonly string[] = ['http_request']
+export const CREDENTIAL_CONSUMER_TOOLS: readonly string[] = ['http_request', 'shell']
 
 export const credentialsListTool: AgentToolDefinition = {
   type: 'function',

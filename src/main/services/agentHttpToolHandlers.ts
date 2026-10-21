@@ -225,6 +225,7 @@ export function registerHttpToolHandlers(
           recoveryAction: 'change_strategy'
         })
       }
+      if (!taken.send) return invalid(title, `${alias} cannot be sent in a web request.`)
       const refusal = place(taken.send, taken.values, url, headers, body)
       if (refusal) return invalid(title, refusal)
       usedAlias = alias.replace(/~\d+$/, '')

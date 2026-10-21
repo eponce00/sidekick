@@ -1,8 +1,8 @@
 # Credentials the agent can use but not read
 
 Status: design note. The vault, the Settings page, the agent's list and request tools, the audit,
-redaction, and API calls with a credential (`http_request`, approvals and returned tokens) have
-shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
+redaction, API calls with a credential (`http_request`, approvals and returned tokens) and
+commands that receive one in an environment variable have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
 and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
 still open.
 
@@ -98,15 +98,8 @@ entries change.
 `http_request`, its approvals and returned tokens are described in
 [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
-**Commands.** A command that receives a value can reveal it, so the agent can in effect read any
-value it passes to a command. Settings says so on the entry, and commands ask every time by default.
-The variable is added after `shellChildEnvironment` removes secret-looking names inherited from
-SideKick's own environment, and reaches every process the command starts. Variable names that
-change what runs (`PATH`, `NODE_OPTIONS`, `LD_*`, `DYLD_*`, `PSModulePath`, `ComSpec` and similar)
-are refused. In the Docker shell, which has no network, the variable is passed by name, so the
-value never appears on the `docker` command line. Background commands keep it for their lifetime.
-`send_command_input` accepts no credentials; a program prompting for a password is answered by the
-user.
+Commands that receive a credential are described in
+[Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
 ### Scope and approval
 
@@ -269,7 +262,7 @@ Each phase is one pull request with its tests and, when it ships, user documenta
    `credentials_request`, the audit, and redaction at every output source and the provider
    boundary.
 2. **API calls** (shipped). `http_request` with host scope, approvals and returned tokens.
-3. **Commands.** The `shell` `secrets` argument, command scope and allowed programs.
+3. **Commands** (shipped). The `shell` `secrets` argument, command scope and allowed programs.
 4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.
 5. **Later.** MCP server environments and arguments from entries, one-time codes, an OAuth
    client-credentials kind, and answering a waiting command prompt with a credential the user

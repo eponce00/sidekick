@@ -39,6 +39,22 @@ describe('isolated shell launch policy', () => {
     expect(launch.args.join(' ')).not.toContain('fixture-secret')
     expect(launch.args.join(' ')).not.toContain('SIDEKICK_SKILLS=')
   })
+  it('passes a stored credential into the container by name, never by value', async () => {
+    const launch = await isolatedShellProcess({
+      ...input(),
+      env: { PC_SECRET: 'fixture-credential' },
+      secretNames: ['PC_SECRET']
+    })
+    const env = launch.args.indexOf('PC_SECRET')
+    expect(launch.args[env - 1]).toBe('--env')
+    expect(launch.args.join(' ')).not.toContain('fixture-credential')
+    await expect(
+      isolatedShellProcess({ ...input(), env: {}, secretNames: ['MISSING'] })
+    ).rejects.toThrow(/credential variable/)
+    await expect(
+      isolatedShellProcess({ ...input(), env: { 'A=B': 'x' }, secretNames: ['A=B'] })
+    ).rejects.toThrow(/credential variable/)
+  })
   it.each([
     root,
     resolve('resources'),

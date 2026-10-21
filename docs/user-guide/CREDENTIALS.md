@@ -19,6 +19,7 @@ Open **Settings → Credentials** and choose **Add credential**.
 | **Ask before each use**             | Every use, the first use in each chat, or never within its scope. It applies in every permission mode, including Full access.                                                                                                                                |
 | **Projects**                        | All projects, or only chats in the projects you pick.                                                                                                                                                                                                        |
 | **Use in web requests**             | Lets the agent's `http_request` tool add the credential to API calls; see [Web requests](#web-requests).                                                                                                                                                     |
+| **Use in commands**                 | Lets the agent put the credential in an environment variable of a command it runs; see [Commands](#commands).                                                                                                                                                |
 | **Allow in background runs**        | Whether chats a schedule or another chat started may use it. Off by default, since nobody may be watching them.                                                                                                                                              |
 
 A secret or password must be at least 4 characters, and one under 8 characters is saved with a
@@ -58,6 +59,36 @@ Before a credential is used, SideKick asks as the entry says: every use, or the 
 chat, where **Allow for this chat** covers the same credential with the same host. The approval
 names the credential, where it goes and how, and it asks even in Full access. An entry set to never
 ask follows your permission mode like any other request.
+
+## Commands
+
+With **Use in commands** on, the agent can run a command with the credential in an environment
+variable, such as `msstore publish --clientSecret $env:PC_SECRET`. SideKick sets the variable
+itself, so the value never appears in the command, the process list, the chat or the Terminal's
+record of what ran. For a sign-in, the agent names `alias.username` or `alias.password`.
+
+A command that receives a value can print it, save it, or send it anywhere, and SideKick hides the
+value only as typed, not in a form the command changed it into. So you choose which commands may
+have it:
+
+- **Any command, asking every time**: each command that uses the credential shows SideKick's
+  approval with the full command, whatever the entry's **Ask before each use** says. Read the
+  command before allowing it.
+- **Only these programs**: commands of the programs you list, such as `gh`, `az` or `msstore`,
+  follow **Ask before each use**. Each must be one simple command that runs the program by name:
+  no `;`, `&&`, pipes, redirection, subshells, script blocks, or a path to the program. Shells and
+  interpreters such as `bash`, `pwsh`, `node` and `python`, launchers such as `npx` and `sudo`,
+  and `ssh` cannot be listed, because they run whatever they are given. A program like `curl` can
+  be listed, but it can send the value anywhere.
+
+A command never receives a credential when its program would run a file inside the project, such
+as a `gh.cmd` placed there, instead of the program installed on this computer.
+
+Variables that change how commands run, such as `PATH`, `NODE_OPTIONS` or `LD_PRELOAD`, cannot
+hold a credential. The variable reaches everything the command starts, and a background command
+keeps it until it ends. In the [Docker shell](PERMISSIONS.md#optional-isolated-shell), which has no
+network, the variable is passed into the container by name. A program that prompts for a password
+is answered by you; the agent cannot type a credential into it.
 
 ## What the agent sees
 

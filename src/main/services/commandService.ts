@@ -20,6 +20,11 @@ export interface CommandServiceRunInput {
   cwd?: string
   timeoutSecs?: number
   background?: boolean
+  /**
+   * Stored credentials for this command, by environment variable. They are added after the
+   * ambient environment is stripped of secret-looking names, and reach only this command.
+   */
+  secretEnvironment?: Record<string, string>
   signal?: AbortSignal
   onOutput?: (data: { commandId: string; chunk: string; stream: 'stdout' | 'stderr' }) => void
 }
@@ -298,7 +303,10 @@ export class CommandService {
         'Background commands are not supported in isolated mode; run a bounded foreground command'
       )
     if (input.background) return this.startBackground(id, cwd, input)
-    const env = this.shellEnvironment(input.runId, input.workspaceRoot)
+    const env = {
+      ...this.shellEnvironment(input.runId, input.workspaceRoot),
+      ...input.secretEnvironment
+    }
     const sandbox = isolate
       ? await isolatedShellProcess({
           id,
@@ -307,6 +315,7 @@ export class CommandService {
           command: input.command,
           timeoutSecs: input.timeoutSecs,
           env,
+          secretNames: Object.keys(input.secretEnvironment ?? {}),
           skillAssetsPath: this.skillAssetsPath
         })
       : undefined
@@ -481,7 +490,10 @@ export class CommandService {
         cwd,
         timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 3_600)) * 1_000,
         outputPath: this.outputPath(id),
-        env: this.shellEnvironment(input.runId, input.workspaceRoot),
+        env: {
+          ...this.shellEnvironment(input.runId, input.workspaceRoot),
+          ...input.secretEnvironment
+        },
         terminal: this.terminalEnabled(),
         onStart: ({ pty }) => this.openSession(id, cwd, input, true, pty),
         onOutput: (data) => this.terminals.append(id, data.chunk)

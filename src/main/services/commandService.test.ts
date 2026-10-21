@@ -5,6 +5,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { applyDatabaseSchema } from '../bootstrap/database'
 import { CommandService, projectRelativeCommandCwd, shellChildEnvironment } from './commandService'
+import { credentialRedactor } from './credentialRedaction'
 
 const cleanup: Array<() => Promise<void> | void> = []
 
@@ -75,6 +76,42 @@ describe('CommandService', () => {
     })
     expect('success' in result && result.success).toBe(true)
     expect('stdout' in result && result.stdout.trim()).toBe(await realpath(root))
+  })
+
+  it('gives a stored credential to its command alone, past the ambient filter, and hides it', async () => {
+    const { root, service } = await setup()
+    const value = `generated${Date.now().toString(36)}value`
+    const print =
+      process.platform === 'win32' ? 'Write-Output "key=$env:PC_SECRET"' : 'printf "key=$PC_SECRET"'
+    // PC_SECRET looks like a secret, so only the credential path can put it there.
+    const plain = await service.execute({
+      runId: 'run-secret-plain',
+      title: 'Print key',
+      command: print,
+      workspaceRoot: root,
+      secretEnvironment: { PC_SECRET: value }
+    })
+    expect('stdout' in plain && plain.stdout).toContain(`key=${value}`)
+
+    credentialRedactor.setSecrets([{ alias: 'partner-center', value }])
+    cleanup.push(() => credentialRedactor.setSecrets([]))
+    const hidden = await service.execute({
+      runId: 'run-secret-hidden',
+      title: 'Print key',
+      command: print,
+      workspaceRoot: root,
+      secretEnvironment: { PC_SECRET: value }
+    })
+    expect('stdout' in hidden && hidden.stdout).toContain('key=[secret: partner-center]')
+    expect(JSON.stringify(hidden)).not.toContain(value)
+
+    const other = await service.execute({
+      runId: 'run-secret-other',
+      title: 'Print key',
+      command: print,
+      workspaceRoot: root
+    })
+    expect('stdout' in other && other.stdout.trim()).toBe('key=')
   })
 
   it('accepts an absolute cwd when it resolves inside the active project', async () => {

@@ -3,6 +3,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  SquareTerminal,
   KeyRound,
   Pencil,
   Plus,
@@ -16,8 +17,10 @@ import {
   MIN_CREDENTIAL_VALUE,
   SHORT_CREDENTIAL_VALUE,
   defaultCredentialScope,
+  describeCredentialCommands,
   describeCredentialSend,
   type CredentialAskPolicy,
+  type CredentialCommandScope,
   type CredentialEvent,
   type CredentialKind,
   type CredentialRequest,
@@ -40,6 +43,12 @@ interface WebDraft {
   send: CredentialSend
 }
 
+/** Command settings as typed; the program list stays text until saved. */
+interface CommandsDraft {
+  mode: CredentialCommandScope['mode']
+  programs: string
+}
+
 interface Draft {
   id?: string
   alias: string
@@ -47,8 +56,9 @@ interface Draft {
   description: string
   usernameVisible: boolean
   ask: CredentialAskPolicy
-  scope: Omit<CredentialScope, 'web'>
+  scope: Omit<CredentialScope, 'web' | 'commands'>
   web: WebDraft | null
+  commands: CommandsDraft | null
   values: CredentialValues
   /** The description the agent suggested when it asked for this credential. */
   suggestedDescription?: string
@@ -77,12 +87,13 @@ function newDraft(request?: CredentialRequest | null): Draft {
     ask: 'once_per_chat',
     scope: defaultCredentialScope(),
     web: null,
+    commands: null,
     values: {}
   }
 }
 
 function draftFrom(credential: CredentialSummary): Draft {
-  const { web, ...scope } = credential.scope
+  const { web, commands, ...scope } = credential.scope
   return {
     id: credential.id,
     alias: credential.alias,
@@ -94,6 +105,7 @@ function draftFrom(credential: CredentialSummary): Draft {
     web: web
       ? { hosts: web.hosts.join(', '), tokenHosts: web.tokenHosts.join(', '), send: web.send }
       : null,
+    commands: commands ? { mode: commands.mode, programs: commands.programs.join(', ') } : null,
     values: {}
   }
 }
@@ -348,6 +360,13 @@ function scopeSummary(credential: CredentialSummary): string {
     parts.push(`${count} project${count === 1 ? '' : 's'}`)
   }
   if (credential.scope.web) parts.push(`web: ${credential.scope.web.hosts.join(', ')}`)
+  if (credential.scope.commands) {
+    parts.push(
+      credential.scope.commands.mode === 'ask'
+        ? 'commands ask every time'
+        : `commands: ${credential.scope.commands.programs.join(', ')}`
+    )
+  }
   if (credential.scope.background) parts.push('background runs')
   parts.push(credential.lastUsedAt ? `used ${relativeTime(credential.lastUsedAt)}` : 'never used')
   return parts.join(' · ')
@@ -448,6 +467,15 @@ export function CredentialSettings({
                   hosts: hostList(draft.web.hosts),
                   tokenHosts: hostList(draft.web.tokenHosts),
                   send: draft.web.send
+                }
+              }
+            : {}),
+          ...(draft.commands
+            ? {
+                commands: {
+                  mode: draft.commands.mode,
+                  programs:
+                    draft.commands.mode === 'programs' ? hostList(draft.commands.programs) : []
                 }
               }
             : {})
@@ -685,6 +713,68 @@ export function CredentialSettings({
         />
         {draft.web && (
           <WebScopeFields kind={draft.kind} web={draft.web} onChange={(web) => update({ web })} />
+        )}
+        <ToggleField
+          icon={SquareTerminal}
+          label="Use in commands"
+          hint={
+            draft.commands
+              ? draft.commands.mode === 'ask'
+                ? 'The agent can put it in an environment variable of a command; SideKick asks before every command.'
+                : `Only ${describeCredentialCommands({ mode: 'programs', programs: hostList(draft.commands.programs) })}.`
+              : 'Lets the agent put it in an environment variable of a command it runs.'
+          }
+          checked={Boolean(draft.commands)}
+          onChange={(enabled) =>
+            update({ commands: enabled ? { mode: 'ask', programs: '' } : null })
+          }
+        />
+        {draft.commands && (
+          <div className="credential-web">
+            <p className="credential-warning credential-command-warning">
+              A command that receives a value can print it, save it, or send it anywhere. Output
+              hides the value as typed, not in a form the command changed it into.
+            </p>
+            <label className="modern-field" htmlFor={`${controlId}-commands`}>
+              <span>Which commands</span>
+              <Select
+                id={`${controlId}-commands`}
+                value={draft.commands.mode}
+                onChange={(event) =>
+                  update({
+                    commands: {
+                      ...draft.commands!,
+                      mode: event.target.value as CredentialCommandScope['mode']
+                    }
+                  })
+                }
+              >
+                <option value="ask">Any command, asking every time</option>
+                <option value="programs">Only these programs</option>
+              </Select>
+            </label>
+            {draft.commands.mode === 'programs' && (
+              <label className="modern-field" htmlFor={`${controlId}-programs`}>
+                <span>
+                  Programs <em>one simple command each; shells and interpreters are refused</em>
+                </span>
+                <input
+                  id={`${controlId}-programs`}
+                  className="credential-alias-input"
+                  value={draft.commands.programs}
+                  placeholder="gh, az, msstore"
+                  spellCheck={false}
+                  onChange={(event) =>
+                    update({ commands: { ...draft.commands!, programs: event.target.value } })
+                  }
+                />
+                <small>
+                  These follow Ask before each use above. Name tools you trust with the value: a
+                  program like curl can send it anywhere.
+                </small>
+              </label>
+            )}
+          </div>
         )}
         <ToggleField
           label="Allow in background runs"

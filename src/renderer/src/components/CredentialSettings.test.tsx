@@ -192,3 +192,19 @@ it('saves where a credential may be sent in web requests', async () => {
     })
   )
 })
+
+it('saves which commands may receive a credential, warning that a command can reveal it', async () => {
+  await act(async () => root.render(<CredentialSettings />))
+  await act(async () => button('Edit partner-center').click())
+  const toggle = Array.from(container.querySelectorAll('label.settings-toggle-row')).find((row) =>
+    row.textContent?.includes('Use in commands')
+  )!
+  await act(async () => (toggle as HTMLLabelElement).click())
+  expect(container.textContent).toContain('A command that receives a value can print it')
+  await act(async () => button('Save credential').click())
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({
+      scope: expect.objectContaining({ commands: { mode: 'ask', programs: [] } })
+    })
+  )
+})

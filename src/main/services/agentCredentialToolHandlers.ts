@@ -8,6 +8,7 @@ import {
   CREDENTIAL_ALIAS_PATTERN,
   CREDENTIAL_ASK_LABELS,
   MAX_CREDENTIAL_DESCRIPTION,
+  describeCredentialCommands,
   describeCredentialSend,
   credentialScopeRefusal,
   type CredentialRequest,
@@ -42,6 +43,9 @@ function describe(credential: CredentialSummary, context: CredentialUseContext |
           sent: describeCredentialSend(credential.scope.web.send),
           returned_tokens_to: credential.scope.web.tokenHosts
         }
+      : 'not allowed',
+    commands: credential.scope.commands
+      ? describeCredentialCommands(credential.scope.commands)
       : 'not allowed',
     usable_in_this_chat: refusal === null,
     ...(refusal ? { not_usable_because: refusal } : {}),

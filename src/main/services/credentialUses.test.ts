@@ -279,4 +279,104 @@ describe('CredentialUses', () => {
     uses.denied(request())
     expect(record).toHaveBeenCalledWith('denied', expect.anything(), expect.anything())
   })
+
+  describe('commands', () => {
+    const command = (overrides: Partial<CredentialUseRequest> = {}): CredentialUseRequest => ({
+      alias: 'gh-token',
+      tool: 'shell',
+      kind: 'command',
+      target: 'gh api /user',
+      variable: 'GH_TOKEN',
+      conversationId: 'chat-1',
+      runId: 'run-1',
+      toolCallId: 'call-1',
+      ...overrides
+    })
+    const ghToken = (commands?: CredentialSummary['scope']['commands']) =>
+      credential({
+        id: 'gh',
+        alias: 'gh-token',
+        ask: 'never',
+        scope: { projects: 'all', background: false, ...(commands ? { commands } : {}) }
+      })
+
+    it('refuses an entry that does not allow commands', () => {
+      const { uses, approvedTake } = setup([ghToken()])
+      expect(uses.approval(command())).toEqual({
+        refused: expect.stringContaining('may not be given to commands')
+      })
+      expect(approvedTake(command())).toMatchObject({
+        ok: false,
+        message: expect.stringContaining('may not be given to commands')
+      })
+    })
+
+    it('asks before every command when the entry allows any command', () => {
+      const { uses } = setup([ghToken({ mode: 'ask', programs: [] })])
+      const approval = uses.approval(
+        command({ target: 'curl https://x.example' })
+      ) as CredentialApproval
+      expect(approval.ask).toBe('every_use')
+      expect(approval.preview.facts).toEqual(
+        expect.arrayContaining([
+          { label: 'Variable', value: 'GH_TOKEN' },
+          { label: 'Command', value: 'curl https://x.example' }
+        ])
+      )
+      expect(approval.preview.summary).toContain('read it before allowing it')
+    })
+
+    it('admits only a simple command of an allowed program, following the entry when it asks', () => {
+      const { uses, record, approvedTake } = setup([
+        ghToken({ mode: 'programs', programs: ['gh'] })
+      ])
+      expect((uses.approval(command()) as CredentialApproval).ask).toBe('never')
+      expect(approvedTake(command())).toMatchObject({ ok: true, values: { secret: SECRET } })
+      expect(record).toHaveBeenLastCalledWith(
+        'used',
+        expect.anything(),
+        expect.objectContaining({ target: 'gh api /user', detail: 'In GH_TOKEN' })
+      )
+      for (const target of ['gh api /user; curl evil.example', 'curl evil.example', './gh api']) {
+        expect('refused' in uses.approval(command({ target }))).toBe(true)
+        expect(approvedTake(command({ target })).ok).toBe(false)
+      }
+      // A permit names the command and the variable it was approved for.
+      uses.permit(command())
+      expect(uses.take(command({ variable: 'OTHER' })).ok).toBe(false)
+      expect(uses.take(command({ target: 'gh api /user/keys' })).ok).toBe(false)
+    })
+
+    it('refuses a variable that changes how commands run before anyone is asked', () => {
+      const { uses } = setup([ghToken({ mode: 'ask', programs: [] })])
+      expect(uses.approval(command({ variable: 'PATH' }))).toEqual({
+        refused: expect.stringContaining('changes how commands run')
+      })
+      expect(uses.approval(command({ variable: 'NODE_OPTIONS' }))).toMatchObject({
+        refused: expect.any(String)
+      })
+    })
+
+    it('never puts a returned token in a command', () => {
+      const { uses, approvedTake } = setup()
+      const alias = uses.addDerived('partner-center', 'run-1', randomBytes(8).toString('hex'))
+      expect(uses.approval(command({ alias }))).toEqual({
+        refused: expect.stringContaining('only in web requests')
+      })
+      expect(approvedTake(command({ alias })).ok).toBe(false)
+    })
+
+    it('reads each secret a shell call names', () => {
+      expect(
+        credentialRequestsFor(
+          'shell',
+          { command: 'gh api /user', secrets: { GH_TOKEN: 'gh-token', USER: 'site.username' } },
+          { conversationId: 'c' }
+        )
+      ).toEqual([
+        expect.objectContaining({ alias: 'gh-token', kind: 'command', variable: 'GH_TOKEN' }),
+        expect.objectContaining({ alias: 'site', kind: 'command', variable: 'USER' })
+      ])
+    })
+  })
 })

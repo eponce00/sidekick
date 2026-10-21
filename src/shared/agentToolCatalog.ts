@@ -438,6 +438,12 @@ const shell = definition(
       background: {
         type: 'boolean',
         description: 'Run asynchronously and return a task ID. Do not append shell &.'
+      },
+      secrets: {
+        type: 'object',
+        additionalProperties: { type: 'string' },
+        description:
+          'Stored credentials to put in environment variables, as {"VARIABLE": "alias"}; for a sign-in, "alias.username" or "alias.password". Reference the variable in the command ($env:VARIABLE in PowerShell, $VARIABLE in Bash); never write a value. The output never shows it.'
       }
     }
   }

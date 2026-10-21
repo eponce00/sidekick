@@ -109,6 +109,24 @@ a quiet connection. A failed request is reported by its message alone, because a
 object carries the request. A response is decoded by its byte-order mark, then its declared
 charset, then as UTF-8.
 
+**Commands.** `shell` takes `secrets: { VARIABLE: "alias" }` (or `alias.username` /
+`alias.password` for a sign-in). `AgentToolRuntime.commandSecrets` refuses variables that change
+how commands run (`credentialVariableRefusal`: `PATH`, `LD_*`, `DYLD_*`, `NODE_*`, `BASH_ENV`,
+`ComSpec`, `GIT_SSH_COMMAND` and similar), takes each value from `CredentialUses`, and passes them
+to `CommandService` as `secretEnvironment`, added after `shellChildEnvironment` strips
+secret-looking names inherited from SideKick's own environment. The Docker shell passes them with
+`--env NAME`, so Docker reads the value from its own environment. An entry's
+`CredentialCommandScope` is `ask`, where every command asks whatever the entry's setting, or
+`programs`, where `simpleCommandProgram` must find one simple command (no `;`, `&`, `|`,
+redirection, backticks, parentheses, braces or `$(`, in Bash or PowerShell) whose program is a
+bare name on the list; `credentialProgramRefusal` keeps shells, interpreters, launchers and remote
+shells such as `ssh` off it. `CredentialUses` checks the variable name too, so a refused variable
+never reaches an approval card. Before taking any value, `commandSecrets` looks the command's
+program up as the shell would (`resolveProgram`: PATH, and on Windows the working directory first)
+and refuses when it resolves to a file inside the project or the working directory, which the agent
+could have written. A command chat grant is keyed on the entry, the variable and the exact
+command.
+
 **Returned tokens.** `aliasResponseTokens` (`credentialResponseTokens.ts`) reads the response to a
 request that used a credential whatever its content type. Every string under a token-like name
 (`access_token`, `accessToken`, `client_token`, `sessionToken`, `SecretAccessKey`, `password` and
@@ -119,8 +137,9 @@ cannot parse, text in an encoding it cannot read, more than 32 tokens, or a toke
 beside a value that is not an alias (in XML, HTML, a script or any other text) withholds the body
 and the `Location` header. `CredentialUses` keeps the tokens in memory for the run that received
 them, for the response's `expires_in` or at most an hour, and sends them only as
-`Authorization: Bearer` to the entry's token hosts. When a token expires or its run ends, its value
-stays with the redactor, through `CredentialVault.setTransientSecrets`, until SideKick restarts.
+`Authorization: Bearer` to the entry's token hosts, never to a command. When a token expires or its
+run ends, its value stays with the redactor, through `CredentialVault.setTransientSecrets`, until
+SideKick restarts.
 
 ## Redaction
 
