@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, getAgentToolCatalog } from '../../shared/agentToolCatalog'
-import type { CredentialSummary } from '../../shared/credentials'
+import { credentialScopeRefusal, type CredentialSummary } from '../../shared/credentials'
 import {
-  credentialScopeRefusal,
   registerCredentialToolHandlers,
   type CredentialToolAccess
 } from './agentCredentialToolHandlers'

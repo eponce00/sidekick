@@ -1,17 +1,29 @@
 import { useEffect, useId, useMemo, useState } from 'react'
-import { Eye, EyeOff, KeyRound, Pencil, Plus, ShieldAlert, Trash2, UserRound } from 'lucide-react'
+import {
+  Eye,
+  EyeOff,
+  Globe,
+  KeyRound,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  UserRound
+} from 'lucide-react'
 import {
   CREDENTIAL_ASK_LABELS,
   CREDENTIAL_ASK_POLICIES,
   MIN_CREDENTIAL_VALUE,
   SHORT_CREDENTIAL_VALUE,
   defaultCredentialScope,
+  describeCredentialSend,
   type CredentialAskPolicy,
   type CredentialEvent,
   type CredentialKind,
   type CredentialRequest,
   type CredentialSaveInput,
   type CredentialScope,
+  type CredentialSend,
   type CredentialStatus,
   type CredentialSummary,
   type CredentialValues
@@ -21,6 +33,13 @@ import { Select } from './Select'
 import { SettingsEmptyState, SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
 import './CredentialSettings.css'
 
+/** Web request settings as typed: host lists stay text until saved, so typing is not fought. */
+interface WebDraft {
+  hosts: string
+  tokenHosts: string
+  send: CredentialSend
+}
+
 interface Draft {
   id?: string
   alias: string
@@ -28,10 +47,24 @@ interface Draft {
   description: string
   usernameVisible: boolean
   ask: CredentialAskPolicy
-  scope: CredentialScope
+  scope: Omit<CredentialScope, 'web'>
+  web: WebDraft | null
   values: CredentialValues
   /** The description the agent suggested when it asked for this credential. */
   suggestedDescription?: string
+}
+
+function defaultSend(kind: CredentialKind): CredentialSend {
+  return kind === 'sign_in'
+    ? { as: 'basic' }
+    : { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
+}
+
+function hostList(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((host) => host.trim())
+    .filter(Boolean)
 }
 
 function newDraft(request?: CredentialRequest | null): Draft {
@@ -43,11 +76,13 @@ function newDraft(request?: CredentialRequest | null): Draft {
     usernameVisible: false,
     ask: 'once_per_chat',
     scope: defaultCredentialScope(),
+    web: null,
     values: {}
   }
 }
 
 function draftFrom(credential: CredentialSummary): Draft {
+  const { web, ...scope } = credential.scope
   return {
     id: credential.id,
     alias: credential.alias,
@@ -55,9 +90,148 @@ function draftFrom(credential: CredentialSummary): Draft {
     description: credential.description,
     usernameVisible: credential.usernameVisible,
     ask: credential.ask,
-    scope: credential.scope,
+    scope,
+    web: web
+      ? { hosts: web.hosts.join(', '), tokenHosts: web.tokenHosts.join(', '), send: web.send }
+      : null,
     values: {}
   }
+}
+
+const SEND_LABELS: Record<CredentialSend['as'], string> = {
+  header: 'Header',
+  basic: 'Basic authentication',
+  query: 'Query parameter',
+  form: 'Form field',
+  json: 'JSON field'
+}
+
+/** Where the entry may be sent in web requests, and how; the user decides, never the agent. */
+function WebScopeFields({
+  kind,
+  web,
+  onChange
+}: {
+  kind: CredentialKind
+  web: WebDraft
+  onChange: (web: WebDraft) => void
+}): React.JSX.Element {
+  const id = useId()
+  const send = web.send
+  const setSend = (patch: Partial<CredentialSend> & { as?: CredentialSend['as'] }): void =>
+    onChange({ ...web, send: { ...send, ...patch } as CredentialSend })
+  const choices = (Object.keys(SEND_LABELS) as Array<CredentialSend['as']>).filter(
+    (as) => as !== 'basic' || kind === 'sign_in'
+  )
+  return (
+    <div className="credential-web">
+      <label className="modern-field" htmlFor={`${id}-hosts`}>
+        <span>
+          Hosts <em>HTTPS only, exact; *.example.com for subdomains</em>
+        </span>
+        <input
+          id={`${id}-hosts`}
+          className="credential-alias-input"
+          value={web.hosts}
+          placeholder="api.example.com"
+          spellCheck={false}
+          onChange={(event) => onChange({ ...web, hosts: event.target.value })}
+        />
+      </label>
+      <div className="credential-send">
+        <label className="modern-field" htmlFor={`${id}-as`}>
+          <span>Sent as</span>
+          <Select
+            id={`${id}-as`}
+            value={send.as}
+            onChange={(event) => {
+              const as = event.target.value as CredentialSend['as']
+              const next: CredentialSend =
+                as === 'header'
+                  ? { as, name: 'Authorization', prefix: 'Bearer ' }
+                  : as === 'basic'
+                    ? { as }
+                    : as === 'query'
+                      ? { as, name: '' }
+                      : { as, name: '', ...(kind === 'sign_in' ? { usernameName: '' } : {}) }
+              onChange({ ...web, send: next })
+            }}
+          >
+            {choices.map((as) => (
+              <option key={as} value={as}>
+                {SEND_LABELS[as]}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {send.as === 'header' && (
+          <>
+            <label className="modern-field" htmlFor={`${id}-header`}>
+              <span>Header name</span>
+              <input
+                id={`${id}-header`}
+                value={send.name}
+                spellCheck={false}
+                onChange={(event) => setSend({ name: event.target.value })}
+              />
+            </label>
+            <label className="modern-field" htmlFor={`${id}-prefix`}>
+              <span>
+                Before the value <em>optional</em>
+              </span>
+              <input
+                id={`${id}-prefix`}
+                value={send.prefix}
+                spellCheck={false}
+                onChange={(event) => setSend({ prefix: event.target.value })}
+              />
+            </label>
+          </>
+        )}
+        {(send.as === 'query' || send.as === 'form' || send.as === 'json') && (
+          <label className="modern-field" htmlFor={`${id}-field`}>
+            <span>{kind === 'sign_in' ? 'Password field' : 'Field name'}</span>
+            <input
+              id={`${id}-field`}
+              value={send.name}
+              placeholder={send.as === 'query' ? 'api_key' : 'client_secret'}
+              spellCheck={false}
+              onChange={(event) => setSend({ name: event.target.value })}
+            />
+          </label>
+        )}
+        {(send.as === 'form' || send.as === 'json') && kind === 'sign_in' && (
+          <label className="modern-field" htmlFor={`${id}-username-field`}>
+            <span>Username field</span>
+            <input
+              id={`${id}-username-field`}
+              value={send.usernameName ?? ''}
+              placeholder="username"
+              spellCheck={false}
+              onChange={(event) => setSend({ usernameName: event.target.value })}
+            />
+          </label>
+        )}
+      </div>
+      <label className="modern-field" htmlFor={`${id}-token-hosts`}>
+        <span>
+          Tokens it returns may go to <em>optional</em>
+        </span>
+        <input
+          id={`${id}-token-hosts`}
+          className="credential-alias-input"
+          value={web.tokenHosts}
+          placeholder="api.example.com"
+          spellCheck={false}
+          onChange={(event) => onChange({ ...web, tokenHosts: event.target.value })}
+        />
+        <small>
+          When a request with this credential returns an access token, as a sign-in endpoint does,
+          the agent gets an alias for it, usable only with these hosts.
+        </small>
+      </label>
+    </div>
+  )
 }
 
 function relativeTime(at: number): string {
@@ -173,6 +347,7 @@ function scopeSummary(credential: CredentialSummary): string {
     const count = credential.scope.projects.length
     parts.push(`${count} project${count === 1 ? '' : 's'}`)
   }
+  if (credential.scope.web) parts.push(`web: ${credential.scope.web.hosts.join(', ')}`)
   if (credential.scope.background) parts.push('background runs')
   parts.push(credential.lastUsedAt ? `used ${relativeTime(credential.lastUsedAt)}` : 'never used')
   return parts.join(' · ')
@@ -265,7 +440,18 @@ export function CredentialSettings({
         description: draft.description,
         usernameVisible: draft.kind === 'sign_in' && draft.usernameVisible,
         ask: draft.ask,
-        scope: draft.scope,
+        scope: {
+          ...draft.scope,
+          ...(draft.web
+            ? {
+                web: {
+                  hosts: hostList(draft.web.hosts),
+                  tokenHosts: hostList(draft.web.tokenHosts),
+                  send: draft.web.send
+                }
+              }
+            : {})
+        },
         values: draft.values
       }
       const result = await window.api.credentials.save(input)
@@ -324,7 +510,13 @@ export function CredentialSettings({
                 role="radio"
                 aria-checked={draft.kind === kind}
                 className={draft.kind === kind ? 'active' : ''}
-                onClick={() => update({ kind, values: {} })}
+                onClick={() =>
+                  update({
+                    kind,
+                    values: {},
+                    web: draft.web ? { ...draft.web, send: defaultSend(kind) } : null
+                  })
+                }
               >
                 {kind === 'secret' ? <KeyRound size={14} /> : <UserRound size={14} />}
                 {kind === 'secret' ? 'Secret' : 'Sign-in'}
@@ -476,6 +668,24 @@ export function CredentialSettings({
             </div>
           )}
         </SettingsRow>
+        <ToggleField
+          icon={Globe}
+          label="Use in web requests"
+          hint={
+            draft.web
+              ? `Sent ${describeCredentialSend(draft.web.send)}, only to the hosts below, by http_request.`
+              : 'Lets http_request add it to API calls to the hosts you list.'
+          }
+          checked={Boolean(draft.web)}
+          onChange={(enabled) =>
+            update({
+              web: enabled ? { hosts: '', tokenHosts: '', send: defaultSend(draft.kind) } : null
+            })
+          }
+        />
+        {draft.web && (
+          <WebScopeFields kind={draft.kind} web={draft.web} onChange={(web) => update({ web })} />
+        )}
         <ToggleField
           label="Allow in background runs"
           hint="Chats a schedule or another chat started, which nobody may be watching."

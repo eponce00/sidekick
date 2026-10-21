@@ -24,6 +24,7 @@ import {
   settingsReferenceTool
 } from './appSettingsTools'
 import { credentialsListTool, credentialsRequestTool } from './credentialTools'
+import { httpRequestTool } from './httpRequestTool'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
@@ -109,6 +110,10 @@ function presentationTitle(
     return { kind, title: query ? `Search “${query}”` : 'Search the web', subject: query }
   }
   if (name === 'web_fetch') return { kind, title: `Read ${url || 'web page'}`, subject: url }
+  if (name === 'http_request') {
+    const method = stringArgument(args, 'method').toUpperCase() || 'HTTP'
+    return { kind, title: `${method} ${url || 'request'}`.trim(), subject: url }
+  }
   if (name === 'view_image') return { kind, title: `View ${path || 'image'}`, subject: path }
   if (name === 'browser_open') return { kind, title: `Open ${url || 'browser'}`, subject: url }
   if (name === 'browser_navigate')
@@ -1451,6 +1456,12 @@ const coreEntries: AgentToolCatalogEntry[] = [
   entry(webSearch, 'web.search', 'network'),
   entry(webImageSearch, 'web.images', 'network'),
   entry(webFetch, 'web.fetch', 'network'),
+  // Execute risk: a request that changes something asks in the stricter permission modes.
+  entry(httpRequestTool, 'web.request', 'execute', {
+    host: 'main',
+    timeoutMs: 125_000,
+    concurrency: 'exclusive'
+  }),
   ...browserTools.map((tool) =>
     entry(
       tool,
@@ -1525,7 +1536,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'tool.output',
     'settings',
     'sessions',
-    'credentials'
+    'credentials',
+    'web.request'
   ],
   subagent: [
     'workspace.read',

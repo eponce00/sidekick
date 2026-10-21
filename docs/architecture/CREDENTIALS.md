@@ -69,7 +69,58 @@ The `credentials` capability (conversation runs, not planning, not sub-agents or
   that lists credentials reads it. The agent learns only that the editor opened.
 
 `CREDENTIAL_CONSUMER_TOOLS` in `src/shared/credentialTools.ts` names the tools that take an alias and
-add the value themselves; `credentials_list` reports it to the model.
+add the value themselves; `credentials_list` reports it to the model, with each entry's web hosts,
+placement and token hosts.
+
+## Using a credential
+
+The value never enters a tool's arguments. A tool takes an alias in a typed argument, and its
+handler asks `CredentialUses` (`src/main/services/credentialUses.ts`) for the value at the moment it
+sends the request. Arguments, and everything built from them (the run ledger, live previews,
+approval cards, chat grants and the tool's title, which is recomputed from the arguments after
+authorization), hold only the alias.
+
+`CredentialUses` checks every rule each time: the entry exists, `credentialScopeRefusal` admits the
+chat's project and how it was started, and the target is in scope. `take` returns the values and
+records `used`, or records `refused` with the reason the tool returns to the model. Its audit
+target is the URL without its query string, so a value sent as a parameter is never kept.
+
+**Approval.** `credentialRequestsFor` reads the uses a call asks for and `credentialApprovalFor`
+turns them into one `AgentCredentialApproval`. `AgentRunKernel.authorizeCredential` runs before the
+permission policy: an entry that asks every use, or once per chat without a grant yet, suspends the
+run with a permission card whose `preview.facts` name the credential, the target and how it is
+sent. Approving it approves the whole call. A once-per-chat grant is keyed on the entry and the
+target's origin. A use outside scope, including a returned-token alias that does not exist yet, is
+refused at that point with the reason, whatever the permission mode, so no card can stand in for
+it. Once the kernel approves a call, `credentialApproved` gives `CredentialUses` a one-time permit
+for that run, tool call, alias and URL; `take` hands values only to a permitted use and checks
+scope again. Permits a run did not use lapse when it ends. A denial records `denied`.
+
+**`http_request`** (`agentHttpToolHandlers.ts`, capability `web.request`, execute risk with GET and
+HEAD requested as auto) sends one request through `requestAdmitted` in `webNetworkGuard.ts`, the
+same local-network policy as `web_fetch`, and never follows a redirect. With a credential, the
+URL must be HTTPS on one of the entry's hosts (`credentialHostMatches`: exact host and port, or
+`*.domain` for subdomains), and the handler places the value as the entry's `CredentialSend` says:
+a header with a prefix, Basic authentication, a query parameter, or a form or JSON field. It refuses
+a request that already sets that header, parameter or field in any letter case, a
+`Content-Encoding` header, and, when the value goes in the body, a `Content-Type` header: SideKick
+sets the body's type itself. The `timeout` argument is a deadline for the whole exchange, not only
+a quiet connection. A failed request is reported by its message alone, because an HTTP client error
+object carries the request. A response is decoded by its byte-order mark, then its declared
+charset, then as UTF-8.
+
+**Returned tokens.** `aliasResponseTokens` (`credentialResponseTokens.ts`) reads the response to a
+request that used a credential whatever its content type. Every string under a token-like name
+(`access_token`, `accessToken`, `client_token`, `sessionToken`, `SecretAccessKey`, `password` and
+the like, in any case and at any depth, but not paging cursors such as `nextPageToken`) in a JSON
+body, a form-encoded body, or a redirect's `Location` query and fragment, where an authorization
+`code` counts too, is replaced by an alias such as `partner-center~1`. It fails closed: a body it
+cannot parse, text in an encoding it cannot read, more than 32 tokens, or a token-like name left
+beside a value that is not an alias (in XML, HTML, a script or any other text) withholds the body
+and the `Location` header. `CredentialUses` keeps the tokens in memory for the run that received
+them, for the response's `expires_in` or at most an hour, and sends them only as
+`Authorization: Bearer` to the entry's token hosts. When a token expires or its run ends, its value
+stays with the redactor, through `CredentialVault.setTransientSecrets`, until SideKick restarts.
 
 ## Redaction
 

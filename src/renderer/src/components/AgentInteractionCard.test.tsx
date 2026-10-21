@@ -584,6 +584,41 @@ describe('AgentInteractionCard question workflow', () => {
     expect(container.querySelector('.agent-interaction-preview')).toBeNull()
   })
 
+  it('shows where a credential goes as plain facts, without a before and after', async () => {
+    await act(async () =>
+      root.render(
+        <AgentInteractionCard
+          interaction={{
+            id: 'credential',
+            kind: 'permission',
+            status: 'pending',
+            request: {
+              title: 'Use partner-center: GET api.example.com',
+              chatScope: 'partner-center with api.example.com',
+              preview: {
+                summary: 'SideKick adds partner-center to this request itself.',
+                changes: [],
+                facts: [
+                  { label: 'Credential', value: 'partner-center' },
+                  { label: 'Sent to', value: 'https://api.example.com/v1' },
+                  { label: 7, value: 'malformed' }
+                ]
+              }
+            }
+          }}
+          onResolve={vi.fn()}
+        />
+      )
+    )
+    const facts = Array.from(container.querySelectorAll('.agent-interaction-fact'))
+    expect(facts.map((fact) => fact.textContent)).toEqual([
+      'Credentialpartner-center',
+      'Sent tohttps://api.example.com/v1'
+    ])
+    expect(container.querySelector('del')).toBeNull()
+    expect(container.textContent).toContain('Allow for this chat')
+  })
+
   it('shows the recorded decision, reading older responses as allow once or deny', async () => {
     const resolved = (response: Record<string, unknown>) => ({
       id: `permission-${JSON.stringify(response)}`,

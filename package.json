@@ -127,7 +127,8 @@
     "rehype-twemoji": "^0.0.6",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
-    "sherpa-onnx-node": "1.13.8"
+    "sherpa-onnx-node": "1.13.8",
+    "tldts": "^7.0.19"
   },
   "optionalDependencies": {
     "@napi-rs/canvas-darwin-arm64": "1.0.8",

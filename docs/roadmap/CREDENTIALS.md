@@ -1,7 +1,8 @@
 # Credentials the agent can use but not read
 
-Status: design note. The vault, the Settings page, the agent's list and request tools, the audit
-and redaction have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
+Status: design note. The vault, the Settings page, the agent's list and request tools, the audit,
+redaction, and API calls with a credential (`http_request`, approvals and returned tokens) have
+shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
 and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
 still open.
 
@@ -74,12 +75,12 @@ considered and rejected, because it lets the model put a value in a request body
 host publishes back, such as a GitHub issue comment (Fly.io calls this an "echo oracle"), and
 because escaping a value correctly inside JSON, URLs and shell text is error-prone.
 
-| Tool                    | Argument                                     | What SideKick does                                                                                                                                                                                  |
-| ----------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `http_request` (new)    | `credential: "partner-center"`               | Adds the value where the entry says (a header with an optional prefix, Basic authentication for a sign-in, a form or JSON body field, or a query parameter), only for the entry's hosts over HTTPS. |
-| `shell`                 | `secrets: { "PC_SECRET": "partner-center" }` | Puts the value in that environment variable of the command. The command text, the process list and the stored command never contain it.                                                             |
-| `browser_sign_in` (new) | `credential: "github-login"`                 | Fills the sign-in's username and password on the current page if its origin matches; see [Browser sign-in](#browser-sign-in).                                                                       |
-| MCP tools (later)       | Server environments and named arguments      | Lets a server's environment point at an entry instead of holding its own copy.                                                                                                                      |
+| Tool                     | Argument                                     | What SideKick does                                                                                                                                                                                  |
+| ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http_request` (shipped) | `credential: "partner-center"`               | Adds the value where the entry says (a header with an optional prefix, Basic authentication for a sign-in, a form or JSON body field, or a query parameter), only for the entry's hosts over HTTPS. |
+| `shell`                  | `secrets: { "PC_SECRET": "partner-center" }` | Puts the value in that environment variable of the command. The command text, the process list and the stored command never contain it.                                                             |
+| `browser_sign_in` (new)  | `credential: "github-login"`                 | Fills the sign-in's username and password on the current page if its origin matches; see [Browser sign-in](#browser-sign-in).                                                                       |
+| MCP tools (later)        | Server environments and named arguments      | Lets a server's environment point at an entry instead of holding its own copy.                                                                                                                      |
 
 Every other tool, including file writes, messages to other chats, questions to the user, artifacts
 and settings changes, has no way to name a credential. The value never enters a tool's arguments:
@@ -94,21 +95,8 @@ agent login service, whose credential list carries username and origin but has n
 The tools' own descriptions say how credentials work, so the prompt and tool list do not change as
 entries change.
 
-**`http_request`.** `web_fetch` reads pages and takes only a URL, so calling an API needs a new tool
-with method, URL, headers, body and a timeout. It is admitted through `webNetworkGuard` like
-`web_fetch`. A request naming a credential does not follow a redirect to another host: the redirect
-response is returned instead, and a host outside scope is refused rather than sent without the
-credential. The model may not set the header, body field or parameter the entry uses itself. The
-response is bounded and passes through redaction.
-
-**Derived tokens.** A token exchange, such as an OAuth client-credentials request to
-`login.microsoftonline.com`, returns a new bearer token the redactor does not know. GitHub's
-documentation warns about exactly this: a value derived from a secret must be registered as a
-secret too. In the response to a request that used a credential, string fields named like
-`access_token`, `refresh_token` or `id_token` are replaced by run-scoped aliases such as
-`partner-center~1`. They are sent as `Authorization: Bearer` only to the hosts the entry lists for
-returned tokens, and expire with the run. A dedicated OAuth client-credentials kind, where SideKick
-performs the exchange itself as Fly.io's tokenizer does, is a later option.
+`http_request`, its approvals and returned tokens are described in
+[Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
 **Commands.** A command that receives a value can reveal it, so the agent can in effect read any
 value it passes to a command. Settings says so on the entry, and commands ask every time by default.
@@ -206,7 +194,7 @@ is why commands ask every time by default and why scope can only be widened in S
 | Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | Commands that receive a value ask every time by default; the card shows the full command.                                                          | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
 | Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                           | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
 | Sending it to an unrelated host with `http_request`                             | Host scope, HTTPS only, no redirect to another host.                                                                                               | A host in scope that relays requests elsewhere.                                                                                                                                                                                                 |
-| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                             | Nothing for `http_request`; a command holding the value can still do it.                                                                                                                                                                        |
+| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                             | The method, path and other fields are still the model's choice, so an endpoint on an allowed host that stores what it receives can keep the value. A command holding the value can do it directly.                                              |
 | Sending it to an unrelated host from a command                                  | Commands off or ask every time by default; allowed programs exclude shells and interpreters and refuse chaining, pipes, redirection and subshells. | An allowed program that can itself send anywhere, such as `curl`.                                                                                                                                                                               |
 | Prompt injection asking the agent to use a credential somewhere                 | Out-of-scope uses are refused without a prompt; scope changes only in Settings; the card shows the exact target.                                   | A user approving a command they did not read.                                                                                                                                                                                                   |
 | Filling a password on the wrong site                                            | Frame and top-level origin match at insertion time, HTTPS, form target check.                                                                      | Script on the allowed site can read its own password field, as with any password manager.                                                                                                                                                       |
@@ -280,7 +268,7 @@ Each phase is one pull request with its tests and, when it ships, user documenta
 1. **Vault and redaction** (shipped). Storage, the Settings page, `credentials_list`,
    `credentials_request`, the audit, and redaction at every output source and the provider
    boundary.
-2. **API calls.** `http_request` with host scope, approvals and derived tokens.
+2. **API calls** (shipped). `http_request` with host scope, approvals and returned tokens.
 3. **Commands.** The `shell` `secrets` argument, command scope and allowed programs.
 4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.
 5. **Later.** MCP server environments and arguments from entries, one-time codes, an OAuth
