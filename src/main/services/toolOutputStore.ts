@@ -3,6 +3,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { ToolOutputReference } from '../../shared/agentRuntime'
 import { estimateTextTokens } from '../../shared/contextBudget'
+import { credentialRedactor, type CredentialRedactor } from './credentialRedaction'
 
 export interface ToolOutputPolicy {
   maxBytes?: number
@@ -224,10 +225,16 @@ function compose(head: string, note: string, tail: string): string {
   return `${before}${note}${tail ? `\n${tail}` : ''}`
 }
 
+/**
+ * Bounds tool output for the model and keeps the rest on disk. Stored credential values are
+ * redacted from everything it is given before any of it is measured, shown or written, so the
+ * offsets it reports match the redacted text that is kept.
+ */
 export class ToolOutputStore {
   constructor(
     private readonly root: string,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    private readonly redactor: CredentialRedactor = credentialRedactor
   ) {}
 
   private path(handle: string): string {
@@ -253,11 +260,15 @@ export class ToolOutputStore {
   async save(content: string): Promise<string> {
     await fs.mkdir(this.root, { recursive: true })
     const handle = randomUUID()
-    await fs.writeFile(this.path(handle), content, { encoding: 'utf8', mode: 0o600 })
+    await fs.writeFile(this.path(handle), this.redactor.redact(content), {
+      encoding: 'utf8',
+      mode: 0o600
+    })
     return handle
   }
 
-  async apply(content: string, policy: ToolOutputPolicy = {}): Promise<BoundedToolOutput> {
+  async apply(rawContent: string, policy: ToolOutputPolicy = {}): Promise<BoundedToolOutput> {
+    const content = this.redactor.redact(rawContent)
     const cut = planToolOutputCut(content, policy)
     const originalEstimatedTokens = estimateTextTokens(content)
     if (!cut.truncated) {
@@ -300,8 +311,8 @@ export class ToolOutputStore {
    * the first byte its section left out.
    */
   async applySections(
-    header: string,
-    sections: readonly ToolOutputSection[],
+    rawHeader: string,
+    rawSections: readonly ToolOutputSection[],
     options: {
       policy?: ToolOutputPolicy
       /** Says what was shortened, for example "SideKick shortened the output shown in the chat". */
@@ -313,6 +324,11 @@ export class ToolOutputStore {
       ) => string
     }
   ): Promise<BoundedToolOutput & { sections: BoundedToolOutputSection[] }> {
+    const header = this.redactor.redact(rawHeader)
+    const sections = rawSections.map((section) => ({
+      ...section,
+      text: this.redactor.redact(section.text)
+    }))
     const limits = resolveLimits(options.policy ?? {})
     const preview = options.policy?.preview ?? 'head-tail'
     const opening = header ? `${header}\n` : ''
@@ -472,8 +488,21 @@ export class ToolOutputStore {
         if (lead + width > end) end = lead
       }
       const nextOffset = start + end < stat.size ? start + end : null
+      // Output kept before a value was stored is redacted as it is read back. The text around
+      // the window is read too, so a value crossing its edge is still recognised.
+      const context = this.redactor.context * 4
+      const before = Buffer.alloc(context ? Math.min(context, start) : 0)
+      const after = Buffer.alloc(context ? Math.min(context, stat.size - (start + end)) : 0)
+      if (before.length) await descriptor.read(before, 0, before.length, start - before.length)
+      if (after.length) await descriptor.read(after, 0, after.length, start + end)
+      const lead = before.toString('utf8')
+      const window = buffer.subarray(0, end).toString('utf8')
       return {
-        content: buffer.subarray(0, end).toString('utf8'),
+        content: this.redactor.redactWindow(
+          lead + window + after.toString('utf8'),
+          lead.length,
+          lead.length + window.length
+        ),
         offset: start,
         nextOffset,
         totalBytes: stat.size

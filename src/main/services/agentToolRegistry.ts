@@ -15,6 +15,7 @@ import {
 } from '../../shared/agentRuntime'
 import { readIncompleteToolInputError } from '../../shared/toolCalls'
 import { OutsideProjectError } from '../utils/workspacePaths'
+import { credentialRedactor, type CredentialRedactor } from './credentialRedaction'
 import { otherHarnessEquivalent } from './otherHarnessTools'
 import {
   ToolExecutionPipeline,
@@ -669,6 +670,8 @@ export class AgentToolRegistry {
     { exclusive: Promise<void>; readers: Set<Promise<unknown>> }
   >()
 
+  constructor(private readonly redactor: CredentialRedactor = credentialRedactor) {}
+
   registerGuard(guard: ToolExecutionGuard): () => void {
     return this.pipeline.registerGuard(guard)
   }
@@ -714,7 +717,19 @@ export class AgentToolRegistry {
     return predecessors.then(body).finally(release)
   }
 
+  /**
+   * Every result, failures included, leaves with stored credential values redacted, before the
+   * run journal, the renderer or the model sees it. Tools that write output while they run redact
+   * it at its source as well.
+   */
   async execute(
+    input: ExecuteAgentToolInput,
+    executor: AgentToolExecutor
+  ): Promise<ToolExecutionResult> {
+    return this.redactor.redactDeep(await this.executeUnredacted(input, executor))
+  }
+
+  private async executeUnredacted(
     input: ExecuteAgentToolInput,
     executor: AgentToolExecutor
   ): Promise<ToolExecutionResult> {

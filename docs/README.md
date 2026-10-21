@@ -10,6 +10,7 @@ behavior, and the development guide when testing or publishing it.
 - [Projects](user-guide/PROJECTS.md) — understand folder-backed chats and project instructions.
 - [Tools](user-guide/TOOLS.md) — see which capabilities agents can receive and how they are bounded.
 - [Permissions](user-guide/PERMISSIONS.md) — choose a policy and review authorization events.
+- [Credentials](user-guide/CREDENTIALS.md) — store API keys and sign-ins the agent never sees.
 - [Plan mode](user-guide/PLAN_MODE.md) — approve a revisioned plan before implementation.
 - [Research](user-guide/RESEARCH.md) — run evidence-backed web research through the normal agent runtime.
 - [Chats that work together](user-guide/CHATS_THAT_WORK_TOGETHER.md) — let a chat start other chats, message them, and collect their reports.
@@ -32,6 +33,7 @@ behavior, and the development guide when testing or publishing it.
 - [Scheduled runs](architecture/SCHEDULES.md) — the scheduler, missed runs, overlap, and approvals.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
 - [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
+- [Credentials](architecture/CREDENTIALS.md) — the sealed vault, its renderer and agent boundaries, and redaction of every output source.
 
 ## Development and operations
 
@@ -54,8 +56,8 @@ behavior, and the development guide when testing or publishing it.
 - [Android](roadmap/ANDROID.md) — deferred mobile direction and prerequisites.
 - [iPhone and iPad](roadmap/IOS.md) — installable-web-app direction under the zero-cost constraint.
 - [Configuration CLI](roadmap/CONFIGURATION_CLI.md) — remaining packaging and qualification work for the command line.
-- [Credentials](roadmap/CREDENTIALS.md) — stored keys and sign-ins the agent can use by alias but
-  never read, and the phases to build them.
+- [Credentials](roadmap/CREDENTIALS.md) — how other tools handle agent credentials, and the tools
+  that will use a stored credential by alias.
 
 Roadmap documents describe intent, not current behavior. A planned feature belongs there until its
 implementation, tests, and user documentation land together.

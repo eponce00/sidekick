@@ -102,13 +102,19 @@ export function resolveToolView(tool: ToolExecution): ToolViewKind {
   )
 }
 
-export type SettingsSectionId = 'providers' | 'general' | 'agent' | 'appearance' | 'integrations'
+export type SettingsSectionId =
+  | 'providers'
+  | 'general'
+  | 'agent'
+  | 'appearance'
+  | 'integrations'
+  | 'credentials'
 
 export interface SettingsSectionContribution {
   id: SettingsSectionId
   label: string
   description: string
-  icon: 'server' | 'settings' | 'bot' | 'palette' | 'boxes'
+  icon: 'server' | 'settings' | 'bot' | 'palette' | 'boxes' | 'key'
 }
 
 export const settingsSectionContributions =
@@ -124,7 +130,13 @@ const BUILTIN_SETTINGS_SECTIONS = [
   },
   { id: 'agent', label: 'Agent', description: 'Behavior and permissions', icon: 'bot' },
   { id: 'appearance', label: 'Appearance', description: 'Theme and color', icon: 'palette' },
-  { id: 'integrations', label: 'Integrations', description: 'MCP servers', icon: 'boxes' }
+  { id: 'integrations', label: 'Integrations', description: 'MCP servers', icon: 'boxes' },
+  {
+    id: 'credentials',
+    label: 'Credentials',
+    description: 'API keys and sign-ins the agent uses without seeing them',
+    icon: 'key'
+  }
 ] satisfies SettingsSectionContribution[]
 
 BUILTIN_SETTINGS_SECTIONS.forEach((value) =>

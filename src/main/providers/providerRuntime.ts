@@ -26,6 +26,7 @@ import type { ProviderInstance, ProviderInstanceModel } from '../../shared/setti
 import { offlineProviderHealth, onlineProviderHealth } from '../../shared/providerHealth'
 import { PRODUCT_IDENTITY, PRODUCT_REPOSITORY_URL } from '../../shared/productIdentity'
 import { abortablePromise } from '../services/abortablePromise'
+import { credentialRedactor } from '../services/credentialRedaction'
 import { completeOpenAIChat, streamOpenAICompatibleChat } from './openAIStreamingClient'
 import { fetchOpenAICompatibleModels, openAICompatibleHeaders } from './openAICompatibleClient'
 import {
@@ -231,10 +232,38 @@ async function materializeAttachment(
   }
 }
 
-/** Resolve durable file references only at the provider boundary. */
+/**
+ * The last place a stored credential value could leave for a model provider. Earlier redaction
+ * covers tool output; this catches anything else, such as a value the user pasted into a message.
+ * Thinking blocks are left alone: providers sign them, and only the model writes them.
+ */
+function redactProviderMessage(message: ProviderChatMessage): ProviderChatMessage {
+  const content = message.content ? credentialRedactor.redact(message.content) : message.content
+  const toolCalls = message.tool_calls
+    ? credentialRedactor.redactDeep(message.tool_calls)
+    : message.tool_calls
+  // An attachment's name and description, not its image data.
+  const media = message.media
+    ? credentialRedactor.redactDeep({ media: message.media }).media
+    : message.media
+  return content === message.content && toolCalls === message.tool_calls && media === message.media
+    ? message
+    : { ...message, content, tool_calls: toolCalls, media }
+}
+
+/** Resolve durable file references only at the provider boundary, and redact stored values. */
 export async function materializeProviderRequestMedia(
   request: ProviderChatRequest
 ): Promise<ProviderChatRequest> {
+  const prepared = await materializeMedia(request)
+  if (!credentialRedactor.active) return prepared
+  const messages = prepared.messages.map(redactProviderMessage)
+  return messages.some((message, index) => message !== prepared.messages[index])
+    ? { ...prepared, messages }
+    : prepared
+}
+
+async function materializeMedia(request: ProviderChatRequest): Promise<ProviderChatRequest> {
   const selectedMessages = withProviderImageBudget(request.messages)
   let changed = selectedMessages !== request.messages
   const messages = await Promise.all(

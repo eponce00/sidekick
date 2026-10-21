@@ -1,6 +1,9 @@
 # Credentials the agent can use but not read
 
-Status: design agreed, not implemented. Nothing here describes current behavior.
+Status: design note. The vault, the Settings page, the agent's list and request tools, the audit
+and redaction have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
+and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
+still open.
 
 ## Problem
 
@@ -52,68 +55,15 @@ What SideKick takes from this:
 
 ## Design
 
-### Entries
+### Shipped
 
-An entry is one of two kinds:
-
-| Kind    | Fields                             | Typical use                                |
-| ------- | ---------------------------------- | ------------------------------------------ |
-| Secret  | one hidden value                   | An API key, client secret or access token  |
-| Sign-in | username and password, both hidden | A website account, or Basic authentication |
-
-Every entry also has:
-
-- **Alias.** Lowercase letters, digits, `-` and `_`, up to 64 characters, unique. It is how the
-  agent and the audit name the entry, so it is never secret.
-- **Description.** Free text the agent can read, such as "Partner Center client secret for the
-  SideKick Store app; tenant and client IDs are in the release guide." Identifiers that are not
-  secret belong here, not in a field.
-- **Where it can be used** and **when to ask** (see [Scope and approval](#scope-and-approval)).
-- **Username visible to the agent**, off by default for sign-ins. When on, the agent can read the
-  username so it can say which account it used; the password stays hidden either way.
-- Created, last changed and last used times.
-
-A one-time-code (TOTP) field, where SideKick computes the current code at fill time and the seed
-never leaves the main process, is a later addition.
-
-### Storage
-
-- A main-process `CredentialVault` service owns entries. Each entry, values and scope together, is
-  one record encrypted with Electron `safeStorage`, so editing the store file cannot widen an
-  entry's scope or swap its value without the operating system's key. Writes are serialized as in
-  `ConnectorCredentialStore`.
-- Records live under a top-level store key of their own, like `connectorCredentials`, not inside
-  `settings`: a Settings save rebuilds `settings` from the renderer's copy and would drop an unknown
-  key, and the public settings projection would pass one to the renderer.
-- It fails closed: where `isSecureCredentialStorageAvailable()` is false (Linux without libsecret
-  or KWallet), Credentials is unavailable and says why; there is no plaintext fallback.
-- Values are decrypted only for one use and for the redaction set
-  ([Keeping values out of output](#keeping-values-out-of-output)), and never cached elsewhere.
-- The renderer gets a narrow preload API: list metadata, save (values optional, so an edit without
-  a new value keeps the old one), delete, and read the audit. There is no call that returns a value,
-  its length, a hash or its last characters. The development mock implements the same shape.
-- Nothing that reads configuration returns a value: not `settings_read`, not the `sidekick`
-  command, not support diagnostics.
-
-### Settings
-
-A new **Credentials** page in Settings, built from the existing `SettingsSection` and `SettingsRow`
-components and design tokens:
-
-- **List.** One row per entry: a key or person icon for the kind, the alias in monospace, the
-  description, a scope summary such as "api.partner.microsoft.com · commands ask every time", and
-  last use. Row actions are Edit and Delete. The empty state explains what Credentials are for.
-- **Editor.** Kind (Secret or Sign-in), alias, description labelled "The agent sees this", the
-  hidden fields, then where it can be used and when to ask. Value inputs are password fields with
-  spellcheck and autocomplete off. Editing shows "Stored. Type a new value to replace it." in place
-  of the old value; it is never shown again after saving, as in GitHub's secrets settings.
-- **Recent uses** for the entry, from the audit.
-- **Short values.** A value under 8 characters saves with a warning that it cannot be reliably kept
-  out of output.
-
-The agent never fills this form. Its `credentials_request` tool opens the editor with an alias,
-description and suggested host filled in, the way `provider_request_key` opens a provider's key
-field, and the agent learns only whether the user saved it.
+An entry is a secret (one value) or a sign-in (username and password) under an alias, with a
+description the agent can read, an approval setting, and a project and background scope. Values
+are sealed with `safeStorage` together with the scope, entered only in **Settings → Credentials**,
+never returned to the renderer, and redacted, with their common encodings, at the source of every
+tool output stream, for every tool result, and for every model request. Widening an entry and
+deleting one confirm in a trusted dialog, and every change is audited. See
+[Credentials](../architecture/CREDENTIALS.md) for how.
 
 ### Using a credential
 
@@ -138,11 +88,11 @@ vault checks scope again. Arguments, and everything built from them (the run led
 approval cards, chat grants and the tool's title, which is recomputed from the arguments after
 authorization), therefore hold only the alias.
 
-The model sees `credentials_list`, which returns each entry's alias, kind, description, scope and
-approval setting, and the username where the entry allows it. This mirrors Chromium's agent login
-service, whose credential list carries username and origin but has no password field. A short
-static line in the system prompt says credentials exist, so the prompt and tool list do not change
-as entries change.
+The model already sees `credentials_list`, which returns each entry's alias, kind, description,
+scope and approval setting, and the username where the entry allows it. This mirrors Chromium's
+agent login service, whose credential list carries username and origin but has no password field.
+The tools' own descriptions say how credentials work, so the prompt and tool list do not change as
+entries change.
 
 **`http_request`.** `web_fetch` reads pages and takes only a URL, so calling an API needs a new tool
 with method, URL, headers, body and a timeout. It is admitted through `webNetworkGuard` like
@@ -200,51 +150,6 @@ so it applies in Full access as `approval: 'always'` does. The card uses the exi
 variable names), never a value. **Allow for this chat** is keyed on the entry and the target, not on
 the call's whole arguments, and covers only those.
 
-### Keeping values out of output
-
-One redactor in the main process knows every stored value, not only the ones a run used, so a token
-the agent finds in a file is hidden too. It also matches common encodings of each value:
-
-- each line of a multi-line value on its own, since output arrives line by line;
-- JSON string escaping, percent-encoding (both `%20` and `+` forms), HTML and XML entities, and
-  Bash and PowerShell quoting;
-- Base64, standard and URL-safe, with and without padding, at all three byte alignments, so a value
-  is caught inside a longer Base64 string such as a Basic `Authorization` header;
-- Base64 of the UTF-16LE form, which PowerShell's `-EncodedCommand` uses;
-- hexadecimal in either case.
-
-This follows the GitHub Actions runner, which registers the same kinds of encodings for every
-secret. GitHub also says plainly that automatic redaction is not guaranteed, and so does this
-design: redaction is the second line, behind scope.
-
-A match is replaced with `[secret: alias]`. Matching uses one multi-pattern automaton. A streaming
-redactor holds back only the trailing bytes that could still be the start of a match, so ordinary
-output is not delayed and a value split across chunks is still caught. A value replaced or deleted
-during this app session stays in the redaction set until restart.
-
-Several tools write output during execution, before any central point sees it, so the redactor
-runs at the source of each stream, then once more for every result, then on every model request:
-
-1. **Command output**, as each chunk leaves `commandRunner`, before it reaches the command log
-   file under `command-outputs`, the terminal store and its `terminal:event` stream, the run
-   ledger's `tool.output.delta` events, background-task records, verification summaries and the
-   screen the model reads. Today all of these hold raw output.
-2. **Retained output**, in `ToolOutputStore.apply`, before the full text is written to
-   `tool-outputs`.
-3. **Browser observations**: semantic snapshot, tab titles and URLs, console messages, network
-   entries and `browser_evaluate` values.
-4. **`http_request` and `web_fetch` responses**, before a page digest is saved.
-5. **Every tool result**, in `AgentToolRegistry.execute` after `normalizeToolExecutionResult`,
-   covering the title, model content, data and errors (HTTP client errors can carry request
-   headers), before `tool.completed` is written. This also covers MCP results, which are not
-   bounded by the output store.
-6. **Files copied between chats** by `import_attachment`, which stores whole file contents.
-7. **Every outgoing model request**, in `materializeProviderRequestMedia`, which catches anything
-   the earlier points missed, including a value the user pasted into a message, compaction summaries
-   and worker reports.
-
-Screenshots cannot be scrubbed, which is why the browser rules below keep values out of them.
-
 ### Browser sign-in
 
 A browser password manager fills only on the site a password belongs to. Chromium's own agent
@@ -275,23 +180,17 @@ SideKick follows that contract with `browser_sign_in`:
 - The existing **Take control** card stays the alternative for a site the user would rather sign in
   to themselves.
 
-### Audit
+### Audit of uses
 
-Every use is recorded: entry, alias, tool, target (host, origin, or command with variable names),
-conversation, run, tool call, decision (allowed by scope, approved, denied, or refused as out of
-scope) and time. Never the value, its length or a hash. Creating, replacing a value, changing scope
-and deleting are recorded too. Settings shows each entry's recent uses, and the permission audit
-includes credential decisions.
+Every use a tool makes will be recorded in the existing audit as `used`, `denied` or `refused`,
+with the tool and its target (host, origin, or command with variable names), and the permission
+audit will include credential decisions.
 
-### Backup, moving and deleting
+### Export
 
-- `safeStorage` binds values to this operating-system account. A profile copied to another
-  computer shows its entries as **Needs a new value** rather than failing.
-- Export writes aliases, kinds, descriptions, scope and approval settings only, and import recreates
-  entries without values, as with GitHub secrets: values are write-only.
-- Delete takes an exact broker grant like other destructive Settings actions, removes the record,
-  and stops further use at once, including in running chats. The audit keeps the alias and
-  marks it deleted.
+Export will write aliases, kinds, descriptions, scope and approval settings only, and import will
+recreate entries without values, as with GitHub secrets: values are write-only. A profile copied to
+another computer already lists its entries as **Needs a new value**.
 
 ## Threats and limits
 
@@ -317,7 +216,7 @@ is why commands ask every time by default and why scope can only be widened in S
 | A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                       | None.                                                                                                                                                                                                                                           |
 | A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                          | It can see what the user types while saving a value.                                                                                                                                                                                            |
 | The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                           | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
-| Short or common values                                                          | Warning under 8 characters.                                                                                                                        | Short values may be missed or cause harmless over-redaction.                                                                                                                                                                                    |
+| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                 | Short values may be missed. Over-redaction hides ordinary text that matches, such as a hidden username like `admin`; file tools refuse to write a placeholder back.                                                                             |
 | Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                      | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
 
 ## Tests
@@ -353,13 +252,34 @@ credential. Each boundary gets adversarial tests:
 - **Deletion.** A deleted entry stops working mid-run; a replaced value is still redacted until
   restart; the audit keeps the alias.
 
+## Changes from the agreed design
+
+Made while building the vault, and why:
+
+- **Deleting confirms in a trusted dialog**, not with a broker grant. The dialog is drawn by the
+  main process, so a compromised renderer still cannot delete an entry without the user.
+- **Opened records stay in main-process memory** for the session instead of being decrypted for
+  each use, because the redactor must hold every value anyway.
+- **`import_attachment` copies files as they are.** The receiving agent reads them through the same
+  redacted tools, and copying them redacted would corrupt them.
+- **Integrity is the platform's.** Windows seals records with AES-GCM; macOS and Linux use AES-CBC
+  without a MAC, so a process that can write the profile could alter or replay a record's settings.
+  That process can already change SideKick's settings, and on Windows and Linux decrypt values, so
+  an authenticated layer of SideKick's own is left for later.
+- **Approval defaults per use.** Each kind of use has its own scope, which an entry gains only when
+  the user turns that use on, so a later use can default to asking every time without touching
+  existing entries. Records carry a schema version for any migration a default change needs.
+- **Descriptions are untrusted.** `credentials_request` can suggest one, and every chat reads it, so
+  Settings marks an agent's description until the user edits it and `credentials_list` tells the
+  model descriptions are notes, not instructions.
+
 ## Phases
 
 Each phase is one pull request with its tests and, when it ships, user documentation.
 
-1. **Vault and redaction.** Storage, the Settings page, `credentials_list`, `credentials_request`,
-   the audit, and redaction at every output path including the provider boundary. Useful alone: a
-   stored token that turns up in a file or command output is hidden from the model.
+1. **Vault and redaction** (shipped). Storage, the Settings page, `credentials_list`,
+   `credentials_request`, the audit, and redaction at every output source and the provider
+   boundary.
 2. **API calls.** `http_request` with host scope, approvals and derived tokens.
 3. **Commands.** The `shell` `secrets` argument, command scope and allowed programs.
 4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.

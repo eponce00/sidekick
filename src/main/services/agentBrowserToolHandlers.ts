@@ -1,6 +1,7 @@
 import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/browserDevices'
 import { dirname, join, resolve } from 'path'
 import { readFile, writeFile } from 'fs/promises'
+import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
 import { OutsideProjectError } from '../utils/workspacePaths'
 import {
@@ -253,7 +254,9 @@ function prioritizedSemanticSnapshot(snapshot: string, lineLimit: number): strin
   return `${selected.map(({ line }) => line).join('\n')}\n... semantic snapshot prioritized and limited by SideKick ...`
 }
 
-function boundedSemanticLine(line: string): string {
+function boundedSemanticLine(raw: string): string {
+  // Redacted before it is cut, so no part of a stored value survives on either side of the cut.
+  const line = credentialRedactor.redact(raw)
   if (line.length <= MAX_ACTION_SEMANTIC_LINE_CHARS) return line
   const tailChars = 140
   const headChars = MAX_ACTION_SEMANTIC_LINE_CHARS - tailChars - 5

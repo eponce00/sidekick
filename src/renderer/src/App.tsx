@@ -106,7 +106,8 @@ function getPreviewSettingsSection(): SettingsSection | null {
     'general',
     'agent',
     'appearance',
-    'integrations'
+    'integrations',
+    'credentials'
   ]
   return validSections.find((item) => item === section) ?? null
 }
@@ -164,6 +165,20 @@ function App(): React.JSX.Element {
       window.api.app.onOpenProviderKey((id) => {
         setProviderKeyRequest({ id, at: Date.now() })
         setSettingsInitialSection('providers')
+        setIsSettingsOpen(true)
+      }),
+    []
+  )
+  // Likewise a credential: the user types its value into Settings.
+  const [credentialRequest, setCredentialRequest] = useState<{
+    value: import('../../shared/credentials').CredentialRequest
+    at: number
+  } | null>(null)
+  useEffect(
+    () =>
+      window.api.app.onOpenCredential((value) => {
+        setCredentialRequest({ value, at: Date.now() })
+        setSettingsInitialSection('credentials')
         setIsSettingsOpen(true)
       }),
     []
@@ -1575,6 +1590,7 @@ function App(): React.JSX.Element {
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
           providerKeyRequest={providerKeyRequest}
+          credentialRequest={credentialRequest}
         />
       )}
       <AppMenuHost />

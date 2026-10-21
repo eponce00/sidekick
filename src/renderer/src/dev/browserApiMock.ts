@@ -1,5 +1,6 @@
 import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
+import { previewCredentialsApi } from './credentialsPreview'
 import {
   previewSessionConversations,
   previewSessionsApi,
@@ -1286,6 +1287,7 @@ export function installBrowserApiMock(): void {
         return [...previewBrowserNetwork]
       }
     },
+    credentials: previewCredentialsApi(),
     pullRequests: previewPullRequestsApi(),
     window: {
       minimize: () => {},
@@ -1302,7 +1304,8 @@ export function installBrowserApiMock(): void {
       platform: 'windows',
       onCommand: () => () => undefined,
       onOpenConversation: () => () => undefined,
-      onOpenProviderKey: () => () => undefined
+      onOpenProviderKey: () => () => undefined,
+      onOpenCredential: () => () => undefined
     },
     appUpdates: {
       install: async () => ({

@@ -1,9 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
+import { StringDecoder } from 'string_decoder'
 import type { IPty } from 'node-pty'
 import type { ShellCommandResult } from '../../shared/types'
 import { COMMAND_CAPTURE_BYTES } from '../../shared/terminalSessions'
+import {
+  credentialRedactor,
+  REDACTION_STREAM_QUIET_MS,
+  type CredentialRedactor
+} from './credentialRedaction'
 import { TERMINAL_COLUMNS, TERMINAL_ROWS } from './terminalScreen'
 
 const WINDOWS_EXIT_MARKER = '__SIDEKICK_EXIT_CODE__='
@@ -29,6 +35,36 @@ export function normalizePowerShellStderr(value: string): string {
     .map((match) => decodeCliXmlText(match[1]).trim())
     .filter(Boolean)
   return errors.length ? [...new Set(errors)].join('\n') : ''
+}
+
+/**
+ * Redacts one output stream before anything else sees it: the log file, the captured result, the
+ * terminal and the run journal all receive the same redacted text. A tail that could begin a
+ * stored value waits for the next chunk, or is released after a quiet moment so a prompt still
+ * shows; a program that pauses mid-value on purpose can defeat that, as it could defeat any filter.
+ */
+function redactedOutput(
+  redactor: CredentialRedactor,
+  write: (chunk: string) => void
+): { push: (chunk: string) => void; end: () => void } {
+  const stream = redactor.stream()
+  let quiet: NodeJS.Timeout | undefined
+  const release = (): void => {
+    if (quiet) clearTimeout(quiet)
+    quiet = undefined
+    const tail = stream.flush()
+    if (tail) write(tail)
+  }
+  return {
+    push: (chunk) => {
+      if (quiet) clearTimeout(quiet)
+      quiet = undefined
+      const safe = stream.push(chunk)
+      if (safe) write(safe)
+      if (stream.holding) quiet = setTimeout(release, REDACTION_STREAM_QUIET_MS)
+    },
+    end: release
+  }
 }
 
 type PtyModule = typeof import('node-pty')
@@ -109,6 +145,8 @@ type ActiveProcess =
 export class CommandRunner {
   private readonly active = new Map<string, ActiveProcess>()
   private readonly cancelled = new Set<string>()
+
+  constructor(private readonly redactor: CredentialRedactor = credentialRedactor) {}
 
   private terminate(process_: ActiveProcess, signal: NodeJS.Signals = 'SIGTERM'): boolean {
     const pid = process_.kind === 'pipe' ? process_.child.pid : process_.pty.pid
@@ -248,8 +286,22 @@ export class CommandRunner {
       let forceKillTimer: NodeJS.Timeout | undefined
       let settleTimer: NodeJS.Timeout | undefined
 
+      const out = redactedOutput(this.redactor, (chunk) => {
+        log.write(chunk)
+        if (!truncated) {
+          const remaining = Math.max(0, maxCaptureBytes - capturedBytes)
+          const bytes = Buffer.from(chunk)
+          if (bytes.length > remaining) truncated = true
+          const value = bytes.subarray(0, remaining).toString()
+          capturedBytes += Buffer.byteLength(value)
+          output += value
+        }
+        options.onOutput?.({ commandId: options.id, chunk, stream: 'stdout' })
+      })
+
       const finish = (result: Omit<ShellCommandResult, 'stdout' | 'stderr'>): void => {
         if (settled) return
+        out.end()
         settled = true
         clearTimeout(timer)
         if (forceKillTimer) clearTimeout(forceKillTimer)
@@ -288,16 +340,7 @@ export class CommandRunner {
 
       const dataSubscription = terminal.onData((chunk) => {
         if (settled) return
-        log.write(chunk)
-        if (!truncated) {
-          const remaining = Math.max(0, maxCaptureBytes - capturedBytes)
-          const bytes = Buffer.from(chunk)
-          if (bytes.length > remaining) truncated = true
-          const value = bytes.subarray(0, remaining).toString()
-          capturedBytes += Buffer.byteLength(value)
-          output += value
-        }
-        options.onOutput?.({ commandId: options.id, chunk, stream: 'stdout' })
+        out.push(chunk)
       })
       const exitSubscription = terminal.onExit(({ exitCode, signal }) => {
         const cancelled = !timedOut && (this.cancelled.delete(options.id) || signal === 15)
@@ -361,9 +404,31 @@ export class CommandRunner {
         capturedBytes += Buffer.byteLength(value)
         return value
       }
+      const out = redactedOutput(this.redactor, (chunk) => {
+        log.write(chunk)
+        stdout += capture(chunk)
+        options.onOutput?.({ commandId: options.id, chunk, stream: 'stdout' })
+      })
+      const err = redactedOutput(this.redactor, (chunk) => {
+        log.write(chunk)
+        stderr += capture(chunk)
+        options.onOutput?.({ commandId: options.id, chunk, stream: 'stderr' })
+      })
+      // One decoder per stream: a character split between two chunks decodes whole, so a value
+      // holding one is still recognised.
+      const stdoutText = new StringDecoder('utf8')
+      const stderrText = new StringDecoder('utf8')
 
-      const finish = (result: ShellCommandResult): void => {
+      // Built only once held-back output is released, so the result holds all of it.
+      const finish = (build: () => ShellCommandResult): void => {
         if (settled) return
+        const restOut = stdoutText.end()
+        if (restOut) out.push(restOut)
+        const restErr = stderrText.end()
+        if (restErr) err.push(restErr)
+        out.end()
+        err.end()
+        const result = build()
         settled = true
         clearTimeout(timer)
         if (forceKillTimer) clearTimeout(forceKillTimer)
@@ -386,13 +451,13 @@ export class CommandRunner {
         forceKillTimer = setTimeout(() => this.terminate(running, 'SIGKILL'), 3_000)
         settleTimer = setTimeout(
           () =>
-            finish({
+            finish(() => ({
               success: false,
               exitCode: -1,
               stdout,
               stderr,
               error: `Command timed out after ${options.timeoutMs / 1000} seconds`
-            }),
+            })),
           3_500
         )
       }, options.timeoutMs)
@@ -401,25 +466,22 @@ export class CommandRunner {
       child.stdin?.on('error', () => undefined)
       child.stdout.on('data', (data: Buffer) => {
         if (settled) return
-        const chunk = data.toString()
-        log.write(chunk)
-        stdout += capture(chunk)
-        options.onOutput?.({ commandId: options.id, chunk, stream: 'stdout' })
+        const text = stdoutText.write(data)
+        if (text) out.push(text)
       })
       child.stderr.on('data', (data: Buffer) => {
         if (settled) return
-        const rawChunk = data.toString()
+        const rawChunk = stderrText.write(data)
+        if (!rawChunk) return
         const marker = new RegExp(`${WINDOWS_EXIT_MARKER}(-?\\d+)\\r?\\n?`, 'g')
         const matches = options.process ? [] : [...rawChunk.matchAll(marker)]
         if (matches.length) reportedWindowsExitCode = Number(matches.at(-1)?.[1])
         const chunk = options.process ? rawChunk : rawChunk.replace(marker, '')
         if (!chunk) return
-        log.write(chunk)
-        stderr += capture(chunk)
-        options.onOutput?.({ commandId: options.id, chunk, stream: 'stderr' })
+        err.push(chunk)
       })
       child.on('error', (error) =>
-        finish({ success: false, exitCode: -1, stdout, stderr, error: error.message })
+        finish(() => ({ success: false, exitCode: -1, stdout, stderr, error: error.message }))
       )
       // Stopped as it started, the shell can die while launching a program that inherits its
       // output and outlives it, so the output never closes. A stopped shell's exit is enough.
@@ -428,33 +490,31 @@ export class CommandRunner {
         this.sweepOrphans(child.pid)
         settleTimer ??= setTimeout(() => {
           this.cancelled.delete(options.id)
-          finish({
+          finish(() => ({
             success: false,
             exitCode: -1,
             stdout,
             stderr,
             cancelled: true,
             error: 'Command cancelled'
-          })
+          }))
         }, 1_000)
       })
       child.on('close', (code, signal) => {
         const effectiveCode = reportedWindowsExitCode ?? code ?? -1
         const cancelled = !timedOut && (this.cancelled.delete(options.id) || signal === 'SIGTERM')
-        const finalStderr =
-          process.platform === 'win32' ? normalizePowerShellStderr(stderr) : stderr
-        finish({
+        finish(() => ({
           success: effectiveCode === 0 && !timedOut && !cancelled,
           exitCode: effectiveCode,
           stdout,
-          stderr: finalStderr,
+          stderr: process.platform === 'win32' ? normalizePowerShellStderr(stderr) : stderr,
           cancelled,
           error: timedOut
             ? `Command timed out after ${options.timeoutMs / 1000} seconds`
             : cancelled
               ? 'Command cancelled'
               : undefined
-        })
+        }))
       })
     })
   }

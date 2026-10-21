@@ -15,6 +15,8 @@ import { AgentRuntimeCoordinator } from '../services/agentRuntimeCoordinator'
 import { AgentEngineClient, LocalAgentEngineTransport } from '../services/agentEngineTransport'
 import { PromptAdmissionStore } from '../services/promptAdmissionStore'
 import { getDb } from './state'
+import { conversationCredentialContext, openCredentialEditor } from './credentials'
+import { getCredentialVault } from '../services/credentialVaultInstance'
 import { getManagedWorktrees } from './worktrees'
 import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
 import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
@@ -94,6 +96,11 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
     coordinator.tools.setAppSettings({
       control: createAppControlHandlers("SideKick's agent"),
       openProviderKeyPrompt
+    })
+    coordinator.tools.setCredentials({
+      list: () => getCredentialVault().list(),
+      useContext: (conversationId) => conversationCredentialContext(getDb(), conversationId),
+      openEditor: openCredentialEditor
     })
   }
   return coordinator

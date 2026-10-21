@@ -40,6 +40,7 @@ import { isBrowserParkingWindow } from './services/browserViewHost'
 import { SystemTray, type TraySnapshot } from './bootstrap/systemTray'
 import { startControlEndpoint } from './control/controlService'
 import { seedMcpApprovals } from './services/mcpServerTrust'
+import { loadCredentialVault } from './services/credentialVaultInstance'
 
 let appUpdateService: AppUpdateService | null = null
 let voiceService: VoiceService | null = null
@@ -249,6 +250,8 @@ async function bootstrapApplication(): Promise<void> {
   ipcMain.on('ping', () => console.log('pong'))
 
   seedMcpApprovals()
+  // Before any agent runs, so stored values are redacted from the first output on.
+  loadCredentialVault()
   registerAllHandlers()
   appUpdateService = new AppUpdateService({
     beforeQuit: async () => {

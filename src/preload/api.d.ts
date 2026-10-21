@@ -220,6 +220,10 @@ interface AppAPI {
   onOpenConversation: (callback: (conversationId: string) => void) => () => void
   /** SideKick's agent asked the user to enter a provider's key in Settings. */
   onOpenProviderKey: (callback: (providerInstanceId: string) => void) => () => void
+  /** SideKick's agent asked the user to add or update a credential in Settings. */
+  onOpenCredential: (
+    callback: (request: import('../shared/credentials').CredentialRequest) => void
+  ) => () => void
 }
 
 interface ClipboardAPI {
@@ -402,6 +406,7 @@ export interface DesktopApi {
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  credentials: import('../shared/credentials').CredentialsAPI
   pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
   notification: NotificationAPI

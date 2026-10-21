@@ -29,7 +29,8 @@ export const AGENT_CAPABILITIES = [
   'tool.output',
   'browser',
   'settings',
-  'sessions'
+  'sessions',
+  'credentials'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]

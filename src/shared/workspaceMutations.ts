@@ -98,6 +98,7 @@ export type WorkspaceMutationFailureCode =
   | 'stale_read'
   | 'conflict'
   | 'outside_project'
+  | 'secret_placeholder'
 
 export interface WorkspaceMutationFailure {
   code: WorkspaceMutationFailureCode
