@@ -1282,6 +1282,21 @@ const browserUpload = definition(
   }
 )
 
+const browserSignIn = definition(
+  'browser_sign_in',
+  "Sign in on the current page with a sign-in the user stored, named by its alias from credentials_list. SideKick fills the username and password itself, only on the sites the user allowed and only into the page's own fields, and you never see the password. Without refs it finds the form as a password manager does, including a username-only first step; pass username_ref or password_ref from browser_observe when it cannot. Never type a password with browser_type.",
+  {
+    type: 'object',
+    required: ['credential'],
+    properties: {
+      credential: { type: 'string', description: 'Alias of a stored sign-in.' },
+      username_ref: { type: 'string', description: 'Ref of the username field, when needed.' },
+      password_ref: { type: 'string', description: 'Ref of the password field, when needed.' },
+      submit: { type: 'boolean', description: 'Press Enter after filling to send the form.' }
+    }
+  }
+)
+
 const browserTools = [
   definition(
     'browser_download',
@@ -1301,6 +1316,7 @@ const browserTools = [
   browserHold,
   browserRequestHuman,
   browserType,
+  browserSignIn,
   browserSelect,
   browserFillForm,
   browserPress,

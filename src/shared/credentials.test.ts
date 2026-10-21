@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   credentialHostMatches,
+  credentialPageOrigin,
+  normalizeCredentialOrigin,
   credentialProgramRefusal,
   credentialVariableRefusal,
   credentialWidening,
@@ -288,5 +290,67 @@ describe('credential commands', () => {
         { ...settings, scope: { ...base, commands: { mode: 'programs', programs: ['gh'] } } }
       )
     ).toEqual(['Commands may use it without asking each time: gh'])
+  })
+})
+
+describe('credential sign-in sites', () => {
+  it.each([
+    ['github.com', 'https://github.com'],
+    ['https://GitHub.com/', 'https://github.com'],
+    ['https://login.example.com:8443', 'https://login.example.com:8443'],
+    ['http://localhost:3000', 'http://localhost:3000'],
+    ['http://127.0.0.1:5173', 'http://127.0.0.1:5173']
+  ])('normalizes %s to %s', (raw, expected) => {
+    expect(normalizeCredentialOrigin(raw)).toBe(expected)
+  })
+
+  it.each([
+    'http://github.com',
+    'https://github.com/login',
+    'https://user@github.com',
+    'https://github.com?next=x',
+    'ftp://github.com',
+    'http://10.0.0.5',
+    'javascript:alert(1)',
+    ''
+  ])('refuses %s', (raw) => {
+    expect(normalizeCredentialOrigin(raw)).toBeNull()
+  })
+
+  it('reads the origin of a page, refusing pages with a user name in the address', () => {
+    expect(credentialPageOrigin('https://github.com/login?return_to=x')).toBe('https://github.com')
+    expect(credentialPageOrigin('https://evil.example@github.com/')).toBeNull()
+    expect(credentialPageOrigin('http://github.com/login')).toBeNull()
+  })
+
+  it('allows sign-in sites only on sign-ins, and counts new ones as widening', () => {
+    const input = (kind: 'secret' | 'sign_in') =>
+      validateCredentialInput({
+        alias: 'github-login',
+        kind,
+        description: '',
+        usernameVisible: false,
+        ask: 'once_per_chat',
+        scope: { projects: 'all', background: false, browser: { origins: ['GitHub.com'] } },
+        values: kind === 'secret' ? { secret: 'x-generated' } : { username: 'u', password: 'p' }
+      })
+    expect(input('secret')).toEqual({ error: 'Only a sign-in can be filled into a page.' })
+    expect(input('sign_in')).toMatchObject({
+      input: { scope: { browser: { origins: ['https://github.com'] } } }
+    })
+    const settings = { ask: 'every_use' as const, usernameVisible: false }
+    expect(
+      credentialWidening(
+        { ...settings, scope: { projects: 'all', background: false } },
+        {
+          ...settings,
+          scope: {
+            projects: 'all',
+            background: false,
+            browser: { origins: ['https://github.com'] }
+          }
+        }
+      )
+    ).toEqual(['Filled in on https://github.com'])
   })
 })

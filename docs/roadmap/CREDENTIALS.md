@@ -1,8 +1,8 @@
 # Credentials the agent can use but not read
 
 Status: design note. The vault, the Settings page, the agent's list and request tools, the audit,
-redaction, API calls with a credential (`http_request`, approvals and returned tokens) and
-commands that receive one in an environment variable have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
+redaction, API calls with a credential (`http_request`, approvals and returned tokens), commands
+that receive one in an environment variable, and browser sign-in have shipped; they are described in [Credentials](../architecture/CREDENTIALS.md)
 and the [user guide](../user-guide/CREDENTIALS.md). This file keeps the reasoning and the work
 still open.
 
@@ -133,33 +133,7 @@ the call's whole arguments, and covers only those.
 
 ### Browser sign-in
 
-A browser password manager fills only on the site a password belongs to. Chromium's own agent
-support goes further: while its agent is acting, Chrome stops filling automatically, and the agent
-must ask its login service to sign in with a credential it picked from a list that has no password.
-SideKick follows that contract with `browser_sign_in`:
-
-- The agent names a sign-in, and optionally the username and password fields by element reference.
-  Without references SideKick finds the form itself, as a password manager does, including a
-  username-only first step.
-- The value is inserted only when the field's own frame origin and the top-level page origin both
-  match one of the entry's origins over HTTPS, with no cross-origin frame in between (Chrome,
-  Firefox and 1Password all refuse cross-origin frames). The check runs at insertion time, inside
-  the existing text-entry check that already refuses a focus or navigation change before a value is
-  inserted, and the attempt stops if the page navigates while filling.
-- A form that submits to an origin outside the entry's scope is refused, as Firefox matches a
-  login's form action.
-- The password goes only into `<input type="password">`, which Chromium paints as dots in
-  screenshots. One sign-in runs per tab at a time. Like `browser_fill_form`, it returns one
-  redacted semantic observation and no screenshot.
-- After a fill the document is marked as holding a secret until it navigates away. While marked,
-  `browser_evaluate` is refused, because its regular-expression filter does not stop page script
-  from reading the field or calling `fetch`, and a screenshot or observation is refused if the
-  password field is no longer a password field, for example after the page's "show password"
-  button is pressed.
-- `browser_type` and `browser_fill_form` cannot use credentials.
-- Usernames may appear in screenshots; redaction covers only text.
-- The existing **Take control** card stays the alternative for a site the user would rather sign in
-  to themselves.
+Shipped; see [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
 ### Audit of uses
 
@@ -263,7 +237,7 @@ Each phase is one pull request with its tests and, when it ships, user documenta
    boundary.
 2. **API calls** (shipped). `http_request` with host scope, approvals and returned tokens.
 3. **Commands** (shipped). The `shell` `secrets` argument, command scope and allowed programs.
-4. **Browser sign-in.** `browser_sign_in`, origin-bound filling and marked documents.
+4. **Browser sign-in** (shipped). `browser_sign_in`, origin-bound filling and marked documents.
 5. **Later.** MCP server environments and arguments from entries, one-time codes, an OAuth
    client-credentials kind, and answering a waiting command prompt with a credential the user
    picks.

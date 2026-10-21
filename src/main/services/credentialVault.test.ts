@@ -199,6 +199,21 @@ describe('CredentialVault', () => {
     expect(redactor.redact(second)).toBe('[secret: partner-center]')
   })
 
+  it('does not redact a username the agent may read', () => {
+    const { vault, redactor } = setup()
+    const username = generated()
+    const password = generated()
+    vault.save(
+      secretInput({
+        alias: 'site',
+        kind: 'sign_in',
+        usernameVisible: true,
+        values: { username, password }
+      })
+    )
+    expect(redactor.redact(`${username} ${password}`)).toBe(`${username} [secret: site]`)
+  })
+
   it('records lifecycle events without values', () => {
     const { vault } = setup()
     const saved = vault.save(secretInput())

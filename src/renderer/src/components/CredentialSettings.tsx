@@ -3,6 +3,7 @@ import {
   Eye,
   EyeOff,
   Globe,
+  LogIn,
   SquareTerminal,
   KeyRound,
   Pencil,
@@ -56,9 +57,11 @@ interface Draft {
   description: string
   usernameVisible: boolean
   ask: CredentialAskPolicy
-  scope: Omit<CredentialScope, 'web' | 'commands'>
+  scope: Omit<CredentialScope, 'web' | 'commands' | 'browser'>
   web: WebDraft | null
   commands: CommandsDraft | null
+  /** Sites a sign-in may be filled on, as typed. */
+  browser: string | null
   values: CredentialValues
   /** The description the agent suggested when it asked for this credential. */
   suggestedDescription?: string
@@ -88,12 +91,13 @@ function newDraft(request?: CredentialRequest | null): Draft {
     scope: defaultCredentialScope(),
     web: null,
     commands: null,
+    browser: null,
     values: {}
   }
 }
 
 function draftFrom(credential: CredentialSummary): Draft {
-  const { web, commands, ...scope } = credential.scope
+  const { web, commands, browser, ...scope } = credential.scope
   return {
     id: credential.id,
     alias: credential.alias,
@@ -106,6 +110,7 @@ function draftFrom(credential: CredentialSummary): Draft {
       ? { hosts: web.hosts.join(', '), tokenHosts: web.tokenHosts.join(', '), send: web.send }
       : null,
     commands: commands ? { mode: commands.mode, programs: commands.programs.join(', ') } : null,
+    browser: browser ? browser.origins.join(', ') : null,
     values: {}
   }
 }
@@ -367,6 +372,9 @@ function scopeSummary(credential: CredentialSummary): string {
         : `commands: ${credential.scope.commands.programs.join(', ')}`
     )
   }
+  if (credential.scope.browser) {
+    parts.push(`signs in on ${credential.scope.browser.origins.join(', ')}`)
+  }
   if (credential.scope.background) parts.push('background runs')
   parts.push(credential.lastUsedAt ? `used ${relativeTime(credential.lastUsedAt)}` : 'never used')
   return parts.join(' · ')
@@ -469,6 +477,9 @@ export function CredentialSettings({
                   send: draft.web.send
                 }
               }
+            : {}),
+          ...(draft.browser !== null && draft.kind === 'sign_in'
+            ? { browser: { origins: hostList(draft.browser) } }
             : {}),
           ...(draft.commands
             ? {
@@ -713,6 +724,36 @@ export function CredentialSettings({
         />
         {draft.web && (
           <WebScopeFields kind={draft.kind} web={draft.web} onChange={(web) => update({ web })} />
+        )}
+        {draft.kind === 'sign_in' && (
+          <ToggleField
+            icon={LogIn}
+            label="Use for browser sign-in"
+            hint="The agent's browser_sign_in fills it in on the sites below, only into the page's own username and password fields."
+            checked={draft.browser !== null}
+            onChange={(enabled) => update({ browser: enabled ? '' : null })}
+          />
+        )}
+        {draft.kind === 'sign_in' && draft.browser !== null && (
+          <div className="credential-web">
+            <label className="modern-field" htmlFor={`${controlId}-origins`}>
+              <span>
+                Sites <em>exact addresses, such as https://github.com</em>
+              </span>
+              <input
+                id={`${controlId}-origins`}
+                className="credential-alias-input"
+                value={draft.browser}
+                placeholder="https://example.com"
+                spellCheck={false}
+                onChange={(event) => update({ browser: event.target.value })}
+              />
+              <small>
+                Only HTTPS, or a server on this computer. A subdomain is a different site, as in a
+                password manager.
+              </small>
+            </label>
+          </div>
         )}
         <ToggleField
           icon={SquareTerminal}
