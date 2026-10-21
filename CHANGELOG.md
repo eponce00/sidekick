@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.17.0 — 2026-10-21
+
+- Store API keys and sign-ins in **Settings → Credentials** and let the agent use them by name
+  without ever seeing them. A value is typed once, sealed with the system's protected storage, and
+  can only be replaced, never read back, by you, the agent or the model provider. Wherever a stored
+  value turns up in output, including encoded and split forms, the agent sees `[secret: name]`
+  instead.
+- Let the agent call an API with a stored key on the hosts you list, over HTTPS. SideKick adds the
+  key where you said it goes, and tokens the API returns are hidden the same way.
+- Let a command receive a stored key in an environment variable, only for the programs you allow
+  and with your approval each time by default. Shells and interpreters can never receive one.
+- Let the agent sign in on a website with a stored sign-in, only on the exact sites you list; the
+  password is typed into the password field and never shown.
+- Choose for each credential when SideKick asks, in which projects it may be used, and whether
+  scheduled runs and chats started by other chats may use it. A use outside its scope is refused,
+  and every use is recorded without the value.
+- Say "the page changed" when a page navigates in the middle of a browser step, instead of passing
+  on the browser's own error.
+- Submit each release to the Microsoft Store in a form it accepts.
+
 ## 0.16.3 — 2026-10-20
 
 - Scroll up to read while a reply streams; the chat no longer pulls you back down. Scrolling back to
