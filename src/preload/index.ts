@@ -305,6 +305,20 @@ const api = {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
     revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
   },
+  // Set and replace only: no call returns a stored value.
+  credentials: {
+    status: () => ipcRenderer.invoke('credentials:status'),
+    list: () => ipcRenderer.invoke('credentials:list'),
+    save: (input: import('../shared/credentials').CredentialSaveInput) =>
+      ipcRenderer.invoke('credentials:save', input),
+    delete: (id: string) => ipcRenderer.invoke('credentials:delete', id),
+    events: (credentialId?: string) => ipcRenderer.invoke('credentials:events', credentialId),
+    onChanged: (callback: () => void) => {
+      const listener = (): void => callback()
+      ipcRenderer.on('credentials:changed', listener)
+      return () => ipcRenderer.removeListener('credentials:changed', listener)
+    }
+  },
   pullRequests: {
     getStatus: (workspaceRoot: string) =>
       ipcRenderer.invoke('pullRequests:getStatus', workspaceRoot)
@@ -359,6 +373,22 @@ const api = {
       }
       ipcRenderer.on('app:openProviderKey', listener)
       return () => ipcRenderer.removeListener('app:openProviderKey', listener)
+    },
+    onOpenCredential: (
+      callback: (request: import('../shared/credentials').CredentialRequest) => void
+    ) => {
+      const listener = (_event: Electron.IpcRendererEvent, request: unknown): void => {
+        const value = request as Partial<import('../shared/credentials').CredentialRequest>
+        if (value && typeof value.alias === 'string' && value.alias) {
+          callback({
+            alias: value.alias,
+            ...(typeof value.description === 'string' ? { description: value.description } : {}),
+            ...(value.kind === 'secret' || value.kind === 'sign_in' ? { kind: value.kind } : {})
+          })
+        }
+      }
+      ipcRenderer.on('app:openCredential', listener)
+      return () => ipcRenderer.removeListener('app:openCredential', listener)
     }
   },
   appUpdates: {

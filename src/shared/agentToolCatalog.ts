@@ -23,6 +23,7 @@ import {
   settingsReadTool,
   settingsReferenceTool
 } from './appSettingsTools'
+import { credentialsListTool, credentialsRequestTool } from './credentialTools'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
 
@@ -152,6 +153,11 @@ function presentationTitle(
     return { kind, title: `Change SideKick setting ${key}`.trim(), subject: key }
   }
   if (name === 'provider_request_key') return { kind, title: 'Ask for a provider key in Settings' }
+  if (name === 'credentials_list') return { kind, title: 'List stored credentials' }
+  if (name === 'credentials_request') {
+    const alias = stringArgument(args, 'alias')
+    return { kind, title: `Ask for credential ${alias}`.trim(), subject: alias }
+  }
   if (name === 'start_session') {
     const count = Array.isArray(args.sessions) ? args.sessions.length : 0
     const verb = args.mode === 'propose' ? 'Suggest' : 'Start'
@@ -1415,6 +1421,8 @@ const coreEntries: AgentToolCatalogEntry[] = [
     approval: 'always'
   }),
   entry(providerRequestKeyTool, 'settings', 'read'),
+  entry(credentialsListTool, 'credentials', 'read'),
+  entry(credentialsRequestTool, 'credentials', 'read'),
   entry(manageTodo, 'todo', 'write'),
   entry(shell, 'command.execute', 'execute', {
     host: 'subprocess',
@@ -1516,7 +1524,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'plan',
     'tool.output',
     'settings',
-    'sessions'
+    'sessions',
+    'credentials'
   ],
   subagent: [
     'workspace.read',

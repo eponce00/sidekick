@@ -78,6 +78,10 @@ import {
   registerSettingsToolHandlers,
   type AppSettingsToolAccess
 } from './agentSettingsToolHandlers'
+import {
+  registerCredentialToolHandlers,
+  type CredentialToolAccess
+} from './agentCredentialToolHandlers'
 import { registerSkillToolHandlers } from './agentSkillToolHandlers'
 import type { ArtifactInspectorLike } from './artifactInspector'
 import type { InspectedArtifactType } from '../../shared/artifactInspection'
@@ -376,6 +380,7 @@ export class AgentToolRuntime {
   private childLauncher?: AgentChildRunLauncher
   private artifactInspector?: ArtifactInspectorLike
   private appSettings?: AppSettingsToolAccess
+  private credentials?: CredentialToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -413,6 +418,10 @@ export class AgentToolRuntime {
   /** Lets the agent read and propose changes to SideKick's own settings. */
   setAppSettings(access: AppSettingsToolAccess): void {
     this.appSettings = access
+  }
+
+  setCredentials(access: CredentialToolAccess): void {
+    this.credentials = access
   }
 
   async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
@@ -458,6 +467,7 @@ export class AgentToolRuntime {
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
+    if (this.credentials) registerCredentialToolHandlers(handlers, this.credentials)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
       officeHelpersAvailable: () => officeSession?.available() ?? false,

@@ -13,6 +13,7 @@ import {
   FolderOpen,
   Globe,
   Hand,
+  KeyRound,
   LifeBuoy,
   MapPin,
   Palette,
@@ -43,6 +44,7 @@ import { validateMcpServerConfig } from '../../../shared/mcp'
 import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentPalettes'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
+import { CredentialSettings } from './CredentialSettings'
 import { McpServerSettings } from './McpServerSettings'
 import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
@@ -75,6 +77,11 @@ interface SettingsModalProps {
   initialSection?: SettingsSection
   /** Shows a provider's key field, when SideKick's agent asked the user for a key. */
   providerKeyRequest?: { id: string; at: number } | null
+  /** Opens the credential editor, when SideKick's agent asked the user for a credential. */
+  credentialRequest?: {
+    value: import('../../../shared/credentials').CredentialRequest
+    at: number
+  } | null
 }
 
 const SETTINGS_ICONS = {
@@ -82,7 +89,8 @@ const SETTINGS_ICONS = {
   settings: Settings2,
   bot: Bot,
   palette: Palette,
-  boxes: Boxes
+  boxes: Boxes,
+  key: KeyRound
 }
 
 const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
@@ -95,7 +103,8 @@ function SettingsModal({
   onSave,
   onClose,
   initialSection = 'providers',
-  providerKeyRequest = null
+  providerKeyRequest = null,
+  credentialRequest = null
 }: SettingsModalProps): React.JSX.Element {
   const [settings, setSettings] = useState<ProviderSettings>(initialSettings)
   const [openedWith] = useState<ProviderSettings>(initialSettings)
@@ -107,6 +116,9 @@ function SettingsModal({
   useEffect(() => {
     if (providerKeyRequest) setActiveSection('providers')
   }, [providerKeyRequest])
+  useEffect(() => {
+    if (credentialRequest) setActiveSection('credentials')
+  }, [credentialRequest])
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
@@ -709,6 +721,18 @@ function SettingsModal({
             validationError={mcpValidationError}
           />
           <CommandLineToolSettings />
+        </div>
+      )
+    }
+
+    if (activeSection === 'credentials') {
+      return (
+        <div className="settings-page">
+          <SettingsPageHeader
+            title="Credentials"
+            description="API keys and sign-ins the agent can use by name without ever seeing them. Each one saves on its own, apart from Save changes."
+          />
+          <CredentialSettings request={credentialRequest} />
         </div>
       )
     }

@@ -19,11 +19,14 @@ SideKick keeps the following data in the operating system's application-data dir
 - application preferences and provider or connector configuration;
 - SideKick History snapshots for changes made through SideKick;
 - command output retained for durable runs, plus local operational and update logs; and
-- encrypted provider and connector credentials.
+- encrypted provider and connector credentials, and credentials you store for the agent, with a
+  record of when each was added, changed and used.
 
-Provider and connector secrets are encrypted with Electron `safeStorage` when the operating
-system's credential service is available. Decrypted credentials remain in the trusted main process
-and are not returned to normal renderer state. SideKick does not claim to protect local data from a
+Provider and connector secrets, and credentials you store for the agent, are encrypted with
+Electron `safeStorage` when the operating system's credential service is available. Decrypted
+credentials remain in the trusted main process and are not returned to normal renderer state. A
+stored credential's value is replaced with its alias in tool output and in every request sent to a
+model provider. SideKick does not claim to protect local data from a
 person or process that already controls your operating-system account.
 
 Project folders remain where you selected them. SideKick can read or change project files only

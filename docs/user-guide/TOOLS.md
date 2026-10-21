@@ -15,6 +15,7 @@ tools the model can see. A tool missing from that catalog cannot be invoked thro
 | Other chats     | `start_session`, `stop_session`, `send_message`, `list_sessions`, `import_attachment`                   | Conversation runs, not planning; workers only message, list and import |
 | Skills          | `use_skill`                                                                                             | Conversation runs, including read-only planning                        |
 | SideKick itself | `settings_read`, `settings_reference`, `settings_propose_change`, `provider_request_key`                | Conversation runs, not planning; every change asks first               |
+| Credentials     | `credentials_list`, `credentials_request`                                                               | Conversation runs, not planning; never return a value                  |
 | Human input     | `ask_user`                                                                                              | All interactive agent profiles                                         |
 | Retained output | `tool_output`                                                                                           | All agent profiles                                                     |
 | Web             | `web_search`, `web_image_search`, `web_fetch`                                                           | Conversation, child-agent, and research runs when enabled              |

@@ -18,6 +18,7 @@ import { registerSessionHandlers } from './sessions'
 import { registerPullRequestHandlers } from './pullRequests'
 import { registerWorktreeHandlers } from './worktrees'
 import { registerAppMenuHandlers } from './appMenus'
+import { registerCredentialHandlers } from './credentials'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -36,6 +37,7 @@ export function registerAllHandlers(): void {
   registerMcpHandlers()
   registerPermissionHandlers()
   registerBrowserNetworkHandlers()
+  registerCredentialHandlers()
   registerPullRequestHandlers()
   registerSupportHandlers()
   registerAgentRunHandlers()

@@ -1,4 +1,5 @@
 import { Terminal } from '@xterm/headless'
+import { credentialRedactor } from './credentialRedaction'
 
 export const TERMINAL_COLUMNS = 160
 export const TERMINAL_ROWS = 40
@@ -36,7 +37,11 @@ export class TerminalScreen {
     return this.written
   }
 
-  /** The screen and its scrollback as lines, a wrapped line joined back into one. */
+  /**
+   * The screen and its scrollback as lines, a wrapped line joined back into one. The output fed in
+   * is already redacted, but a console host that repaints with cursor moves can split a stored
+   * value on the way in and join it again on screen, so each line is redacted once more.
+   */
   lines(): string[] {
     const buffer = this.terminal.buffer.active
     const lines: string[] = []
@@ -48,7 +53,7 @@ export class TerminalScreen {
       else lines.push(text)
     }
     while (lines.length && !lines.at(-1)!.trim()) lines.pop()
-    return lines
+    return lines.map((line) => credentialRedactor.redact(line))
   }
 
   /**
@@ -62,7 +67,7 @@ export class TerminalScreen {
       .getLine(buffer.baseY + buffer.cursorY)
       ?.translateToString(true)
       .trimEnd()
-    return text ? text : undefined
+    return text ? credentialRedactor.redact(text) : undefined
   }
 
   dispose(): void {
