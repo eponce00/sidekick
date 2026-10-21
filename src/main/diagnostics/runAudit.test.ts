@@ -101,6 +101,36 @@ describe('auditRuns', () => {
     expect(finding('compaction-fallback').examples).toEqual(['timeout × 2', 'unrecorded × 1'])
   })
 
+  it('flags a run that summarizes the chat at its start after a run that sent little', () => {
+    // The shape a lost summary left: each new run began by summarizing the whole chat again,
+    // although the previous run had sent the model only a fifth of the window.
+    const startCompaction = (runId: string, at: number): void => {
+      event(runId, 'compaction.started', { reason: 'preflight_budget' }, at)
+      event(
+        runId,
+        'compaction.completed',
+        { compacted: true, reason: 'preflight_budget', contextLength: 260_000, strategy: 'model' },
+        at + 30_000
+      )
+    }
+    run('small', 1_000)
+    event('small', 'usage.updated', { promptTokens: 54_000 }, 2_000)
+    run('again', 100_000)
+    startCompaction('again', 101_000)
+    run('full', 200_000)
+    event('full', 'usage.updated', { promptTokens: 205_000 }, 201_000)
+    run('due', 300_000)
+    startCompaction('due', 301_000)
+
+    expect(finding('compaction-at-start')).toMatchObject({
+      severity: 'flag',
+      count: 1,
+      examples: ['again (the previous run sent 21% of 260,000)'],
+      summary:
+        '1 of 2 runs that began by summarizing the chat followed a run that had sent less than 60% of the window.'
+    })
+  })
+
   it("reports how SideKick's estimate compared with the provider's count", () => {
     run('estimates')
     event(
