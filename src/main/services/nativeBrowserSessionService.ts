@@ -848,6 +848,20 @@ function currentSignal(
   return signals.length === 1 ? signals[0] : AbortSignal.any(signals)
 }
 
+/**
+ * Chromium's own words for a call that outlived the document or node it targeted, as when the
+ * page navigates in the middle of an action.
+ */
+const LOST_PAGE_PROTOCOL_ERROR =
+  /Cannot find context with specified id|Execution context was destroyed|Inspected target navigated or closed|Cannot find object with id|No node with given id|Could not find node with given id|Node with given id does not belong to the document|Node is detached from document/i
+
+/** The agent gets SideKick's explanation, not a protocol error, when the page moved on. */
+export function pageChangedError(error: unknown): unknown {
+  return error instanceof Error && LOST_PAGE_PROTOCOL_ERROR.test(error.message)
+    ? new Error('Browser page changed during this action; observe it before trying again')
+    : error
+}
+
 async function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
   if (!signal) return promise
   if (signal.aborted) {
@@ -3412,7 +3426,9 @@ export class NativeBrowserSessionService {
         backendNodeId
       }),
       signal
-    )
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
     const objectId = response.object?.objectId
     if (!objectId) throw new Error('Browser element is no longer available; observe again')
     return objectId
@@ -3440,7 +3456,9 @@ export class NativeBrowserSessionService {
           userGesture: true
         }),
         signal
-      )
+      ).catch((error: unknown) => {
+        throw pageChangedError(error)
+      })
       if (response.exceptionDetails) {
         throw new Error(
           response.exceptionDetails.exception?.description ??
@@ -4523,7 +4541,9 @@ export class NativeBrowserSessionService {
         { expression: `(${FIND_SIGN_IN_FIELD})(${JSON.stringify(kind)})`, returnByValue: false }
       ),
       signal
-    )
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
     const objectId = found.result?.objectId
     if (!objectId || found.result?.subtype === 'null') return undefined
     try {
@@ -4532,7 +4552,9 @@ export class NativeBrowserSessionService {
           objectId
         }),
         signal
-      )
+      ).catch((error: unknown) => {
+        throw pageChangedError(error)
+      })
       const backendNodeId = described.node?.backendNodeId
       if (!backendNodeId) return undefined
       const rect = await this.elementRect(tab, backendNodeId, signal)

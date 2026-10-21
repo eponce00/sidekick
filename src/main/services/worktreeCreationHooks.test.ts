@@ -70,6 +70,7 @@ it('runs a real approved command in a disposable checkout and captures its outpu
     expect(readFileSync(outputPath, 'utf8')).toContain('setup-verified')
   } finally {
     runner.cancelAll()
-    rmSync(root, { recursive: true, force: true })
+    // On Windows a scanner can still hold a file the command just wrote, so removal retries.
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
   }
 })
