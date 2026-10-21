@@ -3,6 +3,7 @@ import { Eye, EyeOff, KeyRound, Pencil, Plus, ShieldAlert, Trash2, UserRound } f
 import {
   CREDENTIAL_ASK_LABELS,
   CREDENTIAL_ASK_POLICIES,
+  MIN_CREDENTIAL_VALUE,
   SHORT_CREDENTIAL_VALUE,
   defaultCredentialScope,
   type CredentialAskPolicy,
@@ -29,6 +30,8 @@ interface Draft {
   ask: CredentialAskPolicy
   scope: CredentialScope
   values: CredentialValues
+  /** The description the agent suggested when it asked for this credential. */
+  suggestedDescription?: string
 }
 
 function newDraft(request?: CredentialRequest | null): Draft {
@@ -36,6 +39,7 @@ function newDraft(request?: CredentialRequest | null): Draft {
     alias: request?.alias ?? '',
     kind: request?.kind ?? 'secret',
     description: request?.description ?? '',
+    ...(request?.description ? { suggestedDescription: request.description } : {}),
     usernameVisible: false,
     ask: 'once_per_chat',
     scope: defaultCredentialScope(),
@@ -77,7 +81,8 @@ const EVENT_LABELS: Record<CredentialEvent['kind'], string> = {
 
 /**
  * A value field that never shows a stored value: it starts empty and only sets a new one. What the
- * user types is masked unless `plain`, as for a username, and can be shown while typing.
+ * user types is masked unless `plain`, as for a username, and can be shown while typing. A
+ * `multiline` field takes a pasted key with its line breaks, masked the same way.
  */
 function ValueField({
   label,
@@ -85,7 +90,9 @@ function ValueField({
   value,
   onChange,
   autoFocus,
-  plain = false
+  plain = false,
+  multiline = false,
+  hidden = true
 }: {
   label: string
   stored: boolean
@@ -93,27 +100,54 @@ function ValueField({
   onChange: (value: string | undefined) => void
   autoFocus?: boolean
   plain?: boolean
+  multiline?: boolean
+  /** Whether the redactor hides this value, which decides the length warning. */
+  hidden?: boolean
 }): React.JSX.Element {
   const id = useId()
   const [revealed, setRevealed] = useState(false)
   const shown = plain || revealed
-  const short = Boolean(value) && (value?.length ?? 0) < SHORT_CREDENTIAL_VALUE
+  const length = value?.trim().length ?? 0
+  const placeholder = stored
+    ? 'Stored. Type a new value to replace it.'
+    : `Enter the ${label.toLowerCase()}`
+  const warning = !value
+    ? null
+    : !plain && length < MIN_CREDENTIAL_VALUE
+      ? `Enter at least ${MIN_CREDENTIAL_VALUE} characters; shorter values cannot be kept out of output.`
+      : !plain && length < SHORT_CREDENTIAL_VALUE
+        ? `Values under ${SHORT_CREDENTIAL_VALUE} characters may be missed in output, or hide ordinary text that matches them.`
+        : plain && hidden && length < MIN_CREDENTIAL_VALUE
+          ? `A username under ${MIN_CREDENTIAL_VALUE} characters is not hidden from output.`
+          : null
   return (
     <label className="modern-field credential-value-field" htmlFor={id}>
       <span>{label}</span>
       <span className="credential-value-input">
-        <input
-          id={id}
-          type={shown ? 'text' : 'password'}
-          value={value ?? ''}
-          autoComplete="off"
-          spellCheck={false}
-          autoFocus={autoFocus}
-          placeholder={
-            stored ? 'Stored. Type a new value to replace it.' : `Enter the ${label.toLowerCase()}`
-          }
-          onChange={(event) => onChange(event.target.value || undefined)}
-        />
+        {multiline ? (
+          <textarea
+            id={id}
+            className={shown ? undefined : 'is-masked'}
+            rows={Math.min(6, Math.max(1, (value ?? '').split('\n').length))}
+            value={value ?? ''}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus={autoFocus}
+            placeholder={placeholder}
+            onChange={(event) => onChange(event.target.value || undefined)}
+          />
+        ) : (
+          <input
+            id={id}
+            type={shown ? 'text' : 'password'}
+            value={value ?? ''}
+            autoComplete="off"
+            spellCheck={false}
+            autoFocus={autoFocus}
+            placeholder={placeholder}
+            onChange={(event) => onChange(event.target.value || undefined)}
+          />
+        )}
         {!plain && (
           <button
             type="button"
@@ -127,11 +161,7 @@ function ValueField({
           </button>
         )}
       </span>
-      {short && (
-        <small className="credential-warning">
-          Values under {SHORT_CREDENTIAL_VALUE} characters cannot be reliably kept out of output.
-        </small>
-      )}
+      {warning && <small className="credential-warning">{warning}</small>}
     </label>
   )
 }
@@ -327,10 +357,17 @@ export function CredentialSettings({
               placeholder="What it is for. Identifiers that are not secret, such as a client ID, belong here."
               onChange={(event) => update({ description: event.target.value })}
             />
+            {draft.suggestedDescription && draft.description === draft.suggestedDescription && (
+              <small className="credential-warning">
+                The agent that asked for this credential wrote this. Check it before saving: every
+                chat that lists credentials reads it.
+              </small>
+            )}
           </label>
           {draft.kind === 'secret' ? (
             <ValueField
               label="Secret"
+              multiline
               stored={valuesStored}
               value={draft.values.secret}
               onChange={(value) => setValue('secret', value)}
@@ -341,6 +378,7 @@ export function CredentialSettings({
               <ValueField
                 label="Username"
                 plain
+                hidden={!draft.usernameVisible}
                 stored={valuesStored}
                 value={draft.values.username}
                 onChange={(value) => setValue('username', value)}
@@ -364,7 +402,11 @@ export function CredentialSettings({
         {draft.kind === 'sign_in' && (
           <ToggleField
             label="Let the agent read the username"
-            hint="So it can say which account it used. The password stays hidden either way."
+            hint={
+              draft.usernameVisible
+                ? 'So it can say which account it used. The password stays hidden either way.'
+                : `While hidden, the username is replaced with [secret: ${draft.alias || 'alias'}] wherever it appears in output, so a common name such as admin or deploy is hidden everywhere.`
+            }
             checked={draft.usernameVisible}
             onChange={(usernameVisible) => update({ usernameVisible })}
           />

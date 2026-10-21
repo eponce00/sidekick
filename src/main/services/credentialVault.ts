@@ -36,7 +36,16 @@ interface StoredEntry {
 
 interface VaultFile {
   version: 1
+  /** Entries this version cannot read are written back exactly as they were. */
+  entries: Record<string, StoredEntry | unknown>
+}
+
+/** The store as read: the entries this version understands, and whether it may write it. */
+interface ReadVault {
   entries: Record<string, StoredEntry>
+  unknown: Record<string, unknown>
+  /** Written by a newer SideKick, or not a store at all: saving would destroy what it holds. */
+  locked: boolean
 }
 
 export interface CredentialPersistence {
@@ -48,6 +57,8 @@ export interface CredentialPersistence {
 
 /** The sealed part of an entry. */
 interface SealedRecord {
+  /** The record's layout, so a later version can migrate it when a default changes. */
+  schema?: 1
   id: string
   alias: string
   kind: CredentialSummary['kind']
@@ -81,19 +92,23 @@ export class CredentialUnavailableError extends Error {
 const MAX_EVENTS = 1_000
 const UNAVAILABLE_REASON =
   "This computer has no protected storage SideKick can use, such as the system keychain, so credentials can't be stored safely."
+const LOCKED_REASON =
+  'Stored credentials were saved by a newer version of SideKick, or the store cannot be read. Update SideKick to change them; nothing was changed.'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-function readFile(value: unknown): VaultFile {
+function readFile(value: unknown): ReadVault {
+  if (value === undefined || value === null) return { entries: {}, unknown: {}, locked: false }
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.entries)) {
-    return { version: 1, entries: {} }
+    return { entries: {}, unknown: {}, locked: true }
   }
   const entries: Record<string, StoredEntry> = {}
+  const unknown: Record<string, unknown> = {}
   for (const [id, raw] of Object.entries(value.entries)) {
-    if (!isRecord(raw)) continue
     if (
+      isRecord(raw) &&
       typeof raw.alias === 'string' &&
       (raw.kind === 'secret' || raw.kind === 'sign_in') &&
       typeof raw.description === 'string' &&
@@ -105,9 +120,19 @@ function readFile(value: unknown): VaultFile {
         description: raw.description,
         sealed: raw.sealed
       }
-    }
+    } else unknown[id] = raw
   }
-  return { version: 1, entries }
+  return { entries, unknown, locked: false }
+}
+
+/** The values the redactor hides: every value except a username the user lets the agent read. */
+function hiddenValues(record: SealedRecord): Array<[keyof CredentialValues, string]> {
+  return (Object.entries(record.values) as Array<[keyof CredentialValues, unknown]>).filter(
+    (entry): entry is [keyof CredentialValues, string] =>
+      typeof entry[1] === 'string' &&
+      Boolean(entry[1]) &&
+      !(entry[0] === 'username' && record.usernameVisible)
+  )
 }
 
 function readEvents(value: unknown): CredentialEvent[] {
@@ -139,6 +164,7 @@ export class CredentialVault {
   /** Values replaced or deleted since launch stay redacted until SideKick restarts. */
   private readonly retired: Array<{ alias: string; value: string }> = []
   private loaded = false
+  private locked = false
 
   constructor(
     private readonly cipher: CredentialCipher,
@@ -149,6 +175,8 @@ export class CredentialVault {
   ) {}
 
   status(): CredentialStatus {
+    this.ensureLoaded()
+    if (this.locked) return { available: false, reason: LOCKED_REASON }
     return this.cipher.isAvailable()
       ? { available: true }
       : { available: false, reason: UNAVAILABLE_REASON }
@@ -190,6 +218,7 @@ export class CredentialVault {
       )
     }
     this.entries = entries
+    this.locked = file.locked
     this.loaded = true
     this.refreshRedactor()
   }
@@ -200,11 +229,20 @@ export class CredentialVault {
 
   private refreshRedactor(): void {
     const current = [...this.entries.values()].flatMap(({ record }) =>
-      Object.values(record.values)
-        .filter((value): value is string => typeof value === 'string' && Boolean(value))
-        .map((value) => ({ alias: record.alias, value }))
+      hiddenValues(record).map(([, value]) => ({ alias: record.alias, value }))
     )
     this.redactor.setSecrets([...current, ...this.retired])
+  }
+
+  /** Reads the store for a change, refusing one that would overwrite what it cannot read. */
+  private writable(): ReadVault {
+    const file = readFile(this.persistence.read())
+    if (file.locked) throw new CredentialUnavailableError(LOCKED_REASON)
+    return file
+  }
+
+  private write(file: ReadVault): void {
+    this.persistence.write({ version: 1, entries: { ...file.unknown, ...file.entries } })
   }
 
   private lastUses(): Map<string, number> {
@@ -267,12 +305,12 @@ export class CredentialVault {
         throw new Error(`Another credential is already called ${input.alias}.`)
       }
     }
+    const file = this.writable()
     const now = this.now()
     const id = existing?.record.id ?? this.newId()
-    const previousValues =
-      existing && !existing.needsValue && existing.record.kind === input.kind
-        ? existing.record.values
-        : {}
+    const oldValues = existing && !existing.needsValue ? existing.record.values : {}
+    // A changed kind keeps no value; every old one is replaced.
+    const previousValues = existing?.record.kind === input.kind ? oldValues : {}
     const values: CredentialValues = { ...previousValues, ...(input.values ?? {}) }
     const fields = input.kind === 'secret' ? ['secret'] : ['username', 'password']
     for (const field of Object.keys(values) as Array<keyof CredentialValues>) {
@@ -282,6 +320,7 @@ export class CredentialVault {
       throw new Error('Enter every value for this credential.')
     }
     const record: SealedRecord = {
+      schema: 1,
       id,
       alias: input.alias,
       kind: input.kind,
@@ -293,27 +332,29 @@ export class CredentialVault {
       createdAt: existing && !existing.needsValue ? existing.record.createdAt : now,
       updatedAt: now
     }
-    const file = readFile(this.persistence.read())
     file.entries[id] = {
       alias: record.alias,
       kind: record.kind,
       description: record.description,
       sealed: this.cipher.seal(JSON.stringify(record))
     }
-    this.persistence.write(file)
+    this.write(file)
 
-    const replaced = Object.entries(previousValues).filter(
-      ([field, value]) => value && values[field as keyof CredentialValues] !== value
-    )
-    for (const [, value] of replaced) {
-      if (value) this.retired.push({ alias: existing!.record.alias, value })
-    }
+    const replaced = existing
+      ? hiddenValues({ ...existing.record, values: oldValues }).filter(
+          ([field, value]) => values[field] !== value
+        )
+      : []
+    for (const [, value] of replaced) this.retired.push({ alias: existing!.record.alias, value })
     this.entries.set(id, { record, needsValue: false })
     this.refreshRedactor()
 
     if (!existing) this.record('created', record)
     else {
-      if (replaced.length || existing.needsValue) this.record('value_replaced', record)
+      const replacedAny = Object.entries(oldValues).some(
+        ([field, value]) => value && values[field as keyof CredentialValues] !== value
+      )
+      if (replacedAny || existing.needsValue) this.record('value_replaced', record)
       const changes = this.describeChanges(existing.record, record)
       if (changes) this.record('changed', record, { detail: changes })
     }
@@ -335,11 +376,11 @@ export class CredentialVault {
     this.ensureLoaded()
     const existing = this.entries.get(id)
     if (!existing) return false
-    const file = readFile(this.persistence.read())
+    const file = this.writable()
     delete file.entries[id]
-    this.persistence.write(file)
-    for (const value of Object.values(existing.record.values)) {
-      if (value) this.retired.push({ alias: existing.record.alias, value })
+    this.write(file)
+    for (const [, value] of hiddenValues(existing.record)) {
+      this.retired.push({ alias: existing.record.alias, value })
     }
     this.entries.delete(id)
     this.refreshRedactor()

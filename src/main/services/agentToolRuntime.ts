@@ -30,6 +30,7 @@ import {
   workspaceMutationResultForModel,
   workspaceMutationTargetPaths
 } from '../../shared/workspaceMutations'
+import { credentialRedactor } from './credentialRedaction'
 import { executeWorkspaceMutation } from './workspaceMutationService'
 import { WorkspaceReadService } from './workspaceReadService'
 import { CommandService, type OwnedBackgroundTask } from './commandService'
@@ -885,7 +886,10 @@ export class AgentToolRuntime {
         const stale = failureCode
           ? failureCode === 'read_required' || failureCode === 'stale_read'
           : /stale|re-?read|read receipt/i.test(result.error || '')
-        const correctable = failureCode === 'multiple_matches' || failureCode === 'text_not_found'
+        const correctable =
+          failureCode === 'multiple_matches' ||
+          failureCode === 'text_not_found' ||
+          failureCode === 'secret_placeholder'
         const patchSyntax =
           name === 'apply_patch' &&
           /^Invalid (?:patch|Add File|Delete File|Update File|hunk)/i.test(result.error || '')
@@ -1277,7 +1281,10 @@ export class AgentToolRuntime {
                 -16_384
               )
               printed.set(id, text)
-              if (pattern!.test(text)) wake({ woke: 'pattern_matched', task: session })
+              // Matched on redacted text: a pattern must not tell the agent what a value holds.
+              if (pattern!.test(credentialRedactor.redact(text))) {
+                wake({ woke: 'pattern_matched', task: session })
+              }
             })
           : () => undefined
         const userMessage = (): void => wake({ woke: 'user_message' })

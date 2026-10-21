@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { createWriteStream, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
+import { StringDecoder } from 'string_decoder'
 import type { IPty } from 'node-pty'
 import type { ShellCommandResult } from '../../shared/types'
 import { COMMAND_CAPTURE_BYTES } from '../../shared/terminalSessions'
@@ -413,10 +414,18 @@ export class CommandRunner {
         stderr += capture(chunk)
         options.onOutput?.({ commandId: options.id, chunk, stream: 'stderr' })
       })
+      // One decoder per stream: a character split between two chunks decodes whole, so a value
+      // holding one is still recognised.
+      const stdoutText = new StringDecoder('utf8')
+      const stderrText = new StringDecoder('utf8')
 
       // Built only once held-back output is released, so the result holds all of it.
       const finish = (build: () => ShellCommandResult): void => {
         if (settled) return
+        const restOut = stdoutText.end()
+        if (restOut) out.push(restOut)
+        const restErr = stderrText.end()
+        if (restErr) err.push(restErr)
         out.end()
         err.end()
         const result = build()
@@ -457,11 +466,13 @@ export class CommandRunner {
       child.stdin?.on('error', () => undefined)
       child.stdout.on('data', (data: Buffer) => {
         if (settled) return
-        out.push(data.toString())
+        const text = stdoutText.write(data)
+        if (text) out.push(text)
       })
       child.stderr.on('data', (data: Buffer) => {
         if (settled) return
-        const rawChunk = data.toString()
+        const rawChunk = stderrText.write(data)
+        if (!rawChunk) return
         const marker = new RegExp(`${WINDOWS_EXIT_MARKER}(-?\\d+)\\r?\\n?`, 'g')
         const matches = options.process ? [] : [...rawChunk.matchAll(marker)]
         if (matches.length) reportedWindowsExitCode = Number(matches.at(-1)?.[1])

@@ -29,6 +29,14 @@ function tempDir(): string {
   return dir
 }
 
+/** Runs a Node script directly, so a test controls exactly which bytes arrive and when. */
+function nodeProcess(script: string): { file: string; args: string[] } {
+  return { file: process.execPath, args: ['-e', script] }
+}
+
+// Under `npm test` the runner is Electron; this makes it behave as Node for the child.
+const NODE_ENV = { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+
 function storedValue(): { value: string; redactor: CredentialRedactor } {
   const value = `sk${randomBytes(18).toString('hex')}`
   const redactor = new CredentialRedactor()
@@ -83,6 +91,95 @@ describe('credential redaction points', () => {
     expect(result.stdout).not.toContain(value)
     expect(chunks.join('')).not.toContain(value)
     expect(existsSync(outputPath) ? readFileSync(outputPath, 'utf8') : '').not.toContain(value)
+  })
+
+  it('redacts a value printed in pieces between terminal escapes, wherever output goes', async () => {
+    const { value, redactor } = storedValue()
+    const dir = tempDir()
+    const outputPath = join(dir, 'ansi.log')
+    const chunks: string[] = []
+    const printed = `key=${value.slice(0, 11)}\x1b[31m${value.slice(11, 20)}\x1b[0m${value.slice(20)}\n`
+    const result = await new CommandRunner(redactor).run({
+      id: 'ansi',
+      command: 'print',
+      process: nodeProcess(`process.stdout.write(${JSON.stringify(printed)})`),
+      env: NODE_ENV,
+      cwd: dir,
+      timeoutMs: 15_000,
+      outputPath,
+      onOutput: ({ chunk }) => chunks.push(chunk)
+    })
+    // eslint-disable-next-line no-control-regex
+    const plain = (text: string): string => text.replace(/\x1b\[[0-9;]*m/g, '')
+    for (const text of [result.stdout, chunks.join(''), readFileSync(outputPath, 'utf8')]) {
+      expect(plain(text)).not.toContain(value.slice(11))
+      expect(plain(text)).toContain('key=[secret: api-key]')
+    }
+  })
+
+  it('redacts a value whose character is split between two pipe chunks', async () => {
+    const value = `pé${randomBytes(12).toString('hex')}ü`
+    const redactor = new CredentialRedactor()
+    redactor.setSecrets([{ alias: 'api-key', value }])
+    const dir = tempDir()
+    const bytes = Buffer.from(`key=${value}\n`, 'utf8')
+    // Cut inside the two bytes of "é", with a pause so the halves arrive as separate chunks.
+    const cut = Buffer.from('key=p', 'utf8').length + 1
+    const script = `const b = Buffer.from(${JSON.stringify(bytes.toString('base64'))}, 'base64');
+      process.stdout.write(b.subarray(0, ${cut}));
+      setTimeout(() => process.stdout.write(b.subarray(${cut})), 150)`
+    const chunks: string[] = []
+    const result = await new CommandRunner(redactor).run({
+      id: 'utf8',
+      command: 'print',
+      process: nodeProcess(script),
+      env: NODE_ENV,
+      cwd: dir,
+      timeoutMs: 15_000,
+      outputPath: join(dir, 'utf8.log'),
+      onOutput: ({ chunk }) => chunks.push(chunk)
+    })
+    expect(result.stdout).toBe('key=[secret: api-key]\n')
+    expect(chunks.join('')).not.toContain('�')
+  })
+
+  it('releases a held tail after a quiet moment, so a prompt still shows', async () => {
+    const { value, redactor } = storedValue()
+    const dir = tempDir()
+    const chunks: string[] = []
+    // The prompt ends in what could be the start of the value, then the program waits.
+    const script = `process.stdout.write(${JSON.stringify(`Password: ${value.slice(0, 6)}`)});
+      setTimeout(() => process.stdout.write(' done\\n'), 1500)`
+    await new CommandRunner(redactor).run({
+      id: 'quiet',
+      command: 'prompt',
+      process: nodeProcess(script),
+      env: NODE_ENV,
+      cwd: dir,
+      timeoutMs: 15_000,
+      outputPath: join(dir, 'quiet.log'),
+      onOutput: ({ chunk }) => chunks.push(chunk)
+    })
+    // Without the quiet release the held characters would come out only with " done".
+    const held = chunks.findIndex((chunk) => chunk.includes(value.slice(0, 6)))
+    expect(held).toBeGreaterThanOrEqual(0)
+    expect(chunks[held]).not.toContain('done')
+    expect(chunks.join('')).toBe(`Password: ${value.slice(0, 6)} done\n`)
+  })
+
+  it('redacts a window of retained output that cuts a value at either edge', async () => {
+    const { value, redactor } = storedValue()
+    const root = tempDir()
+    // Kept before the value was stored, so the file still holds it.
+    const before = new ToolOutputStore(root, Date.now, new CredentialRedactor())
+    const handle = await before.save(`${'a'.repeat(3_000)}${value}${'b'.repeat(3_000)}`)
+    const outputs = new ToolOutputStore(root, Date.now, redactor)
+    const starting = await outputs.read(handle, 3_000 + 10, 1_024)
+    expect(starting.content.startsWith('[secret: api-key]bbb')).toBe(true)
+    expect(starting.content).not.toContain(value.slice(10, 30))
+    const ending = await outputs.read(handle, 3_000 + 10 - 1_024, 1_024)
+    expect(ending.content.endsWith('[secret: api-key]')).toBe(true)
+    expect(ending.content).not.toContain(value.slice(0, 10))
   })
 
   it('redacts retained output before measuring and writing it', async () => {
@@ -161,11 +258,35 @@ describe('credential redaction points', () => {
           role: 'assistant',
           content: null,
           tool_calls: [{ id: 't', function: { name: 'shell', arguments: { command: value } } }]
+        },
+        // A worker's report, and an attachment's name and description.
+        { role: 'user', content: `Worker report: deployed with ${value}` },
+        {
+          role: 'tool',
+          tool_call_id: 't',
+          content: 'ok',
+          media: [
+            {
+              type: 'image' as const,
+              mimeType: 'image/png' as const,
+              source: {
+                type: 'data_url' as const,
+                dataUrl:
+                  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='
+              },
+              name: `screenshot-${value}.png`,
+              description: `The page showed ${value}`
+            }
+          ]
         }
       ]
     }
     const prepared = await materializeProviderRequestMedia(request)
     expect(JSON.stringify(prepared)).not.toContain(value)
+    expect(prepared.messages[4].media?.[0]).toMatchObject({
+      name: 'screenshot-[secret: api-key].png',
+      description: 'The page showed [secret: api-key]'
+    })
     expect(prepared.messages[1].content).toBe('here is my key [secret: api-key]')
     expect(prepared.messages[0]).toBe(request.messages[0])
     expect(request.messages[1].content).toContain(value)

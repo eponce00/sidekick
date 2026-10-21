@@ -242,9 +242,13 @@ function redactProviderMessage(message: ProviderChatMessage): ProviderChatMessag
   const toolCalls = message.tool_calls
     ? credentialRedactor.redactDeep(message.tool_calls)
     : message.tool_calls
-  return content === message.content && toolCalls === message.tool_calls
+  // An attachment's name and description, not its image data.
+  const media = message.media
+    ? credentialRedactor.redactDeep({ media: message.media }).media
+    : message.media
+  return content === message.content && toolCalls === message.tool_calls && media === message.media
     ? message
-    : { ...message, content, tool_calls: toolCalls }
+    : { ...message, content, tool_calls: toolCalls, media }
 }
 
 /** Resolve durable file references only at the provider boundary, and redact stored values. */

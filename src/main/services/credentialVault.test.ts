@@ -248,6 +248,71 @@ describe('CredentialVault', () => {
     ).toEqual([])
   })
 
+  it('retires every old value when the kind changes, and records the replacement', () => {
+    const { vault, redactor } = setup()
+    const secret = generated()
+    const saved = vault.save(secretInput({ values: { secret } }))
+    const username = generated()
+    const password = generated()
+    vault.save({
+      ...secretInput({ kind: 'sign_in', values: { username, password } }),
+      id: saved.id
+    })
+    // The old secret is no longer stored, but stays hidden until restart.
+    expect(redactor.redact(`old ${secret}`)).toBe('old [secret: partner-center]')
+    expect(vault.events(saved.id).map((event) => event.kind)).toContain('value_replaced')
+  })
+
+  it('never hides a username the agent may read, from the list or from output', () => {
+    const { vault, redactor } = setup()
+    const username = generated()
+    const password = generated()
+    vault.save(
+      secretInput({
+        alias: 'site',
+        kind: 'sign_in',
+        usernameVisible: true,
+        values: { username, password }
+      })
+    )
+    expect(redactor.redact(`${username} ${password}`)).toBe(`${username} [secret: site]`)
+  })
+
+  it('keeps entries it cannot read when it saves', () => {
+    const { vault, store } = setup()
+    vault.save(secretInput())
+    const file = JSON.parse(store.raw()).file
+    file.entries['from-later'] = { alias: 'later', kind: 'passkey', sealed: 'opaque', extra: 1 }
+    store.persistence.write(file)
+    vault.load()
+    vault.save(secretInput({ alias: 'another', values: { secret: generated() } }))
+    expect(JSON.parse(store.raw()).file.entries['from-later']).toEqual({
+      alias: 'later',
+      kind: 'passkey',
+      sealed: 'opaque',
+      extra: 1
+    })
+  })
+
+  it.each([
+    ['a newer version', { version: 2, entries: { x: { future: true } } }],
+    ['something that is not a store', 'corrupted']
+  ])('changes nothing in a store written by %s', (_label, contents) => {
+    const { vault, store } = setup()
+    store.persistence.write(contents as never)
+    vault.load()
+    expect(vault.status()).toMatchObject({ available: false })
+    expect(() => vault.save(secretInput())).toThrow(CredentialUnavailableError)
+    expect(JSON.parse(store.raw()).file).toEqual(contents)
+  })
+
+  it('marks each sealed record with its layout', () => {
+    const { vault, store, cipher } = setup()
+    const saved = vault.save(secretInput())
+    const sealed = JSON.parse(store.raw()).file.entries[saved.id].sealed
+    expect(JSON.parse(cipher.open(sealed)).schema).toBe(1)
+  })
+
   it('keeps the newest thousand events', () => {
     const { vault } = setup()
     const saved = vault.save(secretInput())

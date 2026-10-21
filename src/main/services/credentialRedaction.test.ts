@@ -95,22 +95,73 @@ describe('CredentialRedactor', () => {
     expect(redactor.redact('abc abc')).toBe('abc abc')
   })
 
-  it('redacts strings throughout a tool result but leaves media and timing alone', () => {
+  it('redacts strings and keys throughout a tool result, leaving only image data alone', () => {
     const value = generated()
     const redactor = redactorFor(value)
-    const media = [{ type: 'image', source: { type: 'data_url', dataUrl: `data:,${value}` } }]
+    const source = { type: 'data_url', dataUrl: `data:,${value}` }
     const result = {
       title: `Ran ${value}`,
-      data: { nested: [{ text: value }], count: 3 },
-      media,
+      data: {
+        nested: [{ text: value }],
+        count: 3,
+        // Keys named like the top-level fields are ordinary data deeper down.
+        media: value,
+        timing: { label: value },
+        [value]: 'a key'
+      },
+      media: [{ type: 'image', source, name: `shot-${value}.png`, description: value }],
       timing: { startedAt: 1 }
     }
     const redacted = redactor.redactDeep(result)
     expect(redacted.title).toBe('Ran [secret: entry-0]')
     expect(redacted.data.nested[0].text).toBe('[secret: entry-0]')
     expect(redacted.data.count).toBe(3)
-    expect(redacted.media).toBe(media)
+    expect(JSON.stringify(redacted.data)).not.toContain(value)
+    expect(redacted.media[0].source).toBe(source)
+    expect(redacted.media[0].name).toBe('shot-[secret: entry-0].png')
+    expect(redacted.media[0].description).toBe('[secret: entry-0]')
     expect(result.title).toContain(value)
+  })
+
+  it('finds a value a program printed in pieces between terminal escapes', () => {
+    const value = generated(24)
+    const redactor = redactorFor(value)
+    for (const escape of [
+      '\x1b[31m',
+      '\x1b[0m',
+      '\x1b[2K',
+      '\x1b]0;title\x07',
+      '\x1b]8;;https://x\x1b\\',
+      '\x1b7'
+    ]) {
+      const printed = `key=${value.slice(0, 9)}${escape}${value.slice(9)} done`
+      const output = redactor.redact(printed)
+      expect(output, JSON.stringify(escape)).toBe('key=[secret: entry-0] done')
+    }
+    expect(redactor.redact('\x1b[32mplain\x1b[0m')).toBe('\x1b[32mplain\x1b[0m')
+  })
+
+  it('hides a value printed without the spaces it was stored with', () => {
+    const value = generated()
+    const redactor = redactorFor(`  ${value} `)
+    expect(redactor.redact(`token=${value};`)).toBe('token=[secret: entry-0];')
+  })
+
+  it('redacts a window of text against the text around it', () => {
+    const value = generated(30)
+    const redactor = redactorFor(value)
+    const text = `aaaa${value}bbbb`
+    // Windows that cut the value at either edge show the placeholder, not the part inside.
+    expect(redactor.redactWindow(text, 10, text.length)).toBe('[secret: entry-0]bbbb')
+    expect(redactor.redactWindow(text, 0, 20)).toBe('aaaa[secret: entry-0]')
+    expect(redactor.redactWindow(text, 0, 2)).toBe('aa')
+    expect(redactor.context).toBeGreaterThanOrEqual(value.length)
+  })
+
+  it('counts placeholders only for the values it hides', () => {
+    const redactor = redactorFor(generated())
+    expect(redactor.placeholders('A=[secret: entry-0] B=[secret: entry-0]')).toBe(2)
+    expect(redactor.placeholders('[secret: unknown] [secret: ENTRY-0]')).toBe(0)
   })
 })
 
@@ -158,6 +209,19 @@ describe('CredentialRedactionStream', () => {
     const emitted = stream.push(text)
     expect(emitted).toBe('emoji \u{1f511}')
     expect(stream.push(`${value.slice(9)}!`)).toBe('[secret: entry-0]!')
+  })
+
+  it('catches a value split by an escape that is itself split between chunks', () => {
+    const value = generated(24)
+    const redactor = redactorFor(value)
+    const text = `>> ${value.slice(0, 7)}\x1b[38;5;196m${value.slice(7)}\x1b[0m <<`
+    for (let cut = 0; cut <= text.length; cut++) {
+      const stream = redactor.stream()
+      const output = stream.push(text.slice(0, cut)) + stream.push(text.slice(cut)) + stream.flush()
+      expect(output, `cut at ${cut}`).not.toContain(value.slice(7))
+      // eslint-disable-next-line no-control-regex
+      expect(output.replace(/\x1b\[[0-9;]*m/g, ''), `cut at ${cut}`).toBe('>> [secret: entry-0] <<')
+    }
   })
 
   it('uses the values current at each chunk', () => {

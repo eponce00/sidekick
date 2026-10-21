@@ -82,7 +82,7 @@ it('lists credentials by alias with what the agent may do', async () => {
 it('never fills a stored value into the editor and keeps it unless a new one is typed', async () => {
   await act(async () => root.render(<CredentialSettings />))
   await act(async () => button('Edit partner-center').click())
-  const secret = container.querySelector<HTMLInputElement>('input[type="password"]')!
+  const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
   expect(secret.value).toBe('')
   expect(secret.placeholder).toBe('Stored. Type a new value to replace it.')
   await act(async () => button('Save credential').click())
@@ -93,12 +93,14 @@ it('sends a new value only once, straight to the main process', async () => {
   await act(async () => root.render(<CredentialSettings />))
   await act(async () => button('Add credential').click())
   const alias = container.querySelector<HTMLInputElement>('.credential-alias-input')!
-  const secret = container.querySelector<HTMLInputElement>('input[type="password"]')!
+  const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
   await act(async () => {
     type(alias, 'github-token')
-    type(secret, 'short')
+    type(secret, 'abc')
   })
-  expect(container.textContent).toContain('cannot be reliably kept out of output')
+  expect(container.textContent).toContain('Enter at least 4 characters')
+  await act(async () => type(secret, 'short'))
+  expect(container.textContent).toContain('may be missed in output')
   await act(async () => button('Save credential').click())
   expect(save).toHaveBeenCalledWith(
     expect.objectContaining({ alias: 'github-token', kind: 'secret', values: { secret: 'short' } })
@@ -117,8 +119,45 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
   expect(container.querySelector<HTMLInputElement>('.credential-alias-input')!.value).toBe(
     'new-key'
   )
-  expect(container.querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('For the API')
-  expect(container.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe('')
+  const description = container.querySelector<HTMLTextAreaElement>('textarea')!
+  expect(description.value).toBe('For the API')
+  expect(
+    container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!.value
+  ).toBe('')
+  // A description the agent wrote is marked until the user changes it.
+  expect(container.textContent).toContain('The agent that asked for this credential wrote this')
+  await act(async () => type(description, 'Partner Center client secret'))
+  expect(container.textContent).not.toContain('The agent that asked for this credential wrote this')
+})
+
+it('takes a multi-line key, masked, and sends it with its line breaks', async () => {
+  await act(async () => root.render(<CredentialSettings />))
+  await act(async () => button('Add credential').click())
+  const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
+  expect(secret.classList.contains('is-masked')).toBe(true)
+  const key = [
+    '-----BEGIN PRIVATE KEY-----',
+    'MIIEvQ' + 'a'.repeat(40),
+    '-----END PRIVATE KEY-----'
+  ]
+  await act(async () => {
+    type(container.querySelector<HTMLInputElement>('.credential-alias-input')!, 'deploy-key')
+    type(secret, `${key.join('\n')}\n`)
+  })
+  expect(secret.rows).toBeGreaterThan(1)
+  await act(async () => button('Show what you typed').click())
+  expect(secret.classList.contains('is-masked')).toBe(false)
+  await act(async () => button('Save credential').click())
+  expect(save).toHaveBeenCalledWith(
+    expect.objectContaining({ alias: 'deploy-key', values: { secret: `${key.join('\n')}\n` } })
+  )
+})
+
+it('warns that a hidden username is hidden wherever it appears', async () => {
+  await act(async () => root.render(<CredentialSettings />))
+  await act(async () => button('Add credential').click())
+  await act(async () => button('Sign-in').click())
+  expect(container.textContent).toContain('a common name such as admin or deploy is hidden')
 })
 
 it('explains when the computer has no protected storage', async () => {

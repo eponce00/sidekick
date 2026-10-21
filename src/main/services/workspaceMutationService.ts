@@ -9,6 +9,7 @@ import {
 } from '../../shared/workspaceMutations'
 import { applyCanonicalUpdate, parseCanonicalPatch } from '../utils/canonicalPatch'
 import { createWorkspaceFileChange } from '../utils/workspaceDiff'
+import { credentialRedactor } from './credentialRedaction'
 import { workspaceFileVersion } from '../utils/workspaceFileVersion'
 import {
   OutsideProjectError,
@@ -543,9 +544,34 @@ async function planMutation(
   workspaceRoot: string,
   request: WorkspaceMutationRequest
 ): Promise<PlannedChange[]> {
+  refuseSecretPlaceholders(request)
   return request.kind === 'apply-patch'
     ? planCanonicalPatch(workspaceRoot, request)
     : planSingleFileMutation(workspaceRoot, request)
+}
+
+/**
+ * The agent reads a stored credential in a file as `[secret: alias]`. Writing that text back
+ * would replace the real value with the placeholder, so no change may contain one.
+ */
+function refuseSecretPlaceholders(request: WorkspaceMutationRequest): void {
+  const text =
+    request.kind === 'apply-patch'
+      ? request.patch
+      : request.kind === 'replace'
+        ? `${request.oldText}\n${request.newText}`
+        : request.kind === 'write'
+          ? request.content
+          : ''
+  if (!credentialRedactor.placeholders(text)) return
+  throw new WorkspaceMutationPlanningError(
+    'Edit rejected: it contains a [secret: …] placeholder. Where you read one, the file holds the stored value it hides, and writing the placeholder would replace that value. No file changes were made.',
+    {
+      code: 'secret_placeholder',
+      recovery:
+        'Change only lines that do not show a [secret: …] placeholder, with edits that leave those lines out, or ask the user to change the stored value themselves.'
+    }
+  )
 }
 
 function publicChanges(changes: PlannedChange[]): WorkspaceFileChange[] {

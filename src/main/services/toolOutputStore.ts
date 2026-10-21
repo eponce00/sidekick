@@ -488,9 +488,21 @@ export class ToolOutputStore {
         if (lead + width > end) end = lead
       }
       const nextOffset = start + end < stat.size ? start + end : null
+      // Output kept before a value was stored is redacted as it is read back. The text around
+      // the window is read too, so a value crossing its edge is still recognised.
+      const context = this.redactor.context * 4
+      const before = Buffer.alloc(context ? Math.min(context, start) : 0)
+      const after = Buffer.alloc(context ? Math.min(context, stat.size - (start + end)) : 0)
+      if (before.length) await descriptor.read(before, 0, before.length, start - before.length)
+      if (after.length) await descriptor.read(after, 0, after.length, start + end)
+      const lead = before.toString('utf8')
+      const window = buffer.subarray(0, end).toString('utf8')
       return {
-        // Output kept before a value was stored is redacted as it is read back.
-        content: this.redactor.redact(buffer.subarray(0, end).toString('utf8')),
+        content: this.redactor.redactWindow(
+          lead + window + after.toString('utf8'),
+          lead.length,
+          lead.length + window.length
+        ),
         offset: start,
         nextOffset,
         totalBytes: stat.size

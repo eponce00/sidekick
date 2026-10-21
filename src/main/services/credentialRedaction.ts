@@ -6,18 +6,30 @@
  * line behind a credential's scope: a process that holds a value can always transform it beyond
  * recognition, so this catches accidents and ordinary output, not a determined program.
  */
+import { MIN_CREDENTIAL_VALUE } from '../../shared/credentials'
 
 export interface RedactableSecret {
   alias: string
   value: string
 }
 
-/** Shorter values would cut ordinary words out of output. */
-const MIN_VALUE_LENGTH = 4
 /** Encoded forms shorter than this are too likely to occur by chance. */
 const MIN_VARIANT_LENGTH = 6
 /** A held-back tail is released after this long without more output, so prompts still show. */
 export const REDACTION_STREAM_QUIET_MS = 300
+
+/**
+ * Terminal control sequences a program can print inside a value, splitting it for anything that
+ * reads the raw text: CSI (colors, cursor moves), OSC (titles, links), and short escapes such as
+ * `ESC 7` or `ESC ( B`.
+ */
+// eslint-disable-next-line no-control-regex
+const ANSI_SEQUENCE = /\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])/g
+/** An escape a chunk ends in the middle of, which the next chunk completes. */
+// eslint-disable-next-line no-control-regex
+const PARTIAL_ANSI = /\x1b(?:\[[0-?]*[ -/]*|\][^\x07\x1b]*\x1b?|[ -/]*)$/
+/** How the redactor writes a value in place; a write that adds one would corrupt a file. */
+const PLACEHOLDER = /\[secret: ([a-z0-9][a-z0-9_~-]{0,80})\]/g
 
 function escapeHtml(value: string, apostrophe: string): string {
   return value
@@ -47,7 +59,7 @@ function base64Forms(bytes: Buffer): string[] {
 
 /** Every form of `value` the redactor looks for. */
 export function secretVariants(value: string): string[] {
-  if (value.length < MIN_VALUE_LENGTH) return []
+  if (value.length < MIN_CREDENTIAL_VALUE) return []
   const encoded: string[] = []
   const lines = value.split(/\r?\n/)
   // Each line on its own, since output arrives line by line; PEM armor lines are not secret.
@@ -136,6 +148,7 @@ class Automaton {
     if (this.nodes[state].match === -1) {
       this.nodes[state].match = this.patterns.length
       this.patterns.push({ length: text.length, alias })
+      this.longest = Math.max(this.longest, text.length)
     }
   }
 
@@ -156,6 +169,9 @@ class Automaton {
       if (node.match === -1) node.match = this.nodes[node.fail].match
     }
   }
+
+  /** The longest form it looks for, in UTF-16 code units. */
+  longest = 0
 
   /** Matches merged where they overlap, and how much of the text's end could still begin one. */
   scan(text: string): { spans: Span[]; tail: number } {
@@ -198,6 +214,25 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff
 }
 
+/** Text without its escapes, and where each of its characters sits in the original. */
+function withoutEscapes(raw: string): { text: string; at: number[] } | null {
+  if (!raw.includes('\x1b')) return null
+  let text = ''
+  const at: number[] = []
+  let cursor = 0
+  const keep = (end: number): void => {
+    for (let index = cursor; index < end; index++) at.push(index)
+    text += raw.slice(cursor, end)
+  }
+  for (const match of raw.matchAll(ANSI_SEQUENCE)) {
+    keep(match.index)
+    cursor = match.index + match[0].length
+  }
+  keep(raw.length)
+  at.push(raw.length)
+  return { text, at }
+}
+
 /** Redacts a stream delivered in chunks, so a value split between two chunks is still caught. */
 export class CredentialRedactionStream {
   private held = ''
@@ -211,8 +246,8 @@ export class CredentialRedactionStream {
 
   push(chunk: string): string {
     const text = this.held + chunk
-    const { spans, tail } = this.redactor.scan(text)
-    let boundary = text.length - tail
+    const { spans, holdFrom } = this.redactor.scan(text)
+    let boundary = holdFrom
     // A complete match that reaches into the held tail waits with it, whole.
     const crossing = spans.find((span) => span.start < boundary && span.end > boundary)
     if (crossing) boundary = crossing.start
@@ -234,51 +269,103 @@ export class CredentialRedactionStream {
   }
 }
 
-const SKIPPED_KEYS = new Set(['media', 'timing'])
-
 export class CredentialRedactor {
   private automaton = new Automaton([])
+  private aliases = new Set<string>()
 
   /** Replaces the values to look for; aliases label each redaction. */
   setSecrets(secrets: readonly RedactableSecret[]): void {
-    const entries = secrets.flatMap(({ alias, value }) =>
-      secretVariants(value).map((text) => ({ text, alias }))
-    )
+    const entries = secrets.flatMap(({ alias, value }) => {
+      const forms = new Set(secretVariants(value))
+      // A value stored with spaces around it is still hidden when printed without them.
+      if (value.trim() !== value) for (const form of secretVariants(value.trim())) forms.add(form)
+      return [...forms].map((text) => ({ text, alias }))
+    })
     // Longer forms first, so a form contained in another is reported under the longer match.
     entries.sort((left, right) => right.text.length - left.text.length)
     this.automaton = new Automaton(entries)
+    this.aliases = new Set(entries.map((entry) => entry.alias))
   }
 
   get active(): boolean {
     return !this.automaton.empty
   }
 
-  scan(text: string): { spans: Span[]; tail: number } {
-    if (this.automaton.empty || !text) return { spans: [], tail: 0 }
-    return this.automaton.scan(text)
+  /**
+   * Every match in `text`, also where escapes split a value, and where a tail that could still
+   * begin one starts, including an escape cut off at the end.
+   */
+  scan(text: string): { spans: Span[]; holdFrom: number } {
+    if (this.automaton.empty || !text) return { spans: [], holdFrom: text.length }
+    // An escape cut off at the end is left out of matching, and held with whatever it follows.
+    const partial = text.includes('\x1b') ? PARTIAL_ANSI.exec(text) : null
+    const complete = partial ? text.slice(0, partial.index) : text
+    const plain = withoutEscapes(complete)
+    if (!plain) {
+      const { spans, tail } = this.automaton.scan(complete)
+      return { spans, holdFrom: complete.length - tail }
+    }
+    const { spans, tail } = this.automaton.scan(plain.text)
+    return {
+      spans: spans.map((span) => ({
+        start: plain.at[span.start],
+        end: plain.at[span.end - 1] + 1,
+        alias: span.alias
+      })),
+      holdFrom: tail ? plain.at[plain.text.length - tail] : complete.length
+    }
   }
 
   redact(text: string): string {
     if (this.automaton.empty || !text) return text
-    return applySpans(text, this.automaton.scan(text).spans)
+    return applySpans(text, this.scan(text).spans)
   }
 
   /**
-   * Redacts every string inside plain objects and arrays, returning the same object when nothing
-   * matched. Media attachments and timing are left alone: they hold image data and numbers.
+   * How many characters of context a window of text needs on each side, so a value that crosses
+   * the window's edge is still recognised.
+   */
+  get context(): number {
+    return this.automaton.longest
+  }
+
+  /** Redacts `text.slice(from, to)`, matching against the whole of `text` around it. */
+  redactWindow(text: string, from: number, to: number): string {
+    if (this.automaton.empty) return text.slice(from, to)
+    let result = ''
+    let cursor = from
+    for (const span of this.scan(text).spans) {
+      if (span.end <= from || span.start >= to) continue
+      result += text.slice(cursor, Math.max(cursor, span.start)) + `[secret: ${span.alias}]`
+      cursor = span.end
+    }
+    return cursor < to ? result + text.slice(cursor, to) : result
+  }
+
+  /** How many placeholders for a value it hides `text` holds. */
+  placeholders(text: string): number {
+    let count = 0
+    for (const match of text.matchAll(PLACEHOLDER)) if (this.aliases.has(match[1])) count++
+    return count
+  }
+
+  /**
+   * Redacts every string, and every key, inside plain objects and arrays, returning the same
+   * object when nothing matched. Only the `source` of each top-level `media` item, which holds
+   * image data, is left alone; its name and description are redacted like the rest.
    */
   redactDeep<T>(value: T): T {
     if (this.automaton.empty) return value
-    return this.walk(value, 0) as T
+    return this.walk(value, 0, false) as T
   }
 
-  private walk(value: unknown, depth: number): unknown {
+  private walk(value: unknown, depth: number, mediaItem: boolean): unknown {
     if (typeof value === 'string') return this.redact(value)
     if (!value || typeof value !== 'object' || depth > 64) return value
     if (Array.isArray(value)) {
       let changed = false
       const items = value.map((item) => {
-        const next = this.walk(item, depth + 1)
+        const next = this.walk(item, depth + 1, mediaItem)
         changed ||= next !== item
         return next
       })
@@ -288,10 +375,11 @@ export class CredentialRedactor {
     if (prototype !== Object.prototype && prototype !== null) return value
     let changed = false
     const entries = Object.entries(value).map(([key, item]) => {
-      if (SKIPPED_KEYS.has(key)) return [key, item]
-      const next = this.walk(item, depth + 1)
-      changed ||= next !== item
-      return [key, next]
+      if (mediaItem && key === 'source') return [key, item]
+      const nextKey = this.redact(key)
+      const next = this.walk(item, depth + 1, depth === 0 && key === 'media')
+      changed ||= next !== item || nextKey !== key
+      return [nextKey, next]
     })
     return changed ? Object.fromEntries(entries) : value
   }

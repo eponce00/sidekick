@@ -3,6 +3,7 @@ import { chmod, lstat, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } 
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { executeWorkspaceMutation, previewWorkspaceMutation } from './workspaceMutationService'
+import { credentialRedactor } from './credentialRedaction'
 import { WorkspaceReadService } from './workspaceReadService'
 
 const temporaryRoots: string[] = []
@@ -20,6 +21,52 @@ afterEach(async () => {
 })
 
 describe('workspace mutation service', () => {
+  it('refuses to write a placeholder over the stored value it stands for', async () => {
+    const root = await workspace()
+    const value = `sk${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`
+    await writeFile(join(root, '.env'), `API_KEY=${value}\nDEBUG=0\n`, 'utf8')
+    credentialRedactor.setSecrets([{ alias: 'api-key', value }])
+    try {
+      for (const request of [
+        {
+          kind: 'write' as const,
+          filePath: '.env',
+          content: 'API_KEY=[secret: api-key]\nDEBUG=1\n'
+        },
+        {
+          kind: 'replace' as const,
+          filePath: '.env',
+          oldText: 'API_KEY=[secret: api-key]\nDEBUG=0',
+          newText: 'API_KEY=[secret: api-key]\nDEBUG=1',
+          replaceAll: false
+        },
+        {
+          kind: 'apply-patch' as const,
+          patch:
+            '*** Begin Patch\n*** Update File: .env\n@@\n API_KEY=[secret: api-key]\n-DEBUG=0\n+DEBUG=1\n*** End Patch'
+        }
+      ]) {
+        const result = await executeWorkspaceMutation(root, { ...request, accessLevel: 'auto' })
+        expect(result, request.kind).toMatchObject({
+          ok: false,
+          changed: false,
+          failure: { code: 'secret_placeholder' }
+        })
+      }
+      expect(await readFile(join(root, '.env'), 'utf8')).toBe(`API_KEY=${value}\nDEBUG=0\n`)
+      // Text that only looks like a placeholder, for a value SideKick does not hold, is ordinary.
+      const other = await executeWorkspaceMutation(root, {
+        kind: 'write',
+        filePath: 'notes.md',
+        content: 'Output reads [secret: example] where a value was hidden.\n',
+        accessLevel: 'auto'
+      })
+      expect(other.ok).toBe(true)
+    } finally {
+      credentialRedactor.setSecrets([])
+    }
+  })
+
   it.each(['-old\n+new', 'old\nnew'])(
     'rejects non-canonical patch input without touching the file',
     async (patch) => {

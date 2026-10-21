@@ -112,6 +112,17 @@ export const MAX_CREDENTIAL_DESCRIPTION = 500
 export const MAX_CREDENTIAL_VALUE = 16_384
 /** Values shorter than this are hard to keep out of output; Settings warns when saving one. */
 export const SHORT_CREDENTIAL_VALUE = 8
+/** Shorter values would cut ordinary words out of output, so they are never hidden or stored. */
+export const MIN_CREDENTIAL_VALUE = 4
+
+/**
+ * A value as stored: one kind of line ending, so a pasted key matches output line by line, and,
+ * except for a password, without the spaces around it that copying a token often adds.
+ */
+export function normalizeCredentialValue(field: keyof CredentialValues, value: string): string {
+  const text = value.replace(/\r\n?/g, '\n')
+  return field === 'password' ? text : text.trim()
+}
 
 export const CREDENTIAL_ASK_LABELS: Record<CredentialAskPolicy, string> = {
   every_use: 'Every use',
@@ -184,10 +195,16 @@ export function validateCredentialInput(
   if (!isRecord(raw)) return { error: 'Invalid credential values.' }
   const values: CredentialValues = {}
   for (const field of ['secret', 'username', 'password'] as const) {
-    const value = raw[field]
-    if (value === undefined) continue
-    if (typeof value !== 'string' || !value) return { error: 'A new value cannot be empty.' }
+    if (raw[field] === undefined) continue
+    if (typeof raw[field] !== 'string') return { error: 'Invalid credential values.' }
+    const value = normalizeCredentialValue(field, raw[field])
+    if (!value) return { error: 'A new value cannot be empty.' }
     if (value.length > MAX_CREDENTIAL_VALUE) return { error: 'That value is too long.' }
+    if (field !== 'username' && value.length < MIN_CREDENTIAL_VALUE) {
+      return {
+        error: `The ${field} must be at least ${MIN_CREDENTIAL_VALUE} characters; SideKick cannot keep shorter values out of output.`
+      }
+    }
     values[field] = value
   }
   const fields = kind === 'secret' ? (['secret'] as const) : (['username', 'password'] as const)

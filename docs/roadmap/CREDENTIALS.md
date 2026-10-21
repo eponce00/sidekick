@@ -216,16 +216,17 @@ is why commands ask every time by default and why scope can only be widened in S
 | A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                       | None.                                                                                                                                                                                                                                           |
 | A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                          | It can see what the user types while saving a value.                                                                                                                                                                                            |
 | The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                           | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
-| Short or common values                                                          | Warning under 8 characters.                                                                                                                        | Short values may be missed or cause harmless over-redaction.                                                                                                                                                                                    |
+| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                 | Short values may be missed. Over-redaction hides ordinary text that matches, such as a hidden username like `admin`; file tools refuse to write a placeholder back.                                                                             |
 | Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                      | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
 
 ## Tests
 
 Fixtures generate random values at run time; no test, fixture, document or log contains a real
-credential. Storage, redaction (every encoding, values split across chunks at every offset, each
-output source and the provider boundary), deletion and the Settings page are covered. Each boundary
-still to come gets adversarial tests:
+credential. Each boundary gets adversarial tests:
 
+- **Storage.** No preload call or IPC response contains a stored value (asserted by scanning every
+  response); the store file holds no plaintext; an unavailable backend refuses to save; a tampered
+  record is refused.
 - **Credential arguments.** Only the declared arguments of `http_request`, `shell` and
   `browser_sign_in` accept an alias, checked by iterating the whole catalog; unknown aliases and
   `~` aliases from another run are refused; the model cannot set the header, field or parameter an
@@ -241,9 +242,36 @@ still to come gets adversarial tests:
 - **Approval.** Full access still asks per the entry's setting; a chat grant does not cover another
   host or command; schedules and worker chats are refused unless allowed; out-of-scope uses never
   prompt.
+- **Redaction.** Every encoding; a value split across chunks at every offset; overlapping values;
+  values inside ANSI sequences and across UTF-8 boundaries; the retained output store; compaction
+  summaries; HTTP client errors; a value planted in a user message and in a worker reply caught at
+  the provider boundary.
 - **Browser.** A real-Electron smoke on a local fixture page: fill on the right origin succeeds;
   wrong origin, cross-origin iframe, text field and "show password" followed by a screenshot are
   refused; `browser_evaluate` is refused after a fill; a page that logs the value has it redacted.
+- **Deletion.** A deleted entry stops working mid-run; a replaced value is still redacted until
+  restart; the audit keeps the alias.
+
+## Changes from the agreed design
+
+Made while building the vault, and why:
+
+- **Deleting confirms in a trusted dialog**, not with a broker grant. The dialog is drawn by the
+  main process, so a compromised renderer still cannot delete an entry without the user.
+- **Opened records stay in main-process memory** for the session instead of being decrypted for
+  each use, because the redactor must hold every value anyway.
+- **`import_attachment` copies files as they are.** The receiving agent reads them through the same
+  redacted tools, and copying them redacted would corrupt them.
+- **Integrity is the platform's.** Windows seals records with AES-GCM; macOS and Linux use AES-CBC
+  without a MAC, so a process that can write the profile could alter or replay a record's settings.
+  That process can already change SideKick's settings, and on Windows and Linux decrypt values, so
+  an authenticated layer of SideKick's own is left for later.
+- **Approval defaults per use.** Each kind of use has its own scope, which an entry gains only when
+  the user turns that use on, so a later use can default to asking every time without touching
+  existing entries. Records carry a schema version for any migration a default change needs.
+- **Descriptions are untrusted.** `credentials_request` can suggest one, and every chat reads it, so
+  Settings marks an agent's description until the user edits it and `credentials_list` tells the
+  model descriptions are notes, not instructions.
 
 ## Phases
 
