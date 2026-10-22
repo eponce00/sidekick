@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.18.0 — 2026-10-22
+
+- Let the agent use the tools a website offers through WebMCP, instead of clicking through the
+  page. When a page offers tools, the browser panel's toolbar shows how many and lists them with
+  the site's own descriptions. A call acts on the site as you, so it asks like a click would in
+  your permission mode; a tool the site marks as consequential always asks. A call meant for
+  another site, or for a page that changed since the agent looked, is refused.
+- Attach images of any size up to 100 MB, including AVIF and BMP, instead of being told to keep
+  them under 8 MB. The chat keeps the original, and each model gets a copy it accepts; the image's
+  tooltip says when the model gets a smaller one. Photos are turned upright and their location
+  data is left out of the copy sent. Claude and OpenRouter models now receive up to four images
+  per message.
+- Keep each chat's model: choosing one in a chat no longer changes the others. A new chat starts
+  on the model chosen last, and a chat whose model was removed asks you to choose another instead
+  of switching on its own.
+- Dictate with Parakeet Ultra by Moondream, which makes fewer mistakes in English and Spanish and
+  writes numbers as digits more often. It downloads in the background, and dictation keeps using
+  the previous model until it is ready.
+- Keep the terminal's newest line off the bottom edge of the window, and use the panel's full
+  width instead of wrapping output in a narrow band.
+- Show **Approved** or **Denied** on a tool's row once you answer its permission card, instead of
+  **Approval needed**.
+- Hide stored credentials in more escaped forms of tool output.
+
 ## 0.17.1 — 2026-10-21
 
 - Keep each chat's summary again, so a long chat no longer compacts at the start of every run.
