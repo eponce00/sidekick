@@ -8,6 +8,9 @@ import {
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import { saveViewedImagePreview } from './viewedImagePreviews'
 import { imageContentType } from '../../shared/imageContent'
+import { MAX_IMAGE_INPUT_BYTES, type ProviderImageProfile } from '../../shared/imagePreparation'
+import { MAX_TOOL_RESULT_MEDIA_BYTES } from '../../shared/agentRuntime'
+import { prepareProviderImage } from '../providers/providerImages'
 const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -15,7 +18,15 @@ const TYPES: Readonly<Record<string, ToolResultImageMimeType>> = {
   '.webp': 'image/webp',
   '.gif': 'image/gif'
 }
-const LIMIT = 8 * 1024 * 1024
+const LIMIT = MAX_IMAGE_INPUT_BYTES
+// A larger image is kept in the run's journal as a copy that fits the tool media cap; each
+// provider request then fits that copy to the model.
+const JOURNAL_COPY: ProviderImageProfile = {
+  maxLongEdge: Number.POSITIVE_INFINITY,
+  maxBytes: MAX_TOOL_RESULT_MEDIA_BYTES,
+  formats: ['image/png', 'image/jpeg', 'image/webp', 'image/gif'],
+  maxImages: 1
+}
 export type ExternalImageApproval = (canonicalPath: string, signal: AbortSignal) => Promise<boolean>
 async function approved(
   approve: ExternalImageApproval,
@@ -75,7 +86,7 @@ export function registerVisionToolHandlers(
         return toolExecutionFailed({
           title,
           code: 'unsupported',
-          message: 'Image must be a nonempty regular file no larger than 8 MiB.'
+          message: 'Image must be a nonempty regular file no larger than 100 MB.'
         })
       if (external) {
         if (!approveExternal)
@@ -109,7 +120,7 @@ export function registerVisionToolHandlers(
           current.mtimeMs !== before.mtimeMs
         )
           throw new Error('changed')
-        const buffer = Buffer.alloc(LIMIT + 1)
+        const buffer = Buffer.alloc(before.size + 1)
         let length = 0
         while (length < buffer.length) {
           const read = await file.read(buffer, length, buffer.length - length, null)
@@ -140,7 +151,21 @@ export function registerVisionToolHandlers(
             'rewrites binary output. Save the file where it is made and copy it instead, for ' +
             'example `adb shell screencap -p /sdcard/screen.png` then `adb pull /sdcard/screen.png`.'
         })
-      const previewUrl = await saveViewedImagePreview(bytes)
+      let sent = { mimeType, bytes }
+      if (bytes.length > MAX_TOOL_RESULT_MEDIA_BYTES) {
+        const copy = await prepareProviderImage(bytes, JOURNAL_COPY, { keepDimensions: true })
+        if (!copy.ok)
+          return toolExecutionFailed({
+            title,
+            code: 'unsupported',
+            message:
+              copy.reason === 'too_large'
+                ? `${requested} has more pixels than SideKick can open.`
+                : `${requested} could not be decoded as an image.`
+          })
+        sent = { mimeType: copy.mimeType, bytes: copy.bytes }
+      }
+      const previewUrl = await saveViewedImagePreview(sent.bytes)
       return toolExecutionSucceeded({
         title,
         data: {
@@ -154,12 +179,12 @@ export function registerVisionToolHandlers(
         media: [
           {
             type: 'image',
-            mimeType,
+            mimeType: sent.mimeType,
             name: requested,
             description: 'Image selected by view_image',
             source: {
               type: 'data_url',
-              dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`
+              dataUrl: `data:${sent.mimeType};base64,${sent.bytes.toString('base64')}`
             }
           }
         ]

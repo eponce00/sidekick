@@ -437,7 +437,9 @@ function screenshotMedia(
       mimeType: artifact.mimeType,
       name: `browser-${artifact.kind}-${artifact.id}.png`,
       description,
-      source: { type: 'file', path: artifact.path }
+      source: { type: 'file', path: artifact.path },
+      // Coordinates the model reads off a viewport screenshot map back through its own size.
+      ...(artifact.kind === 'viewport' ? { keepDimensions: true } : {})
     }
   ]
 }
