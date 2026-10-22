@@ -7,13 +7,15 @@ import {
   X,
   Globe,
   MonitorSmartphone,
-  Pause
+  Pause,
+  Plug
 } from 'lucide-react'
 import type {
   BrowserWorkspaceRequest,
   BrowserWorkspaceState
 } from '../../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
+import { webMcpSite } from '../../../shared/webMcp'
 
 export function BrowserWorkspace({
   conversationId
@@ -31,6 +33,14 @@ export function BrowserWorkspace({
   const [snapshot, setSnapshot] = useState<string | null>(null)
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const pageTools = state?.pageTools?.tools.length ? state.pageTools : null
+  const hasPageTools = Boolean(pageTools)
+
+  // A page that offers tools again later starts with its list closed.
+  useEffect(() => {
+    if (!hasPageTools) setToolsOpen(false)
+  }, [hasPageTools])
 
   useEffect(() => {
     if (!editing.current) setAddress(activeUrl)
@@ -215,6 +225,22 @@ export function BrowserWorkspace({
           }}
           onChange={(event) => setAddress(event.target.value)}
         />
+        {pageTools && (
+          <button
+            type="button"
+            className="browser-workspace-tools"
+            aria-label={`Tools this page offers the agent: ${pageTools.tools.length}`}
+            aria-expanded={toolsOpen}
+            aria-controls="browser-page-tools"
+            title={`${webMcpSite(pageTools.origin)} offers ${pageTools.tools.length} ${
+              pageTools.tools.length === 1 ? 'tool' : 'tools'
+            } to the agent (WebMCP)`}
+            onClick={() => setToolsOpen((open) => !open)}
+          >
+            <Plug size={14} aria-hidden="true" />
+            <span>{pageTools.tools.length}</span>
+          </button>
+        )}
         <button
           type="button"
           className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
@@ -267,6 +293,33 @@ export function BrowserWorkspace({
           </span>
         ) : null}
       </form>
+      {pageTools && toolsOpen && (
+        // Laid out above the page, never over it: the page is drawn above the app.
+        <section
+          id="browser-page-tools"
+          className="browser-workspace-page-tools"
+          aria-label="Tools this page offers the agent"
+        >
+          <p className="browser-workspace-page-tools-heading">
+            <strong>{webMcpSite(pageTools.origin)}</strong> offers these tools to the agent. Their
+            descriptions are the site&apos;s own.
+          </p>
+          <ul>
+            {pageTools.tools.map((tool) => (
+              <li key={tool.name}>
+                <div className="browser-workspace-page-tool-name">
+                  <code>{tool.name}</code>
+                  {tool.readOnly && (
+                    <span className="browser-workspace-page-tool-mark">Read-only</span>
+                  )}
+                  {tool.form && <span className="browser-workspace-page-tool-mark">Form</span>}
+                </div>
+                <p title={tool.description}>{tool.description}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       {(error || layoutError) && (
         <div role="alert" className="browser-workspace-error">
           {error || layoutError}

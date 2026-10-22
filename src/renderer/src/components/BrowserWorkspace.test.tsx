@@ -69,6 +69,43 @@ describe('shared browser workspace', () => {
     expect(container.querySelector('.browser-workspace-topbar')).not.toBeNull()
     expect(container.textContent).not.toContain('Resume agent')
   })
+  it("lists the page's WebMCP tools beside the page, never over it", async () => {
+    request.mockResolvedValue({
+      sessionId: 'session',
+      activeTabId: 'tab',
+      busy: false,
+      userControl: false,
+      tabs: [
+        { id: 'tab', title: 'Shop', url: 'https://shop.example/', active: true, loading: false }
+      ],
+      pageTools: {
+        origin: 'https://shop.example',
+        tools: [
+          { name: 'add_item', description: '<b>Adds</b> an item', readOnly: false, form: false },
+          { name: 'get_cart', description: 'Reads the cart', readOnly: true, form: false }
+        ]
+      }
+    })
+    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
+    const button = container.querySelector<HTMLButtonElement>('.browser-workspace-tools')!
+    expect(button.getAttribute('aria-expanded')).toBe('false')
+    expect(button.textContent).toBe('2')
+    expect(container.querySelector('#browser-page-tools')).toBeNull()
+
+    await act(async () => button.click())
+    const list = container.querySelector('#browser-page-tools')!
+    expect(list.getAttribute('role')).toBeNull()
+    expect(list.textContent).toContain('shop.example offers these tools to the agent')
+    expect([...list.querySelectorAll('code')].map((name) => name.textContent)).toEqual([
+      'add_item',
+      'get_cart'
+    ])
+    // The site's words are text, never markup.
+    expect(list.querySelector('b')).toBeNull()
+    expect(list.textContent).toContain('<b>Adds</b> an item')
+    expect(list.textContent).toContain('Read-only')
+  })
+
   it('opens a new tab without needing an agent run and detaches on unmount', async () => {
     request.mockResolvedValue(null)
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
