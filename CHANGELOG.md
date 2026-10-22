@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.1 — 2026-10-22
+
+- Give each new chat worktree its own branch, named after its folder, such as
+  `sidekick/fix-cards-3f9a1c`, instead of a copy marked "detached from main". The agent is told it
+  works in a worktree and on which branch, and may rename, create and switch branches there.
+  Removing a worktree deletes its branch too when the base already has everything on it.
+- Ask before more kinds of commands in **Ask for sensitive actions**: a command runs without asking
+  only when nothing in it can write a file, change a branch or run another program. Search patterns
+  in quotes no longer make a read-only command ask.
+
 ## 0.18.0 — 2026-10-22
 
 - Let the agent use the tools a website offers through WebMCP, instead of clicking through the
