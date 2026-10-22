@@ -693,7 +693,7 @@ export class AgentToolRuntime {
         approvalPreview: (name, args, context) => handlers.preview(name, args, context),
         requestedAccess: (name, args, context) =>
           name === 'browser_call_webmcp_tool' && this.browser
-            ? webMcpCallAccess(this.browser, browserScope(context), args)
+            ? webMcpCallAccess(this.browser, browserScope(context), args, context)
             : undefined,
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses

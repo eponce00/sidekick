@@ -61,10 +61,25 @@ describe('webMcpToolFromProtocol', () => {
       inputSchema: { type: 'object', properties: { item: { type: 'string' } } },
       readOnly: true,
       untrustedContent: true,
+      consequential: false,
       form: false,
       autosubmit: false,
       version: 0
     })
+  })
+
+  it("reads the protocol's consequential mark, and never offers a tool marked for debugging", () => {
+    expect(
+      webMcpToolFromProtocol(tool('buy', { annotations: { consequential: true, readOnly: true } }))
+    ).toMatchObject({ consequential: true })
+    expect(
+      webMcpToolFromProtocol(tool('dump_state', { annotations: { debugging: true } }))
+    ).toBeNull()
+    const page = pageWith(
+      tool('dump_state', { annotations: { debugging: true } }),
+      tool('add_item')
+    )
+    expect(page.snapshot().tools.map(({ name }) => name)).toEqual(['add_item'])
   })
 
   it('refuses names and descriptions the specification does not allow', () => {
@@ -170,6 +185,21 @@ describe('WebMcpPageTools', () => {
     expect(refusal(() => page.callable(ORIGIN, 'add_item')).code).toBe('cross_origin')
   })
 
+  it('refuses calls on a page whose origin cannot bind them, and allows files in the project', () => {
+    const page = pageWith(tool('add_item'))
+    navigate(page, `${ORIGIN}/opaque`, { securityOrigin: 'null' })
+    page.handle('WebMCP.toolsAdded', { tools: [tool('add_item')] })
+    page.list()
+    expect(refusal(() => page.callable('null', 'add_item')).code).toBe('unavailable')
+
+    page.handle('Page.frameNavigated', {
+      frame: { id: 'main', url: 'file:///project/index.html', securityOrigin: 'file://' }
+    })
+    page.handle('WebMCP.toolsAdded', { tools: [tool('add_item')] })
+    page.list()
+    expect(page.callable('file://', 'add_item').tool.name).toBe('add_item')
+  })
+
   it('refuses calls in a tab where WebMCP could not be enabled', () => {
     const page = new WebMcpPageTools()
     page.attach({ id: 'main', url: `${ORIGIN}/`, securityOrigin: ORIGIN })
@@ -192,6 +222,35 @@ describe('WebMcpPageTools', () => {
     await expect(
       page.awaitResult('two', { form: false, timeoutMs: 1_000, signal })
     ).resolves.toMatchObject({ status: 'completed', output: 'ok' })
+  })
+
+  it('keeps answers nobody awaits yet bounded in size and number', async () => {
+    vi.useFakeTimers()
+    const page = pageWith(tool('add_item'))
+    const huge = 'x'.repeat(WEBMCP_MAX_RESULT_BYTES * 4)
+    page.handle('WebMCP.toolResponded', { invocationId: 'big', status: 'Completed', output: huge })
+    const signal = new AbortController().signal
+    const big = (await page.awaitResult('big', {
+      form: false,
+      timeoutMs: 1_000,
+      signal
+    })) as Extract<WebMcpCallOutcome, { status: 'completed' }>
+    expect(big.truncated).toBe(true)
+    expect(Buffer.byteLength(String(big.output))).toBeLessThanOrEqual(WEBMCP_MAX_RESULT_BYTES)
+
+    for (let index = 0; index < 12; index++) {
+      page.handle('WebMCP.toolResponded', {
+        invocationId: `early-${index}`,
+        status: 'Completed',
+        output: index
+      })
+    }
+    await expect(
+      page.awaitResult('early-11', { form: false, timeoutMs: 1_000, signal })
+    ).resolves.toMatchObject({ output: 11 })
+    const evicted = page.awaitResult('early-0', { form: false, timeoutMs: 1_000, signal })
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(evicted).resolves.toEqual({ status: 'timeout' })
   })
 
   it('times out, and reports a stopped run as cancelled', async () => {

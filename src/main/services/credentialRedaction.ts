@@ -40,6 +40,14 @@ function escapeHtml(value: string, apostrophe: string): string {
     .replace(/'/g, apostrophe)
 }
 
+/** `text` with each character `characters` matches written as a JSON `\u` escape. */
+function unicodeEscaped(text: string, characters: RegExp, upperCase: boolean): string {
+  return text.replace(characters, (character) => {
+    const hex = character.charCodeAt(0).toString(16).padStart(4, '0')
+    return `\\u${upperCase ? hex.toUpperCase() : hex}`
+  })
+}
+
 /**
  * The parts of a value's Base64 that do not depend on the bytes around it, at each of the three
  * alignments it can have inside a longer encoded string, plus its own padded encoding.
@@ -66,7 +74,19 @@ export function secretVariants(value: string): string[] {
   if (lines.length > 1) {
     encoded.push(...lines.filter((line) => !/^-----(BEGIN|END) [A-Z0-9 ]+-----$/.test(line.trim())))
   }
-  encoded.push(JSON.stringify(value).slice(1, -1))
+  const json = JSON.stringify(value).slice(1, -1)
+  // JSON as other writers produce it: `<`, `>` and `&` as \u escapes (Go), `<` alone (the
+  // page-content blocks SideKick gives its model), every non-ASCII character escaped (Python's
+  // default), and JSON text quoted again inside another JSON string.
+  encoded.push(
+    json,
+    unicodeEscaped(json, /</g, false),
+    unicodeEscaped(json, /[<>&]/g, false),
+    unicodeEscaped(json, /[<>&]/g, true),
+    unicodeEscaped(json, /[\u0080-\uffff]/g, false),
+    unicodeEscaped(json, /[<>&\u0080-\uffff]/g, false),
+    JSON.stringify(json).slice(1, -1)
+  )
   try {
     const component = encodeURIComponent(value)
     encoded.push(

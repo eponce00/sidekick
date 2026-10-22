@@ -15,7 +15,7 @@ export const WEBMCP_CALL_TIMEOUT_MS = 30_000
 /** How long a script tool's call waits for an answer after the page navigates; Chromium sends none. */
 const SCRIPT_NAVIGATION_GRACE_MS = 1_000
 /** Answers kept for invocations not yet awaited: the answer can arrive before invokeTool returns. */
-const MAX_EARLY_RESPONSES = 20
+const MAX_EARLY_RESPONSES = 8
 
 const TOOL_NAME = /^[A-Za-z0-9_.-]{1,128}$/
 
@@ -88,6 +88,8 @@ export interface WebMcpTool {
   readOnly: boolean
   /** The site says the result holds content it did not write, such as reviews. */
   untrustedContent: boolean
+  /** The site says calling the tool has consequences the user should confirm. */
+  consequential: boolean
   /** A declarative `<form toolname>`: calling it fills the form, and submits it if `autosubmit`. */
   form: boolean
   autosubmit: boolean
@@ -114,17 +116,25 @@ export type WebMcpCallErrorCode =
   | 'changed'
   | 'not_found'
   | 'invalid_arguments'
+  | 'secret_on_page'
 
 /** Why a call to a page's tool is refused before it runs. */
 export class WebMcpCallError extends Error {
   constructor(
     readonly code: WebMcpCallErrorCode,
     message: string,
-    readonly recovery: string
+    readonly recovery: string,
+    /** Detail that comes from the page, such as names in its schema; never part of `message`. */
+    readonly pageDetail?: unknown
   ) {
     super(message)
     this.name = 'WebMcpCallError'
   }
+}
+
+/** Whether calls can be bound to `origin`: a web origin, or `file://` for files in the project. */
+export function webMcpBindableOrigin(origin: string): boolean {
+  return /^https?:\/\/[^/]+$/.test(origin) || origin === 'file://'
 }
 
 export type WebMcpCallOutcome =
@@ -170,10 +180,15 @@ export function documentOrigin(frame: Record<string, unknown>): string {
   }
 }
 
-/** A tool as Chromium reported it, bounded, before it is given a version; null when it cannot be one. */
+/**
+ * A tool as Chromium reported it, bounded, before it is given a version; null when it cannot be
+ * one, or when the page marks it as a tool for debugging, which is never offered to the model.
+ */
 export function webMcpToolFromProtocol(value: unknown): WebMcpTool | null {
   const raw = record(value)
   if (!raw || typeof raw.name !== 'string' || !TOOL_NAME.test(raw.name)) return null
+  const annotations = record(raw.annotations) ?? {}
+  if (annotations.debugging === true) return null
   if (typeof raw.description !== 'string' || !raw.description.trim()) return null
   const description = bounded(raw.description, WEBMCP_MAX_DESCRIPTION_CHARS)
   const schema = record(raw.inputSchema)
@@ -189,7 +204,6 @@ export function webMcpToolFromProtocol(value: unknown): WebMcpTool | null {
     if (size <= WEBMCP_MAX_SCHEMA_BYTES) inputSchema = schema
     else schemaOmitted = true
   }
-  const annotations = record(raw.annotations) ?? {}
   const form = typeof raw.backendNodeId === 'number'
   return {
     name: raw.name,
@@ -199,6 +213,7 @@ export function webMcpToolFromProtocol(value: unknown): WebMcpTool | null {
     ...(description.truncated ? { descriptionTruncated: true } : {}),
     readOnly: annotations.readOnly === true && !form,
     untrustedContent: annotations.untrustedContent === true,
+    consequential: annotations.consequential === true,
     form,
     autosubmit: annotations.autosubmit === true,
     version: 0
@@ -251,7 +266,7 @@ export class WebMcpPageTools {
   private readonly tools = new Map<string, WebMcpTool>()
   private listing?: { document: number; origin: string; versions: Map<string, number> }
   private readonly pending = new Map<string, PendingCall>()
-  private readonly early = new Map<string, Record<string, unknown>>()
+  private readonly early = new Map<string, WebMcpCallOutcome>()
 
   /** Starts from the frame the tab shows when WebMCP is enabled on it. */
   attach(frame: Record<string, unknown>): void {
@@ -316,7 +331,8 @@ export class WebMcpPageTools {
         this.finish(id, webMcpOutcomeFromResponse(params))
         return
       }
-      this.early.set(id, params)
+      // Bounded like any answer; most are for calls nobody awaits any more, such as the page's own.
+      this.early.set(id, webMcpOutcomeFromResponse(params))
       while (this.early.size > MAX_EARLY_RESPONSES)
         this.early.delete(this.early.keys().next().value!)
     }
@@ -351,6 +367,13 @@ export class WebMcpPageTools {
       throw new WebMcpCallError(
         'unavailable',
         'This browser tab cannot offer WebMCP tools.',
+        'Use the page with the ordinary browser tools instead.'
+      )
+    }
+    if (!webMcpBindableOrigin(this.origin)) {
+      throw new WebMcpCallError(
+        'unavailable',
+        'This page has no origin its tools can be bound to.',
         'Use the page with the ordinary browser tools instead.'
       )
     }
@@ -428,7 +451,7 @@ export class WebMcpPageTools {
       const answered = this.early.get(invocationId)
       if (answered) {
         this.early.delete(invocationId)
-        this.finish(invocationId, webMcpOutcomeFromResponse(answered))
+        this.finish(invocationId, answered)
       }
     })
   }

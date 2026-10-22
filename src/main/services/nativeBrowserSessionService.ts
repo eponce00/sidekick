@@ -482,20 +482,34 @@ export interface BrowserVerificationResult {
   observation: BrowserObservation
 }
 
+/**
+ * What a call to a page's tool was checked against before anyone was asked: the tab, its document
+ * and the tool as it stood. A call made under it is refused if any of them changed since.
+ */
+export interface WebMcpCallBinding {
+  tabId: string
+  document: number
+  origin: string
+  tool: WebMcpTool
+}
+
 export interface BrowserWebMcpCallInput {
   sessionId: string
-  tabId?: string
   /** The site the caller means to act on; the call is refused on any other. */
   origin: string
   tool: string
   arguments: Record<string, unknown>
+  binding?: WebMcpCallBinding
 }
 
 export interface BrowserWebMcpCallResult {
   sessionId: string
   tabId: string
   origin: string
-  tool: Pick<WebMcpTool, 'name' | 'readOnly' | 'untrustedContent' | 'form' | 'autosubmit'>
+  tool: Pick<
+    WebMcpTool,
+    'name' | 'readOnly' | 'untrustedContent' | 'consequential' | 'form' | 'autosubmit'
+  >
   outcome: WebMcpCallOutcome
   durationMs: number
   page: { url: string; title: string }
@@ -4428,11 +4442,18 @@ export class NativeBrowserSessionService {
   }
 
   /**
-   * The listed tool a call with this input would run on the active tab; throws why it would be
-   * refused, so that a call bound to fail asks no one first.
+   * What a call with this input would run on the active tab, for the decision whether to ask and
+   * for the approval card; throws why it would be refused, so a call bound to fail asks no one.
    */
-  webMcpTool(sessionId: string, origin: string, name: string, input: unknown = {}): WebMcpTool {
-    return this.checkedWebMcpCall(this.getTab(this.getSession(sessionId)), origin, name, input).tool
+  webMcpCallBinding(
+    sessionId: string,
+    origin: string,
+    name: string,
+    input: unknown = {}
+  ): WebMcpCallBinding {
+    const tab = this.getTab(this.getSession(sessionId))
+    const call = this.checkedWebMcpCall(tab, origin, name, input)
+    return { tabId: tab.id, document: call.document, origin, tool: { ...call.tool } }
   }
 
   private checkedWebMcpCall(tab: TabState, origin: string, name: string, input: unknown) {
@@ -4448,11 +4469,12 @@ export class NativeBrowserSessionService {
     }
     const issues = call.tool.inputSchema ? externalSchemaIssues(call.tool.inputSchema, input) : []
     if (issues?.length) {
-      const described = issues.map((issue) => issue.message).join('; ')
+      // Paths and messages name the schema's own properties and values, which are the page's.
       throw new WebMcpCallError(
         'invalid_arguments',
-        `The arguments do not fit ${name}'s input schema: ${described.slice(0, 1_500)}.`,
-        correct
+        `The arguments do not fit ${name}'s input schema.`,
+        correct,
+        issues.slice(0, 20).map(({ path, code, message }) => ({ path, code, message }))
       )
     }
     return call
@@ -4461,7 +4483,8 @@ export class NativeBrowserSessionService {
   /**
    * Calls a listed WebMCP tool of the active tab's page, through Chromium as its own agent does.
    * Refused before anything runs when the page is another site's, has loaded a new document or
-   * changed the tool since it was listed, or when the input does not fit the tool's schema.
+   * changed the tool since it was listed or since `binding` was taken, when the input does not fit
+   * the tool's schema, or while a stored password is filled in on the page.
    */
   async callWebMcpTool(
     input: BrowserWebMcpCallInput,
@@ -4469,27 +4492,54 @@ export class NativeBrowserSessionService {
   ): Promise<BrowserWebMcpCallResult> {
     const session = this.getSession(input.sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
-      const tab = this.getTab(session, input.tabId)
+      const tab = this.getTab(session)
       const { tool, frameId, document } = this.checkedWebMcpCall(
         tab,
         input.origin,
         input.tool,
         input.arguments
       )
+      const bound = input.binding
+      if (
+        bound &&
+        (bound.tabId !== tab.id ||
+          bound.document !== document ||
+          bound.origin !== input.origin ||
+          JSON.stringify(bound.tool) !== JSON.stringify(tool))
+      ) {
+        throw new WebMcpCallError(
+          'changed',
+          `The tab, its page or ${tool.name} changed after this call was checked, so it was not run.`,
+          'Call browser_list_webmcp_tools again and call the tool from what the page offers now.'
+        )
+      }
+      if (await this.secretStillOnPage(tab, signal)) {
+        throw new WebMcpCallError(
+          'secret_on_page',
+          "A page's tools cannot be called while a stored password is filled in on the page, since the page's code could read it.",
+          'Submit the sign-in form or leave the page first.'
+        )
+      }
       await this.assertAutomatedMutationAllowed(tab, signal)
       const startedAt = this.now()
+      // Chromium starts the tool as it answers, so the call is not abandoned without its id:
+      // a stopped run waits the moment it takes, then cancels the tool in the page.
       const { invocationId } = await abortable(
         tab.surface.sendDebuggerCommand<{ invocationId: string }>('WebMCP.invokeTool', {
           frameId,
           toolName: tool.name,
           input: input.arguments
         }),
-        signal
+        AbortSignal.timeout(10_000)
       )
       const cancel = (): void =>
         void tab.surface
           .sendDebuggerCommand('WebMCP.cancelInvocation', { invocationId })
           .catch(() => undefined)
+      if (signal?.aborted) {
+        cancel()
+        throw abortError('Browser operation cancelled')
+      }
       if (tab.webMcp.snapshot().document !== document) {
         // The page loaded another document before Chromium took the call, so it may have reached
         // a tool of the same name there, possibly another site's.
@@ -4531,6 +4581,7 @@ export class NativeBrowserSessionService {
           name: tool.name,
           readOnly: tool.readOnly,
           untrustedContent: tool.untrustedContent,
+          consequential: tool.consequential,
           form: tool.form,
           autosubmit: tool.autosubmit
         },
