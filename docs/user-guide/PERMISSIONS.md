@@ -18,21 +18,27 @@ The stricter modes are available per conversation from the composer and in Setti
 
 ## Operation matrix
 
-| Operation                         | Default request          | Trusted enforcement                                                                 |
-| --------------------------------- | ------------------------ | ----------------------------------------------------------------------------------- |
-| Agent shell command               | Agent-selected           | Kernel policy before canonical command service                                      |
-| Agent workspace mutation          | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation              |
-| Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
-| Agent API call (`http_request`)   | Auto for GET and HEAD    | Kernel policy before the guarded request                                            |
-| Agent call to a website's tool    | Auto if marked read-only | Kernel policy; consequential always asks; site, tab and tool rechecked at the call  |
-| Agent use of a stored credential  | The entry's own setting  | Kernel approval before the permission mode, then scope checked again when used      |
-| Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
-| MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |
-| Agent and child-agent tools       | Shared catalog policy    | Same kernel suspension and result envelope                                          |
-| Agent starting other chats        | Mode-dependent           | Start card unless Full access; a new project always asks; see below                 |
-| Checkpoint restore/rewind/reset   | Confirm                  | Exact broker grant consumed before private-History mutation                         |
-| User file deletion                | Auto after in-app intent | Exact broker grant consumed before system Trash / Recycle Bin                       |
-| External browser navigation       | Auto                     | Main-window policy before opening                                                   |
+| Operation                         | Default request            | Trusted enforcement                                                                 |
+| --------------------------------- | -------------------------- | ----------------------------------------------------------------------------------- |
+| Agent shell command               | Auto only if it only reads | Kernel policy before canonical command service                                      |
+| Agent workspace mutation          | Agent-selected             | Kernel policy plus same-run file receipt before transactional mutation              |
+| Agent MCP tool call               | Confirm                    | Kernel policy before internal MCP dispatch                                          |
+| Agent API call (`http_request`)   | Auto for GET and HEAD      | Kernel policy before the guarded request                                            |
+| Agent call to a website's tool    | Auto if marked read-only   | Kernel policy; consequential always asks; site, tab and tool rechecked at the call  |
+| Agent use of a stored credential  | The entry's own setting    | Kernel approval before the permission mode, then scope checked again when used      |
+| Agent change to SideKick settings | Always confirm             | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
+| MCP connector start               | Approved content           | Fingerprint check before any connector process or connection starts                 |
+| Agent and child-agent tools       | Shared catalog policy      | Same kernel suspension and result envelope                                          |
+| Agent starting other chats        | Mode-dependent             | Start card unless Full access; a new project always asks; see below                 |
+| Checkpoint restore/rewind/reset   | Confirm                    | Exact broker grant consumed before private-History mutation                         |
+| User file deletion                | Auto after in-app intent   | Exact broker grant consumed before system Trash / Recycle Bin                       |
+| External browser navigation       | Auto                       | Main-window policy before opening                                                   |
+
+A shell command counts as only reading when every command in it is one of a short list of
+inspection programs (`Get-Content`, `rg`, `ls` and the like), or `git status`, `diff`, `log`,
+`show`, `grep`, `rev-parse`, or `git branch` listing branches. It must also have no expansion,
+subexpression or script block, no redirection except discarding output, and no option that writes
+a file or runs another program. Anything else asks in **Ask for sensitive actions**.
 
 ## Answering an approval
 
