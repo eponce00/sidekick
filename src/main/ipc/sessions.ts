@@ -9,6 +9,7 @@ import {
 } from '../../shared/sessions'
 import { normalizePermissionMode } from '../../shared/permissions'
 import { SessionService } from '../services/sessionService'
+import { resolveConversationModel } from '../services/conversationModelStore'
 import { createSessionTools } from '../services/sessionTools'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import {
@@ -85,20 +86,19 @@ function validStartInput(value: unknown): StartSessionsInput {
   }
 }
 
-/** The model asked for, else the one the chat's latest run used, else the selected model. */
+/** See `resolveConversationModel`. */
 function resolveModel(conversationId: string, modelId?: string): PinnedModel | null {
   const settings = loadStoredSettings() as unknown as ProviderSettings
-  const models = pinnedModelsFromProviderInstances(settings.providerInstances ?? [])
-  if (modelId) return models.find(({ id }) => id === modelId) ?? null
-  const latest = getAgentRuntimeCoordinator().store.latest(conversationId)
-  const used = latest
-    ? models.find(
-        (model) =>
-          (model.providerModelId || model.name) === latest.model &&
-          (model.providerKind ?? model.provider) === latest.provider
-      )
-    : undefined
-  return used ?? models.find(({ id }) => id === settings.selectedModel) ?? models[0] ?? null
+  const coordinator = getAgentRuntimeCoordinator()
+  return resolveConversationModel(
+    pinnedModelsFromProviderInstances(settings.providerInstances ?? []),
+    {
+      requested: modelId,
+      own: coordinator.conversationModels.get(conversationId),
+      latestRun: coordinator.store.latest(conversationId),
+      defaultModelId: settings.selectedModel
+    }
+  )
 }
 
 export function registerSessionHandlers(): void {

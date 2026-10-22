@@ -91,8 +91,9 @@ const api = {
     create: (
       title: string,
       projectId?: string | null,
-      titleSource?: import('../shared/conversationTitles').ConversationTitleSource
-    ) => ipcRenderer.invoke('conversations:create', title, projectId, titleSource),
+      titleSource?: import('../shared/conversationTitles').ConversationTitleSource,
+      modelId?: string
+    ) => ipcRenderer.invoke('conversations:create', title, projectId, titleSource, modelId),
     fork: (input: import('../shared/projects').ForkConversationInput) =>
       ipcRenderer.invoke('conversations:fork', input),
     update: (
@@ -102,6 +103,8 @@ const api = {
     ) => ipcRenderer.invoke('conversations:update', id, title, options),
     setPinned: (id: string, pinned: boolean) =>
       ipcRenderer.invoke('conversations:setPinned', id, pinned),
+    setModel: (id: string, modelId: string) =>
+      ipcRenderer.invoke('conversations:setModel', id, modelId),
     listTitleBackfillCandidates: (limit?: number) =>
       ipcRenderer.invoke('conversations:listTitleBackfillCandidates', limit),
     claimTitleBackfill: (

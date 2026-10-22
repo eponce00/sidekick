@@ -2707,6 +2707,15 @@ body[data-theme='light'] .message-user .message-action:hover {
   box-shadow: var(--focus-ring);
 }
 
+/* Above the message box while the chat's model is no longer set up. */
+.composer-model-missing-bar {
+  border-bottom-color: color-mix(in srgb, var(--error) 30%, var(--border-color));
+}
+
+.composer-model-missing-bar svg {
+  color: var(--error);
+}
+
 .plan-mode-bar {
   display: flex;
   align-items: center;
@@ -3508,6 +3517,12 @@ body[data-theme='light'] .message-user .message-action:hover {
 .model-selector-inline:disabled {
   opacity: 0.48;
   cursor: not-allowed;
+}
+
+/* The chat's model is no longer set up. */
+.model-selector-inline.is-unavailable,
+.model-selector-inline.is-unavailable:hover {
+  color: var(--error);
 }
 
 .model-selector-inline:disabled:hover {

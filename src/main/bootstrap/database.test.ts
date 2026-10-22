@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { afterEach, describe, expect, it } from 'vitest'
 import { applyDatabaseSchema, openApplicationDatabase } from './database'
 import { ConversationCompactionStore } from '../services/conversationCompactionStore'
+import { ConversationModelStore } from '../services/conversationModelStore'
 import { mkdtemp, readdir, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -95,6 +96,47 @@ describe('database schema migrations', () => {
         replyMessageId: 'reply',
         replyMessagesCovered: 3
       })
+    } finally {
+      if (disk?.open) disk.close()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('lets chats on an installed database keep their own model, starting from their last reply', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'sidekick-db-chat-models-'))
+    let disk: Database.Database | undefined
+    try {
+      const path = join(root, 'app.db')
+      disk = openApplicationDatabase(path)
+      disk.exec('ALTER TABLE conversations DROP COLUMN model_id')
+      disk.exec(`
+        INSERT INTO conversations (id, title, created_at, updated_at)
+          VALUES ('older', 'Older chat', 1, 1), ('other', 'Other chat', 1, 1);
+        INSERT INTO agent_runs
+          (id, thread_id, surface, phase, provider, model, profile_json, started_at, updated_at)
+          VALUES ('run', 'older', 'conversation', 'completed', 'openrouter',
+                  'anthropic/claude-sonnet-4', '{}', 1, 1);
+      `)
+      disk.close()
+
+      disk = openApplicationDatabase(path)
+      const models = new ConversationModelStore(disk)
+      expect(models.get('older')).toBeNull()
+      const sonnet = {
+        id: 'openrouter:openrouter/anthropic/claude-sonnet-4',
+        name: 'Claude Sonnet 4',
+        provider: 'openrouter' as const,
+        providerModelId: 'anthropic/claude-sonnet-4'
+      }
+      const qwen = {
+        id: 'ollama:ollama-local/qwen3:8b',
+        name: 'Qwen 3 8B',
+        provider: 'ollama' as const,
+        providerModelId: 'qwen3:8b'
+      }
+      expect(models.adoptUnassigned([qwen, sonnet], qwen.id)).toBe(2)
+      expect(models.get('older')).toBe(sonnet.id)
+      expect(models.get('other')).toBe(qwen.id)
     } finally {
       if (disk?.open) disk.close()
       await rm(root, { recursive: true, force: true })

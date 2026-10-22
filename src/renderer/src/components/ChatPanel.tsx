@@ -46,6 +46,7 @@ import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
 import type { TodoItem } from '../../../shared/types'
 import type { PermissionMode } from '../../../shared/permissions'
 import type { ConversationTitleSource } from '../../../shared/conversationTitles'
+import { modelNameFromId } from '../../../shared/conversationModels'
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 import type { Message } from '../types/chat.types'
 import type { PinnedModel } from '../types/models.types'
@@ -219,6 +220,14 @@ function ChatPanel({
     onCostUpdate: onConversationCostUpdate
   })
   const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
+  // This chat's model was removed or turned off. The chat asks for another rather than quietly
+  // running on a different one.
+  const unavailableModelName =
+    selectedModel && !selectedPinnedModel ? modelNameFromId(selectedModel) : null
+  // Read as each reply starts, so a message queued under a running reply goes to the model chosen
+  // since, not the one the running reply started with.
+  const chatModelRef = useRef({ id: selectedModel, model: selectedPinnedModel })
+  chatModelRef.current = { id: selectedModel, model: selectedPinnedModel }
   const selectedContextLength = selectedPinnedModel?.contextLength ?? 32_768
   const tokenCountUpdateRef = useRef(onTokenCountUpdate)
   tokenCountUpdateRef.current = onTokenCountUpdate
@@ -454,7 +463,8 @@ function ChatPanel({
     messages,
     setMessages,
     conversationId,
-    selectedModel,
+    selectedModel: selectedPinnedModel ? selectedModel : '',
+    onModelUnavailable: () => setIsModelMenuOpen(true),
     isRunActive,
     workspaceFolder,
     onCheckpointCreated,
@@ -872,12 +882,17 @@ function ChatPanel({
     runMode: ConversationRunMode,
     continuesRunId?: string
   ): Promise<void> => {
-    if (!selectedModel) {
+    const chatModel = chatModelRef.current
+    if (!chatModel.id) {
       alert('Please select a model first')
       return
     }
-    const model = pinnedModels.find((candidate) => candidate.id === selectedModel)
-    if (!model) throw new Error('The selected model is no longer available')
+    const model = chatModel.model
+    if (!model) {
+      throw new Error(
+        `${modelNameFromId(chatModel.id)} is no longer available. Choose another model for this chat.`
+      )
+    }
     // A reply already running stays as it is; starting another would be refused anyway.
     if (isRunActive()) return
 
@@ -1194,6 +1209,10 @@ function ChatPanel({
 
   const handleSubmit = (): void => {
     if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (unavailableModelName) {
+      setIsModelMenuOpen(true)
+      return
+    }
     if (!isLoading && conversationId && projectId) {
       if (workspaceCheckRef.current) return
       workspaceCheckRef.current = true
@@ -1819,6 +1838,8 @@ function ChatPanel({
         isFeaturesMenuOpen={isFeaturesMenuOpen}
         isModelMenuOpen={isModelMenuOpen}
         selectedModel={selectedModel}
+        unavailableModelName={unavailableModelName}
+        onChooseModel={() => setIsModelMenuOpen(true)}
         pinnedModels={pinnedModels}
         queuedMessages={messageQueue}
         pivotMessage={pivotPending}

@@ -117,6 +117,40 @@ describe('conversation fork IPC', () => {
     })
   })
 
+  it('starts a new chat on the model it is given, and a fork on its source chat’s model', async () => {
+    const create = mocks.handlers.get('conversations:create') as RegisteredHandler
+    const created = (await create(
+      {},
+      'New Conversation',
+      null,
+      'placeholder',
+      'ollama:ollama-local/qwen3:8b'
+    )) as { id: string; model_id: string | null }
+    const withoutModel = (await create({}, 'New Conversation', null, 'placeholder', 42)) as {
+      id: string
+      model_id: string | null
+    }
+    const modelOf = (id: string): unknown =>
+      (
+        mocks.db!.prepare('SELECT model_id FROM conversations WHERE id = ?').get(id) as {
+          model_id: string | null
+        }
+      ).model_id
+
+    expect(created.model_id).toBe('ollama:ollama-local/qwen3:8b')
+    expect(modelOf(created.id)).toBe('ollama:ollama-local/qwen3:8b')
+    // Anything that is not a model id leaves the chat on the new-chat default.
+    expect(modelOf(withoutModel.id)).toBeNull()
+
+    const fork = mocks.handlers.get('conversations:fork') as RegisteredHandler
+    const forked = (await fork({}, { sourceId: created.id, workspaceMode: 'current' })) as {
+      id: string
+      model_id: string | null
+    }
+    expect(forked.model_id).toBe('ollama:ollama-local/qwen3:8b')
+    expect(modelOf(forked.id)).toBe('ollama:ollama-local/qwen3:8b')
+  })
+
   it('pins a chat and lists it ahead of unpinned chats', async () => {
     const insert = mocks.db!.prepare(
       `INSERT INTO conversations (id, title, created_at, updated_at, sidebar_order)

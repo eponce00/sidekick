@@ -233,7 +233,8 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 0,
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
-    home_project_name: 'sidekick-demo'
+    home_project_name: 'sidekick-demo',
+    model_id: 'openrouter:openrouter/anthropic/claude-sonnet-4'
   },
   {
     id: 'preview-2',
@@ -244,7 +245,8 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 0,
     project_context_version: 0,
     home_workspace_root: null,
-    home_project_name: null
+    home_project_name: null,
+    model_id: 'ollama:ollama-local/qwen3:8b'
   },
   {
     id: 'preview-3',
@@ -255,7 +257,9 @@ const previewConversations: ProjectConversation[] = [
     sidebar_order: 1,
     project_context_version: 0,
     home_workspace_root: 'C:\\Projects\\sidekick-demo',
-    home_project_name: 'sidekick-demo'
+    home_project_name: 'sidekick-demo',
+    // Its provider was removed since, so the chat asks for another model.
+    model_id: 'lmstudio:lm-studio/qwen2.5-coder-14b'
   },
   ...[2, 1].map(
     (run): ProjectConversation => ({
@@ -878,7 +882,7 @@ export function installBrowserApiMock(): void {
         [...previewCreatedConversations, ...previewConversations].filter((item) =>
           item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())
         ),
-      create: async (title, projectId, titleSource = 'placeholder') => {
+      create: async (title, projectId, titleSource = 'placeholder', modelId) => {
         const project = previewProjects.find(({ id }) => id === projectId)
         const created = {
           id: `preview-${Date.now()}`,
@@ -892,7 +896,8 @@ export function installBrowserApiMock(): void {
           sidebar_order: -1,
           project_context_version: 0,
           home_workspace_root: project?.folder_path ?? null,
-          home_project_name: project?.name ?? null
+          home_project_name: project?.name ?? null,
+          model_id: modelId ?? null
         }
         previewCreatedConversations.unshift(created)
         return created
@@ -915,6 +920,13 @@ export function installBrowserApiMock(): void {
           (candidate) => candidate.id === id
         )
         if (conversation) conversation.is_pinned = pinned ? 1 : 0
+        return { success: Boolean(conversation) }
+      },
+      setModel: async (id, modelId) => {
+        const conversation = [...previewCreatedConversations, ...previewConversations].find(
+          (candidate) => candidate.id === id
+        )
+        if (conversation) conversation.model_id = modelId
         return { success: Boolean(conversation) }
       },
       listTitleBackfillCandidates: async () => [],

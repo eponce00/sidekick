@@ -1,6 +1,7 @@
 import { registerWindowHandlers } from './window'
 import { registerSettingsHandlers } from './settings'
 import { registerDatabaseHandlers } from './database'
+import { registerConversationModelHandlers } from './conversationModels'
 import { registerWorkspaceHandlers } from './workspace'
 import { registerCheckpointHandlers } from './checkpointHandlers'
 import { registerMcpHandlers } from './mcp'
@@ -30,6 +31,7 @@ export function registerAllHandlers(): void {
   registerProviderRuntimeHandlers()
   registerSettingsHandlers()
   registerDatabaseHandlers()
+  registerConversationModelHandlers()
   registerProjectHandlers()
   registerWorktreeHandlers()
   registerWorkspaceHandlers()

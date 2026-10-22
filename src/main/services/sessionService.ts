@@ -518,8 +518,8 @@ export class SessionService {
        (id, title, created_at, updated_at, project_id, title_source, sidebar_order,
         project_context_version, home_workspace_root, home_project_name, started_by_kind,
         started_by_conversation_id, report_to_conversation_id, session_handle, work_in,
-        permission_ceiling, worktree_id)
-       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?, ?, ?)`
+        permission_ceiling, worktree_id, model_id)
+       VALUES (?, ?, ?, ?, ?, 'preserved', 0, 0, ?, ?, 'session', ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id,
       plan.title,
@@ -537,7 +537,8 @@ export class SessionService {
       // Working in the manager's folder means its worktree, when it has one.
       plan.workIn !== 'worktree' && plan.projectId === manager.project_id
         ? (manager.worktree_id ?? null)
-        : null
+        : null,
+      plan.model.id
     )
     this.starting.add(id)
     let runStarted = false

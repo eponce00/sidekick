@@ -54,6 +54,7 @@ import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { mainProcessMcpTrust } from './mcpServerTrust'
 import { OfficeHelperService } from './officeHelperService'
 import { ConversationGoalStore } from './conversationGoalStore'
+import { ConversationModelStore, isConversationModelId } from './conversationModelStore'
 import { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { ArtifactInspector } from './artifactInspector'
 import { ProjectStore } from './projectStore'
@@ -100,6 +101,7 @@ export class AgentRuntimeCoordinator {
   readonly tools: AgentToolRuntime
   readonly browser: NativeBrowserSessionService
   readonly goals: ConversationGoalStore
+  readonly conversationModels: ConversationModelStore
   private readonly messages: AgentMessageMaterializer
   private readonly admissions: PromptAdmissionStore
   private readonly mcp = new McpClientManager(undefined, undefined, undefined, mainProcessMcpTrust)
@@ -153,6 +155,7 @@ export class AgentRuntimeCoordinator {
     this.messages = new AgentMessageMaterializer(db, this.store)
     this.admissions = new PromptAdmissionStore(db)
     this.goals = new ConversationGoalStore(db, publishGoal)
+    this.conversationModels = new ConversationModelStore(db)
     this.outputs = new ToolOutputStore(join(userDataRoot, 'tool-outputs'))
     this.commands = new CommandService(
       db,
@@ -481,6 +484,10 @@ export class AgentRuntimeCoordinator {
       : () => undefined
     let preparation: PreparingRun
     try {
+      // The chat keeps the model it last ran with, whoever started the run.
+      if (isConversationModelId(input.model.id)) {
+        this.conversationModels.set(input.conversationId, input.model.id)
+      }
       preparation = this.beginPreparation({
         id: input.id,
         threadId: input.conversationId,
