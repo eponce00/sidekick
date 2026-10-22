@@ -100,7 +100,9 @@ SideKick includes an isolated Chromium workspace for visual feedback. Vision-cap
 open local or remote pages, inspect accessible structure, click, type, scroll, resize the viewport,
 capture screenshots, and verify the result. The docked Browser panel shows the live page, a visible
 cursor, and concise activity while the ordinary conversation keeps text, thinking, and tools in
-their real execution order.
+their real execution order. When a website offers its own tools through
+[WebMCP](docs/user-guide/BROWSER.md#tools-that-websites-offer), the agent can call them directly,
+with the same permissions as a click.
 
 ## Chats that work together
 

@@ -8,6 +8,7 @@ import { OutsideProjectError } from '../utils/workspacePaths'
 import {
   AgentToolExecutionError,
   AgentToolRegistry,
+  externalSchemaIssues,
   normalizeAgentToolArguments,
   prepareAgentToolCall,
   validateAgentToolArguments,
@@ -466,5 +467,35 @@ describe('argument names from other harnesses', () => {
       vi.fn()
     )
     expect(invalid.error?.recovery).toContain('SideKick normalized: file_path → path.')
+  })
+})
+
+describe('externalSchemaIssues', () => {
+  const schema = {
+    type: 'object',
+    required: ['item'],
+    properties: {
+      item: { type: 'string', pattern: '^(a+)+$' },
+      quantity: { type: 'integer', minimum: 1 }
+    }
+  }
+
+  it("finds what a web page's schema can check cheaply", () => {
+    expect(externalSchemaIssues(schema, { quantity: 0 })?.map((issue) => issue.code)).toEqual([
+      'required',
+      'minimum'
+    ])
+    expect(externalSchemaIssues(schema, { item: 'apple', quantity: 2 })).toEqual([])
+  })
+
+  it('never runs a page-supplied pattern', () => {
+    // This pattern backtracks catastrophically on this input; checking it would stall the main process.
+    expect(externalSchemaIssues(schema, { item: `${'a'.repeat(40)}!` })).toEqual([])
+  })
+
+  it('gives up on a schema whose alternatives multiply beyond its budget', () => {
+    let nested: Record<string, unknown> = { type: 'string' }
+    for (let depth = 0; depth < 40; depth++) nested = { anyOf: [nested, nested] }
+    expect(externalSchemaIssues(nested, 1)).toBeNull()
   })
 })

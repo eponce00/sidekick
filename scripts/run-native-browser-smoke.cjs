@@ -6,7 +6,8 @@ const { buildSync } = require('esbuild')
 
 const ROOT = resolve(__dirname, '..')
 if (process.argv.includes('--fixture-only')) process.env.SIDEKICK_BROWSER_FIXTURE_ONLY = '1'
-const reliability = process.argv.includes('--reliability') || process.argv.includes('--fixture-only')
+const reliability =
+  process.argv.includes('--reliability') || process.argv.includes('--fixture-only')
 const liveAgent =
   process.argv.includes('--live-agent') ||
   (reliability && process.env.SIDEKICK_BROWSER_FIXTURE_ONLY !== '1')
@@ -74,16 +75,13 @@ async function main() {
       platform: 'node',
       format: 'cjs',
       target: 'node22',
-      external: ['electron'],
-      ...(liveAgent || reliability
-        ? {
-            packages: 'external',
-            loader: { '.md': 'text' },
-            banner: {
-              js: `require = require('node:module').createRequire(${JSON.stringify(join(ROOT, 'package.json'))});`
-            }
-          }
-        : {}),
+      // A native module loads from node_modules, which Electron finds through this require
+      // rather than NODE_PATH; the WebMCP part runs the agent kernel on SQLite.
+      external: ['electron', 'better-sqlite3'],
+      banner: {
+        js: `require = require('node:module').createRequire(${JSON.stringify(join(ROOT, 'package.json'))});`
+      },
+      ...(liveAgent || reliability ? { packages: 'external', loader: { '.md': 'text' } } : {}),
       logLevel: 'silent'
     })
     const stdout = await runElectron(output)
@@ -100,7 +98,7 @@ async function main() {
       )
     else
       console.log(
-        `Native browser smoke passed: ${result.semanticNodeCount} semantic nodes, ${result.screenshotBytes} screenshot bytes, ${result.popupTabs} managed tabs.`
+        `Native browser smoke passed: ${result.semanticNodeCount} semantic nodes, ${result.screenshotBytes} screenshot bytes, ${result.popupTabs} managed tabs, ${result.webMcpToolCalls} WebMCP agent tool calls.`
       )
   } finally {
     removeBundleRoot(bundleRoot)
