@@ -444,6 +444,17 @@ async function runSmoke(): Promise<SmokeResult> {
       // show the whole page scaled to fit, not its left part clipped.
       progress('Checking an agent viewport wider than the panel')
       const wide = await service.open({ runId: 'wide-view', url: `${baseUrl}/wide` })
+      type PageInput = { width: number; touch: number; fine: boolean; agent: string }
+      const page = async (): Promise<PageInput> =>
+        (
+          await service.evaluate({
+            sessionId: wide.sessionId,
+            expression:
+              '({ width: window.innerWidth, touch: navigator.maxTouchPoints, fine: matchMedia("(any-pointer: fine)").matches, agent: navigator.userAgent })'
+          })
+        ).value as PageInput
+      // Read before any emulation: a touchscreen gives the page its own touch points.
+      const native = await page()
       const narrowHost = new BrowserWindow({
         show: false,
         width: 900,
@@ -531,14 +542,6 @@ async function runSmoke(): Promise<SmokeResult> {
       // A phone preset lays out at its width as a touch, mobile page; responsive gives the page
       // back the panel's size with the browser's own user agent and input.
       mountBrowserView(wide.tab.webContentsId, narrowHost, panel, () => true, 1)
-      const page = async (): Promise<{ width: number; touch: number; agent: string }> =>
-        (
-          await service.evaluate({
-            sessionId: wide.sessionId,
-            expression:
-              '({ width: window.innerWidth, touch: navigator.maxTouchPoints, agent: navigator.userAgent })'
-          })
-        ).value as { width: number; touch: number; agent: string }
       await service.resize({
         sessionId: wide.sessionId,
         viewport: { width: 393, height: 852, deviceScaleFactor: 1 },
@@ -554,12 +557,20 @@ async function runSmoke(): Promise<SmokeResult> {
         'A phone keeps its exact height, centred in the panel'
       )
       assert.ok(phone.touch > 0, 'A phone has touch input')
+      // A touchscreen already has touch points, so the reset below only shows the phone's
+      // emulation was turned off if the phone's input differs from the page's own.
+      assert.notDeepEqual(
+        { touch: phone.touch, fine: phone.fine },
+        { touch: native.touch, fine: native.fine },
+        `A phone emulates touch input the page can tell apart (native ${JSON.stringify(native)})`
+      )
       assert.match(phone.agent, /Mobile/, 'A phone reports a mobile user agent')
       assert.equal(service.workspaceSnapshot(wide.sessionId).device?.id, 'iphone-14-pro')
       await service.resetViewport({ sessionId: wide.sessionId })
       const responsive = await page()
       assert.equal(responsive.width, panel.width, 'Responsive lays out at the panel width at 100%')
-      assert.equal(responsive.touch, 0, 'Responsive has no emulated touch')
+      assert.equal(responsive.touch, native.touch, 'Responsive restores the native touch points')
+      assert.equal(responsive.fine, native.fine, 'Responsive restores the native pointers')
       assert.doesNotMatch(responsive.agent, /Mobile/, 'Responsive has the browser user agent')
       assert.equal(service.workspaceSnapshot(wide.sessionId).device, null)
       unmountBrowserHost(narrowHost)
