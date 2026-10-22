@@ -73,19 +73,6 @@ function markRunning(db: Database.Database, conversationId: string): void {
 }
 
 /**
- * Turns a new worktree into one made before worktrees started detached, when SideKick created a
- * branch for each: checked out in it and recorded as its branch.
- */
-async function giveLegacyBranch(
-  db: Database.Database,
-  worktree: ManagedWorktreeSummary,
-  branch: string
-): Promise<void> {
-  await git(worktree.folderPath, ['switch', '-c', branch])
-  db.prepare('UPDATE managed_worktrees SET branch = ? WHERE id = ?').run(branch, worktree.id)
-}
-
-/**
  * A worktree where SideKick used to put every worktree: its storage, under the source project,
  * with a long name.
  */
@@ -159,9 +146,9 @@ describe('ManagedWorktreeService', () => {
     await rm(storage, { recursive: true, force: true })
   })
 
-  it('creates a worktree detached at the source commit, with no new branch or project', async () => {
+  it('creates a worktree on a branch of its own from the source commit, with no new project', async () => {
     const source = new ProjectStore(db).create(root, 'Example')
-    const branchesBefore = await git(root, ['branch', '--list'])
+    const base = await git(root, ['branch', '--show-current'])
     const service = new ManagedWorktreeService(db, storage)
     const project = await service.create(source.id, 'Fix cards')
 
@@ -170,15 +157,16 @@ describe('ManagedWorktreeService', () => {
     expect(basename(project.worktreeRoot)).toMatch(/^fix-cards-[0-9a-f]{6}$/)
     expect(isPathInside(root, project.worktreeRoot)).toBe(false)
     expect(isPathInside(storage, project.worktreeRoot)).toBe(false)
-    // Detached: the base branch stays checked out in the project folder, where it already is.
-    expect(await git(project.folderPath, ['branch', '--show-current'])).toBe('')
+    // Its branch is named after its folder; the base stays checked out in the project folder.
+    const branch = `sidekick/${basename(project.worktreeRoot)}`
+    expect(await git(project.folderPath, ['branch', '--show-current'])).toBe(branch)
     expect(await git(project.folderPath, ['rev-parse', 'HEAD'])).toBe(
       await git(root, ['rev-parse', 'HEAD'])
     )
-    expect(await git(root, ['branch', '--list'])).toBe(branchesBefore)
+    expect(await git(root, ['branch', '--show-current'])).toBe(base)
     const [worktree] = await service.list()
-    expect(worktree.branch).toBeNull()
-    expect(worktree.status).toEqual({ currentBranch: null, ahead: 0, changedFiles: 0 })
+    expect(worktree.branch).toBe(branch)
+    expect(worktree.status).toEqual({ currentBranch: branch, ahead: 0, changedFiles: 0 })
     expect(worktree.setAsideAt).toBeNull()
     expect(worktree).toMatchObject({ sourceProjectId: source.id, sourceProjectName: 'Example' })
     expect(await git(root, ['status', '--porcelain'])).toBe('')
@@ -204,6 +192,8 @@ describe('ManagedWorktreeService', () => {
     await service.discardFresh(project.id)
     await expect(access(project.folderPath)).rejects.toThrow()
     expect(await readFile(join(root, 'README.md'), 'utf8')).toBe('source\n')
+    // Its branch never held any work, so it goes too.
+    expect(await git(root, ['branch', '--list', project.branch!])).toBe('')
   })
   it('does not execute repository checkout hooks during managed creation', async () => {
     const hook = join(root, '.git', 'hooks', 'post-checkout')
@@ -238,19 +228,38 @@ describe('ManagedWorktreeService', () => {
     const service = new ManagedWorktreeService(db, storage)
     await service.create(source.id, 'Cards')
     const [worktree] = await service.list()
-    expect(worktree).toMatchObject({ branch: null, baseRef: base, owners: [] })
-    expect(worktree.status).toEqual({ currentBranch: null, ahead: 0, changedFiles: 0 })
+    expect(worktree).toMatchObject({ baseRef: base, owners: [] })
+    expect(worktree.branch).toMatch(/^sidekick\/cards-[0-9a-f]{6}$/)
+    expect(worktree.status).toEqual({ currentBranch: worktree.branch, ahead: 0, changedFiles: 0 })
   })
 
-  it('starts several detached worktrees from one base without inventing branch names', async () => {
+  it('starts several worktrees from one base, each on its own branch', async () => {
     const source = new ProjectStore(db).create(root, 'Example')
     const service = new ManagedWorktreeService(db, storage)
     const first = await service.create(source.id, 'Fix cards')
     const second = await service.create(source.id, 'Fix cards')
     expect(first.folderPath).not.toBe(second.folderPath)
-    expect(await git(first.folderPath, ['branch', '--show-current'])).toBe('')
-    expect(await git(second.folderPath, ['branch', '--show-current'])).toBe('')
-    expect((await service.list()).map(({ branch }) => branch)).toEqual([null, null])
+    expect(first.branch).not.toBe(second.branch)
+    expect(await git(first.folderPath, ['branch', '--show-current'])).toBe(first.branch)
+    expect(await git(second.folderPath, ['branch', '--show-current'])).toBe(second.branch)
+  })
+
+  it('never takes a branch name already in use', async () => {
+    const source = new ProjectStore(db).create(root, 'Example')
+    const service = new ManagedWorktreeService(db, storage)
+    await git(root, ['branch', 'sidekick/fix-cards-aaaaaa'])
+    names.suffixes.push('aaaaaa', 'dddddd')
+    const worktree = await service.create(source.id, 'Fix cards')
+    expect(basename(worktree.worktreeRoot)).toBe('fix-cards-aaaaaa')
+    expect(worktree.branch).toBe('sidekick/fix-cards-aaaaaa-dddddd')
+
+    // A branch named `sidekick` leaves no room for `sidekick/...` branches, and Git refuses it
+    // while any of those exist.
+    await service.remove(worktree.id)
+    await git(root, ['branch', '-D', 'sidekick/fix-cards-aaaaaa'])
+    await git(root, ['branch', 'sidekick'])
+    names.suffixes.push('eeeeee')
+    expect((await service.create(source.id, 'Fix cards')).branch).toBe('sidekick-fix-cards-eeeeee')
   })
 
   it('reports commits, changes and the chats that use it', async () => {
@@ -262,13 +271,13 @@ describe('ManagedWorktreeService', () => {
     await writeFile(join(project.folderPath, 'draft.txt'), 'draft', 'utf8')
 
     const [worktree] = await service.list()
-    expect(worktree.status).toEqual({ currentBranch: null, ahead: 1, changedFiles: 1 })
+    expect(worktree.status).toEqual({ currentBranch: project.branch, ahead: 1, changedFiles: 1 })
     expect(worktree.owners).toEqual([
       { kind: 'chat', id: 'chat-1', title: 'Status chat', running: false }
     ])
   })
 
-  it('removes a worktree with its changes, keeps branches made in it, and detaches its chats', async () => {
+  it('removes a worktree with its changes, keeps branches with work, and detaches its chats', async () => {
     const source = new ProjectStore(db).create(root, 'Example')
     const service = new ManagedWorktreeService(db, storage)
     const project = await service.create(source.id, 'Removed')
@@ -288,8 +297,10 @@ describe('ManagedWorktreeService', () => {
     db.prepare("UPDATE agent_runs SET phase = 'completed' WHERE thread_id = 'chat-2'").run()
     expect(await service.remove(worktree.id)).toEqual({ removed: true })
     await expect(access(project.folderPath)).rejects.toThrow()
-    // The agent's branch is the user's to merge or open a pull request from.
+    // The agent's branch is the user's to merge or open a pull request from. The one SideKick
+    // made never held any work, so it went with the folder.
     expect(await git(root, ['branch', '--list', 'agent/cards'])).toContain('agent/cards')
+    expect(await git(root, ['branch', '--list', project.branch!])).toBe('')
     expect(
       db
         .prepare(
@@ -413,6 +424,11 @@ describe('ManagedWorktreeService', () => {
       projectName: 'Example',
       workspaceRoot: result.worktree.folderPath,
       worktreeId: result.worktree.id,
+      worktree: {
+        projectFolder: source.folder_path,
+        branch: result.worktree.branch,
+        base: await git(root, ['branch', '--show-current'])
+      },
       isDetached: false
     })
     await expect(service.createForConversation({ conversationId: 'fresh' })).rejects.toThrow(
@@ -445,15 +461,34 @@ describe('ManagedWorktreeService', () => {
     const source = new ProjectStore(db).create(root, 'Example')
     const service = new ManagedWorktreeService(db, storage)
     const parent = await service.create(source.id, 'Parent')
-    await giveLegacyBranch(db, parent, 'sidekick/parent')
     await commitFile(parent.folderPath, 'parent.txt', 'parent\n')
     const child = await service.create(source.id, 'Child', { fromWorktreeId: parent.id })
     expect(await readFile(join(child.folderPath, 'parent.txt'), 'utf8')).toBe('parent\n')
     const rows = await service.list()
     expect(rows.find(({ id }) => id === child.id)).toMatchObject({
       sourceProjectId: source.id,
-      baseRef: 'sidekick/parent'
+      baseRef: parent.branch
     })
+    expect(child.branch).toMatch(/^sidekick\/child-[0-9a-f]{6}$/)
+  })
+
+  it('keeps its own branch when it holds work, and deletes it once merged', async () => {
+    const source = new ProjectStore(db).create(root, 'Example')
+    const base = await git(root, ['branch', '--show-current'])
+    const service = new ManagedWorktreeService(db, storage)
+
+    const unmerged = await service.create(source.id, 'Unmerged')
+    await commitFile(unmerged.folderPath, 'unmerged.txt', 'work\n')
+    expect(await service.remove(unmerged.id)).toEqual({ removed: true })
+    expect(await git(root, ['show', `${unmerged.branch}:unmerged.txt`])).toBe('work')
+
+    const merged = await service.create(source.id, 'Merged')
+    await commitFile(merged.folderPath, 'merged.txt', 'work\n')
+    await git(root, ['merge', '--ff-only', merged.branch!])
+    expect(await service.remove(merged.id)).toEqual({ removed: true })
+    expect(await git(root, ['branch', '--list', merged.branch!])).toBe('')
+    expect(await git(root, ['branch', '--show-current'])).toBe(base)
+    expect(await readFile(join(root, 'merged.txt'), 'utf8')).toBe('work\n')
   })
 
   describe('where worktrees go', () => {

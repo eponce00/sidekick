@@ -73,6 +73,15 @@ export interface ConversationProjectTransition {
   movedAt: number
 }
 
+export interface ConversationWorktreeContext {
+  /** The project folder the worktree is a copy of, which keeps its own checkout. */
+  projectFolder: string | null
+  /** The branch SideKick made for it; null for worktrees made while they started detached. */
+  branch: string | null
+  /** The branch or commit it started from. */
+  base: string | null
+}
+
 export interface ConversationProjectContext {
   conversationId: string
   projectId: string | null
@@ -80,6 +89,8 @@ export interface ConversationProjectContext {
   /** Where the chat works: its worktree's folder when it has one, else the project folder. */
   workspaceRoot: string | null
   worktreeId: string | null
+  /** For a chat in its own worktree: the project folder it is a copy of, its branch and base. */
+  worktree?: ConversationWorktreeContext | null
   homeWorkspaceRoot: string | null
   homeProjectName: string | null
   isDetached: boolean

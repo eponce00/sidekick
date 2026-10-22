@@ -158,6 +158,47 @@ describe('PromptComposer', () => {
     expect(prompt.sectionIds).not.toContain('workspace')
   })
 
+  it('tells the agent it works in its own worktree, on which branch, and that it may change it', () => {
+    const compose = (worktree: { branch: string | null; base: string | null } | null) =>
+      new PromptComposer().compose({
+        platform: 'windows',
+        capabilities: capabilitiesFromTools(
+          getToolDefinitions(true, 'C:\\work\\app.worktrees\\fix-1a2b3c')
+        ),
+        permissionMode: 'full-access',
+        model,
+        project: {
+          workspaceRoot: 'C:\\work\\app.worktrees\\fix-1a2b3c',
+          instructions: '',
+          instructionSources: [],
+          memory: '',
+          worktree: worktree && { projectFolder: 'C:\\work\\app', ...worktree }
+        },
+        currentDate: 'Sunday, July 19, 2026',
+        toolRoundLimit: 100,
+        activeSkillIds: [],
+        skillAssetsPath: null
+      }).content
+
+    const onBranch = compose({ branch: 'sidekick/fix-1a2b3c', base: 'main' })
+    expect(onBranch).toContain('own Git worktree of `C:\\work\\app`')
+    expect(onBranch).toContain('SideKick created branch `sidekick/fix-1a2b3c` for it from `main`')
+    expect(onBranch).toContain('Rename, create and switch branches and run any Git command here')
+    expect(onBranch).toContain('cannot be checked out here')
+    expect(onBranch).toContain(
+      'merge it into `main` in the folder where that branch is checked out'
+    )
+
+    // Worktrees made while they started detached have no branch of their own yet.
+    const detached = compose({ branch: null, base: 'a'.repeat(40) })
+    expect(detached).toContain(
+      'It started detached at its base; create a branch with `git switch -c'
+    )
+    expect(detached).not.toContain('a'.repeat(40))
+
+    expect(compose(null)).not.toContain('Git worktree')
+  })
+
   it('composes phase-specific Plan and approved-execution contracts from actual tools', () => {
     const compose = (planStage: 'planning' | 'executing') =>
       new PromptComposer().compose({

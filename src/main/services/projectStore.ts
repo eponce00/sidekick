@@ -117,7 +117,9 @@ export class ProjectStore {
       .prepare(
         `SELECT c.id, c.project_id, c.project_context_version,
                 c.home_workspace_root, c.home_project_name, c.worktree_id,
-                p.name, p.folder_path, w.folder_path AS worktree_folder
+                p.name, p.folder_path, w.folder_path AS worktree_folder,
+                w.branch AS worktree_branch,
+                w.base_ref AS worktree_base
          FROM conversations c
          LEFT JOIN projects p ON p.id = c.project_id
          LEFT JOIN managed_worktrees w ON w.id = c.worktree_id
@@ -134,9 +136,12 @@ export class ProjectStore {
           name: string | null
           folder_path: string | null
           worktree_folder: string | null
+          worktree_branch: string | null
+          worktree_base: string | null
         }
       | undefined
     if (!conversation) throw new Error('Conversation not found')
+    const inWorktree = Boolean(conversation.worktree_id && conversation.worktree_folder)
 
     const event = this.db
       .prepare(
@@ -152,8 +157,14 @@ export class ProjectStore {
       projectName: conversation.name,
       // A chat in its own worktree works there, even if its project was removed since.
       workspaceRoot: conversation.worktree_folder ?? conversation.folder_path,
-      worktreeId:
-        conversation.worktree_id && conversation.worktree_folder ? conversation.worktree_id : null,
+      worktreeId: inWorktree ? conversation.worktree_id : null,
+      worktree: inWorktree
+        ? {
+            projectFolder: conversation.folder_path,
+            branch: conversation.worktree_branch,
+            base: conversation.worktree_base
+          }
+        : null,
       homeWorkspaceRoot: conversation.home_workspace_root,
       homeProjectName: conversation.home_project_name,
       isDetached:

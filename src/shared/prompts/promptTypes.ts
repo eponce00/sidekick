@@ -1,7 +1,7 @@
 import type { PermissionMode } from '../permissions'
 import type { ModelProvider, PinnedModel } from '../models'
 import type { ProviderKind } from '../providerRegistry'
-import type { ConversationProjectTransition } from '../projects'
+import type { ConversationProjectTransition, ConversationWorktreeContext } from '../projects'
 
 export const AGENT_PROMPT_VERSION = 'sidekick-agent-v10'
 
@@ -55,6 +55,8 @@ export interface PromptProjectContext {
   homeWorkspaceRoot?: string | null
   homeProjectName?: string | null
   isDetached?: boolean
+  /** Set when the workspace is the chat's own Git worktree of its project. */
+  worktree?: ConversationWorktreeContext | null
 }
 
 export interface PromptLocation {
