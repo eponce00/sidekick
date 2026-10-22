@@ -101,6 +101,72 @@
   color: var(--accent);
   font: 500 var(--text-xs) / 1 var(--font-mono);
 }
+/* Shown only when the page offers WebMCP tools; the count says how many. */
+.browser-workspace-tools {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font: 500 var(--text-xs) / 1 var(--font-mono);
+}
+.browser-workspace-tools[aria-expanded='true'] {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+.browser-workspace-page-tools {
+  flex-shrink: 0;
+  max-height: 40%;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-1);
+  font-size: var(--text-xs);
+}
+.browser-workspace-page-tools-heading {
+  margin: 0 0 6px;
+  color: var(--text-secondary);
+}
+.browser-workspace-page-tools-heading strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.browser-workspace-page-tools ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.browser-workspace-page-tool-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.browser-workspace-page-tool-name code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+.browser-workspace-page-tool-mark {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+}
+.browser-workspace-page-tools li p {
+  display: -webkit-box;
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
 .browser-workspace-toolbar input {
   flex: 1;
   min-width: 0;

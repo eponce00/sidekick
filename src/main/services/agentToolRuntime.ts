@@ -97,8 +97,10 @@ import type { PermissionMode } from '../../shared/permissions'
 import {
   AgentBrowserSessionManager,
   browserScope,
-  registerBrowserToolHandlers
+  registerBrowserToolHandlers,
+  webMcpCallAccess
 } from './agentBrowserToolHandlers'
+import { webMcpSite } from '../../shared/webMcp'
 import type { NativeBrowserSessionService } from './nativeBrowserSessionService'
 import { shellCommandHint } from './shellCommandHints'
 
@@ -688,7 +690,11 @@ export class AgentToolRuntime {
         },
         title: (name, args) => this.title(name, args),
         safeArguments: safeToolArguments,
-        approvalPreview: (name, args) => handlers.preview(name, args),
+        approvalPreview: (name, args, context) => handlers.preview(name, args, context),
+        requestedAccess: (name, args, context) =>
+          name === 'browser_call_webmcp_tool' && this.browser
+            ? webMcpCallAccess(this.browser, browserScope(context), args)
+            : undefined,
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
           return uses
@@ -832,6 +838,10 @@ export class AgentToolRuntime {
     if (name === 'browser_evaluate') return 'Inspect page state'
     if (name === 'browser_verify') return `Verify ${stringArg(args, 'criterion', 'UI visually')}`
     if (name === 'browser_close') return 'Close browser'
+    if (name === 'browser_list_webmcp_tools') return 'List page tools'
+    if (name === 'browser_call_webmcp_tool') {
+      return `Call ${stringArg(args, 'tool', 'page tool')} on ${webMcpSite(stringArg(args, 'origin'))}`
+    }
     if (name === 'use_skill') return `Load ${stringArg(args, 'skill_id')} skill`
     if (name === 'update_goal') {
       return args.status === 'complete' ? 'Complete goal' : 'Report goal blocker'

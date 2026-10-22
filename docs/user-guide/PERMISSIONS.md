@@ -24,6 +24,7 @@ The stricter modes are available per conversation from the composer and in Setti
 | Agent workspace mutation          | Agent-selected           | Kernel policy plus same-run file receipt before transactional mutation              |
 | Agent MCP tool call               | Confirm                  | Kernel policy before internal MCP dispatch                                          |
 | Agent API call (`http_request`)   | Auto for GET and HEAD    | Kernel policy before the guarded request                                            |
+| Agent call to a website's tool    | Auto if marked read-only | Kernel policy, then the page's site and document checked again before the call      |
 | Agent use of a stored credential  | The entry's own setting  | Kernel approval before the permission mode, then scope checked again when used      |
 | Agent change to SideKick settings | Always confirm           | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
 | MCP connector start               | Approved content         | Fingerprint check before any connector process or connection starts                 |

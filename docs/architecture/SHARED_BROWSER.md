@@ -25,7 +25,7 @@ is product context; the actual runtime capability descriptions are the more deta
 | User handoff                     | Browser-control interruption and handoff                                 | Direct native input claims control; browser tool calls wait for Resume agent, remain cancellable, then stale refs are invalidated |
 | Diagnostics                      | Console, optional CDP                                                    | Existing console and failed-network tools, read-only page evaluation                                                              |
 | General programmable browser API | Persistent REPL and locator composition                                  | Typed tool calls; no equivalent general browser REPL in this release                                                              |
-| Optional integrations            | External browser profiles, WebMCP, page assets, file chooser/export APIs | Not full parity; these remain separate additions, not implemented by embedding the page                                           |
+| Optional integrations            | External browser profiles, WebMCP, page assets, file chooser/export APIs | WebMCP tools are listed and called through Chromium ([WebMCP](WEBMCP.md)); the others remain separate additions                   |
 
 ## Implementation
 
