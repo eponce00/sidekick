@@ -14,8 +14,11 @@ export interface AgentToolHandlerInput {
 
 export type AgentToolHandler = (input: AgentToolHandlerInput) => Promise<ToolExecutionResult>
 
-/** Which run and chat a call belongs to, for previews that depend on their state. */
-export type AgentToolPreviewContext = Pick<AgentToolExecutionContext, 'conversationId' | 'runId'>
+/** Which run, chat and call a preview is for, for previews that depend on their state. */
+export type AgentToolPreviewContext = Pick<
+  AgentToolExecutionContext,
+  'conversationId' | 'runId' | 'toolCallId'
+>
 
 /** Describes what an approved call would change, for the approval card. */
 export type AgentToolApprovalPreview = (

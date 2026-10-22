@@ -75,6 +75,7 @@ export interface AgentToolArgumentIssue {
     | 'pattern'
     | 'minItems'
     | 'maxItems'
+    | 'schema'
   message: string
 }
 
@@ -163,6 +164,18 @@ function collectSchemaIssues(
   check: SchemaCheck = { patterns: true, steps: Infinity }
 ): void {
   if (--check.steps < 0) throw new SchemaCheckBudgetSpent()
+  // JSON Schema allows `true` (anything) and `false` (nothing) in place of a schema; anything else
+  // that is not an object is a malformed schema, reported rather than read.
+  const given: unknown = schema
+  if (given === true) return
+  if (!given || typeof given !== 'object' || Array.isArray(given)) {
+    issues.push({
+      path,
+      code: 'schema',
+      message: `${path || 'arguments'} ${given === false ? 'is not allowed by' : 'has a malformed'} schema`
+    })
+    return
+  }
   const alternatives = [schema.anyOf, schema.oneOf].find(Array.isArray) as
     | Record<string, unknown>[]
     | undefined

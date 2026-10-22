@@ -498,4 +498,14 @@ describe('externalSchemaIssues', () => {
     for (let depth = 0; depth < 40; depth++) nested = { anyOf: [nested, nested] }
     expect(externalSchemaIssues(nested, 1)).toBeNull()
   })
+
+  it('reports a malformed schema as an issue rather than failing on it', () => {
+    expect(externalSchemaIssues({ anyOf: [null] }, {})).toEqual([
+      { path: '', code: 'schema', message: 'arguments has a malformed schema' }
+    ])
+    expect(externalSchemaIssues({ properties: { a: { anyOf: [false] } } }, { a: 1 })).toEqual([
+      { path: 'a', code: 'schema', message: 'a is not allowed by schema' }
+    ])
+    expect(externalSchemaIssues({ anyOf: [true, 7] }, { a: 1 })).toEqual([])
+  })
 })

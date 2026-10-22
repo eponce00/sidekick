@@ -60,12 +60,15 @@ such as "Call add_to_cart on shop.example".
 
 - A call acts on the site as you. It follows your [permission mode](PERMISSIONS.md) like a click:
   **Ask for sensitive actions** asks before each call unless the site marks the tool read-only, and
-  **Ask before every change or command** asks before every call. The card shows the site, the tool
-  and the site's description of it. A read-only mark is the site's claim, which SideKick cannot
-  check.
-- A call goes only to the site where the agent listed the tools. If the tab has moved on to another
-  page or another site, or the page has changed the tool, the call is refused and the agent lists
-  the tools again.
+  **Ask before every change or command** asks before every call. A tool the site marks as having
+  consequences asks every time, even in **Full access**. The card shows the site, the tool and the
+  site's description of it. A read-only mark is the site's claim, which SideKick cannot check.
+- **Allow for this chat** is offered for a site's tools on the web, not for files on your computer.
+- A call goes only to the site where the agent listed the tools, and only to the tab and tool you
+  were shown. If the tab has moved on to another page or another site, another tab is in front, or
+  the page has changed the tool, the call is refused and the agent lists the tools again.
+- While a password from a stored sign-in is filled in on the page, the page's tools are not called,
+  since the page's code could read it.
 - SideKick checks the agent's input against what the tool says it takes before anything runs.
 - Only the page's own tools are offered, not those of frames embedded in it.
 - A tool's description and result are the page's content: the agent treats them as information,
