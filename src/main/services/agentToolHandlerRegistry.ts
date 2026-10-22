@@ -14,9 +14,16 @@ export interface AgentToolHandlerInput {
 
 export type AgentToolHandler = (input: AgentToolHandlerInput) => Promise<ToolExecutionResult>
 
+/** Which run, chat and call a preview is for, for previews that depend on their state. */
+export type AgentToolPreviewContext = Pick<
+  AgentToolExecutionContext,
+  'conversationId' | 'runId' | 'toolCallId'
+>
+
 /** Describes what an approved call would change, for the approval card. */
 export type AgentToolApprovalPreview = (
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: AgentToolPreviewContext
 ) => Promise<AgentApprovalPreview | undefined>
 
 /** Scoped registry used by one run; registrations are explicit and duplicate names fail closed. */
@@ -46,8 +53,12 @@ export class AgentToolHandlerRegistry {
     }
   }
 
-  preview(name: string, args: Record<string, unknown>): Promise<AgentApprovalPreview | undefined> {
-    return this.previews.get(name)?.(args) ?? Promise.resolve(undefined)
+  preview(
+    name: string,
+    args: Record<string, unknown>,
+    context?: AgentToolPreviewContext
+  ): Promise<AgentApprovalPreview | undefined> {
+    return this.previews.get(name)?.(args, context) ?? Promise.resolve(undefined)
   }
 
   has(name: string): boolean {

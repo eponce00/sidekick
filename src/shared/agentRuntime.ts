@@ -234,6 +234,11 @@ export interface ToolResultMediaAttachment {
   source: ToolResultMediaSource
   name?: string
   description?: string
+  /**
+   * The model points at this image by pixel coordinates (a browser viewport screenshot), so the
+   * copy a provider receives keeps its size and is only re-encoded to fit.
+   */
+  keepDimensions?: boolean
 }
 
 export interface ToolExecutionResult<TData = unknown> {
@@ -455,7 +460,8 @@ export function normalizeToolResultMedia(
       mimeType: mimeType as ToolResultImageMimeType,
       source,
       ...(name ? { name } : {}),
-      ...(description ? { description } : {})
+      ...(description ? { description } : {}),
+      ...(candidate.keepDimensions === true ? { keepDimensions: true } : {})
     }
   })
 }

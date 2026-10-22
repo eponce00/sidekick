@@ -17,6 +17,7 @@ import {
   registerArtifactScheme
 } from '../src/main/bootstrap/artifactProtocol'
 import { NativeBrowserSessionService } from '../src/main/services/nativeBrowserSessionService'
+import { runWebMcpSmoke, webMcpFixtureHtml } from './native-browser-webmcp'
 
 const RESULT_PREFIX = 'SIDEKICK_NATIVE_BROWSER_SMOKE='
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -42,6 +43,7 @@ interface SmokeResult {
   partitionIsolated: boolean
   localFileAllowed: boolean
   closeSessions: number
+  webMcpToolCalls: number
 }
 
 function progress(step: string): void {
@@ -268,6 +270,12 @@ async function runSmoke(): Promise<SmokeResult> {
       if (requestUrl.pathname === '/fixture.pdf') {
         response.setHeader('content-type', 'application/pdf')
         response.end(fillablePdfFixture())
+        return
+      }
+      if (requestUrl.pathname === '/webmcp' || requestUrl.pathname === '/webmcp-next') {
+        response.setHeader('content-type', 'text/html; charset=utf-8')
+        response.setHeader('cache-control', 'no-store')
+        response.end(webMcpFixtureHtml(requestUrl.pathname === '/webmcp' ? 'shop' : 'next'))
         return
       }
       if (requestUrl.pathname === '/drop') {
@@ -1186,6 +1194,14 @@ async function runSmoke(): Promise<SmokeResult> {
     assert.ok(takeoverComplete.observation.screenshot)
     progress('Same-session human takeover reveal and recapture passed')
 
+    // localhost and 127.0.0.1 are different origins on the same fixture server.
+    const webMcp = await runWebMcpSmoke(
+      service,
+      `${baseUrl}/webmcp`,
+      `http://localhost:${port}/webmcp`,
+      progress
+    )
+
     const closeResult = await service.close({ sessionId: opened.sessionId })
     assert.deepEqual(closeResult.closedSessions, [opened.sessionId])
     await assert.rejects(
@@ -1210,7 +1226,8 @@ async function runSmoke(): Promise<SmokeResult> {
       humanTakeover: true,
       partitionIsolated: true,
       localFileAllowed: true,
-      closeSessions: closeResult.closedSessions.length
+      closeSessions: closeResult.closedSessions.length,
+      webMcpToolCalls: webMcp.toolCalls
     }
   } finally {
     await service?.dispose().catch(() => undefined)

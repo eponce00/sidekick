@@ -6,6 +6,7 @@ export interface BrowserPanelBounds {
 }
 
 import type { BrowserDeviceState } from './browserDevices'
+import type { BrowserPageTool } from './webMcp'
 
 export interface BrowserWorkspaceState {
   sessionId: string
@@ -18,6 +19,8 @@ export interface BrowserWorkspaceState {
   /** A fixed viewport in effect on the active tab; null while it is responsive. */
   device?: BrowserDeviceState | null
   tabs: Array<{ id: string; title: string; url: string; active: boolean; loading: boolean }>
+  /** The WebMCP tools the active tab's page offers the agent, with the page's origin. */
+  pageTools?: { origin: string; tools: BrowserPageTool[] } | null
   /**
    * A picture of the page, sent with the device menu: the page is drawn above the app, so it hides
    * while SideKick's menu is open and the panel shows this in its place.

@@ -45,6 +45,39 @@ pause the agent. Right-click offers native text editing actions.
 
 The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
+## Tools that websites offer
+
+Some websites offer tools to in-browser agents through
+[WebMCP](https://webmachinelearning.github.io/webmcp/): a store might offer "add to cart", a travel
+site "search flights". When the page in the active tab offers tools, a plug button with their
+number appears in the Browser panel's toolbar. Choose it to see each tool's name, whether the site
+marks it read-only, and the site's own description of it.
+
+The agent learns which tools a page offers when it looks at the page. It lists them with
+`browser_list_webmcp_tools` and calls one with `browser_call_webmcp_tool`, which runs the site's own
+code in the page, as when you use that feature yourself. Calls appear in the chat as browser steps,
+such as "Call add_to_cart on shop.example".
+
+- A call acts on the site as you. It follows your [permission mode](PERMISSIONS.md) like a click:
+  **Ask for sensitive actions** asks before each call unless the site marks the tool read-only, and
+  **Ask before every change or command** asks before every call. A tool the site marks as having
+  consequences asks every time, even in **Full access**. The card shows the site, the tool and the
+  site's description of it. A read-only mark is the site's claim, which SideKick cannot check.
+- **Allow for this chat** is offered for a site's tools on the web, not for files on your computer.
+- A call goes only to the site where the agent listed the tools, and only to the tab and tool you
+  were shown. If the tab has moved on to another page or another site, another tab is in front, or
+  the page has changed the tool, the call is refused and the agent lists the tools again.
+- While a password from a stored sign-in is filled in on the page, the page's tools are not called,
+  since the page's code could read it.
+- SideKick checks the agent's input against what the tool says it takes before anything runs.
+- Only the page's own tools are offered, not those of frames embedded in it.
+- A tool's description and result are the page's content: the agent treats them as information,
+  not instructions. A result is cut to 256 KB, a call is cancelled after 30 seconds, and stored
+  credentials are hidden in results as everywhere else.
+
+A page can also describe one of its forms as a tool. Calling it fills in the form, and submits it if
+the site says to; it always counts as a change.
+
 ## Human-only site checks
 
 When SideKick detects a CAPTCHA or anti-bot verification, automated input and page evaluation stop.

@@ -137,8 +137,19 @@ export interface AgentKernelToolRouter {
   /** What an approval would change, shown on the approval card. */
   approvalPreview?: (
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    context?: AgentCredentialContext
   ) => Promise<AgentApprovalPreview | undefined>
+  /**
+   * How much a call asks for when that depends on state the arguments do not carry, such as a
+   * web page's tool the page marks read-only. `always` asks every time, even in Full access, with
+   * no chat-wide grant. Undefined leaves it to the tool's catalog entry.
+   */
+  requestedAccess?: (
+    name: string,
+    args: Record<string, unknown>,
+    context: AgentCredentialContext
+  ) => RequestedAccess | 'always' | undefined
   reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
   releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
   /**
@@ -1116,12 +1127,16 @@ The user approved this exact plan revision. Act capabilities are now available a
     const catalog = currentCatalog(input)
     const credential = await this.authorizeCredential(input, call, title, signal)
     if (credential !== 'unasked') return credential
-    // Tools that change SideKick itself ask every time, even in full access.
-    const alwaysAsk = getAgentToolEntry(catalog, call.name)?.approval === 'always'
+    const context = { conversationId: input.threadId, runId: input.id, toolCallId: call.id }
+    const routedAccess = input.toolRouter.requestedAccess?.(call.name, call.arguments, context)
+    // Tools that change SideKick itself ask every time, even in full access, as do calls the
+    // router marks so.
+    const alwaysAsk =
+      getAgentToolEntry(catalog, call.name)?.approval === 'always' || routedAccess === 'always'
     if (!alwaysAsk && !toolNeedsPolicyDecision(catalog, call.name)) return 'approved'
     const requestedAccess = alwaysAsk
       ? 'confirm'
-      : toolRequestedAccess(catalog, call.name, call.arguments)
+      : (routedAccess ?? toolRequestedAccess(catalog, call.name, call.arguments))
     const decision = alwaysAsk
       ? { effectiveAccess: 'confirm' as const }
       : resolvePermissionPolicy(input.permissionMode, requestedAccess)
@@ -1160,7 +1175,7 @@ The user approved this exact plan revision. Act capabilities are now available a
       return 'approved'
     }
     const preview = await input.toolRouter
-      .approvalPreview?.(call.name, call.arguments)
+      .approvalPreview?.(call.name, call.arguments, context)
       .catch(() => undefined)
     const interaction = await this.suspendForInteraction(
       input.id,

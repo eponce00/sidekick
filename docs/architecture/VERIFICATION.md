@@ -89,8 +89,8 @@ result as the answer. The pass follows the same answer rules as above.
 
 `browser_verify` can capture an animation: with `frames` set to 2 to 4, it takes that many viewport
 screenshots `interval_ms` apart and returns them side by side as one JPEG, oldest on the left, at
-most 1536 pixels wide. A request keeps only the latest two images, so one strip shows motion for
-about the cost of one screenshot without pushing the newest image out. When every frame is
+most 1536 pixels wide. A request to a local model keeps only the latest two images, so one strip
+shows motion for about the cost of one screenshot without pushing the newest image out. When every frame is
 identical, the result says that nothing moved.
 
 The final message shows the verification result as one status in its footer, reconstructed from

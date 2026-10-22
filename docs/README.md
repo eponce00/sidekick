@@ -15,7 +15,7 @@ behavior, and the development guide when testing or publishing it.
 - [Research](user-guide/RESEARCH.md) — run evidence-backed web research through the normal agent runtime.
 - [Chats that work together](user-guide/CHATS_THAT_WORK_TOGETHER.md) — let a chat start other chats, message them, and collect their reports.
 - [Search](user-guide/SEARCH.md) — understand web search, image search, and page retrieval.
-- [Visual browser](user-guide/BROWSER.md) — inspect, interact with, and verify pages in the native browser.
+- [Visual browser](user-guide/BROWSER.md) — inspect, interact with, and verify pages in the native browser, and use the tools websites offer.
 - [Workspace History](user-guide/WORKSPACE_HISTORY.md) — restore SideKick-authored file changes.
 - [Voice](user-guide/VOICE.md) — dictate messages and hear replies, on this device.
 - [Chatting with SideKick](user-guide/CHAT.md) — steer replies, drafts, comments on changes, the command palette, and shortcuts.
@@ -34,6 +34,7 @@ behavior, and the development guide when testing or publishing it.
 - [Desktop integration](architecture/DESKTOP_INTEGRATION.md) — operating-system behavior and release targets.
 - [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
 - [Credentials](architecture/CREDENTIALS.md) — the sealed vault, its renderer and agent boundaries, and redaction of every output source.
+- [WebMCP](architecture/WEBMCP.md) — how the agent lists and calls the tools websites offer, through Chromium's own implementation.
 
 ## Development and operations
 
@@ -59,6 +60,8 @@ behavior, and the development guide when testing or publishing it.
 - [Configuration CLI](roadmap/CONFIGURATION_CLI.md) — remaining packaging and qualification work for the command line.
 - [Credentials](roadmap/CREDENTIALS.md) — how other tools handle agent credentials, and the tools
   that will use a stored credential by alias.
+- [WebMCP](roadmap/WEBMCP.md) — the standard, what Electron's Chromium ships, why SideKick uses it,
+  and what is left.
 
 Roadmap documents describe intent, not current behavior. A planned feature belongs there until its
 implementation, tests, and user documentation land together.
