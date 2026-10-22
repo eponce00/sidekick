@@ -2627,6 +2627,78 @@ describe('AgentRunKernel', () => {
     expect(router.execute).toHaveBeenCalledTimes(2)
   })
 
+  it('decides on a call after the calls before it in the same reply have run', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          { id: 'list-1', function: { name: 'browser_list_webmcp_tools', arguments: {} } },
+          {
+            id: 'act-1',
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool: 'add_item' }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Done' })
+    )
+    let listed = false
+    const router = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'browser_list_webmcp_tools') listed = true
+        return { ok: true }
+      }),
+      // As for a page's tool: a call that is not listed yet would be refused, so it asks nothing.
+      requestedAccess: vi.fn(() => (listed ? ('confirm' as const) : ('auto' as const)))
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ name: 'browser_call_webmcp_tool', toolCallId: 'act-1' })
+    expect(router.execute).toHaveBeenCalledOnce()
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+  })
+
+  it('asks every time, even with full access, for a call the router marks always', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = sampledTurn({
+      toolCalls: [
+        {
+          id: 'buy-1',
+          function: {
+            name: 'browser_call_webmcp_tool',
+            arguments: { origin: 'https://shop.example', tool: 'buy_now' }
+          }
+        }
+      ]
+    })
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      requestedAccess: vi.fn(() => 'always' as const)
+    }
+    const kernel = new AgentRunKernel(
+      store,
+      undefined,
+      sequence(call, sampledTurn({ content: 'Done' }))
+    )
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ requestedAccess: 'confirm', mode: 'full-access' })
+    expect(card.request).not.toHaveProperty('chatScope')
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledOnce()
+  })
+
   it('asks before every SideKick settings change even with full access, showing the diff', async () => {
     const propose = (id: string): AgentKernelProviderSampler =>
       sampledTurn({

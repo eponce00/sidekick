@@ -76,8 +76,9 @@ async function main() {
       format: 'cjs',
       target: 'node22',
       // A native module loads from node_modules, which Electron finds through this require
-      // rather than NODE_PATH; the WebMCP part runs the agent kernel on SQLite.
-      external: ['electron', 'better-sqlite3'],
+      // rather than NODE_PATH; the WebMCP part runs the agent kernel on SQLite, and the provider
+      // runtime it reaches resizes images with @napi-rs/canvas.
+      external: ['electron', 'better-sqlite3', '@napi-rs/canvas'],
       banner: {
         js: `require = require('node:module').createRequire(${JSON.stringify(join(ROOT, 'package.json'))});`
       },

@@ -94,8 +94,9 @@ since fixed both; Electron 44 (Chromium 152) also drops `navigator.modelContext`
 
 - Tools from same-origin and `allow="tools"` iframes, each shown with its own origin, if the
   specification settles that built-in agents should see them.
-- `title` and `consequentialHint`: Chromium 150's protocol does not report them. When it does, show
-  the title, and ask before a consequential call even in Full access, as Chrome's guidance asks.
+- `title`, `consequential` and `debugging`: Chromium 150's protocol reports none of them. SideKick
+  already asks before a tool marked consequential in every mode and never offers one marked for
+  debugging, so these take effect when Electron's Chromium reports them; the title is not shown yet.
 - Electron 44 (Chromium 152) removes `navigator.modelContext` and changes result and event shapes;
   rerun the protocol probe and the smoke on every Electron upgrade before trusting them, and drop
   the compatibility script once Chromium matches the specification.

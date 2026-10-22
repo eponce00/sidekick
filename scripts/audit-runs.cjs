@@ -16,7 +16,7 @@ try {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    external: ['better-sqlite3', 'electron'],
+    external: ['better-sqlite3', 'electron', '@napi-rs/canvas'],
     logLevel: 'warning'
   })
   const result = spawnSync(require('electron'), [output, ...process.argv.slice(2)], {

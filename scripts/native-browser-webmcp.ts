@@ -160,7 +160,7 @@ export async function runWebMcpSmoke(
         approvalPreview: (name, args, context) => handlers.preview(name, args, context),
         requestedAccess: (name, args, context) =>
           name === 'browser_call_webmcp_tool'
-            ? webMcpCallAccess(manager, browserScope(context), args)
+            ? webMcpCallAccess(manager, browserScope(context), args, context)
             : undefined
       }
     })
