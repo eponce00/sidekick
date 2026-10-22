@@ -138,8 +138,9 @@ earlier versions stay where they are and keep working there.
 
 Before the first message of a project chat, the bar above the composer offers **Work in: This
 folder** or **New worktree**. A new worktree starts **from** the branch the project folder is on,
-or another branch you choose, as a copy of that branch with no branch of its own: Git lets a branch
-be checked out in only one folder, and the project folder already has it. Sending the first message
+or another branch you choose, on a new branch of its own named after its folder, such as
+`sidekick/fix-cards-3f9a1c`. It cannot use the branch it starts from: Git lets a branch be checked
+out in only one folder, and the project folder already has it. Sending the first message
 creates the chat's worktree and then starts the agent there. SideKick remembers your
 last choice for the next new chat. Worktrees need a project inside a Git repository; for any other
 folder the bar says so and the chat works in the folder. A new chat outside any project shows
@@ -151,14 +152,17 @@ A chat that already has messages keeps its folder. To move its work aside, fork 
 worktree. Uncommitted files stay in the original folder and are not copied into a new worktree.
 
 Once a chat works in a worktree, the Work in bar goes away. A small branch label in the
-composer's bottom row shows its branch, or "detached from main" until it has one.
+composer's bottom row shows the branch checked out in it. A worktree made by an earlier version
+may read "detached from main" until the agent creates a branch there.
 
 #### Finishing the work
 
-A worktree's work never has to come back through the project folder. In the worktree, the agent
-creates a branch when the work needs one, commits, and then merges into the base or pushes the
-branch and opens a pull request. Once the work is merged, remove the worktree or delete its chat.
-Each chat can have its own worktree, so several agents can each finish their own change this way.
+A worktree's work never has to come back through the project folder. The agent knows it works in
+a worktree and on which branch. It commits there, may rename the branch, create others or switch
+between them, and runs whatever Git commands the work needs, as your permission mode allows. It
+then merges into the base where the base is checked out, or pushes the branch and opens a pull
+request. Once the work is merged, remove the worktree or delete its chat. Each chat can have its
+own worktree, so several agents can each finish their own change this way.
 
 #### When another agent is already working in the folder
 
@@ -193,9 +197,10 @@ last used, marked **Working**, **Set aside**, or with its number of changed file
 - **Open its chat** switches to the chat, or starts one in the worktree.
 - **Show the folder** opens it in your file manager. A set-aside worktree has no folder until its
   chat continues.
-- **Remove** asks once, then deletes the folder with any uncommitted changes. Branches made in it
-  stay in the repository with their commits. Its chats keep their history as chats outside any
-  project.
+- **Remove** asks once, then deletes the folder with any uncommitted changes. Branches with
+  commits stay in the repository. The branch SideKick made for it is deleted too when it holds
+  nothing its base lacks, because it was never committed on or is already merged. Its chats keep
+  their history as chats outside any project.
 
 Deleting a worktree's chat removes the worktree too. SideKick never removes a worktree while an agent works in it, or one it
 cannot prove it created: the folder must sit directly inside the repository's `.worktrees` folder or

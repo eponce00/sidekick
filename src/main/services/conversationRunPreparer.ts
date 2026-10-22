@@ -857,7 +857,8 @@ export class ConversationRunPreparer {
           latestTransition: project.latestTransition,
           homeWorkspaceRoot: project.homeWorkspaceRoot,
           homeProjectName: project.homeProjectName,
-          isDetached: project.isDetached
+          isDetached: project.isDetached,
+          worktree: project.worktree
         },
         currentDate: new Intl.DateTimeFormat('en-US', {
           weekday: 'long',

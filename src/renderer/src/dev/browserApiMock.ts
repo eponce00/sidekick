@@ -470,13 +470,13 @@ const previewWorktreesApi: WorktreesAPI = {
       worktreeRoot: folder,
       sourceProjectId: 'preview-project-1',
       sourceProjectName: 'sidekick-demo',
-      branch: null,
+      branch: 'sidekick/new-chat-5e1d0a',
       baseRef: base,
       createdAt: Date.now(),
       lastUsedAt: Date.now(),
       owners: [{ kind: 'chat', id: conversation.id, title: conversation.title, running: false }],
       setAsideAt: null,
-      status: { currentBranch: null, ahead: 0, changedFiles: 0 }
+      status: { currentBranch: 'sidekick/new-chat-5e1d0a', ahead: 0, changedFiles: 0 }
     }
     previewWorktrees.unshift(worktree)
     return { conversation, worktree }

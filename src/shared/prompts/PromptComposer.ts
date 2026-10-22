@@ -171,7 +171,23 @@ function workspaceSection(input: PromptComposerInput): string {
   return `## Active project
 Workspace root: \`${input.project.workspaceRoot}\`
 
-Treat this folder as the conversation's durable working context. Read the relevant existing content before editing it. ${mutationGuidance} A mutation is successful only when its tool result says ok=true and changed=true; never treat a completed tool call alone as proof that a file changed. Never delete a file merely to recreate or rewrite the same path; deletion is only for a file whose intended final state is absent. Preserve unrelated user changes. Verify meaningful changes with the narrowest relevant checks.`
+Treat this folder as the conversation's durable working context. Read the relevant existing content before editing it. ${mutationGuidance} A mutation is successful only when its tool result says ok=true and changed=true; never treat a completed tool call alone as proof that a file changed. Never delete a file merely to recreate or rewrite the same path; deletion is only for a file whose intended final state is absent. Preserve unrelated user changes. Verify meaningful changes with the narrowest relevant checks.${worktreeGuidance(input)}`
+}
+
+/** Where a chat's own worktree came from, so Git's one-folder-per-branch rule does not surprise the agent. */
+function worktreeGuidance(input: PromptComposerInput): string {
+  const worktree = input.project.worktree
+  if (!worktree) return ''
+  // A bare commit names no branch to merge into.
+  const base =
+    worktree.base && !/^[0-9a-f]{40}$/.test(worktree.base) ? `\`${worktree.base}\`` : 'its base'
+  const project = worktree.projectFolder ? `\`${worktree.projectFolder}\`` : 'the project folder'
+  const start = worktree.branch
+    ? `SideKick created branch \`${worktree.branch}\` for it from ${base}; commit your work there.`
+    : `It started detached at ${base}; create a branch with \`git switch -c <name>\` before committing.`
+  return `
+
+This folder is the chat's own Git worktree of ${project}. ${start} Rename, create and switch branches and run any Git command here as the work needs. Git checks out a branch in only one folder at a time, so a branch checked out in another folder, such as the one in ${project}, cannot be checked out here. To land the work, push the branch and open a pull request, or merge it into ${base} in the folder where that branch is checked out.`
 }
 
 function projectBoundarySection(input: PromptComposerInput): string {
