@@ -137,7 +137,9 @@ const REQUIRED_COLUMNS = [
   { table: 'schedules', column: 'permission_ceiling', definition: 'TEXT' },
   // Whether each run starts a new chat or continues the last run's.
   { table: 'schedules', column: 'chat_mode', definition: "TEXT NOT NULL DEFAULT 'new'" },
-  { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' }
+  { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' },
+  // The model the chat runs with. Each chat keeps its own; the setting is only where new chats start.
+  { table: 'conversations', column: 'model_id', definition: 'TEXT' }
 ] as const
 
 const SCHEDULE_TABLES = `
@@ -760,6 +762,7 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       work_in TEXT,
       archived_at INTEGER,
       permission_ceiling TEXT,
+      model_id TEXT,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
     );
 

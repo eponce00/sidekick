@@ -62,7 +62,9 @@ interface ConversationsAPI {
   create: (
     title: string,
     projectId?: string | null,
-    titleSource?: import('../shared/conversationTitles').ConversationTitleSource
+    titleSource?: import('../shared/conversationTitles').ConversationTitleSource,
+    /** The model the new chat starts on and keeps. */
+    modelId?: string
   ) => Promise<
     import('../shared/projects').ProjectConversation & {
       title_source: import('../shared/conversationTitles').ConversationTitleSource
@@ -78,6 +80,8 @@ interface ConversationsAPI {
     options?: import('../shared/conversationTitles').ConversationTitleUpdateOptions
   ) => Promise<{ success: boolean; updatedAt?: number }>
   setPinned: (id: string, pinned: boolean) => Promise<{ success: boolean }>
+  /** Changes the model of this chat only. */
+  setModel: (id: string, modelId: string) => Promise<{ success: boolean }>
   listTitleBackfillCandidates: (
     limit?: number
   ) => Promise<import('../shared/conversationTitles').ConversationTitleBackfillCandidate[]>

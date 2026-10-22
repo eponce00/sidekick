@@ -26,6 +26,7 @@ import {
   conversationTitleVersionForSource,
   type ConversationTitleSource
 } from '../../shared/conversationTitles'
+import { conversationModelChoice } from '../../shared/conversationModels'
 import {
   migrateLegacyProviderInstances,
   pinnedModelsFromProviderInstances,
@@ -204,7 +205,8 @@ function App(): React.JSX.Element {
   const [focusChainTodosByConversation, setFocusChainTodosByConversation] = useState<
     Record<string, TodoItem[]>
   >({})
-  const [selectedModel, setSelectedModel] = useState<string>('')
+  // Where a new chat starts: the model last chosen in any chat. Each chat keeps its own.
+  const [defaultModel, setDefaultModel] = useState<string>('')
   const [isActivityPanelPinned, setIsActivityPanelPinned] = useState<boolean>(() => {
     const stored = window.localStorage.getItem('activityPanelPinned')
     return stored === null ? window.innerWidth >= 1100 : stored === 'true'
@@ -461,7 +463,7 @@ function App(): React.JSX.Element {
         migratedSettings.selectedModel = selected
         setSettings(migratedSettings)
         setPinnedModels(configuredModels)
-        setSelectedModel(selected)
+        setDefaultModel(selected)
         if (savedSettings) {
           // Apply saved accent palette
           if (migratedSettings.accentPalette) {
@@ -545,22 +547,22 @@ function App(): React.JSX.Element {
     const configuredModels = pinnedModelsFromProviderInstances(
       normalizedSettings.providerInstances || []
     )
-    const nextSelectedModel = configuredModels.some((model) => model.id === selectedModel)
-      ? selectedModel
+    const nextDefaultModel = configuredModels.some((model) => model.id === defaultModel)
+      ? defaultModel
       : configuredModels[0]?.id || ''
-    normalizedSettings.selectedModel = nextSelectedModel
+    normalizedSettings.selectedModel = nextDefaultModel
     // Only what changed since Settings opened, so a change made meanwhile, such as by the
-    // `sidekick` CLI, survives. The chat's current model is always this window's to say.
+    // `sidekick` CLI, survives. The new-chat model is always this window's to say.
     const result = await window.api.settings.save({
       ...changedSettings(
         normalizeSettings(syncLegacyProviderSettings(openedWith)),
         normalizedSettings
       ),
-      selectedModel: nextSelectedModel
+      selectedModel: nextDefaultModel
     })
     if (!result.success) return result
     setPinnedModels(configuredModels)
-    setSelectedModel(nextSelectedModel)
+    setDefaultModel(nextDefaultModel)
     await window.api.pinnedModels.save(configuredModels)
     const publicSettings = await window.api.settings.load()
     setSettings(
@@ -593,17 +595,27 @@ function App(): React.JSX.Element {
           const configured = pinnedModelsFromProviderInstances(next.providerInstances || [])
           setPinnedModels(configured)
           if (configured.some((model) => model.id === next.selectedModel)) {
-            setSelectedModel(next.selectedModel || '')
+            setDefaultModel(next.selectedModel || '')
           }
         })
       }),
     []
   )
 
-  const handleModelChange = (modelId: string): void => {
-    setSelectedModel(modelId)
-    setSettings({ ...settings, selectedModel: modelId })
-    window.api.settings.save({ selectedModel: modelId })
+  // A model chosen in a chat changes that chat only, and is where the next new chat starts.
+  const handleModelChange = (conversationId: string | null, modelId: string): void => {
+    setDefaultModel(modelId)
+    setSettings((current) => ({ ...current, selectedModel: modelId }))
+    void window.api.settings.save({ selectedModel: modelId })
+    if (!conversationId) return
+    setConversations((current) =>
+      current.map((conversation) =>
+        conversation.id === conversationId ? { ...conversation, model_id: modelId } : conversation
+      )
+    )
+    void window.api.conversations
+      .setModel(conversationId, modelId)
+      .catch((error) => console.error('[App] Could not keep the chat model:', error))
   }
 
   // Throttle token count updates to avoid "Maximum update depth exceeded" during rapid streaming.
@@ -695,7 +707,8 @@ function App(): React.JSX.Element {
     const newConv = await window.api.conversations.create(
       'New Conversation',
       projectId,
-      'placeholder'
+      'placeholder',
+      defaultModel || undefined
     )
     setConversations((prev) => [newConv, ...prev])
     setCurrentConversationId(newConv.id)
@@ -886,7 +899,9 @@ function App(): React.JSX.Element {
       sidebar_order: -1,
       project_context_version: 0,
       home_workspace_root: null,
-      home_project_name: null
+      home_project_name: null,
+      // Its first run records the model the draft showed; until then it shows the same one.
+      model_id: defaultModel || null
     }
     claimDraftPanel(id)
     setConversations((prev) => [newConv, ...prev])
@@ -916,7 +931,8 @@ function App(): React.JSX.Element {
       const conversation = await window.api.conversations.create(
         'New Conversation',
         project.id,
-        'placeholder'
+        'placeholder',
+        defaultModel || undefined
       )
       setConversations((current) => [conversation, ...current])
       setCurrentConversationId(conversation.id)
@@ -1188,17 +1204,25 @@ function App(): React.JSX.Element {
     [currentConversationIdRef, handleResponseComplete, markConversationRead]
   )
 
-  const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
-  const activeProviderInstance = providerInstanceForModel(settings, selectedPinnedModel)
-  const currentProvider = selectedPinnedModel?.provider || 'ollama'
-  const currentModelName =
-    selectedPinnedModel?.providerModelId || selectedPinnedModel?.name || selectedModel
-  const legacyFastModel = resolveFastModel(currentProvider, currentModelName, settings).modelName
-  const fastModelName = activeProviderInstance?.fastModelId || legacyFastModel
+  /** The quicker model a chat's provider names for titles, when it differs from the chat's own. */
+  const fastModelFor = (model: PinnedModel | undefined, modelId: string): string | undefined => {
+    const modelName = model?.providerModelId || model?.name || modelId
+    const fastModel =
+      providerInstanceForModel(settings, model)?.fastModelId ||
+      resolveFastModel(model?.provider || 'ollama', modelName, settings).modelName
+    return fastModel !== modelName ? fastModel : undefined
+  }
+  const defaultPinnedModel = pinnedModels.find((model) => model.id === defaultModel)
+  const currentModel = conversationModelChoice(
+    pinnedModels,
+    currentConversation?.model_id,
+    defaultModel
+  )
+  const currentPinnedModel = currentModel.model ?? undefined
   useConversationTitleBackfill({
     enabled: isReady,
-    model: selectedPinnedModel,
-    fastModelName: fastModelName !== currentModelName ? fastModelName : undefined,
+    model: defaultPinnedModel,
+    fastModelName: fastModelFor(defaultPinnedModel, defaultModel),
     isAgentBusy: runningConversationIds.size > 0,
     onTitleApplied: (conversationId, title, source = 'generated') => {
       setConversations((current) =>
@@ -1260,6 +1284,7 @@ function App(): React.JSX.Element {
   ): React.JSX.Element => {
     const panelConversationId = conversation?.id ?? null
     const panelProject = projectById(conversation?.project_id)
+    const panelModel = conversationModelChoice(pinnedModels, conversation?.model_id, defaultModel)
     return (
       <div
         className="conversation-panel-slot"
@@ -1301,9 +1326,9 @@ function App(): React.JSX.Element {
           onForkConversation={(messageId) => {
             if (panelConversationId) handleForkConversation(panelConversationId, messageId)
           }}
-          selectedModel={selectedModel}
+          selectedModel={panelModel.modelId}
           planningModelId={settings.planningModelId}
-          onModelChange={handleModelChange}
+          onModelChange={(modelId) => handleModelChange(panelConversationId, modelId)}
           onTokenCountUpdate={(current, max) => {
             if (panelConversationId) {
               tokenCountsByConversation.current.set(panelConversationId, { current, max })
@@ -1336,7 +1361,7 @@ function App(): React.JSX.Element {
               : undefined
           }
           onBusyStateChange={handleConversationBusyStateChange}
-          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          fastModelName={fastModelFor(panelModel.model ?? undefined, panelModel.modelId)}
           reasoningSettings={settings}
           onReasoningLevelChange={(modelId, level) => {
             const reasoningLevels = { ...settings.reasoningLevels, [modelId]: level }
@@ -1394,8 +1419,8 @@ function App(): React.JSX.Element {
             <ContextIndicator
               currentTokens={tokenCounts.current}
               maxTokens={tokenCounts.max}
-              selectedModel={selectedModel}
-              model={selectedPinnedModel}
+              selectedModel={currentModel.modelId}
+              model={currentPinnedModel}
               autoCompactEnabled={settings.autoCompactEnabled ?? true}
               autoCompactThreshold={settings.autoCompactThreshold ?? 0.8}
               conversationCost={conversationCost}
@@ -1533,8 +1558,8 @@ function App(): React.JSX.Element {
             setRestoredHash(hash)
             setChatRollbackHash(hash)
           }}
-          titleModel={selectedPinnedModel}
-          fastModelName={fastModelName !== currentModelName ? fastModelName : undefined}
+          titleModel={currentPinnedModel}
+          fastModelName={fastModelFor(currentPinnedModel, currentModel.modelId)}
           isAgentBusy={isAgentBusy}
         />
       </main>
@@ -1545,7 +1570,7 @@ function App(): React.JSX.Element {
           schedules={schedules}
           projects={projects}
           models={pinnedModels}
-          defaultModelId={selectedModel}
+          defaultModelId={defaultModel}
           defaultProjectId={currentConversation?.project_id ?? null}
           permissionMode={normalizePermissionMode(settings.commandPermissionMode)}
           onClose={() => setIsSchedulesOpen(false)}

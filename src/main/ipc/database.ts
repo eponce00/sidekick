@@ -21,6 +21,7 @@ import { setupCreatedWorktree } from './worktreeSetup'
 import { getManagedWorktrees } from './worktrees'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
+import { isConversationModelId } from '../services/conversationModelStore'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -79,12 +80,20 @@ export function registerDatabaseHandlers(): void {
 
   ipcMain.handle(
     'conversations:create',
-    async (_, title: string, projectId?: string | null, titleSource?: unknown) => {
+    async (
+      _,
+      title: string,
+      projectId?: string | null,
+      titleSource?: unknown,
+      modelId?: unknown
+    ) => {
       const id = randomUUID()
       const now = Date.now()
       const source = isConversationTitleSource(titleSource) ? titleSource : 'placeholder'
       const titleVersion = conversationTitleVersionForSource(source)
       const normalizedProjectId = projectId ?? null
+      // A new chat starts on the model last chosen in any chat, and keeps it.
+      const normalizedModelId = isConversationModelId(modelId) ? modelId : null
       const project = normalizedProjectId
         ? (db
             .prepare('SELECT name, folder_path FROM projects WHERE id = ?')
@@ -100,8 +109,8 @@ export function registerDatabaseHandlers(): void {
       const stmt = db.prepare(
         `INSERT INTO conversations
          (id, title, created_at, updated_at, project_id, title_source, title_version,
-          sidebar_order, project_context_version, home_workspace_root, home_project_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`
+          sidebar_order, project_context_version, home_workspace_root, home_project_name, model_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
       )
       stmt.run(
         id,
@@ -113,7 +122,8 @@ export function registerDatabaseHandlers(): void {
         titleVersion,
         placement.sidebar_order,
         project?.folder_path ?? null,
-        project?.name ?? null
+        project?.name ?? null,
+        normalizedModelId
       )
       return {
         id,
@@ -128,7 +138,8 @@ export function registerDatabaseHandlers(): void {
         project_context_version: 0,
         home_workspace_root: project?.folder_path ?? null,
         home_project_name: project?.name ?? null,
-        unread_completion_at: null
+        unread_completion_at: null,
+        model_id: normalizedModelId
       }
     }
   )
@@ -145,7 +156,7 @@ export function registerDatabaseHandlers(): void {
     const sourceId = input.sourceId
     const source = db
       .prepare(
-        `SELECT title, project_id, home_workspace_root, home_project_name, worktree_id
+        `SELECT title, project_id, home_workspace_root, home_project_name, worktree_id, model_id
          FROM conversations WHERE id = ?`
       )
       .get(sourceId) as
@@ -155,6 +166,7 @@ export function registerDatabaseHandlers(): void {
           home_workspace_root: string | null
           home_project_name: string | null
           worktree_id: string | null
+          model_id: string | null
         }
       | undefined
     if (!source) throw new Error('Conversation not found')
@@ -206,8 +218,8 @@ export function registerDatabaseHandlers(): void {
           `INSERT INTO conversations
          (id, title, created_at, updated_at, project_id, title_source, title_version,
           sidebar_order, project_context_version, home_workspace_root, home_project_name,
-          worktree_id, forked_from_conversation_id, forked_from_message_id)
-         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?, ?)`
+          worktree_id, forked_from_conversation_id, forked_from_message_id, model_id)
+         VALUES (?, ?, ?, ?, ?, 'fork', ?, ?, 0, ?, ?, ?, ?, ?, ?)`
         ).run(
           id,
           title,
@@ -220,7 +232,8 @@ export function registerDatabaseHandlers(): void {
           source.home_project_name,
           targetWorktreeId,
           sourceId,
-          boundary?.id ?? null
+          boundary?.id ?? null,
+          source.model_id
         )
         const insert = db.prepare(
           `INSERT INTO messages
@@ -301,7 +314,8 @@ export function registerDatabaseHandlers(): void {
         : null,
       forked_from_conversation_id: sourceId,
       forked_from_message_id: boundary?.id ?? null,
-      unread_completion_at: null
+      unread_completion_at: null,
+      model_id: source.model_id
     }
   })
 

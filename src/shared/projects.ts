@@ -41,6 +41,8 @@ export interface ProjectConversation {
   archived_at?: number | null
   /** The most this chat may do without asking; stricter than the setting. See `effectivePermissionMode`. */
   permission_ceiling?: import('./permissions').PermissionMode | null
+  /** The model this chat runs with; see `conversationModelChoice`. */
+  model_id?: string | null
 }
 
 export interface ForkConversationInput {

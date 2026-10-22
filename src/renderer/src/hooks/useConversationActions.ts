@@ -11,7 +11,10 @@ interface ConversationActionsOptions {
   messages: Message[]
   setMessages: Dispatch<SetStateAction<Message[]>>
   conversationId: string | null
+  /** The model the chat runs with; empty when it has none it can use. */
   selectedModel: string
+  /** Asked to answer again while the chat has no model it can use. */
+  onModelUnavailable?: () => void
   workspaceFolder: string | null
   /** Whether a reply is running or starting, read at call time. */
   isRunActive?: () => boolean
@@ -178,7 +181,11 @@ export function useConversationActions(options: ConversationActionsOptions): {
   }
 
   const rewindConversationOnce = async (message: Message, edit?: MessageEdit): Promise<void> => {
-    if (!options.conversationId || !options.selectedModel) return
+    if (!options.conversationId) return
+    if (!options.selectedModel) {
+      options.onModelUnavailable?.()
+      return
+    }
     const targetIndex = options.messages.findIndex((candidate) => candidate.id === message.id)
     if (targetIndex < 0) return
 

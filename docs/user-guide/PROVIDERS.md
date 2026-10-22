@@ -56,7 +56,8 @@ and redacted thinking blocks unchanged through tool-result continuations.
 ## Settings and model selection
 
 Settings manages connections and model inventory. Chat only selects from enabled models projected
-from enabled instances.
+from enabled instances, and each conversation keeps its own choice; see
+[The message box](CHAT.md#the-message-box).
 
 For a provider that lists its models, **Connect** checks the connection and loads the list in one
 step. It runs by itself when a provider opens with no models yet and needs no key, or when a key is

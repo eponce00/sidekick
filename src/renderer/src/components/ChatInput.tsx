@@ -1,5 +1,6 @@
 import React from 'react'
 import {
+  AlertTriangle,
   AtSign,
   Check,
   Command,
@@ -175,6 +176,9 @@ interface ChatInputProps {
   isFeaturesMenuOpen: boolean
   isModelMenuOpen: boolean
   selectedModel: string
+  /** This chat's model, when it is no longer set up; the chat asks for another before sending. */
+  unavailableModelName?: string | null
+  onChooseModel?: () => void
   pinnedModels: PinnedModel[]
   queuedMessages: PendingRunMessageItem[]
   pivotMessage: PendingRunMessageItem | null
@@ -259,6 +263,8 @@ export function ChatInput({
   isFeaturesMenuOpen,
   isModelMenuOpen,
   selectedModel,
+  unavailableModelName,
+  onChooseModel,
   pinnedModels,
   queuedMessages,
   pivotMessage,
@@ -667,6 +673,16 @@ export function ChatInput({
       }
       contextBar={
         <>
+          {unavailableModelName && (
+            <div className="composer-editing-bar composer-model-missing-bar" role="status">
+              <AlertTriangle size={13} aria-hidden="true" />
+              <strong>{unavailableModelName} is no longer available</strong>
+              <span>Choose another model to keep going in this chat.</span>
+              <button type="button" onClick={onChooseModel}>
+                Choose model
+              </button>
+            </div>
+          )}
           {editingMessageId && (
             <div className="composer-editing-bar" role="status">
               <Pencil size={13} aria-hidden="true" />
@@ -987,13 +1003,15 @@ export function ChatInput({
       }
       sendButtonClassName={isStopping ? 'is-stopping' : ''}
       sendTitle={
-        isLoading
-          ? 'Add message to queue'
-          : researchSelected
-            ? 'Start research report'
-            : planSelected
-              ? 'Start Plan mode'
-              : 'Send message'
+        unavailableModelName
+          ? 'Choose a model for this chat first'
+          : isLoading
+            ? 'Add message to queue'
+            : researchSelected
+              ? 'Start research report'
+              : planSelected
+                ? 'Start Plan mode'
+                : 'Send message'
       }
       toolbarLeft={
         <>

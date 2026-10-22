@@ -1,7 +1,8 @@
 import React from 'react'
-import { Check, ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react'
 import type { PinnedModel } from '../types/models.types'
 import { describeProviderAvailability } from '../../../shared/providerHealth'
+import { modelNameFromId } from '../../../shared/conversationModels'
 import {
   compactModelLabel,
   getModelDisplayInfo,
@@ -9,7 +10,7 @@ import {
 } from '../../../shared/modelDisplay'
 import { filterModelsByQuery } from '../utils/modelSearch'
 import { shouldOfferModelSearch } from '../utils/modelPickerDensity'
-import { parseProviderFromModelId, providerIconKindForModel } from '../utils/providerIconKinds'
+import { providerIconKindForModel } from '../utils/providerIconKinds'
 import { ProviderIcon } from './ProviderIcon'
 
 interface ChatModelPickerProps {
@@ -50,12 +51,10 @@ export function ChatModelPicker({
   const selected = selectedModelId
     ? models.find((model) => model.id === selectedModelId)
     : undefined
-  const provider = selected
-    ? providerIconKindForModel(selected)
-    : selectedModelId
-      ? parseProviderFromModelId(selectedModelId)
-      : null
+  const provider = selected ? providerIconKindForModel(selected) : null
   const display = selected ? getModelDisplayInfo(selected) : undefined
+  // A model the chat kept that is no longer set up stays named, so the chat asks for another.
+  const unavailableName = selectedModelId && !selected ? modelNameFromId(selectedModelId) : null
   const selectedAvailability = selected?.providerHealth
     ? describeProviderAvailability(selected.providerHealth)
     : undefined
@@ -76,21 +75,33 @@ export function ChatModelPicker({
     <div className="model-menu-container" ref={containerRef}>
       <button
         type="button"
-        className="model-selector-inline"
+        className={`model-selector-inline${unavailableName ? ' is-unavailable' : ''}`}
         onClick={onToggle}
         disabled={disabled}
-        title={disabled ? titleOverride || 'Model is busy' : undefined}
+        title={
+          disabled
+            ? titleOverride || 'Model is busy'
+            : unavailableName
+              ? `${unavailableName} is no longer available. Choose another model.`
+              : undefined
+        }
         aria-label={
           titleOverride ||
           (display
             ? `${display.fullName} · ${display.fullId}`
-            : disabled
-              ? 'Model is busy'
-              : 'Change model')
+            : unavailableName
+              ? `${unavailableName} is no longer available. Choose another model`
+              : disabled
+                ? 'Model is busy'
+                : 'Change model')
         }
         aria-expanded={isOpen}
       >
-        {provider && <ProviderIcon provider={provider} size={14} />}
+        {unavailableName ? (
+          <AlertTriangle size={14} aria-hidden="true" />
+        ) : (
+          provider && <ProviderIcon provider={provider} size={14} />
+        )}
         {selectedAvailability && (
           <i
             className={`selected-provider-health selected-provider-health-${selectedAvailability.state}`}
@@ -98,7 +109,12 @@ export function ChatModelPicker({
           />
         )}
         <span className="model-selector-inline-label">
-          {labelOverride || (selected ? compactModelLabel(selected, 24) : 'Select model')}
+          {labelOverride ||
+            (selected
+              ? compactModelLabel(selected, 24)
+              : unavailableName
+                ? `Unavailable: ${unavailableName}`
+                : 'Select model')}
         </span>
         <ChevronDown size={13} />
       </button>
