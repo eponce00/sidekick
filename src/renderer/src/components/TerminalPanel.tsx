@@ -100,14 +100,28 @@ function CommandTerminal({
       terminal.clearSelection()
       return text.trimEnd()
     }
-    const fitToHost = (): void => {
+    /** Fits the terminal to its host; false while there is nothing to fit to yet. */
+    const fitToHost = (): boolean => {
       try {
+        // The fit has no size while the panel is hidden or before xterm has measured its cells.
+        const size = fit.proposeDimensions()
+        if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return false
         fit.fit()
+        return true
       } catch {
-        // A hidden panel has no size to fit.
+        return false
       }
     }
-    fitToHost()
+    // xterm measures its cells after opening, so a fit right away can come too early and leave
+    // the terminal at its default 80 columns, a narrow band in a wide panel; the size of the host
+    // has not changed, so the observer below would not try again. Retry over the next frames.
+    let measureFrame = 0
+    let measureAttempts = 0
+    const fitOnceMeasured = (): void => {
+      if (fitToHost() || ++measureAttempts > 60) return
+      measureFrame = requestAnimationFrame(fitOnceMeasured)
+    }
+    fitOnceMeasured()
 
     let offset = 0
     let replayed = false
@@ -135,13 +149,14 @@ function CommandTerminal({
       if (terminal.options.disableStdin) return
       void window.api.terminal.write(session.id, data)
     })
-    const observer = new ResizeObserver(fitToHost)
+    const observer = new ResizeObserver(() => void fitToHost())
     observer.observe(host)
     const themeObserver = new MutationObserver(() => {
       terminal.options.theme = terminalTheme()
     })
     themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-theme'] })
     return () => {
+      cancelAnimationFrame(measureFrame)
       unsubscribe()
       input.dispose()
       observer.disconnect()
@@ -160,7 +175,13 @@ function CommandTerminal({
     if (session.state === 'waiting_for_input' && acceptsKeys) terminal.focus()
   }, [acceptsKeys, session.state])
 
-  return <div className="terminal-panel-screen" ref={hostRef} />
+  // The padding is on the outer frame: the fit sizes the terminal from its host's computed size,
+  // which includes the host's own padding, so rows and columns would run into it.
+  return (
+    <div className="terminal-panel-screen">
+      <div className="terminal-panel-host" ref={hostRef} />
+    </div>
+  )
 }
 
 /** A reply line for a command reading input over a pipe, which does not echo keystrokes. */
