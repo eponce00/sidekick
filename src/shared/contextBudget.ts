@@ -1,3 +1,5 @@
+import { dataUrlHead, imageHeader } from './imageContent'
+import { MAX_PREPARED_IMAGE_LONG_EDGE } from './imagePreparation'
 import type { ProviderChatMessage } from './providerRuntime'
 
 const PROVIDER_FRAMING_TOKENS = 256
@@ -182,12 +184,29 @@ export function resolveMaxOutputTokens(
   )
 }
 
+// Enough for the header of every format but a JPEG behind a large EXIF block.
+const IMAGE_HEADER_BYTES = 64 * 1024
+// Vision encoders charge about a token per 28-pixel square: Anthropic's rate, and Qwen-VL's.
+const IMAGE_PATCH_PIXELS = 28
+
+/**
+ * Every image is fitted to its provider before it is sent, so what it costs follows from its
+ * pixel size fitted to the longest side any provider gets, never from the size of its file: a
+ * 20 MB screenshot costs a model no more than a 2 MB one of the same size. An image whose size
+ * cannot be read counts as the largest square that could be sent.
+ */
 function estimateImageTokens(image: string): number {
   if (/^https?:/i.test(image)) return 768
-  // Image payloads are encoded by multimodal providers rather than tokenized as
-  // literal base64. This bounded estimate is intentionally conservative without
-  // treating a one-megabyte image as hundreds of thousands of language tokens.
-  return Math.min(8_192, Math.max(512, Math.ceil(image.length / 256)))
+  const head = dataUrlHead(image, IMAGE_HEADER_BYTES)
+  const header = head ? imageHeader(head) : undefined
+  const width = header?.width || MAX_PREPARED_IMAGE_LONG_EDGE
+  const height = header?.height || MAX_PREPARED_IMAGE_LONG_EDGE
+  const scale = Math.min(1, MAX_PREPARED_IMAGE_LONG_EDGE / Math.max(width, height))
+  return Math.max(
+    512,
+    Math.ceil((width * scale) / IMAGE_PATCH_PIXELS) *
+      Math.ceil((height * scale) / IMAGE_PATCH_PIXELS)
+  )
 }
 
 export function estimateConversationTokens(messages: ProviderChatMessage[]): number {

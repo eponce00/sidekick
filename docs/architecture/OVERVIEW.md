@@ -327,9 +327,27 @@ request boundary. OpenAI-compatible and Ollama requests preserve the required co
 results before adding a linked multimodal observation, while Anthropic uses image blocks inside the
 native tool result. This avoids base64 in chat/event text and keeps screenshots available across
 continuation turns. The durable ledger retains every bounded screenshot, while inference requests
-carry only the two newest tool images so a long local-model browser loop cannot accumulate an
+carry only the provider's image budget so a long local-model browser loop cannot accumulate an
 unbounded visual prompt. Expired historical artifacts degrade to text instead of breaking a later
-follow-up. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
+follow-up.
+
+Images are fitted to the provider in the same boundary step, `materializeProviderRequestMedia`,
+from the profile `providerImageProfile` gives each provider kind
+(`src/shared/imagePreparation.ts`): Anthropic and OpenRouter take four images of up to 2000 px;
+LiteLLM and other OpenAI-compatible gateways two of up to 2048 px; local servers (LM Studio,
+llama.cpp, Ollama) two of up to 1568 px and about 1.3 megapixels, as PNG or JPEG only, since
+llama.cpp cannot decode WebP. Every profile keeps an image within 5 MB once base64-encoded, the
+smallest per-image limit among Anthropic's platforms. An image that already fits is sent byte for
+byte. Others are decoded with `@napi-rs/canvas` (which applies EXIF rotation), drawn at the
+planned size from mipmaps, and encoded as PNG first unless the source was a JPEG, then as JPEG at
+falling quality, shrinking further only when none fits. The model is told in the message when an
+image was resized; an image that cannot be read or declares more than 100 megapixels is left out
+with a note instead of failing the request. Viewport screenshots carry `keepDimensions`, because
+coordinate actions map the model's pixels back through the captured size, so they are only
+re-encoded. Results are cached by content hash, so a turn that resends the conversation's images
+does not prepare them again. The stored message and the run ledger keep the original; the
+composer accepts up to 100 MB per image and validates the type and declared size in the renderer
+and again at the IPC boundary. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
 renderer. The resizable workspace inspector docks Browser beside Files and Recovery. Its flexible
 preview stage consumes the available height while the page label, latest action, and verification
 state stay anchored at the bottom. Portrait and full-page captures scale inside that stage instead
