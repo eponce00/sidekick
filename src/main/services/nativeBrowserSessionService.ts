@@ -44,6 +44,16 @@ import {
   revokeBrowserPdfSession,
   revokeBrowserPdfSessionsByOwner
 } from '../bootstrap/browserPdfSessionRegistry'
+import { externalSchemaIssues } from './agentToolRegistry'
+import {
+  WEBMCP_CALL_TIMEOUT_MS,
+  WEBMCP_COMPATIBILITY_SCRIPT,
+  WebMcpCallError,
+  WebMcpPageTools,
+  type WebMcpCallOutcome,
+  type WebMcpPageListing,
+  type WebMcpTool
+} from './webMcpPageTools'
 
 export interface BrowserViewport {
   width: number
@@ -182,6 +192,8 @@ export interface BrowserObservation {
   console: BrowserConsoleEntry[]
   failedRequests: BrowserNetworkFailure[]
   cursors: { console: number; network: number }
+  /** Names of the WebMCP tools the page offers, when it offers any. */
+  webMcpTools?: string[]
 }
 
 export interface BrowserQuiescenceResult {
@@ -470,6 +482,25 @@ export interface BrowserVerificationResult {
   observation: BrowserObservation
 }
 
+export interface BrowserWebMcpCallInput {
+  sessionId: string
+  tabId?: string
+  /** The site the caller means to act on; the call is refused on any other. */
+  origin: string
+  tool: string
+  arguments: Record<string, unknown>
+}
+
+export interface BrowserWebMcpCallResult {
+  sessionId: string
+  tabId: string
+  origin: string
+  tool: Pick<WebMcpTool, 'name' | 'readOnly' | 'untrustedContent' | 'form' | 'autosubmit'>
+  outcome: WebMcpCallOutcome
+  durationMs: number
+  page: { url: string; title: string }
+}
+
 export interface BrowserCloseInput {
   sessionId?: string
   runId?: string
@@ -665,6 +696,8 @@ interface TabState {
    * value, screenshots are withheld if it stops being a password field, and evaluation is refused.
    */
   secretFields?: number[]
+  /** The WebMCP tools the tab's top-level document offers. */
+  webMcp: WebMcpPageTools
 }
 
 interface OpeningReservation {
@@ -1629,6 +1662,9 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         webSecurity: true,
         allowRunningInsecureContent: false,
         backgroundThrottling: false,
+        // Chromium's own WebMCP, off by default in Electron 43: pages can offer tools that the
+        // agent lists and calls through the DevTools WebMCP domain. Only these tabs get it.
+        enableBlinkFeatures: 'WebMCP',
         // Use a normal WebContents so this exact tab can be revealed for
         // same-session human takeover. Full-page CDP capture briefly wakes
         // the window offscreen to keep Chromium's compositor responsive.
@@ -1670,12 +1706,25 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
 export class NativeBrowserSessionService {
   workspaceSnapshot(sessionId: string) {
     const session = this.getSession(sessionId)
+    const tab = this.getTab(session)
+    const tools = tab.webMcp.snapshot()
     return {
       sessionId,
       activeTabId: session.activeTabId,
       tabs: this.tabSummaries(session),
-      device: this.getTab(session).device ?? null,
-      ...browserNavigationState(this.getTab(session).surface.webContentsId)
+      device: tab.device ?? null,
+      pageTools: tools.tools.length
+        ? {
+            origin: tools.origin,
+            tools: tools.tools.map((tool) => ({
+              name: tool.name,
+              description: tool.description.slice(0, 300),
+              readOnly: tool.readOnly,
+              form: tool.form
+            }))
+          }
+        : null,
+      ...browserNavigationState(tab.surface.webContentsId)
     }
   }
 
@@ -2112,7 +2161,8 @@ export class NativeBrowserSessionService {
       unchangedScreenshotStreaks: {},
       inFlight: new Map(),
       actionHistory: [],
-      disposers: []
+      disposers: [],
+      webMcp: new WebMcpPageTools()
     }
     session.tabs.set(tab.id, tab)
     tab.disposers.push(
@@ -2131,7 +2181,35 @@ export class NativeBrowserSessionService {
         })
       })
     )
+    if (!surface.attached) await this.enableWebMcp(tab, signal)
     return tab
+  }
+
+  /**
+   * Starts reading the tab's WebMCP tools from Chromium. A tab where this fails, as with a Chromium
+   * without the domain, simply offers no tools.
+   */
+  private async enableWebMcp(tab: TabState, signal?: AbortSignal): Promise<void> {
+    const command = <T>(method: string, params?: Record<string, unknown>): Promise<T> =>
+      abortable(
+        tab.surface.sendDebuggerCommand<T>(method, params),
+        signal ? AbortSignal.any([signal, AbortSignal.timeout(3_000)]) : AbortSignal.timeout(3_000)
+      )
+    try {
+      await command('Page.addScriptToEvaluateOnNewDocument', {
+        source: WEBMCP_COMPATIBILITY_SCRIPT
+      })
+      const tree = await command<{ frameTree?: { frame?: Record<string, unknown> } }>(
+        'Page.getFrameTree'
+      )
+      if (!tree?.frameTree?.frame) return
+      // Enabling replays the tools the document already has, so the frame must be known first.
+      tab.webMcp.attach(tree.frameTree.frame)
+      await command('WebMCP.enable')
+      tab.webMcp.available = true
+    } catch (error) {
+      if (signal?.aborted) throw error
+    }
   }
 
   private recordConsole(
@@ -2178,6 +2256,13 @@ export class NativeBrowserSessionService {
     method: string,
     params: Record<string, unknown>
   ): void {
+    if (
+      method.startsWith('WebMCP.') ||
+      method === 'Page.frameNavigated' ||
+      method === 'Page.navigatedWithinDocument'
+    ) {
+      tab.webMcp.handle(method, params)
+    }
     if (method === 'Network.requestWillBeSent') {
       const requestId = String(params.requestId ?? '')
       const request = (params.request ?? {}) as Record<string, unknown>
@@ -2230,6 +2315,7 @@ export class NativeBrowserSessionService {
   }
 
   private handleSurfaceDestroyed(session: SessionState, tab: TabState): void {
+    tab.webMcp.close()
     for (const token of tab.pdfSessionTokens) revokeBrowserPdfSession(token)
     tab.pdfSessionTokens.clear()
     void this.cleanupTemporaryPdfSources(tab)
@@ -2825,6 +2911,7 @@ export class NativeBrowserSessionService {
     tab.consoleCursor = session.consoleSequence
     tab.networkCursor = session.networkSequence
     const humanVerification = await this.detectHumanVerification(tab, semanticSnapshot, signal)
+    const webMcpTools = tab.webMcp.snapshot().tools.map((tool) => tool.name)
     return {
       sessionId: session.id,
       runId: session.runId,
@@ -2843,7 +2930,8 @@ export class NativeBrowserSessionService {
         screenshot?.unchangedStreak ?? tab.unchangedScreenshotStreaks.viewport ?? 0,
       console: consoleEntries,
       failedRequests: failures,
-      cursors: { console: session.consoleSequence, network: session.networkSequence }
+      cursors: { console: session.consoleSequence, network: session.networkSequence },
+      ...(webMcpTools.length ? { webMcpTools } : {})
     }
   }
 
@@ -4331,6 +4419,126 @@ export class NativeBrowserSessionService {
   /** The address the session's active tab is showing, as Chromium reports it. */
   pageAddress(sessionId: string): string {
     return this.getTab(this.getSession(sessionId)).surface.getURL()
+  }
+
+  /** The WebMCP tools of the active tab's page, binding the calls that follow to this listing. */
+  listWebMcpTools(sessionId: string, tabId?: string): WebMcpPageListing & { tabId: string } {
+    const tab = this.getTab(this.getSession(sessionId), tabId)
+    return { ...tab.webMcp.list(), tabId: tab.id }
+  }
+
+  /**
+   * The listed tool a call with this input would run on the active tab; throws why it would be
+   * refused, so that a call bound to fail asks no one first.
+   */
+  webMcpTool(sessionId: string, origin: string, name: string, input: unknown = {}): WebMcpTool {
+    return this.checkedWebMcpCall(this.getTab(this.getSession(sessionId)), origin, name, input).tool
+  }
+
+  private checkedWebMcpCall(tab: TabState, origin: string, name: string, input: unknown) {
+    const call = tab.webMcp.callable(origin, name)
+    const correct =
+      "Correct the arguments to match the schema browser_list_webmcp_tools returned; the schema's text is the site's own."
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new WebMcpCallError(
+        'invalid_arguments',
+        'The arguments must be a JSON object.',
+        correct
+      )
+    }
+    const issues = call.tool.inputSchema ? externalSchemaIssues(call.tool.inputSchema, input) : []
+    if (issues?.length) {
+      const described = issues.map((issue) => issue.message).join('; ')
+      throw new WebMcpCallError(
+        'invalid_arguments',
+        `The arguments do not fit ${name}'s input schema: ${described.slice(0, 1_500)}.`,
+        correct
+      )
+    }
+    return call
+  }
+
+  /**
+   * Calls a listed WebMCP tool of the active tab's page, through Chromium as its own agent does.
+   * Refused before anything runs when the page is another site's, has loaded a new document or
+   * changed the tool since it was listed, or when the input does not fit the tool's schema.
+   */
+  async callWebMcpTool(
+    input: BrowserWebMcpCallInput,
+    operation: BrowserOperationOptions = {}
+  ): Promise<BrowserWebMcpCallResult> {
+    const session = this.getSession(input.sessionId)
+    return this.withSessionLock(session, operation, async (signal) => {
+      const tab = this.getTab(session, input.tabId)
+      const { tool, frameId, document } = this.checkedWebMcpCall(
+        tab,
+        input.origin,
+        input.tool,
+        input.arguments
+      )
+      await this.assertAutomatedMutationAllowed(tab, signal)
+      const startedAt = this.now()
+      const { invocationId } = await abortable(
+        tab.surface.sendDebuggerCommand<{ invocationId: string }>('WebMCP.invokeTool', {
+          frameId,
+          toolName: tool.name,
+          input: input.arguments
+        }),
+        signal
+      )
+      const cancel = (): void =>
+        void tab.surface
+          .sendDebuggerCommand('WebMCP.cancelInvocation', { invocationId })
+          .catch(() => undefined)
+      if (tab.webMcp.snapshot().document !== document) {
+        // The page loaded another document before Chromium took the call, so it may have reached
+        // a tool of the same name there, possibly another site's.
+        cancel()
+        throw new WebMcpCallError(
+          'navigated',
+          `The page loaded a new document as ${tool.name} was called; SideKick cancelled the call, which may have reached the new page.`,
+          'Call browser_list_webmcp_tools again and check the page before calling anything.'
+        )
+      }
+      const outcome = await tab.webMcp.awaitResult(invocationId, {
+        form: tool.form,
+        timeoutMs: WEBMCP_CALL_TIMEOUT_MS,
+        signal: signal ?? new AbortController().signal
+      })
+      if (outcome.status === 'timeout' || outcome.status === 'cancelled') cancel()
+      if (outcome.status === 'error' && outcome.exceptionObjectId) {
+        void tab.surface
+          .sendDebuggerCommand('Runtime.releaseObject', { objectId: outcome.exceptionObjectId })
+          .catch(() => undefined)
+      }
+      const navigated =
+        outcome.status === 'navigated' ||
+        (outcome.status === 'completed' && outcome.navigatedTo !== undefined)
+      if (navigated && !signal?.aborted) {
+        await this.waitForQuiescence(
+          tab,
+          this.navigationQuiescence(tab.surface.getURL()),
+          signal
+        ).catch((error) => {
+          if (signal?.aborted) throw error
+        })
+      }
+      return {
+        sessionId: session.id,
+        tabId: tab.id,
+        origin: input.origin,
+        tool: {
+          name: tool.name,
+          readOnly: tool.readOnly,
+          untrustedContent: tool.untrustedContent,
+          form: tool.form,
+          autosubmit: tool.autosubmit
+        },
+        outcome,
+        durationMs: this.now() - startedAt,
+        page: { url: this.tabUrl(tab), title: tab.surface.getTitle() }
+      }
+    })
   }
 
   /**

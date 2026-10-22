@@ -2575,6 +2575,58 @@ describe('AgentRunKernel', () => {
     }
   )
 
+  it("lets the router set a call's access from state its arguments do not carry", async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = (id: string, tool: string): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool }
+            }
+          }
+        ]
+      })
+    const sampler = sequence(
+      call('read-1', 'get_cart'),
+      call('act-1', 'add_item'),
+      sampledTurn({ content: 'Done' })
+    )
+    const preview = { facts: [{ label: 'Site', value: 'https://shop.example' }], changes: [] }
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      // The page marks get_cart read-only.
+      requestedAccess: vi.fn((_name: string, args: Record<string, unknown>) =>
+        args.tool === 'get_cart' ? ('auto' as const) : ('confirm' as const)
+      ),
+      approvalPreview: vi.fn(async () => preview)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({
+      name: 'browser_call_webmcp_tool',
+      requestedAccess: 'confirm',
+      arguments: { tool: 'add_item' },
+      preview
+    })
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(router.approvalPreview).toHaveBeenCalledWith(
+      'browser_call_webmcp_tool',
+      expect.objectContaining({ tool: 'add_item' }),
+      { conversationId: 'thread-1', runId: 'run-1', toolCallId: 'act-1' }
+    )
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(2)
+  })
+
   it('asks before every SideKick settings change even with full access, showing the diff', async () => {
     const propose = (id: string): AgentKernelProviderSampler =>
       sampledTurn({
