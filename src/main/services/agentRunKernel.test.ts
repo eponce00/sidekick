@@ -2539,6 +2539,42 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it.each([
+    [{ approved: true, decision: 'allow_once' }, 'approved', 'success'],
+    [{ approved: false, decision: 'deny' }, 'denied', 'denied']
+  ])(
+    "labels the tool's row with the user's answer %o to its permission card",
+    async (response, approvalStatus, status) => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const sampler = sequence(
+        sampledTurn({
+          toolCalls: [
+            { id: 'clean-1', function: { name: 'shell', arguments: { command: 'rm -rf dist' } } }
+          ]
+        }),
+        sampledTurn({ content: 'Permission handled' })
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const runInput = input({ execute: vi.fn(async () => ({ content: 'ok' })) })
+      runInput.permissionMode = 'sensitive-only'
+      const running = kernel.start(runInput)
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, response)
+      expect((await running).phase).toBe('completed')
+
+      // The answer is recorded against the interaction; only its request names the tool call.
+      const resolved = store.listEvents('run-1').find(({ type }) => type === 'permission.resolved')
+      expect(resolved?.payload.toolCallId).toBeUndefined()
+      const tools = projectAgentRunEvents(store.listEvents('run-1')).segments.flatMap((segment) =>
+        segment.type === 'tool' ? [segment.tool] : []
+      )
+      expect(tools).toEqual([
+        expect.objectContaining({ id: 'clean-1', accessLevel: 'confirm', approvalStatus, status })
+      ])
+    }
+  )
+
   it("lets the router set a call's access from state its arguments do not carry", async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const call = (id: string, tool: string): AgentKernelProviderSampler =>
