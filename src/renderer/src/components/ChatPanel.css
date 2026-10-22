@@ -701,6 +701,14 @@
   color: var(--text-muted);
 }
 
+.image-lightbox-footer .image-lightbox-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .image-lightbox-close {
   position: fixed;
   top: 16px;

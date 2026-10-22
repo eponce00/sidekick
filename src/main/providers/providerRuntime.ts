@@ -23,6 +23,7 @@ import type {
   ProviderStreamResult
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
+import { providerImageProfile } from '../../shared/imagePreparation'
 import { offlineProviderHealth, onlineProviderHealth } from '../../shared/providerHealth'
 import { PRODUCT_IDENTITY, PRODUCT_REPOSITORY_URL } from '../../shared/productIdentity'
 import { abortablePromise } from '../services/abortablePromise'
@@ -55,6 +56,7 @@ import {
   discoverAnthropicModels,
   streamAnthropicChat
 } from './anthropicClient'
+import { prepareMessageImages } from './providerImages'
 import {
   requireProviderApiKey,
   resolveProviderDraft,
@@ -106,14 +108,14 @@ type MaterializedToolMedia = ToolResultMediaAttachment & {
 }
 
 /**
- * Local vision gateways commonly cap a request at two images. The budget is
- * global: composer attachments and tool/browser media are serialized into the
- * same provider prompt and must not be bounded independently.
+ * The provider's image count is one budget: composer attachments and tool/browser media are
+ * serialized into the same provider prompt and must not be bounded independently.
  */
-export const MAX_PROVIDER_IMAGE_ATTACHMENTS = 2
-
-function withProviderImageBudget(messages: ProviderChatMessage[]): ProviderChatMessage[] {
-  let remaining = MAX_PROVIDER_IMAGE_ATTACHMENTS
+function withProviderImageBudget(
+  messages: ProviderChatMessage[],
+  maxImages: number
+): ProviderChatMessage[] {
+  let remaining = maxImages
   let changed = false
   const selected = [...messages]
   const keptImageIndexes = new Set<number>()
@@ -263,33 +265,42 @@ export async function materializeProviderRequestMedia(
     : prepared
 }
 
-async function materializeMedia(request: ProviderChatRequest): Promise<ProviderChatRequest> {
-  const selectedMessages = withProviderImageBudget(request.messages)
-  let changed = selectedMessages !== request.messages
-  const messages = await Promise.all(
-    selectedMessages.map(async (message) => {
-      if (!message.media?.length) return message
-      const media = normalizeToolResultMedia(message.media) || []
-      const resolved = await Promise.all(media.map(materializeAttachment))
-      const materialized = resolved.filter(
-        (attachment): attachment is MaterializedToolMedia => attachment !== null
-      )
-      const unavailable = resolved.length - materialized.length
-      changed ||= materialized.some(
-        (attachment, index) => attachment.source !== media[index]?.source
-      )
-      changed ||= unavailable > 0
-      return {
-        ...message,
-        ...(materialized.length ? { media: materialized } : { media: undefined }),
-        ...(unavailable
-          ? {
-              content: `${message.content || ''}${message.content ? '\n' : ''}[${unavailable} historical visual artifact${unavailable === 1 ? '' : 's'} no longer available.]`
-            }
-          : {})
-      }
-    })
+async function resolveMessageMedia(message: ProviderChatMessage): Promise<ProviderChatMessage> {
+  if (!message.media?.length) return message
+  const media = normalizeToolResultMedia(message.media) || []
+  const resolved = await Promise.all(media.map(materializeAttachment))
+  const materialized = resolved.filter(
+    (attachment): attachment is MaterializedToolMedia => attachment !== null
   )
+  const unavailable = resolved.length - materialized.length
+  if (
+    !unavailable &&
+    materialized.every((attachment, index) => attachment.source === media[index]?.source)
+  ) {
+    return message
+  }
+  return {
+    ...message,
+    ...(materialized.length ? { media: materialized } : { media: undefined }),
+    ...(unavailable
+      ? {
+          content: `${message.content || ''}${message.content ? '\n' : ''}[${unavailable} historical visual artifact${unavailable === 1 ? '' : 's'} no longer available.]`
+        }
+      : {})
+  }
+}
+
+async function materializeMedia(request: ProviderChatRequest): Promise<ProviderChatRequest> {
+  const profile = providerImageProfile(request.target.providerKind)
+  const selectedMessages = withProviderImageBudget(request.messages, profile.maxImages)
+  let changed = selectedMessages !== request.messages
+  const messages: ProviderChatMessage[] = []
+  // One message at a time: decoding a large image briefly holds four bytes per pixel.
+  for (const message of selectedMessages) {
+    const prepared = await prepareMessageImages(await resolveMessageMedia(message), profile)
+    changed ||= prepared !== message
+    messages.push(prepared)
+  }
   return changed ? { ...request, messages } : request
 }
 
