@@ -40,6 +40,7 @@ import {
   type ReasoningSettings
 } from '../../../shared/reasoning'
 import type { ProviderKind } from '../../../shared/providerRegistry'
+import { providerImageProfile } from '../../../shared/imagePreparation'
 import { ChatInput } from './ChatInput'
 import ConfirmDialog from './ConfirmDialog'
 import { WorkspaceMemoryModal } from './WorkspaceMemoryModal'
@@ -1809,6 +1810,9 @@ function ChatPanel({
       <ChatInput
         inputValue={inputValue}
         attachedImages={attachedImages}
+        imageSendProfile={
+          reasoningModel ? providerImageProfile(reasoningModel.providerKind) : undefined
+        }
         attachedContext={attachedContext}
         attachmentError={attachmentError}
         visionAvailable={visionAvailable}

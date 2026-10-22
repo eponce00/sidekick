@@ -37,7 +37,14 @@ describe('live scenario provider boundary', () => {
   it('materializes browser and image files before OpenAI-compatible serialization', async () => {
     await withIsolatedEvalRoot('sidekick-eval-media-', async (root) => {
       const path = join(root, 'viewport.png')
-      await fs.writeFile(path, Buffer.from('89504e470d0a1a0a', 'hex'))
+      // A whole 1x1 PNG: an image that cannot be read is left out of the request.
+      await fs.writeFile(
+        path,
+        Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          'base64'
+        )
+      )
 
       const messages = await serializeAgentScenarioMessages({
         target: { providerKind: 'litellm', model: 'local-loaded-model' },

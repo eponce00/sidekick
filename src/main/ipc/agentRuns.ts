@@ -25,6 +25,7 @@ import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import { MAX_TERMINAL_INPUT_LENGTH } from '../../shared/terminalSessions'
+import { validateMessageImages } from '../../shared/messageImages'
 import {
   CONVERSATION_GOAL_MAX_LENGTH,
   type CreateConversationGoalInput,
@@ -287,7 +288,16 @@ function validateAdmissions(value: unknown): ReplacePromptAdmissionsInput {
   ) {
     throw new Error('Invalid prompt admissions')
   }
-  return input
+  // A steered message's images go into the run's journal and to the model as they are stored.
+  const withImages = <T extends ReplacePromptAdmissionsInput['queued'][number]>(item: T): T => {
+    const images = validateMessageImages(item.images)
+    return { ...item, images: images.length ? images : undefined }
+  }
+  return {
+    ...input,
+    queued: input.queued.map(withImages),
+    pivot: input.pivot ? withImages(input.pivot) : input.pivot
+  }
 }
 
 export function registerAgentRunHandlers(): void {

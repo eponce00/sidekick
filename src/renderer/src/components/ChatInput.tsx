@@ -39,6 +39,7 @@ import { QueuedMessageTray } from './QueuedMessageTray'
 import { PullRequestBar } from './PullRequestBar'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
+import type { ProviderImageProfile } from '../../../shared/imagePreparation'
 import {
   isPastedTextAttachment,
   isReviewCommentAttachment,
@@ -142,6 +143,8 @@ function FeatureMenuStatus({
 interface ChatInputProps {
   inputValue: string
   attachedImages: MessageImageAttachment[]
+  /** What the selected model accepts, so an image's chip can say it will get a smaller copy. */
+  imageSendProfile?: ProviderImageProfile
   attachedContext: MessageContextAttachment[]
   attachmentError: string | null
   visionAvailable: boolean
@@ -230,6 +233,7 @@ interface ChatInputProps {
 export function ChatInput({
   inputValue,
   attachedImages,
+  imageSendProfile,
   attachedContext,
   attachmentError,
   visionAvailable,
@@ -967,7 +971,11 @@ export function ChatInput({
             )}
             {attachedImages.map((image) => (
               <div className="composer-attachment" key={image.id}>
-                <ImageAttachmentPreview image={image} className="composer-image-preview" />
+                <ImageAttachmentPreview
+                  image={image}
+                  className="composer-image-preview"
+                  sendProfile={imageSendProfile}
+                />
                 <button
                   type="button"
                   className="composer-attachment-remove"
@@ -1015,7 +1023,7 @@ export function ChatInput({
               ref={imageInputRef}
               className="composer-image-input"
               type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
+              accept="image/png,image/jpeg,image/webp,image/gif,image/avif,image/bmp"
               multiple
               tabIndex={-1}
               aria-hidden="true"

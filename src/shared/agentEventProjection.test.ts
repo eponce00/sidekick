@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentRunEvent } from './agentRuntime'
-import { projectAgentRunEvents } from './agentEventProjection'
+import { projectAgentRunEvents, type ProjectedToolExecution } from './agentEventProjection'
 
 function event(
   sequence: number,
@@ -632,6 +632,34 @@ Keep building the app.
         response: { approved: false }
       }
     })
+  })
+
+  it("labels a tool's row from the answer to its card, which names only the interaction", () => {
+    const approval = (
+      resolved: Record<string, unknown>
+    ): ProjectedToolExecution['approvalStatus'] => {
+      const tool = projectAgentRunEvents([
+        event(1, 'tool.pending', { toolCallId: 'tool-1', name: 'shell' }),
+        event(2, 'permission.requested', {
+          interactionId: 'permission-1',
+          kind: 'permission',
+          request: { toolCallId: 'tool-1', name: 'shell' }
+        }),
+        event(3, 'permission.resolved', { interactionId: 'permission-1', ...resolved })
+      ]).segments.find((segment) => segment.type === 'tool')
+      return tool?.type === 'tool' ? tool.tool.approvalStatus : undefined
+    }
+
+    expect(
+      approval({ status: 'resolved', response: { approved: true, decision: 'allow_once' } })
+    ).toBe('approved')
+    expect(
+      approval({ status: 'resolved', response: { approved: true, decision: 'allow_chat' } })
+    ).toBe('approved')
+    expect(approval({ status: 'resolved', response: { approved: false, decision: 'deny' } })).toBe(
+      'denied'
+    )
+    expect(approval({ status: 'cancelled', response: { reason: 'run_cancelled' } })).toBe('denied')
   })
 
   it('renders Plan control as a review interaction instead of a duplicate tool row', () => {

@@ -651,6 +651,13 @@ function App(): React.JSX.Element {
       }, 250)
     }
   }, [])
+  // An update still pending when the app unmounts must not land on a window that has gone.
+  useEffect(
+    () => () => {
+      if (tokenThrottleRef.current) clearTimeout(tokenThrottleRef.current)
+    },
+    []
+  )
 
   const projectById = useCallback(
     (projectId: string | null | undefined) =>

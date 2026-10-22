@@ -30,7 +30,9 @@ before they are changed, and every edit uses the same transactional workspace mu
 The native browser catalog includes `browser_open`, `browser_observe`, `browser_screenshot`,
 `browser_click`, `browser_type`, `browser_sign_in`, `browser_select`, `browser_fill_form`, `browser_scroll`, `browser_hover`,
 `browser_wait`, `browser_navigate`, `browser_tabs`, `browser_console`, `browser_network`,
-inspection-only `browser_evaluate`, `browser_verify`, and `browser_close`. Browser pages run in an
+inspection-only `browser_evaluate`, `browser_verify`, `browser_list_webmcp_tools` and
+`browser_call_webmcp_tool` for [tools a website offers](BROWSER.md#tools-that-websites-offer), and
+`browser_close`. Browser pages run in an
 isolated Electron session, not in the app renderer, and screenshots can be supplied directly to a
 vision-capable model. See [Visual browser](BROWSER.md).
 

@@ -67,3 +67,22 @@ describe('agentPermissionScope', () => {
     expect(agentPermissionScope(tool, { title: 'Other', body: 'x' })!.keys).not.toEqual(scope.keys)
   })
 })
+
+describe("a website's tool", () => {
+  const call = (origin: string) => ({ origin, tool: 'add_item', arguments: { item: 'milk' } })
+
+  it('can be allowed for the chat on its own web origin, with its exact arguments', () => {
+    const scope = agentPermissionScope('browser_call_webmcp_tool', call('https://shop.example'))
+    expect(scope?.keys).toHaveLength(1)
+    expect(scope?.keys[0]).toContain('https://shop.example')
+    expect(
+      agentPermissionScope('browser_call_webmcp_tool', call('https://other.example'))?.keys
+    ).not.toEqual(scope?.keys)
+  })
+
+  it('is never allowed for the chat on files or pages without a web origin', () => {
+    for (const origin of ['file://', 'null', '', 'chrome-extension://abc']) {
+      expect(agentPermissionScope('browser_call_webmcp_tool', call(origin)), origin).toBeUndefined()
+    }
+  })
+})

@@ -296,6 +296,58 @@ describe('conversation fork IPC', () => {
     })
   })
 
+  it('stores a large original image, and refuses images the renderer misdescribes', async () => {
+    mocks
+      .db!.prepare(
+        `INSERT INTO conversations (id, title, created_at, updated_at)
+         VALUES ('conversation', 'Images', 1, 1)`
+      )
+      .run()
+    const pixel = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    )
+    // Over the old 8 MB limit; only the copy a model receives is reduced.
+    const large = Buffer.concat([pixel.subarray(0, 33), Buffer.alloc(9 * 1024 * 1024)])
+    const bomb = Buffer.from(pixel)
+    bomb.writeUInt32BE(60_000, 16)
+    bomb.writeUInt32BE(60_000, 20)
+    const image = (bytes: Buffer, mimeType = 'image/png') => ({
+      id: `image-${mimeType}-${bytes.length}`,
+      name: 'screenshot.png',
+      mimeType,
+      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`
+    })
+    const save = mocks.handlers.get('conversations:saveMessage') as RegisteredHandler
+    const message = (id: string, images: unknown[]) => ({
+      id,
+      conversation_id: 'conversation',
+      role: 'user',
+      content: 'Look',
+      images,
+      timestamp: 2
+    })
+
+    await save({}, message('large', [image(large)]))
+    const stored = mocks.db!.prepare("SELECT images FROM messages WHERE id = 'large'").get() as {
+      images: string
+    }
+    expect(JSON.parse(stored.images)[0].dataUrl).toBe(image(large).dataUrl)
+
+    for (const forged of [
+      image(bomb),
+      image(pixel, 'image/jpeg'),
+      image(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>'))
+    ]) {
+      await expect(save({}, message(`forged-${forged.id}`, [forged]))).rejects.toThrow(
+        'Invalid message image attachment'
+      )
+    }
+    expect(
+      mocks.db!.prepare("SELECT COUNT(*) AS count FROM messages WHERE id LIKE 'forged-%'").get()
+    ).toEqual({ count: 0 })
+  })
+
   it('keeps a notice tone across reopening, and ignores tones it does not know', async () => {
     // A finished goal is reported as a success notice. Without its tone the
     // reopened conversation showed it as an ordinary info row.

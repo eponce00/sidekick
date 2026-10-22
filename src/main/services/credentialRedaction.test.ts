@@ -233,3 +233,37 @@ describe('CredentialRedactionStream', () => {
     expect(stream.push(`${value}\n`)).toBe('[secret: late]\n')
   })
 })
+
+describe('JSON forms other writers produce', () => {
+  const unicode = (text: string, characters: RegExp, upperCase = false): string =>
+    text.replace(characters, (character) => {
+      const hex = character.charCodeAt(0).toString(16).padStart(4, '0')
+      return `\\u${upperCase ? hex.toUpperCase() : hex}`
+    })
+
+  it('catches a value whose JSON escapes <, > and & as \\u escapes, in either case', () => {
+    const value = `a<b>c&d"e\\${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1)
+    for (const form of [
+      unicode(json, /[<>&]/g),
+      unicode(json, /[<>&]/g, true),
+      // SideKick's own page-content blocks write `<` this way around a page's JSON.
+      JSON.stringify({ token: value }).replace(/</g, '\\u003c')
+    ]) {
+      expect(redactor.redact(`before ${form} after`), form).not.toContain(form)
+      expect(redactor.redact(`before ${form} after`)).toContain('[secret: entry-0]')
+    }
+  })
+
+  it('catches a value escaped as ASCII, and JSON text quoted inside another JSON string', () => {
+    const value = `clé-ñ"${generated(10)}`
+    const redactor = redactorFor(value)
+    const json = JSON.stringify(value).slice(1, -1)
+    const ascii = unicode(json, /[\u0080-￿]/g)
+    const twice = JSON.stringify(JSON.stringify({ token: value }))
+    expect(redactor.redact(ascii)).toBe('[secret: entry-0]')
+    expect(redactor.redact(twice)).toContain('[secret: entry-0]')
+    expect(redactor.redact(twice)).not.toContain(value.slice(-10))
+  })
+})

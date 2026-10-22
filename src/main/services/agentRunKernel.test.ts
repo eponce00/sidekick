@@ -2539,6 +2539,166 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it.each([
+    [{ approved: true, decision: 'allow_once' }, 'approved', 'success'],
+    [{ approved: false, decision: 'deny' }, 'denied', 'denied']
+  ])(
+    "labels the tool's row with the user's answer %o to its permission card",
+    async (response, approvalStatus, status) => {
+      catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
+      const sampler = sequence(
+        sampledTurn({
+          toolCalls: [
+            { id: 'clean-1', function: { name: 'shell', arguments: { command: 'rm -rf dist' } } }
+          ]
+        }),
+        sampledTurn({ content: 'Permission handled' })
+      )
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+      const runInput = input({ execute: vi.fn(async () => ({ content: 'ok' })) })
+      runInput.permissionMode = 'sensitive-only'
+      const running = kernel.start(runInput)
+
+      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, response)
+      expect((await running).phase).toBe('completed')
+
+      // The answer is recorded against the interaction; only its request names the tool call.
+      const resolved = store.listEvents('run-1').find(({ type }) => type === 'permission.resolved')
+      expect(resolved?.payload.toolCallId).toBeUndefined()
+      const tools = projectAgentRunEvents(store.listEvents('run-1')).segments.flatMap((segment) =>
+        segment.type === 'tool' ? [segment.tool] : []
+      )
+      expect(tools).toEqual([
+        expect.objectContaining({ id: 'clean-1', accessLevel: 'confirm', approvalStatus, status })
+      ])
+    }
+  )
+
+  it("lets the router set a call's access from state its arguments do not carry", async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = (id: string, tool: string): AgentKernelProviderSampler =>
+      sampledTurn({
+        toolCalls: [
+          {
+            id,
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool }
+            }
+          }
+        ]
+      })
+    const sampler = sequence(
+      call('read-1', 'get_cart'),
+      call('act-1', 'add_item'),
+      sampledTurn({ content: 'Done' })
+    )
+    const preview = { facts: [{ label: 'Site', value: 'https://shop.example' }], changes: [] }
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      // The page marks get_cart read-only.
+      requestedAccess: vi.fn((_name: string, args: Record<string, unknown>) =>
+        args.tool === 'get_cart' ? ('auto' as const) : ('confirm' as const)
+      ),
+      approvalPreview: vi.fn(async () => preview)
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({
+      name: 'browser_call_webmcp_tool',
+      requestedAccess: 'confirm',
+      arguments: { tool: 'add_item' },
+      preview
+    })
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(router.approvalPreview).toHaveBeenCalledWith(
+      'browser_call_webmcp_tool',
+      expect.objectContaining({ tool: 'add_item' }),
+      { conversationId: 'thread-1', runId: 'run-1', toolCallId: 'act-1' }
+    )
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledTimes(2)
+  })
+
+  it('decides on a call after the calls before it in the same reply have run', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          { id: 'list-1', function: { name: 'browser_list_webmcp_tools', arguments: {} } },
+          {
+            id: 'act-1',
+            function: {
+              name: 'browser_call_webmcp_tool',
+              arguments: { origin: 'https://shop.example', tool: 'add_item' }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Done' })
+    )
+    let listed = false
+    const router = {
+      execute: vi.fn(async (name: string) => {
+        if (name === 'browser_list_webmcp_tools') listed = true
+        return { ok: true }
+      }),
+      // As for a page's tool: a call that is not listed yet would be refused, so it asks nothing.
+      requestedAccess: vi.fn(() => (listed ? ('confirm' as const) : ('auto' as const)))
+    }
+    const kernel = new AgentRunKernel(store, undefined, sampler)
+    const runInput = input(router)
+    runInput.permissionMode = 'sensitive-only'
+    const running = kernel.start(runInput)
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ name: 'browser_call_webmcp_tool', toolCallId: 'act-1' })
+    expect(router.execute).toHaveBeenCalledOnce()
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+  })
+
+  it('asks every time, even with full access, for a call the router marks always', async () => {
+    catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
+    const call = sampledTurn({
+      toolCalls: [
+        {
+          id: 'buy-1',
+          function: {
+            name: 'browser_call_webmcp_tool',
+            arguments: { origin: 'https://shop.example', tool: 'buy_now' }
+          }
+        }
+      ]
+    })
+    const router = {
+      execute: vi.fn(async () => ({ ok: true })),
+      requestedAccess: vi.fn(() => 'always' as const)
+    }
+    const kernel = new AgentRunKernel(
+      store,
+      undefined,
+      sequence(call, sampledTurn({ content: 'Done' }))
+    )
+    const running = kernel.start(input(router))
+
+    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    const card = store.listPendingInteractions('run-1')[0]
+    expect(card.request).toMatchObject({ requestedAccess: 'confirm', mode: 'full-access' })
+    expect(card.request).not.toHaveProperty('chatScope')
+    kernel.resolveInteraction(card.id, { approved: true })
+    expect((await running).phase).toBe('completed')
+    expect(router.execute).toHaveBeenCalledOnce()
+  })
+
   it('asks before every SideKick settings change even with full access, showing the diff', async () => {
     const propose = (id: string): AgentKernelProviderSampler =>
       sampledTurn({

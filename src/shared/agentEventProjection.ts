@@ -7,6 +7,7 @@ import type {
 import { formatCompactionContext } from './compactionPrompt'
 import type { MessageImageAttachment } from './messageImages'
 import type { MessageContextAttachment } from './messageContextAttachments'
+import { agentPermissionDecision } from './permissions'
 import type { WorkspaceVerificationSummary } from './verification'
 
 export interface ProjectedToolExecution {
@@ -374,14 +375,20 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
       }
     }
     if (event.type === 'permission.resolved') {
-      const request = event.payload.request as Record<string, unknown> | undefined
       const response = event.payload.response as Record<string, unknown> | undefined
-      const tool = tools.get(String(event.payload.toolCallId || request?.toolCallId || ''))
-      if (tool) {
-        tool.approvalStatus =
-          event.payload.approved === false || response?.approved === false ? 'denied' : 'approved'
-      }
       const interaction = interactions.get(String(event.payload.interactionId || ''))
+      // A policy decision names its call; a user's answer names only the card that asked.
+      const tool = tools.get(
+        String(event.payload.toolCallId || interaction?.interaction.request.toolCallId || '')
+      )
+      if (tool) {
+        // Judged as the kernel judges it: a cancelled card or any answer but allow is a denial.
+        const approved = response
+          ? event.payload.status === 'resolved' &&
+            ['allow_once', 'allow_chat'].includes(agentPermissionDecision(response))
+          : event.payload.approved !== false
+        tool.approvalStatus = approved ? 'approved' : 'denied'
+      }
       if (interaction) {
         interaction.interaction.status =
           event.payload.status === 'cancelled' ? 'cancelled' : 'resolved'

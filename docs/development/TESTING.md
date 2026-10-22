@@ -162,7 +162,8 @@ changes, rendered bounds at desktop and mobile viewports, console/network cleanl
 reference-image similarity are supporting evidence. Subjective aesthetic scoring is never allowed
 to turn an otherwise valid harness run into a harness defect by itself. The full live suite includes
 a two-turn inline-SVG creation and revision scenario; the native-browser smoke separately proves
-real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup.
+real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup, and
+drives a page's WebMCP tools through the agent kernel in each permission mode.
 
 `npm run test:artifact-inspector-smoke` renders React, HTML, and SVG artifacts, including one that
 fetches live data and one that throws, through the real artifact inspection window, and writes each

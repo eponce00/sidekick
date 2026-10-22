@@ -23,9 +23,9 @@ Image discovery uses DuckDuckGo's browser-facing image flow directly. SideKick e
 Search presentation, model text, and visual input are separate channels. The interface keeps the
 linked result metadata it needs to render the gallery, while the model receives compact metadata
 and, only when requested, one typed visual attachment from that search. Raw image bytes are never
-serialized into tool-result text. Immediately before inference, SideKick applies one global budget
-of two images across user attachments, image searches, and browser screenshots, retaining the
-newest relevant tool visuals without rewriting the durable conversation history.
+serialized into tool-result text. Immediately before inference, SideKick applies one image budget,
+set by the provider, across user attachments, image searches, and browser screenshots, retaining
+the newest relevant tool visuals without rewriting the durable conversation history.
 
 `web_fetch` requests a page directly and returns it as Markdown: the page's details (description, author, publish and update dates, and structured data such as versions, ratings, and prices), its main article as found by Mozilla Readability, and the text around the article that the article does not repeat, such as a sidebar's figures. Navigation menus and footers are left out. A page longer than one read keeps its opening and the parts that best match the information the agent asked for, marks what was left out, and saves the whole page so the agent can read on with `tool_output`. JSON, plain-text, CSV, and Markdown responses, such as a public API's data, are returned as the data itself, with JSON pretty-printed and long bodies truncated. A page that cannot be read is reported as a failed call. If the initial HTML has no readable body or the site requires JavaScript, SideKick performs one isolated render in a hidden Electron window and reads the rendered document the same way.
 

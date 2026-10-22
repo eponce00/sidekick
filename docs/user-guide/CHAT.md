@@ -79,6 +79,11 @@ of its report.
 - **Comments on changes:** in a reply's file changes, click a line number (shift-click to extend
   the range) and write a comment. It is attached to your next message as a card, with the file,
   the lines, and the quoted change, for the agent to act on.
+- **Images:** paste an image or choose one with **+**: PNG, JPEG, WebP, GIF, AVIF, or BMP, up to
+  100 MB each and four per message. Size is not something to manage: the chat keeps the image as
+  you attached it, and each model receives a copy made to fit what it takes, shrunk to its size
+  and byte limits and converted when it cannot read the format. When the selected model will get a
+  smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
 - **Files:** type `@` to pick a project file. Its path goes into the message and the file is
   attached. Attached files, up to four per message, are read before the agent starts, so its first
   step already has their contents; the reads show in the reply like any other.
