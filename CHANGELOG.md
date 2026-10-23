@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.2 — 2026-10-22
+
+- Show the agent what a long tool result holds instead of leaving it to read the rest in pieces.
+  A website tool's long JSON result arrives as an outline that keeps every field, such as an
+  editor's token, with as many of each list's first items as fit. Other long results keep the
+  start and end of a line too long to show whole, such as JSON on one line, which before showed
+  nothing of it.
+- Let the agent find text in a long result it was shown part of, in one step: `tool_output` now
+  takes `find`, and returns each match with where it is and the text around it.
+
 ## 0.18.1 — 2026-10-22
 
 - Give each new chat worktree its own branch, named after its folder, such as
