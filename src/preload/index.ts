@@ -87,6 +87,14 @@ const api = {
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
+    onMessagesChanged: (callback: (conversationId: string) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string }
+      ): void => callback(change.conversationId)
+      ipcRenderer.on('conversations:messagesChanged', listener)
+      return () => ipcRenderer.removeListener('conversations:messagesChanged', listener)
+    },
     search: (query: string) => ipcRenderer.invoke('conversations:search', query),
     create: (
       title: string,
@@ -186,6 +194,14 @@ const api = {
       ipcRenderer.invoke('agentRuns:admissionsReplace', input),
     admissionsTakeNext: (conversationId: string) =>
       ipcRenderer.invoke('agentRuns:admissionsTakeNext', conversationId),
+    onAdmissionsChanged: (callback: (conversationId: string) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string }
+      ): void => callback(change.conversationId)
+      ipcRenderer.on('agentRuns:admissionsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:admissionsChanged', listener)
+    },
     onEvent: (callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
@@ -253,6 +269,20 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('schedules:changed', listener)
       return () => ipcRenderer.removeListener('schedules:changed', listener)
+    }
+  },
+  companion: {
+    status: () => ipcRenderer.invoke('companion:status'),
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke('companion:setEnabled', enabled),
+    newCode: () => ipcRenderer.invoke('companion:newCode'),
+    removeDevice: (deviceId: string) => ipcRenderer.invoke('companion:removeDevice', deviceId),
+    onChanged: (callback: (status: import('../shared/companion').CompanionStatus) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        status: import('../shared/companion').CompanionStatus
+      ): void => callback(status)
+      ipcRenderer.on('companion:changed', listener)
+      return () => ipcRenderer.removeListener('companion:changed', listener)
     }
   },
   sessions: {

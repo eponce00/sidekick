@@ -8,6 +8,7 @@ import {
   parseNumberedLines,
   type NumberedLine
 } from '../utils/codeHighlight'
+import { SurfaceImage } from './SurfaceImage'
 
 /** Source lines with their numbers in a gutter, highlighted, scrolling instead of wrapping. */
 export function CodeExcerpt({
@@ -150,7 +151,11 @@ export function SearchResultsOutput({ data }: { data: unknown }): React.JSX.Elem
           const page = safeHttpUrl(result.pageUrl) || image
           return (
             <a key={`${page}:${index}`} href={page} target="_blank" rel="noreferrer">
-              <img src={image} alt={String(result.title || 'Search result')} loading="lazy" />
+              <SurfaceImage
+                src={image}
+                alt={String(result.title || 'Search result')}
+                loading="lazy"
+              />
               <span>
                 <ImageIcon size={11} />
                 {String(result.title || result.source || 'Image')}

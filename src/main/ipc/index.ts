@@ -20,6 +20,7 @@ import { registerPullRequestHandlers } from './pullRequests'
 import { registerWorktreeHandlers } from './worktrees'
 import { registerAppMenuHandlers } from './appMenus'
 import { registerCredentialHandlers } from './credentials'
+import { registerCompanionHandlers } from './companion'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -47,4 +48,5 @@ export function registerAllHandlers(): void {
   registerCommandLineHandlers()
   registerScheduleHandlers()
   registerSessionHandlers()
+  registerCompanionHandlers()
 }

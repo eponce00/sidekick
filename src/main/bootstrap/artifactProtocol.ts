@@ -89,6 +89,46 @@ function resolveArtifactPath(rendererRoot: string, pathname: string): string | n
   return rel.startsWith('..') || rel.includes(':') ? null : targetPath
 }
 
+/**
+ * A screenshot or viewed-image preview by its `sidekick-browser://artifact/` address: only an
+ * image of the type its name says, inside the artifact folder after links are followed.
+ */
+export async function readBrowserArtifact(
+  url: string
+): Promise<{ data: Buffer; contentType: string } | null> {
+  if (!browserArtifactRoot) return null
+  let requestUrl: URL
+  let pathname: string
+  try {
+    requestUrl = new URL(url)
+    pathname = decodeURIComponent(requestUrl.pathname)
+  } catch {
+    return null
+  }
+  if (requestUrl.protocol !== `${BROWSER_ARTIFACT_SCHEME}:` || requestUrl.hostname !== 'artifact')
+    return null
+  const targetPath = resolveArtifactPath(browserArtifactRoot, pathname)
+  const extension = targetPath ? extname(targetPath).toLowerCase() : ''
+  // Screenshots are PNG; previews of images the agent viewed are JPEG.
+  const expectedType = BROWSER_ARTIFACT_TYPES[extension]
+  if (!targetPath || !expectedType) return null
+  try {
+    const [realRoot, realTarget] = await Promise.all([
+      fsPromises.realpath(browserArtifactRoot),
+      fsPromises.realpath(targetPath)
+    ])
+    const realRelative = relative(realRoot, realTarget)
+    if (!realRelative || realRelative.startsWith('..') || realRelative.includes(':')) return null
+    const stat = await fsPromises.stat(realTarget)
+    if (!stat.isFile() || stat.size < 8 || stat.size > MAX_BROWSER_ARTIFACT_BYTES) return null
+    const data = await fsPromises.readFile(realTarget)
+    if (imageContentType(data) !== expectedType) return null
+    return { data, contentType: CONTENT_TYPES[extension] ?? 'application/octet-stream' }
+  } catch {
+    return null
+  }
+}
+
 function browserPdfAssetResponse(body: BodyInit, contentType: string): Response {
   return new Response(body, {
     headers: {
@@ -305,50 +345,16 @@ export async function installArtifactProtocol(): Promise<void> {
     }
   })
   await protocol.handle(BROWSER_ARTIFACT_SCHEME, async (request) => {
-    if (!browserArtifactRoot) return new Response('Not found', { status: 404 })
-    const requestUrl = new URL(request.url)
-    if (requestUrl.hostname !== 'artifact') return new Response('Not found', { status: 404 })
-    let pathname: string
-    try {
-      pathname = decodeURIComponent(requestUrl.pathname)
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
-    const targetPath = resolveArtifactPath(browserArtifactRoot, pathname)
-    const extension = targetPath ? extname(targetPath).toLowerCase() : ''
-    // Screenshots are PNG; previews of images the agent viewed are JPEG.
-    const expectedType = BROWSER_ARTIFACT_TYPES[extension]
-    if (!targetPath || !expectedType) {
-      return new Response('Not found', { status: 404 })
-    }
-    try {
-      const [realRoot, realTarget] = await Promise.all([
-        fsPromises.realpath(browserArtifactRoot),
-        fsPromises.realpath(targetPath)
-      ])
-      const realRelative = relative(realRoot, realTarget)
-      if (!realRelative || realRelative.startsWith('..') || realRelative.includes(':')) {
-        return new Response('Not found', { status: 404 })
+    const file = await readBrowserArtifact(request.url)
+    if (!file) return new Response('Not found', { status: 404 })
+    return new Response(new Uint8Array(file.data), {
+      headers: {
+        'content-type': file.contentType,
+        'cache-control': 'no-store',
+        'content-security-policy': "default-src 'none'",
+        'x-content-type-options': 'nosniff'
       }
-      const stat = await fsPromises.stat(realTarget)
-      if (!stat.isFile() || stat.size < 8 || stat.size > MAX_BROWSER_ARTIFACT_BYTES) {
-        return new Response('Not found', { status: 404 })
-      }
-      const data = await fsPromises.readFile(realTarget)
-      if (imageContentType(data) !== expectedType) {
-        return new Response('Not found', { status: 404 })
-      }
-      return new Response(data, {
-        headers: {
-          'content-type': CONTENT_TYPES[extension] ?? 'application/octet-stream',
-          'cache-control': 'no-store',
-          'content-security-policy': "default-src 'none'",
-          'x-content-type-options': 'nosniff'
-        }
-      })
-    } catch {
-      return new Response('Not found', { status: 404 })
-    }
+    })
   })
   await installBrowserPdfProtocol(protocol)
 }

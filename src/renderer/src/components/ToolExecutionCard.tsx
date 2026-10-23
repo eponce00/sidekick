@@ -20,6 +20,7 @@ import { Reveal } from './Reveal'
 import { CommandResultOutput } from './CommandResultOutput'
 import { commandResultFrom } from '../utils/commandResult'
 import { copyText } from '../utils/clipboard'
+import { SurfaceImage } from './SurfaceImage'
 import './ToolExecutionCard.css'
 
 function boundedLines(
@@ -97,10 +98,11 @@ export function ToolExecutionCard({
           aria-label={imageEnlarged ? 'Show the image smaller' : 'Show the image larger'}
           title={subject || readPath}
         >
-          <img
+          <SurfaceImage
             src={previewUrl}
             alt={`Image the agent viewed: ${subject || readPath || ''}`}
             loading="lazy"
+            fallback={<span className="tool-image-unavailable">Image no longer available</span>}
           />
         </button>
       )}

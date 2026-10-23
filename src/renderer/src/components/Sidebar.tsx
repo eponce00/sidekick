@@ -22,6 +22,7 @@ import {
   PinOff,
   Plus,
   Search,
+  Smartphone,
   SquarePen,
   Trash2,
   X
@@ -57,6 +58,8 @@ import { shortcutLabel } from '../../../shared/keyboardShortcuts'
 import type { DesktopPlatform } from '../../../shared/platform'
 import type { SessionStatus } from '../../../shared/sessions'
 import ConfirmDialog from './ConfirmDialog'
+import PhoneCompanionPanel from './PhoneCompanionPanel'
+import { usePhoneCompanionStatus } from '../hooks/usePhoneCompanionStatus'
 import ScheduledRunGroupRow from './ScheduledRunGroupRow'
 import { groupScheduledConversations } from '../utils/scheduledRunGroups'
 import { Reveal } from './Reveal'
@@ -168,6 +171,11 @@ function Sidebar({
   const [removeProjectConfirm, setRemoveProjectConfirm] = useState<string | null>(null)
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isPhoneOpen, setIsPhoneOpen] = useState(false)
+  const phoneButtonRef = useRef<HTMLButtonElement>(null)
+  const closePhone = useCallback(() => setIsPhoneOpen(false), [])
+  const phone = usePhoneCompanionStatus()
+  const phoneConnected = phone?.status?.devices.some(({ connected }) => connected) ?? false
   const [openActionsMenu, setOpenActionsMenu] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
@@ -1044,6 +1052,22 @@ function Sidebar({
     </div>
   )
 
+  const phoneButton = phone && (
+    <button
+      ref={phoneButtonRef}
+      type="button"
+      className={`sidebar-icon-btn sidebar-phone-btn ${isPhoneOpen ? 'active' : ''}`}
+      onClick={() => setIsPhoneOpen((current) => !current)}
+      title={phoneConnected ? 'Phone connected' : 'Phone'}
+      aria-label={phoneConnected ? 'Phone connected' : 'Phone'}
+      aria-haspopup="dialog"
+      aria-expanded={isPhoneOpen}
+    >
+      <Smartphone size={16} />
+      {phoneConnected && <span className="sidebar-phone-dot" aria-hidden="true" />}
+    </button>
+  )
+
   return (
     <>
       <aside
@@ -1489,8 +1513,25 @@ function Sidebar({
           )}
         </div>
         {/* The rail keeps its menu at the bottom, out of the way of the places above. */}
-        {isCollapsed && <div className="sidebar-rail-footer">{moreMenu}</div>}
+        {isCollapsed ? (
+          <div className="sidebar-rail-footer">
+            {phoneButton}
+            {moreMenu}
+          </div>
+        ) : (
+          phoneButton && <div className="sidebar-footer">{phoneButton}</div>
+        )}
       </aside>
+
+      {phone && (
+        <PhoneCompanionPanel
+          isOpen={isPhoneOpen}
+          companion={phone}
+          anchorRef={phoneButtonRef}
+          placement={isCollapsed ? 'beside' : 'above'}
+          onClose={closePhone}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={deleteConfirm !== null}

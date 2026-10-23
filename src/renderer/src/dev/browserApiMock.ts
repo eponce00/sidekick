@@ -1,6 +1,7 @@
 import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import { previewCredentialsApi } from './credentialsPreview'
+import { previewCompanionApi } from './companionPreview'
 import {
   previewSessionConversations,
   previewSessionsApi,
@@ -878,6 +879,8 @@ export function installBrowserApiMock(): void {
     },
     conversations: {
       list: async () => [...previewCreatedConversations, ...previewConversations],
+      // No phone adds messages in the preview.
+      onMessagesChanged: () => () => undefined,
       search: async (query) =>
         [...previewCreatedConversations, ...previewConversations].filter((item) =>
           item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())
@@ -1179,6 +1182,7 @@ export function installBrowserApiMock(): void {
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
+      onAdmissionsChanged: () => () => undefined,
       onEvent: () => () => undefined
     },
     terminal: previewTerminalApi(),
@@ -1300,6 +1304,7 @@ export function installBrowserApiMock(): void {
       }
     },
     credentials: previewCredentialsApi(),
+    companion: previewCompanionApi(),
     pullRequests: previewPullRequestsApi(),
     window: {
       minimize: () => {},

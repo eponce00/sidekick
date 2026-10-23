@@ -1180,6 +1180,11 @@ function App(): React.JSX.Element {
       }),
     [refreshConversationsForSchedules, refreshProjects]
   )
+  // A message from the user's phone can start a chat or move one up the list.
+  useEffect(
+    () => window.api.conversations.onMessagesChanged(() => refreshConversationsForSchedules()),
+    [refreshConversationsForSchedules]
+  )
   const scheduleNames = useMemo(
     () => new Map(schedules.map(({ id, name }) => [id, name])),
     [schedules]

@@ -41,6 +41,7 @@ describe('useConversationRun', () => {
     for (const subscriber of [...listeners]) subscriber(change)
   }
   let durableAdmissions: PromptAdmissionItem[]
+  let admissionsChanged: ((conversationId: string) => void) | null = null
 
   // The conversation the harness has open; most tests start runs from a new chat.
   let openConversation: string | null = null
@@ -145,6 +146,12 @@ describe('useConversationRun', () => {
             if (next) durableAdmissions = durableAdmissions.filter((item) => item.id !== next.id)
             return next
           }),
+          onAdmissionsChanged: (callback: (conversationId: string) => void) => {
+            admissionsChanged = callback
+            return () => {
+              if (admissionsChanged === callback) admissionsChanged = null
+            }
+          },
           // Like the real channel, every subscriber hears every event.
           onEvent: (callback: (change: AgentRunChangedEvent) => void) => {
             listeners.add(callback)
@@ -417,6 +424,31 @@ describe('useConversationRun', () => {
     })
     expect(controller.isRunActive()).toBe(false)
     expect(renderedMessages.map((message) => message.id)).not.toContain('elsewhere-reply')
+  })
+
+  it('shows a message queued from the phone in the open chat', async () => {
+    openConversation = 'phone-chat'
+    await act(async () => root.render(<Harness />))
+    expect(controller.queuedMessages).toEqual([])
+    durableAdmissions = [
+      {
+        id: 'from-phone',
+        conversationId: 'phone-chat',
+        content: 'Queued on the phone',
+        mode: 'conversation',
+        behavior: 'queue',
+        position: 0,
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    await act(async () => {
+      admissionsChanged?.('another-chat')
+      admissionsChanged?.('phone-chat')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(controller.queuedMessages.map(({ content }) => content)).toEqual(['Queued on the phone'])
   })
 
   it('retains queued messages until the finalized run is consumed', async () => {

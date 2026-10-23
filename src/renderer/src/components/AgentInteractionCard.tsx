@@ -9,12 +9,14 @@ import {
   MessageCircleQuestionMark,
   MonitorUp,
   ShieldAlert,
+  Workflow,
   X
 } from 'lucide-react'
 import type { ContentSegment } from '../types/chat.types'
 import type { AgentApprovalPreview } from '../../../shared/agentRuntime'
 import { agentPermissionDecision, type AgentPermissionDecision } from '../../../shared/permissions'
 import { useWorkerChatIdentity } from './sessionChatContext'
+import { useChatSurface } from './chatSurface'
 import { StartSessionsCard } from './StartSessionsCard'
 
 type Interaction = NonNullable<ContentSegment['interaction']>
@@ -273,6 +275,7 @@ export default function AgentInteractionCard({
   const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
   const workerIdentity = useWorkerChatIdentity()
+  const { computerOnly } = useChatSurface()
   const questionRef = useRef<HTMLDivElement>(null)
   const questionShownRef = useRef(false)
   const promptId = useId()
@@ -425,6 +428,28 @@ export default function AgentInteractionCard({
               : PERMISSION_DECISION_LABELS[displayedDecision ?? 'deny']}
           </div>
         )}
+      </div>
+    )
+  }
+
+  const intent = interaction.kind === 'question' ? interaction.request.intent : undefined
+  // Starting chats in the computer's folders and taking over its browser happen on the computer.
+  if (computerOnly && pending && (intent === 'start_sessions' || intent === 'browser_takeover')) {
+    return (
+      <div className="agent-interaction agent-interaction-pending">
+        <div className="agent-interaction-heading">
+          {intent === 'start_sessions' ? (
+            <Workflow size={14} aria-hidden="true" />
+          ) : (
+            <MonitorUp size={14} aria-hidden="true" />
+          )}
+          <span>
+            {intent === 'start_sessions'
+              ? 'SideKick wants to start other chats'
+              : 'Human browser verification required'}
+          </span>
+        </div>
+        <div className="agent-interaction-copy">{computerOnly}</div>
       </div>
     )
   }

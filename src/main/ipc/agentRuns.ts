@@ -49,6 +49,24 @@ export function observeAgentRunEvents(
   return () => runEventObservers.delete(observer)
 }
 
+const admissionObservers = new Set<(conversationId: string) => void>()
+
+/** Lets another service hear when the window changes a chat's queued messages. */
+export function observeAdmissionChanges(observer: (conversationId: string) => void): () => void {
+  admissionObservers.add(observer)
+  return () => admissionObservers.delete(observer)
+}
+
+function admissionsChanged(conversationId: string): void {
+  for (const observer of admissionObservers) {
+    try {
+      observer(conversationId)
+    } catch (error) {
+      console.warn('[AgentRuntime] An admission observer failed:', error)
+    }
+  }
+}
+
 /** Lets a service hear when a run starts or stops preparing, which publishes no run event. */
 export function observeAgentRunPreparations(observer: (threadId: string) => void): () => void {
   preparationObservers.add(observer)
@@ -548,11 +566,15 @@ export function registerAgentRunHandlers(): void {
     return admissions.list(conversationId)
   })
   ipcMain.handle('agentRuns:admissionsReplace', (_event, input: ReplacePromptAdmissionsInput) => {
-    return admissions.replace(validateAdmissions(input))
+    const result = admissions.replace(validateAdmissions(input))
+    admissionsChanged(input.conversationId)
+    return result
   })
   ipcMain.handle('agentRuns:admissionsTakeNext', (_event, conversationId: string) => {
     if (!validId(conversationId)) throw new Error('Invalid conversation')
-    return admissions.takeNext(conversationId)
+    const next = admissions.takeNext(conversationId)
+    if (next) admissionsChanged(conversationId)
+    return next
   })
   ipcMain.handle('conversationGoals:current', (_event, conversationId: string) =>
     validId(conversationId)

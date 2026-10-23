@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Expand, MapPinned, X } from 'lucide-react'
 import type { MapLinkLocation } from '../utils/mapLinks'
+import { useChatSurface } from './chatSurface'
 import './MessageMapCard.css'
 
 const MessageMapPreview = lazy(() => import('./MessageMapPreview'))
@@ -45,6 +46,8 @@ export function MessageMapCard({ location }: { location: MapLinkLocation }): Rea
   const fullscreenTriggerRef = useRef<HTMLButtonElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const closeRef = useRef<HTMLButtonElement | null>(null)
+  // Map tiles come from the network; where nothing may load from there, the address is the card.
+  const { offline } = useChatSurface()
 
   useEffect(() => {
     if (!fullscreen) return undefined
@@ -95,19 +98,21 @@ export function MessageMapCard({ location }: { location: MapLinkLocation }): Rea
               <small>{location.providerLabel}</small>
             </span>
           </div>
-          <div className="message-map-controls">
-            <button
-              ref={fullscreenTriggerRef}
-              type="button"
-              onClick={() => setFullscreen(true)}
-              title="Open full screen"
-              aria-label="Open map full screen"
-            >
-              <Expand size={14} />
-            </button>
-          </div>
+          {!offline && (
+            <div className="message-map-controls">
+              <button
+                ref={fullscreenTriggerRef}
+                type="button"
+                onClick={() => setFullscreen(true)}
+                title="Open full screen"
+                aria-label="Open map full screen"
+              >
+                <Expand size={14} />
+              </button>
+            </div>
+          )}
         </div>
-        <MapSurface location={location} />
+        {!offline && <MapSurface location={location} />}
       </section>
       {fullscreen &&
         typeof document !== 'undefined' &&

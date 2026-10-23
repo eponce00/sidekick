@@ -40,6 +40,8 @@ import Artifact from './artifacts/Artifact'
 import { MessageMapCard } from './MessageMapCard'
 import { SiteIcon } from './SiteIcon'
 import { copyText } from '../utils/clipboard'
+import { useImageSource } from './chatSurface'
+import { SurfaceImage } from './SurfaceImage'
 import './MessageMarkdown.css'
 
 interface MarkdownNode {
@@ -299,7 +301,9 @@ function GalleryTile({
   onOpen: (index: number, trigger: HTMLButtonElement) => void
 }): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [loadFailed, setFailed] = useState(false)
+  const source = useImageSource(image.src)
+  const failed = loadFailed || source.failed
 
   return (
     <button
@@ -315,17 +319,19 @@ function GalleryTile({
           <span>Image unavailable</span>
         </span>
       ) : (
-        <img
-          src={image.src}
-          alt={image.alt}
-          title={image.title}
-          loading="lazy"
-          decoding="async"
-          draggable={false}
-          referrerPolicy="no-referrer"
-          onLoad={() => setLoaded(true)}
-          onError={() => setFailed(true)}
-        />
+        source.src && (
+          <img
+            src={source.src}
+            alt={image.alt}
+            title={image.title}
+            loading="lazy"
+            decoding="async"
+            draggable={false}
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+          />
+        )
       )}
       <span className="message-image-caption">{image.alt}</span>
       <span className="message-image-expand" aria-hidden="true">
@@ -464,7 +470,17 @@ function MessageImageGallery({ images }: { images: GalleryImage[] }): React.JSX.
                   <ChevronLeft size={21} />
                 </button>
               )}
-              <img src={activeImage.src} alt={activeImage.alt} draggable={false} />
+              <SurfaceImage
+                src={activeImage.src}
+                alt={activeImage.alt}
+                draggable={false}
+                fallback={
+                  <span className="message-image-error">
+                    <ImageOff size={17} aria-hidden="true" />
+                    <span>Image unavailable</span>
+                  </span>
+                }
+              />
               {images.length > 1 && (
                 <button
                   type="button"
@@ -498,13 +514,24 @@ function MarkdownImage({
     .join(' ')
   const isTwemoji = Boolean(props['data-twemoji'])
   return (
-    <img
+    <SurfaceImage
       {...props}
       alt={hints.alt}
       className={[className, isTwemoji ? '' : 'doc-img', hintClasses].filter(Boolean).join(' ')}
       {...(isTwemoji
         ? {}
         : { loading: 'lazy' as const, decoding: 'async' as const, referrerPolicy: 'no-referrer' })}
+      // Where the image cannot load, an emoji is its own character and a picture its name.
+      fallback={
+        props['data-twemoji'] !== undefined ? (
+          hints.alt
+        ) : (
+          <span className="markdown-image-unavailable">
+            <ImageOff size={13} aria-hidden="true" />
+            {hints.alt || 'Image'}
+          </span>
+        )
+      }
     />
   )
 }

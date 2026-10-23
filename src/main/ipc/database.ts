@@ -22,6 +22,7 @@ import { getManagedWorktrees } from './worktrees'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 import { isConversationModelId } from '../services/conversationModelStore'
+import { createConversation } from '../services/conversationCreation'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -87,60 +88,13 @@ export function registerDatabaseHandlers(): void {
       titleSource?: unknown,
       modelId?: unknown
     ) => {
-      const id = randomUUID()
-      const now = Date.now()
-      const source = isConversationTitleSource(titleSource) ? titleSource : 'placeholder'
-      const titleVersion = conversationTitleVersionForSource(source)
-      const normalizedProjectId = projectId ?? null
       // A new chat starts on the model last chosen in any chat, and keeps it.
-      const normalizedModelId = isConversationModelId(modelId) ? modelId : null
-      const project = normalizedProjectId
-        ? (db
-            .prepare('SELECT name, folder_path FROM projects WHERE id = ?')
-            .get(normalizedProjectId) as { name: string; folder_path: string } | undefined)
-        : undefined
-      if (normalizedProjectId && !project) throw new Error('Project not found')
-      const placement = db
-        .prepare(
-          `SELECT COALESCE(MIN(sidebar_order), 0) - 1 AS sidebar_order
-           FROM conversations WHERE project_id IS ?`
-        )
-        .get(normalizedProjectId) as { sidebar_order: number }
-      const stmt = db.prepare(
-        `INSERT INTO conversations
-         (id, title, created_at, updated_at, project_id, title_source, title_version,
-          sidebar_order, project_context_version, home_workspace_root, home_project_name, model_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
-      )
-      stmt.run(
-        id,
+      return createConversation(db, {
         title,
-        now,
-        now,
-        normalizedProjectId,
-        source,
-        titleVersion,
-        placement.sidebar_order,
-        project?.folder_path ?? null,
-        project?.name ?? null,
-        normalizedModelId
-      )
-      return {
-        id,
-        title,
-        created_at: now,
-        updated_at: now,
-        project_id: normalizedProjectId,
-        is_pinned: 0,
-        title_source: source,
-        title_version: titleVersion,
-        sidebar_order: placement.sidebar_order,
-        project_context_version: 0,
-        home_workspace_root: project?.folder_path ?? null,
-        home_project_name: project?.name ?? null,
-        unread_completion_at: null,
-        model_id: normalizedModelId
-      }
+        projectId: projectId ?? null,
+        titleSource: isConversationTitleSource(titleSource) ? titleSource : 'placeholder',
+        modelId: isConversationModelId(modelId) ? modelId : null
+      })
     }
   )
 
