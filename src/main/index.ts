@@ -13,6 +13,7 @@ import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
+import { shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
@@ -69,6 +70,7 @@ function prepareApplicationShutdown(): Promise<void> {
   voiceService?.dispose()
   applicationShutdown = Promise.allSettled([
     stopControlEndpoint?.(),
+    shutdownCompanion(),
     shutdownAgentRuntime(),
     closeMcpConnections(),
     shutdownWorktreeSetup()

@@ -22,6 +22,7 @@ behavior, and the development guide when testing or publishing it.
 - [Working in the background](user-guide/BACKGROUND.md) — keep agents working from the tray or Dock, and quit.
 - [Schedules](user-guide/SCHEDULES.md) — run a saved prompt hourly, daily, on weekdays, or weekly.
 - [Command line](user-guide/COMMAND_LINE.md) — inspect and configure SideKick from a terminal or another agent without handling keys.
+- [Phone](user-guide/PHONE.md) — see and drive your chats from a phone on the same Wi-Fi.
 
 ## Architecture
 
@@ -35,6 +36,7 @@ behavior, and the development guide when testing or publishing it.
 - [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
 - [Credentials](architecture/CREDENTIALS.md) — the sealed vault, its renderer and agent boundaries, and redaction of every output source.
 - [WebMCP](architecture/WEBMCP.md) — how the agent lists and calls the tools websites offer, through Chromium's own implementation.
+- [Phone companion](architecture/PHONE_COMPANION.md) — the local server, QR pairing, and the encryption inside each phone connection.
 
 ## Development and operations
 
@@ -62,6 +64,8 @@ behavior, and the development guide when testing or publishing it.
   that will use a stored credential by alias.
 - [WebMCP](roadmap/WEBMCP.md) — the standard, what Electron's Chromium ships, why SideKick uses it,
   and what is left.
+- [Phone companion](roadmap/PHONE_COMPANION.md) — a stable name, notifications, images, and the
+  rest of the phone work.
 
 Roadmap documents describe intent, not current behavior. A planned feature belongs there until its
 implementation, tests, and user documentation land together.

@@ -1,0 +1,324 @@
+.phone-companion-backdrop {
+  animation: motion-fade-in var(--duration-normal) ease-out;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: var(--modal-overlay);
+}
+
+.phone-companion-dialog {
+  animation: motion-dialog-in var(--duration-normal) var(--ease-out);
+  width: min(480px, 100%);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  overflow-y: auto;
+  padding: var(--space-5);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-xl);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+}
+
+.phone-companion-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.phone-companion-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
+
+.phone-companion-header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+}
+
+.phone-companion-header p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.phone-companion-close {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.phone-companion-close:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.phone-companion-close:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.phone-companion-access {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+
+.phone-companion-access > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.phone-companion-access strong {
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.phone-companion-access small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.phone-companion-error {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.phone-companion-pairing {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.phone-companion-code {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* White in both themes, with the code's own quiet zone inside, so a camera finds its edges. */
+.phone-companion-qr {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border-radius: var(--radius-lg);
+  background: #fff;
+  box-shadow: 0 0 0 1px var(--border-color);
+}
+
+.phone-companion-qr svg {
+  display: block;
+}
+
+.phone-companion-code-text {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+
+.phone-companion-code-text p,
+.phone-companion-expired p,
+.phone-companion-waiting p {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--text-md);
+  line-height: 1.4;
+}
+
+.phone-companion-countdown {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.phone-companion-expired,
+.phone-companion-waiting {
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.phone-companion-waiting {
+  flex-direction: row;
+  gap: var(--space-3);
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border-color));
+  background: var(--accent-subtle);
+  color: var(--accent);
+  text-align: left;
+}
+
+.phone-companion-waiting > div {
+  display: grid;
+  gap: 4px;
+}
+
+.phone-companion-waiting small {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.phone-companion-address {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.phone-companion-address code,
+.phone-companion-device code {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+.phone-companion-safety {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.phone-companion-safety svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+.phone-companion-devices {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--panel-border);
+}
+
+.phone-companion-devices h3 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.phone-companion-devices ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.phone-companion-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.phone-companion-device {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px 6px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.phone-companion-device:hover {
+  background: var(--surface-hover);
+}
+
+.phone-companion-device-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--surface-4);
+}
+
+.phone-companion-device-dot.is-connected {
+  background: var(--accent);
+}
+
+.phone-companion-device-text {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.phone-companion-device-text strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.phone-companion-device-text small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Narrow windows stack the code over its text instead of squeezing both. */
+@media (max-width: 480px) {
+  .phone-companion-dialog {
+    padding: var(--space-4);
+  }
+
+  .phone-companion-code {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  .phone-companion-code-text {
+    justify-items: center;
+  }
+}

@@ -77,6 +77,14 @@ OAuth access and refresh tokens are kept in protected main-process storage. Side
 the permissions granted by the connected service, so review the service's authorization screen and
 disconnect connectors you no longer use.
 
+### Your phone
+
+With **Phone access** on, SideKick listens on your local network so a phone you allowed can show
+and drive your chats. It sends that phone your chat titles, messages and the agent's live progress,
+encrypted, directly over the network, never through a service. It never sends credentials,
+settings, files or images. The phones you allowed are stored on this computer; removing one, or
+turning phone access off, ends its access. See [Use SideKick from your phone](docs/user-guide/PHONE.md).
+
 ### Updates and operating-system services
 
 Installed builds contact the public GitHub Releases feed to check for, download, and install

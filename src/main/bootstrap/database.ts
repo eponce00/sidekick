@@ -1037,6 +1037,17 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_conversation_project_events_latest
       ON conversation_project_events(conversation_id, moved_at DESC);
+
+    -- Phones the user approved for the phone companion; the secret is sealed by the OS when it can be.
+    CREATE TABLE IF NOT EXISTS companion_devices (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      secret BLOB NOT NULL,
+      secret_sealed INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      last_seen_at INTEGER,
+      last_address TEXT
+    );
   `)
   db.exec(SCHEDULE_TABLES)
 

@@ -16,6 +16,7 @@ describe('useConversationMessages', () => {
   let deleteMessagesAfter: ReturnType<typeof vi.fn>
   let onCostUpdate: ReturnType<typeof vi.fn<(cost: number) => void>>
   let onRollbackConsumed: ReturnType<typeof vi.fn<() => void>>
+  let messagesChanged: ((conversationId: string) => void) | null
 
   function Harness({ rollbackHash }: { rollbackHash?: string }): null {
     const value = useConversationMessages({
@@ -47,9 +48,16 @@ describe('useConversationMessages', () => {
     deleteMessagesAfter = vi.fn(async () => undefined)
     onCostUpdate = vi.fn()
     onRollbackConsumed = vi.fn()
+    messagesChanged = null
+    const onMessagesChanged = (callback: (conversationId: string) => void): (() => void) => {
+      messagesChanged = callback
+      return () => {
+        messagesChanged = null
+      }
+    }
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { conversations: { getMessages, deleteMessagesAfter } }
+      value: { conversations: { getMessages, deleteMessagesAfter, onMessagesChanged } }
     })
   })
 
@@ -80,5 +88,26 @@ describe('useConversationMessages', () => {
 
     await render('checkpoint-1')
     expect(deleteMessagesAfter).toHaveBeenCalledOnce()
+  })
+
+  it('loads again when the phone adds a message, keeping a reply that is still running', async () => {
+    await render()
+    await act(async () => {
+      controller.setMessages((previous) => [
+        ...previous,
+        { id: 'live', role: 'agent', content: 'Working', timestamp: 4, runId: 'run-1' }
+      ])
+    })
+    getMessages.mockResolvedValueOnce([
+      { id: 'one', role: 'user', content: 'Question', timestamp: 1 },
+      { id: 'phone', role: 'user', content: 'From the phone', timestamp: 5 }
+    ])
+    await act(async () => {
+      messagesChanged?.('another-conversation')
+      messagesChanged?.('conversation-1')
+      await Promise.resolve()
+    })
+    expect(getMessages).toHaveBeenCalledTimes(2)
+    expect(controller.messages.map((message) => message.id)).toEqual(['one', 'phone', 'live'])
   })
 })

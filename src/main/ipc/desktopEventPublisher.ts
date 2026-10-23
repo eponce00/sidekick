@@ -7,6 +7,8 @@ interface DesktopEventPayloads {
   'sessions:changed': import('../../shared/sessions').SessionsChangedEvent
   'terminal:event': import('../../shared/terminalSessions').TerminalSessionEvent
   'schedules:changed': import('../../shared/schedules').SchedulesChangedEvent
+  'companion:changed': import('../../shared/companion').CompanionStatus
+  'conversations:messagesChanged': { conversationId: string }
 }
 
 export interface DesktopEventWindow {

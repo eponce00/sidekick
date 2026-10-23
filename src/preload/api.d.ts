@@ -58,6 +58,8 @@ interface MemoryAPI {
 
 interface ConversationsAPI {
   list: () => Promise<import('../shared/projects').ProjectConversation[]>
+  /** A chat's saved messages changed outside this window, such as from the user's phone. */
+  onMessagesChanged: (callback: (conversationId: string) => void) => () => void
   search: (query: string) => Promise<import('../shared/projects').ProjectConversation[]>
   create: (
     title: string,
@@ -405,6 +407,7 @@ export interface DesktopApi {
   agentRuns: AgentRunsAPI
   conversationGoals: import('../shared/conversationGoals').ConversationGoalsAPI
   schedules: import('../shared/schedules').SchedulesAPI
+  companion: import('../shared/companion').CompanionAPI
   sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
   mcp: McpAPI

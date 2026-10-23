@@ -370,13 +370,45 @@
   display: grid;
   flex-shrink: 0;
   justify-items: center;
+  gap: 4px;
   padding: 8px 0 10px;
 }
 
-.sidebar-rail-footer .sidebar-menu-btn {
+.sidebar-rail-footer .sidebar-menu-btn,
+.sidebar-rail-footer .sidebar-phone-btn {
   width: 38px;
   height: 38px;
   border-radius: var(--radius-md);
+}
+
+.sidebar-footer {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  padding: 6px 10px 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.sidebar-phone-btn {
+  position: relative;
+}
+
+.sidebar-phone-btn.active {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+/* A phone is connected now. */
+.sidebar-phone-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--surface-0);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  pointer-events: none;
 }
 
 /* From the bottom of the rail the menu opens beside it and upward, so it stays on screen. */

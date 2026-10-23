@@ -24,7 +24,9 @@ export default defineConfig({
         input: {
           index: resolve('src/renderer/index.html'),
           sandbox: resolve('src/renderer/sandbox.html'),
-          'artifact-inspect': resolve('src/renderer/artifact-inspect.html')
+          'artifact-inspect': resolve('src/renderer/artifact-inspect.html'),
+          // The page SideKick serves to paired phones on the local network.
+          companion: resolve('src/renderer/companion.html')
         }
       }
     }
