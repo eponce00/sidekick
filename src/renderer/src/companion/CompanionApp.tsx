@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Smartphone } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import type { CompanionChat, CompanionEvent } from '../../../shared/companion'
 import type { CompanionConnection } from './chatState'
-import { ChatList } from './ChatList'
+import { ChatDrawer } from './ChatDrawer'
 import { ChatView } from './ChatView'
 import {
   CompanionClient,
@@ -12,26 +12,38 @@ import {
   pair,
   type StoredDevice
 } from './companionClient'
+import { homeSuggestions } from './homeSuggestions'
+import { entryState, HOME, readEntry, releaseLayers, type ShownChat } from './navigation'
 import { bindPhoneApi, dispatchToPhoneApi } from './phoneApi'
 import { refreshPhoneVoice } from './phoneVoice'
+import { Robot } from './Robot'
 
 export interface CompanionBoot {
   /** The one-time secret from a scanned code. */
   secret: Uint8Array | null
   device: StoredDevice | null
-  /** The preview's fake computer, used instead of pairing. */
-  preview?: { device: StoredDevice; connection: CompanionConnection }
+  /** The preview's fake computer, used instead of pairing, or one of the screens before it. */
+  preview?: {
+    device: StoredDevice
+    connection: CompanionConnection
+    screen?: 'start' | 'pairing' | 'denied'
+    /** Opens the chat drawer at once, for screenshots. */
+    drawer?: boolean
+  }
 }
 
+type Pair = (secret: Uint8Array) => Promise<StoredDevice>
+
 type Screen =
-  | { kind: 'pairing'; secret: Uint8Array }
+  | { kind: 'pairing'; secret: Uint8Array; pair: Pair }
   | { kind: 'start'; notice?: string }
-  | { kind: 'ready'; device: StoredDevice; connection: CompanionConnection }
+  | { kind: 'ready'; device: StoredDevice; connection: CompanionConnection; drawer?: boolean }
 
-const REMOVED_NOTICE = 'This phone was removed. Scan a new code on the computer.'
+const REMOVED_NOTICE = 'This phone was removed on the computer.'
 
+// The start screen says how to scan a new code, so only what it does not say is added.
 const PAIRING_HINTS: Record<CompanionPairingError['reason'], string> = {
-  denied: 'If that was a mistake, show a new code on the computer and scan it again.',
+  denied: '',
   expired: '',
   unreachable:
     'Check that this phone is on the same Wi-Fi network as the computer, then scan the code again.',
@@ -46,37 +58,53 @@ function pairingNotice(error: unknown): string {
 }
 
 function initialScreen(boot: CompanionBoot): Screen {
-  if (boot.preview) return { kind: 'ready', ...boot.preview }
-  if (boot.secret) return { kind: 'pairing', secret: boot.secret }
+  if (boot.preview) {
+    const { screen, device, connection } = boot.preview
+    if (screen === 'start') return { kind: 'start' }
+    if (screen === 'denied')
+      return {
+        kind: 'start',
+        notice: pairingNotice(
+          new CompanionPairingError('denied', 'The computer did not allow this phone.')
+        )
+      }
+    // The preview's computer never answers, so its pairing screen stays up.
+    if (screen === 'pairing')
+      return { kind: 'pairing', secret: new Uint8Array(), pair: () => new Promise(() => {}) }
+    return { kind: 'ready', device, connection, drawer: boot.preview.drawer }
+  }
+  if (boot.secret) return { kind: 'pairing', secret: boot.secret, pair }
   if (boot.device)
     return { kind: 'ready', device: boot.device, connection: new CompanionClient(boot.device) }
   return { kind: 'start' }
 }
 
+const SCAN_INSTRUCTION =
+  'On your computer, click the phone icon at the bottom of the sidebar and scan the code.'
+
 function StartScreen({ notice }: { notice?: string }) {
   return (
     <div className="cp-screen cp-center">
-      <Smartphone size={40} className="cp-center-icon" aria-hidden="true" />
+      <Robot />
       <h1>SideKick on your phone</h1>
       {notice && (
-        <p className="cp-inline-error" role="alert">
+        <p className="cp-center-error" role="alert">
           {notice}
         </p>
       )}
-      <p>
-        Open SideKick on your computer, click the phone icon at the bottom of the sidebar, and scan
-        the code.
-      </p>
+      <p>{SCAN_INSTRUCTION}</p>
     </div>
   )
 }
 
 function PairingScreen({
   secret,
+  pair,
   onPaired,
   onFailed
 }: {
   secret: Uint8Array
+  pair: Pair
   onPaired: (device: StoredDevice) => void
   onFailed: (notice: string) => void
 }) {
@@ -89,28 +117,60 @@ function PairingScreen({
     return () => {
       current = false
     }
-  }, [secret, onPaired, onFailed])
+  }, [secret, pair, onPaired, onFailed])
   return (
-    <div className="cp-screen cp-center" role="status">
-      <Loader2 size={32} className="icon-spin cp-center-icon" aria-hidden="true" />
-      <h1>Waiting for you to allow this phone on your computer…</h1>
-      <p>Check the computer for a SideKick prompt.</p>
+    <div className="cp-screen cp-center">
+      <Robot />
+      <h1>Allow this phone on your computer</h1>
+      <p className="cp-center-status" role="status">
+        <Loader2 size={15} className="icon-spin" aria-hidden="true" />
+        Waiting for your answer…
+      </p>
     </div>
   )
 }
 
-type View = { kind: 'list' } | { kind: 'chat'; id: string | null; title: string; key: number }
+interface View {
+  /** The history entry the chat is shown at; a new one remounts the chat. */
+  nav: number
+  chat: ShownChat
+}
 
-const HISTORY_MARK = 'sidekickCompanionChat'
+/**
+ * Keeps the page inside the part of the screen the keyboard leaves, so the message box sits just
+ * above it. Android resizes the page itself; iOS only shrinks the visual viewport and pans it.
+ */
+function useKeyboardViewport(): void {
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) return
+    const root = document.documentElement
+    const update = (): void => {
+      root.style.setProperty('--cp-viewport-height', `${Math.round(viewport.height)}px`)
+      root.style.setProperty('--cp-viewport-top', `${Math.round(viewport.offsetTop)}px`)
+    }
+    update()
+    viewport.addEventListener('resize', update)
+    viewport.addEventListener('scroll', update)
+    return () => {
+      viewport.removeEventListener('resize', update)
+      viewport.removeEventListener('scroll', update)
+      root.style.removeProperty('--cp-viewport-height')
+      root.style.removeProperty('--cp-viewport-top')
+    }
+  }, [])
+}
 
 function Connected({
   device,
   connection,
+  initialDrawer = false,
   onForget,
   onRemoved
 }: {
   device: StoredDevice
   connection: CompanionConnection
+  initialDrawer?: boolean
   onForget: () => void
   onRemoved: () => void
 }) {
@@ -119,12 +179,15 @@ function Connected({
   // Null until the stream first opens.
   const [online, setOnline] = useState<boolean | null>(null)
   const [reconnects, setReconnects] = useState(0)
-  const [view, setView] = useState<View>({ kind: 'list' })
-  const [now, setNow] = useState(() => Date.now())
+  const [view, setView] = useState<View>({ nav: 0, chat: HOME })
+  const [drawerOpen, setDrawerOpen] = useState(initialDrawer)
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   const [notice, setNotice] = useState('')
   const listeners = useRef(new Set<(event: CompanionEvent) => void>())
-  const nextViewKey = useRef(1)
+  const nextNav = useRef(1)
+  const shownNav = useRef(0)
   const refreshing = useRef<{ again: boolean } | null>(null)
+  useKeyboardViewport()
 
   const onFailure = useCallback(
     (error: unknown): string | null => {
@@ -151,7 +214,6 @@ function Connected({
         refreshing.current.again = false
         const next = await connection.call('chats.list', {})
         setChats(next)
-        setNow(Date.now())
         setListError('')
       } while (refreshing.current.again)
     } catch (error) {
@@ -202,12 +264,6 @@ function Connected({
     return () => connection.close()
   }, [connection, refreshList])
 
-  // Ages in the list stay current while it is open.
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 60_000)
-    return () => clearInterval(timer)
-  }, [])
-
   const subscribe = useCallback((listener: (event: CompanionEvent) => void) => {
     listeners.current.add(listener)
     return () => {
@@ -215,35 +271,78 @@ function Connected({
     }
   }, [])
 
-  // The phone's back gesture returns to the list instead of leaving the page.
-  useEffect(() => {
-    const onPop = (): void => setView({ kind: 'list' })
-    window.addEventListener('popstate', onPop)
-    return () => window.removeEventListener('popstate', onPop)
+  // The page opens on the new-chat home; back from there leaves it, as it would any page. Runs
+  // before the drawer's own entry, which a preview can open at once.
+  useLayoutEffect(() => {
+    history.replaceState(entryState({ nav: 0, chat: HOME, layer: 0 }), '')
   }, [])
 
-  const openChat = (id: string | null, title: string): void => {
-    history.pushState({ [HISTORY_MARK]: id ?? '' }, '')
-    setView({ kind: 'chat', id, title, key: nextViewKey.current++ })
-  }
-  const back = (): void => {
-    if (history.state && HISTORY_MARK in history.state) history.back()
-    else setView({ kind: 'list' })
-    void refreshList()
-  }
-  const onCreated = useCallback(
-    (id: string) => {
-      history.replaceState({ [HISTORY_MARK]: id }, '')
+  // Back closes a sheet or the drawer first (see navigation.ts), then shows the chat before.
+  useEffect(() => {
+    const onPop = (event: PopStateEvent): void => {
+      const entry = readEntry(event.state) ?? { nav: 0, chat: HOME, layer: 0 }
+      if (entry.nav === shownNav.current) return
+      shownNav.current = entry.nav
+      setView({ nav: entry.nav, chat: entry.chat })
+      void refreshList()
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [refreshList])
+
+  const show = useCallback(
+    (chat: ShownChat): void => {
+      const nav = nextNav.current++
+      const entry = entryState({ nav, chat, layer: 0 })
+      // Picked in the drawer: the drawer's entry becomes the chat's, so back skips the drawer.
+      if (readEntry(history.state)?.layer) {
+        releaseLayers()
+        history.replaceState(entry, '')
+      } else history.pushState(entry, '')
+      shownNav.current = nav
+      setView({ nav, chat })
       void refreshList()
     },
     [refreshList]
   )
+  const openChat = useCallback(
+    (chat: CompanionChat) => {
+      if (chat.id === view.chat.id) setDrawerOpen(false)
+      else show({ id: chat.id, title: chat.title })
+    },
+    [show, view.chat.id]
+  )
+  const newChat = useCallback(() => {
+    if (view.chat.id === null) setDrawerOpen(false)
+    else show(HOME)
+  }, [show, view.chat.id])
+  const onCreated = useCallback(
+    (id: string) => {
+      // The home's entry now holds the chat it started; the chat itself stays mounted.
+      const entry = readEntry(history.state)
+      if (entry && entry.nav === shownNav.current && !entry.layer)
+        history.replaceState(entryState({ ...entry, chat: { id, title: '' } }), '')
+      setView((current) => ({ ...current, chat: { id, title: '' } }))
+      void refreshList()
+    },
+    [refreshList]
+  )
+  const toggle = useCallback((key: string) => {
+    setCollapsed((current) => {
+      const next = new Set(current)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [])
+  const closeDrawer = useCallback(() => setDrawerOpen(false), [])
+  // Shown once the chats are in, so the pills do not change under a finger as they arrive.
+  const suggestions = useMemo(() => (chats ? homeSuggestions(chats) : []), [chats])
 
   return (
     <div className="cp-app">
       {online !== true && (
         <div className="cp-connection" role="status">
-          <Loader2 size={14} className="icon-spin" aria-hidden="true" />
+          <Loader2 size={13} className="icon-spin" aria-hidden="true" />
           {online === null ? 'Connecting…' : 'Reconnecting…'}
         </div>
       )}
@@ -252,29 +351,38 @@ function Connected({
           {notice}
         </div>
       )}
-      {view.kind === 'chat' ? (
-        <ChatView
-          key={view.key}
-          connection={connection}
-          conversationId={view.id}
-          fallbackTitle={view.title}
-          subscribe={subscribe}
-          reconnects={reconnects}
-          onBack={back}
-          onCreated={onCreated}
-          onFailure={onFailure}
-        />
-      ) : (
-        <ChatList
-          chats={chats}
-          now={now}
-          error={listError}
-          deviceName={device.name}
-          onOpen={(chat) => openChat(chat.id, chat.title)}
-          onNew={() => openChat(null, 'New chat')}
-          onForget={onForget}
-        />
-      )}
+      <ChatView
+        key={view.nav}
+        connection={connection}
+        conversationId={view.chat.id}
+        fallbackTitle={view.chat.title}
+        subscribe={subscribe}
+        reconnects={reconnects}
+        suggestions={suggestions}
+        onMenu={() => {
+          setDrawerOpen(true)
+          void refreshList()
+        }}
+        onNew={newChat}
+        onOpenChat={openChat}
+        onCreated={onCreated}
+        onFailure={onFailure}
+      />
+      <ChatDrawer
+        open={drawerOpen}
+        chats={chats}
+        error={listError}
+        currentId={view.chat.id}
+        collapsed={collapsed}
+        onToggle={toggle}
+        host={window.location.host}
+        online={online}
+        deviceName={device.name}
+        onOpen={openChat}
+        onNew={newChat}
+        onClose={closeDrawer}
+        onForget={onForget}
+      />
     </div>
   )
 }
@@ -299,7 +407,12 @@ export default function CompanionApp({ boot }: { boot: CompanionBoot }) {
   if (screen.kind === 'pairing')
     return (
       <div className="cp-app">
-        <PairingScreen secret={screen.secret} onPaired={onPaired} onFailed={onPairingFailed} />
+        <PairingScreen
+          secret={screen.secret}
+          pair={screen.pair}
+          onPaired={onPaired}
+          onFailed={onPairingFailed}
+        />
       </div>
     )
   if (screen.kind === 'start')
@@ -313,6 +426,7 @@ export default function CompanionApp({ boot }: { boot: CompanionBoot }) {
       key={screen.device.deviceId}
       device={screen.device}
       connection={screen.connection}
+      initialDrawer={screen.drawer}
       onForget={onForget}
       onRemoved={onRemoved}
     />

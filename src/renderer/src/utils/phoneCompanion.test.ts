@@ -3,6 +3,7 @@ import {
   companionErrorMessage,
   deviceActivity,
   formatCountdown,
+  phonePopoverPosition,
   qrPixelSize,
   qrRects,
   qrUnits
@@ -38,8 +39,9 @@ describe('qrUnits and qrPixelSize', () => {
   })
 
   it('uses a whole number of pixels per module', () => {
-    expect(qrPixelSize(33)).toBe(198)
-    expect(qrPixelSize(49)).toBe(196)
+    expect(qrPixelSize(33)).toBe(165)
+    expect(qrPixelSize(37)).toBe(148)
+    expect(qrPixelSize(49)).toBe(147)
     expect(qrPixelSize(0)).toBe(0)
   })
 
@@ -69,28 +71,58 @@ describe('deviceActivity', () => {
   it('says a connected phone is connected', () => {
     expect(
       deviceActivity({ connected: true, lastSeenAt: now - 86_400_000, createdAt: 0 }, now)
-    ).toBe('Connected now')
+    ).toBe('Connected')
   })
 
   it('says when a phone was last used', () => {
     expect(deviceActivity({ connected: false, lastSeenAt: now - 20_000, createdAt: 0 }, now)).toBe(
-      'Last used just now'
+      'Just now'
     )
     expect(
       deviceActivity({ connected: false, lastSeenAt: now - 5 * 60_000, createdAt: 0 }, now)
-    ).toBe('Last used 5 min ago')
+    ).toBe('5 min ago')
     expect(
       deviceActivity({ connected: false, lastSeenAt: now - 3 * 3_600_000, createdAt: 0 }, now)
-    ).toBe('Last used 3 h ago')
+    ).toBe('3 h ago')
     expect(
       deviceActivity({ connected: false, lastSeenAt: now - 2 * 86_400_000, createdAt: 0 }, now)
-    ).toBe('Last used 2 d ago')
+    ).toBe('2 d ago')
   })
 
   it('falls back to when it was paired', () => {
     expect(
       deviceActivity({ connected: false, lastSeenAt: null, createdAt: now - 10 * 60_000 }, now)
-    ).toBe('Last used 10 min ago')
+    ).toBe('10 min ago')
+  })
+})
+
+describe('phonePopoverPosition', () => {
+  const viewport = { width: 1200, height: 800 }
+  const button = { left: 10, right: 39, top: 760, bottom: 789 }
+
+  it('opens above the button in the full sidebar, starting at its left edge', () => {
+    expect(phonePopoverPosition(button, 'above', viewport)).toEqual({
+      left: 10,
+      bottom: 46,
+      maxHeight: 746
+    })
+  })
+
+  it('opens beside the button in the rail, level with its bottom', () => {
+    expect(phonePopoverPosition(button, 'beside', viewport)).toEqual({
+      left: 46,
+      bottom: 11,
+      maxHeight: 781
+    })
+  })
+
+  it('stays inside a narrow window', () => {
+    expect(
+      phonePopoverPosition({ left: 300, right: 329, top: 2, bottom: 31 }, 'beside', {
+        width: 400,
+        height: 30
+      })
+    ).toEqual({ left: 72, bottom: 8, maxHeight: 14 })
   })
 })
 

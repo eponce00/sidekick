@@ -38,7 +38,7 @@ export function qrUnits(modules: boolean[][], quietZone = QR_QUIET_ZONE): number
  * The drawn side in pixels: a whole number of pixels per module near `target`, since a module
  * split across pixels blurs and can make the code harder to scan.
  */
-export function qrPixelSize(units: number, target = 208): number {
+export function qrPixelSize(units: number, target = 176): number {
   if (units <= 0) return 0
   return units * Math.max(2, Math.floor(target / units))
 }
@@ -51,20 +51,52 @@ export function formatCountdown(remainingMs: number): string {
 
 function relativeTime(at: number, now: number): string {
   const minutes = Math.round((now - at) / 60_000)
-  if (minutes < 1) return 'just now'
+  if (minutes < 1) return 'Just now'
   if (minutes < 60) return `${minutes} min ago`
   const hours = Math.round(minutes / 60)
   if (hours < 24) return `${hours} h ago`
   return `${Math.round(hours / 24)} d ago`
 }
 
-/** What a paired phone's row says about when it was last used. */
+/** What a paired phone's row says: connected now, or when it was last used. */
 export function deviceActivity(
   device: Pick<CompanionDevice, 'connected' | 'lastSeenAt' | 'createdAt'>,
   now = Date.now()
 ): string {
-  if (device.connected) return 'Connected now'
-  return `Last used ${relativeTime(device.lastSeenAt ?? device.createdAt, now)}`
+  if (device.connected) return 'Connected'
+  return relativeTime(device.lastSeenAt ?? device.createdAt, now)
+}
+
+export type PhonePopoverPlacement = 'above' | 'beside'
+
+export interface PhonePopoverPosition {
+  left: number
+  bottom: number
+  maxHeight: number
+}
+
+const POPOVER_WIDTH = 320
+const POPOVER_EDGE = 8
+
+/**
+ * Where the phone popover sits, in viewport pixels: above its button and running right in the
+ * full sidebar, or beside it and running up in the collapsed rail, as the rail's own menu does.
+ * Anchored by its bottom so it grows upward from the button, and kept on screen.
+ */
+export function phonePopoverPosition(
+  anchor: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+  placement: PhonePopoverPlacement,
+  viewport: { width: number; height: number }
+): PhonePopoverPosition {
+  const left = placement === 'above' ? anchor.left : anchor.right + 7
+  const bottom =
+    placement === 'above' ? viewport.height - anchor.top + 6 : viewport.height - anchor.bottom
+  const clampedBottom = Math.max(POPOVER_EDGE, bottom)
+  return {
+    left: Math.max(POPOVER_EDGE, Math.min(left, viewport.width - POPOVER_WIDTH - POPOVER_EDGE)),
+    bottom: clampedBottom,
+    maxHeight: Math.max(0, viewport.height - clampedBottom - POPOVER_EDGE)
+  }
 }
 
 /** Electron prefixes errors thrown by a main-process handler with the channel name. */

@@ -16,34 +16,64 @@ function previewPairing(): NonNullable<CompanionStatus['pairing']> {
   return { url, modules, expiresAt: Date.now() + PREVIEW_CODE_LIFETIME_MS }
 }
 
-/** Phone access for the renderer preview: one phone connected now and one used last week. */
-export function previewCompanionApi(): CompanionAPI {
+function previewDevices(now: number): CompanionStatus['devices'] {
+  return [
+    {
+      id: 'preview-phone-pixel',
+      name: 'Pixel 9',
+      createdAt: now - 3 * 86_400_000,
+      lastSeenAt: now,
+      lastAddress: '192.168.1.42',
+      connected: true
+    },
+    {
+      id: 'preview-phone-iphone',
+      name: 'iPhone',
+      createdAt: now - 21 * 86_400_000,
+      lastSeenAt: now - 6 * 86_400_000,
+      lastAddress: '192.168.1.57',
+      connected: false
+    }
+  ]
+}
+
+/**
+ * The state the preview starts in, so each one can be reviewed: `?phone=off`, `expired`,
+ * `waiting` or `error` (a code otherwise), and `&phones=none` for no paired phones.
+ */
+function previewStatus(search: string): CompanionStatus {
+  const params = new URLSearchParams(search)
   const now = Date.now()
-  let status: CompanionStatus = {
+  const devices = params.get('phones') === 'none' ? [] : previewDevices(now)
+  const on: CompanionStatus = {
     enabled: true,
     error: null,
     address: PREVIEW_ADDRESS,
     pairing: previewPairing(),
     awaitingApproval: null,
-    devices: [
-      {
-        id: 'preview-phone-pixel',
-        name: 'Pixel 9',
-        createdAt: now - 3 * 86_400_000,
-        lastSeenAt: now,
-        lastAddress: '192.168.1.42',
-        connected: true
-      },
-      {
-        id: 'preview-phone-iphone',
-        name: 'iPhone',
-        createdAt: now - 21 * 86_400_000,
-        lastSeenAt: now - 6 * 86_400_000,
-        lastAddress: '192.168.1.57',
-        connected: false
-      }
-    ]
+    devices
   }
+  const off: CompanionStatus = { ...on, enabled: false, address: null, pairing: null }
+  switch (params.get('phone')) {
+    case 'off':
+      return off
+    case 'error':
+      return {
+        ...off,
+        error: 'This computer is not on a local network. Connect to Wi-Fi and try again.'
+      }
+    case 'expired':
+      return { ...on, pairing: { ...previewPairing(), expiresAt: now - 1 } }
+    case 'waiting':
+      return { ...on, pairing: null, awaitingApproval: { name: 'iPhone', address: '192.168.1.57' } }
+    default:
+      return on
+  }
+}
+
+/** Phone access for the renderer preview: one phone connected now and one used last week. */
+export function previewCompanionApi(): CompanionAPI {
+  let status = previewStatus(window.location.search)
   const listeners = new Set<(status: CompanionStatus) => void>()
   const change = (update: Partial<CompanionStatus>): CompanionStatus => {
     status = { ...status, ...update }
@@ -56,9 +86,10 @@ export function previewCompanionApi(): CompanionAPI {
     setEnabled: async (enabled) =>
       // Turning access off closes every phone's connection, as the real server does.
       enabled
-        ? change({ enabled, address: PREVIEW_ADDRESS, pairing: previewPairing() })
+        ? change({ enabled, error: null, address: PREVIEW_ADDRESS, pairing: previewPairing() })
         : change({
             enabled,
+            error: null,
             address: null,
             pairing: null,
             awaitingApproval: null,

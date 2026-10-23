@@ -381,12 +381,12 @@
   border-radius: var(--radius-md);
 }
 
+/* The phone button sits under the list like the header's buttons above it, with no band. */
 .sidebar-footer {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  padding: 6px 10px 8px;
-  border-top: 1px solid var(--border-subtle);
+  padding: 4px 8px 8px 10px;
 }
 
 .sidebar-phone-btn {

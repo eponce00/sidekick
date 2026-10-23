@@ -28,7 +28,26 @@ import type { StoredDevice } from './companionClient'
  * pairing: a tour chat with the desktop's rich replies, a reply that streams, a run that keeps
  * working with a queue and a sub-agent, and chats waiting on a permission, a question and a plan.
  * Uploads, images, models, dictation and read aloud answer with canned data.
+ *
+ * `&state=` shows another screen: `home` (the new-chat home, also the default), `start`, `pairing`
+ * and `denied` before pairing, `empty` for a computer with no chats, and `reconnecting` for a
+ * stream that drops after it opens. `&drawer=1` opens the chat drawer.
  */
+
+export type PreviewState = 'home' | 'start' | 'pairing' | 'denied' | 'empty' | 'reconnecting'
+
+const PREVIEW_STATES: readonly PreviewState[] = [
+  'home',
+  'start',
+  'pairing',
+  'denied',
+  'empty',
+  'reconnecting'
+]
+
+export function previewState(value: string | null): PreviewState | null {
+  return PREVIEW_STATES.find((state) => state === value) ?? null
+}
 
 export const PREVIEW_DEVICE: StoredDevice = {
   deviceId: 'preview',
@@ -157,8 +176,10 @@ export class CompanionPreview implements CompanionConnection {
   private timers = new Set<ReturnType<typeof setTimeout>>()
   private nextId = 1
   private uploadPlaying = false
+  private readonly drops: boolean
 
-  constructor(now = Date.now()) {
+  constructor(now = Date.now(), options: { empty?: boolean; drops?: boolean } = {}) {
+    this.drops = Boolean(options.drops)
     this.chats = [
       chat('tour', 'Tour of the phone view', now - 90_000, 'sidekick', { pinned: true }),
       chat('upload', 'Fix the flaky upload test', now - 20_000, 'sidekick', {
@@ -179,9 +200,13 @@ export class CompanionPreview implements CompanionConnection {
         activePhase: 'awaiting_user',
         needsAnswer: true
       }),
+      chat('pricing', 'Update the pricing page copy', now - 95 * MINUTE, 'website'),
       chat('weekly', 'Weekly report draft', now - 2 * 60 * MINUTE, 'notes'),
+      chat('shoes', 'Compare trail running shoes under $150', now - 5 * 60 * MINUTE, null),
+      chat('footer', 'Fix the broken footer links', now - 26 * 60 * MINUTE, 'website'),
       chat('release', 'Explain the release process', now - 3 * 24 * 60 * MINUTE, 'sidekick')
     ]
+    if (options.empty) this.chats = []
     this.seed(now)
   }
 
@@ -1107,6 +1132,7 @@ export class CompanionPreview implements CompanionConnection {
   listen(onEvent: (event: CompanionEvent) => void, onConnection: (open: boolean) => void): void {
     this.onEvent = onEvent
     this.later(300, () => onConnection(true))
+    if (this.drops) this.later(900, () => onConnection(false))
   }
 
   close(): void {

@@ -1,9 +1,17 @@
 import { createRoot } from 'react-dom/client'
+// Inter, which the desktop loads from Google Fonts; the phone page loads nothing from elsewhere,
+// so it carries the four weights the app uses itself.
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
 // The desktop's design tokens and chat styles, so the phone matches it in both themes.
 import '../styles/App.css'
 import '../styles/codeTheme.css'
 import 'katex/dist/katex.min.css'
 import '../components/ChatPanel.css'
+// The chat list is the desktop's sidebar at phone size, with the same marks and search field.
+import '../components/Sidebar.css'
 import './companion.css'
 import CompanionApp, { type CompanionBoot } from './CompanionApp'
 import { storedDevice, takePairingSecret } from './companionClient'
@@ -34,13 +42,23 @@ applyTheme()
 light.addEventListener('change', applyTheme)
 
 async function boot(): Promise<CompanionBoot> {
-  if (new URLSearchParams(window.location.search).has('preview')) {
+  const params = new URLSearchParams(window.location.search)
+  if (params.has('preview')) {
     // Loaded only for the preview, so a paired phone never downloads the canned data.
-    const { CompanionPreview, PREVIEW_DEVICE } = await import('./companionPreview')
+    const { CompanionPreview, PREVIEW_DEVICE, previewState } = await import('./companionPreview')
+    const state = previewState(params.get('state'))
     return {
       secret: null,
       device: null,
-      preview: { device: PREVIEW_DEVICE, connection: new CompanionPreview() }
+      preview: {
+        device: PREVIEW_DEVICE,
+        connection: new CompanionPreview(Date.now(), {
+          empty: state === 'empty',
+          drops: state === 'reconnecting'
+        }),
+        screen: state === 'start' || state === 'pairing' || state === 'denied' ? state : undefined,
+        drawer: params.get('drawer') === '1'
+      }
     }
   }
   // Read once: taking the secret also removes it from the address bar.

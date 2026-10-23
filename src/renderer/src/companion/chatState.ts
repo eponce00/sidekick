@@ -1,6 +1,7 @@
 import type { ProjectedContentSegment } from '../../../shared/agentEventProjection'
 import type { AgentRunEvent, AgentRunPhase } from '../../../shared/agentRuntime'
 import type { CompanionChat, CompanionImage, CompanionMessage } from '../../../shared/companion'
+import type { SidebarDot } from '../utils/sessionFamilies'
 import type { CompanionClient } from './companionClient'
 
 /** What the phone needs from a connection; the preview client offers the same. */
@@ -19,28 +20,16 @@ export function isActivePhase(phase: AgentRunPhase | null | undefined): boolean 
   return Boolean(phase && !FINISHED_PHASES.has(phase))
 }
 
-/** The list badge: a waiting card matters more than a run that is still working. */
-export function chatBadge(chat: CompanionChat): 'answer' | 'working' | null {
-  if (chat.needsAnswer) return 'answer'
+/**
+ * The mark the desktop's sidebar would show on the chat's row: a waiting card matters more than a
+ * run that is still working.
+ */
+export function chatDot(
+  chat: CompanionChat
+): Extract<SidebarDot, 'waiting' | 'queued' | 'working'> | null {
+  if (chat.needsAnswer) return 'waiting'
+  if (chat.activePhase === 'queued') return 'queued'
   return isActivePhase(chat.activePhase) ? 'working' : null
-}
-
-/** A short age for the chat list: now, 5m, 3h, 2d, then the date. */
-export function relativeTime(timestamp: number, now = Date.now()): string {
-  const seconds = Math.max(0, Math.round((now - timestamp) / 1_000))
-  if (seconds < 60) return 'now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d`
-  const date = new Date(timestamp)
-  return date.toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    ...(date.getFullYear() === new Date(now).getFullYear() ? {} : { year: 'numeric' })
-  })
 }
 
 /** Adds events to a run once each, in sequence order; returns the same array when nothing is new. */

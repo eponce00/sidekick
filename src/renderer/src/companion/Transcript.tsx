@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
+import { Copy } from 'lucide-react'
 import { MessageItem } from '../components/MessageItem'
 import type { Message } from '../types/chat.types'
 import { messageTextForClipboard } from '../utils/messageClipboard'
 import { copyOnPhone, phoneNotice } from './phoneApi'
+import { Sheet, SheetAction } from './Sheet'
 
 type Resolve = (
   interactionId: string,
@@ -12,6 +14,15 @@ type Resolve = (
 
 const NOTHING = (): void => undefined
 const RETRY_ON_COMPUTER = 'Retry this reply on the computer.'
+/** How long a finger rests on a sent message before its menu opens. */
+const LONG_PRESS_MS = 450
+
+/** The sent message under an event, by the id the desktop's message view puts on each one. */
+function userMessageId(event: SyntheticEvent): string | null {
+  const target = event.target instanceof Element ? event.target : null
+  const message = target?.closest('.message-user[data-message-id]')
+  return message?.getAttribute('data-message-id') ?? null
+}
 
 /**
  * The chat drawn by the desktop's own message view, so replies, tools, cards and footers look and
@@ -55,9 +66,44 @@ export function Transcript({
     })
   }, [])
 
+  // A sent message has no row of buttons under it, as in the phone apps: holding it opens a menu.
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
+  const cancelPress = (): void => {
+    if (press.current) clearTimeout(press.current.timer)
+    press.current = null
+  }
+  useEffect(() => cancelPress, [])
+  const closeMenu = useCallback(() => setMenuFor(null), [])
+  const menuMessage = menuFor ? messages.find((message) => message.id === menuFor) : undefined
+
   const last = messages.length - 1
   return (
-    <>
+    <div
+      className="cp-transcript"
+      onContextMenu={(event) => {
+        const id = userMessageId(event)
+        if (!id) return
+        event.preventDefault()
+        cancelPress()
+        setMenuFor(id)
+      }}
+      onTouchStart={(event) => {
+        const id = userMessageId(event)
+        cancelPress()
+        if (!id || event.touches.length !== 1) return
+        const { clientX: x, clientY: y } = event.touches[0]
+        press.current = { x, y, timer: setTimeout(() => setMenuFor(id), LONG_PRESS_MS) }
+      }}
+      onTouchMove={(event) => {
+        const start = press.current
+        const touch = event.touches[0]
+        if (start && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10)
+          cancelPress()
+      }}
+      onTouchEnd={cancelPress}
+      onTouchCancel={cancelPress}
+    >
       {messages.map((message, index) => (
         <MessageItem
           key={message.id}
@@ -78,6 +124,21 @@ export function Transcript({
           readOnly
         />
       ))}
-    </>
+      {menuMessage && (
+        <Sheet label="Message" onClose={closeMenu}>
+          <p className="cp-sheet-quote">{menuMessage.content}</p>
+          <SheetAction
+            icon={<Copy size={18} />}
+            label="Copy"
+            onClick={() => {
+              setMenuFor(null)
+              void copyOnPhone(messageTextForClipboard(menuMessage)).then(
+                (copied) => copied && phoneNotice('Copied')
+              )
+            }}
+          />
+        </Sheet>
+      )}
+    </div>
   )
 }

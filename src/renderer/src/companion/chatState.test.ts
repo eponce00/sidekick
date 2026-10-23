@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 import type { CompanionChat, CompanionMessage } from '../../../shared/companion'
 import {
-  chatBadge,
+  chatDot,
   firstGapAfter,
   insertAtCursor,
   mergeRunEvents,
-  relativeTime,
   runEventAction,
   sendBaseline,
   unconfirmedSends,
@@ -95,26 +94,13 @@ describe('runEventAction', () => {
   })
 })
 
-describe('chatBadge', () => {
+describe('chatDot', () => {
   it('prefers a waiting card to a working run', () => {
-    expect(chatBadge(chat({ activePhase: 'awaiting_user', needsAnswer: true }))).toBe('answer')
-    expect(chatBadge(chat({ activePhase: 'streaming' }))).toBe('working')
-    expect(chatBadge(chat({ activePhase: 'completed' }))).toBeNull()
-    expect(chatBadge(chat({}))).toBeNull()
-  })
-})
-
-describe('relativeTime', () => {
-  const now = new Date(2026, 5, 15, 12).getTime()
-  it('gives short ages', () => {
-    expect(relativeTime(now - 10_000, now)).toBe('now')
-    expect(relativeTime(now - 5 * 60_000, now)).toBe('5m')
-    expect(relativeTime(now - 3 * 3_600_000, now)).toBe('3h')
-    expect(relativeTime(now - 2 * 86_400_000, now)).toBe('2d')
-  })
-
-  it('treats a clock ahead of the phone as now', () => {
-    expect(relativeTime(now + 60_000, now)).toBe('now')
+    expect(chatDot(chat({ activePhase: 'awaiting_user', needsAnswer: true }))).toBe('waiting')
+    expect(chatDot(chat({ activePhase: 'streaming' }))).toBe('working')
+    expect(chatDot(chat({ activePhase: 'queued' }))).toBe('queued')
+    expect(chatDot(chat({ activePhase: 'completed' }))).toBeNull()
+    expect(chatDot(chat({}))).toBeNull()
   })
 })
 

@@ -1,15 +1,13 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Camera,
   ChevronDown,
-  Eye,
   FileText,
-  ImagePlus,
+  Images,
   ListChecks,
   Loader2,
   Microscope,
   Plus,
-  Sparkles,
   Square,
   X
 } from 'lucide-react'
@@ -23,20 +21,23 @@ import { TEXT_FILE_ACCEPT } from './attachments'
 import { insertAtCursor, type CompanionConnection } from './chatState'
 import { PhoneDictation } from './PhoneDictation'
 import { useCompanionVoice } from './phoneVoice'
-import { Sheet, SheetAction, SheetSection } from './Sheet'
+import { Sheet, SheetAction, SheetSection, SheetTile } from './Sheet'
 import type { ModelList, OutgoingMessage } from './useCompanionChat'
 import { usePhoneAttachments } from './usePhoneAttachments'
 
-const MODE_COPY: Record<Exclude<ConversationRunMode, 'conversation'>, [string, string]> = {
-  research: ['Research report', 'One response · web sources · cross-checked citations'],
-  plan: ['Plan first', 'Review a plan before SideKick changes project files']
+/** The chip a chosen mode shows in the message box, as the phone apps show an active tool. */
+const MODE_CHIP: Record<Exclude<ConversationRunMode, 'conversation'>, string> = {
+  research: 'Research',
+  plan: 'Plan'
 }
 
 /**
- * The desktop's message box, laid out for a thumb: one row of controls, with attachments,
- * Plan and Research in a sheet from the + button and the model in its own. While SideKick
- * works, Send queues the message behind the run, as on the desktop; each queued message can
- * steer the run now, and Send with an empty box steers with the first.
+ * The desktop's message box as one card, laid out like the ChatGPT and Claude apps': the text on
+ * top, then + on the left, and the model, the microphone and one round button on the right. That
+ * button sends once there is something to send and stops SideKick while it works with nothing
+ * typed. Attachments, Plan and Research come from the + sheet, the model from its own. While
+ * SideKick works, Send queues the message behind the run, as on the desktop; each queued message
+ * can steer the run now, and Ctrl+Enter in an empty box steers with the first.
  */
 export function PhoneComposer({
   connection,
@@ -45,6 +46,7 @@ export function PhoneComposer({
   stopping,
   queue,
   models,
+  prefill,
   onSend,
   onStop,
   onUpdateQueue,
@@ -56,6 +58,8 @@ export function PhoneComposer({
   stopping: boolean
   queue: PromptAdmissionsResult
   models: ModelList | null
+  /** Text put in the box for review, as a home suggestion does; a new nonce puts it again. */
+  prefill?: { text: string; nonce: number } | null
   onSend: (message: OutgoingMessage) => Promise<boolean>
   onStop: () => void
   onUpdateQueue: (queued: Array<{ id: string; content: string }>) => void
@@ -72,6 +76,20 @@ export function PhoneComposer({
   const files = usePhoneAttachments(connection)
   const voice = useCompanionVoice()
   const closeSheet = useCallback(() => setSheet(null), [])
+  // A new suggestion replaces the text while rendering, so the box never shows the old text first.
+  const [prefilled, setPrefilled] = useState<number | null>(null)
+  if (prefill && prefill.nonce !== prefilled) {
+    setPrefilled(prefill.nonce)
+    setText(prefill.text)
+  }
+  useEffect(() => {
+    if (!prefill) return
+    requestAnimationFrame(() => {
+      const field = inputRef.current
+      field?.focus()
+      field?.setSelectionRange(prefill.text.length, prefill.text.length)
+    })
+  }, [prefill])
 
   const modelId = chosenModelId ?? models?.selectedModelId ?? null
   const model = models?.models.find((candidate) => candidate.id === modelId) ?? null
@@ -227,30 +245,11 @@ export function PhoneComposer({
       </div>
     ) : undefined
 
-  const contextBar =
-    mode !== 'conversation' ? (
-      <div
-        className={`${mode === 'plan' ? 'plan-mode-bar' : 'research-mode-bar'} is-selected`}
-        role="status"
-      >
-        <span className={mode === 'plan' ? 'plan-mode-icon' : 'research-mode-icon'} aria-hidden>
-          {mode === 'plan' ? <ListChecks size={14} /> : <Microscope size={14} />}
-        </span>
-        <span className={mode === 'plan' ? 'plan-mode-copy' : 'research-mode-copy'}>
-          <strong>{MODE_COPY[mode][0]}</strong>
-          <span>{MODE_COPY[mode][1]}</span>
-        </span>
-        <button
-          type="button"
-          className="research-mode-remove"
-          onClick={() => setMode('conversation')}
-          title="Use normal conversation mode"
-          aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
-        >
-          <X size={13} />
-        </button>
-      </div>
-    ) : undefined
+  // One round button at the end of the row, as in the phone apps: Send once there is something to
+  // send, Stop while SideKick works with nothing typed. A queued message steers from its own Steer
+  // button, or with Ctrl+Enter in an empty box on a hardware keyboard.
+  const showSend = hasContent
+  const showStop = runActive && !hasContent
 
   return (
     <>
@@ -272,7 +271,6 @@ export function PhoneComposer({
         }
         queueTray={queueTray}
         attachmentTray={attachmentTray}
-        contextBar={contextBar}
         onChange={setText}
         onKeyDown={(event) => {
           // Enter makes a new line on a phone keyboard; a hardware keyboard sends with Ctrl+Enter.
@@ -282,53 +280,67 @@ export function PhoneComposer({
           }
         }}
         onSend={() => void submit()}
-        sendDisabled={(!hasContent && !steerFirst) || sending || files.uploading}
+        sendDisabled={!showSend || sending || files.uploading}
+        sendButtonClassName={showSend ? '' : 'cp-hidden'}
         sendTitle={
-          steerFirst
-            ? 'Steer with the first queued message'
-            : files.uploading
-              ? 'Waiting for attachments to upload'
-              : runActive
-                ? 'Add message to queue'
-                : mode === 'research'
-                  ? 'Start research report'
-                  : mode === 'plan'
-                    ? 'Start Plan mode'
-                    : 'Send message'
+          files.uploading
+            ? 'Waiting for attachments to upload'
+            : runActive
+              ? 'Add message to queue'
+              : mode === 'research'
+                ? 'Start research report'
+                : mode === 'plan'
+                  ? 'Start Plan mode'
+                  : 'Send message'
         }
         toolbarLeft={
           <>
             <button
               type="button"
-              className={`input-plus-button ${sheet === 'add' ? 'menu-open' : ''}`}
+              className="cp-composer-button"
               onClick={() => setSheet('add')}
-              title="Add an attachment or agent behavior"
               aria-label="Add an attachment or agent behavior"
               aria-haspopup="dialog"
             >
-              <Plus size={18} strokeWidth={1.8} />
+              <Plus size={20} aria-hidden="true" />
             </button>
-            {models && models.models.length > 0 && (
-              <button
-                type="button"
-                className="cp-model-chip"
-                onClick={() => setSheet('model')}
-                title="Choose the model"
-                aria-haspopup="dialog"
-              >
-                <Sparkles size={13} aria-hidden="true" />
-                <span>{model?.name ?? 'Choose model'}</span>
-                <ChevronDown size={13} aria-hidden="true" />
-              </button>
+            {mode !== 'conversation' && (
+              <span className="cp-mode-chip" role="status">
+                {mode === 'plan' ? (
+                  <ListChecks size={15} aria-hidden="true" />
+                ) : (
+                  <Microscope size={15} aria-hidden="true" />
+                )}
+                {MODE_CHIP[mode]}
+                <button
+                  type="button"
+                  onClick={() => setMode('conversation')}
+                  aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
+                >
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </span>
             )}
           </>
         }
         toolbarRight={
           <>
+            {models && models.models.length > 0 && (
+              <button
+                type="button"
+                className="cp-model-chip"
+                onClick={() => setSheet('model')}
+                aria-label={`Model: ${model?.name ?? 'choose one'}`}
+                aria-haspopup="dialog"
+              >
+                <span>{model?.name ?? 'Choose model'}</span>
+                <ChevronDown size={14} aria-hidden="true" />
+              </button>
+            )}
             {voice?.dictation && (
               <PhoneDictation connection={connection} onText={insertDictation} />
             )}
-            {runActive && (
+            {showStop && (
               <button
                 type="button"
                 className={`stop-button ${stopping ? 'is-stopping' : ''}`}
@@ -337,7 +349,7 @@ export function PhoneComposer({
                 title={stopping ? 'Stopping...' : 'Stop generation'}
                 aria-label={stopping ? 'Stopping' : 'Stop generation'}
               >
-                <Square size={14} fill="currentColor" />
+                <Square size={13} fill="currentColor" />
               </button>
             )}
           </>
@@ -387,41 +399,29 @@ export function PhoneComposer({
       />
       {sheet === 'add' && (
         <Sheet label="Add to message" onClose={closeSheet}>
-          <SheetSection label="Add">
-            <SheetAction
-              icon={<ImagePlus size={18} />}
-              label="Photo library"
-              description={imageReason ?? 'Attach up to four photos or screenshots'}
-              disabled={Boolean(imageReason)}
-              onClick={() => pick(libraryInput)}
-            />
-            <SheetAction
-              icon={<Camera size={18} />}
-              label="Take photo"
-              description={imageReason ?? 'Use the camera'}
+          <div className="cp-sheet-tiles" role="group" aria-label="Attach">
+            <SheetTile
+              icon={<Camera size={22} />}
+              label="Camera"
               disabled={Boolean(imageReason)}
               onClick={() => pick(cameraInput)}
             />
-            <SheetAction
-              icon={<FileText size={18} />}
-              label="File"
-              description="A text or code file, up to 2 MB"
+            <SheetTile
+              icon={<Images size={22} />}
+              label="Photos"
+              disabled={Boolean(imageReason)}
+              onClick={() => pick(libraryInput)}
+            />
+            <SheetTile
+              icon={<FileText size={22} />}
+              label="Files"
               onClick={() => pick(fileInput)}
             />
-          </SheetSection>
-          <SheetSection label="Agent behavior">
+          </div>
+          {imageReason && <p className="cp-sheet-note">{imageReason}</p>}
+          <div className="cp-sheet-list" role="group" aria-label="Agent behavior">
             <SheetAction
-              icon={<ListChecks size={18} />}
-              label="Plan first"
-              description="Review a plan before SideKick changes project files"
-              selected={mode === 'plan'}
-              onClick={() => {
-                setMode((current) => (current === 'plan' ? 'conversation' : 'plan'))
-                setSheet(null)
-              }}
-            />
-            <SheetAction
-              icon={<Microscope size={18} />}
+              icon={<Microscope size={20} />}
               label="Research report"
               description="Search, cross-check, and cite web sources"
               selected={mode === 'research'}
@@ -430,7 +430,17 @@ export function PhoneComposer({
                 setSheet(null)
               }}
             />
-          </SheetSection>
+            <SheetAction
+              icon={<ListChecks size={20} />}
+              label="Plan first"
+              description="Review a plan before SideKick changes project files"
+              selected={mode === 'plan'}
+              onClick={() => {
+                setMode((current) => (current === 'plan' ? 'conversation' : 'plan'))
+                setSheet(null)
+              }}
+            />
+          </div>
         </Sheet>
       )}
       {sheet === 'model' && models && (
@@ -439,9 +449,8 @@ export function PhoneComposer({
             {models.models.map((candidate) => (
               <SheetAction
                 key={candidate.id}
-                icon={candidate.supportsVision ? <Eye size={18} /> : <Sparkles size={18} />}
                 label={candidate.name}
-                description={candidate.supportsVision ? 'Sees images' : undefined}
+                description={candidate.supportsVision ? 'Sees images' : 'Text only'}
                 selected={candidate.id === modelId}
                 onClick={() => {
                   setChosenModelId(candidate.id)

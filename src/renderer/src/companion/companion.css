@@ -1,6 +1,9 @@
 /* ============================================
-   SideKick on the phone. Colours, radii and spacing come from the desktop's tokens (App.css);
-   sizes are larger, since this is read at arm's length and tapped with a thumb.
+   SideKick on the phone, laid out as the ChatGPT and Claude apps are: a chat with a top bar, the
+   chats in a drawer from the left, the message box as one card, and sheets from the bottom.
+   Colours, radii and spacing come from the desktop's tokens (App.css), and the drawer is the
+   desktop's sidebar at phone size; text is a step larger, since this is read at arm's length and
+   tapped with a thumb.
    ============================================ */
 
 html {
@@ -13,14 +16,16 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The page fills the part of the screen the keyboard leaves (see useKeyboardViewport). */
 .cp-app {
-  position: relative;
+  position: fixed;
+  top: var(--cp-viewport-top, 0px);
+  right: 0;
+  left: 0;
   display: flex;
   flex-direction: column;
-  width: 100%;
   max-width: 820px;
-  height: 100%;
-  height: 100dvh;
+  height: var(--cp-viewport-height, 100dvh);
   margin: 0 auto;
   overflow: hidden;
   background: var(--app-bg);
@@ -35,6 +40,24 @@ body {
   }
 }
 
+/* Read at arm's length: the phone's text is a step larger than the desktop's. */
+.cp-header,
+.cp-drawer,
+.cp-center,
+.cp-connection,
+.cp-toast,
+.cp-messages,
+.cp-composer-area,
+.cp-sheet {
+  --content-text: 16px;
+  --content-text-secondary: 14px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-base: 15px;
+}
+
 .cp-screen {
   display: flex;
   flex: 1;
@@ -42,34 +65,28 @@ body {
   min-height: 0;
 }
 
-/* — Header — */
+/* — Top bar: the drawer's menu, the chat's name, a new chat — */
 
 .cp-header {
-  display: flex;
+  display: grid;
   flex: none;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
   align-items: center;
   gap: var(--space-2);
-  min-height: 56px;
-  padding: calc(env(safe-area-inset-top) + var(--space-2))
-    calc(env(safe-area-inset-right) + var(--space-4)) var(--space-2)
-    calc(env(safe-area-inset-left) + var(--space-1));
-  border-bottom: 1px solid var(--border-subtle);
+  min-height: calc(env(safe-area-inset-top) + 52px);
+  padding: env(safe-area-inset-top) calc(env(safe-area-inset-right) + var(--space-2)) 0
+    calc(env(safe-area-inset-left) + var(--space-2));
   background: var(--app-bg);
 }
 
-.cp-header.is-list {
-  gap: var(--space-4);
-  padding-left: calc(env(safe-area-inset-left) + var(--space-5));
-}
-
 .cp-header-text {
-  flex: 1;
   min-width: 0;
+  text-align: center;
 }
 
 .cp-header-text h1 {
   overflow: hidden;
-  font-size: var(--text-xl);
+  font-size: var(--text-base);
   font-weight: 600;
   line-height: 1.3;
   text-overflow: ellipsis;
@@ -79,27 +96,28 @@ body {
 .cp-header-text p {
   overflow: hidden;
   color: var(--text-muted);
-  font-size: var(--text-base);
+  font-size: var(--text-xs);
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* A quiet chip under the top bar while the computer is out of reach. */
 .cp-connection {
   position: absolute;
   z-index: 10;
-  top: calc(env(safe-area-inset-top) + 64px);
+  top: calc(env(safe-area-inset-top) + 58px);
   left: 50%;
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border-color);
+  height: 30px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
-  background: var(--surface-3);
-  box-shadow: var(--shadow-md);
-  color: var(--text-secondary);
-  font-size: var(--text-base);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
   transform: translateX(-50%);
   white-space: nowrap;
   animation: motion-fade-in var(--duration-normal) ease;
@@ -113,8 +131,6 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-4) calc(env(safe-area-inset-right) + var(--space-4)) var(--space-6)
-    calc(env(safe-area-inset-left) + var(--space-4));
 }
 
 .cp-placeholder {
@@ -124,7 +140,13 @@ body {
   gap: var(--space-3);
   padding: var(--space-8) 0;
   color: var(--text-muted);
+  font-size: var(--text-base);
   text-align: center;
+}
+
+.cp-placeholder.is-compact {
+  justify-content: flex-start;
+  padding: var(--space-3) 10px;
 }
 
 .cp-inline-error {
@@ -139,54 +161,7 @@ body {
 
 /* — Buttons — */
 
-.cp-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 44px;
-  padding: 0 var(--space-5);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--surface-2);
-  color: var(--text-primary);
-  font-size: var(--text-lg);
-  font-weight: 500;
-  line-height: 1.2;
-  cursor: pointer;
-  transition: var(--transition-ui);
-}
-
-.cp-button:active:not(:disabled) {
-  background: var(--surface-3);
-}
-
-.cp-button.is-primary {
-  border-color: transparent;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-.cp-button.is-primary:active:not(:disabled) {
-  background: var(--accent-pressed);
-}
-
-.cp-button.is-quiet {
-  border-color: transparent;
-  background: transparent;
-  color: var(--text-secondary);
-}
-
-.cp-button.is-compact {
-  flex: none;
-  padding: 0 var(--space-4);
-}
-
-.cp-button:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
+/* Quiet round icon buttons at the size of a thumb. */
 .cp-icon-button {
   display: inline-flex;
   flex: none;
@@ -194,20 +169,118 @@ body {
   justify-content: center;
   width: 44px;
   height: 44px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-full);
   background: transparent;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   cursor: pointer;
-  transition: var(--transition-ui);
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast),
+    opacity var(--duration-fast);
 }
 
 .cp-icon-button:active:not(:disabled) {
   background: var(--surface-3);
+  color: var(--text-primary);
 }
 
+/* A new chat while the new-chat home is already open does nothing. */
 .cp-icon-button:disabled {
   cursor: default;
+  opacity: 0.4;
+}
+
+.cp-icon-button:focus-visible,
+.cp-row:focus-visible,
+.cp-project-row:focus-visible,
+.cp-section-label:focus-visible,
+.cp-search-clear:focus-visible,
+.cp-suggestion:focus-visible,
+.cp-drawer-connection:focus-visible,
+.cp-composer-button:focus-visible,
+.cp-model-chip:focus-visible,
+.cp-sheet-tile:focus-visible,
+.cp-sheet-action:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* — Robot — */
+
+.cp-robot {
+  display: block;
+  flex: none;
+  width: 148px;
+}
+
+.cp-robot.is-small {
+  width: 96px;
+}
+
+.cp-robot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.cp-robot .peek-helmet {
+  fill: var(--brand-helmet);
+}
+
+.cp-robot .peek-shade {
+  fill: var(--brand-shade);
+}
+
+.cp-robot .peek-visor {
+  fill: var(--brand-visor);
+}
+
+.cp-robot .peek-glint {
+  stroke: var(--brand-glint);
+}
+
+.cp-robot .peek-led,
+.cp-robot .peek-eye,
+.cp-robot .peek-badge {
+  fill: var(--brand-led);
+}
+
+.cp-robot .peek-badge-mark {
+  stroke: var(--brand-visor);
+}
+
+.cp-robot .peek-cape {
+  fill: var(--brand-cape);
+}
+
+.cp-robot .peek-cape-lining {
+  fill: var(--brand-cape-lining);
+}
+
+/* Now and then it blinks, as on the desktop's empty chat. */
+.cp-robot .peek-eye {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: cp-robot-blink 5.8s ease-in-out 1.8s infinite;
+}
+
+@keyframes cp-robot-blink {
+  0%,
+  93%,
+  100% {
+    transform: none;
+  }
+  95.5% {
+    transform: scaleY(0.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-robot .peek-eye {
+    animation: none;
+  }
 }
 
 /* — Start and pairing — */
@@ -215,12 +288,16 @@ body {
 .cp-center {
   align-items: center;
   justify-content: center;
-  gap: var(--space-4);
+  gap: var(--space-3);
   padding: calc(env(safe-area-inset-top) + var(--space-6))
     calc(env(safe-area-inset-right) + var(--space-6))
-    calc(env(safe-area-inset-bottom) + var(--space-6))
+    calc(env(safe-area-inset-bottom) + var(--space-8))
     calc(env(safe-area-inset-left) + var(--space-6));
   text-align: center;
+}
+
+.cp-center .cp-robot {
+  margin-bottom: var(--space-4);
 }
 
 .cp-center h1 {
@@ -228,127 +305,384 @@ body {
   font-size: var(--text-2xl);
   font-weight: 600;
   line-height: 1.3;
+  text-wrap: balance;
 }
 
 .cp-center p {
   max-width: 34ch;
-  color: var(--text-secondary);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  text-wrap: balance;
 }
 
-.cp-center .cp-inline-error {
-  margin: 0;
+.cp-center .cp-center-error {
   color: var(--color-error);
 }
 
-.cp-center-icon {
-  color: var(--accent);
+.cp-center .cp-center-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-/* — Chat list — */
+/* — New-chat home — */
 
-.cp-chat-list {
+.cp-app .messages-container.cp-messages.is-home {
+  justify-content: center;
+}
+
+.cp-home {
   display: flex;
   flex-direction: column;
-  margin: 0 calc(-1 * var(--space-2));
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-7);
+  text-align: center;
+}
+
+.cp-home h2 {
+  color: var(--text-primary);
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.cp-suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  margin-top: var(--space-2);
+}
+
+.cp-suggestion {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  min-height: 44px;
+  padding: 0 var(--space-5);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-md);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+.cp-suggestion span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-suggestion svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cp-suggestion:active {
+  background: var(--surface-2);
+}
+
+/* — Drawer: the desktop's sidebar, sliding in over the chat — */
+
+.cp-drawer-root {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  pointer-events: none;
+}
+
+.cp-drawer-root.is-open {
+  pointer-events: auto;
+}
+
+.cp-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--modal-overlay);
+  opacity: 0;
+  transition: opacity var(--duration-slow) ease;
+}
+
+.cp-drawer-root.is-open .cp-drawer-scrim {
+  opacity: 1;
+}
+
+.cp-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  width: min(85%, 360px);
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+  border-right: 1px solid var(--panel-border);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 2%, transparent), transparent 160px),
+    var(--surface-0);
+  box-shadow: var(--shadow-panel);
+  visibility: hidden;
+  transform: translateX(calc(-100% - 64px));
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    visibility 0s linear var(--duration-slow);
+}
+
+.cp-drawer-root.is-open .cp-drawer {
+  visibility: visible;
+  transform: none;
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    visibility 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-drawer,
+  .cp-drawer-root.is-open .cp-drawer,
+  .cp-drawer-scrim {
+    transition: none;
+  }
+}
+
+.cp-drawer-top {
+  flex: none;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.cp-drawer .sidebar-search.cp-search {
+  height: 40px;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0 var(--space-2) 0 var(--space-4);
+}
+
+/* At 16 px a phone does not zoom in when the field is tapped. */
+.cp-search input {
+  font-size: 16px;
+}
+
+.cp-search-clear {
+  display: grid;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cp-drawer .cp-list {
+  padding: 0 var(--space-2) var(--space-5);
+}
+
+.cp-new-row {
+  margin-bottom: var(--space-3);
+}
+
+.cp-new-row-icon {
+  flex: none;
+  color: var(--text-secondary);
+}
+
+.cp-drawer-connection {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 52px;
+  padding: 0 var(--space-5);
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cp-drawer-connection:active {
+  background: var(--surface-2);
+}
+
+.cp-drawer-connection-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.cp-status-dot.is-online {
+  background: var(--accent);
+}
+
+.cp-section + .cp-section {
+  margin-top: var(--space-4);
+}
+
+.cp-section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cp-section-label.is-static {
+  padding-left: 10px;
+  cursor: default;
+}
+
+.cp-rows {
+  display: flex;
+  flex-direction: column;
   list-style: none;
 }
 
-.cp-chat-list li + li {
-  border-top: 1px solid var(--border-subtle);
-}
-
-.cp-chat {
+.cp-row,
+.cp-project-row {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-3);
   width: 100%;
-  min-height: 56px;
-  padding: var(--space-4) var(--space-3);
+  min-height: 44px;
+  padding: var(--space-1) var(--space-4) var(--space-1) 10px;
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
-  transition: var(--transition-ui);
+  transition: background var(--duration-fast);
 }
 
-.cp-chat:active {
+.cp-row:active,
+.cp-project-row:active {
   background: var(--surface-2);
 }
 
-.cp-chat-top {
+/* The chat on screen, as the desktop marks its selected row. */
+.cp-row.is-active {
+  background: color-mix(in srgb, var(--surface-4) 68%, transparent);
+}
+
+.cp-row.is-active .cp-row-title {
+  font-weight: 500;
+}
+
+.cp-row-text {
   display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.cp-chat-pin {
-  flex: none;
-  color: var(--text-muted);
-}
-
-.cp-chat-title {
   flex: 1;
+  flex-direction: column;
   min-width: 0;
+}
+
+.cp-row-title {
   overflow: hidden;
-  font-weight: 500;
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cp-chat-time {
-  flex: none;
-  color: var(--text-muted);
-  font-size: var(--text-base);
-}
-
-.cp-chat-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  min-width: 0;
-  color: var(--text-muted);
-  font-size: var(--text-base);
-}
-
-.cp-chat-project {
-  min-width: 0;
+.cp-row-meta {
   overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cp-badge {
+/* A project's chats sit under its name, as on the desktop. */
+.cp-row.is-nested {
+  width: calc(100% - 26px);
+  margin-left: 26px;
+}
+
+.cp-project-row {
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.cp-project-chevron {
+  color: var(--text-muted);
+}
+
+.cp-project-icon {
   flex: none;
-  margin-left: auto;
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-full);
-  font-size: var(--text-md);
-  font-weight: 500;
+  margin-left: 2px;
+  color: var(--text-muted);
 }
 
-.cp-badge.is-answer {
-  background: var(--color-warning-subtle);
-  color: var(--color-warning);
+.cp-project-row.contains-active {
+  color: var(--text-primary);
 }
 
-.cp-badge.is-working {
-  background: var(--accent-muted);
+.cp-project-row.contains-active .cp-project-icon {
   color: var(--accent);
 }
 
-.cp-list-footer {
+.cp-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The desktop's marks, a little larger beside a larger title. */
+.cp-drawer .conversation-run-indicator {
+  margin-left: auto;
+  scale: 1.15;
+}
+
+.cp-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-7);
-  padding: var(--space-5) 0 env(safe-area-inset-bottom);
-  border-top: 1px solid var(--border-subtle);
+  gap: var(--space-3);
+  padding: 10vh var(--space-5) var(--space-8);
   color: var(--text-muted);
   font-size: var(--text-base);
+  text-align: center;
+}
+
+.cp-empty .cp-robot {
+  margin-bottom: var(--space-2);
 }
 
 /* — Toast — */
@@ -373,33 +707,82 @@ body {
 
 /* — The chat, drawn by the desktop's components — */
 
-/* Read at arm's length: the chat's text is a step larger than on the desktop. */
-.cp-messages,
-.cp-composer-area,
-.cp-sheet {
-  --content-text: 15px;
-  --content-text-secondary: 14px;
-  --text-2xs: 11px;
-  --text-xs: 12px;
-  --text-sm: 13px;
-  --text-md: 14px;
-  --text-base: 15px;
-}
-
 .cp-app .messages-container.cp-messages {
-  padding: var(--space-4) calc(env(safe-area-inset-right) + var(--space-3)) var(--space-6)
-    calc(env(safe-area-inset-left) + var(--space-3));
-  gap: var(--space-3);
+  gap: var(--space-5);
+  padding: var(--space-3) calc(env(safe-area-inset-right) + var(--space-5)) var(--space-6)
+    calc(env(safe-area-inset-left) + var(--space-5));
   overscroll-behavior: contain;
 }
 
-.cp-messages .message-bubble {
-  padding: var(--space-4);
+/* The transcript's wrapper only listens for a held message; it takes no room. */
+.cp-transcript {
+  display: contents;
 }
 
-/* A reply has no background, so its text can use the whole width. */
+/* What the user sent: a bubble on the right, with no row of buttons under it. */
+.cp-messages .message-user {
+  align-self: flex-end;
+  max-width: 85%;
+}
+
+.cp-messages .message-user .message-bubble {
+  padding: 10px var(--space-4);
+  border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.cp-messages .message-user .message-meta {
+  display: none;
+}
+
+/* The desktop sizes message text by its container, which gives it no width of its own; a bubble
+   that fits its text needs one. */
+.cp-messages .message-user .message-content {
+  container-type: normal;
+}
+
+/* A reply has no bubble, so its text uses the whole width. */
 .cp-messages .message-agent .message-bubble {
-  padding: var(--space-2) var(--space-1);
+  padding: 0;
+}
+
+/* Under a finished reply, one quiet row of buttons and nothing else. */
+.cp-messages .message-agent .message-meta {
+  justify-content: flex-start;
+  margin-top: calc(-1 * var(--space-2));
+}
+
+.cp-messages .message-agent .message-actions {
+  order: -1;
+  margin-left: calc(-1 * var(--space-3));
+}
+
+.cp-messages .message-timestamp,
+.cp-messages .message-run-stats {
+  display: none;
+}
+
+.cp-messages .message-action {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+}
+
+.cp-messages .message-action svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.75;
+}
+
+.cp-messages .message-action:hover {
+  background: transparent;
+}
+
+.cp-messages .message-action:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
 }
 
 /* Sent from this phone and not yet shown back by the computer. */
@@ -434,11 +817,6 @@ body {
 }
 
 /* Thumb-sized targets for the controls the desktop sizes for a pointer. */
-.cp-messages .message-action {
-  width: 36px;
-  height: 36px;
-}
-
 .cp-messages .agent-work-toggle,
 .cp-messages .actions-toggle {
   min-height: 36px;
@@ -476,7 +854,7 @@ body > .image-lightbox {
     calc(env(safe-area-inset-bottom) + var(--space-5));
 }
 
-/* — Message box — */
+/* — Message box: one rounded card — */
 
 .cp-composer-area {
   flex: none;
@@ -484,40 +862,160 @@ body > .image-lightbox {
   background: var(--app-bg);
 }
 
+/* With the keyboard up, the home indicator's room is under the keyboard. */
+.cp-composer-area:focus-within {
+  padding-bottom: 0;
+}
+
 .cp-composer-area > .cp-inline-error {
-  margin: var(--space-2) var(--space-3) 0;
+  margin: var(--space-2) var(--space-4) 0;
 }
 
 .cp-app .input-area.cp-input-area {
   width: 100%;
-  padding: var(--space-2) var(--space-3) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-3);
 }
 
 .cp-input-area .input-container {
   min-height: 0;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-2) var(--space-2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  background: var(--input-bg);
+  box-shadow: none;
+}
+
+.cp-input-area .composer-attachments {
+  padding: var(--space-1) var(--space-2) var(--space-2);
+}
+
+.cp-input-area .composer-attachment {
+  width: 64px;
+  height: 64px;
   border-radius: var(--radius-lg);
 }
 
 /* At 16 px a phone does not zoom in when the box is tapped. */
 .cp-input-area .message-input {
-  min-height: 32px;
+  min-height: 28px;
+  padding: var(--space-1) var(--space-3) 0;
   font-size: 16px;
   line-height: 1.4;
 }
 
 .cp-input-area .input-toolbar {
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
-.cp-input-area .input-plus-button,
-.cp-input-area .dictation-button,
-.cp-input-area .send-button,
-.cp-input-area .stop-button {
+.cp-input-area .input-toolbar-left,
+.cp-input-area .input-toolbar-right {
+  gap: var(--space-1);
+}
+
+.cp-composer-button,
+.cp-input-area .dictation-button {
+  display: inline-grid;
   width: 40px;
   min-width: 40px;
   height: 40px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.cp-composer-button:active,
+.cp-input-area .dictation-button:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+/* The one filled button: Send in the accent, Stop in the text colour. */
+.cp-input-area .send-button,
+.cp-input-area .stop-button {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  margin-left: var(--space-1);
+}
+
+.cp-input-area .stop-button {
+  background: var(--text-primary);
+  color: var(--app-bg);
+}
+
+.cp-input-area .send-button.cp-hidden,
+.cp-input-area .input-buttons:has(> .cp-hidden) {
+  display: none;
+}
+
+/* A chosen mode, as the phone apps show an active tool: a chip that removes it. */
+.cp-mode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--accent-subtle);
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.cp-mode-chip button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.cp-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  height: 36px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+/* The model's name gives way first when the row is narrow. */
+.cp-input-area .input-toolbar-right > .cp-model-chip {
+  flex-shrink: 1;
+}
+
+.cp-model-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-model-chip svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cp-model-chip:active {
+  background: var(--surface-3);
 }
 
 .cp-input-area .queued-message-tray {
@@ -561,42 +1059,6 @@ body > .image-lightbox {
 
 .cp-input-area .queued-message-list {
   max-height: min(260px, 36dvh);
-}
-
-.cp-model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  min-width: 0;
-  max-width: 100%;
-  height: 32px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
-/* The model's name gives way first when the row is narrow. */
-.cp-input-area .input-toolbar-left > .cp-model-chip {
-  flex-shrink: 1;
-}
-
-.cp-model-chip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cp-model-chip svg {
-  flex: none;
-}
-
-.cp-model-chip:active {
-  background: var(--surface-3);
 }
 
 /* Attachments on their way up. */
@@ -666,30 +1128,37 @@ body > .image-lightbox {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  background: rgb(0 0 0 / 0.42);
+  background: var(--modal-overlay);
   animation: motion-fade-in var(--duration-normal) ease;
 }
 
+/* A sheet sits a step above the page; a pale page takes a white sheet. */
 .cp-sheet {
+  --cp-sheet-bg: var(--surface-2);
+  --cp-sheet-raised: var(--surface-3);
+
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   width: 100%;
   max-width: 820px;
-  max-height: min(78dvh, 640px);
+  max-height: min(82dvh, 680px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--space-2) calc(env(safe-area-inset-right) + var(--space-3))
-    calc(env(safe-area-inset-bottom) + var(--space-4))
-    calc(env(safe-area-inset-left) + var(--space-3));
-  border: 1px solid var(--border-color);
-  border-bottom: none;
+  padding: var(--space-2) calc(env(safe-area-inset-right) + var(--space-4))
+    calc(env(safe-area-inset-bottom) + var(--space-5))
+    calc(env(safe-area-inset-left) + var(--space-4));
   border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  background: var(--surface-2);
-  box-shadow: 0 -8px 32px var(--shadow-lg);
+  background: var(--cp-sheet-bg);
+  box-shadow: var(--shadow-panel);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  animation: cp-sheet-in var(--duration-normal) var(--ease-out);
+  animation: cp-sheet-in var(--duration-slow) var(--ease-out);
+}
+
+[data-theme='light'] .cp-sheet {
+  --cp-sheet-bg: var(--surface-1);
+  --cp-sheet-raised: var(--surface-2);
 }
 
 .cp-sheet:focus-visible {
@@ -698,8 +1167,7 @@ body > .image-lightbox {
 
 @keyframes cp-sheet-in {
   from {
-    transform: translateY(24px);
-    opacity: 0;
+    transform: translateY(100%);
   }
 }
 
@@ -711,26 +1179,87 @@ body > .image-lightbox {
 }
 
 .cp-sheet-handle {
+  flex: none;
   align-self: center;
   width: 36px;
-  height: 4px;
-  margin-bottom: var(--space-1);
+  height: 5px;
+  margin-bottom: var(--space-2);
   border-radius: var(--radius-full);
-  background: var(--surface-4);
+  background: var(--border-strong);
 }
 
-.cp-sheet-section {
+.cp-sheet-section,
+.cp-sheet-list {
   display: flex;
   flex-direction: column;
 }
 
 .cp-sheet-section-label {
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-2);
   color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+/* Camera, photos and files across the top of the + sheet. */
+.cp-sheet-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.cp-sheet-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 84px;
+  padding: var(--space-3) var(--space-2);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--cp-sheet-raised);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cp-sheet-tile > span {
+  display: grid;
+  color: var(--text-secondary);
+}
+
+.cp-sheet-tile:active:not(:disabled) {
+  background: var(--surface-4);
+}
+
+.cp-sheet-tile:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.cp-sheet-note {
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+/* The sent message a held-message menu is for, so it is plain which one. */
+.cp-sheet-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--cp-sheet-raised);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow-wrap: anywhere;
 }
 
 .cp-sheet-action {
@@ -739,17 +1268,18 @@ body > .image-lightbox {
   gap: var(--space-4);
   width: 100%;
   min-height: 56px;
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border: none;
   border-radius: var(--radius-md);
   background: transparent;
   color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
 .cp-sheet-action:active:not(:disabled) {
-  background: var(--surface-3);
+  background: var(--cp-sheet-raised);
 }
 
 .cp-sheet-action:disabled {
@@ -757,19 +1287,11 @@ body > .image-lightbox {
   opacity: 0.5;
 }
 
-.cp-sheet-action.is-selected .cp-sheet-action-icon {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
 .cp-sheet-action-icon {
   display: grid;
   flex: none;
-  width: 36px;
-  height: 36px;
+  width: 28px;
   place-items: center;
-  border-radius: var(--radius-md);
-  background: var(--surface-3);
   color: var(--text-secondary);
 }
 
@@ -793,4 +1315,38 @@ body > .image-lightbox {
 .cp-sheet-action-check {
   flex: none;
   color: var(--accent);
+}
+
+.cp-sheet-action.is-danger,
+.cp-sheet-action.is-danger .cp-sheet-action-icon {
+  color: var(--color-error);
+}
+
+/* A fact in a sheet, laid out as its actions are so the rows line up. */
+.cp-sheet-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 52px;
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+}
+
+.cp-sheet-info-icon {
+  display: grid;
+  flex: none;
+  width: 28px;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.cp-sheet-info-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cp-sheet-info-value {
+  color: var(--text-secondary);
 }

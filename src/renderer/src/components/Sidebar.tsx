@@ -172,6 +172,8 @@ function Sidebar({
   const [deleteAllConfirm, setDeleteAllConfirm] = useState(false)
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isPhoneOpen, setIsPhoneOpen] = useState(false)
+  const phoneButtonRef = useRef<HTMLButtonElement>(null)
+  const closePhone = useCallback(() => setIsPhoneOpen(false), [])
   const phone = usePhoneCompanionStatus()
   const phoneConnected = phone?.status?.devices.some(({ connected }) => connected) ?? false
   const [openActionsMenu, setOpenActionsMenu] = useState<string | null>(null)
@@ -1052,12 +1054,14 @@ function Sidebar({
 
   const phoneButton = phone && (
     <button
+      ref={phoneButtonRef}
       type="button"
       className={`sidebar-icon-btn sidebar-phone-btn ${isPhoneOpen ? 'active' : ''}`}
-      onClick={() => setIsPhoneOpen(true)}
+      onClick={() => setIsPhoneOpen((current) => !current)}
       title={phoneConnected ? 'Phone connected' : 'Phone'}
       aria-label={phoneConnected ? 'Phone connected' : 'Phone'}
       aria-haspopup="dialog"
+      aria-expanded={isPhoneOpen}
     >
       <Smartphone size={16} />
       {phoneConnected && <span className="sidebar-phone-dot" aria-hidden="true" />}
@@ -1523,7 +1527,9 @@ function Sidebar({
         <PhoneCompanionPanel
           isOpen={isPhoneOpen}
           companion={phone}
-          onClose={() => setIsPhoneOpen(false)}
+          anchorRef={phoneButtonRef}
+          placement={isCollapsed ? 'beside' : 'above'}
+          onClose={closePhone}
         />
       )}
 
