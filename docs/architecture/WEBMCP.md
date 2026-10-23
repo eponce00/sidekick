@@ -106,7 +106,10 @@ read-only and consequential marks.
 Listings, results, page errors, schema issues and the address a page navigated to reach the model
 inside `<webmcp_tools>`, `<webmcp_result>`, `<webmcp_error>`, `<webmcp_schema_issues>` and
 `<webmcp_navigation>` blocks marked `trust="untrusted-data"`. The block's body is JSON with every
-`<` written as `\u003c`, so no text from the page can close the block. A result the page marks
+`<` written as `\u003c`, so no text from the page can close the block. A tool that returns JSON as
+text, as most do, has that text parsed first, so the model reads the JSON once rather than escaped
+inside a string. A result too long for the chat keeps the start and end of its JSON, and the agent
+finds a value in the rest with `tool_output`'s `find`. A result the page marks
 `untrustedContentHint` carries a note saying so. Routine browser observations name the page's tools
 so the agent can find them.
 

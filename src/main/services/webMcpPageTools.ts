@@ -220,6 +220,19 @@ export function webMcpToolFromProtocol(value: unknown): WebMcpTool | null {
   }
 }
 
+/**
+ * A page's answer as the value it stands for. Tools commonly return JSON as text, which quoted
+ * again would reach the model escaped twice, on one line.
+ */
+function decodedOutput(output: unknown): unknown {
+  if (typeof output !== 'string' || !/^\s*[[{]/.test(output)) return output
+  try {
+    return JSON.parse(output) as unknown
+  } catch {
+    return output
+  }
+}
+
 /** The result of a call, bounded to WEBMCP_MAX_RESULT_BYTES of JSON. */
 export function webMcpOutcomeFromResponse(params: Record<string, unknown>): WebMcpCallOutcome {
   const status = String(params.status ?? '')
@@ -236,7 +249,7 @@ export function webMcpOutcomeFromResponse(params: Record<string, unknown>): WebM
       ...(typeof exception?.objectId === 'string' ? { exceptionObjectId: exception.objectId } : {})
     }
   }
-  const output = params.output === undefined ? null : params.output
+  const output = params.output === undefined ? null : decodedOutput(params.output)
   let json: string
   try {
     json = JSON.stringify(output) ?? 'null'

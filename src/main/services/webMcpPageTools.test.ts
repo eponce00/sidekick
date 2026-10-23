@@ -337,6 +337,26 @@ describe('webMcpOutcomeFromResponse', () => {
     expect(outcome.bytes).toBeGreaterThan(WEBMCP_MAX_RESULT_BYTES)
   })
 
+  it('takes JSON a tool returned as text as the value it stands for', () => {
+    // Quoted again, the text reached the model escaped twice, on one line.
+    const answer = (output: unknown): unknown =>
+      (
+        webMcpOutcomeFromResponse({ status: 'Completed', output }) as Extract<
+          WebMcpCallOutcome,
+          { status: 'completed' }
+        >
+      ).output
+    expect(answer(JSON.stringify({ ok: true, editor: { editorToken: 't' } }))).toEqual({
+      ok: true,
+      editor: { editorToken: 't' }
+    })
+    expect(answer(' [1, 2]')).toEqual([1, 2])
+    // Plain text, and text that only looks like JSON, stay as they are.
+    expect(answer('Added the note.')).toBe('Added the note.')
+    expect(answer('{not json')).toBe('{not json')
+    expect(answer('"quoted"')).toBe('"quoted"')
+  })
+
   it("reports the page's error and its cancellation", () => {
     expect(
       webMcpOutcomeFromResponse({
