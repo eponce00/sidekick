@@ -179,6 +179,8 @@ interface AgentRunsAPI {
   admissionsTakeNext: (
     conversationId: string
   ) => Promise<import('../shared/agentRunApi').PromptAdmissionItem | null>
+  /** A chat's queued messages changed outside this window, such as from the user's phone. */
+  onAdmissionsChanged: (callback: (conversationId: string) => void) => () => void
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
   ) => () => void

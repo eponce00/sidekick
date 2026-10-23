@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COMPANION_MAX_REPLY_BYTES,
   ReplayWindow,
   deriveSessionKeys,
   fromBase64Url,
@@ -88,6 +89,16 @@ describe('companion protocol', () => {
     expect(() => openMessage(client.reply, 'session', sealed)).toThrow()
     expect(() => openMessage(client.request, 'session', sealed, 6)).toThrow()
     expect(() => sealMessage(client.request, 0, 'session', {})).toThrow()
+  })
+
+  it('opens a large reply only when the receiver allows it', () => {
+    const { client } = sessionPair(randomBytes(32))
+    const big = sealMessage(client.reply, 1, 'session', { chat: 'x'.repeat(400 * 1024) })
+    // A request this large is refused; a reply to the phone can carry a long chat.
+    expect(() => openMessage(client.reply, 'session', big)).toThrow()
+    expect(openMessage(client.reply, 'session', big, 1, COMPANION_MAX_REPLY_BYTES).value).toEqual({
+      chat: 'x'.repeat(400 * 1024)
+    })
   })
 
   it('takes each counter once, out of order within the window', () => {

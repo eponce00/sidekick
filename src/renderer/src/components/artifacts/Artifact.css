@@ -83,6 +83,14 @@
   font-style: italic;
 }
 
+/* An artifact shown where it cannot run, such as on the phone. */
+.artifact-elsewhere-note {
+  margin: 0;
+  padding: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 /* ---- Artifact Header ---- */
 .artifact-header {
   display: flex;

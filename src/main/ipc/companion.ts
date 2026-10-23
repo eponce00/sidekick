@@ -1,13 +1,21 @@
-import { BrowserWindow, ipcMain, safeStorage } from 'electron'
+import { BrowserWindow, ipcMain, nativeImage, safeStorage } from 'electron'
+import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { networkInterfaces } from 'os'
 import { extname, join } from 'path'
 import qrcode from 'qrcode-generator'
 import icon from '../../../resources/icon.png?asset'
-import type { CompanionEvent, CompanionStatus } from '../../shared/companion'
+import {
+  COMPANION_IMAGE_SIDE,
+  type CompanionEvent,
+  type CompanionImage,
+  type CompanionStatus
+} from '../../shared/companion'
+import type { MessageImageAttachment } from '../../shared/messageImages'
 import { pinnedModelsFromProviderInstances } from '../../shared/providerInstances'
 import type { ProviderSettings } from '../../shared/settings'
-import { CompanionApi, trimForPhone } from '../services/companion/companionApi'
+import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
+import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
 import { CompanionDeviceStore } from '../services/companion/companionDeviceStore'
 import {
   isDevelopmentPagePath,
@@ -17,14 +25,19 @@ import { CompanionServer, type CompanionStaticFile } from '../services/companion
 import { resolveConversationModel } from '../services/conversationModelStore'
 import { isSecureCredentialStorageAvailable } from '../services/secureCredentialStorage'
 import { showTrustedDialog } from '../services/trustedDialog'
+import type { VoiceService } from '../services/voice/voiceService'
 import {
   getAgentRuntimeCoordinator,
+  observeAdmissionChanges,
   observeAgentRunEvents,
   startConversationRun
 } from './agentRuns'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import { loadStoredSettings } from './settings'
 import { appState, getDb, getStore } from './state'
+
+/** A tenth of a second at 16 kHz, as a microphone sends it. */
+const DICTATION_PIECE = 1_600
 
 /** The port phones remember, so a saved home-screen icon keeps working. */
 const DEFAULT_PORT = 47615
@@ -90,7 +103,7 @@ function rendererDirectory(): string {
 }
 
 /** The phone page's files. Only the page, its built assets, its manifest and its icon are served. */
-async function staticFile(path: string): Promise<CompanionStaticFile | null> {
+async function staticFile(path: string, search: string): Promise<CompanionStaticFile | null> {
   if (path === '/companion.webmanifest')
     return { body: Buffer.from(MANIFEST), type: 'application/manifest+json' }
   if (path === '/companion-icon.png') return { body: await fs.readFile(icon), type: 'image/png' }
@@ -100,9 +113,10 @@ async function staticFile(path: string): Promise<CompanionStaticFile | null> {
     // In development the page and its modules come from the renderer's development server. Only
     // the paths a page loads are passed on: it can also read files elsewhere on disk.
     if (!page && !isDevelopmentPagePath(path)) return null
-    const response = await fetch(new URL(page ? '/companion.html' : path, development)).catch(
-      () => null
-    )
+    // Imports such as `?raw` change what the development server returns, so the query is kept.
+    const response = await fetch(
+      new URL(page ? '/companion.html' : path + search, development)
+    ).catch(() => null)
     if (!response?.ok) return null
     return {
       body: Buffer.from(await response.arrayBuffer()),
@@ -122,17 +136,100 @@ async function staticFile(path: string): Promise<CompanionStaticFile | null> {
   return body ? { body, type } : null
 }
 
-function resolveModel(conversationId: string): ReturnType<typeof resolveConversationModel> {
+function enabledModels(): ReturnType<typeof pinnedModelsFromProviderInstances> {
+  const settings = loadStoredSettings() as unknown as ProviderSettings
+  return pinnedModelsFromProviderInstances(settings.providerInstances ?? [])
+}
+
+/** See `resolveConversationModel`; an empty ID asks for the new-chat default. */
+function resolveModel(
+  conversationId: string,
+  requested?: string
+): ReturnType<typeof resolveConversationModel> {
   const settings = loadStoredSettings() as unknown as ProviderSettings
   const coordinator = getAgentRuntimeCoordinator()
-  return resolveConversationModel(
-    pinnedModelsFromProviderInstances(settings.providerInstances ?? []),
-    {
-      own: conversationId ? coordinator.conversationModels.get(conversationId) : null,
-      latestRun: conversationId ? coordinator.store.latest(conversationId) : null,
-      defaultModelId: settings.selectedModel
-    }
-  )
+  return resolveConversationModel(enabledModels(), {
+    requested,
+    own: conversationId ? coordinator.conversationModels.get(conversationId) : null,
+    latestRun: conversationId ? coordinator.store.latest(conversationId) : null,
+    defaultModelId: settings.selectedModel
+  })
+}
+
+/** A copy of an image no larger than a phone shows, so a chat of photos stays quick to open. */
+async function shrinkImage(image: MessageImageAttachment): Promise<CompanionImage> {
+  const original = nativeImage.createFromDataURL(image.dataUrl)
+  const { width, height } = original.getSize()
+  if (original.isEmpty() || Math.max(width, height) <= COMPANION_IMAGE_SIDE) return image
+  const scale = COMPANION_IMAGE_SIDE / Math.max(width, height)
+  const reduced = original.resize({
+    width: Math.round(width * scale),
+    height: Math.round(height * scale),
+    quality: 'good'
+  })
+  return {
+    id: image.id,
+    name: image.name,
+    mimeType: 'image/jpeg',
+    dataUrl: `data:image/jpeg;base64,${reduced.toJPEG(82).toString('base64')}`
+  }
+}
+
+let voiceService: VoiceService | null = null
+
+/** Lets phones use the computer's dictation and read-aloud. */
+export function setCompanionVoice(service: VoiceService): void {
+  voiceService = service
+}
+
+function companionVoice(): CompanionVoice | null {
+  const service = voiceService
+  if (!service) return null
+  const ready = (id: 'dictation' | 'speech'): boolean => {
+    const state = service.state()
+    return state.enabled && state.models[id]?.status === 'ready'
+  }
+  return {
+    state: () => {
+      const state = service.state()
+      return {
+        dictation: ready('dictation'),
+        speech: ready('speech'),
+        message: !state.enabled
+          ? 'Voice is turned off on the computer, in Settings › General.'
+          : ready('dictation') && ready('speech')
+            ? null
+            : 'Voice is still being set up on the computer.'
+      }
+    },
+    transcribe: async (samples) => {
+      const sessionId = `phone-${randomUUID()}`
+      const parts: string[] = []
+      const started = await service.startDictation(sessionId, (text, final) => {
+        if (final && text.trim()) parts.push(text.trim())
+      })
+      if (!started.ok) throw new Error(started.message)
+      // In the small pieces a microphone delivers: the speech detector reads audio a short window
+      // at a time, and given seconds at once it heard only part of the recording.
+      for (let offset = 0; offset < samples.length; offset += DICTATION_PIECE)
+        service.pushDictationAudio(sessionId, samples.slice(offset, offset + DICTATION_PIECE))
+      await service.stopDictation(sessionId)
+      return parts.join(' ')
+    },
+    speak: async (speechId, text, onAudio, onEnd) => {
+      const started = await service.speak(speechId, text, onAudio)
+      if (!started.ok) return { ok: false, message: started.message }
+      void started.finished?.then(() => onEnd()).catch((error: Error) => onEnd(error.message))
+      if (!started.finished) onEnd()
+      return { ok: true }
+    },
+    stop: (speechId) => service.stopSpeech(speechId)
+  }
+}
+
+function queueChanged(conversationId: string): void {
+  publishDesktopEvent('agentRuns:admissionsChanged', { conversationId })
+  server?.broadcast({ type: 'queue.changed', conversationId })
 }
 
 async function approve(
@@ -166,19 +263,26 @@ function companionServer(): CompanionServer {
     run: (runId) => coordinator.store.get(runId),
     interaction: (id) => coordinator.store.getInteraction(id),
     resolveInteraction: async (input) => coordinator.resolveInteraction(input),
-    steer: (conversationId, message, onApplied) =>
-      coordinator.steerUserMessage(conversationId, message, onApplied),
+    steerAdmission: (runId, admissionId) => coordinator.steer({ runId, admissionId }).accepted,
+    models: enabledModels,
     resolveModel,
+    setChatModel: (conversationId, modelId) =>
+      coordinator.conversationModels.set(conversationId, modelId),
     messagesChanged: (conversationId) => {
       publishDesktopEvent('conversations:messagesChanged', { conversationId })
       server?.broadcast({ type: 'messages.changed', conversationId })
-    }
+    },
+    queueChanged,
+    shrinkImage,
+    readArtifact: readBrowserArtifact,
+    voice: companionVoice,
+    sendToDevice: (deviceId, event) => server?.sendTo(deviceId, event)
   })
   companionApi = api
   server = new CompanionServer({
     devices: deviceStore(),
     approve,
-    handle: (call, input) => api.handle(call, input),
+    handle: (call, input, deviceId) => api.handle(call, input, deviceId),
     staticFile,
     contentSecurityPolicy: process.env.ELECTRON_RENDERER_URL ? DEVELOPMENT_CSP : PRODUCTION_CSP,
     onChange: notifyChanged
@@ -225,6 +329,7 @@ async function setEnabled(enabled: boolean): Promise<CompanionStatus> {
   getStore().set('companionEnabled', enabled)
   startError = null
   if (!enabled) {
+    companionApi?.reset()
     await server?.stop()
     notifyChanged()
     return companionStatus()
@@ -254,6 +359,7 @@ function forwardRunEvent(event: CompanionEvent & { type: 'run.event' }): void {
   server.broadcast(event)
   if (
     event.event.type === 'run.started' ||
+    event.event.type === 'run.steered' ||
     event.event.type === 'run.finalized' ||
     event.event.type === 'run.phase'
   )
@@ -277,11 +383,24 @@ export function registerCompanionHandlers(): void {
     return companionStatus()
   })
   observeAgentRunEvents((event) => {
-    if (event.type === 'run.finalized') companionApi?.runEnded(event.runId)
+    if (event.type === 'run.steered' && server?.listening) {
+      // A steered message leaves the queue as the run takes it.
+      const run = getAgentRuntimeCoordinator().store.get(event.runId)
+      if (run) server.broadcast({ type: 'queue.changed', conversationId: run.threadId })
+    }
+    if (event.type === 'run.finalized' && server?.listening) {
+      const run = getAgentRuntimeCoordinator().store.get(event.runId)
+      // A sub-agent's end is not its chat's; the chat's own run ending sends the next message.
+      if (run && run.surface !== 'subagent') companionApi?.runEnded(run.threadId)
+    }
     // Phones get the same events the window does, small enough to carry.
     if (server?.listening)
       forwardRunEvent({ type: 'run.event', event: trimForPhone(event) as typeof event })
   })
+  // The window's own queue edits reach the phones too.
+  observeAdmissionChanges((conversationId) =>
+    server?.broadcast({ type: 'queue.changed', conversationId })
+  )
   // Phone access stays on across restarts once the user turned it on.
   if (getStore().get('companionEnabled', false) === true)
     void setEnabled(true).catch((error) => console.warn('[Companion] Could not start:', error))

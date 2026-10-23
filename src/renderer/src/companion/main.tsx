@@ -1,9 +1,28 @@
 import { createRoot } from 'react-dom/client'
-// The desktop's design tokens, so the phone matches it in both themes.
+// The desktop's design tokens and chat styles, so the phone matches it in both themes.
 import '../styles/App.css'
+import '../styles/codeTheme.css'
+import 'katex/dist/katex.min.css'
+import '../components/ChatPanel.css'
 import './companion.css'
 import CompanionApp, { type CompanionBoot } from './CompanionApp'
 import { storedDevice, takePairingSecret } from './companionClient'
+import { installPhoneApi } from './phoneApi'
+
+// Browsers keep `crypto.randomUUID` to secure pages, and this one is plain HTTP; the desktop's
+// read-aloud player names each reading with one. The random source itself is available.
+if (typeof crypto.randomUUID !== 'function') {
+  crypto.randomUUID = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(16))
+    bytes[6] = (bytes[6] & 0x0f) | 0x40
+    bytes[8] = (bytes[8] & 0x3f) | 0x80
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` as ReturnType<
+      Crypto['randomUUID']
+    >
+  }
+}
+installPhoneApi()
 
 // The tokens are dark unless the body says light; the phone follows its own system setting.
 const light = window.matchMedia('(prefers-color-scheme: light)')

@@ -21,12 +21,28 @@ secret, an approval on the computer and per-device keys, with no outside service
 ## Processes
 
 The trusted main process owns everything. `src/main/ipc/companion.ts` wires the server to the app;
-`src/main/services/companion/` holds the server, the phone's API and the device store. The phone is
-treated like an untrusted renderer: every input is checked in `CompanionApi`, and its calls go
-through the same services the desktop window uses: the engine's start, stop, events and
-interaction requests, and `AgentRuntimeCoordinator.steerUserMessage` for a message sent while a run
-works. A message the phone sends is saved like a scheduled prompt, and the desktop window reloads
-an open chat on `conversations:messagesChanged`.
+`src/main/services/companion/` holds the server, the phone's API, its uploads and the device store.
+The phone is treated like an untrusted renderer: every input is checked in `CompanionApi`, and its
+calls go through the same services the desktop window uses: the engine's start, stop, events,
+steer and interaction requests.
+
+- **Messages** the phone sends are checked as the window's are (`validateMessageImages`,
+  `validateMessageContextAttachments`, the pasted-text budget of the chat's model), saved like a
+  scheduled prompt, and the window reloads an open chat on `conversations:messagesChanged`.
+- **The queue** is the window's own prompt-admission queue. A message sent while a run works is
+  queued; **Steer** makes it the pending steer and hands it to the run, and a run that cannot take
+  it is stopped, as in the composer. Changes from either side reach the other
+  (`agentRuns:admissionsChanged`, `queue.changed`). The window sends the next queued message when a
+  run it follows ends; for a chat no window follows, the main process does, shortly after, and
+  taking an item is atomic, so it is never sent twice.
+- **Uploads** arrive in pieces of at most 128 KB, up to 20 MB each and 64 MB held across phones,
+  belong to the phone that sent them, are taken once and expire after ten minutes.
+- **Images** go to the phone as reduced copies, at most 1,600 pixels on the longer side. Images a
+  tool saved, such as viewed images and screenshots, are fetched by their `sidekick-browser://`
+  address through the same checks as the window's protocol (`readBrowserArtifact`).
+- **Voice** uses the computer's own models. The phone records with its recorder, decodes and
+  resamples the recording to 16 kHz itself, and the computer transcribes it; speech is streamed to
+  the phone that asked as 16-bit samples, and only that phone can stop it.
 
 The phone page is its own small bundle, `src/renderer/companion.html`, built with the renderer. In
 development the server fetches it from the renderer's development server.

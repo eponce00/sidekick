@@ -194,6 +194,14 @@ const api = {
       ipcRenderer.invoke('agentRuns:admissionsReplace', input),
     admissionsTakeNext: (conversationId: string) =>
       ipcRenderer.invoke('agentRuns:admissionsTakeNext', conversationId),
+    onAdmissionsChanged: (callback: (conversationId: string) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string }
+      ): void => callback(change.conversationId)
+      ipcRenderer.on('agentRuns:admissionsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:admissionsChanged', listener)
+    },
     onEvent: (callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,

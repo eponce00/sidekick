@@ -28,6 +28,8 @@ export const DEVICE_ID_BYTES = 16
 export const PAIRING_TTL_MS = 2 * 60 * 1_000
 /** The most a phone may send in one request. */
 export const COMPANION_MAX_REQUEST_BYTES = 256 * 1024
+/** The most one reply or event to the phone may carry, such as a long chat with its images. */
+export const COMPANION_MAX_REPLY_BYTES = 64 * 1024 * 1024
 /** How far behind the newest message an out-of-order one may arrive and still be taken. */
 const REPLAY_WINDOW = 64
 
@@ -253,11 +255,16 @@ export function sealMessage(
   return { n: counter, c: toBase64Url(cipher.encrypt(utf8(JSON.stringify(value)))) }
 }
 
+/**
+ * Opens a sealed message. `maxBytes` bounds what the receiver accepts: requests to the computer
+ * are small, while replies and events to the phone can carry a whole chat.
+ */
 export function openMessage(
   key: Uint8Array,
   sessionId: string,
   message: unknown,
-  expectedCounter?: number
+  expectedCounter?: number,
+  maxBytes = COMPANION_MAX_REQUEST_BYTES
 ): { counter: number; value: unknown } {
   const sealed = message as Partial<SealedMessage> | null
   const counter = sealed?.n
@@ -265,7 +272,7 @@ export function openMessage(
     throw new CompanionProtocolError('Bad counter')
   try {
     const cipher = chacha20poly1305(key, counterNonce(counter), utf8(sessionId))
-    const plain = cipher.decrypt(fromBase64Url(sealed?.c))
+    const plain = cipher.decrypt(fromBase64Url(sealed?.c, maxBytes))
     return { counter, value: JSON.parse(new TextDecoder().decode(plain)) }
   } catch {
     throw new CompanionProtocolError('The message could not be authenticated')

@@ -34,6 +34,7 @@ describe('QueuedMessageTray', () => {
     onRemove?: (id: string) => void
     onMove?: (id: string, toIndex: number) => void
     onSteer?: (id: string) => void
+    moveButtons?: boolean
   }) {
     const callbacks = {
       onUpdate: overrides?.onUpdate ?? vi.fn(() => true),
@@ -46,12 +47,32 @@ describe('QueuedMessageTray', () => {
         <QueuedMessageTray
           pivotMessage={overrides?.pivotMessage ?? null}
           queuedMessages={queuedMessages}
+          moveButtons={overrides?.moveButtons}
           {...callbacks}
         />
       )
     })
     return callbacks
   }
+
+  it('offers move buttons only where dragging cannot reorder', () => {
+    renderTray()
+    expect(container.querySelector('[aria-label="Move queued message up"]')).toBeNull()
+
+    const callbacks = renderTray({ moveButtons: true })
+    const up = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Move queued message up"]'
+    )
+    const down = container.querySelectorAll<HTMLButtonElement>(
+      '[aria-label="Move queued message down"]'
+    )
+    expect(up[0].disabled).toBe(true)
+    expect(down[1].disabled).toBe(true)
+    act(() => down[0].click())
+    act(() => up[1].click())
+    expect(callbacks.onMove).toHaveBeenNthCalledWith(1, 'queued-1', 1)
+    expect(callbacks.onMove).toHaveBeenNthCalledWith(2, 'queued-2', 0)
+  })
 
   it('renders compact queue rows and exposes steer, edit, and remove actions', () => {
     const callbacks = renderTray()
@@ -61,7 +82,9 @@ describe('QueuedMessageTray', () => {
     expect(container.querySelector('[aria-label="Queued messages"]')).not.toBeNull()
 
     act(() => {
-      ;(container.querySelector('[aria-label="Steer with queued message now"]') as HTMLElement).click()
+      ;(
+        container.querySelector('[aria-label="Steer with queued message now"]') as HTMLElement
+      ).click()
       ;(container.querySelector('[aria-label="Remove queued message"]') as HTMLElement).click()
     })
 
@@ -81,10 +104,7 @@ describe('QueuedMessageTray', () => {
     ) as HTMLTextAreaElement
     expect(editor).not.toBeNull()
 
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      'value'
-    )?.set
+    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
     act(() => {
       valueSetter?.call(editor, 'Add validation and integration coverage')
       editor.dispatchEvent(new Event('input', { bubbles: true }))
@@ -139,7 +159,9 @@ describe('QueuedMessageTray', () => {
     })
 
     expect(container.textContent).toContain('Steering')
-    expect(container.querySelectorAll('[aria-label="Steer with queued message now"]')).toHaveLength(2)
+    expect(container.querySelectorAll('[aria-label="Steer with queued message now"]')).toHaveLength(
+      2
+    )
     expect(
       container
         .querySelector('[data-pending-message-id="pivot-1"]')

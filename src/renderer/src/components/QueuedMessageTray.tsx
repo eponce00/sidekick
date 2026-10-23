@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DragEvent, KeyboardEvent } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
-import { ArrowUpToLine, Check, GripVertical, Pencil, Trash2, X } from 'lucide-react'
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
+  Check,
+  GripVertical,
+  Pencil,
+  Trash2,
+  X
+} from 'lucide-react'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import {
   isPastedTextAttachment,
@@ -29,6 +38,8 @@ interface QueuedMessageTrayProps {
   onRemove: (id: string) => void
   onMove: (id: string, toIndex: number) => void
   onSteer: (id: string) => void
+  /** Move buttons beside each message, for touch screens, where dragging does not reorder. */
+  moveButtons?: boolean
 }
 
 export function QueuedMessageTray({
@@ -37,7 +48,8 @@ export function QueuedMessageTray({
   onUpdate,
   onRemove,
   onMove,
-  onSteer
+  onSteer,
+  moveButtons = false
 }: QueuedMessageTrayProps): React.JSX.Element | null {
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -197,6 +209,28 @@ export function QueuedMessageTray({
             </>
           ) : (
             <>
+              {moveButtons && !isPivot && queuedMessages.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onMove(message.id, index - 1)}
+                    disabled={index === 0}
+                    title="Move up"
+                    aria-label="Move queued message up"
+                  >
+                    <ArrowUp size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onMove(message.id, index + 1)}
+                    disabled={index === queuedMessages.length - 1}
+                    title="Move down"
+                    aria-label="Move queued message down"
+                  >
+                    <ArrowDown size={14} />
+                  </button>
+                </>
+              )}
               {!isPivot && (
                 <button
                   type="button"

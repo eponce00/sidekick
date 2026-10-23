@@ -47,8 +47,8 @@ export interface CompanionServerOptions {
   approve: (request: { name: string; address: string }, signal: AbortSignal) => Promise<boolean>
   /** Runs one call from a paired phone. */
   handle: (call: CompanionCallName, input: unknown, deviceId: string) => Promise<unknown>
-  /** The phone page's files, by URL path; null when there is no such file. */
-  staticFile: (path: string) => Promise<CompanionStaticFile | null>
+  /** The phone page's files, by URL path and query; null when there is no such file. */
+  staticFile: (path: string, search: string) => Promise<CompanionStaticFile | null>
   /** The page's Content-Security-Policy. */
   contentSecurityPolicy: string
   onChange: () => void
@@ -253,14 +253,24 @@ export class CompanionServer {
   }
 
   broadcast(event: CompanionEvent): void {
-    for (const stream of this.streams) {
-      const session = stream.session
-      const sealed = sealMessage(session.keys.event, ++session.eventCounter, session.id, event)
-      try {
-        stream.response.write(`data: ${JSON.stringify(sealed)}\n\n`)
-      } catch {
-        this.endStream(stream)
-      }
+    for (const stream of [...this.streams]) this.send(stream, event)
+  }
+
+  /** An event for one phone only, such as speech it asked for. */
+  sendTo(deviceId: string, event: CompanionEvent): void {
+    for (const stream of [...this.streams])
+      if (stream.session.deviceId === deviceId) this.send(stream, event)
+  }
+
+  private send(stream: EventStream, event: CompanionEvent): void {
+    const session = stream.session
+    const sealed = sealMessage(session.keys.event, ++session.eventCounter, session.id, event)
+    try {
+      stream.response.write(`data: ${JSON.stringify(sealed)}
+
+`)
+    } catch {
+      this.endStream(stream)
     }
   }
 
@@ -288,7 +298,7 @@ export class CompanionServer {
         throw new HttpError(404, 'not_found')
       }
       if (request.method !== 'GET' && request.method !== 'HEAD') throw new HttpError(405, 'method')
-      const file = await this.options.staticFile(url.pathname)
+      const file = await this.options.staticFile(url.pathname, url.search)
       if (!file) throw new HttpError(404, 'not_found')
       response.writeHead(200, {
         ...this.pageHeaders(),

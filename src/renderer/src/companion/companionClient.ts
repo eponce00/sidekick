@@ -5,6 +5,7 @@ import type {
   CompanionReply
 } from '../../../shared/companion'
 import {
+  COMPANION_MAX_REPLY_BYTES,
   deriveSessionKeys,
   equalBytes,
   fromBase64Url,
@@ -228,8 +229,13 @@ export class CompanionClient {
       }
       if (!response.ok) throw new Error('The computer did not answer.')
       const body = (await response.json()) as { m?: unknown }
-      const reply = openMessage(session.keys.reply, session.id, body.m, counter)
-        .value as CompanionReply
+      const reply = openMessage(
+        session.keys.reply,
+        session.id,
+        body.m,
+        counter,
+        COMPANION_MAX_REPLY_BYTES
+      ).value as CompanionReply
       if (reply.id !== id) throw new Error('The computer answered another request.')
       if (!reply.ok) throw new Error(reply.error)
       return reply.output as CompanionCalls[Name]['output']
@@ -255,7 +261,13 @@ export class CompanionClient {
         }
         source.onmessage = (message) => {
           try {
-            const opened = openMessage(session.keys.event, session.id, JSON.parse(message.data))
+            const opened = openMessage(
+              session.keys.event,
+              session.id,
+              JSON.parse(message.data),
+              undefined,
+              COMPANION_MAX_REPLY_BYTES
+            )
             // Events count up; an old one is a replay.
             if (opened.counter <= this.lastEventCounter) return
             this.lastEventCounter = opened.counter

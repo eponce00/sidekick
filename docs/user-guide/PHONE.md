@@ -20,17 +20,31 @@ it, or phones cannot connect.
 
 ## What the phone can do
 
-- See your chats and each agent's progress as it happens: its reply, the tools it runs, and its
-  status.
-- Send a message in a chat, or start a new chat. While the agent is working, a message you send is
-  handed to it, as one sent from the computer's composer is. If it stops before reading it, the
-  message is saved to the chat, so the next reply reads it.
-- Stop a running agent.
-- Answer approval cards, questions and plan reviews. Cards that act on the computer itself, such as
-  starting chats in project folders or taking over the browser, are answered on the computer.
+The phone shows a chat as the computer does, laid out for a small screen: the agent's reply as it
+streams, its thinking, the tools it runs with their output and the changes they made, images, cards
+and the agent's other chats.
 
-The phone never sees stored credentials or settings, cannot browse your files, and cannot type into
-terminals. Images in chats are not sent to the phone.
+- **Send** a message in a chat, or start a new chat, in Chat, Research or Plan mode and on the model
+  you choose for the chat.
+- **While the agent works**, a message you send is queued, as on the computer, and is sent when the
+  reply finishes. The queue is the same one the computer's composer shows: edit, reorder or remove
+  messages from either, or **Steer** one to hand it to the agent now. A message steered while the
+  agent waits for you, or is finishing, stops the reply and starts the next one.
+- **Attach** photos from the phone, take one with the camera, or attach text files such as notes,
+  logs or code. Photos are reduced on the phone before they are sent. The chat's model must be able
+  to see images.
+- **Dictate** with SideKick's microphone button: the phone records, and the computer turns the
+  recording into text with its own dictation, on the computer. Where the phone offers no recorder,
+  the keyboard's own microphone works in the message box.
+- **Read aloud** a reply: the computer speaks it in its own voice, and the phone plays it.
+- **Stop** a running agent.
+- **Answer** approval cards, questions, plan reviews and tool-limit prompts. Cards that act on the
+  computer itself, such as starting chats in project folders or taking over the browser, are
+  answered on the computer.
+
+Dictation and read aloud need **Voice** turned on in the computer's Settings. The phone never sees
+stored credentials or settings, cannot browse your files, and cannot type into terminals. Images it
+shows from chats are reduced copies.
 
 ## Who can connect
 

@@ -78,11 +78,15 @@ export function originMatches(origin: string | undefined, address: string, port:
 
 /**
  * Whether a path is one the phone page loads from the renderer's development server: its sources,
- * prepared dependencies and client. That server can also read other files on disk, so nothing
- * else is passed on, and nothing that could step out of a folder.
+ * its client and packages, which it names by absolute path under `/@fs/`. That server can read
+ * other files that way, so only shared and renderer sources and packages are passed on, and
+ * nothing that could step out of a folder.
  */
 export function isDevelopmentPagePath(path: string): boolean {
   if (/\.\.|\\|%/.test(path)) return false
+  // The development server keeps /@fs/ inside the project; this keeps it to sources and packages.
+  if (path.startsWith('/@fs/'))
+    return /\/(?:node_modules|src\/shared|src\/renderer)\/[^/]/.test(path)
   return /^\/(?:src\/|node_modules\/\.vite\/deps\/|@id\/)|^\/(?:@vite\/client|@react-refresh)$/.test(
     path
   )

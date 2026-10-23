@@ -1145,35 +1145,6 @@ export class AgentRuntimeCoordinator {
     return { accepted }
   }
 
-  /**
-   * Hands a message the user sent from outside this window, such as from their phone, to the
-   * chat's running run, as a message steered in from the composer would be.
-   */
-  steerUserMessage(
-    conversationId: string,
-    message: { id: string; content: string },
-    onApplied?: () => void
-  ): boolean {
-    for (const [runId, active] of this.activeConversations) {
-      if (active.input.conversationId !== conversationId) continue
-      if (active.input.mode === 'research') return false
-      const payload = {
-        messageId: message.id,
-        content: message.content,
-        mode: 'conversation' as const
-      }
-      const accepted = this.kernel.steer(runId, {
-        id: message.id,
-        message: steeredProviderMessage(payload),
-        payload,
-        ...(onApplied ? { onApplied } : {})
-      })
-      if (accepted) this.tools.notifyUserMessage(runId)
-      return accepted
-    }
-    return false
-  }
-
   setSessionTools(tools: ConversationSessionTools | undefined): void {
     this.sessionTools = tools
   }

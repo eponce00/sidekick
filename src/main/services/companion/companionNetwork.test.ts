@@ -63,11 +63,16 @@ describe('companion network checks', () => {
       '/src/companion/main.tsx',
       '/@vite/client',
       '/@react-refresh',
-      '/node_modules/.vite/deps/react.js'
+      '/node_modules/.vite/deps/react.js',
+      '/@fs/E:/repo/node_modules/.vite/deps/react-dom_client.js',
+      '/@fs/E:/repo/node_modules/katex/dist/katex.min.css',
+      '/@fs/E:/repo/src/shared/companionProtocol.ts'
     ])
       expect(isDevelopmentPagePath(path), path).toBe(true)
     for (const path of [
       '/@fs/C:/Users/me/.ssh/id_rsa',
+      '/@fs/E:/repo/src/main/secret.ts',
+      '/@fs/E:/repo/node_modules/../.env',
       '/src/../../.env',
       '/src/%2e%2e/secret',
       '/src/a\\b',

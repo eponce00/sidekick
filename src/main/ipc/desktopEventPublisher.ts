@@ -9,6 +9,7 @@ interface DesktopEventPayloads {
   'schedules:changed': import('../../shared/schedules').SchedulesChangedEvent
   'companion:changed': import('../../shared/companion').CompanionStatus
   'conversations:messagesChanged': { conversationId: string }
+  'agentRuns:admissionsChanged': { conversationId: string }
 }
 
 export interface DesktopEventWindow {

@@ -499,8 +499,21 @@ export function useConversationRun({
         replacePivot(result.pivot)
       })
       .catch((error) => console.error('[PromptAdmissions] Failed to load queue', error))
+    // The phone can queue, edit or send a message, and the main process can send the next one.
+    const unsubscribe = window.api.agentRuns.onAdmissionsChanged((changed) => {
+      if (changed !== conversationId) return
+      void admissionWriteRef.current
+        .then(() => window.api.agentRuns.admissionsList(conversationId))
+        .then((result) => {
+          if (cancelled) return
+          replaceQueue(result.queued)
+          replacePivot(result.pivot)
+        })
+        .catch((error) => console.error('[PromptAdmissions] Failed to load queue', error))
+    })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [conversationId, replacePivot, replaceQueue])
 

@@ -2,18 +2,14 @@ import { describe, expect, it } from 'vitest'
 import type { AgentRunEvent } from '../../../shared/agentRuntime'
 import type { CompanionChat, CompanionMessage } from '../../../shared/companion'
 import {
-  answerableOnPhone,
   chatBadge,
   firstGapAfter,
+  insertAtCursor,
   mergeRunEvents,
-  permissionPreview,
-  questionResponse,
   relativeTime,
   runEventAction,
-  savedSegments,
   sendBaseline,
   unconfirmedSends,
-  type Interaction,
   type PendingSend,
   type Segment
 } from './chatState'
@@ -124,14 +120,14 @@ describe('relativeTime', () => {
 
 describe('sent messages', () => {
   it('stay shown until the computer has one more copy of the text', () => {
-    const pending: PendingSend[] = [{ id: 's1', text: 'yes', baseline: 1 }]
+    const pending: PendingSend[] = [{ id: 's1', text: 'yes', sentAt: 0, baseline: 1 }]
     const before = [userMessage('yes')]
     expect(unconfirmedSends(pending, before, [])).toHaveLength(1)
     expect(unconfirmedSends(pending, [...before, userMessage('yes')], [])).toHaveLength(0)
   })
 
   it('count a message the run took in while it worked', () => {
-    const pending: PendingSend[] = [{ id: 's1', text: 'also check logs', baseline: 0 }]
+    const pending: PendingSend[] = [{ id: 's1', text: 'also check logs', sentAt: 0, baseline: 0 }]
     const steer: Segment = {
       type: 'steer',
       steer: { id: 'm', content: 'also check logs', timestamp: 0 }
@@ -140,7 +136,7 @@ describe('sent messages', () => {
   })
 
   it('count a message a finished reply took in', () => {
-    const pending: PendingSend[] = [{ id: 's1', text: 'and a steer', baseline: 0 }]
+    const pending: PendingSend[] = [{ id: 's1', text: 'and a steer', sentAt: 0, baseline: 0 }]
     const reply: CompanionMessage = {
       id: 'r',
       role: 'assistant',
@@ -152,10 +148,16 @@ describe('sent messages', () => {
   })
 
   it('give a repeated text its own place in line', () => {
-    const first: PendingSend = { id: 's1', text: 'ok', baseline: sendBaseline('ok', [], [], []) }
+    const first: PendingSend = {
+      id: 's1',
+      text: 'ok',
+      sentAt: 0,
+      baseline: sendBaseline('ok', [], [], [])
+    }
     const second: PendingSend = {
       id: 's2',
       text: 'ok',
+      sentAt: 0,
       baseline: sendBaseline('ok', [], [], [first])
     }
     expect(second.baseline).toBe(1)
@@ -164,65 +166,23 @@ describe('sent messages', () => {
   })
 })
 
-describe('savedSegments', () => {
-  it('keeps the shapes the phone draws and drops the rest', () => {
-    const segments = savedSegments([
-      { type: 'text', content: 'hi' },
-      { type: 'text', content: 3 },
-      { type: 'tool', tool: { title: 'Read file', status: 'success' } },
-      { type: 'tool' },
-      { type: 'mystery' },
-      null,
-      'text'
-    ])
-    expect(segments.map((segment) => segment.type)).toEqual(['text', 'tool'])
-    expect(savedSegments(undefined)).toEqual([])
-  })
-})
-
-describe('questionResponse', () => {
-  const questions = [
-    { id: 'one', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }] },
-    { id: 'many', question: 'Pick some', multiSelect: true, options: [{ label: 'X' }] },
-    { id: 'skip', question: 'Skipped' }
-  ]
-
-  it('sends one string for a single answer and a list for several', () => {
-    expect(
-      questionResponse(questions, {
-        one: { selected: ['A'], custom: '', skipped: false },
-        many: { selected: ['X'], custom: ' Y ', skipped: false },
-        skip: { selected: [], custom: 'ignored', skipped: true }
-      })
-    ).toEqual({ one: 'A', many: ['X', 'Y'] })
+describe('insertAtCursor', () => {
+  it('puts dictated words at the cursor with a space on each side', () => {
+    expect(insertAtCursor('Draft it and', 12, 12, 'send it')).toEqual({
+      value: 'Draft it and send it',
+      cursor: 20
+    })
+    expect(insertAtCursor('Fix  please', 4, 4, 'the build')).toEqual({
+      value: 'Fix the build please',
+      cursor: 13
+    })
   })
 
-  it('sends a list for a multi-select question with one choice', () => {
-    expect(
-      questionResponse(questions, { many: { selected: ['X'], custom: '', skipped: false } })
-    ).toEqual({ many: ['X'] })
-  })
-})
-
-describe('cards', () => {
-  const interaction = (request: Record<string, unknown>): Interaction => ({
-    id: 'i',
-    kind: 'question',
-    status: 'pending',
-    request
-  })
-
-  it('leave takeovers and session starts to the computer', () => {
-    expect(answerableOnPhone(interaction({ intent: 'browser_takeover' }))).toBe(false)
-    expect(answerableOnPhone(interaction({ intent: 'start_sessions' }))).toBe(false)
-    expect(answerableOnPhone(interaction({ questions: [] }))).toBe(true)
-  })
-
-  it('cut a long argument preview', () => {
-    const preview = permissionPreview({ arguments: { text: 'x'.repeat(2_000) } })
-    expect(preview.length).toBe(601)
-    expect(preview.endsWith('…')).toBe(true)
-    expect(permissionPreview({})).toBe('')
-    expect(permissionPreview({ arguments: {} })).toBe('')
+  it('replaces a selection and fills an empty box', () => {
+    expect(insertAtCursor('Fix the tests', 4, 7, 'every')).toEqual({
+      value: 'Fix every tests',
+      cursor: 9
+    })
+    expect(insertAtCursor('', 0, 0, 'Hello')).toEqual({ value: 'Hello', cursor: 5 })
   })
 })

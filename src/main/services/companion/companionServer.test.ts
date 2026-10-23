@@ -315,7 +315,7 @@ describe('CompanionServer', () => {
   })
 
   it('opens the event stream once per ticket and seals each event with a rising counter', async () => {
-    const { port, server, session } = await paired()
+    const { port, server, session, deviceId } = await paired()
     const ticketReply = await call(port, session, 1, { id: 1, call: 'events.ticket', input: {} })
     const ticket = (
       openMessage(session.keys.reply, session.sessionId, ticketReply.reply.json().m, 1).value as {
@@ -340,8 +340,10 @@ describe('CompanionServer', () => {
     stream.on('data', (chunk) => received.push(String(chunk)))
     await vi.waitFor(() => expect(server.connectedDeviceIds().size).toBe(1))
     server.broadcast({ type: 'chats.changed' })
+    server.sendTo('another-device', { type: 'speech.end', speechId: 'theirs' })
     server.broadcast({ type: 'messages.changed', conversationId: 'c1' })
-    await vi.waitFor(() => expect(received.join('')).toMatch(/data: .*\n\n.*data: /s))
+    server.sendTo(deviceId, { type: 'speech.end', speechId: 'mine' })
+    await vi.waitFor(() => expect(received.join('').match(/data: /g)).toHaveLength(3))
     const events = received
       .join('')
       .split('\n\n')
@@ -349,7 +351,8 @@ describe('CompanionServer', () => {
       .map((line) => openMessage(session.keys.event, session.sessionId, JSON.parse(line.slice(6))))
     expect(events).toEqual([
       { counter: 1, value: { type: 'chats.changed' } },
-      { counter: 2, value: { type: 'messages.changed', conversationId: 'c1' } }
+      { counter: 2, value: { type: 'messages.changed', conversationId: 'c1' } },
+      { counter: 3, value: { type: 'speech.end', speechId: 'mine' } }
     ])
     stream.destroy()
     expect((await send(port, `/api/events?t=${ticket}`)).status).toBe(401)

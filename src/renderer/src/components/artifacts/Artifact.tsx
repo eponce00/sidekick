@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Monitor } from 'lucide-react'
+import { useChatSurface } from '../chatSurface'
 import type { ParsedArtifact } from '../../utils/artifactParser'
 import ReactArtifact from './ReactArtifact'
 import HtmlArtifact from './HtmlArtifact'
@@ -131,7 +132,33 @@ function ArtifactInstance({
   }
 }
 
+/** An artifact where it cannot run, as on the phone: its name and where to open it. */
+function ArtifactElsewhere({
+  artifact,
+  note
+}: {
+  artifact: ParsedArtifact
+  note: string
+}): React.JSX.Element {
+  return (
+    <div className="artifact-container artifact-elsewhere">
+      <div className="artifact-header">
+        <div className="artifact-header-left">
+          <span className="artifact-icon">
+            <Monitor size={16} aria-hidden="true" />
+          </span>
+          <span className="artifact-title">{artifact.title}</span>
+          <span className="artifact-type-badge">{artifact.type}</span>
+        </div>
+      </div>
+      <p className="artifact-elsewhere-note">{note}</p>
+    </div>
+  )
+}
+
 function Artifact(props: ArtifactProps): React.JSX.Element {
+  const { computerOnly } = useChatSurface()
+  if (computerOnly) return <ArtifactElsewhere artifact={props.artifact} note={computerOnly} />
   return <ArtifactInstance key={props.artifact.title} {...props} />
 }
 

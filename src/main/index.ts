@@ -13,7 +13,7 @@ import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
 import { appState } from './ipc/state'
 import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentRuns'
-import { shutdownCompanion } from './ipc/companion'
+import { setCompanionVoice, shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
@@ -282,6 +282,7 @@ async function bootstrapApplication(): Promise<void> {
     enabled: voiceEnabled()
   })
   registerVoiceHandlers(voiceService)
+  setCompanionVoice(voiceService)
   onSettingsSaved(() => voiceService?.setEnabled(voiceEnabled()))
   openMainWindow()
   mainWindowOpened = true

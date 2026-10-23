@@ -12,6 +12,8 @@ import {
   pair,
   type StoredDevice
 } from './companionClient'
+import { bindPhoneApi, dispatchToPhoneApi } from './phoneApi'
+import { refreshPhoneVoice } from './phoneVoice'
 
 export interface CompanionBoot {
   /** The one-time secret from a scanned code. */
@@ -119,6 +121,7 @@ function Connected({
   const [reconnects, setReconnects] = useState(0)
   const [view, setView] = useState<View>({ kind: 'list' })
   const [now, setNow] = useState(() => Date.now())
+  const [notice, setNotice] = useState('')
   const listeners = useRef(new Set<(event: CompanionEvent) => void>())
   const nextViewKey = useRef(1)
   const refreshing = useRef<{ again: boolean } | null>(null)
@@ -163,18 +166,37 @@ function Connected({
     void refreshList()
   }, [refreshList, reconnects])
 
+  // The desktop's components on the phone reach the computer through this connection.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    bindPhoneApi(connection, (text) => {
+      setNotice(text)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setNotice(''), 4_000)
+    })
+    return () => {
+      if (timer) clearTimeout(timer)
+      bindPhoneApi(null)
+      void refreshPhoneVoice(null)
+    }
+  }, [connection])
+
   useEffect(() => {
     let opened = false
     connection.listen(
       (event) => {
         if (event.type === 'chats.changed') void refreshList()
+        dispatchToPhoneApi(event)
         for (const listener of listeners.current) listener(event)
       },
       (open) => {
         setOnline(open)
         // Events sent while the stream was down are lost, so everything on screen reloads.
         if (open && opened) setReconnects((count) => count + 1)
-        if (open) opened = true
+        if (open) {
+          opened = true
+          void refreshPhoneVoice(connection)
+        }
       }
     )
     return () => connection.close()
@@ -223,6 +245,11 @@ function Connected({
         <div className="cp-connection" role="status">
           <Loader2 size={14} className="icon-spin" aria-hidden="true" />
           {online === null ? 'Connecting…' : 'Reconnecting…'}
+        </div>
+      )}
+      {notice && (
+        <div className="cp-toast" role="status">
+          {notice}
         </div>
       )}
       {view.kind === 'chat' ? (

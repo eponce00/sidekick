@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { projectAgentRunEvents } from '../../../shared/agentEventProjection'
+import type { ConversationRunMode, PromptAdmissionsResult } from '../../../shared/agentRunApi'
 import type { AgentRunEvent, AgentRunSnapshot } from '../../../shared/agentRuntime'
-import type { CompanionChatDetail, CompanionEvent } from '../../../shared/companion'
+import type {
+  CompanionCalls,
+  CompanionChatDetail,
+  CompanionEvent,
+  CompanionImage
+} from '../../../shared/companion'
+import type { Message } from '../types/chat.types'
 import {
   firstGapAfter,
   isActivePhase,
@@ -12,6 +19,7 @@ import {
   type CompanionConnection,
   type PendingSend
 } from './chatState'
+import { liveRunMessage, pendingSendMessage, toDesktopMessage } from './messageAdapter'
 
 interface LiveRun {
   snapshot: AgentRunSnapshot
@@ -20,11 +28,24 @@ interface LiveRun {
 
 export type Subscribe = (listener: (event: CompanionEvent) => void) => () => void
 
+export type ModelList = CompanionCalls['models.list']['output']
+
+/** What one message carries: its text and the uploads already on the computer. */
+export interface OutgoingMessage {
+  text: string
+  mode: ConversationRunMode
+  modelId?: string
+  images: Array<{ uploadId: string; preview: CompanionImage }>
+  files: Array<{ uploadId: string; name: string }>
+}
+
+const NO_QUEUE: PromptAdmissionsResult = { queued: [], pivot: null }
+
 let nextSendId = 1
 
 /**
- * One chat as the phone follows it: the saved messages from `chat.open`, plus the active run
- * rebuilt from its events as they arrive.
+ * One chat as the phone follows it: the saved messages from `chat.open`, the active run rebuilt
+ * from its events as they arrive, and the messages queued behind it.
  */
 export function useCompanionChat({
   connection,
@@ -48,14 +69,18 @@ export function useCompanionChat({
   const [run, setRun] = useState<LiveRun | null>(null)
   const [loading, setLoading] = useState(Boolean(initialConversationId))
   const [pending, setPending] = useState<PendingSend[]>([])
+  const [queue, setQueue] = useState<PromptAdmissionsResult>(NO_QUEUE)
+  const [models, setModels] = useState<ModelList | null>(null)
   const [sending, setSending] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [error, setError] = useState('')
-  const [answered, setAnswered] = useState<ReadonlySet<string>>(new Set())
+  // The mode of runs this phone started; a run's events do not say it.
+  const [runModes, setRunModes] = useState<ReadonlyMap<string, ConversationRunMode>>(new Map())
   // Event handlers need the latest values without resubscribing on every change.
   const idRef = useRef(conversationId)
   const runRef = useRef(run)
   const loadToken = useRef(0)
+  const queueToken = useRef(0)
   const catchingUp = useRef(false)
 
   const updateRun = useCallback((next: LiveRun | null) => {
@@ -98,6 +123,27 @@ export function useCompanionChat({
     }
   }, [connection, fail, updateRun])
 
+  const loadQueue = useCallback(async () => {
+    const id = idRef.current
+    if (!id) return
+    const token = ++queueToken.current
+    try {
+      const next = await connection.call('queue.list', { conversationId: id })
+      if (token === queueToken.current && idRef.current === id) setQueue(next)
+    } catch {
+      /* The queue shows again with the next change. */
+    }
+  }, [connection])
+
+  const loadModels = useCallback(async () => {
+    try {
+      const id = idRef.current
+      setModels(await connection.call('models.list', id ? { conversationId: id } : {}))
+    } catch {
+      /* Without the list, messages go to the chat's own model. */
+    }
+  }, [connection])
+
   // Fills holes left by events the stream dropped.
   const catchUp = useCallback(async () => {
     if (catchingUp.current) return
@@ -124,7 +170,12 @@ export function useCompanionChat({
 
   useEffect(() => {
     void load()
-  }, [load, reconnects])
+    void loadQueue()
+  }, [load, loadQueue, reconnects])
+
+  useEffect(() => {
+    void loadModels()
+  }, [loadModels, reconnects])
 
   useEffect(
     () =>
@@ -133,6 +184,10 @@ export function useCompanionChat({
         if (!id) return
         if (event.type === 'messages.changed') {
           if (event.conversationId === id) void load()
+          return
+        }
+        if (event.type === 'queue.changed') {
+          if (event.conversationId === id) void loadQueue()
           return
         }
         if (event.type !== 'run.event') return
@@ -145,16 +200,11 @@ export function useCompanionChat({
         if (event.event.type === 'run.finalized') void load()
         else void catchUp()
       }),
-    [subscribe, load, catchUp, updateRun]
+    [subscribe, load, loadQueue, catchUp, updateRun]
   )
 
   const projected = useMemo(() => (run ? projectAgentRunEvents(run.events) : null), [run])
   const liveSegments = useMemo(() => projected?.segments ?? [], [projected])
-  const messages = useMemo(() => {
-    const saved = detail?.messages ?? []
-    // The run's own output message may already exist; the live projection draws it instead.
-    return run ? saved.filter((message) => message.runId !== run.snapshot.id) : saved
-  }, [detail, run])
   const unconfirmed = useMemo(
     () => unconfirmedSends(pending, detail?.messages ?? [], liveSegments),
     [pending, detail, liveSegments]
@@ -162,38 +212,73 @@ export function useCompanionChat({
   const phase = projected?.phase ?? run?.snapshot.phase ?? null
   const runActive = Boolean(run) && isActivePhase(phase)
 
+  /** The chat as the desktop's message view shows it: saved, then sent, then being written. */
+  const messages = useMemo((): Message[] => {
+    const saved = detail?.messages ?? []
+    // The run's own output message may already exist; the live projection draws it instead.
+    const shown = (run ? saved.filter((message) => message.runId !== run.snapshot.id) : saved).map(
+      toDesktopMessage
+    )
+    shown.push(...unconfirmed.map(pendingSendMessage))
+    if (run && projected)
+      shown.push(liveRunMessage(run.snapshot, projected, runModes.get(run.snapshot.id)))
+    return shown
+  }, [detail, run, projected, unconfirmed, runModes])
+
   const send = useCallback(
-    async (text: string): Promise<boolean> => {
-      const pendingSend: PendingSend = {
-        id: `send-${nextSendId++}`,
-        text,
-        baseline: sendBaseline(text, detail?.messages ?? [], liveSegments, pending)
-      }
-      setPending((current) => [...current, pendingSend])
+    async (message: OutgoingMessage): Promise<boolean> => {
+      const queuing = runActive
+      const pendingSend: PendingSend | null = queuing
+        ? null
+        : {
+            id: `send-${nextSendId++}`,
+            text: message.text,
+            sentAt: Date.now(),
+            baseline: sendBaseline(message.text, detail?.messages ?? [], liveSegments, pending),
+            images: message.images.map((image) => image.preview),
+            files: message.files.map((file) => file.name)
+          }
+      if (pendingSend) setPending((current) => [...current, pendingSend])
       setSending(true)
       setError('')
       try {
         const id = idRef.current
         const result = await connection.call('chat.send', {
           ...(id ? { conversationId: id } : {}),
-          text
+          text: message.text,
+          mode: message.mode,
+          ...(message.modelId ? { modelId: message.modelId } : {}),
+          ...(message.images.length
+            ? { images: message.images.map(({ uploadId }) => ({ uploadId })) }
+            : {}),
+          ...(message.files.length
+            ? { files: message.files.map(({ uploadId }) => ({ uploadId })) }
+            : {})
         })
         if (!id) {
           idRef.current = result.conversationId
           setConversationId(result.conversationId)
           onCreated(result.conversationId)
         }
-        await load()
+        // A queued message shows in the queue, not as a sent one.
+        if (result.queued && pendingSend)
+          setPending((current) => current.filter((item) => item.id !== pendingSend.id))
+        if (result.runId && !result.queued && !result.steered) {
+          const runId = result.runId
+          setRunModes((current) => new Map(current).set(runId, message.mode))
+        }
+        await Promise.all([load(), loadQueue()])
         return true
       } catch (failure) {
-        setPending((current) => current.filter((item) => item.id !== pendingSend.id))
+        if (pendingSend)
+          setPending((current) => current.filter((item) => item.id !== pendingSend.id))
         fail(failure)
         return false
       } finally {
         setSending(false)
       }
     },
-    [connection, detail, liveSegments, pending, load, onCreated, fail]
+    [connection, detail, liveSegments, pending, runActive, load, loadQueue, onCreated, fail]
   )
 
   const stop = useCallback(async () => {
@@ -210,43 +295,85 @@ export function useCompanionChat({
     }
   }, [connection, fail])
 
+  /**
+   * Answers a card. The desktop's cards await this to settle, and some do not catch, so the
+   * promise is marked handled here and the failure is shown above the message box.
+   */
   const resolve = useCallback(
-    async (interactionId: string, response: Record<string, unknown>, cancelled?: boolean) => {
-      setAnswered((current) => new Set(current).add(interactionId))
+    (interactionId: string, response: Record<string, unknown>, cancelled?: boolean) => {
       setError('')
-      try {
-        await connection.call('interaction.resolve', {
+      const result = connection
+        .call('interaction.resolve', {
           interactionId,
           response,
           ...(cancelled ? { cancelled: true } : {})
         })
-      } catch (failure) {
-        setAnswered((current) => {
-          const next = new Set(current)
-          next.delete(interactionId)
-          return next
-        })
-        fail(failure)
-      }
+        .then(() => undefined)
+      result.catch(fail)
+      return result
     },
     [connection, fail]
+  )
+
+  /** Replaces the queue: reordered, edited, or without the ids left out. */
+  const updateQueue = useCallback(
+    async (queued: Array<{ id: string; content: string }>) => {
+      const id = idRef.current
+      if (!id) return
+      // Shown at once; the computer's answer replaces it.
+      setQueue((current) => {
+        const byId = new Map(current.queued.map((item) => [item.id, item]))
+        return {
+          ...current,
+          queued: queued.flatMap(({ id: itemId, content }) => {
+            const item = byId.get(itemId)
+            return item ? [{ ...item, content }] : []
+          })
+        }
+      })
+      try {
+        setQueue(await connection.call('queue.update', { conversationId: id, queued }))
+      } catch (failure) {
+        fail(failure)
+        void loadQueue()
+      }
+    },
+    [connection, fail, loadQueue]
+  )
+
+  const steerQueued = useCallback(
+    async (admissionId: string) => {
+      const id = idRef.current
+      if (!id) return
+      setError('')
+      try {
+        await connection.call('queue.steer', { conversationId: id, admissionId })
+      } catch (failure) {
+        fail(failure)
+      } finally {
+        void loadQueue()
+      }
+    },
+    [connection, fail, loadQueue]
   )
 
   return {
     conversationId,
     chat: detail?.chat ?? null,
     messages,
-    liveSegments,
     runActive,
     phase,
-    unconfirmed,
+    queue,
+    models,
     loading,
     sending,
     stopping,
     error,
-    answered,
+    setError,
     send,
     stop,
-    resolve
+    resolve,
+    updateQueue,
+    steerQueued
   }
 }

@@ -1,16 +1,12 @@
 import type { ProjectedContentSegment } from '../../../shared/agentEventProjection'
 import type { AgentRunEvent, AgentRunPhase } from '../../../shared/agentRuntime'
-import type { CompanionChat, CompanionMessage } from '../../../shared/companion'
-import type { AgentPermissionDecision } from '../../../shared/permissions'
+import type { CompanionChat, CompanionImage, CompanionMessage } from '../../../shared/companion'
 import type { CompanionClient } from './companionClient'
 
 /** What the phone needs from a connection; the preview client offers the same. */
 export type CompanionConnection = Pick<CompanionClient, 'call' | 'listen' | 'close'>
 
 export type Segment = ProjectedContentSegment
-export type InteractionSegment = Extract<Segment, { type: 'interaction' }>
-export type Interaction = InteractionSegment['interaction']
-export type ToolSegment = Extract<Segment, { type: 'tool' }>
 
 const FINISHED_PHASES: ReadonlySet<AgentRunPhase> = new Set([
   'completed',
@@ -98,8 +94,12 @@ export function runEventAction(
 export interface PendingSend {
   id: string
   text: string
+  sentAt: number
   /** How many copies of this text the chat already showed when it was sent. */
   baseline: number
+  images?: CompanionImage[]
+  /** Names of the text files sent with it. */
+  files?: string[]
 }
 
 /**
@@ -152,137 +152,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
-/** Saved segments come from storage, so only the shapes this page draws are kept. */
-export function savedSegments(value: unknown[] | undefined): Segment[] {
-  if (!Array.isArray(value)) return []
-  return value.filter((item): item is Segment => {
-    if (!isRecord(item)) return false
-    switch (item.type) {
-      case 'text':
-      case 'thinking':
-        return typeof item.content === 'string'
-      case 'tool':
-        return isRecord(item.tool) && typeof item.tool.title === 'string'
-      case 'interaction':
-        return (
-          isRecord(item.interaction) &&
-          typeof item.interaction.id === 'string' &&
-          isRecord(item.interaction.request)
-        )
-      case 'run_error':
-        return isRecord(item.runError) && typeof item.runError.message === 'string'
-      case 'run_status':
-        return isRecord(item.status)
-      case 'steer':
-        return isRecord(item.steer) && typeof item.steer.content === 'string'
-      case 'artifact':
-        return isRecord(item.artifact) && typeof item.artifact.title === 'string'
-      case 'summary':
-      case 'verification':
-      case 'decision':
-        return true
-      default:
-        return false
-    }
-  })
-}
-
-export interface QuestionOption {
-  label: string
-  description?: string
-  recommended?: boolean
-}
-
-export interface Question {
-  id: string
-  header?: string
-  question: string
-  options?: QuestionOption[]
-  multiSelect?: boolean
-  allowOther?: boolean
-}
-
-export interface QuestionAnswer {
-  selected: string[]
-  custom: string
-  skipped: boolean
-}
-
-export const EMPTY_ANSWER: QuestionAnswer = { selected: [], custom: '', skipped: false }
-
-export function questionsFrom(request: Record<string, unknown>): Question[] {
-  if (!Array.isArray(request.questions)) return []
-  return request.questions.filter(
-    (question): question is Question =>
-      isRecord(question) && typeof question.id === 'string' && typeof question.question === 'string'
-  )
-}
-
-/** The answers as the desktop sends them: one string, or a list for several choices. */
-export function questionResponse(
-  questions: readonly Question[],
-  answers: Readonly<Record<string, QuestionAnswer>>
-): Record<string, string | string[]> {
-  const response: Record<string, string | string[]> = {}
-  for (const question of questions) {
-    const answer = answers[question.id] ?? EMPTY_ANSWER
-    if (answer.skipped) continue
-    const custom = answer.custom.trim()
-    const values = [...answer.selected, ...(custom ? [custom] : [])]
-    if (!values.length) continue
-    response[question.id] = question.multiSelect || values.length > 1 ? values : values[0]
-  }
-  return response
-}
-
-/** Cards that need the computer itself, such as taking over its browser. */
-export function answerableOnPhone(interaction: Interaction): boolean {
-  return !(
-    interaction.kind === 'question' &&
-    (interaction.request.intent === 'start_sessions' ||
-      interaction.request.intent === 'browser_takeover')
-  )
-}
-
-const PREVIEW_LIMIT = 600
-
-/** What a permission card shows of the action's arguments. */
-export function permissionPreview(request: Record<string, unknown>): string {
-  const args = request.arguments
-  if (args === undefined || args === null) return ''
-  let text: string
-  try {
-    text = typeof args === 'string' ? args : JSON.stringify(args, null, 2)
-  } catch {
-    return ''
-  }
-  if (!text || text === '{}') return ''
-  return text.length > PREVIEW_LIMIT ? `${text.slice(0, PREVIEW_LIMIT)}…` : text
-}
-
-export const PERMISSION_DECISION_LABELS: Record<AgentPermissionDecision, string> = {
-  allow_once: 'Allowed once',
-  allow_chat: 'Allowed for this chat',
-  deny: 'Denied',
-  deny_stop: 'Denied and stopped'
-}
-
-/** The text a tool row expands to: what ran, then how it ended. */
-export function toolDetail(tool: ToolSegment['tool']): string {
-  const lines: string[] = []
-  if (tool.command && tool.command !== tool.title) lines.push(tool.command)
-  if (tool.input && Object.keys(tool.input).length) {
-    try {
-      const input = JSON.stringify(tool.input, null, 2)
-      lines.push(input.length > PREVIEW_LIMIT ? `${input.slice(0, PREVIEW_LIMIT)}…` : input)
-    } catch {
-      /* An input that cannot be shown is left out. */
-    }
-  }
-  if (tool.error) lines.push(tool.error)
-  else if (tool.output) {
-    const output = tool.output.trim()
-    lines.push(output.length > PREVIEW_LIMIT ? `${output.slice(0, PREVIEW_LIMIT)}…` : output)
-  }
-  return lines.join('\n\n')
+/**
+ * Puts dictated words where the cursor is, replacing any selection, with a space between them and
+ * the text around them; returns the new text and where the cursor goes.
+ */
+export function insertAtCursor(
+  value: string,
+  start: number,
+  end: number,
+  words: string
+): { value: string; cursor: number } {
+  const before = value.slice(0, start)
+  const after = value.slice(end)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && !/^\s/.test(after) ? ' ' : ''
+  const inserted = `${lead}${words}${trail}`
+  return { value: before + inserted + after, cursor: before.length + lead.length + words.length }
 }
