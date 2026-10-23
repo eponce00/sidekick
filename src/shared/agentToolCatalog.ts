@@ -1430,7 +1430,7 @@ const askUser = definition(
 
 const toolOutput = definition(
   'tool_output',
-  'Read a bounded range of a complete tool result that SideKick shortened for the chat. Use the handle and offset from the note where the result was shortened; do not guess filesystem paths.',
+  'Read a bounded range of a complete tool result that SideKick shortened for the chat, or find text in it. Use the handle and offset from the note where the result was shortened; do not guess filesystem paths. To get one value out of a long result, such as a key or an ID, use find instead of reading it in pieces.',
   {
     type: 'object',
     required: ['handle'],
@@ -1441,7 +1441,12 @@ const toolOutput = definition(
         description:
           'UTF-8 byte offset to read from, default 0. The note gives where the part left out starts.'
       },
-      max_bytes: { type: 'number', description: 'Maximum bytes to return, capped by SideKick.' }
+      max_bytes: { type: 'number', description: 'Maximum bytes to return, capped by SideKick.' },
+      find: {
+        type: 'string',
+        description:
+          'Text to look for instead of reading a range, ignoring case. Returns each place it occurs with its offset and the text around it.'
+      }
     }
   }
 )

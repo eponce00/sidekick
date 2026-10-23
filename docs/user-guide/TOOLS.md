@@ -116,9 +116,11 @@ global policy is Full access.
   commands return an ID that can be read, answered, or cancelled from any reply in the conversation.
 - Tool output is bounded. A long result keeps its start and its end, cut on whole lines, and a
   note where the middle was left out says that SideKick shortened it, gives an opaque handle and
-  the byte offset where the part left out starts. The whole result is kept in trusted storage, and
-  the agent reads on from that offset with `tool_output`; it is not silently inserted into the
-  prompt.
+  the byte offset where the part left out starts. A line too long to show whole, such as JSON on
+  one line, shows as much of its start and end as fits. The whole result is kept in trusted
+  storage, and the agent reads on from that offset with `tool_output`, or finds text in it with
+  `tool_output`'s `find`, which returns each match's offset and the text around it. None of it is
+  silently inserted into the prompt.
 - A command's result reaches the agent as text: its exit code, then stdout and stderr (or, in a
   terminal, the output) as plain lines, each shortened on its own. The note says the command's own
   output was complete, so a shortened download log is not taken for a short file. The command row
