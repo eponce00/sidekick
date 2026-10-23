@@ -345,6 +345,29 @@ export class ToolOutputStore {
   }
 
   /**
+   * Keeps a whole result and gives the model `shown(handle)` instead: a shorter form the tool made
+   * itself, such as an outline of long JSON, which names the handle for reading the rest.
+   */
+  async keep(rawContent: string, shown: (handle: string) => string): Promise<BoundedToolOutput> {
+    const content = this.redactor.redact(rawContent)
+    const handle = await this.save(content)
+    const text = this.redactor.redact(shown(handle))
+    const originalBytes = Buffer.byteLength(content, 'utf8')
+    return {
+      content: text,
+      output: {
+        truncated: true,
+        originalBytes,
+        returnedBytes: Buffer.byteLength(text, 'utf8'),
+        originalEstimatedTokens: estimateTextTokens(content),
+        returnedEstimatedTokens: estimateTextTokens(text),
+        fullOutputHandle: handle,
+        continuation: { offset: 0, bytes: originalBytes }
+      }
+    }
+  }
+
+  /**
    * Bounds a result made of labelled sections, such as a command's stdout and stderr, each on its
    * own: a section that fits whole keeps it, and the others share the rest of the room, head and
    * tail on whole lines. The model reads `header`, then each section between `<name>` tags; the

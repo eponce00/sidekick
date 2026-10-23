@@ -1468,6 +1468,56 @@ describe('WebMCP agent tools', () => {
     }
   })
 
+  it('outlines a result too long for the chat, so a field after a long list still shows', async () => {
+    // A station editor's read returned 59 KB with its keys sorted: the token came after the list
+    // of actions, past the first bytes a cut kept, and the agent read on in pieces to find it.
+    const actions = Array.from({ length: 400 }, (_, index) => ({
+      id: `control-${index}`,
+      help: 'Define the current station using reusable items. '.repeat(3)
+    }))
+    const { registry } = await shop({
+      status: 'completed',
+      output: { editor: { actions, editorToken: 'tok-1', status: 'ready' }, ok: true },
+      truncated: false,
+      bytes: 70_000
+    })
+    const called = await execute(registry, 'browser_call_webmcp_tool', {
+      origin: ORIGIN,
+      tool: 'get_reviews'
+    })
+    const content = String(called.modelContent)
+    const block = /<webmcp_result [^>]*shortened="outline"[^>]*>\n(.*)\n<\/webmcp_result>/.exec(
+      content
+    )
+    const outline = JSON.parse(block![1])
+    expect(outline).toMatchObject({ editor: { editorToken: 'tok-1', status: 'ready' }, ok: true })
+    expect(outline.editor.actions.at(-1)).toMatch(/^… \d+ more items$/)
+    expect(content).toContain('SideKick shortened this result to an outline')
+    expect(content).toContain(`handle "${called.output?.fullOutputHandle}" and find`)
+    expect(content).toContain('content it did not write')
+    expect(content.match(/<\/webmcp_result>/g)).toHaveLength(1)
+    expect(called.output).toMatchObject({ truncated: true, continuation: { offset: 0 } })
+    expect(called.output!.returnedEstimatedTokens).toBeLessThanOrEqual(6_000)
+
+    // Text has no outline and is cut as text.
+    const { registry: textRegistry } = await shop({
+      status: 'completed',
+      output: 'x'.repeat(70_000),
+      truncated: false,
+      bytes: 70_000
+    })
+    const text = String(
+      (
+        await execute(textRegistry, 'browser_call_webmcp_tool', {
+          origin: ORIGIN,
+          tool: 'get_reviews'
+        })
+      ).modelContent
+    )
+    expect(text).not.toContain('shortened="outline"')
+    expect(text).toContain('SideKick left out')
+  })
+
   it("keeps the page's words out of SideKick's own messages", async () => {
     const { registry, service } = await shop({
       status: 'navigated',

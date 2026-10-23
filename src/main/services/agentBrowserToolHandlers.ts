@@ -16,8 +16,14 @@ import {
 import type { RequestedAccess } from '../../shared/permissions'
 import type { AgentToolExecutionContext } from './agentToolRegistry'
 import type { AgentToolHandler, AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
-import type { ToolOutputStore } from './toolOutputStore'
+import {
+  planToolOutputCut,
+  type BoundedToolOutput,
+  type ToolOutputPolicy,
+  type ToolOutputStore
+} from './toolOutputStore'
 import type { CredentialUses } from './credentialUses'
+import { fittingOutline } from './jsonOutline'
 import {
   NativeBrowserSessionService,
   type BrowserActionResult,
@@ -1499,6 +1505,52 @@ async function webMcpListingResult(
   })
 }
 
+/** Room an outline leaves for its note. */
+const OUTLINE_NOTE_ROOM = { bytes: 600, tokens: 200 }
+
+/**
+ * A page result too long for the chat, as an outline of its JSON rather than its first and last
+ * bytes. Results arrive with their keys sorted, so a byte cut can hide the field the agent needs,
+ * such as a token after a long list; the outline keeps every short value. Null when no outline
+ * fits, and the result is cut as text instead.
+ */
+async function outlinedWebMcpResult(
+  outputs: ToolOutputStore,
+  whole: string,
+  output: unknown,
+  attributes: Record<string, string>,
+  notes: string[]
+): Promise<BoundedToolOutput | null> {
+  const room: ToolOutputPolicy = {
+    ...WEBMCP_OUTPUT_POLICY,
+    maxBytes: WEBMCP_OUTPUT_POLICY.maxBytes - OUTLINE_NOTE_ROOM.bytes,
+    maxTokens: WEBMCP_OUTPUT_POLICY.maxTokens - OUTLINE_NOTE_ROOM.tokens
+  }
+  const render = (outline: unknown, note: string): string =>
+    [
+      untrustedPageBlock('webmcp_result', { ...attributes, shortened: 'outline' }, outline),
+      note,
+      ...notes
+    ]
+      .filter(Boolean)
+      .join('\n')
+  const fitted = fittingOutline(
+    output,
+    (outline) => !planToolOutputCut(render(outline, ''), room).truncated
+  )
+  if (!fitted) return null
+  const { items, chars } = fitted.limits
+  return outputs.keep(whole, (handle) =>
+    render(
+      fitted.outline,
+      `[SideKick shortened this result to an outline: each list shows its first ${items} ` +
+        `${items === 1 ? 'item' : 'items'} and each long text its first ${chars} characters, ` +
+        `marked where they were cut. The whole result is kept: find a value in it with ` +
+        `tool_output, handle "${handle}" and find, or read it from offset 0.]`
+    )
+  )
+}
+
 async function webMcpCallResult(
   outputs: ToolOutputStore,
   title: string,
@@ -1539,10 +1591,11 @@ async function webMcpCallResult(
         ? `The page navigated while the tool ran, to the address in the webmcp_navigation block; observe it before using element refs.\n${untrustedPageBlock('webmcp_navigation', attributes, { to: outcome.navigatedTo })}`
         : ''
     ].filter(Boolean)
-    const bounded = await outputs.apply(
-      [untrustedPageBlock('webmcp_result', attributes, output), ...notes].join('\n'),
-      WEBMCP_OUTPUT_POLICY
-    )
+    const whole = [untrustedPageBlock('webmcp_result', attributes, output), ...notes].join('\n')
+    const bounded =
+      (planToolOutputCut(whole, WEBMCP_OUTPUT_POLICY).truncated &&
+        (await outlinedWebMcpResult(outputs, whole, output, attributes, notes))) ||
+      (await outputs.apply(whole, WEBMCP_OUTPUT_POLICY))
     return toolExecutionSucceeded({
       title,
       data,

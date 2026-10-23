@@ -108,8 +108,12 @@ inside `<webmcp_tools>`, `<webmcp_result>`, `<webmcp_error>`, `<webmcp_schema_is
 `<webmcp_navigation>` blocks marked `trust="untrusted-data"`. The block's body is JSON with every
 `<` written as `\u003c`, so no text from the page can close the block. A tool that returns JSON as
 text, as most do, has that text parsed first, so the model reads the JSON once rather than escaped
-inside a string. A result too long for the chat keeps the start and end of its JSON, and the agent
-finds a value in the rest with `tool_output`'s `find`. A result the page marks
+inside a string. A result too long for the chat is shown as an outline of its JSON,
+marked `shortened="outline"`: every key and short value, each list with as many of its first
+items and each text with as much of its start as fit, and where each was cut. Results arrive with
+their keys sorted, so cutting the text at a byte could hide a field such as a token behind a long
+list. The whole result is kept, and the agent finds a value in it with `tool_output`'s `find`. A
+result that is not JSON keeps the start and end of its text. A result the page marks
 `untrustedContentHint` carries a note saying so. Routine browser observations name the page's tools
 so the agent can find them.
 
