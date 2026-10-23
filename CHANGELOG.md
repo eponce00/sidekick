@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.19.0 — 2026-10-23
+
+- Use SideKick from your phone over your Wi-Fi. Click the phone icon at the bottom of the sidebar,
+  turn on **Phone access** and scan the QR code. Once you allow the phone on the computer, it shows
+  your chats as the computer does, laid out for a phone: replies as they stream, tools and their
+  output, changes, images, cards and the agent's other chats. From the phone you can send messages
+  in any mode and on any model, queue and steer them in the same queue the computer shows, attach
+  photos (or take one), text files and dictate, have replies read aloud in the computer's voice,
+  stop the agent and answer its cards. The phone connects to the computer directly, with no
+  service and no app to install; each code works once, every phone needs your approval, and the
+  connection is encrypted, so others on the network cannot join or read it. See
+  [Use SideKick from your phone](docs/user-guide/PHONE.md).
+
 ## 0.18.2 — 2026-10-22
 
 - Show the agent what a long tool result holds instead of leaving it to read the rest in pieces.
