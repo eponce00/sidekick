@@ -424,6 +424,16 @@ export class CompanionPreview implements CompanionConnection {
             output: 'Image, 640 × 400',
             data: { previewUrl: 'sidekick-browser://artifact/preview-viewed-image' }
           }),
+          tool('t-shot', 'browser_screenshot', 'Took a screenshot of the upload page', {
+            input: {},
+            presentation: {
+              kind: 'generic',
+              title: 'Took a screenshot of the upload page',
+              subject: 'localhost:5173/upload'
+            },
+            output: 'Screenshot, 1280 × 800',
+            data: { previewUrl: 'sidekick-browser://artifact/preview-browser-screenshot' }
+          }),
           tool('t-test', 'run_command', 'Ran npm test -- upload', {
             input: { command: 'npm test -- upload' },
             presentation: { kind: 'terminal', title: 'Ran npm test -- upload' },

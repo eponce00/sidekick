@@ -40,6 +40,13 @@ interface QueuedMessageTrayProps {
   onSteer: (id: string) => void
   /** Move buttons beside each message, for touch screens, where dragging does not reorder. */
   moveButtons?: boolean
+  /**
+   * Edits a message in the message box instead of in its card, as a sent message is edited on the
+   * phone, where a second text box inside the tray is cramped.
+   */
+  onEditInComposer?: (message: PendingRunMessageItem) => void
+  /** The message the message box is editing, marked as the one being changed. */
+  editingInComposerId?: string | null
 }
 
 export function QueuedMessageTray({
@@ -49,7 +56,9 @@ export function QueuedMessageTray({
   onRemove,
   onMove,
   onSteer,
-  moveButtons = false
+  moveButtons = false,
+  onEditInComposer,
+  editingInComposerId = null
 }: QueuedMessageTrayProps): React.JSX.Element | null {
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
@@ -66,6 +75,7 @@ export function QueuedMessageTray({
   if (!pendingCount) return null
 
   const beginEdit = (message: PendingRunMessageItem): void => {
+    if (onEditInComposer) return onEditInComposer(message)
     setEditingId(message.id)
     setDraft(message.content)
   }
@@ -114,7 +124,7 @@ export function QueuedMessageTray({
     return (
       <article
         key={message.id}
-        className={`queued-message-card ${isPivot ? 'is-steering' : ''} ${draggedId === message.id ? 'is-dragging' : ''} ${dropTargetId === message.id ? 'is-drop-target' : ''}`.trim()}
+        className={`queued-message-card ${isPivot ? 'is-steering' : ''} ${draggedId === message.id ? 'is-dragging' : ''} ${dropTargetId === message.id ? 'is-drop-target' : ''} ${editingInComposerId === message.id ? 'is-editing' : ''}`.trim()}
         onDragOver={(event) => {
           if (isPivot || !draggedId || draggedId === message.id) return
           event.preventDefault()

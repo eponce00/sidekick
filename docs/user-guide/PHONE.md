@@ -44,7 +44,8 @@ and the agent's other chats.
   A reply's own buttons are always under it.
 - **While the agent works**, a message you send is queued, as on the computer, and is sent when the
   reply finishes. The queue is the same one the computer's composer shows: edit, reorder or remove
-  messages from either, or **Steer** one to hand it to the agent now. A message steered while the
+  messages from either, or **Steer** one to hand it to the agent now. Editing a queued message on
+  the phone puts it in the message box, as editing a sent one does; send it to save the change. A message steered while the
   agent waits for you, or is finishing, stops the reply and starts the next one.
 - **Attach** photos from the phone, take one with the camera, or attach text files such as notes,
   logs or code. Photos are reduced on the phone before they are sent. The chat's model must be able

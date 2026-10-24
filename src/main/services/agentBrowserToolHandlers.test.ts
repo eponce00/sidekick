@@ -37,6 +37,11 @@ import { OutsideProjectError } from '../utils/workspacePaths'
 vi.mock('./browserFilmstrip', () => ({
   composeFilmstrip: vi.fn(() => ({ jpeg: Buffer.from('strip'), width: 1536, height: 320 }))
 }))
+vi.mock('./viewedImagePreviews', () => ({
+  saveViewedImagePreview: vi.fn(async (bytes: Buffer) =>
+    bytes.length ? 'sidekick-browser://artifact/viewed-images/preview.jpg' : undefined
+  )
+}))
 
 function observation(sessionId: string, runId = 'run-1'): BrowserObservation {
   const path = join(tmpdir(), `${sessionId}.png`)
@@ -515,6 +520,27 @@ describe('native browser agent tool handlers', () => {
       allowedFileRoots: ['C:\\project']
     })
     expect(service.open.mock.calls[0][1]).toEqual({ signal })
+  })
+
+  it('shows the chat a reduced copy of the screenshot the model was shown, not the model', async () => {
+    const { registry } = setup()
+    await writeFile(join(tmpdir(), 'session-1.png'), Buffer.from('png bytes'))
+    try {
+      const result = await execute(
+        registry,
+        'browser_open',
+        { url: 'https://example.com/' },
+        { workspaceRoot: 'C:\\project', signal: new AbortController().signal }
+      )
+      expect(result.media).toHaveLength(1)
+      expect((result.data as { previewUrl?: string }).previewUrl).toBe(
+        'sidekick-browser://artifact/viewed-images/preview.jpg'
+      )
+      // The preview is for the chat's row; what the model reads does not mention it.
+      expect(result.modelContent).not.toContain('viewed-images')
+    } finally {
+      await rm(join(tmpdir(), 'session-1.png'), { force: true })
+    }
   })
 
   it('reuses the conversation browser across follow-up runs', async () => {

@@ -1156,6 +1156,12 @@ body > .image-lightbox {
   padding: var(--space-3) var(--space-3) var(--space-1);
 }
 
+/* The queued message the box is editing. */
+.cp-input-area .queued-message-card.is-editing {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--surface-4));
+  background: var(--accent-subtle);
+}
+
 .cp-input-area .queued-message-handle {
   display: none;
 }

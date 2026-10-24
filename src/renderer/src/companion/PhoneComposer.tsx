@@ -22,6 +22,7 @@ import { QueuedMessageTray } from '../components/QueuedMessageTray'
 import { endDictation } from '../services/voice/dictationControl'
 import { TEXT_FILE_ACCEPT } from './attachments'
 import type { CompanionConnection } from './chatState'
+import { phoneNotice } from './phoneApi'
 import { useCompanionVoice } from './phoneVoice'
 import { Sheet, SheetAction, SheetSection, SheetTile } from './Sheet'
 import type { ModelList, OutgoingMessage } from './useCompanionChat'
@@ -102,25 +103,36 @@ export function PhoneComposer({
       field?.setSelectionRange(prefill.text.length, prefill.text.length)
     })
   }, [prefill])
+  // A queued message is edited in the box as a sent one is: its text in the box, with an Editing
+  // chip. Sending saves it in the queue instead of answering anything again.
+  const [queuedEdit, setQueuedEdit] = useState<{ id: string; text: string; nonce: number } | null>(
+    null
+  )
+  const activeEdit = queuedEdit ?? editing
   const [edited, setEdited] = useState<number | null>(null)
   const setAside = useRef<string | null>(null)
-  if (editing && editing.nonce !== edited) {
-    setEdited(editing.nonce)
+  if (activeEdit && activeEdit.nonce !== edited) {
+    setEdited(activeEdit.nonce)
     if (setAside.current === null) setAside.current = text
-    setText(editing.text)
+    setText(activeEdit.text)
   }
   useEffect(() => {
-    if (!editing) return
+    if (!activeEdit) return
     requestAnimationFrame(() => {
       const field = inputRef.current
       field?.focus()
-      field?.setSelectionRange(editing.text.length, editing.text.length)
+      field?.setSelectionRange(activeEdit.text.length, activeEdit.text.length)
     })
-  }, [editing])
+  }, [activeEdit])
   const endEdit = (): void => {
     setText(setAside.current ?? '')
     setAside.current = null
     setEdited(null)
+  }
+  const cancelEdit = (): void => {
+    endEdit()
+    if (queuedEdit) setQueuedEdit(null)
+    else onCancelEdit()
   }
 
   const modelId = chosenModelId ?? models?.selectedModelId ?? null
@@ -131,6 +143,28 @@ export function PhoneComposer({
   const steerFirst = runActive && !hasContent && queue.queued.length > 0
 
   const submit = async (): Promise<void> => {
+    if (queuedEdit) {
+      const edit = text.trim()
+      if (!edit) return
+      endDictation()
+      if (!queue.queued.some((item) => item.id === queuedEdit.id)) {
+        // It was sent while being edited; the new text stays in the box to send.
+        setQueuedEdit(null)
+        setAside.current = null
+        setEdited(null)
+        phoneNotice('That message was already sent.')
+        return
+      }
+      onUpdateQueue(
+        queue.queued.map((item) => ({
+          id: item.id,
+          content: item.id === queuedEdit.id ? edit : item.content
+        }))
+      )
+      setQueuedEdit(null)
+      endEdit()
+      return
+    }
     if (editing) {
       const edit = text.trim()
       if (!edit || sending) return
@@ -216,6 +250,10 @@ export function PhoneComposer({
           onUpdateQueue(order.map((item) => ({ id: item.id, content: item.content })))
         }}
         onSteer={onSteerQueued}
+        editingInComposerId={queuedEdit?.id ?? null}
+        onEditInComposer={(message) =>
+          setQueuedEdit({ id: message.id, text: message.content, nonce: Date.now() })
+        }
       />
     ) : undefined
 
@@ -277,8 +315,8 @@ export function PhoneComposer({
   // One round button at the end of the row, as in the phone apps: Send once there is something to
   // send, Stop while SideKick works with nothing typed. A queued message steers from its own Steer
   // button, or with Ctrl+Enter in an empty box on a hardware keyboard.
-  const showSend = editing ? Boolean(text.trim()) : hasContent
-  const showStop = runActive && !hasContent && !editing
+  const showSend = activeEdit ? Boolean(text.trim()) : hasContent
+  const showStop = runActive && !hasContent && !activeEdit
 
   return (
     <>
@@ -290,7 +328,7 @@ export function PhoneComposer({
         minRows={1}
         maxRows={6}
         placeholder={
-          editing
+          activeEdit
             ? 'Edit your message'
             : mode === 'research'
               ? 'What should SideKick research?'
@@ -314,31 +352,26 @@ export function PhoneComposer({
         sendDisabled={!showSend || sending || files.uploading}
         sendButtonClassName={showSend ? '' : 'cp-hidden'}
         sendTitle={
-          editing
-            ? 'Send the edited message'
-            : files.uploading
-              ? 'Waiting for attachments to upload'
-              : runActive
-                ? 'Add message to queue'
-                : mode === 'research'
-                  ? 'Start research report'
-                  : mode === 'plan'
-                    ? 'Start Plan mode'
-                    : 'Send message'
+          queuedEdit
+            ? 'Save the queued message'
+            : editing
+              ? 'Send the edited message'
+              : files.uploading
+                ? 'Waiting for attachments to upload'
+                : runActive
+                  ? 'Add message to queue'
+                  : mode === 'research'
+                    ? 'Start research report'
+                    : mode === 'plan'
+                      ? 'Start Plan mode'
+                      : 'Send message'
         }
         toolbarLeft={
-          editing ? (
+          activeEdit ? (
             <span className="cp-mode-chip is-editing" role="status">
               <Pencil size={15} aria-hidden="true" />
-              Editing
-              <button
-                type="button"
-                onClick={() => {
-                  endEdit()
-                  onCancelEdit()
-                }}
-                aria-label="Cancel the edit"
-              >
+              {queuedEdit ? 'Editing queued' : 'Editing'}
+              <button type="button" onClick={cancelEdit} aria-label="Cancel the edit">
                 <X size={14} aria-hidden="true" />
               </button>
             </span>

@@ -9,9 +9,10 @@ const PREVIEW_QUALITY = 82
 const PREVIEWS_KEPT = 300
 
 /**
- * Keeps a reduced copy of an image the model looked at, so its tool row can show it. The image
- * itself may be anywhere the model was allowed to read, which the renderer cannot open; the copy
- * is served from the browser artifact store like a screenshot. Returns nothing when no store is
+ * Keeps a reduced copy of an image the model looked at, a file it viewed or a browser screenshot
+ * it was shown, so its tool row can show it. The image itself may be anywhere the model was
+ * allowed to read, which the renderer cannot open; the copy is served from the browser artifact
+ * store. Returns nothing when no store is
  * configured or the image cannot be decoded, and the row then shows its path alone.
  */
 export async function saveViewedImagePreview(bytes: Buffer): Promise<string | undefined> {

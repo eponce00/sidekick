@@ -24,6 +24,7 @@ import {
 } from './toolOutputStore'
 import type { CredentialUses } from './credentialUses'
 import { fittingOutline } from './jsonOutline'
+import { saveViewedImagePreview } from './viewedImagePreviews'
 import {
   NativeBrowserSessionService,
   type BrowserActionResult,
@@ -496,6 +497,24 @@ async function prepareVisualAttachment(
         : {})
     }
   }
+}
+
+/**
+ * The result's data with a reduced copy of the screenshot the model was shown, so the tool's row
+ * in the chat shows what the model saw, as it does for an image the model viewed.
+ */
+async function withScreenshotPreview(
+  data: unknown,
+  media: ToolResultMediaAttachment[] | undefined
+): Promise<unknown> {
+  const image = media?.find((item) => item.type === 'image' && item.source.type === 'file')
+  if (!image || image.source.type !== 'file') return data
+  const bytes = await readFile(image.source.path).catch(() => null)
+  const previewUrl = bytes ? await saveViewedImagePreview(bytes) : undefined
+  if (!previewUrl) return data
+  return data && typeof data === 'object' && !Array.isArray(data)
+    ? { ...data, previewUrl }
+    : { result: data, previewUrl }
 }
 
 function addVisualMetadata(data: unknown, metadata: Record<string, unknown> | undefined): unknown {
@@ -1298,7 +1317,7 @@ async function boundedSuccess(
   })
   return toolExecutionSucceeded({
     title,
-    data,
+    data: await withScreenshotPreview(data, media),
     modelContent: bounded.content,
     output: bounded.output,
     media
@@ -1406,7 +1425,7 @@ async function boundedVisualFormFailure(
     retryable: !unsupported,
     recoveryAction: unsupported ? 'change_strategy' : 'refresh_state',
     recovery,
-    data: addVisualMetadata(data, visual.metadata),
+    data: await withScreenshotPreview(addVisualMetadata(data, visual.metadata), visual.media),
     modelContent: bounded.content,
     output: bounded.output,
     media: visual.media
