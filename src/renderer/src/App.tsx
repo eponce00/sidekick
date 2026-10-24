@@ -93,7 +93,6 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
   commandPermissionMode: 'full-access',
-  contentFontSize: 13,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -126,7 +125,6 @@ const previewTheme = getPreviewTheme()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
-    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -523,21 +521,18 @@ function App(): React.JSX.Element {
   }, [theme, settings.accentPalette])
 
   useEffect(() => {
-    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13)))
-    document.documentElement.style.setProperty('--content-text', `${size}px`)
-    document.documentElement.style.setProperty(
-      '--content-text-secondary',
-      `${Math.max(11, size - (size > 14 ? 2 : 1))}px`
-    )
-  }, [settings.contentFontSize])
-
-  useEffect(() => {
     window.localStorage.setItem('sidebarCollapsed', String(isSidebarCollapsed))
   }, [isSidebarCollapsed])
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelPinned', String(isActivityPanelPinned))
   }, [isActivityPanelPinned])
+
+  // Text size applies at once, as the zoom shortcuts that step the same setting do.
+  const handleTextScaleChange = (textScale: number): void => {
+    setSettings((current) => ({ ...current, textScale }))
+    void window.api.settings.save({ textScale })
+  }
 
   const handleSaveSettings = async (
     newSettings: ProviderSettings,
@@ -1641,6 +1636,7 @@ function App(): React.JSX.Element {
         <SettingsModal
           settings={settings}
           onSave={handleSaveSettings}
+          onTextScaleChange={handleTextScaleChange}
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
           providerKeyRequest={providerKeyRequest}

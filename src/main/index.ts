@@ -7,7 +7,8 @@ import {
   installArtifactProtocol
 } from './bootstrap/artifactProtocol'
 import { openApplicationDatabase } from './bootstrap/database'
-import { createMainWindow } from './bootstrap/mainWindow'
+import { createMainWindow, textScaleSetting } from './bootstrap/mainWindow'
+import { stepTextScale } from './bootstrap/windowZoom'
 import { initializeWorkspaceState } from './bootstrap/workspace'
 import { registerAllHandlers } from './ipc'
 import { closeMcpConnections } from './ipc/mcp'
@@ -308,7 +309,10 @@ async function bootstrapApplication(): Promise<void> {
     'open-settings': () => dispatchAppCommand('open-settings'),
     'new-chat': () => dispatchAppCommand('new-chat'),
     'open-project': () => dispatchAppCommand('open-project'),
-    'check-for-updates': () => void appUpdateService?.check()
+    'check-for-updates': () => void appUpdateService?.check(),
+    'text-larger': () => stepTextScale(textScaleSetting, 'in'),
+    'text-smaller': () => stepTextScale(textScaleSetting, 'out'),
+    'text-reset': () => stepTextScale(textScaleSetting, 'reset')
   })
   const updates = appUpdateService
   const installUpdate = (): void => void updates.install()

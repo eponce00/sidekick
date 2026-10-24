@@ -21,6 +21,7 @@ import {
 import { showTrustedDialog } from '../services/trustedDialog'
 import { RETIRED_SETTING_KEYS } from '../../shared/settingsSchema'
 import { ACCENT_PALETTE_VERSION, migrateAccentPalette } from '../../shared/accentPalettes'
+import { legacyTextScale } from '../../shared/textScale'
 import {
   resolveStoredToolCallLimit,
   TOOL_CALL_LIMIT_POLICY_VERSION
@@ -443,8 +444,29 @@ export function notifySettingsSaved(settings: SettingsRecord): void {
   for (const listener of settingsSavedListeners) listener(settings)
 }
 
+const LEGACY_ZOOM_KEY = 'desktopZoomFactorV1'
+
+/**
+ * Earlier versions sized the window and the conversation text separately. Folds both into the one
+ * text size, keeping what the user saw, and drops the old values.
+ */
+export function migrateTextScale(): void {
+  const store = getStore()
+  const zoom = store.get(LEGACY_ZOOM_KEY)
+  const stored = asSettingsRecord(store.get('settings', {}))
+  if (typeof zoom !== 'number' && !Object.hasOwn(stored, 'contentFontSize')) return
+  updateStoredSettings((current) => {
+    const next = { ...current }
+    if (next.textScale === undefined) next.textScale = legacyTextScale(zoom, next.contentFontSize)
+    delete next.contentFontSize
+    return next
+  })
+  store.delete(LEGACY_ZOOM_KEY)
+}
+
 export function registerSettingsHandlers(): void {
   const store = getStore()
+  migrateTextScale()
   ipcMain.handle('settings:selectOfficeInterpreter', async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = {

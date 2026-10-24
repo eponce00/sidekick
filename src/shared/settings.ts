@@ -112,8 +112,8 @@ export interface ProviderSettings {
   accentPalette?: string
   /** The look the accent choice was made under; an older one moves to the current default once. */
   accentPaletteVersion?: number
-  /** Semantic conversation text size. Interface zoom remains an independent window control. */
-  contentFontSize?: number
+  /** Size of the whole window in percent, one of `TEXT_SCALES`; Ctrl + and Ctrl − step it. */
+  textScale?: number
   focusChainEnabled?: boolean
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number

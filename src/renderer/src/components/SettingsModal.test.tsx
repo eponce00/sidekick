@@ -60,6 +60,7 @@ it('says when there are unsaved changes and saves them', async () => {
       <SettingsModal
         settings={SETTINGS}
         onSave={onSave}
+        onTextScaleChange={vi.fn()}
         onClose={onClose}
         initialSection="appearance"
       />
@@ -80,6 +81,39 @@ it('says when there are unsaved changes and saves them', async () => {
   expect(onClose).toHaveBeenCalledOnce()
 })
 
+it('applies a text size at once and follows one set by the zoom shortcuts', async () => {
+  // As the window does: the size is saved, and Settings is passed the stored value.
+  const onTextScaleChange = vi.fn((textScale: number) => render(textScale))
+  const render = (textScale?: number): void =>
+    root.render(
+      <SettingsModal
+        settings={{ ...SETTINGS, textScale }}
+        onSave={vi.fn(async () => ({ success: true }))}
+        onTextScaleChange={onTextScaleChange}
+        onClose={vi.fn()}
+        initialSection="appearance"
+      />
+    )
+  const shown = (): string => container.querySelector('.settings-stepper output')?.textContent ?? ''
+  await act(async () => render())
+  expect(shown()).toBe('100%')
+
+  await act(async () =>
+    container.querySelector<HTMLButtonElement>('[aria-label="Larger text"]')!.click()
+  )
+  expect(onTextScaleChange).toHaveBeenCalledWith(110)
+  expect(shown()).toBe('110%')
+  // Already saved, so nothing waits for Save changes.
+  expect(footer()).toBe('Changes apply after you save.')
+
+  // Ctrl + saves the setting from the main process; the window passes the new value down.
+  await act(async () => render(120))
+  expect(shown()).toBe('120%')
+  expect(footer()).toBe('Changes apply after you save.')
+  await act(async () => button('Reset').click())
+  expect(onTextScaleChange).toHaveBeenLastCalledWith(100)
+})
+
 it('keeps the window open and shows why when saving fails', async () => {
   const onClose = vi.fn()
   await act(async () =>
@@ -87,6 +121,7 @@ it('keeps the window open and shows why when saving fails', async () => {
       <SettingsModal
         settings={SETTINGS}
         onSave={async () => ({ success: false, error: 'Disk full' })}
+        onTextScaleChange={vi.fn()}
         onClose={onClose}
         initialSection="appearance"
       />
@@ -119,6 +154,7 @@ it('opens Integrations and explains an invalid enabled connector instead of savi
           } as ProviderSettings
         }
         onSave={onSave}
+        onTextScaleChange={vi.fn()}
         onClose={vi.fn()}
         initialSection="appearance"
       />

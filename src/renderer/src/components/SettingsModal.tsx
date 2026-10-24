@@ -26,6 +26,8 @@ import {
   ShieldCheck,
   Layers,
   Type,
+  Minus,
+  Plus,
   Workflow
 } from 'lucide-react'
 import type { ProviderSettings } from '../types/app.types'
@@ -42,6 +44,7 @@ import {
 import { normalizeToolCallLimit } from '../../../shared/agentLimits'
 import { validateMcpServerConfig } from '../../../shared/mcp'
 import { ACCENT_PALETTES, DEFAULT_ACCENT_PALETTE } from '../../../shared/accentPalettes'
+import { DEFAULT_TEXT_SCALE, nearestTextScale, steppedTextScale } from '../../../shared/textScale'
 import { applyAccentPalette } from '../constants/accentPalettes'
 import { CommandLineToolSettings } from './CommandLineToolSettings'
 import { CredentialSettings } from './CredentialSettings'
@@ -73,6 +76,8 @@ interface SettingsModalProps {
     settings: ProviderSettings,
     openedWith: ProviderSettings
   ) => Promise<{ success: boolean; error?: string }>
+  /** Saves a text size at once; the window resizes as soon as it is stored. */
+  onTextScaleChange: (textScale: number) => void
   onClose: () => void
   initialSection?: SettingsSection
   /** Shows a provider's key field, when SideKick's agent asked the user for a key. */
@@ -101,6 +106,7 @@ const NAV_ITEMS = settingsSectionContributions.list().map(({ value }) => ({
 function SettingsModal({
   settings: initialSettings,
   onSave,
+  onTextScaleChange,
   onClose,
   initialSection = 'providers',
   providerKeyRequest = null,
@@ -113,6 +119,10 @@ function SettingsModal({
   // Set by the version button; the Updates card only exists once General renders.
   const [revealUpdates, setRevealUpdates] = useState(false)
   const [mcpValidationError, setMcpValidationError] = useState<string | null>(null)
+  // Text size is saved as it changes, here or by the zoom shortcuts, so the draft follows it.
+  useEffect(() => {
+    setSettings((current) => ({ ...current, textScale: initialSettings.textScale }))
+  }, [initialSettings.textScale])
   useEffect(() => {
     if (providerKeyRequest) setActiveSection('providers')
   }, [providerKeyRequest])
@@ -627,14 +637,15 @@ function SettingsModal({
     }
 
     if (activeSection === 'appearance') {
-      const textSize = settings.contentFontSize ?? 13
+      const textScale = nearestTextScale(settings.textScale)
+      const chooseTextScale = (next: number): void => {
+        setSettings({ ...settings, textScale: next })
+        onTextScaleChange(next)
+      }
       const activePalette = settings.accentPalette || DEFAULT_ACCENT_PALETTE
       return (
         <div className="settings-page">
-          <SettingsPageHeader
-            title="Appearance"
-            description="Accent color and conversation text size."
-          />
+          <SettingsPageHeader title="Appearance" description="Accent color and text size." />
           <SettingsSection
             icon={Palette}
             title="Accent color"
@@ -665,38 +676,40 @@ function SettingsModal({
           </SettingsSection>
           <SettingsSection
             icon={Type}
-            title="Conversation text"
-            description="Sizes messages and the message box only. Ctrl + and Ctrl − zoom the whole window."
+            title="Text size"
+            description="Sizes everything in the window together. The zoom shortcuts, Ctrl + and Ctrl −, step through the same sizes."
           >
             <SettingsRow
-              label="Text size"
-              controlId={`${controlId}-text-size`}
+              label="Size"
               control={
-                <>
-                  <input
-                    id={`${controlId}-text-size`}
-                    type="range"
-                    min={12}
-                    max={17}
-                    step={1}
-                    value={textSize}
-                    onChange={(event) => {
-                      const contentFontSize = Number(event.target.value)
-                      setSettings({ ...settings, contentFontSize })
-                      document.documentElement.style.setProperty(
-                        '--content-text',
-                        `${contentFontSize}px`
-                      )
-                      document.documentElement.style.setProperty(
-                        '--content-text-secondary',
-                        `${Math.max(11, contentFontSize - (contentFontSize > 14 ? 2 : 1))}px`
-                      )
-                    }}
-                  />
-                  <output className="settings-range-value" htmlFor={`${controlId}-text-size`}>
-                    {textSize}px
-                  </output>
-                </>
+                <div className="settings-stepper" role="group" aria-label="Text size">
+                  <button
+                    type="button"
+                    aria-label="Smaller text"
+                    disabled={steppedTextScale(textScale, 'out') === textScale}
+                    onClick={() => chooseTextScale(steppedTextScale(textScale, 'out'))}
+                  >
+                    <Minus size={14} aria-hidden="true" />
+                  </button>
+                  <output aria-live="polite">{textScale}%</output>
+                  <button
+                    type="button"
+                    aria-label="Larger text"
+                    disabled={steppedTextScale(textScale, 'in') === textScale}
+                    onClick={() => chooseTextScale(steppedTextScale(textScale, 'in'))}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                  </button>
+                  {textScale !== DEFAULT_TEXT_SCALE && (
+                    <button
+                      type="button"
+                      className="settings-stepper-reset"
+                      onClick={() => chooseTextScale(DEFAULT_TEXT_SCALE)}
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
               }
             >
               <p className="settings-text-preview">

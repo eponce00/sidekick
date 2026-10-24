@@ -578,6 +578,58 @@
   text-align: right;
 }
 
+/* The text-size stepper: one step per press, like the zoom shortcuts it shares a setting with. */
+.settings-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--settings-control-radius);
+  background: var(--input-bg);
+}
+
+.settings-stepper > button {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: none;
+  border-radius: calc(var(--settings-control-radius) - 2px);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.settings-stepper > button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.settings-stepper > button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-stepper > output {
+  min-width: 48px;
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.settings-stepper > .settings-stepper-reset {
+  width: auto;
+  margin-left: 4px;
+  padding: 0 10px;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0 calc(var(--settings-control-radius) - 2px)
+    calc(var(--settings-control-radius) - 2px) 0;
+  font-size: var(--text-sm);
+}
+
 /* Form controls */
 
 .settings-card :is(input, select, .ui-select, textarea):not([type='checkbox'], [type='range']),

@@ -7,7 +7,10 @@ function actions(): ApplicationMenuActions {
     'open-settings': vi.fn(),
     'new-chat': vi.fn(),
     'open-project': vi.fn(),
-    'check-for-updates': vi.fn()
+    'check-for-updates': vi.fn(),
+    'text-larger': vi.fn(),
+    'text-smaller': vi.fn(),
+    'text-reset': vi.fn()
   }
 }
 
@@ -38,7 +41,8 @@ describe('applicationMenuTemplate', () => {
   })
 
   it('provides an intentional Windows menu instead of Electron defaults', () => {
-    const template = applicationMenuTemplate('win32', 'SideKick', actions())
+    const menuActions = actions()
+    const template = applicationMenuTemplate('win32', 'SideKick', menuActions)
     expect(template.map(({ label, role }) => label || role)).toEqual([
       'File',
       'editMenu',
@@ -54,12 +58,17 @@ describe('applicationMenuTemplate', () => {
     )
     expect(submenu(template.find(({ label }) => label === 'View'))).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ role: 'zoomIn' }),
-        expect.objectContaining({ role: 'zoomOut' }),
-        expect.objectContaining({ role: 'resetZoom' }),
+        expect.objectContaining({ label: 'Larger Text', accelerator: 'CommandOrControl+=' }),
+        expect.objectContaining({ label: 'Smaller Text', accelerator: 'CommandOrControl+-' }),
+        expect.objectContaining({ label: 'Actual Size', accelerator: 'CommandOrControl+0' }),
         expect.objectContaining({ role: 'togglefullscreen', accelerator: 'F11' })
       ])
     )
+    // The menu steps the text-size setting; Chromium's own zoom would stack with it.
+    const view = submenu(template.find(({ label }) => label === 'View'))
+    expect(view.some(({ role }) => role === 'zoomIn' || role === 'resetZoom')).toBe(false)
+    ;(view.find(({ label }) => label === 'Larger Text')?.click as () => void)()
+    expect(menuActions['text-larger']).toHaveBeenCalledOnce()
     expect(submenu(template.find(({ label }) => label === 'Help'))).toEqual(
       expect.arrayContaining([expect.objectContaining({ label: 'Check for Updates…' })])
     )

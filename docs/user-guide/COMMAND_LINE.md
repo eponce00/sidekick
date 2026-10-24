@@ -78,7 +78,7 @@ Cancelling exits with code 7 and changes nothing.
 Add `--json` to any command for one JSON document on standard output:
 
 ```json
-{ "ok": true, "result": { "key": "contentFontSize", "previous": 13, "value": 15, "changed": true } }
+{ "ok": true, "result": { "key": "textScale", "previous": 100, "value": 110, "changed": true } }
 ```
 
 A failure prints `{"ok": false, "error": {"code": "...", "message": "..."}}` and exits with:

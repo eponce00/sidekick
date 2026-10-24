@@ -76,12 +76,12 @@ beforeEach(() => {
       ]
     })),
     'config.get': vi.fn(async ({ key }: { key: string }) => {
-      if (key !== 'contentFontSize') throw new ControlError('not-found', 'Unknown setting.')
-      return { key, value: 15, isDefault: false, descriptor: EDITABLE_SETTINGS[0] }
+      if (key !== 'textScale') throw new ControlError('not-found', 'Unknown setting.')
+      return { key, value: 110, isDefault: false, descriptor: EDITABLE_SETTINGS[0] }
     }),
     'config.set': vi.fn(async ({ key, value }: { key: string; value: unknown }) => ({
       key,
-      previous: 13,
+      previous: 100,
       value: Number(value),
       changed: true
     })),
@@ -217,8 +217,8 @@ describe('config and doctor', () => {
   beforeEach(startApp)
 
   it('prints a bare value for config get', async () => {
-    const result = await run(['config', 'get', 'contentFontSize'])
-    expect(result).toMatchObject({ code: 0, stdout: '15\n' })
+    const result = await run(['config', 'get', 'textScale'])
+    expect(result).toMatchObject({ code: 0, stdout: '110\n' })
   })
 
   it('maps server error codes to exit codes', async () => {
@@ -228,10 +228,10 @@ describe('config and doctor', () => {
   })
 
   it('sends config set values as typed by the user', async () => {
-    const result = await run(['config', 'set', 'contentFontSize', '15'])
+    const result = await run(['config', 'set', 'textScale', '110'])
     expect(result.code).toBe(0)
-    expect(handlers['config.set']).toHaveBeenCalledWith({ key: 'contentFontSize', value: '15' })
-    expect(result.stdout).toBe('contentFontSize: 13 -> 15\n')
+    expect(handlers['config.set']).toHaveBeenCalledWith({ key: 'textScale', value: '110' })
+    expect(result.stdout).toBe('textScale: 100 -> 110\n')
   })
 
   it('refuses to send a key-like setting to SideKick at all', async () => {

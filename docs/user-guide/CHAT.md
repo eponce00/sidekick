@@ -193,4 +193,7 @@ each shown with its shortcut.
 | Ctrl+Shift+V               | Paste long text inline instead of attaching it |
 | Enter / Shift+Enter        | Send / new line                                |
 | Esc                        | Close a menu, or skip a reply being read aloud |
-| Ctrl + / - / 0             | Zoom in, out, or reset                         |
+| Ctrl + / - / 0             | Text size larger, smaller, or back to 100%     |
+
+The text-size shortcuts and **Settings → Appearance → Text size** are one setting. Each step sizes
+the whole window, text and interface together, through 80, 90, 100, 110, 120, 135, and 150%.
