@@ -22,9 +22,9 @@ import { Robot } from './Robot'
 import { Sheet, SheetAction } from './Sheet'
 
 /**
- * The chats, in a drawer that slides over the open chat from the left as the ChatGPT and Claude
- * apps keep theirs: search, a new chat, then the desktop sidebar's projects and chats with its
- * marks, and the connection to the computer at the foot.
+ * The chats, in a drawer that slides over the open chat from the left as the ChatGPT app keeps its
+ * own: the name and a search button at the top, the desktop sidebar's projects and chats with its
+ * marks, and at the foot a floating New chat button and the connection to the computer.
  */
 export function ChatDrawer({
   open,
@@ -63,6 +63,7 @@ export function ChatDrawer({
   onForget: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const panel = useRef<HTMLElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
@@ -230,37 +231,46 @@ export function ChatDrawer({
       <div className="cp-drawer-scrim" aria-hidden="true" onClick={onClose} />
       <nav ref={panel} className="cp-drawer" aria-label="Chats">
         <div className="cp-drawer-top">
-          <label className="sidebar-search field-shell cp-search">
-            <Search size={16} aria-hidden="true" />
-            <input
-              ref={searchInput}
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search chats"
-              aria-label="Search chats"
-              enterKeyHint="search"
-            />
-            {query && (
+          {searchOpen ? (
+            <label className="sidebar-search field-shell cp-search">
+              <Search size={16} aria-hidden="true" />
+              <input
+                ref={searchInput}
+                type="text"
+                value={query}
+                autoFocus
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search chats"
+                aria-label="Search chats"
+                enterKeyHint="search"
+              />
               <button
                 type="button"
                 className="cp-search-clear"
-                aria-label="Clear search"
+                aria-label="Close search"
                 onClick={() => {
                   setQuery('')
-                  searchInput.current?.focus()
+                  setSearchOpen(false)
                 }}
               >
                 <X size={15} aria-hidden="true" />
               </button>
-            )}
-          </label>
+            </label>
+          ) : (
+            <>
+              <h2 className="cp-drawer-title">SideKick</h2>
+              <button
+                type="button"
+                className="cp-float-button"
+                aria-label="Search chats"
+                onClick={() => setSearchOpen(true)}
+              >
+                <Search size={20} aria-hidden="true" />
+              </button>
+            </>
+          )}
         </div>
         <div className="cp-scroll cp-list">
-          <button type="button" className="cp-row cp-new-row" onClick={onNew}>
-            <SquarePen size={18} className="cp-new-row-icon" aria-hidden="true" />
-            <span className="cp-row-title">New chat</span>
-          </button>
           {error && (
             <p className="cp-inline-error" role="alert">
               {error}
@@ -268,17 +278,22 @@ export function ChatDrawer({
           )}
           {body}
         </div>
-        <button
-          type="button"
-          className="cp-drawer-connection"
-          aria-haspopup="dialog"
-          onClick={() => setMoreOpen(true)}
-        >
-          <span className={`cp-status-dot${online ? ' is-online' : ''}`} aria-hidden="true" />
-          <span className="cp-drawer-connection-text">
-            {online ? 'Connected to' : online === null ? 'Connecting to' : 'Reconnecting to'} {host}
-          </span>
-        </button>
+        <div className="cp-drawer-foot">
+          <button type="button" className="cp-new-chat" onClick={onNew}>
+            <SquarePen size={19} aria-hidden="true" />
+            New chat
+          </button>
+          <button
+            type="button"
+            className="cp-float-button cp-drawer-phone"
+            aria-haspopup="dialog"
+            aria-label={`This phone: ${online ? 'connected' : online === null ? 'connecting' : 'reconnecting'}`}
+            onClick={() => setMoreOpen(true)}
+          >
+            <Smartphone size={19} aria-hidden="true" />
+            <span className={`cp-status-dot${online ? ' is-online' : ''}`} aria-hidden="true" />
+          </button>
+        </div>
       </nav>
       {moreOpen && (
         <Sheet label="This phone" onClose={() => setMoreOpen(false)}>

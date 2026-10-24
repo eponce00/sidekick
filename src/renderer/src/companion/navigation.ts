@@ -63,6 +63,12 @@ export function splitLayers<T extends { depth: number }>(
 }
 
 let layers: Layer[] = []
+/**
+ * A layer closed from the page leaves its entry for a moment before going back from it, so a layer
+ * opened in its place, as when a menu hands over to Find or one sheet to the next, takes the entry
+ * over instead of being closed by the back that was meant for the first.
+ */
+let vacated: { depth: number; timer: ReturnType<typeof setTimeout> } | null = null
 
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', (event) => {
@@ -96,12 +102,24 @@ export function useBackLayer(open: boolean, onClose: () => void): void {
     const below = readEntry(history.state) ?? { nav: 0, chat: HOME, layer: 0 }
     const layer: Layer = { depth: layers.length + 1, close: () => close.current() }
     layers.push(layer)
-    history.pushState(entryState({ ...below, layer: layer.depth }), '')
+    if (vacated?.depth === layer.depth && below.layer === layer.depth) {
+      clearTimeout(vacated.timer)
+      vacated = null
+    } else {
+      history.pushState(entryState({ ...below, layer: layer.depth }), '')
+    }
     return () => {
       // Gone already when back closed it or a chat replaced its entry.
       if (!layers.includes(layer)) return
       layers = layers.filter((candidate) => candidate !== layer)
-      if (readEntry(history.state)?.layer === layer.depth) history.back()
+      if (readEntry(history.state)?.layer !== layer.depth) return
+      if (vacated) clearTimeout(vacated.timer)
+      const timer = setTimeout(() => {
+        if (vacated?.timer !== timer) return
+        vacated = null
+        if (readEntry(history.state)?.layer === layer.depth) history.back()
+      }, 0)
+      vacated = { depth: layer.depth, timer }
     }
   }, [open])
 }

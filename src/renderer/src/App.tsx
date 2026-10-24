@@ -1180,6 +1180,23 @@ function App(): React.JSX.Element {
       }),
     [refreshConversationsForSchedules, refreshProjects]
   )
+  // The phone can pin, rename, move, archive or delete a chat; one that left the list closes here as
+  // deleting it here would.
+  useEffect(
+    () =>
+      window.api.conversations.onListChanged(({ conversationId, removed }) => {
+        refreshConversationsForSchedules()
+        void refreshProjects()
+        if (!removed) return
+        deleteComposerDraft(conversationId)
+        forgetPanel(conversationId)
+        if (currentConversationIdRef.current === conversationId) {
+          setCurrentConversationId(null)
+          void window.api.workspace.setPath(null)
+        }
+      }),
+    [refreshConversationsForSchedules, refreshProjects, forgetPanel, currentConversationIdRef]
+  )
   // A message from the user's phone can start a chat or move one up the list.
   useEffect(
     () => window.api.conversations.onMessagesChanged(() => refreshConversationsForSchedules()),

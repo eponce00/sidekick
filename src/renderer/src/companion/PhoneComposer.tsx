@@ -6,13 +6,13 @@ import {
   Camera,
   Pencil,
   Trash2,
-  ChevronDown,
   FileText,
   Images,
   ListChecks,
   Loader2,
   Microscope,
   Plus,
+  Sparkles,
   Square,
   X
 } from 'lucide-react'
@@ -30,7 +30,8 @@ import { TEXT_FILE_ACCEPT } from './attachments'
 import type { CompanionConnection } from './chatState'
 import { phoneNotice } from './phoneApi'
 import { useCompanionVoice } from './phoneVoice'
-import { Sheet, SheetAction, SheetSection, SheetTile } from './Sheet'
+import { Popover, PopoverItem } from './Popover'
+import { Sheet, SheetAction } from './Sheet'
 import type { ModelList, OutgoingMessage } from './useCompanionChat'
 import { usePhoneAttachments } from './usePhoneAttachments'
 
@@ -93,14 +94,16 @@ export function PhoneComposer({
   const [text, setText] = useState('')
   const [mode, setMode] = useState<ConversationRunMode>('conversation')
   const [chosenModelId, setChosenModelId] = useState<string | null>(null)
-  const [sheet, setSheet] = useState<'add' | 'model' | null>(null)
+  // The + menu, opened above its button, and its list of models.
+  const [menu, setMenu] = useState<'add' | 'model' | null>(null)
+  const [plusAnchor, setPlusAnchor] = useState<HTMLElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const libraryInput = useRef<HTMLInputElement>(null)
   const cameraInput = useRef<HTMLInputElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const files = usePhoneAttachments(connection)
   const voice = useCompanionVoice()
-  const closeSheet = useCallback(() => setSheet(null), [])
+  const closeMenu = useCallback(() => setMenu(null), [])
   // A new suggestion replaces the text while rendering, so the box never shows the old text first.
   const [prefilled, setPrefilled] = useState<number | null>(null)
   if (prefill && prefill.nonce !== prefilled) {
@@ -232,7 +235,7 @@ export function PhoneComposer({
   }
 
   const pick = (input: React.RefObject<HTMLInputElement | null>): void => {
-    setSheet(null)
+    setMenu(null)
     input.current?.click()
   }
 
@@ -388,6 +391,23 @@ export function PhoneComposer({
         contextBar={
           activeEdit ? (
             <ComposerEditingBar queued={Boolean(queuedEdit)} onCancel={cancelEdit} />
+          ) : mode !== 'conversation' ? (
+            // A chosen mode, as the phone apps show an active tool: a chip that removes it.
+            <span className="cp-mode-chip" role="status">
+              {mode === 'plan' ? (
+                <ListChecks size={15} aria-hidden="true" />
+              ) : (
+                <Microscope size={15} aria-hidden="true" />
+              )}
+              {MODE_CHIP[mode]}
+              <button
+                type="button"
+                onClick={() => setMode('conversation')}
+                aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </span>
           ) : undefined
         }
         toolbarLeft={
@@ -396,46 +416,21 @@ export function PhoneComposer({
               <button
                 type="button"
                 className="cp-composer-button"
-                onClick={() => setSheet('add')}
-                aria-label="Add an attachment or agent behavior"
-                aria-haspopup="dialog"
+                onClick={(event) => {
+                  setPlusAnchor(event.currentTarget)
+                  setMenu('add')
+                }}
+                aria-label="Add an attachment, a mode or the model"
+                aria-haspopup="menu"
+                aria-expanded={menu !== null}
               >
-                <Plus size={20} aria-hidden="true" />
+                <Plus size={22} aria-hidden="true" />
               </button>
-              {mode !== 'conversation' && (
-                <span className="cp-mode-chip" role="status">
-                  {mode === 'plan' ? (
-                    <ListChecks size={15} aria-hidden="true" />
-                  ) : (
-                    <Microscope size={15} aria-hidden="true" />
-                  )}
-                  {MODE_CHIP[mode]}
-                  <button
-                    type="button"
-                    onClick={() => setMode('conversation')}
-                    aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
-                  >
-                    <X size={14} aria-hidden="true" />
-                  </button>
-                </span>
-              )}
             </>
           )
         }
         toolbarRight={
           <>
-            {models && models.models.length > 0 && (
-              <button
-                type="button"
-                className="cp-model-chip"
-                onClick={() => setSheet('model')}
-                aria-label={`Model: ${model?.name ?? 'choose one'}`}
-                aria-haspopup="dialog"
-              >
-                <span>{model?.name ?? 'Choose model'}</span>
-                <ChevronDown size={14} aria-hidden="true" />
-              </button>
-            )}
             {voice?.dictation && (
               <DictationButton inputRef={inputRef} onInputChange={setText} phone />
             )}
@@ -496,51 +491,89 @@ export function PhoneComposer({
           if (chosen.length) files.addTextFiles(chosen)
         }}
       />
-      {sheet === 'add' && (
-        <Sheet label="Add to message" onClose={closeSheet}>
-          <div className="cp-sheet-tiles" role="group" aria-label="Attach">
-            <SheetTile
-              icon={<Camera size={22} />}
-              label="Camera"
-              disabled={Boolean(imageReason)}
-              onClick={() => pick(cameraInput)}
+      {menu === 'add' && (
+        <Popover
+          label="Add to message"
+          anchor={plusAnchor}
+          placement="above-start"
+          onClose={closeMenu}
+        >
+          <PopoverItem
+            round
+            icon={<Camera size={20} />}
+            label="Camera"
+            disabled={Boolean(imageReason)}
+            onClick={() => pick(cameraInput)}
+          />
+          <PopoverItem
+            round
+            icon={<Images size={20} />}
+            label="Photos"
+            disabled={Boolean(imageReason)}
+            onClick={() => pick(libraryInput)}
+          />
+          <PopoverItem
+            round
+            icon={<FileText size={20} />}
+            label="Files"
+            onClick={() => pick(fileInput)}
+          />
+          {imageReason && <p className="cp-popover-note">{imageReason}</p>}
+          <div className="cp-popover-divider" role="separator" />
+          <PopoverItem
+            round
+            icon={<Microscope size={20} />}
+            label="Research report"
+            selected={mode === 'research'}
+            onClick={() => {
+              setMode((current) => (current === 'research' ? 'conversation' : 'research'))
+              setMenu(null)
+            }}
+          />
+          <PopoverItem
+            round
+            icon={<ListChecks size={20} />}
+            label="Plan first"
+            selected={mode === 'plan'}
+            onClick={() => {
+              setMode((current) => (current === 'plan' ? 'conversation' : 'plan'))
+              setMenu(null)
+            }}
+          />
+          {models && models.models.length > 0 && (
+            <PopoverItem
+              round
+              icon={<Sparkles size={20} />}
+              label={model?.name ?? 'Choose model'}
+              description="Model"
+              submenu
+              onClick={() => setMenu('model')}
             />
-            <SheetTile
-              icon={<Images size={22} />}
-              label="Photos"
-              disabled={Boolean(imageReason)}
-              onClick={() => pick(libraryInput)}
-            />
-            <SheetTile
-              icon={<FileText size={22} />}
-              label="Files"
-              onClick={() => pick(fileInput)}
-            />
-          </div>
-          {imageReason && <p className="cp-sheet-note">{imageReason}</p>}
-          <div className="cp-sheet-list" role="group" aria-label="Agent behavior">
-            <SheetAction
-              icon={<Microscope size={20} />}
-              label="Research report"
-              description="Search, cross-check, and cite web sources"
-              selected={mode === 'research'}
+          )}
+        </Popover>
+      )}
+      {menu === 'model' && models && (
+        <Popover
+          label="Choose the model"
+          anchor={plusAnchor}
+          placement="above-start"
+          title="Model for this chat"
+          onBack={() => setMenu('add')}
+          onClose={closeMenu}
+        >
+          {models.models.map((candidate) => (
+            <PopoverItem
+              key={candidate.id}
+              label={candidate.name}
+              description={candidate.supportsVision ? 'Sees images' : 'Text only'}
+              selected={candidate.id === modelId}
               onClick={() => {
-                setMode((current) => (current === 'research' ? 'conversation' : 'research'))
-                setSheet(null)
+                setChosenModelId(candidate.id)
+                setMenu(null)
               }}
             />
-            <SheetAction
-              icon={<ListChecks size={20} />}
-              label="Plan first"
-              description="Review a plan before SideKick changes project files"
-              selected={mode === 'plan'}
-              onClick={() => {
-                setMode((current) => (current === 'plan' ? 'conversation' : 'plan'))
-                setSheet(null)
-              }}
-            />
-          </div>
-        </Sheet>
+          ))}
+        </Popover>
       )}
       {queuedMenu && (
         <Sheet label="Queued message" onClose={closeQueuedMenu}>
@@ -597,24 +630,6 @@ export function PhoneComposer({
               }}
             />
           )}
-        </Sheet>
-      )}
-      {sheet === 'model' && models && (
-        <Sheet label="Choose the model" onClose={closeSheet}>
-          <SheetSection label="Model for this chat">
-            {models.models.map((candidate) => (
-              <SheetAction
-                key={candidate.id}
-                label={candidate.name}
-                description={candidate.supportsVision ? 'Sees images' : 'Text only'}
-                selected={candidate.id === modelId}
-                onClick={() => {
-                  setChosenModelId(candidate.id)
-                  setSheet(null)
-                }}
-              />
-            ))}
-          </SheetSection>
         </Sheet>
       )}
     </>

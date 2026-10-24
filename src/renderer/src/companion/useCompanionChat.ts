@@ -407,6 +407,7 @@ export function useCompanionChat({
     setError,
     send,
     retry,
+    reload: load,
     stop,
     resolve,
     updateQueue,

@@ -87,6 +87,16 @@ const api = {
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
+    onListChanged: (callback: (change: { conversationId: string; removed: boolean }) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: { conversationId: string; removed: boolean }
+      ): void => callback(change)
+      ipcRenderer.on('conversations:listChanged', listener)
+      return () => {
+        ipcRenderer.removeListener('conversations:listChanged', listener)
+      }
+    },
     onMessagesChanged: (callback: (conversationId: string) => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,

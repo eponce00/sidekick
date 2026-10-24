@@ -45,6 +45,7 @@ import {
   AGENT_PERMISSION_DECISIONS,
   type AgentPermissionDecision
 } from '../../../shared/permissions'
+import { renameConversation, setConversationPinned } from '../conversationActions'
 import { ConversationCompactionStore } from '../conversationCompactionStore'
 import { createConversation } from '../conversationCreation'
 import { ProjectStore } from '../projectStore'
@@ -117,6 +118,12 @@ export interface CompanionApiDependencies {
     action: 'hard-reset' | 'rewind'
     hash: string
   }) => Promise<void>
+  /** A chat's place in the lists changed, or it is gone; the window and the phones list it again. */
+  chatChanged: (conversationId: string, removed: boolean) => void
+  /** Archives a chat as the window's Chats tab does; it refuses one that is working. */
+  archiveChat: (conversationId: string) => void
+  /** Deletes a chat as the window does, with its worktree when it was the last chat in it. */
+  deleteChat: (conversationId: string) => Promise<void>
   /** An event for one phone only, such as its speech. */
   sendToDevice: (deviceId: string, event: CompanionEvent) => void
   /** Runs work after a delay; tests run it at once. */
@@ -264,6 +271,12 @@ export class CompanionApi {
         return this.projects()
       case 'chat.retry':
         return this.retry(input)
+      case 'chat.pin':
+      case 'chat.rename':
+      case 'chat.move':
+      case 'chat.archive':
+      case 'chat.delete':
+        return this.changeChat(call, input)
       case 'chat.open':
         return this.open(requireId(input.conversationId, 'chat'))
       case 'chat.send':
@@ -672,6 +685,49 @@ export class CompanionApi {
       return { steered: false }
     }
     return { steered: await this.steer(conversationId, latest.id, item) }
+  }
+
+  /** The chat menu's actions, each through the path the window's own uses. */
+  private async changeChat(
+    call: CompanionCallName,
+    input: Record<string, unknown>
+  ): Promise<unknown> {
+    const conversationId = this.chatRow(requireId(input.conversationId, 'chat')).id
+    const latest = this.deps.latestRun(conversationId)
+    const working = Boolean(latest && ACTIVE_PHASES.has(latest.phase))
+    switch (call) {
+      case 'chat.pin': {
+        if (typeof input.pinned !== 'boolean') throw new Error('Invalid pin')
+        setConversationPinned(this.deps.db, conversationId, input.pinned)
+        this.deps.chatChanged(conversationId, false)
+        return { pinned: input.pinned }
+      }
+      case 'chat.rename': {
+        const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : ''
+        if (!title) throw new Error('Give the chat a name')
+        if (title.length > 200) throw new Error('That name is too long')
+        renameConversation(this.deps.db, conversationId, title, this.now())
+        this.deps.chatChanged(conversationId, false)
+        return { title }
+      }
+      case 'chat.move': {
+        const projectId = input.projectId === null ? null : requireId(input.projectId, 'project')
+        new ProjectStore(this.deps.db).moveConversation({ conversationId, projectId })
+        this.deps.chatChanged(conversationId, false)
+        return { projectId }
+      }
+      case 'chat.archive':
+        this.deps.archiveChat(conversationId)
+        this.deps.chatChanged(conversationId, true)
+        return { archived: true }
+      case 'chat.delete':
+        if (working) throw new Error('SideKick is working in this chat. Stop it first.')
+        await this.deps.deleteChat(conversationId)
+        this.deps.chatChanged(conversationId, true)
+        return { deleted: true }
+      default:
+        throw new Error('Unknown request')
+    }
   }
 
   /**

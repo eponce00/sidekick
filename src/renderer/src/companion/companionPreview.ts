@@ -826,6 +826,31 @@ export class CompanionPreview implements CompanionConnection {
         return PROJECTS satisfies Output<'projects.list'>
       case 'chat.retry':
         return this.retry(input as Input<'chat.retry'>)
+      case 'chat.pin': {
+        const { conversationId, pinned } = input as Input<'chat.pin'>
+        this.updateChat(conversationId, { pinned })
+        return { pinned }
+      }
+      case 'chat.rename': {
+        const { conversationId, title } = input as Input<'chat.rename'>
+        this.updateChat(conversationId, { title: title.trim() })
+        return { title: title.trim() }
+      }
+      case 'chat.move': {
+        const { conversationId, projectId } = input as Input<'chat.move'>
+        const project = PROJECTS.find((candidate) => candidate.id === projectId)
+        this.updateChat(conversationId, { projectId, projectName: project?.name ?? null })
+        return { projectId }
+      }
+      case 'chat.archive':
+      case 'chat.delete': {
+        const { conversationId } = input as Input<'chat.delete'>
+        if (this.activeRun(conversationId))
+          throw new Error('SideKick is working in this chat. Stop it first.')
+        this.chats = this.chats.filter((item) => item.id !== conversationId)
+        this.onEvent?.({ type: 'chats.changed' })
+        return name === 'chat.archive' ? { archived: true } : { deleted: true }
+      }
       case 'queue.list':
         return this.queue((input as Input<'queue.list'>).conversationId)
       case 'queue.update':

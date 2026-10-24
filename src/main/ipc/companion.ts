@@ -41,6 +41,9 @@ import {
 } from './agentRuns'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
 import { createChatWorktree, getManagedWorktrees } from './worktrees'
+import { getSessionService } from './sessions'
+import { refreshSessionStatuses } from './sessionStatus'
+import { deleteConversation } from '../services/conversationActions'
 import { loadStoredSettings } from './settings'
 import { appState, getDb, getStore } from './state'
 
@@ -346,6 +349,15 @@ function companionServer(): CompanionServer {
       await createChatWorktree(mainWindowContents(), { conversationId })
     },
     restoreFiles,
+    chatChanged: (conversationId, removed) => {
+      publishDesktopEvent('conversations:listChanged', { conversationId, removed })
+      server?.broadcast({ type: 'chats.changed' })
+    },
+    archiveChat: (conversationId) => getSessionService().archive(conversationId),
+    deleteChat: async (conversationId) => {
+      await deleteConversation(getDb(), getManagedWorktrees(), conversationId)
+      refreshSessionStatuses([conversationId])
+    },
     sendToDevice: (deviceId, event) => server?.sendTo(deviceId, event)
   })
   companionApi = api

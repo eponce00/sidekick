@@ -1,7 +1,9 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Loader2, Menu, SquarePen } from 'lucide-react'
+import { ArrowUpRight, EllipsisVertical, Loader2, Menu, SquarePen } from 'lucide-react'
 import type { CompanionChat, CompanionProject } from '../../../shared/companion'
+import { ChatMenu } from './ChatMenu'
 import type { CompanionConnection } from './chatState'
+import { FindBar } from './FindBar'
 import type { HomeSuggestion } from './homeSuggestions'
 import { PhoneChatSurface } from './PhoneChatSurface'
 import { PhoneComposer } from './PhoneComposer'
@@ -11,9 +13,9 @@ import { Transcript } from './Transcript'
 import { useCompanionChat, type Subscribe } from './useCompanionChat'
 
 /**
- * One chat, or with no chat the new-chat home, under a top bar laid out as the ChatGPT and Claude
- * apps have theirs: the drawer's menu on the left, the chat's name in the middle, a new chat on the
- * right.
+ * One chat, or with no chat the new-chat home. As in the ChatGPT app, its buttons float over the
+ * chat, which scrolls under them: the drawer's on the left, and on the right a new chat and the
+ * chat's menu, which names it and holds what can be done to it.
  */
 export function ChatView({
   connection,
@@ -64,6 +66,9 @@ export function ChatView({
     nonce: number
     source: HTMLElement | null
   } | null>(null)
+  // The ⋮ button while its menu is open.
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [finding, setFinding] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   // Follows new output while the reader is at the bottom, and leaves them alone once they scroll up.
   const following = useRef(true)
@@ -74,28 +79,55 @@ export function ChatView({
 
   const home = !chat.conversationId
   const empty = !chat.loading && !chat.messages.length
-  const title = home ? 'SideKick' : chat.chat?.title || fallbackTitle || 'New chat'
-  const project = home ? null : chat.chat?.projectName
+  const shownChat = chat.chat ? { ...chat.chat, title: chat.chat.title || fallbackTitle } : null
   return (
     <div className="cp-screen">
-      <header className="cp-header is-chat">
-        <button type="button" className="cp-icon-button" aria-label="Chats" onClick={onMenu}>
-          <Menu size={20} aria-hidden="true" />
-        </button>
-        <div className="cp-header-text">
-          <h1>{title}</h1>
-          {project && <p>{project}</p>}
-        </div>
-        <button
-          type="button"
-          className="cp-icon-button"
-          aria-label="New chat"
-          disabled={home && empty}
-          onClick={onNew}
-        >
-          <SquarePen size={19} aria-hidden="true" />
-        </button>
-      </header>
+      {finding ? (
+        <header className="cp-topbar is-finding">
+          <FindBar containerRef={scroller} onClose={() => setFinding(false)} />
+        </header>
+      ) : (
+        <header className="cp-topbar">
+          <button type="button" className="cp-float-button" aria-label="Chats" onClick={onMenu}>
+            <Menu size={20} aria-hidden="true" />
+          </button>
+          <div className="cp-float-group">
+            <button
+              type="button"
+              className="cp-float-group-button"
+              aria-label="New chat"
+              disabled={home && empty}
+              onClick={onNew}
+            >
+              <SquarePen size={19} aria-hidden="true" />
+            </button>
+            {shownChat && (
+              <button
+                type="button"
+                className="cp-float-group-button"
+                aria-label="Chat options"
+                aria-haspopup="menu"
+                aria-expanded={menuAnchor !== null}
+                onClick={(event) => setMenuAnchor(event.currentTarget)}
+              >
+                <EllipsisVertical size={19} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </header>
+      )}
+      {menuAnchor && shownChat && (
+        <ChatMenu
+          chat={shownChat}
+          projects={projects}
+          connection={connection}
+          anchor={menuAnchor}
+          onFind={() => setFinding(true)}
+          onChanged={() => void chat.reload()}
+          onGone={onNew}
+          onClose={() => setMenuAnchor(null)}
+        />
+      )}
       <PhoneChatSurface>
         <main
           ref={scroller}

@@ -144,6 +144,16 @@ export interface CompanionCalls {
     input: { conversationId: string; messageId: string; text?: string }
     output: { runId: string }
   }
+  /** What the chat's menu does, as the desktop sidebar's does. */
+  'chat.pin': { input: { conversationId: string; pinned: boolean }; output: { pinned: boolean } }
+  'chat.rename': { input: { conversationId: string; title: string }; output: { title: string } }
+  /** Into a project, or out of one with `projectId: null`; chats do not move between projects. */
+  'chat.move': {
+    input: { conversationId: string; projectId: string | null }
+    output: { projectId: string | null }
+  }
+  'chat.archive': { input: { conversationId: string }; output: { archived: true } }
+  'chat.delete': { input: { conversationId: string }; output: { deleted: true } }
   /** The chat's queued messages and its pending steer, shared with the desktop composer. */
   'queue.list': { input: { conversationId: string }; output: PromptAdmissionsResult }
   /** Reorders, edits or removes queued messages; ids not listed are removed. */
@@ -224,6 +234,11 @@ export const COMPANION_CALL_NAMES: readonly CompanionCallName[] = [
   'chat.open',
   'chat.send',
   'chat.retry',
+  'chat.pin',
+  'chat.rename',
+  'chat.move',
+  'chat.archive',
+  'chat.delete',
   'queue.list',
   'queue.update',
   'queue.steer',

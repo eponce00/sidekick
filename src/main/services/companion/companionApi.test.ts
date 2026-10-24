@@ -76,6 +76,11 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
     canUseWorktree: vi.fn(async (projectId: string) => projectId === 'repo'),
     createWorktree: vi.fn(async () => undefined),
     restoreFiles: vi.fn(async () => undefined),
+    chatChanged: vi.fn(),
+    archiveChat: vi.fn(),
+    deleteChat: vi.fn(async (conversationId: string) => {
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+    }),
     sendToDevice: vi.fn(),
     later: (work) => queued.push(work),
     ...overrides
@@ -162,6 +167,46 @@ describe('CompanionApi', () => {
       message.startsGoal ? 1 : 0
     )
   }
+
+  it('pins, renames, moves, archives and deletes a chat as its menu does', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    expect(await call('chat.pin', { conversationId: chat.id, pinned: true })).toEqual({
+      pinned: true
+    })
+    expect(await call('chat.rename', { conversationId: chat.id, title: '  Fix   it  ' })).toEqual({
+      title: 'Fix it'
+    })
+    expect(await call('chat.move', { conversationId: chat.id, projectId: 'repo' })).toEqual({
+      projectId: 'repo'
+    })
+    expect(
+      db
+        .prepare(
+          'SELECT is_pinned, title, title_source, project_id FROM conversations WHERE id = ?'
+        )
+        .get(chat.id)
+    ).toEqual({ is_pinned: 1, title: 'Fix it', title_source: 'user', project_id: 'repo' })
+    expect(deps.chatChanged).toHaveBeenCalledWith(chat.id, false)
+    await call('chat.archive', { conversationId: chat.id })
+    expect(deps.archiveChat).toHaveBeenCalledWith(chat.id)
+    expect(deps.chatChanged).toHaveBeenLastCalledWith(chat.id, true)
+    await call('chat.delete', { conversationId: chat.id })
+    expect(deps.deleteChat).toHaveBeenCalledWith(chat.id)
+    await expect(call('chat.pin', { conversationId: chat.id, pinned: false })).rejects.toThrow(
+      /no longer exists/
+    )
+  })
+
+  it('refuses an empty name, and deleting a chat that is working', async () => {
+    const { call, chat, runs, deps } = setup()
+    await expect(call('chat.rename', { conversationId: chat.id, title: '   ' })).rejects.toThrow(
+      /name/
+    )
+    runs.set('run-1', run({ threadId: chat.id, phase: 'streaming' }))
+    await expect(call('chat.delete', { conversationId: chat.id })).rejects.toThrow(/Stop it first/)
+    expect(deps.deleteChat).not.toHaveBeenCalled()
+  })
 
   it('lists projects with whether their chats can use worktrees', async () => {
     const { call, db } = setup()

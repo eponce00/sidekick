@@ -19,8 +19,9 @@ through the internet or any other service, and there is no app to install.
 3. On the computer, SideKick asks whether to allow the phone, by its name (such as "iPhone ·
    Safari") and network address. Click **Allow**.
 
-The phone then shows your chats. To open it like an app, use the browser's **Add to Home Screen**.
-On iPhone and iPad it opens full screen.
+The phone then shows your chats. To keep it a tap away, use the browser's **Add to Home screen**.
+It adds a shortcut that opens the page in the browser: browsers install a page as an app only when
+they trust its certificate, and no authority certifies one for a home network address.
 
 The first time phone access is on, Windows may ask whether SideKick can use private networks; allow
 it, or phones cannot connect.
@@ -31,8 +32,10 @@ The phone shows a chat as the computer does, laid out for a small screen: the ag
 streams, its thinking, the tools it runs with their output and the changes they made, images, cards
 and the agent's other chats.
 
-- **Send** a message in a chat, or start a new chat, in Chat, Research or Plan mode and on the model
-  you choose for the chat.
+- **Send** a message in a chat, or start a new chat. The **+** beside the message box attaches
+  photos and files, switches to Research or Plan, and chooses the chat's model.
+- **The chat's menu**, the **⋮** at the top right, pins or renames the chat, adds it to a project or
+  removes it from one, finds words in it, archives it or deletes it.
 - **Start a chat in a project** with the **+** beside the project in the chat list, or by choosing
   the project above the message box of a new chat. For a project in a Git repository, choose
   **New worktree** there to have the chat work in its own copy of the project, as **Work in** does

@@ -60,6 +60,13 @@ interface ConversationsAPI {
   list: () => Promise<import('../shared/projects').ProjectConversation[]>
   /** A chat's saved messages changed outside this window, such as from the user's phone. */
   onMessagesChanged: (callback: (conversationId: string) => void) => () => void
+  /**
+   * A chat was pinned, renamed, moved, archived or deleted outside this window, such as from the
+   * user's phone; `removed` when it left the list.
+   */
+  onListChanged: (
+    callback: (change: { conversationId: string; removed: boolean }) => void
+  ) => () => void
   search: (query: string) => Promise<import('../shared/projects').ProjectConversation[]>
   create: (
     title: string,
