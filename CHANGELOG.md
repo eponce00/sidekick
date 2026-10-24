@@ -28,6 +28,9 @@
   phone.
 - Read replies in the app's own style: tables, quotes, checklists, code and headings now use its
   rounded cards and quiet colors instead of plain document styling.
+- Update Electron to 43.8.3, with Node.js 24.22.0, for its fix for compromised eMudhra
+  certificates, and update undici, Zod, body-parser, fast-uri and ip-address for their security
+  fixes.
 
 ## 0.19.0 — 2026-10-23
 
