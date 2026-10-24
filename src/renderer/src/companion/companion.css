@@ -816,7 +816,8 @@ body {
   display: contents;
 }
 
-/* What the user sent: a bubble on the right, whose row of buttons shows when it is tapped. */
+/* What the user sent: a bubble on the right. A tap opens its actions in a sheet, so nothing in the
+   chat moves. */
 .cp-messages .message-user {
   align-self: flex-end;
   max-width: 85%;
@@ -826,20 +827,16 @@ body {
   padding: 10px var(--space-4);
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
   cursor: pointer;
+  transition: background var(--duration-fast);
 }
 
-.cp-message-slot:not(.is-revealed) .message-user .message-meta {
-  display: none;
+/* The message a sheet is open for. */
+.cp-message-slot.is-selected .message-user .message-bubble {
+  background: color-mix(in srgb, var(--message-user-bg), var(--text-primary) 10%);
 }
 
 .cp-messages .message-user .message-meta {
-  justify-content: flex-end;
-  margin-top: var(--space-1);
-}
-
-.cp-messages .message-user .message-actions {
-  margin-right: calc(-1 * var(--space-2));
-  animation: motion-fade-in var(--duration-fast) ease;
+  display: none;
 }
 
 /* The desktop sizes message text by its container, which gives it no width of its own; a bubble

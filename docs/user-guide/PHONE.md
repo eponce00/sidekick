@@ -37,7 +37,7 @@ and the agent's other chats.
   the project above the message box of a new chat. For a project in a Git repository, choose
   **New worktree** there to have the chat work in its own copy of the project, as **Work in** does
   on the computer.
-- **Tap a message you sent** for its buttons: **Copy**, **Read aloud**, **Edit** and **Retry**.
+- **Tap a message you sent** for **Copy**, **Read aloud**, **Edit** and **Retry**.
   **Edit** puts the message back in the message box to change and send again; **Retry** answers it
   again. Either way, the replies after it leave the chat, and the files SideKick changed since are
   put back, as on the computer. Where your permission settings ask before that, the computer asks.
