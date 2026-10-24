@@ -77,9 +77,19 @@ const STREAMED_REPLY =
   'to check it holds:\n\n```sh\nnpm test -- upload --repeat 50\n```\n'
 
 const MODELS: CompanionModel[] = [
-  { id: 'sonnet', name: 'Claude Sonnet', supportsVision: true },
-  { id: 'qwen-local', name: 'Qwen3 Coder 30B · local', supportsVision: false },
-  { id: 'gpt-mini', name: 'GPT-5 mini', supportsVision: true }
+  {
+    id: 'sonnet',
+    name: 'Claude Sonnet',
+    supportsVision: true,
+    reasoning: { levels: ['off', 'low', 'medium', 'high', 'max'], initial: 'off', level: 'high' }
+  },
+  {
+    id: 'qwen-local',
+    name: 'Qwen3 Coder 30B · local',
+    supportsVision: false,
+    reasoning: { levels: ['auto', 'on', 'off'], initial: 'auto', level: 'auto' }
+  },
+  { id: 'gpt-mini', name: 'GPT-5 mini', supportsVision: true, reasoning: null }
 ]
 
 /** A made-up screenshot, drawn as SVG so the preview needs no image files. */
@@ -822,6 +832,14 @@ export class CompanionPreview implements CompanionConnection {
       }
       case 'chat.send':
         return this.send(input as Input<'chat.send'>)
+      case 'models.setEffort': {
+        const { modelId, level } = input as Input<'models.setEffort'>
+        const model = MODELS.find((candidate) => candidate.id === modelId)
+        if (!model?.reasoning?.levels.includes(level))
+          throw new Error('This model does not offer that level')
+        model.reasoning = { ...model.reasoning, level }
+        return { level }
+      }
       case 'projects.list':
         return PROJECTS satisfies Output<'projects.list'>
       case 'chat.retry':

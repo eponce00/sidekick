@@ -125,6 +125,9 @@ describe('chat models', () => {
 
   async function chooseModel(name: string): Promise<void> {
     await click(visiblePanel().querySelector('.model-selector-inline'))
+    // A model with reasoning opens on its effort; the list is behind its name.
+    const toList = visiblePanel().querySelector('.effort-card-model')
+    if (toList) await click(toList)
     await click(
       [...visiblePanel().querySelectorAll('.model-menu-option')].find((option) =>
         option.textContent?.includes(name)

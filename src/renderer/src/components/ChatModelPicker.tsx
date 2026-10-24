@@ -1,5 +1,21 @@
 import React from 'react'
-import { AlertTriangle, Check, ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  RotateCcw,
+  Search,
+  SlidersHorizontal,
+  X
+} from 'lucide-react'
+import {
+  REASONING_LEVEL_LABELS,
+  type ReasoningLevel,
+  type ReasoningOptions
+} from '../../../shared/reasoning'
 import type { PinnedModel } from '../types/models.types'
 import { describeProviderAvailability } from '../../../shared/providerHealth'
 import { modelNameFromId } from '../../../shared/conversationModels'
@@ -11,7 +27,18 @@ import {
 import { filterModelsByQuery } from '../utils/modelSearch'
 import { shouldOfferModelSearch } from '../utils/modelPickerDensity'
 import { providerIconKindForModel } from '../utils/providerIconKinds'
+import { EffortSlider } from './EffortSlider'
 import { ProviderIcon } from './ProviderIcon'
+
+/** What the chip says for the level: short, since it sits in the composer toolbar. */
+const SHORT_LEVEL: Partial<Record<ReasoningLevel, string>> = {
+  auto: 'Default',
+  xhigh: 'X-High'
+}
+
+function shortReasoningLabel(level: ReasoningLevel): string {
+  return SHORT_LEVEL[level] ?? REASONING_LEVEL_LABELS[level]
+}
 
 interface ChatModelPickerProps {
   selectedModelId?: string
@@ -24,6 +51,12 @@ interface ChatModelPickerProps {
   onToggle: () => void
   onModelChange: (modelId: string) => void | Promise<void>
   onManageModels: () => void
+  /** The selected model's reasoning: the card opens on its effort, with the model a tap away. */
+  reasoning?: {
+    options: ReasoningOptions
+    level: ReasoningLevel
+    onChange: (level: ReasoningLevel) => void
+  } | null
 }
 
 /** Compact pinned-model control shared by every chat composer. */
@@ -37,16 +70,21 @@ export function ChatModelPicker({
   disabled = false,
   onToggle,
   onModelChange,
-  onManageModels
+  onManageModels,
+  reasoning = null
 }: ChatModelPickerProps): React.JSX.Element {
   const [query, setQuery] = React.useState('')
   const [searchOpen, setSearchOpen] = React.useState(false)
+  // With reasoning to set, the card opens on the effort; the model list is one step in.
+  const [view, setView] = React.useState<'effort' | 'models'>('effort')
   React.useEffect(() => {
     if (!isOpen) {
       setQuery('')
       setSearchOpen(false)
+      setView('effort')
     }
   }, [isOpen])
+  const showEffort = Boolean(reasoning) && view === 'effort'
 
   const selected = selectedModelId
     ? models.find((model) => model.id === selectedModelId)
@@ -83,7 +121,9 @@ export function ChatModelPicker({
             ? titleOverride || 'Model is busy'
             : unavailableName
               ? `${unavailableName} is no longer available. Choose another model.`
-              : undefined
+              : reasoning && selected
+                ? `${compactModelLabel(selected)} · Reasoning: ${REASONING_LEVEL_LABELS[reasoning.level]}`
+                : undefined
         }
         aria-label={
           titleOverride ||
@@ -116,11 +156,64 @@ export function ChatModelPicker({
                 ? `Unavailable: ${unavailableName}`
                 : 'Select model')}
         </span>
+        {reasoning && selected && (
+          <span className="model-selector-inline-effort">
+            {shortReasoningLabel(reasoning.level)}
+          </span>
+        )}
         <ChevronDown size={13} />
       </button>
 
-      {isOpen && (
+      {isOpen && showEffort && reasoning && (
+        <div
+          className="features-menu model-menu effort-card"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="effort-card-head">
+            <Brain size={17} className="effort-card-icon" aria-hidden="true" />
+            <strong className="effort-card-level">{REASONING_LEVEL_LABELS[reasoning.level]}</strong>
+            <button
+              type="button"
+              className="effort-card-reset"
+              onClick={() => reasoning.onChange(reasoning.options.initial)}
+              disabled={reasoning.level === reasoning.options.initial}
+              title={`Back to ${REASONING_LEVEL_LABELS[reasoning.options.initial]}, the model's starting level`}
+              aria-label="Back to the starting level"
+            >
+              <RotateCcw size={16} />
+            </button>
+          </div>
+          <button type="button" className="effort-card-model" onClick={() => setView('models')}>
+            <span>{selected ? compactModelLabel(selected) : 'Choose a model'}</span>
+            <ChevronRight size={14} aria-hidden="true" />
+          </button>
+          <EffortSlider
+            levels={reasoning.options.levels}
+            level={reasoning.level}
+            onChange={reasoning.onChange}
+          />
+          {reasoning.options.levels.includes('auto') && (
+            <button
+              type="button"
+              className={`effort-card-default${reasoning.level === 'auto' ? ' is-selected' : ''}`}
+              onClick={() => reasoning.onChange('auto')}
+              aria-pressed={reasoning.level === 'auto'}
+            >
+              Let the model decide
+              {reasoning.level === 'auto' && <Check size={13} aria-hidden="true" />}
+            </button>
+          )}
+        </div>
+      )}
+
+      {isOpen && !showEffort && (
         <div className="features-menu model-menu" onClick={(event) => event.stopPropagation()}>
+          {reasoning && (
+            <button type="button" className="effort-card-back" onClick={() => setView('effort')}>
+              <ChevronLeft size={14} aria-hidden="true" />
+              <span>Reasoning: {REASONING_LEVEL_LABELS[reasoning.level]}</span>
+            </button>
+          )}
           {models.length > 0 && (
             <>
               {offersSearch && (

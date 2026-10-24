@@ -33,7 +33,8 @@ streams, its thinking, the tools it runs with their output and the changes they 
 and the agent's other chats.
 
 - **Send** a message in a chat, or start a new chat. The **+** beside the message box attaches
-  photos and files, switches to Research or Plan, and chooses the chat's model.
+  photos and files, switches to Research or Plan, and chooses the chat's model and how hard it thinks, with the
+  same slider as the computer.
 - **The chat's menu**, the **⋮** at the top right, pins or renames the chat, adds it to a project or
   removes it from one, finds words in it, archives it or deletes it.
 - **Start a chat in a project** with the **+** beside the project in the chat list, or by choosing

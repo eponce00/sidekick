@@ -3,7 +3,10 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpToLine,
+  Brain,
   Camera,
+  ChevronRight,
+  RotateCcw,
   Pencil,
   Trash2,
   FileText,
@@ -17,10 +20,12 @@ import {
   X
 } from 'lucide-react'
 import type { ConversationRunMode, PromptAdmissionsResult } from '../../../shared/agentRunApi'
+import { REASONING_LEVEL_LABELS, type ReasoningLevel } from '../../../shared/reasoning'
 import { MAX_MESSAGE_IMAGES } from '../../../shared/messageImages'
 import '../components/ChatInput.css'
 import { ChatComposer } from '../components/ChatComposer'
 import { ComposerEditingBar } from '../components/ComposerEditingBar'
+import { EffortSlider } from '../components/EffortSlider'
 import { DictationButton } from '../components/DictationButton'
 import { ImageAttachmentPreview } from '../components/ImageAttachmentPreview'
 import { QueuedMessageTray } from '../components/QueuedMessageTray'
@@ -63,7 +68,8 @@ export function PhoneComposer({
   onSend,
   onStop,
   onUpdateQueue,
-  onSteerQueued
+  onSteerQueued,
+  onEffortChange
 }: {
   connection: CompanionConnection
   runActive: boolean
@@ -90,12 +96,14 @@ export function PhoneComposer({
   onStop: () => void
   onUpdateQueue: (queued: Array<{ id: string; content: string }>) => void
   onSteerQueued: (admissionId: string) => void
+  /** How hard a model thinks, as the desktop's reasoning slider sets it. */
+  onEffortChange: (modelId: string, level: ReasoningLevel) => void
 }) {
   const [text, setText] = useState('')
   const [mode, setMode] = useState<ConversationRunMode>('conversation')
   const [chosenModelId, setChosenModelId] = useState<string | null>(null)
   // The + menu, opened above its button, and its list of models.
-  const [menu, setMenu] = useState<'add' | 'model' | null>(null)
+  const [menu, setMenu] = useState<'add' | 'effort' | 'model' | null>(null)
   const [plusAnchor, setPlusAnchor] = useState<HTMLElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const libraryInput = useRef<HTMLInputElement>(null)
@@ -545,11 +553,62 @@ export function PhoneComposer({
               round
               icon={<Sparkles size={20} />}
               label={model?.name ?? 'Choose model'}
-              description="Model"
+              description={
+                model?.reasoning
+                  ? `Reasoning: ${REASONING_LEVEL_LABELS[model.reasoning.level]}`
+                  : 'Model'
+              }
               submenu
-              onClick={() => setMenu('model')}
+              onClick={() => setMenu(model?.reasoning ? 'effort' : 'model')}
             />
           )}
+        </Popover>
+      )}
+      {menu === 'effort' && model?.reasoning && (
+        <Popover
+          label="Reasoning"
+          anchor={plusAnchor}
+          placement="above-start"
+          title="Reasoning"
+          onBack={() => setMenu('add')}
+          onClose={closeMenu}
+        >
+          <div className="cp-effort">
+            <div className="effort-card-head">
+              <Brain size={18} className="effort-card-icon" aria-hidden="true" />
+              <strong className="effort-card-level">
+                {REASONING_LEVEL_LABELS[model.reasoning.level]}
+              </strong>
+              <button
+                type="button"
+                className="effort-card-reset"
+                disabled={model.reasoning.level === model.reasoning.initial}
+                onClick={() => onEffortChange(model.id, model.reasoning!.initial)}
+                aria-label="Back to the starting level"
+              >
+                <RotateCcw size={17} aria-hidden="true" />
+              </button>
+            </div>
+            <button type="button" className="effort-card-model" onClick={() => setMenu('model')}>
+              <span>{model.name}</span>
+              <ChevronRight size={15} aria-hidden="true" />
+            </button>
+            <EffortSlider
+              levels={model.reasoning.levels}
+              level={model.reasoning.level}
+              onChange={(level) => onEffortChange(model.id, level)}
+            />
+            {model.reasoning.levels.includes('auto') && (
+              <button
+                type="button"
+                className={`effort-card-default${model.reasoning.level === 'auto' ? ' is-selected' : ''}`}
+                aria-pressed={model.reasoning.level === 'auto'}
+                onClick={() => onEffortChange(model.id, 'auto')}
+              >
+                Let the model decide
+              </button>
+            )}
+          </div>
         </Popover>
       )}
       {menu === 'model' && models && (
@@ -558,7 +617,7 @@ export function PhoneComposer({
           anchor={plusAnchor}
           placement="above-start"
           title="Model for this chat"
-          onBack={() => setMenu('add')}
+          onBack={() => setMenu(model?.reasoning ? 'effort' : 'add')}
           onClose={closeMenu}
         >
           {models.models.map((candidate) => (

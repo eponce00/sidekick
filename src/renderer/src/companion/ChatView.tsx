@@ -226,6 +226,7 @@ export function ChatView({
           }}
           onStop={() => void chat.stop()}
           onUpdateQueue={(queued) => void chat.updateQueue(queued)}
+          onEffortChange={(modelId, level) => void chat.setEffort(modelId, level)}
           onSteerQueued={(id) => void chat.steerQueued(id)}
         />
       </footer>

@@ -8,6 +8,7 @@ import type {
   CompanionEvent,
   CompanionImage
 } from '../../../shared/companion'
+import type { ReasoningLevel } from '../../../shared/reasoning'
 import type { Message } from '../types/chat.types'
 import {
   firstGapAfter,
@@ -146,6 +147,31 @@ export function useCompanionChat({
       /* Without the list, messages go to the chat's own model. */
     }
   }, [connection])
+
+  /** How hard a model thinks, for every chat; shown at once, saved on the computer. */
+  const setEffort = useCallback(
+    async (modelId: string, level: ReasoningLevel) => {
+      setModels((current) =>
+        current
+          ? {
+              ...current,
+              models: current.models.map((model) =>
+                model.id === modelId && model.reasoning
+                  ? { ...model, reasoning: { ...model.reasoning, level } }
+                  : model
+              )
+            }
+          : current
+      )
+      try {
+        await connection.call('models.setEffort', { modelId, level })
+      } catch (failure) {
+        fail(failure)
+        void loadModels()
+      }
+    },
+    [connection, fail, loadModels]
+  )
 
   // Fills holes left by events the stream dropped.
   const catchUp = useCallback(async () => {
@@ -408,6 +434,7 @@ export function useCompanionChat({
     send,
     retry,
     reload: load,
+    setEffort,
     stop,
     resolve,
     updateQueue,

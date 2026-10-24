@@ -102,9 +102,11 @@ of its report.
   scheduled run uses its schedule's. When a conversation's model is removed or turned off in
   Settings, the picker marks it **Unavailable** and the message box asks you to choose another
   before sending, rather than switching models for you.
-- **Reasoning:** the brain button beside the model shows how much the selected model reasons, and
-  opens a menu of the levels that model can take. Each model keeps its own level. The levels follow
-  what its provider can send:
+- **Reasoning:** the model picker shows how much the selected model reasons beside its name, and
+  opens on a slider with a stop for each level the model can take; its name opens the list of
+  models, and the reset button beside the level returns to the model's starting level. Where the model
+  offers its own default, **Let the model decide** chooses it. Each model keeps its own level. The
+  levels follow what its provider can send:
 
   | Provider                             | Levels                                          |
   | ------------------------------------ | ----------------------------------------------- |

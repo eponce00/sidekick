@@ -41,6 +41,14 @@ import {
   type MessageImageAttachment
 } from '../../../shared/messageImages'
 import type { PinnedModel } from '../../../shared/models'
+import type { ProviderKind } from '../../../shared/providerRegistry'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel,
+  type ReasoningModel,
+  type ReasoningSettings
+} from '../../../shared/reasoning'
 import {
   AGENT_PERMISSION_DECISIONS,
   type AgentPermissionDecision
@@ -94,6 +102,10 @@ export interface CompanionApiDependencies {
   models: () => PinnedModel[]
   /** The model a chat's next run uses: the one asked for, else the chat's own. */
   resolveModel: (conversationId: string, requestedId?: string) => PinnedModel | null
+  /** The stored reasoning choices, which the window's slider and every run read. */
+  reasoningSettings: () => ReasoningSettings
+  /** Saves how hard a model thinks, as the window's slider does, and tells the window. */
+  setReasoningLevel: (modelId: string, level: ReasoningLevel) => void
   /** Records the model a chat keeps, as choosing one in the window does. */
   setChatModel: (conversationId: string, modelId: string) => void
   /** A chat's saved messages changed outside the window, which should load them again. */
@@ -232,6 +244,16 @@ interface Dictation {
   idle: ReturnType<typeof setTimeout> | null
 }
 
+/** A pinned model as the reasoning rules read it, as the window's chat reads it. */
+function reasoningModelFor(model: PinnedModel): ReasoningModel {
+  return {
+    id: model.id,
+    providerKind: model.providerKind ?? (model.provider as ProviderKind),
+    model: model.providerModelId || model.id,
+    supportsReasoning: model.supportsReasoning
+  }
+}
+
 /** What one message carries, ready to save or queue. */
 interface PreparedMessage {
   content: string
@@ -289,6 +311,8 @@ export class CompanionApi {
         return this.steerQueued(input)
       case 'models.list':
         return this.modelList(input)
+      case 'models.setEffort':
+        return this.setEffort(input)
       case 'run.stop':
         return { stopped: await this.deps.stopRun(this.conversationRun(input.runId).id) }
       case 'run.events': {
@@ -469,13 +493,29 @@ export class CompanionApi {
         ? ''
         : this.chatRow(requireId(input.conversationId, 'chat')).id
     return {
-      models: this.deps.models().map((model) => ({
-        id: model.id,
-        name: model.name,
-        supportsVision: model.supportsVision !== false
-      })),
+      models: this.deps.models().map((model) => {
+        const target = reasoningModelFor(model)
+        const options = reasoningOptions(target)
+        const level = options ? resolveReasoningLevel(target, this.deps.reasoningSettings()) : null
+        return {
+          id: model.id,
+          name: model.name,
+          supportsVision: model.supportsVision !== false,
+          reasoning: options && level ? { ...options, level } : null
+        }
+      }),
       selectedModelId: this.deps.resolveModel(conversationId)?.id ?? null
     }
+  }
+
+  private setEffort(input: Record<string, unknown>): { level: ReasoningLevel } {
+    const model = this.deps.models().find((candidate) => candidate.id === input.modelId)
+    if (!model) throw new Error('That model is no longer available')
+    const options = reasoningOptions(reasoningModelFor(model))
+    const level = input.level as ReasoningLevel
+    if (!options?.levels.includes(level)) throw new Error('This model does not offer that level')
+    this.deps.setReasoningLevel(model.id, level)
+    return { level }
   }
 
   /** The text, images and files one message from the phone carries, checked as the window checks them. */

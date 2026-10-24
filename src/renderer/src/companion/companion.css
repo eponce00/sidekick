@@ -1598,6 +1598,37 @@ body > .image-lightbox {
   background: var(--border-subtle);
 }
 
+/* The model's reasoning in the + menu, laid out as the desktop's effort card. */
+.cp-effort {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
+}
+
+.cp-effort .effort-card-level {
+  font-size: 22px;
+}
+
+.cp-effort .effort-card-model {
+  font-size: var(--text-base);
+}
+
+.cp-effort .effort-card-reset {
+  width: 40px;
+  height: 40px;
+}
+
+.cp-effort .effort-card-head {
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+}
+
+.cp-effort .effort-card-default {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  font-size: var(--text-sm);
+}
+
 /* Renaming a chat. */
 .cp-rename {
   display: flex;

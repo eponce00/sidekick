@@ -1,5 +1,6 @@
 import type { ConversationRunMode, PromptAdmissionsResult } from './agentRunApi'
 import type { AgentRunEvent, AgentRunPhase, AgentRunSnapshot } from './agentRuntime'
+import type { ReasoningLevel } from './reasoning'
 
 /** A phone the user approved. */
 export interface CompanionDevice {
@@ -77,6 +78,8 @@ export interface CompanionModel {
   id: string
   name: string
   supportsVision: boolean
+  /** How hard it can think: the levels it offers, its starting one, and the one chosen. */
+  reasoning: { levels: ReasoningLevel[]; initial: ReasoningLevel; level: ReasoningLevel } | null
 }
 
 /** A project the phone can start a chat in. */
@@ -171,6 +174,11 @@ export interface CompanionCalls {
     input: { conversationId?: string }
     output: { models: CompanionModel[]; selectedModelId: string | null }
   }
+  /** Chooses how hard a model thinks, for every chat, as the desktop's reasoning slider does. */
+  'models.setEffort': {
+    input: { modelId: string; level: ReasoningLevel }
+    output: { level: ReasoningLevel }
+  }
   'run.stop': { input: { runId: string }; output: { stopped: boolean } }
   'run.events': {
     input: { runId: string; afterSequence: number }
@@ -243,6 +251,7 @@ export const COMPANION_CALL_NAMES: readonly CompanionCallName[] = [
   'queue.update',
   'queue.steer',
   'models.list',
+  'models.setEffort',
   'run.stop',
   'run.events',
   'interaction.resolve',

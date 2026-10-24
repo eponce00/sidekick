@@ -44,7 +44,9 @@ import { createChatWorktree, getManagedWorktrees } from './worktrees'
 import { getSessionService } from './sessions'
 import { refreshSessionStatuses } from './sessionStatus'
 import { deleteConversation } from '../services/conversationActions'
-import { loadStoredSettings } from './settings'
+import { loadStoredSettings, saveSettingsChanges } from './settings'
+import { broadcastSettingsChanged } from '../control/controlService'
+import type { ReasoningSettings } from '../../shared/reasoning'
 import { appState, getDb, getStore } from './state'
 
 /** A tenth of a second at 16 kHz, as a microphone sends it. */
@@ -333,6 +335,13 @@ function companionServer(): CompanionServer {
     steerAdmission: (runId, admissionId) => coordinator.steer({ runId, admissionId }).accepted,
     models: enabledModels,
     resolveModel,
+    reasoningSettings: () => loadStoredSettings() as unknown as ReasoningSettings,
+    setReasoningLevel: (modelId, level) => {
+      const current = (loadStoredSettings() as unknown as ReasoningSettings).reasoningLevels ?? {}
+      broadcastSettingsChanged(
+        saveSettingsChanges({ reasoningLevels: { ...current, [modelId]: level } })
+      )
+    },
     setChatModel: (conversationId, modelId) =>
       coordinator.conversationModels.set(conversationId, modelId),
     messagesChanged: (conversationId) => {

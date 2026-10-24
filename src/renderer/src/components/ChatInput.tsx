@@ -22,7 +22,6 @@ import type { PinnedModel } from '../types/models.types'
 import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import { ChatComposer } from './ChatComposer'
 import { ChatModelPicker } from './ChatModelPicker'
-import { ReasoningMenu } from './ReasoningMenu'
 import {
   nextReasoningLevel,
   REASONING_LEVEL_LABELS,
@@ -1156,13 +1155,6 @@ export function ChatInput({
       }
       toolbarRight={
         <>
-          {reasoningOptions && reasoningLevel && (
-            <ReasoningMenu
-              options={reasoningOptions}
-              level={reasoningLevel}
-              onChange={onReasoningLevelChange}
-            />
-          )}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}
@@ -1171,6 +1163,15 @@ export function ChatInput({
             onToggle={onToggleModelMenu}
             onModelChange={onModelChange}
             onManageModels={onOpenModelSearch}
+            reasoning={
+              reasoningOptions && reasoningLevel
+                ? {
+                    options: reasoningOptions,
+                    level: reasoningLevel,
+                    onChange: onReasoningLevelChange
+                  }
+                : null
+            }
           />
           {/* Next to Send, where it is reached for most. */}
           <DictationButton inputRef={inputRef} onInputChange={onInputChange} />

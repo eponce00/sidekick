@@ -218,9 +218,7 @@ export function loadStoredSettings(): SettingsRecord {
  * Changes stored settings in one synchronous read-modify-write. Each writer starts from what is
  * stored at that moment, so none can write back another writer's fields from an older copy.
  */
-function updateStoredSettings(
-  change: (current: SettingsRecord) => SettingsRecord
-): SettingsRecord {
+function updateStoredSettings(change: (current: SettingsRecord) => SettingsRecord): SettingsRecord {
   const store = getStore()
   const stored = store.get('settings', {})
   const next = asSettingsRecord(change(asSettingsRecord(revealSettings(stored))))
@@ -240,6 +238,14 @@ function applySettingsChanges(current: SettingsRecord, changes: SettingsRecord):
       ? randomUUID()
       : current.officeHelperConfigurationId
   return next
+}
+
+/**
+ * Saves settings a main-process caller changes, such as the phone choosing how hard a model
+ * thinks, the way a save from the window applies them.
+ */
+export function saveSettingsChanges(changes: SettingsRecord): SettingsRecord {
+  return updateStoredSettings((current) => applySettingsChanges(current, changes))
 }
 
 export function publicSettings(value: unknown): unknown {

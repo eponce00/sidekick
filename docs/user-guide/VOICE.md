@@ -5,7 +5,7 @@ aloud. It all runs on this device: audio is never sent to a provider or any othe
 
 ## Dictation
 
-Press **Ctrl+Space** (**⌥Space** on macOS), or click the microphone beside the model picker, and
+Press **Ctrl+Space** (**⌥Space** on macOS), or click the microphone beside Send, and
 talk. Words appear in the box as you speak, and each phrase is corrected when it ends. You can
 edit the text or type between phrases.
 

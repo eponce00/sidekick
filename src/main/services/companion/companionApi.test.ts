@@ -77,6 +77,8 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
     createWorktree: vi.fn(async () => undefined),
     restoreFiles: vi.fn(async () => undefined),
     chatChanged: vi.fn(),
+    reasoningSettings: vi.fn(() => ({ reasoningLevels: { 'local:model': 'high' as const } })),
+    setReasoningLevel: vi.fn(),
     archiveChat: vi.fn(),
     deleteChat: vi.fn(async (conversationId: string) => {
       db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
@@ -206,6 +208,29 @@ describe('CompanionApi', () => {
     runs.set('run-1', run({ threadId: chat.id, phase: 'streaming' }))
     await expect(call('chat.delete', { conversationId: chat.id })).rejects.toThrow(/Stop it first/)
     expect(deps.deleteChat).not.toHaveBeenCalled()
+  })
+
+  it('lists each model with how hard it can think, and saves a level it offers', async () => {
+    const { call, deps } = setup()
+    const { models } = (await call('models.list', {})) as {
+      models: Array<{ id: string; reasoning: unknown }>
+    }
+    // An LM Studio model offers its own default and four levels; this one was set to high.
+    expect(models.find((model) => model.id === 'local:model')?.reasoning).toEqual({
+      levels: ['auto', 'off', 'low', 'medium', 'high'],
+      initial: 'auto',
+      level: 'high'
+    })
+    expect(await call('models.setEffort', { modelId: 'local:model', level: 'low' })).toEqual({
+      level: 'low'
+    })
+    expect(deps.setReasoningLevel).toHaveBeenCalledWith('local:model', 'low')
+    await expect(
+      call('models.setEffort', { modelId: 'local:model', level: 'max' })
+    ).rejects.toThrow(/does not offer/)
+    await expect(call('models.setEffort', { modelId: 'gone', level: 'low' })).rejects.toThrow(
+      /no longer/
+    )
   })
 
   it('lists projects with whether their chats can use worktrees', async () => {
@@ -417,8 +442,8 @@ describe('CompanionApi', () => {
     ).rejects.toThrow(/no longer available/)
     expect(await call('models.list', { conversationId: chat.id })).toEqual({
       models: [
-        { id: MODEL.id, name: 'model', supportsVision: true },
-        { id: BLIND.id, name: 'blind', supportsVision: false }
+        expect.objectContaining({ id: MODEL.id, name: 'model', supportsVision: true }),
+        expect.objectContaining({ id: BLIND.id, name: 'blind', supportsVision: false })
       ],
       selectedModelId: MODEL.id
     })
