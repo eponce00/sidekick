@@ -77,9 +77,19 @@ const STREAMED_REPLY =
   'to check it holds:\n\n```sh\nnpm test -- upload --repeat 50\n```\n'
 
 const MODELS: CompanionModel[] = [
-  { id: 'sonnet', name: 'Claude Sonnet', supportsVision: true },
-  { id: 'qwen-local', name: 'Qwen3 Coder 30B · local', supportsVision: false },
-  { id: 'gpt-mini', name: 'GPT-5 mini', supportsVision: true }
+  {
+    id: 'sonnet',
+    name: 'Claude Sonnet',
+    supportsVision: true,
+    reasoning: { levels: ['off', 'low', 'medium', 'high', 'max'], initial: 'off', level: 'high' }
+  },
+  {
+    id: 'qwen-local',
+    name: 'Qwen3 Coder 30B · local',
+    supportsVision: false,
+    reasoning: { levels: ['off', 'on'], initial: 'on', level: 'on' }
+  },
+  { id: 'gpt-mini', name: 'GPT-5 mini', supportsVision: true, reasoning: null }
 ]
 
 /** A made-up screenshot, drawn as SVG so the preview needs no image files. */
@@ -158,6 +168,15 @@ const DIFF = `--- a/src/upload/UploadButton.css
  }
 `
 
+/** The preview's projects; a chat's project is known by its name here. */
+const PROJECTS = [
+  { id: 'sidekick', name: 'sidekick', canUseWorktree: true },
+  { id: 'notes', name: 'Notes', canUseWorktree: false }
+]
+
+/** What the pretend dictation writes. */
+const DICTATED = 'Also check the retry logic in the upload client.'
+
 type Output<Name extends CompanionCallName> = CompanionCalls[Name]['output']
 type Input<Name extends CompanionCallName> = CompanionCalls[Name]['input']
 
@@ -172,6 +191,8 @@ export class CompanionPreview implements CompanionConnection {
   private chatModels = new Map<string, string>()
   private uploads = new Map<string, PreviewUpload>()
   private speeches = new Map<string, Set<ReturnType<typeof setTimeout>>>()
+  /** Seconds of microphone each dictation has sent. */
+  private dictations = new Map<string, number>()
   private onEvent: ((event: CompanionEvent) => void) | null = null
   private timers = new Set<ReturnType<typeof setTimeout>>()
   private nextId = 1
@@ -412,6 +433,16 @@ export class CompanionPreview implements CompanionConnection {
             },
             output: 'Image, 640 × 400',
             data: { previewUrl: 'sidekick-browser://artifact/preview-viewed-image' }
+          }),
+          tool('t-shot', 'browser_screenshot', 'Took a screenshot of the upload page', {
+            input: {},
+            presentation: {
+              kind: 'generic',
+              title: 'Took a screenshot of the upload page',
+              subject: 'localhost:5173/upload'
+            },
+            output: 'Screenshot, 1280 × 800',
+            data: { previewUrl: 'sidekick-browser://artifact/preview-browser-screenshot' }
           }),
           tool('t-test', 'run_command', 'Ran npm test -- upload', {
             input: { command: 'npm test -- upload' },
@@ -801,6 +832,43 @@ export class CompanionPreview implements CompanionConnection {
       }
       case 'chat.send':
         return this.send(input as Input<'chat.send'>)
+      case 'models.setEffort': {
+        const { modelId, level } = input as Input<'models.setEffort'>
+        const model = MODELS.find((candidate) => candidate.id === modelId)
+        if (!model?.reasoning?.levels.includes(level))
+          throw new Error('This model does not offer that level')
+        model.reasoning = { ...model.reasoning, level }
+        return { level }
+      }
+      case 'projects.list':
+        return PROJECTS satisfies Output<'projects.list'>
+      case 'chat.retry':
+        return this.retry(input as Input<'chat.retry'>)
+      case 'chat.pin': {
+        const { conversationId, pinned } = input as Input<'chat.pin'>
+        this.updateChat(conversationId, { pinned })
+        return { pinned }
+      }
+      case 'chat.rename': {
+        const { conversationId, title } = input as Input<'chat.rename'>
+        this.updateChat(conversationId, { title: title.trim() })
+        return { title: title.trim() }
+      }
+      case 'chat.move': {
+        const { conversationId, projectId } = input as Input<'chat.move'>
+        const project = PROJECTS.find((candidate) => candidate.id === projectId)
+        this.updateChat(conversationId, { projectId, projectName: project?.name ?? null })
+        return { projectId }
+      }
+      case 'chat.archive':
+      case 'chat.delete': {
+        const { conversationId } = input as Input<'chat.delete'>
+        if (this.activeRun(conversationId))
+          throw new Error('SideKick is working in this chat. Stop it first.')
+        this.chats = this.chats.filter((item) => item.id !== conversationId)
+        this.onEvent?.({ type: 'chats.changed' })
+        return name === 'chat.archive' ? { archived: true } : { deleted: true }
+      }
       case 'queue.list':
         return this.queue((input as Input<'queue.list'>).conversationId)
       case 'queue.update':
@@ -849,13 +917,25 @@ export class CompanionPreview implements CompanionConnection {
       }
       case 'voice.state':
         return { dictation: true, speech: true, message: null } satisfies Output<'voice.state'>
-      case 'voice.transcribe': {
-        const { uploadId } = input as Input<'voice.transcribe'>
-        const upload = this.take(uploadId, 'audio')
-        const seconds = upload.length / 4 / 16_000
-        return {
-          text: seconds > 0.2 ? 'Also check the retry logic in the upload client.' : ''
-        } satisfies Output<'voice.transcribe'>
+      case 'voice.dictation.start': {
+        const { dictationId } = input as Input<'voice.dictation.start'>
+        this.dictations.set(dictationId, 0)
+        return { ok: true } satisfies Output<'voice.dictation.start'>
+      }
+      case 'voice.dictation.audio':
+        return this.dictate(input as Input<'voice.dictation.audio'>)
+      case 'voice.dictation.stop': {
+        const { dictationId } = input as Input<'voice.dictation.stop'>
+        const words = this.dictatedWords(dictationId)
+        this.dictations.delete(dictationId)
+        if (words) this.onEvent?.({ type: 'dictation.text', dictationId, text: words, final: true })
+        this.onEvent?.({ type: 'dictation.end', dictationId })
+        return { stopped: true } satisfies Output<'voice.dictation.stop'>
+      }
+      case 'voice.dictation.cancel': {
+        const { dictationId } = input as Input<'voice.dictation.cancel'>
+        this.dictations.delete(dictationId)
+        return { cancelled: true } satisfies Output<'voice.dictation.cancel'>
       }
       case 'voice.speak':
         return this.speak(input as Input<'voice.speak'>)
@@ -936,7 +1016,13 @@ export class CompanionPreview implements CompanionConnection {
       throw new Error("This chat's model cannot see images. Choose one that can, or remove them.")
     if (!id) {
       id = this.id('chat')
-      this.chats.push(chat(id, input.text.slice(0, 40) || 'New chat', Date.now(), null))
+      const project = PROJECTS.find((candidate) => candidate.id === input.projectId)
+      if (input.projectId && !project) throw new Error('That project no longer exists')
+      this.chats.push(
+        chat(id, input.text.slice(0, 40) || 'New chat', Date.now(), project?.name ?? null, {
+          inWorktree: Boolean(project?.canUseWorktree && input.workIn === 'worktree')
+        })
+      )
     }
     if (input.modelId) this.chatModels.set(id, input.modelId)
     const run = this.activeRun(id)
@@ -953,6 +1039,26 @@ export class CompanionPreview implements CompanionConnection {
     }
     const started = this.begin(id, input.text, mode, images, files)
     return { conversationId: id, runId: started.snapshot.id, steered: false, queued: false }
+  }
+
+  /** Answers a sent message again, as the computer does: what came after it leaves. */
+  private retry(input: Input<'chat.retry'>): Output<'chat.retry'> {
+    const { conversationId, messageId } = input
+    if (this.activeRun(conversationId)) throw new Error('SideKick is still working in this chat.')
+    const saved = this.messages.get(conversationId) ?? []
+    let index = saved.findIndex((item) => item.id === messageId)
+    while (index >= 0 && saved[index].role !== 'user') index--
+    if (index < 0) throw new Error('That message is no longer in the chat')
+    const target = saved[index]
+    this.messages.set(conversationId, saved.slice(0, index))
+    const started = this.begin(
+      conversationId,
+      input.text?.trim() || target.content,
+      target.runMode ?? 'conversation',
+      target.images ?? [],
+      target.attachments ?? []
+    )
+    return { runId: started.snapshot.id }
   }
 
   /** Saves the user's message and starts a run that answers it. */
@@ -1093,6 +1199,25 @@ export class CompanionPreview implements CompanionConnection {
     return { success: true }
   }
 
+  /** Writes a pretend sentence a word at a time as the microphone streams, drafts first. */
+  private dictate({
+    dictationId,
+    pcm
+  }: Input<'voice.dictation.audio'>): Output<'voice.dictation.audio'> {
+    const heard = this.dictations.get(dictationId)
+    if (heard === undefined) return { accepted: false }
+    this.dictations.set(dictationId, heard + base64ToBytes(pcm).length / 2 / 16_000)
+    const words = this.dictatedWords(dictationId)
+    if (words) this.onEvent?.({ type: 'dictation.text', dictationId, text: words, final: false })
+    return { accepted: true }
+  }
+
+  private dictatedWords(dictationId: string): string {
+    const words = DICTATED.split(' ')
+    const count = Math.min(words.length, Math.floor((this.dictations.get(dictationId) ?? 0) * 2.5))
+    return words.slice(0, count).join(' ')
+  }
+
   /** Speaks in tones: a pretend voice, sent in pieces as the computer sends real speech. */
   private speak({ speechId, text }: Input<'voice.speak'>): Output<'voice.speak'> {
     if (!text.trim()) throw new Error('Nothing to read')
@@ -1173,7 +1298,9 @@ function chat(
     title,
     updatedAt,
     pinned: false,
+    projectId: projectName,
     projectName,
+    inWorktree: false,
     activePhase: null,
     needsAnswer: false,
     ...extra

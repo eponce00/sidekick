@@ -2,13 +2,20 @@ import { describe, expect, it } from 'vitest'
 import type { CompanionChat } from '../../../shared/companion'
 import { groupChats, searchChats } from './chatGroups'
 
-function chat(id: string, title: string, projectName: string | null = null): CompanionChat {
+function chat(
+  id: string,
+  title: string,
+  projectName: string | null = null,
+  projectId: string | null = null
+): CompanionChat {
   return {
     id,
     title,
     updatedAt: 0,
     pinned: false,
+    projectId,
     projectName,
+    inWorktree: false,
     activePhase: null,
     needsAnswer: false
   }
@@ -28,6 +35,25 @@ describe('groupChats', () => {
       ['sidekick', ['b']]
     ])
     expect(groups.chats.map(({ id }) => id)).toEqual(['c', 'e'])
+  })
+
+  it('lists every project the computer has, in its order, even one without chats', () => {
+    const projects = [
+      { id: 'p2', name: 'sidekick', canUseWorktree: true },
+      { id: 'p1', name: 'notes', canUseWorktree: false },
+      { id: 'p3', name: 'Empty', canUseWorktree: false }
+    ]
+    const groups = groupChats(
+      [chat('a', 'Notes chat', 'notes', 'p1'), chat('b', 'Code chat', 'sidekick', 'p2')],
+      projects
+    )
+    expect(
+      groups.projects.map(({ project, chats }) => [project?.id, chats.map(({ id }) => id)])
+    ).toEqual([
+      ['p2', ['b']],
+      ['p1', ['a']],
+      ['p3', []]
+    ])
   })
 
   it('is empty for no chats', () => {

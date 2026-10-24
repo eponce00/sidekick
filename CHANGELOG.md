@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.20.0 — 2026-10-24
+
+- Dictate on your phone as on the computer: words appear in the message box as you speak. The
+  phone page now opens over HTTPS with a certificate SideKick makes for your computer, so the
+  phone asks once whether to trust it; phones paired before pair again. The microphone now only
+  dictates, on the phone and the computer: tap or click to start, again to stop, and sending
+  stops it. Replies are read aloud only when you tap **Read aloud**, and the **Talk back and
+  forth** setting is gone. On the computer the microphone now sits beside Send.
+- Do more from your phone. Tap a sent message for Copy, Read aloud, Edit and Retry; copied replies
+  keep their headings, lists and tables. Start a chat in a project, or in a new worktree of it,
+  and pin, rename, move, find in, archive or delete a chat from its menu. The page is laid out
+  like the ChatGPT app, with floating top buttons and a one-line message box whose **+** holds the
+  camera, photos, files, Research, Plan and the model.
+- Edit a queued message in the message box, as you edit a sent one, on the computer and the
+  phone. The bar's cancel button is now a small red cross.
+- Pick the model and how hard it thinks from one chip. It opens a card with the level and a slider
+  holding only the levels that model takes, which SideKick reads from the model's server when it
+  loads the models: LM Studio, Ollama, Anthropic, OpenRouter, LiteLLM and llama.cpp each say which
+  levels a model has. A model with no choice to make, or whose server says nothing, has no control
+  and uses its own default; mark it as reasoning in its settings to choose a level. **Let the
+  model decide** is gone.
+- Size everything with one setting. **Settings → Appearance → Text size** and Ctrl + / Ctrl − /
+  Ctrl 0 now step through the same sizes, 80% to 150%, and scale the whole window, so text and
+  interface keep their proportions; your earlier zoom and text size become the nearest step.
+- See each browser screenshot the agent takes as a thumbnail in its step, on the computer and the
+  phone.
+- Read replies in the app's own style: tables, quotes, checklists, code and headings now use its
+  rounded cards and quiet colors instead of plain document styling.
+- Update Electron to 43.8.3, with Node.js 24.22.0, for its fix for compromised eMudhra
+  certificates, and update undici, Zod, body-parser, fast-uri and ip-address for their security
+  fixes.
+
 ## 0.19.0 — 2026-10-23
 
 - Use SideKick from your phone over your Wi-Fi. Click the phone icon at the bottom of the sidebar,

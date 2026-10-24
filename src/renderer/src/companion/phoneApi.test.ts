@@ -112,11 +112,15 @@ describe('the desktop API on the phone', () => {
 })
 
 describe('read aloud on the phone', () => {
-  it('shows only when the computer can speak', () => {
+  it('shows the voice the computer offers, and nothing while it offers none', () => {
     expect(voiceStateFor(null).enabled).toBe(false)
+    expect(voiceStateFor({ dictation: false, speech: false, message: null }).enabled).toBe(false)
     const state = voiceStateFor({ dictation: true, speech: false, message: null })
-    expect(state.enabled).toBe(false)
-    expect(state.models.dictation.status).toBe('ready')
+    expect(state.enabled).toBe(true)
+    expect(state.models).toMatchObject({
+      dictation: { status: 'ready' },
+      speech: { status: 'missing' }
+    })
     expect(voiceStateFor({ dictation: false, speech: true, message: null })).toMatchObject({
       enabled: true,
       models: { speech: { status: 'ready' } }
@@ -164,6 +168,92 @@ describe('read aloud on the phone', () => {
       reason: 'unavailable',
       message: 'Read aloud is off on the computer.'
     })
+  })
+})
+
+describe('dictation on the phone', () => {
+  it('streams the microphone in order and writes the words the computer sends', async () => {
+    const pieces: string[] = []
+    let release: (() => void) | null = null
+    const { connection, call } = fakeConnection({
+      'voice.dictation.start': () => ({ ok: true }),
+      'voice.dictation.audio': async (input: { pcm: string }) => {
+        pieces.push(input.pcm)
+        // The first piece is slow to arrive, so the frames after it wait and go together.
+        if (pieces.length === 1) await new Promise<void>((resolve) => (release = resolve))
+        return { accepted: true }
+      },
+      'voice.dictation.stop': () => {
+        dispatchToPhoneApi({
+          type: 'dictation.text',
+          dictationId: 'd1',
+          text: 'hello there',
+          final: true
+        })
+        dispatchToPhoneApi({ type: 'dictation.end', dictationId: 'd1' })
+        return { stopped: true }
+      }
+    })
+    bindPhoneApi(connection)
+    const voice = createPhoneVoice()
+    const texts: Array<{ text: string; final: boolean }> = []
+    voice.onDictationText(({ sessionId, text, final }) => {
+      if (sessionId === 'd1') texts.push({ text, final })
+    })
+    expect(await voice.startDictation('d1')).toEqual({ ok: true })
+    voice.pushDictationAudio('d1', new Float32Array([1]))
+    voice.pushDictationAudio('d1', new Float32Array([-1]))
+    voice.pushDictationAudio('d1', new Float32Array([0]))
+    dispatchToPhoneApi({ type: 'dictation.text', dictationId: 'd1', text: 'hel', final: false })
+    const stopped = voice.stopDictation('d1')
+    await vi.waitFor(() => expect(release).not.toBeNull())
+    release!()
+    await stopped
+    // 0x7fff; then -32768 and 0 in one piece, little-endian.
+    expect(pieces).toEqual(['/38=', 'AIAAAA=='])
+    expect(call.mock.calls.map(([name]) => name).at(-1)).toBe('voice.dictation.stop')
+    expect(texts).toEqual([
+      { text: 'hel', final: false },
+      { text: 'hello there', final: true }
+    ])
+    // Audio after the stop goes nowhere.
+    voice.pushDictationAudio('d1', new Float32Array([1]))
+    expect(pieces).toHaveLength(2)
+  })
+
+  it('stops sending once the computer ends the dictation', async () => {
+    const pieces: string[] = []
+    const { connection } = fakeConnection({
+      'voice.dictation.start': () => ({ ok: true }),
+      'voice.dictation.audio': (input: { pcm: string }) => {
+        pieces.push(input.pcm)
+        return { accepted: false }
+      },
+      'voice.dictation.cancel': () => ({ cancelled: true })
+    })
+    bindPhoneApi(connection)
+    const voice = createPhoneVoice()
+    await voice.startDictation('d2')
+    voice.pushDictationAudio('d2', new Float32Array([0.5]))
+    await vi.waitFor(() => expect(pieces).toHaveLength(1))
+    voice.pushDictationAudio('d2', new Float32Array([0.5]))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(pieces).toHaveLength(1)
+    await voice.cancelDictation('d2')
+  })
+
+  it('says why dictation did not start', async () => {
+    const { connection } = fakeConnection({
+      'voice.dictation.start': () => ({ ok: false, message: 'Voice is off on the computer.' })
+    })
+    bindPhoneApi(connection)
+    expect(await createPhoneVoice().startDictation('d3')).toEqual({
+      ok: false,
+      reason: 'unavailable',
+      message: 'Voice is off on the computer.'
+    })
+    bindPhoneApi(null)
+    expect(await createPhoneVoice().startDictation('d4')).toMatchObject({ ok: false })
   })
 })
 

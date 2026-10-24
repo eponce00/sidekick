@@ -881,6 +881,7 @@ export function installBrowserApiMock(): void {
       list: async () => [...previewCreatedConversations, ...previewConversations],
       // No phone adds messages in the preview.
       onMessagesChanged: () => () => undefined,
+      onListChanged: () => () => undefined,
       search: async (query) =>
         [...previewCreatedConversations, ...previewConversations].filter((item) =>
           item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())

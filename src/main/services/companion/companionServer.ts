@@ -1,5 +1,11 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
-import type { AddressInfo } from 'net'
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse
+} from 'http'
+import { createServer as createHttpsServer } from 'https'
+import { createServer as createNetServer, type AddressInfo, type Server, type Socket } from 'net'
 import {
   COMPANION_CALL_NAMES,
   type CompanionCallName,
@@ -27,6 +33,7 @@ import {
   type ServerHello,
   type SessionKeys
 } from '../../../shared/companionProtocol'
+import type { CompanionCertificate } from './companionCertificate'
 import type { CompanionDeviceStore } from './companionDeviceStore'
 import {
   hostMatches,
@@ -90,6 +97,9 @@ const TICKET_TTL_MS = 30_000
 const HEARTBEAT_MS = 20_000
 /** Requests a peer may make to pair or start a session, per minute. */
 const UNAUTHENTICATED_PER_MINUTE = 20
+/** How long a new connection may take to say whether it is HTTPS, and to finish its handshake. */
+const OPENING_MS = 10_000
+const MAX_CONNECTIONS = 64
 
 class RateLimiter {
   private hits = new Map<string, number[]>()
@@ -137,6 +147,7 @@ function cleanName(value: unknown): string {
  */
 export class CompanionServer {
   private server: Server | null = null
+  private sockets = new Set<Socket>()
   private address = ''
   private port = 0
   private pairing: Pairing | null = null
@@ -160,12 +171,46 @@ export class CompanionServer {
     return this.server ? { address: this.address, port: this.port } : null
   }
 
-  /** Listens on the local network address only; a busy preferred port gives way to a free one. */
-  async start(address: string, preferredPort: number): Promise<{ address: string; port: number }> {
+  /**
+   * Listens on the local network address only; a busy preferred port gives way to a free one. The
+   * page is HTTPS, which browsers require for the microphone. Plain HTTP on the same port, as an
+   * address saved before the page was HTTPS uses, is sent to the HTTPS page.
+   */
+  async start(
+    address: string,
+    preferredPort: number,
+    certificate: CompanionCertificate
+  ): Promise<{ address: string; port: number }> {
     if (this.server) await this.stop()
-    const server = createServer((request, response) => void this.route(request, response))
-    server.headersTimeout = 10_000
-    server.requestTimeout = 0
+    const secure = createHttpsServer(
+      {
+        key: certificate.key,
+        cert: certificate.cert,
+        minVersion: 'TLSv1.2',
+        handshakeTimeout: OPENING_MS
+      },
+      (request, response) => void this.route(request, response)
+    )
+    const plain = createHttpServer((request, response) => this.redirect(request, response))
+    for (const http of [secure, plain] as HttpServer[]) {
+      http.headersTimeout = OPENING_MS
+      http.requestTimeout = 0
+    }
+    // A TLS connection opens with a handshake record (0x16); anything else is plain HTTP.
+    const server = createNetServer({ pauseOnConnect: true }, (socket) => {
+      this.sockets.add(socket)
+      socket.once('close', () => this.sockets.delete(socket))
+      socket.setTimeout(OPENING_MS, () => socket.destroy())
+      socket.once('data', (first: Buffer) => {
+        socket.pause()
+        socket.setTimeout(0)
+        socket.unshift(first)
+        ;(first[0] === 0x16 ? secure : plain).emit('connection', socket)
+        process.nextTick(() => socket.resume())
+      })
+      socket.resume()
+    })
+    server.maxConnections = MAX_CONNECTIONS
     const listen = (port: number): Promise<void> =>
       new Promise((resolve, reject) => {
         const failed = (error: Error): void => {
@@ -203,10 +248,9 @@ export class CompanionServer {
     this.tickets.clear()
     const server = this.server
     this.server = null
-    if (server) {
-      server.closeAllConnections()
-      await new Promise<void>((resolve) => server.close(() => resolve()))
-    }
+    for (const socket of this.sockets) socket.destroy()
+    this.sockets.clear()
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
   }
 
   /** A new one-time code, replacing any earlier one. */
@@ -235,7 +279,7 @@ export class CompanionServer {
   }
 
   baseUrl(): string {
-    return `http://${this.address}:${this.port}`
+    return `https://${this.address}:${this.port}`
   }
 
   /** Devices with an event stream open now. */
@@ -316,12 +360,33 @@ export class CompanionServer {
       }
       const status = error instanceof HttpError ? error.status : 500
       const code = error instanceof HttpError ? error.code : 'failed'
+      if (status === 413) {
+        // The phone is still sending. Reading the rest lets it hear this answer rather than a
+        // reset; one that keeps sending well past the limit is cut off.
+        let discarded = 0
+        request.on('data', (chunk: Buffer) => {
+          discarded += chunk.length
+          if (discarded > 4 * COMPANION_MAX_REQUEST_BYTES) request.socket.destroy()
+        })
+        request.resume()
+        response.setHeader('Connection', 'close')
+      }
       if (!(error instanceof HttpError) && !(error instanceof CompanionProtocolError))
         console.warn('[Companion] A request failed:', error)
       json(response, error instanceof CompanionProtocolError ? 400 : status, {
         error: error instanceof CompanionProtocolError ? 'bad_request' : code
       })
     }
+  }
+
+  /** Sends plain HTTP to the HTTPS page, after the same checks as any request. */
+  private redirect(request: IncomingMessage, response: ServerResponse): void {
+    const peer = normalizedAddress(request.socket.remoteAddress)
+    if (!this.isAllowedPeer(peer)) return json(response, 403, { error: 'not_local' })
+    if (!hostMatches(request.headers.host, this.address, this.port))
+      return json(response, 421, { error: 'wrong_host' })
+    response.writeHead(308, { Location: `${this.baseUrl()}/`, 'Cache-Control': 'no-store' })
+    response.end()
   }
 
   private pageHeaders(): Record<string, string> {
@@ -332,7 +397,8 @@ export class CompanionServer {
       'X-Frame-Options': 'DENY',
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Resource-Policy': 'same-origin',
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()'
+      // The microphone is for dictation; the camera takes photos through the phone's camera app.
+      'Permissions-Policy': 'camera=(), microphone=(self), geolocation=()'
     }
   }
 

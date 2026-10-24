@@ -14,6 +14,7 @@ import type {
   PendingAgentInteraction
 } from '../../../shared/agentRuntime'
 import {
+  COMPANION_DICTATION_PIECE_SAMPLES,
   COMPANION_MAX_MESSAGES,
   COMPANION_MAX_MESSAGE_LENGTH,
   type CompanionCallName,
@@ -23,6 +24,7 @@ import {
   type CompanionEvent,
   type CompanionImage,
   type CompanionMessage,
+  type CompanionProject,
   type CompanionVoiceState
 } from '../../../shared/companion'
 import { createFallbackConversationTitle } from '../../../shared/conversationTitles'
@@ -39,19 +41,38 @@ import {
   type MessageImageAttachment
 } from '../../../shared/messageImages'
 import type { PinnedModel } from '../../../shared/models'
+import type { ProviderKind } from '../../../shared/providerRegistry'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel,
+  type ReasoningModel,
+  type ReasoningSettings
+} from '../../../shared/reasoning'
 import {
   AGENT_PERMISSION_DECISIONS,
   type AgentPermissionDecision
 } from '../../../shared/permissions'
+import { renameConversation, setConversationPinned } from '../conversationActions'
+import { ConversationCompactionStore } from '../conversationCompactionStore'
 import { createConversation } from '../conversationCreation'
+import { ProjectStore } from '../projectStore'
 import { PromptAdmissionStore } from '../promptAdmissionStore'
 import { CompanionUploads } from './companionUploads'
 
 /** The computer's voice, as the phone's buttons use it. */
 export interface CompanionVoice {
   state: () => CompanionVoiceState
-  /** The text in 16 kHz mono audio. */
-  transcribe: (samples: Float32Array) => Promise<string>
+  /** Live dictation: `onText` gets drafts of the phrase being spoken, then each phrase final. */
+  startDictation: (
+    dictationId: string,
+    onText: (text: string, final: boolean) => void
+  ) => Promise<{ ok: boolean; message?: string }>
+  /** 16 kHz mono samples, in order. */
+  pushDictation: (dictationId: string, samples: Float32Array) => void
+  /** Resolves once everything heard so far is written. */
+  stopDictation: (dictationId: string) => Promise<void>
+  cancelDictation: (dictationId: string) => void
   speak: (
     speechId: string,
     text: string,
@@ -81,6 +102,10 @@ export interface CompanionApiDependencies {
   models: () => PinnedModel[]
   /** The model a chat's next run uses: the one asked for, else the chat's own. */
   resolveModel: (conversationId: string, requestedId?: string) => PinnedModel | null
+  /** The stored reasoning choices, which the window's slider and every run read. */
+  reasoningSettings: () => ReasoningSettings
+  /** Saves how hard a model thinks, as the window's slider does, and tells the window. */
+  setReasoningLevel: (modelId: string, level: ReasoningLevel) => void
   /** Records the model a chat keeps, as choosing one in the window does. */
   setChatModel: (conversationId: string, modelId: string) => void
   /** A chat's saved messages changed outside the window, which should load them again. */
@@ -92,6 +117,25 @@ export interface CompanionApiDependencies {
   /** An image a tool result names by its `sidekick-browser://artifact/` address. */
   readArtifact: (url: string) => Promise<{ data: Buffer; contentType: string } | null>
   voice?: () => CompanionVoice | null
+  /** Whether a project's folder is in a Git repository, so its chats can work in worktrees. */
+  canUseWorktree: (projectId: string) => Promise<boolean>
+  /** Moves a chat into its own worktree of its project, as the window's Work in does. */
+  createWorktree: (conversationId: string) => Promise<void>
+  /**
+   * Puts a chat's folder back to a history point, as the window's Retry and Edit do: `hard-reset`
+   * returns to it, `rewind` to before it. Permission settings decide whether the computer asks.
+   */
+  restoreFiles: (input: {
+    workspaceRoot: string
+    action: 'hard-reset' | 'rewind'
+    hash: string
+  }) => Promise<void>
+  /** A chat's place in the lists changed, or it is gone; the window and the phones list it again. */
+  chatChanged: (conversationId: string, removed: boolean) => void
+  /** Archives a chat as the window's Chats tab does; it refuses one that is working. */
+  archiveChat: (conversationId: string) => void
+  /** Deletes a chat as the window does, with its worktree when it was the last chat in it. */
+  deleteChat: (conversationId: string) => Promise<void>
   /** An event for one phone only, such as its speech. */
   sendToDevice: (deviceId: string, event: CompanionEvent) => void
   /** Runs work after a delay; tests run it at once. */
@@ -117,6 +161,9 @@ const DRAIN_DELAY_MS = 1_500
 const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 /** Thirty minutes of dictation at 16 kHz. */
 const MAX_DICTATION_SAMPLES = 16_000 * 60 * 30
+/** A phone streams its microphone without pause; this long without audio means it went away. */
+const DICTATION_IDLE_MS = 15_000
+const MAX_DICTATIONS_PER_PHONE = 2
 const MAX_SPEECH_CHARACTERS = 60_000
 
 /**
@@ -167,8 +214,46 @@ interface ConversationRow {
   title: string
   updated_at: number
   is_pinned: number
+  project_id: string | null
+  worktree_id: string | null
   home_project_name: string | null
   project_name: string | null
+}
+
+const CHAT_COLUMNS = `c.id, c.title, c.updated_at, c.is_pinned, c.project_id, c.worktree_id,
+  c.home_project_name, p.name AS project_name`
+
+/** A saved message as Retry and Edit read it. */
+interface HistoryRow {
+  id: string
+  role: string
+  content: string
+  timestamp: number
+  run_mode: ConversationRunMode | null
+  starts_goal: number | null
+  checkpoint_hash: string | null
+  checkpoint_workspace_root: string | null
+}
+
+/** A phone's live dictation; the voice service knows it by an ID of its own. */
+interface Dictation {
+  deviceId: string
+  dictationId: string
+  serviceId: string
+  samples: number
+  idle: ReturnType<typeof setTimeout> | null
+}
+
+/** A pinned model as the reasoning rules read it, as the window's chat reads it. */
+function reasoningModelFor(model: PinnedModel): ReasoningModel {
+  return {
+    id: model.id,
+    providerKind: model.providerKind ?? (model.provider as ProviderKind),
+    model: model.providerModelId || model.id,
+    supportsReasoning: model.supportsReasoning,
+    reasoningLevels: model.reasoningLevels,
+    reasoningDefault: model.reasoningDefault
+  }
 }
 
 /** What one message carries, ready to save or queue. */
@@ -187,6 +272,8 @@ export class CompanionApi {
   private readonly uploads: CompanionUploads
   /** Speech each phone started, so one phone cannot stop another's. */
   private readonly speeches = new Map<string, string>()
+  /** Live dictations by phone and the phone's ID for them, so a phone reaches only its own. */
+  private readonly dictations = new Map<string, Dictation>()
 
   constructor(private readonly deps: CompanionApiDependencies) {
     this.now = deps.now ?? Date.now
@@ -204,6 +291,16 @@ export class CompanionApi {
     switch (call) {
       case 'chats.list':
         return this.chats()
+      case 'projects.list':
+        return this.projects()
+      case 'chat.retry':
+        return this.retry(input)
+      case 'chat.pin':
+      case 'chat.rename':
+      case 'chat.move':
+      case 'chat.archive':
+      case 'chat.delete':
+        return this.changeChat(call, input)
       case 'chat.open':
         return this.open(requireId(input.conversationId, 'chat'))
       case 'chat.send':
@@ -216,6 +313,8 @@ export class CompanionApi {
         return this.steerQueued(input)
       case 'models.list':
         return this.modelList(input)
+      case 'models.setEffort':
+        return this.setEffort(input)
       case 'run.stop':
         return { stopped: await this.deps.stopRun(this.conversationRun(input.runId).id) }
       case 'run.events': {
@@ -239,8 +338,16 @@ export class CompanionApi {
         return this.media(input)
       case 'voice.state':
         return this.voice()?.state() ?? { dictation: false, speech: false, message: null }
-      case 'voice.transcribe':
-        return this.transcribe(input, deviceId)
+      case 'voice.dictation.start':
+        return this.startDictation(input, deviceId)
+      case 'voice.dictation.audio':
+        return this.dictationAudio(input, deviceId)
+      case 'voice.dictation.stop':
+        await this.finishDictation(deviceId, this.dictationId(input.dictationId))
+        return { stopped: true }
+      case 'voice.dictation.cancel':
+        this.cancelDictation(`${deviceId}/${this.dictationId(input.dictationId)}`)
+        return { cancelled: true }
       case 'voice.speak':
         return this.speak(input, deviceId)
       case 'voice.stop': {
@@ -265,7 +372,9 @@ export class CompanionApi {
       title: row.title,
       updatedAt: row.updated_at,
       pinned: row.is_pinned === 1,
+      projectId: row.project_id,
       projectName: row.project_name ?? row.home_project_name ?? null,
+      inWorktree: Boolean(row.worktree_id),
       activePhase: active,
       needsAnswer: Boolean(active && WAITING_PHASES.has(active))
     }
@@ -274,7 +383,7 @@ export class CompanionApi {
   private chatRow(conversationId: string): ConversationRow {
     const row = this.deps.db
       .prepare(
-        `SELECT c.id, c.title, c.updated_at, c.is_pinned, c.home_project_name, p.name AS project_name
+        `SELECT ${CHAT_COLUMNS}
          FROM conversations c LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ? AND c.archived_at IS NULL`
       )
@@ -286,7 +395,7 @@ export class CompanionApi {
   chats(): CompanionChat[] {
     const rows = this.deps.db
       .prepare(
-        `SELECT c.id, c.title, c.updated_at, c.is_pinned, c.home_project_name, p.name AS project_name
+        `SELECT ${CHAT_COLUMNS}
          FROM conversations c LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.archived_at IS NULL
          ORDER BY c.is_pinned DESC, c.updated_at DESC
@@ -294,6 +403,18 @@ export class CompanionApi {
       )
       .all(MAX_CHATS) as ConversationRow[]
     return rows.map((row) => this.chatFrom(row))
+  }
+
+  /** The projects in the desktop sidebar's order. */
+  async projects(): Promise<CompanionProject[]> {
+    const projects = new ProjectStore(this.deps.db).list().slice(0, MAX_CHATS)
+    return Promise.all(
+      projects.map(async (project) => ({
+        id: project.id,
+        name: project.name,
+        canUseWorktree: await this.deps.canUseWorktree(project.id).catch(() => false)
+      }))
+    )
   }
 
   async open(conversationId: string): Promise<CompanionChatDetail> {
@@ -374,13 +495,29 @@ export class CompanionApi {
         ? ''
         : this.chatRow(requireId(input.conversationId, 'chat')).id
     return {
-      models: this.deps.models().map((model) => ({
-        id: model.id,
-        name: model.name,
-        supportsVision: model.supportsVision !== false
-      })),
+      models: this.deps.models().map((model) => {
+        const target = reasoningModelFor(model)
+        const options = reasoningOptions(target)
+        const level = options ? resolveReasoningLevel(target, this.deps.reasoningSettings()) : null
+        return {
+          id: model.id,
+          name: model.name,
+          supportsVision: model.supportsVision !== false,
+          reasoning: options && level ? { ...options, level } : null
+        }
+      }),
       selectedModelId: this.deps.resolveModel(conversationId)?.id ?? null
     }
+  }
+
+  private setEffort(input: Record<string, unknown>): { level: ReasoningLevel } {
+    const model = this.deps.models().find((candidate) => candidate.id === input.modelId)
+    if (!model) throw new Error('That model is no longer available')
+    const options = reasoningOptions(reasoningModelFor(model))
+    const level = input.level as ReasoningLevel
+    if (!options?.levels.includes(level)) throw new Error('This model does not offer that level')
+    this.deps.setReasoningLevel(model.id, level)
+    return { level }
   }
 
   /** The text, images and files one message from the phone carries, checked as the window checks them. */
@@ -436,12 +573,18 @@ export class CompanionApi {
       input.modelId === undefined ? undefined : requireId(input.modelId, 'model')
     let conversationId: string
     let created = false
+    let worktree = false
     if (input.conversationId === undefined) {
+      const projectId = input.projectId === undefined ? null : requireId(input.projectId, 'project')
+      if (projectId && !new ProjectStore(this.deps.db).get(projectId))
+        throw new Error('That project no longer exists')
+      worktree = input.workIn === 'worktree'
+      if (worktree && !projectId) throw new Error('A worktree belongs to a project; choose one')
       const model = this.deps.resolveModel('', requestedModel)
       const title = typeof input.text === 'string' && input.text.trim() ? input.text : 'New chat'
       conversationId = createConversation(this.deps.db, {
         title: createFallbackConversationTitle(title),
-        projectId: null,
+        projectId,
         titleSource: 'fallback',
         modelId: model?.id ?? null
       }).id
@@ -458,6 +601,16 @@ export class CompanionApi {
       if (created)
         this.deps.db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
       throw error
+    }
+    if (worktree) {
+      try {
+        await this.deps.createWorktree(conversationId)
+      } catch (error) {
+        this.deps.db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+        throw new Error(
+          `The worktree could not be made: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
     }
     if (requestedModel && model) this.deps.setChatModel(conversationId, model.id)
     const latest = this.deps.latestRun(conversationId)
@@ -576,6 +729,143 @@ export class CompanionApi {
     return { steered: await this.steer(conversationId, latest.id, item) }
   }
 
+  /** The chat menu's actions, each through the path the window's own uses. */
+  private async changeChat(
+    call: CompanionCallName,
+    input: Record<string, unknown>
+  ): Promise<unknown> {
+    const conversationId = this.chatRow(requireId(input.conversationId, 'chat')).id
+    const latest = this.deps.latestRun(conversationId)
+    const working = Boolean(latest && ACTIVE_PHASES.has(latest.phase))
+    switch (call) {
+      case 'chat.pin': {
+        if (typeof input.pinned !== 'boolean') throw new Error('Invalid pin')
+        setConversationPinned(this.deps.db, conversationId, input.pinned)
+        this.deps.chatChanged(conversationId, false)
+        return { pinned: input.pinned }
+      }
+      case 'chat.rename': {
+        const title = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : ''
+        if (!title) throw new Error('Give the chat a name')
+        if (title.length > 200) throw new Error('That name is too long')
+        renameConversation(this.deps.db, conversationId, title, this.now())
+        this.deps.chatChanged(conversationId, false)
+        return { title }
+      }
+      case 'chat.move': {
+        const projectId = input.projectId === null ? null : requireId(input.projectId, 'project')
+        new ProjectStore(this.deps.db).moveConversation({ conversationId, projectId })
+        this.deps.chatChanged(conversationId, false)
+        return { projectId }
+      }
+      case 'chat.archive':
+        this.deps.archiveChat(conversationId)
+        this.deps.chatChanged(conversationId, true)
+        return { archived: true }
+      case 'chat.delete':
+        if (working) throw new Error('SideKick is working in this chat. Stop it first.')
+        await this.deps.deleteChat(conversationId)
+        this.deps.chatChanged(conversationId, true)
+        return { deleted: true }
+      default:
+        throw new Error('Unknown request')
+    }
+  }
+
+  /**
+   * Retry and Edit, as the window does them (`useConversationActions`): the files go back to
+   * before the message, the replies after it are deleted, and the chat answers it again.
+   */
+  private async retry(input: Record<string, unknown>): Promise<{ runId: string }> {
+    const conversationId = this.chatRow(requireId(input.conversationId, 'chat')).id
+    const latest = this.deps.latestRun(conversationId)
+    if (latest && ACTIVE_PHASES.has(latest.phase))
+      throw new Error('SideKick is still working in this chat. Stop it first.')
+    const rows = this.deps.db
+      .prepare(
+        `SELECT id, role, content, timestamp, run_mode, starts_goal, checkpoint_hash,
+                checkpoint_workspace_root
+         FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC`
+      )
+      .all(conversationId) as HistoryRow[]
+    let index = rows.findIndex((row) => row.id === input.messageId)
+    if (index < 0) throw new Error('That message is no longer in the chat')
+    // A reply is answered again from the message it answered.
+    while (index >= 0 && rows[index].role !== 'user') index--
+    if (index < 0) throw new Error('There is no message before this reply to answer again')
+    const target = rows[index]
+    // A goal is chat state the window restarts or ends with its first message; the phone leaves it.
+    if (rows.slice(index).some((row) => row.starts_goal === 1))
+      throw new Error('This changes a goal. Retry it on the computer.')
+    let text: string | null = null
+    if (input.text !== undefined) {
+      text = typeof input.text === 'string' ? input.text.trim() : ''
+      if (!text) throw new Error('Write the message first')
+      if (text.length > COMPANION_MAX_MESSAGE_LENGTH) throw new Error('That message is too long')
+    }
+    const model = this.deps.resolveModel(conversationId)
+    if (!model) throw new Error('This chat has no model. Choose one first.')
+
+    await this.restoreFilesBefore(conversationId, rows, index)
+    const compactions = new ConversationCompactionStore(this.deps.db)
+    this.deps.db.transaction(() => {
+      if (text !== null) {
+        this.deps.db
+          .prepare('UPDATE messages SET content = ? WHERE id = ? AND conversation_id = ?')
+          .run(text, target.id, conversationId)
+        compactions.invalidateFromTimestamp(conversationId, target.timestamp)
+      }
+      this.deps.db
+        .prepare('DELETE FROM messages WHERE conversation_id = ? AND timestamp > ?')
+        .run(conversationId, target.timestamp)
+      compactions.invalidateAfterTimestamp(conversationId, target.timestamp)
+      this.deps.db
+        .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+        .run(this.now(), conversationId)
+    })()
+    this.deps.messagesChanged(conversationId)
+    const runId = randomUUID()
+    await this.deps.startRun({
+      id: runId,
+      conversationId,
+      assistantMessageId: randomUUID(),
+      model,
+      mode: target.run_mode ?? 'conversation'
+    })
+    return { runId }
+  }
+
+  /**
+   * The chat's folder as it was before the message at `index`: back to the last earlier history
+   * point there, or, with none, to before the first one after it.
+   */
+  private async restoreFilesBefore(
+    conversationId: string,
+    rows: HistoryRow[],
+    index: number
+  ): Promise<void> {
+    const workspaceRoot = new ProjectStore(this.deps.db).getConversationContext(
+      conversationId
+    ).workspaceRoot
+    if (!workspaceRoot) return
+    const here = (row: HistoryRow): boolean =>
+      Boolean(row.checkpoint_hash) && row.checkpoint_workspace_root === workspaceRoot
+    const prior = rows.slice(0, index).reverse().find(here)
+    const own = prior ? undefined : rows.slice(index + 1).find(here)
+    const point = prior ?? own
+    if (!point?.checkpoint_hash) return
+    try {
+      await this.deps.restoreFiles({
+        workspaceRoot,
+        action: prior ? 'hard-reset' : 'rewind',
+        hash: point.checkpoint_hash
+      })
+    } catch (error) {
+      // As in the window: the chat is answered again even when its files could not go back.
+      console.warn('[Companion] Files could not be put back:', error)
+    }
+  }
+
   /** Saves the user's message and starts a run on the same path the window uses. */
   private async start(
     conversationId: string,
@@ -672,20 +962,106 @@ export class CompanionApi {
     return { dataUrl: `data:${file.contentType};base64,${file.data.toString('base64')}` }
   }
 
-  private async transcribe(
+  private dictationId(value: unknown): string {
+    const dictationId = requireId(value, 'dictation')
+    if (!/^[\w-]{1,80}$/.test(dictationId)) throw new Error('Invalid dictation')
+    return dictationId
+  }
+
+  private async startDictation(
     input: Record<string, unknown>,
     deviceId: string
-  ): Promise<{ text: string }> {
+  ): Promise<{ ok: boolean; message?: string }> {
     const voice = this.voice()
     if (!voice?.state().dictation)
-      throw new Error(voice?.state().message ?? 'Dictation is not available on this computer')
-    const upload = this.uploads.take(deviceId, input.uploadId, 'audio')
-    if (upload.data.length % 4 || upload.data.length / 4 > MAX_DICTATION_SAMPLES)
-      throw new Error('That recording could not be read')
-    const samples = new Float32Array(upload.data.length / 4)
+      return {
+        ok: false,
+        message: voice?.state().message ?? 'Dictation is not available on this computer.'
+      }
+    const dictationId = this.dictationId(input.dictationId)
+    const key = `${deviceId}/${dictationId}`
+    if (this.dictations.has(key)) throw new Error('That dictation already started')
+    const own = [...this.dictations.entries()].filter(([, item]) => item.deviceId === deviceId)
+    while (own.length >= MAX_DICTATIONS_PER_PHONE) this.cancelDictation(own.shift()![0])
+    const dictation: Dictation = {
+      deviceId,
+      dictationId,
+      serviceId: `phone-${randomUUID()}`,
+      samples: 0,
+      idle: null
+    }
+    this.dictations.set(key, dictation)
+    const started = await voice.startDictation(dictation.serviceId, (text, final) =>
+      this.deps.sendToDevice(deviceId, { type: 'dictation.text', dictationId, text, final })
+    )
+    // Cancelled while it started.
+    if (this.dictations.get(key) !== dictation) {
+      if (started.ok) voice.cancelDictation(dictation.serviceId)
+      return { ok: false, message: 'Dictation was stopped.' }
+    }
+    if (!started.ok) {
+      this.dictations.delete(key)
+      return { ok: false, message: started.message }
+    }
+    this.keepDictation(key, dictation)
+    return { ok: true }
+  }
+
+  private dictationAudio(input: Record<string, unknown>, deviceId: string): { accepted: boolean } {
+    const key = `${deviceId}/${this.dictationId(input.dictationId)}`
+    const dictation = this.dictations.get(key)
+    const voice = this.voice()
+    // A dictation that ended (stopped, or idle too long) takes no more audio.
+    if (!dictation || !voice) return { accepted: false }
+    const pcm = typeof input.pcm === 'string' ? input.pcm : ''
+    const bytes =
+      pcm.length <= Math.ceil((COMPANION_DICTATION_PIECE_SAMPLES * 2) / 3) * 4
+        ? Buffer.from(pcm, 'base64')
+        : null
+    if (!bytes?.length || bytes.length % 2 || bytes.length / 2 > COMPANION_DICTATION_PIECE_SAMPLES)
+      throw new Error('That audio could not be read')
+    const samples = new Float32Array(bytes.length / 2)
     for (let index = 0; index < samples.length; index++)
-      samples[index] = upload.data.readFloatLE(index * 4)
-    return { text: (await voice.transcribe(samples)).trim() }
+      samples[index] = bytes.readInt16LE(index * 2) / 0x8000
+    dictation.samples += samples.length
+    if (dictation.samples > MAX_DICTATION_SAMPLES) {
+      void this.finishDictation(deviceId, dictation.dictationId)
+      return { accepted: false }
+    }
+    voice.pushDictation(dictation.serviceId, samples)
+    this.keepDictation(key, dictation)
+    return { accepted: true }
+  }
+
+  /** Writes what was heard, then tells the phone its last words were sent. */
+  private async finishDictation(deviceId: string, dictationId: string): Promise<void> {
+    const key = `${deviceId}/${dictationId}`
+    const dictation = this.dictations.get(key)
+    if (dictation) {
+      this.dictations.delete(key)
+      if (dictation.idle) clearTimeout(dictation.idle)
+      await this.voice()
+        ?.stopDictation(dictation.serviceId)
+        .catch(() => undefined)
+    }
+    this.deps.sendToDevice(deviceId, { type: 'dictation.end', dictationId })
+  }
+
+  private cancelDictation(key: string): void {
+    const dictation = this.dictations.get(key)
+    if (!dictation) return
+    this.dictations.delete(key)
+    if (dictation.idle) clearTimeout(dictation.idle)
+    this.voice()?.cancelDictation(dictation.serviceId)
+  }
+
+  private keepDictation(key: string, dictation: Dictation): void {
+    if (dictation.idle) clearTimeout(dictation.idle)
+    dictation.idle = setTimeout(() => {
+      if (this.dictations.get(key) === dictation)
+        void this.finishDictation(dictation.deviceId, dictation.dictationId)
+    }, DICTATION_IDLE_MS)
+    dictation.idle.unref?.()
   }
 
   private async speak(
@@ -780,9 +1156,10 @@ export class CompanionApi {
     return { success: true }
   }
 
-  /** Forgets uploads and speech, as when phone access is turned off. */
+  /** Forgets uploads, speech and dictation, as when phone access is turned off. */
   reset(): void {
     this.uploads.clear()
+    for (const key of [...this.dictations.keys()]) this.cancelDictation(key)
     for (const speechId of this.speeches.keys()) this.voice()?.stop(speechId)
     this.speeches.clear()
   }

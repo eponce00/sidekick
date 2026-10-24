@@ -42,6 +42,10 @@ export interface ProviderInstanceModel {
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean
+  /** The reasoning levels the server says the model takes; empty when it offers no choice. */
+  reasoningLevels?: ReasoningLevel[]
+  /** The level the model uses when a request names none, where the server says. */
+  reasoningDefault?: ReasoningLevel
   supportsAudioInput?: boolean
   supportsAudioOutput?: boolean
   supportsPdfInput?: boolean
@@ -112,8 +116,8 @@ export interface ProviderSettings {
   accentPalette?: string
   /** The look the accent choice was made under; an older one moves to the current default once. */
   accentPaletteVersion?: number
-  /** Semantic conversation text size. Interface zoom remains an independent window control. */
-  contentFontSize?: number
+  /** Size of the whole window in percent, one of `TEXT_SCALES`; Ctrl + and Ctrl − step it. */
+  textScale?: number
   focusChainEnabled?: boolean
   autoCompactEnabled?: boolean
   autoCompactThreshold?: number

@@ -857,6 +857,23 @@ const MarkdownFragment = memo(function MarkdownFragment({
         },
         img: MarkdownImage,
         a: (props) => <MarkdownLink {...props} workspaceRoot={workspaceRoot} />,
+        // A table sits in a rounded card that scrolls sideways when it is wider than the chat.
+        table: ({ children }) => (
+          <div className="markdown-table">
+            <table>{children}</table>
+          </div>
+        ),
+        // A checklist's boxes as the app draws its own, not the browser's disabled checkboxes.
+        input: ({ type, checked }) =>
+          type === 'checkbox' ? (
+            <span
+              className={`markdown-task-box${checked ? ' is-done' : ''}`}
+              role="img"
+              aria-label={checked ? 'Done' : 'Not done'}
+            >
+              {checked && <Check size={11} strokeWidth={3} aria-hidden="true" />}
+            </span>
+          ) : null,
         p: allowRichMedia ? RichMarkdownParagraph : PlainMarkdownParagraph
       }}
     >

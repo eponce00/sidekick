@@ -3,7 +3,6 @@
 import { act, createRef, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ReasoningLevel } from '../../../shared/reasoning'
 import { ChatInput } from './ChatInput'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -70,7 +69,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     onOpenWorkspace: vi.fn(),
     onOpenWorkspaceMemory: vi.fn(),
     workspaceMemoryAvailable: true,
-    onUpdatePendingMessage: vi.fn(() => true),
+    onEditQueuedMessage: vi.fn(),
     onRemovePendingMessage: vi.fn(),
     onMoveQueuedMessage: vi.fn(),
     onSteerQueuedMessage: vi.fn(),
@@ -209,7 +208,7 @@ describe('ChatInput add menu', () => {
   })
 })
 
-describe('ChatInput reasoning menu', () => {
+describe('ChatInput reasoning', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -224,73 +223,43 @@ describe('ChatInput reasoning menu', () => {
     container.remove()
   })
 
-  const button = (): HTMLButtonElement | null =>
-    container.querySelector<HTMLButtonElement>('.composer-reasoning-button')
-  const options = (): string[] =>
-    Array.from(container.querySelectorAll('[role="menuitemradio"] > span > span')).map(
-      (option) => option.textContent || ''
-    )
+  const models = [
+    { id: 'a:sonnet', name: 'Claude Sonnet', provider: 'anthropic', providerKind: 'anthropic' }
+  ] as ChatInputProps['pinnedModels']
 
-  function StatefulInput({
-    levels,
-    initial
-  }: {
-    levels: ReasoningLevel[]
-    initial: ReasoningLevel
-  }): React.JSX.Element {
-    const [level, setLevel] = useState(initial)
-    return (
-      <ChatInput
-        {...baseProps({ isFeaturesMenuOpen: false })}
-        reasoningOptions={{ levels, initial }}
-        reasoningLevel={level}
-        onReasoningLevelChange={setLevel}
-      />
-    )
-  }
-
-  it('lists only the levels the model offers and switches between them', async () => {
+  it('shows the level beside the model, on the model picker', async () => {
     await act(async () =>
-      root.render(<StatefulInput levels={['off', 'low', 'medium', 'high', 'max']} initial="off" />)
+      root.render(
+        <ChatInput
+          {...baseProps({
+            pinnedModels: models,
+            selectedModel: 'a:sonnet',
+            reasoningOptions: { levels: ['off', 'low', 'high'], initial: 'off' },
+            reasoningLevel: 'high'
+          })}
+        />
+      )
     )
-    const control = button()!
-    expect(control.getAttribute('aria-label')).toBe('Reasoning: Off')
-    expect(control.textContent).toBe('Off')
-    expect(control.classList.contains('is-on')).toBe(false)
-
-    await act(async () => control.click())
-    expect(options()).toEqual(['Off', 'Low', 'Medium', 'High', 'Max'])
-    const high = container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')[3]
-    await act(async () => high.click())
-    // The menu closes and the same button now shows the level.
-    expect(container.querySelector('[role="menu"]')).toBeNull()
-    expect(button()).toBe(control)
-    expect(control.textContent).toBe('High')
-    expect(control.classList.contains('is-on')).toBe(true)
-  })
-
-  it('offers just on and off where the protocol has no levels', async () => {
-    await act(async () => root.render(<StatefulInput levels={['on', 'off']} initial="on" />))
-    await act(async () => button()!.click())
-    expect(options()).toEqual(['On', 'Off'])
+    expect(container.querySelector('.model-selector-inline-effort')?.textContent).toBe('High')
+    // No second control for reasoning.
     expect(
-      container.querySelector('[role="menuitemradio"][aria-checked="true"]')?.textContent
-    ).toContain('On')
-  })
-
-  it('closes on Escape without changing the level', async () => {
-    await act(async () => root.render(<StatefulInput levels={['auto', 'off']} initial="auto" />))
-    await act(async () => button()!.click())
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    })
-    expect(container.querySelector('[role="menu"]')).toBeNull()
-    expect(button()!.textContent).toBe('Auto')
+      container.querySelectorAll('.input-toolbar-right [aria-label^="Reasoning"]')
+    ).toHaveLength(0)
   })
 
   it('is absent for a model without reasoning settings', async () => {
-    await act(async () => root.render(<ChatInput {...baseProps({ reasoningOptions: null })} />))
-    expect(button()).toBeNull()
+    await act(async () =>
+      root.render(
+        <ChatInput
+          {...baseProps({
+            pinnedModels: models,
+            selectedModel: 'a:sonnet',
+            reasoningOptions: null
+          })}
+        />
+      )
+    )
+    expect(container.querySelector('.model-selector-inline-effort')).toBeNull()
   })
 })
 

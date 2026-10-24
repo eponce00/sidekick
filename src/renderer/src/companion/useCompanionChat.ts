@@ -8,6 +8,7 @@ import type {
   CompanionEvent,
   CompanionImage
 } from '../../../shared/companion'
+import type { ReasoningLevel } from '../../../shared/reasoning'
 import type { Message } from '../types/chat.types'
 import {
   firstGapAfter,
@@ -37,6 +38,9 @@ export interface OutgoingMessage {
   modelId?: string
   images: Array<{ uploadId: string; preview: CompanionImage }>
   files: Array<{ uploadId: string; name: string }>
+  /** For a new chat: the project it starts in, and whether in its own worktree of it. */
+  projectId?: string
+  workIn?: 'folder' | 'worktree'
 }
 
 const NO_QUEUE: PromptAdmissionsResult = { queued: [], pivot: null }
@@ -144,6 +148,31 @@ export function useCompanionChat({
     }
   }, [connection])
 
+  /** How hard a model thinks, for every chat; shown at once, saved on the computer. */
+  const setEffort = useCallback(
+    async (modelId: string, level: ReasoningLevel) => {
+      setModels((current) =>
+        current
+          ? {
+              ...current,
+              models: current.models.map((model) =>
+                model.id === modelId && model.reasoning
+                  ? { ...model, reasoning: { ...model.reasoning, level } }
+                  : model
+              )
+            }
+          : current
+      )
+      try {
+        await connection.call('models.setEffort', { modelId, level })
+      } catch (failure) {
+        fail(failure)
+        void loadModels()
+      }
+    },
+    [connection, fail, loadModels]
+  )
+
   // Fills holes left by events the stream dropped.
   const catchUp = useCallback(async () => {
     if (catchingUp.current) return
@@ -244,7 +273,11 @@ export function useCompanionChat({
       try {
         const id = idRef.current
         const result = await connection.call('chat.send', {
-          ...(id ? { conversationId: id } : {}),
+          ...(id
+            ? { conversationId: id }
+            : message.projectId
+              ? { projectId: message.projectId, workIn: message.workIn ?? 'folder' }
+              : {}),
           text: message.text,
           mode: message.mode,
           ...(message.modelId ? { modelId: message.modelId } : {}),
@@ -279,6 +312,34 @@ export function useCompanionChat({
       }
     },
     [connection, detail, liveSegments, pending, runActive, load, loadQueue, onCreated, fail]
+  )
+
+  /**
+   * Answers a sent message again, with new text for an edit, as the desktop's Retry and Edit do.
+   * The replies after it leave as the computer deletes them.
+   */
+  const retry = useCallback(
+    async (messageId: string, text?: string): Promise<boolean> => {
+      const id = idRef.current
+      if (!id) return false
+      setSending(true)
+      setError('')
+      try {
+        await connection.call('chat.retry', {
+          conversationId: id,
+          messageId,
+          ...(text !== undefined ? { text } : {})
+        })
+        await load()
+        return true
+      } catch (failure) {
+        fail(failure)
+        return false
+      } finally {
+        setSending(false)
+      }
+    },
+    [connection, fail, load]
   )
 
   const stop = useCallback(async () => {
@@ -371,6 +432,9 @@ export function useCompanionChat({
     error,
     setError,
     send,
+    retry,
+    reload: load,
+    setEffort,
     stop,
     resolve,
     updateQueue,

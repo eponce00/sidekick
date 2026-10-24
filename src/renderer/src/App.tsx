@@ -63,7 +63,7 @@ import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardSho
 import { buildCommandPaletteItems, latestProjectConversationId } from './utils/commandPaletteItems'
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
-import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
+import { toggleDictation, useDictating } from './services/voice/dictationControl'
 import {
   LAYOUT_MOTION_MS,
   PANEL_GLIDE_MS,
@@ -93,7 +93,6 @@ const DEFAULT_SETTINGS: ProviderSettings = {
   ollamaThinkingEnabled: true,
   openRouterThinkingEnabled: false,
   commandPermissionMode: 'full-access',
-  contentFontSize: 13,
   toolCallLimit: DEFAULT_TOOL_CALL_LIMIT
 }
 
@@ -126,7 +125,6 @@ const previewTheme = getPreviewTheme()
 function normalizeSettings(settings: ProviderSettings): ProviderSettings {
   return {
     ...settings,
-    contentFontSize: Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13))),
     commandPermissionMode: normalizePermissionMode(settings.commandPermissionMode),
     toolCallLimit: resolveStoredToolCallLimit(
       settings.toolCallLimit,
@@ -228,7 +226,7 @@ function App(): React.JSX.Element {
     at: number
   } | null>(null)
   const voiceState = useVoiceState()
-  const voiceLoop = useVoiceLoop()
+  const dictating = useDictating()
   useEffect(() => {
     const media = window.matchMedia('(max-width: 760px)')
     const update = (): void => setIsCompactLayout(media.matches)
@@ -523,21 +521,18 @@ function App(): React.JSX.Element {
   }, [theme, settings.accentPalette])
 
   useEffect(() => {
-    const size = Math.max(12, Math.min(17, Math.round(settings.contentFontSize ?? 13)))
-    document.documentElement.style.setProperty('--content-text', `${size}px`)
-    document.documentElement.style.setProperty(
-      '--content-text-secondary',
-      `${Math.max(11, size - (size > 14 ? 2 : 1))}px`
-    )
-  }, [settings.contentFontSize])
-
-  useEffect(() => {
     window.localStorage.setItem('sidebarCollapsed', String(isSidebarCollapsed))
   }, [isSidebarCollapsed])
 
   useEffect(() => {
     window.localStorage.setItem('activityPanelPinned', String(isActivityPanelPinned))
   }, [isActivityPanelPinned])
+
+  // Text size applies at once, as the zoom shortcuts that step the same setting do.
+  const handleTextScaleChange = (textScale: number): void => {
+    setSettings((current) => ({ ...current, textScale }))
+    void window.api.settings.save({ textScale })
+  }
 
   const handleSaveSettings = async (
     newSettings: ProviderSettings,
@@ -1025,7 +1020,7 @@ function App(): React.JSX.Element {
         currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
         browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
-        voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
+        voiceOn: voiceAvailable ? dictating : null,
         theme,
         actions: {
           newChat: () => void handleNewConversation(null),
@@ -1034,7 +1029,7 @@ function App(): React.JSX.Element {
           openSettings,
           toggleSidebar,
           toggleBrowserPanel,
-          toggleVoice: toggleVoiceLoop,
+          toggleVoice: () => void toggleDictation(),
           toggleTheme: () =>
             switchThemeFrom(document.querySelector('.theme-toggle-button'), () =>
               setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
@@ -1179,6 +1174,23 @@ function App(): React.JSX.Element {
         void refreshProjects()
       }),
     [refreshConversationsForSchedules, refreshProjects]
+  )
+  // The phone can pin, rename, move, archive or delete a chat; one that left the list closes here as
+  // deleting it here would.
+  useEffect(
+    () =>
+      window.api.conversations.onListChanged(({ conversationId, removed }) => {
+        refreshConversationsForSchedules()
+        void refreshProjects()
+        if (!removed) return
+        deleteComposerDraft(conversationId)
+        forgetPanel(conversationId)
+        if (currentConversationIdRef.current === conversationId) {
+          setCurrentConversationId(null)
+          void window.api.workspace.setPath(null)
+        }
+      }),
+    [refreshConversationsForSchedules, refreshProjects, forgetPanel, currentConversationIdRef]
   )
   // A message from the user's phone can start a chat or move one up the list.
   useEffect(
@@ -1624,6 +1636,7 @@ function App(): React.JSX.Element {
         <SettingsModal
           settings={settings}
           onSave={handleSaveSettings}
+          onTextScaleChange={handleTextScaleChange}
           onClose={() => setIsSettingsOpen(false)}
           initialSection={settingsInitialSection}
           providerKeyRequest={providerKeyRequest}

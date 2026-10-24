@@ -13,7 +13,12 @@ import {
   type CompanionVoice
 } from './companionApi'
 
-const MODEL = { id: 'local:model', name: 'model', provider: 'lmstudio' } as PinnedModel
+const MODEL = {
+  id: 'local:model',
+  name: 'model',
+  provider: 'lmstudio',
+  supportsReasoning: true
+} as PinnedModel
 const BLIND = {
   id: 'local:blind',
   name: 'blind',
@@ -73,6 +78,16 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
     queueChanged: vi.fn(),
     shrinkImage: vi.fn(async (image) => ({ ...image, dataUrl: 'data:image/jpeg;base64,small' })),
     readArtifact: vi.fn(async () => null),
+    canUseWorktree: vi.fn(async (projectId: string) => projectId === 'repo'),
+    createWorktree: vi.fn(async () => undefined),
+    restoreFiles: vi.fn(async () => undefined),
+    chatChanged: vi.fn(),
+    reasoningSettings: vi.fn(() => ({ reasoningLevels: { 'local:model': 'high' as const } })),
+    setReasoningLevel: vi.fn(),
+    archiveChat: vi.fn(),
+    deleteChat: vi.fn(async (conversationId: string) => {
+      db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+    }),
     sendToDevice: vi.fn(),
     later: (work) => queued.push(work),
     ...overrides
@@ -81,7 +96,7 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
   const call = (name: Parameters<CompanionApi['handle']>[0], input: unknown, device = DEVICE) =>
     api.handle(name, input, device)
   const upload = async (
-    kind: 'image' | 'text' | 'audio',
+    kind: 'image' | 'text',
     data: Buffer,
     mimeType = 'image/png',
     device = DEVICE
@@ -123,6 +138,285 @@ describe('CompanionApi', () => {
     ])
   })
 
+  function addProject(db: Database.Database, id: string, name: string, folder: string): void {
+    db.prepare(
+      `INSERT INTO projects (id, name, folder_path, is_pinned, created_at, updated_at)
+       VALUES (?, ?, ?, 0, 1, 1)`
+    ).run(id, name, folder)
+  }
+
+  function addMessage(
+    db: Database.Database,
+    conversationId: string,
+    message: {
+      id: string
+      role: string
+      content: string
+      timestamp: number
+      checkpoint?: string
+      folder?: string
+      startsGoal?: boolean
+    }
+  ): void {
+    db.prepare(
+      `INSERT INTO messages
+       (id, conversation_id, role, content, timestamp, checkpoint_hash, checkpoint_workspace_root,
+        starts_goal)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      message.id,
+      conversationId,
+      message.role,
+      message.content,
+      message.timestamp,
+      message.checkpoint ?? null,
+      message.folder ?? null,
+      message.startsGoal ? 1 : 0
+    )
+  }
+
+  it('pins, renames, moves, archives and deletes a chat as its menu does', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    expect(await call('chat.pin', { conversationId: chat.id, pinned: true })).toEqual({
+      pinned: true
+    })
+    expect(await call('chat.rename', { conversationId: chat.id, title: '  Fix   it  ' })).toEqual({
+      title: 'Fix it'
+    })
+    expect(await call('chat.move', { conversationId: chat.id, projectId: 'repo' })).toEqual({
+      projectId: 'repo'
+    })
+    expect(
+      db
+        .prepare(
+          'SELECT is_pinned, title, title_source, project_id FROM conversations WHERE id = ?'
+        )
+        .get(chat.id)
+    ).toEqual({ is_pinned: 1, title: 'Fix it', title_source: 'user', project_id: 'repo' })
+    expect(deps.chatChanged).toHaveBeenCalledWith(chat.id, false)
+    await call('chat.archive', { conversationId: chat.id })
+    expect(deps.archiveChat).toHaveBeenCalledWith(chat.id)
+    expect(deps.chatChanged).toHaveBeenLastCalledWith(chat.id, true)
+    await call('chat.delete', { conversationId: chat.id })
+    expect(deps.deleteChat).toHaveBeenCalledWith(chat.id)
+    await expect(call('chat.pin', { conversationId: chat.id, pinned: false })).rejects.toThrow(
+      /no longer exists/
+    )
+  })
+
+  it('refuses an empty name, and deleting a chat that is working', async () => {
+    const { call, chat, runs, deps } = setup()
+    await expect(call('chat.rename', { conversationId: chat.id, title: '   ' })).rejects.toThrow(
+      /name/
+    )
+    runs.set('run-1', run({ threadId: chat.id, phase: 'streaming' }))
+    await expect(call('chat.delete', { conversationId: chat.id })).rejects.toThrow(/Stop it first/)
+    expect(deps.deleteChat).not.toHaveBeenCalled()
+  })
+
+  it('lists each model with how hard it can think, and saves a level it offers', async () => {
+    const { call, deps } = setup()
+    const { models } = (await call('models.list', {})) as {
+      models: Array<{ id: string; reasoning: unknown }>
+    }
+    // An LM Studio model that reasons, with no levels listed, takes four; this one was set to high.
+    expect(models.find((model) => model.id === 'local:model')?.reasoning).toEqual({
+      levels: ['off', 'low', 'medium', 'high'],
+      initial: 'medium',
+      level: 'high'
+    })
+    expect(await call('models.setEffort', { modelId: 'local:model', level: 'low' })).toEqual({
+      level: 'low'
+    })
+    expect(deps.setReasoningLevel).toHaveBeenCalledWith('local:model', 'low')
+    await expect(
+      call('models.setEffort', { modelId: 'local:model', level: 'max' })
+    ).rejects.toThrow(/does not offer/)
+    await expect(call('models.setEffort', { modelId: 'gone', level: 'low' })).rejects.toThrow(
+      /no longer/
+    )
+  })
+
+  it('lists projects with whether their chats can use worktrees', async () => {
+    const { call, db } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    addProject(db, 'notes', 'Notes', 'C:/notes')
+    expect(await call('projects.list', {})).toEqual(
+      expect.arrayContaining([
+        { id: 'repo', name: 'sidekick', canUseWorktree: true },
+        { id: 'notes', name: 'Notes', canUseWorktree: false }
+      ])
+    )
+  })
+
+  it('starts a new chat in a project, and in its own worktree when asked', async () => {
+    const { call, db, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    const inFolder = (await call('chat.send', { text: 'Fix it', projectId: 'repo' })) as {
+      conversationId: string
+    }
+    expect(
+      db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(inFolder.conversationId)
+    ).toEqual({ project_id: 'repo' })
+    expect(deps.createWorktree).not.toHaveBeenCalled()
+    const inWorktree = (await call('chat.send', {
+      text: 'Try it apart',
+      projectId: 'repo',
+      workIn: 'worktree'
+    })) as { conversationId: string }
+    expect(deps.createWorktree).toHaveBeenCalledWith(inWorktree.conversationId)
+    // The worktree exists before the first run uses the folder.
+    expect(vi.mocked(deps.createWorktree).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.startRun).mock.invocationCallOrder.at(-1)!
+    )
+    expect(
+      (await call('chats.list', {})) as Array<{ projectId: string | null; projectName: string }>
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: inFolder.conversationId,
+          projectId: 'repo',
+          projectName: 'sidekick'
+        })
+      ])
+    )
+  })
+
+  it('leaves no chat behind when its worktree cannot be made, and refuses one without a project', async () => {
+    const { call, db } = setup({
+      createWorktree: vi.fn(async () => {
+        throw new Error('not a repository')
+      })
+    })
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    const before = (db.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n
+    await expect(
+      call('chat.send', { text: 'x', projectId: 'repo', workIn: 'worktree' })
+    ).rejects.toThrow(/worktree could not be made: not a repository/)
+    await expect(call('chat.send', { text: 'x', workIn: 'worktree' })).rejects.toThrow(/project/)
+    await expect(call('chat.send', { text: 'x', projectId: 'gone' })).rejects.toThrow(/project/)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n).toBe(
+      before
+    )
+  })
+
+  it('retries a reply from the message it answered, putting the files back first', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ?, home_workspace_root = ? WHERE id = ?').run(
+      'repo',
+      'C:/code/sidekick',
+      chat.id
+    )
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'First', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Done',
+      timestamp: 20,
+      checkpoint: 'aaaaaaa1',
+      folder: 'C:/code/sidekick'
+    })
+    addMessage(db, chat.id, { id: 'u2', role: 'user', content: 'Second', timestamp: 30 })
+    addMessage(db, chat.id, {
+      id: 'a2',
+      role: 'agent',
+      content: 'Changed files',
+      timestamp: 40,
+      checkpoint: 'bbbbbbb2',
+      folder: 'C:/code/sidekick'
+    })
+    const { runId } = (await call('chat.retry', { conversationId: chat.id, messageId: 'a2' })) as {
+      runId: string
+    }
+    // Back to the history point before the retried message, as the window does.
+    expect(deps.restoreFiles).toHaveBeenCalledWith({
+      workspaceRoot: 'C:/code/sidekick',
+      action: 'hard-reset',
+      hash: 'aaaaaaa1'
+    })
+    expect(
+      db
+        .prepare('SELECT id FROM messages WHERE conversation_id = ? ORDER BY timestamp')
+        .all(chat.id)
+    ).toEqual([{ id: 'u1' }, { id: 'a1' }, { id: 'u2' }])
+    expect(deps.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ id: runId, conversationId: chat.id, mode: 'conversation' })
+    )
+    expect(deps.messagesChanged).toHaveBeenCalledWith(chat.id)
+  })
+
+  it('edits a message and answers it again, rewinding to before its own history point', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ? WHERE id = ?').run('repo', chat.id)
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Fix it', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Fixed',
+      timestamp: 20,
+      checkpoint: 'ccccccc3',
+      folder: 'C:/code/sidekick'
+    })
+    await call('chat.retry', { conversationId: chat.id, messageId: 'u1', text: '  Fix it better ' })
+    expect(deps.restoreFiles).toHaveBeenCalledWith({
+      workspaceRoot: 'C:/code/sidekick',
+      action: 'rewind',
+      hash: 'ccccccc3'
+    })
+    expect(
+      db.prepare('SELECT id, content FROM messages WHERE conversation_id = ?').all(chat.id)
+    ).toEqual([{ id: 'u1', content: 'Fix it better' }])
+  })
+
+  it('still answers again when the files cannot go back, as the window does', async () => {
+    const { call, db, chat, deps } = setup({
+      restoreFiles: vi.fn(async () => {
+        throw new Error('Not allowed')
+      })
+    })
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ? WHERE id = ?').run('repo', chat.id)
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Go', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Went',
+      timestamp: 20,
+      checkpoint: 'ddddddd4',
+      folder: 'C:/code/sidekick'
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await call('chat.retry', { conversationId: chat.id, messageId: 'a1' })
+    warn.mockRestore()
+    expect(deps.startRun).toHaveBeenCalled()
+  })
+
+  it('refuses to retry while a run works, across a goal, or with an empty edit', async () => {
+    const { call, db, chat, runs, deps } = setup()
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Go', timestamp: 10 })
+    addMessage(db, chat.id, { id: 'a1', role: 'agent', content: 'Went', timestamp: 20 })
+    await expect(
+      call('chat.retry', { conversationId: chat.id, messageId: 'u1', text: '   ' })
+    ).rejects.toThrow(/Write the message/)
+    await expect(
+      call('chat.retry', { conversationId: chat.id, messageId: 'gone' })
+    ).rejects.toThrow(/no longer/)
+    runs.set('run-1', run({ threadId: chat.id, phase: 'streaming' }))
+    await expect(call('chat.retry', { conversationId: chat.id, messageId: 'a1' })).rejects.toThrow(
+      /Stop it first/
+    )
+    runs.clear()
+    db.prepare('UPDATE messages SET starts_goal = 1 WHERE id = ?').run('u1')
+    await expect(call('chat.retry', { conversationId: chat.id, messageId: 'a1' })).rejects.toThrow(
+      /goal/
+    )
+    expect(deps.startRun).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 2 })
+  })
+
   it('saves a message and starts a run in the chosen mode, on the path the window uses', async () => {
     const { call, deps, db, chat } = setup()
     const result = await call('chat.send', {
@@ -153,8 +447,8 @@ describe('CompanionApi', () => {
     ).rejects.toThrow(/no longer available/)
     expect(await call('models.list', { conversationId: chat.id })).toEqual({
       models: [
-        { id: MODEL.id, name: 'model', supportsVision: true },
-        { id: BLIND.id, name: 'blind', supportsVision: false }
+        expect.objectContaining({ id: MODEL.id, name: 'model', supportsVision: true }),
+        expect.objectContaining({ id: BLIND.id, name: 'blind', supportsVision: false })
       ],
       selectedModelId: MODEL.id
     })
@@ -486,10 +780,24 @@ describe('CompanionApi', () => {
     await expect(call('media.get', { url: 'file:///C:/secret.png' })).rejects.toThrow()
   })
 
-  it('transcribes recorded audio and speaks to the phone that asked', async () => {
-    const voice: CompanionVoice = {
+  function fakeVoice(): CompanionVoice & {
+    heard: Map<string, number[]>
+    writers: Map<string, (text: string, final: boolean) => void>
+  } {
+    const heard = new Map<string, number[]>()
+    const writers = new Map<string, (text: string, final: boolean) => void>()
+    return {
+      heard,
+      writers,
       state: () => ({ dictation: true, speech: true, message: null }),
-      transcribe: vi.fn(async (samples: Float32Array) => ` heard ${samples.length} samples `),
+      startDictation: vi.fn(async (id: string, onText: (text: string, final: boolean) => void) => {
+        heard.set(id, [])
+        writers.set(id, onText)
+        return { ok: true }
+      }),
+      pushDictation: vi.fn((id: string, samples: Float32Array) => heard.get(id)?.push(...samples)),
+      stopDictation: vi.fn(async (id: string) => writers.get(id)?.('the last words', true)),
+      cancelDictation: vi.fn(),
       speak: vi.fn(async (_id, _text, onAudio, onEnd) => {
         onAudio(new Float32Array([0, 1, -1]), 24_000)
         onEnd()
@@ -497,13 +805,94 @@ describe('CompanionApi', () => {
       }),
       stop: vi.fn()
     }
-    const { call, upload, deps } = setup({ voice: () => voice })
-    const samples = Buffer.alloc(16)
-    for (let index = 0; index < 4; index++) samples.writeFloatLE(0.5, index * 4)
-    const audio = await upload('audio', samples, 'audio/pcm')
-    expect(await call('voice.transcribe', { uploadId: audio })).toEqual({
-      text: 'heard 4 samples'
+  }
+
+  const pcm = (...samples: number[]): string => {
+    const bytes = Buffer.alloc(samples.length * 2)
+    samples.forEach((sample, index) => bytes.writeInt16LE(sample, index * 2))
+    return bytes.toString('base64')
+  }
+
+  it('dictates live: audio in order, words back as they come, the last before the end', async () => {
+    const voice = fakeVoice()
+    const { call, deps } = setup({ voice: () => voice })
+    expect(await call('voice.dictation.start', { dictationId: 'd1' })).toEqual({ ok: true })
+    const serviceId = vi.mocked(voice.startDictation).mock.calls[0][0]
+    // The voice service knows the dictation by an ID of its own, not one the phone chose.
+    expect(serviceId).toMatch(/^phone-/)
+    expect(
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(16_384, -32_768) })
+    ).toEqual({ accepted: true })
+    expect(await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(0) })).toEqual({
+      accepted: true
     })
+    expect(voice.heard.get(serviceId)).toEqual([0.5, -1, 0])
+    voice.writers.get(serviceId)!('hello', false)
+    expect(deps.sendToDevice).toHaveBeenLastCalledWith(DEVICE, {
+      type: 'dictation.text',
+      dictationId: 'd1',
+      text: 'hello',
+      final: false
+    })
+    expect(await call('voice.dictation.stop', { dictationId: 'd1' })).toEqual({ stopped: true })
+    const sent = vi.mocked(deps.sendToDevice).mock.calls.map(([, event]) => event)
+    expect(sent.slice(-2)).toEqual([
+      { type: 'dictation.text', dictationId: 'd1', text: 'the last words', final: true },
+      { type: 'dictation.end', dictationId: 'd1' }
+    ])
+    // Once stopped it takes no more audio.
+    expect(await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) })).toEqual({
+      accepted: false
+    })
+  })
+
+  it('keeps each phone to its own dictation and refuses audio it cannot read', async () => {
+    const voice = fakeVoice()
+    const { call } = setup({ voice: () => voice })
+    await call('voice.dictation.start', { dictationId: 'd1' })
+    const serviceId = vi.mocked(voice.startDictation).mock.calls[0][0]
+    expect(
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) }, 'device-2')
+    ).toEqual({ accepted: false })
+    await call('voice.dictation.cancel', { dictationId: 'd1' }, 'device-2')
+    expect(voice.cancelDictation).not.toHaveBeenCalled()
+    await expect(
+      call('voice.dictation.audio', { dictationId: 'd1', pcm: Buffer.from([1]).toString('base64') })
+    ).rejects.toThrow(/could not be read/)
+    await expect(
+      call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(...new Array(32_001).fill(1)) })
+    ).rejects.toThrow(/could not be read/)
+    await expect(call('voice.dictation.start', { dictationId: '../d' })).rejects.toThrow()
+    await expect(call('voice.dictation.start', { dictationId: 'd1' })).rejects.toThrow(/already/)
+    expect(voice.heard.get(serviceId)).toEqual([])
+    await call('voice.dictation.cancel', { dictationId: 'd1' })
+    expect(voice.cancelDictation).toHaveBeenCalledWith(serviceId)
+  })
+
+  it('ends a dictation the phone stopped sending audio to, keeping what was heard', async () => {
+    vi.useFakeTimers()
+    try {
+      const voice = fakeVoice()
+      const { call, deps } = setup({ voice: () => voice })
+      await call('voice.dictation.start', { dictationId: 'd1' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(voice.stopDictation).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(voice.stopDictation).toHaveBeenCalledTimes(1)
+      expect(deps.sendToDevice).toHaveBeenLastCalledWith(DEVICE, {
+        type: 'dictation.end',
+        dictationId: 'd1'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('speaks to the phone that asked', async () => {
+    const voice = fakeVoice()
+    const { call, deps } = setup({ voice: () => voice })
     expect(await call('voice.speak', { speechId: 's1', text: 'Hello' })).toEqual({ ok: true })
     expect(deps.sendToDevice).toHaveBeenCalledWith(DEVICE, {
       type: 'speech.audio',
@@ -524,6 +913,7 @@ describe('CompanionApi', () => {
       message: null
     })
     expect(await call('voice.speak', { speechId: 's1', text: 'hi' })).toMatchObject({ ok: false })
+    expect(await call('voice.dictation.start', { dictationId: 'd1' })).toMatchObject({ ok: false })
   })
 
   it('encodes speech as 16-bit samples', () => {

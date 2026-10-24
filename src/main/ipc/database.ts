@@ -23,6 +23,7 @@ import type { ManagedWorktreeSummary } from '../../shared/worktrees'
 import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 import { isConversationModelId } from '../services/conversationModelStore'
 import { createConversation } from '../services/conversationCreation'
+import { deleteConversation, setConversationPinned } from '../services/conversationActions'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -285,10 +286,7 @@ export function registerDatabaseHandlers(): void {
     if (typeof id !== 'string' || !id || typeof pinned !== 'boolean') {
       throw new Error('Invalid conversation pin request')
     }
-    const result = db
-      .prepare('UPDATE conversations SET is_pinned = ? WHERE id = ?')
-      .run(pinned ? 1 : 0, id)
-    return { success: result.changes > 0 }
+    return { success: setConversationPinned(db, id, pinned) }
   })
 
   ipcMain.handle(
@@ -372,13 +370,9 @@ export function registerDatabaseHandlers(): void {
   )
 
   ipcMain.handle('conversations:delete', async (_, id: string) => {
-    const worktreeId = worktrees.worktreeIdFor(id)
-    db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(id)
-    db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+    const result = await deleteConversation(db, worktrees, id)
     refreshSessionStatuses([id])
-    // A worktree its last chat leaves behind goes too.
-    const worktreeCleanup = worktreeId ? await worktrees.removeIfUnused(worktreeId) : null
-    return { success: true, ...(worktreeCleanup ? { worktreeCleanup } : {}) }
+    return { success: true, ...result }
   })
 
   // A chat opened and left with nothing said in it does not stay behind in the sidebar. Only a

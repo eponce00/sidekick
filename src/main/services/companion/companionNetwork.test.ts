@@ -54,7 +54,9 @@ describe('companion network checks', () => {
     expect(hostMatches('evil.example:47615', '192.168.1.20', 47615)).toBe(false)
     expect(hostMatches(undefined, '192.168.1.20', 47615)).toBe(false)
     expect(originMatches(undefined, '192.168.1.20', 47615)).toBe(true)
-    expect(originMatches('http://192.168.1.20:47615', '192.168.1.20', 47615)).toBe(true)
+    expect(originMatches('https://192.168.1.20:47615', '192.168.1.20', 47615)).toBe(true)
+    // The page is HTTPS; a plain HTTP page at the same address is not it.
+    expect(originMatches('http://192.168.1.20:47615', '192.168.1.20', 47615)).toBe(false)
     expect(originMatches('null', '192.168.1.20', 47615)).toBe(false)
   })
 

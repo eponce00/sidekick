@@ -3,19 +3,13 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { AlertTriangle, ArrowUpRight, X } from 'lucide-react'
 import { useAutoScroll } from '../hooks/useAutoScroll'
 import { endDictation } from '../services/voice/dictationControl'
-import {
-  stopVoiceLoop,
-  voiceLoopReplyFinished,
-  voiceLoopReplyStarted,
-  voiceLoopSent
-} from '../services/voice/voiceLoop'
-import { finalAnswerText } from '../utils/segmentGrouping'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
 import {
   RunAlreadyActiveError,
   useConversationRun,
   type DuringRunSubmission,
+  type PendingRunMessageItem,
   type SendConversationMessageOptions
 } from '../hooks/useConversationRun'
 import { useConversationMessages } from '../hooks/useConversationMessages'
@@ -338,6 +332,8 @@ function ChatPanel({
     mode: ConversationRunMode
     goalArmed: boolean
   } | null>(null)
+  // A queued message being edited in the box, as a sent one is; sending saves it in the queue.
+  const [editingQueuedId, setEditingQueuedId] = useState<string | null>(null)
   const featuresMenuRef = useRef<HTMLDivElement>(null)
   const modelMenuRef = useRef<HTMLDivElement>(null)
   // Track artifact render results for tool response
@@ -446,6 +442,17 @@ function ChatPanel({
     return () => onBusyStateChange?.(busyConversationIdRef.current, false)
   }, [onBusyStateChange])
 
+  /** Puts back what the box held before an edit, of a sent message or a queued one. */
+  const restoreEditStash = (): void => {
+    const stash = editStashRef.current
+    editStashRef.current = null
+    setInputValue(stash?.text ?? '')
+    setAttachedImages(stash?.images ?? [])
+    setAttachedContext(stash?.attachments ?? [])
+    setNextRunMode(stash?.mode ?? 'conversation')
+    setGoalArmed(stash?.goalArmed ?? false)
+  }
+
   const {
     editingMessageId,
     steppedBackFromId,
@@ -482,6 +489,7 @@ function ChatPanel({
       window.requestAnimationFrame(() => inputRef.current?.focus())
     },
     beginEdit: (message, source) => {
+      setEditingQueuedId(null)
       // What the box held comes back if the edit is cancelled.
       editStashRef.current ??= {
         text: inputValue,
@@ -509,15 +517,7 @@ function ChatPanel({
         input.setSelectionRange(input.value.length, input.value.length)
       })
     },
-    cancelEdit: () => {
-      const stash = editStashRef.current
-      editStashRef.current = null
-      setInputValue(stash?.text ?? '')
-      setAttachedImages(stash?.images ?? [])
-      setAttachedContext(stash?.attachments ?? [])
-      setNextRunMode(stash?.mode ?? 'conversation')
-      setGoalArmed(stash?.goalArmed ?? false)
-    },
+    cancelEdit: () => restoreEditStash(),
     beforeMessagesLeave: (message, kind) => {
       const container = messagesContainerRef.current
       if (!container) return
@@ -741,25 +741,56 @@ function ChatPanel({
     return () => window.clearTimeout(timer)
   }, [conversationId, isLoading, latestAnswer, revealStart])
 
-  // Voice conversation: hand each finished reply's answer over to be read
-  // aloud. Another chat ends it, so the mic never follows the user elsewhere.
-  const voiceRunRef = useRef({ conversationId, isLoading })
-  useEffect(() => {
-    const previous = voiceRunRef.current
-    voiceRunRef.current = { conversationId, isLoading }
-    if (previous.conversationId !== conversationId) {
-      stopVoiceLoop()
-      return undefined
+  /**
+   * Moves a queued message into the box to edit, as Edit moves a sent one: it glides in from its
+   * card, and sending saves the new text in the queue. What the box held waits until then.
+   */
+  const beginQueuedEdit = (message: PendingRunMessageItem, source: HTMLElement | null): void => {
+    const original = editStashRef.current
+    if (editingMessageId) handleCancelEditMessage()
+    editStashRef.current = original ?? {
+      text: inputValue,
+      images: attachedImages,
+      attachments: attachedContext,
+      mode: nextRunMode,
+      goalArmed
     }
-    if (isLoading && !previous.isLoading) voiceLoopReplyStarted()
-    if (isLoading || !previous.isLoading) return undefined
-    // The finished message replaces the streamed one a moment after the run ends.
-    const timer = window.setTimeout(() => {
-      const reply = messagesRef.current.findLast((message) => message.role === 'agent')
-      voiceLoopReplyFinished(reply ? finalAnswerText(reply) : '')
-    }, 200)
-    return () => window.clearTimeout(timer)
-  }, [conversationId, isLoading, messagesRef])
+    setEditingQueuedId(message.id)
+    // Its images and files stay with it in the queue; the box edits its words.
+    setInputValue(message.content)
+    setAttachedImages([])
+    setAttachedContext([])
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (!input) return
+      flyIntoComposer(source, input.closest<HTMLElement>('.input-container'))
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+  }
+
+  // A queued message sent while it was being edited leaves edit mode; its new words stay in the
+  // box to send. Another chat ends the edit as well.
+  const editedQueueChatRef = useRef(conversationId)
+  useEffect(() => {
+    if (!editingQueuedId) {
+      editedQueueChatRef.current = conversationId
+      return
+    }
+    const stillQueued =
+      messageQueue.some((item) => item.id === editingQueuedId) ||
+      pivotPending?.id === editingQueuedId
+    if (stillQueued && editedQueueChatRef.current === conversationId) return
+    editStashRef.current = null
+    setEditingQueuedId(null)
+  }, [editingQueuedId, messageQueue, pivotPending, conversationId])
+
+  // Another chat ends dictation, so the microphone never follows the user elsewhere.
+  const dictatedInRef = useRef(conversationId)
+  useEffect(() => {
+    if (dictatedInRef.current !== conversationId) endDictation()
+    dictatedInRef.current = conversationId
+  }, [conversationId])
 
   // Auto-focus input when conversation changes or loading completes
   useAutoFocus(inputRef, isLoading, false, conversationId)
@@ -847,7 +878,9 @@ function ChatPanel({
         id: selectedPinnedModel.id,
         providerKind: selectedPinnedModel.providerKind ?? (selectedProvider as ProviderKind),
         model: selectedPinnedModel.providerModelId || selectedPinnedModel.id,
-        supportsReasoning: selectedPinnedModel.supportsReasoning
+        supportsReasoning: selectedPinnedModel.supportsReasoning,
+        reasoningLevels: selectedPinnedModel.reasoningLevels,
+        reasoningDefault: selectedPinnedModel.reasoningDefault
       }
     : null
   const selectedReasoningOptions = reasoningModel ? reasoningOptions(reasoningModel) : null
@@ -1238,16 +1271,21 @@ function ChatPanel({
   }
 
   const submitMessage = (): void => {
-    // What was dictated so far is in the box and goes with the message; with
-    // voice on, the mic pauses until the reply has been read aloud.
+    // What was dictated so far is in the box and goes with the message, and the mic stops.
     endDictation()
-    voiceLoopSent()
     if (attachedImages.length && !visionAvailable) {
       setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
       return
     }
     const images = attachedImages
     const attachments = attachedContext
+    if (editingQueuedId) {
+      // The queued message takes the new text, and the box gets back what it held.
+      if (!updatePendingMessage(editingQueuedId, inputValue)) return
+      restoreEditStash()
+      setEditingQueuedId(null)
+      return
+    }
     if (editingMessageId) {
       // Sending an edit replaces the message and everything after it, then answers again.
       if (isLoading) return
@@ -1821,6 +1859,12 @@ function ChatPanel({
         isStopping={isStopping}
         editingMessageId={editingMessageId}
         onCancelEdit={handleCancelEditMessage}
+        editingQueuedId={editingQueuedId}
+        onEditQueuedMessage={beginQueuedEdit}
+        onCancelQueuedEdit={() => {
+          restoreEditStash()
+          setEditingQueuedId(null)
+        }}
         researchSelected={nextRunMode === 'research'}
         researchActive={activeMode === 'research'}
         researchPhase={phase}
@@ -1922,7 +1966,6 @@ function ChatPanel({
             setIsWorkspaceMemoryOpen(true)
           }
         }}
-        onUpdatePendingMessage={updatePendingMessage}
         onRemovePendingMessage={removePendingMessage}
         onMoveQueuedMessage={moveQueuedMessage}
         onSteerQueuedMessage={(id) => {

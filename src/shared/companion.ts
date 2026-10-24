@@ -1,5 +1,6 @@
 import type { ConversationRunMode, PromptAdmissionsResult } from './agentRunApi'
 import type { AgentRunEvent, AgentRunPhase, AgentRunSnapshot } from './agentRuntime'
+import type { ReasoningLevel } from './reasoning'
 
 /** A phone the user approved. */
 export interface CompanionDevice {
@@ -36,7 +37,10 @@ export interface CompanionChat {
   title: string
   updatedAt: number
   pinned: boolean
+  projectId: string | null
   projectName: string | null
+  /** The chat works in its own worktree of its project. */
+  inWorktree: boolean
   /** The phase of the chat's latest run while it is active. */
   activePhase: AgentRunPhase | null
   /** A card in the chat waits for an answer. */
@@ -74,6 +78,16 @@ export interface CompanionModel {
   id: string
   name: string
   supportsVision: boolean
+  /** How hard it can think: the levels it offers, its starting one, and the one chosen. */
+  reasoning: { levels: ReasoningLevel[]; initial: ReasoningLevel; level: ReasoningLevel } | null
+}
+
+/** A project the phone can start a chat in. */
+export interface CompanionProject {
+  id: string
+  name: string
+  /** Its folder is in a Git repository, so a chat can work in its own worktree. */
+  canUseWorktree: boolean
 }
 
 /** A file the phone sends with a message, uploaded first with `upload.put`. */
@@ -83,7 +97,7 @@ export interface CompanionUploadRef {
 
 /** What the computer can do for the phone's voice buttons. */
 export interface CompanionVoiceState {
-  /** Dictation is installed and on; the phone records, the computer transcribes. */
+  /** Dictation is installed and on; the phone streams its microphone, the computer writes it. */
   dictation: boolean
   /** Read aloud is installed and on; the computer speaks, the phone plays. */
   speech: boolean
@@ -101,14 +115,18 @@ export interface CompanionChatDetail {
 /** The calls a paired phone can make, and what each returns. */
 export interface CompanionCalls {
   'chats.list': { input: Record<string, never>; output: CompanionChat[] }
+  'projects.list': { input: Record<string, never>; output: CompanionProject[] }
   'chat.open': { input: { conversationId: string }; output: CompanionChatDetail }
   /**
    * Sends a message. With no run it starts one; while one works it is queued (the default) or
-   * handed to the run now (`steer`), as the desktop composer does. No chat starts a new one.
+   * handed to the run now (`steer`), as the desktop composer does. No chat starts a new one, in
+   * a project when one is named, and in its own worktree of it when `workIn` says so.
    */
   'chat.send': {
     input: {
       conversationId?: string
+      projectId?: string
+      workIn?: 'folder' | 'worktree'
       text: string
       mode?: ConversationRunMode
       modelId?: string
@@ -120,6 +138,25 @@ export interface CompanionCalls {
     }
     output: { conversationId: string; runId: string | null; steered: boolean; queued: boolean }
   }
+  /**
+   * Answers a sent message again, as the desktop's Retry does, or with its text changed first, as
+   * its Edit does: the replies after it leave the chat, the files SideKick changed since are put
+   * back, and a new reply starts. A reply names the message it answered.
+   */
+  'chat.retry': {
+    input: { conversationId: string; messageId: string; text?: string }
+    output: { runId: string }
+  }
+  /** What the chat's menu does, as the desktop sidebar's does. */
+  'chat.pin': { input: { conversationId: string; pinned: boolean }; output: { pinned: boolean } }
+  'chat.rename': { input: { conversationId: string; title: string }; output: { title: string } }
+  /** Into a project, or out of one with `projectId: null`; chats do not move between projects. */
+  'chat.move': {
+    input: { conversationId: string; projectId: string | null }
+    output: { projectId: string | null }
+  }
+  'chat.archive': { input: { conversationId: string }; output: { archived: true } }
+  'chat.delete': { input: { conversationId: string }; output: { deleted: true } }
   /** The chat's queued messages and its pending steer, shared with the desktop composer. */
   'queue.list': { input: { conversationId: string }; output: PromptAdmissionsResult }
   /** Reorders, edits or removes queued messages; ids not listed are removed. */
@@ -137,6 +174,11 @@ export interface CompanionCalls {
     input: { conversationId?: string }
     output: { models: CompanionModel[]; selectedModelId: string | null }
   }
+  /** Chooses how hard a model thinks, for every chat, as the desktop's reasoning slider does. */
+  'models.setEffort': {
+    input: { modelId: string; level: ReasoningLevel }
+    output: { level: ReasoningLevel }
+  }
   'run.stop': { input: { runId: string }; output: { stopped: boolean } }
   'run.events': {
     input: { runId: string; afterSequence: number }
@@ -153,7 +195,7 @@ export interface CompanionCalls {
   'upload.put': {
     input: {
       uploadId?: string
-      kind: 'image' | 'text' | 'audio'
+      kind: 'image' | 'text'
       name: string
       mimeType: string
       data: string
@@ -164,8 +206,24 @@ export interface CompanionCalls {
   /** An image the agent viewed or captured, by the address its tool result gives. */
   'media.get': { input: { url: string }; output: { dataUrl: string } }
   'voice.state': { input: Record<string, never>; output: CompanionVoiceState }
-  /** Transcribes uploaded audio: 16 kHz mono 32-bit float little-endian samples. */
-  'voice.transcribe': { input: { uploadId: string }; output: { text: string } }
+  /**
+   * Live dictation, as the desktop's microphone does it. The phone streams its microphone in
+   * `voice.dictation.audio` pieces, in order, and the words come back as `dictation.text` events:
+   * drafts of the phrase being spoken, then each phrase final. After a stop, `dictation.end`
+   * follows the last words.
+   */
+  'voice.dictation.start': {
+    input: { dictationId: string }
+    output: { ok: boolean; message?: string }
+  }
+  /** At most COMPANION_DICTATION_PIECE_SAMPLES 16 kHz mono 16-bit little-endian samples, base64. */
+  'voice.dictation.audio': {
+    input: { dictationId: string; pcm: string }
+    output: { accepted: boolean }
+  }
+  'voice.dictation.stop': { input: { dictationId: string }; output: { stopped: true } }
+  /** Ends dictation at once, dropping words not yet written. */
+  'voice.dictation.cancel': { input: { dictationId: string }; output: { cancelled: true } }
   /** Speaks text in the computer's voice; the audio arrives as `speech.audio` events. */
   'voice.speak': {
     input: { speechId: string; text: string }
@@ -180,19 +238,30 @@ export type CompanionCallName = keyof CompanionCalls
 
 export const COMPANION_CALL_NAMES: readonly CompanionCallName[] = [
   'chats.list',
+  'projects.list',
   'chat.open',
   'chat.send',
+  'chat.retry',
+  'chat.pin',
+  'chat.rename',
+  'chat.move',
+  'chat.archive',
+  'chat.delete',
   'queue.list',
   'queue.update',
   'queue.steer',
   'models.list',
+  'models.setEffort',
   'run.stop',
   'run.events',
   'interaction.resolve',
   'upload.put',
   'media.get',
   'voice.state',
-  'voice.transcribe',
+  'voice.dictation.start',
+  'voice.dictation.audio',
+  'voice.dictation.stop',
+  'voice.dictation.cancel',
   'voice.speak',
   'voice.stop',
   'events.ticket'
@@ -216,9 +285,15 @@ export type CompanionEvent =
   /** Speech for this phone only: 16-bit little-endian mono samples, base64. */
   | { type: 'speech.audio'; speechId: string; sampleRate: number; pcm: string }
   | { type: 'speech.end'; speechId: string; error?: string }
+  /** Dictation for this phone only: a draft of the phrase being spoken, or a phrase final. */
+  | { type: 'dictation.text'; dictationId: string; text: string; final: boolean }
+  /** A stopped dictation's last words have been sent. */
+  | { type: 'dictation.end'; dictationId: string }
 
 /** The longest message a phone may send. */
 export const COMPANION_MAX_MESSAGE_LENGTH = 100_000
+/** The most audio one dictation piece carries: two seconds at 16 kHz. */
+export const COMPANION_DICTATION_PIECE_SAMPLES = 32_000
 /** The most an upload piece carries before base64, inside the request limit. */
 export const COMPANION_UPLOAD_CHUNK_BYTES = 128 * 1024
 /** The most one upload may hold. Phones reduce photos before sending them. */

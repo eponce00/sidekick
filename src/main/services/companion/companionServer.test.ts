@@ -1,5 +1,9 @@
 import Database from 'better-sqlite3'
 import { request as httpRequest } from 'http'
+import { request as httpsRequest } from 'https'
+import { X509Certificate } from 'crypto'
+import type { IncomingMessage } from 'http'
+import type { TLSSocket } from 'tls'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { applyDatabaseSchema } from '../../bootstrap/database'
 import {
@@ -17,10 +21,23 @@ import {
   type ServerHello,
   type SessionKeys
 } from '../../../shared/companionProtocol'
+import { createCompanionCertificate } from './companionCertificate'
 import { CompanionDeviceStore } from './companionDeviceStore'
 import { CompanionServer } from './companionServer'
 
 const servers: CompanionServer[] = []
+const certificate = createCompanionCertificate('127.0.0.1')
+const FINGERPRINT = new X509Certificate(certificate.cert).fingerprint256
+// No authority vouches for the certificate, as for a phone, so these requests check that the server
+// presents exactly this one, as a browser that accepted it does.
+// A new connection each time: a resumed TLS session does not present the certificate again.
+const TLS = { rejectUnauthorized: false, agent: false } as const
+
+function presentsOurCertificate(response: IncomingMessage): void {
+  const peer = (response.socket as TLSSocket).getPeerCertificate()
+  if (peer.fingerprint256 !== FINGERPRINT)
+    throw new Error('The server presented another certificate')
+}
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map((server) => server.stop()))
@@ -40,13 +57,15 @@ function send(
     body?: unknown
     rawBody?: string
     headers?: Record<string, string>
+    plain?: boolean
   } = {}
-): Promise<Reply> {
+): Promise<Reply & { location?: string }> {
   return new Promise((resolve, reject) => {
     const body = options.rawBody ?? (options.body === undefined ? '' : JSON.stringify(options.body))
-    const request = httpRequest(
+    const request = (options.plain ? httpRequest : httpsRequest)(
       {
         host: '127.0.0.1',
+        ...TLS,
         port,
         path,
         method: options.method ?? (options.body === undefined && !options.rawBody ? 'GET' : 'POST'),
@@ -57,10 +76,23 @@ function send(
         }
       },
       (response) => {
+        if (!options.plain) {
+          try {
+            presentsOurCertificate(response)
+          } catch (error) {
+            reject(error)
+            return
+          }
+        }
         let text = ''
         response.on('data', (chunk) => (text += chunk))
         response.on('end', () =>
-          resolve({ status: response.statusCode ?? 0, body: text, json: () => JSON.parse(text) })
+          resolve({
+            status: response.statusCode ?? 0,
+            body: text,
+            json: () => JSON.parse(text),
+            location: response.headers.location
+          })
         )
       }
     )
@@ -97,7 +129,7 @@ async function setup(
     ...(options.now ? { now: options.now } : {})
   })
   servers.push(server)
-  const { port } = await server.start('127.0.0.1', 0)
+  const { port } = await server.start('127.0.0.1', 0, certificate)
   return { server, port, devices, handle, approve, db }
 }
 
@@ -171,7 +203,7 @@ describe('CompanionServer', () => {
   it('pairs a phone the user allows and carries encrypted calls bound to their request', async () => {
     const { port, server, approve, handle, devices } = await setup()
     const info = server.newPairing()!
-    expect(info.url).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${port}/#p=[A-Za-z0-9_-]{22}$`))
+    expect(info.url).toMatch(new RegExp(`^https://127\\.0\\.0\\.1:${port}/#p=[A-Za-z0-9_-]{22}$`))
     const secret = secretFrom(info.url)
     const { reply, deviceId, deviceSecret } = await pair(port, secret, 'My\u0007 <phone>')
     expect(reply.status).toBe(200)
@@ -299,6 +331,39 @@ describe('CompanionServer', () => {
     ).toBe(403)
     const outside = await setup({ peerAllowed: false })
     expect((await send(outside.port, '/')).status).toBe(403)
+    expect((await send(outside.port, '/', { plain: true })).status).toBe(403)
+  })
+
+  it('sends plain HTTP on its port to the HTTPS page, and serves nothing over it', async () => {
+    const { port } = await setup()
+    const page = await send(port, '/api/session', { plain: true, body: {} })
+    expect(page.status).toBe(308)
+    expect(page.location).toBe(`https://127.0.0.1:${port}/`)
+    expect(page.body).toBe('')
+    expect(
+      (await send(port, '/', { plain: true, headers: { Host: `attacker.example:${port}` } })).status
+    ).toBe(421)
+  })
+
+  it('allows the page the microphone and nothing else a browser asks permission for', async () => {
+    const { port } = await setup()
+    const reply = await new Promise<import('http').IncomingMessage>((resolve, reject) => {
+      httpsRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          path: '/',
+          ...TLS,
+          headers: { Host: `127.0.0.1:${port}` }
+        },
+        resolve
+      )
+        .on('error', reject)
+        .end()
+    })
+    reply.resume()
+    presentsOurCertificate(reply)
+    expect(reply.headers['permissions-policy']).toBe('camera=(), microphone=(self), geolocation=()')
   })
 
   it('refuses bodies that are too large or not JSON', async () => {
@@ -324,9 +389,10 @@ describe('CompanionServer', () => {
     ).output.ticket
     const received: string[] = []
     const stream = await new Promise<import('http').IncomingMessage>((resolve, reject) => {
-      const request = httpRequest(
+      const request = httpsRequest(
         {
           host: '127.0.0.1',
+          ...TLS,
           port,
           path: `/api/events?t=${ticket}`,
           headers: { Host: `127.0.0.1:${port}` }
@@ -337,6 +403,7 @@ describe('CompanionServer', () => {
       request.end()
     })
     expect(stream.statusCode).toBe(200)
+    presentsOurCertificate(stream)
     stream.on('data', (chunk) => received.push(String(chunk)))
     await vi.waitFor(() => expect(server.connectedDeviceIds().size).toBe(1))
     server.broadcast({ type: 'chats.changed' })

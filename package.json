@@ -1,6 +1,6 @@
 {
   "name": "sidekick",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Your AI sidekick for everyday computer tasks",
   "desktopName": "io.github.eponce00.sidekick.desktop",
   "license": "GPL-3.0-or-later",
@@ -152,7 +152,7 @@
     "@vitest/coverage-v8": "^4.1.10",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
-    "electron": "43.7.7",
+    "electron": "43.8.3",
     "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
     "eslint": "^9.39.1",

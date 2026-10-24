@@ -3,14 +3,16 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
+  GitBranch,
   Loader2,
+  Plus,
   Search,
   Smartphone,
   SquarePen,
   Unlink,
   X
 } from 'lucide-react'
-import type { CompanionChat } from '../../../shared/companion'
+import type { CompanionChat, CompanionProject } from '../../../shared/companion'
 import { SIDEBAR_DOT_LABELS } from '../utils/sessionFamilies'
 import { groupChats, searchChats } from './chatGroups'
 import { chatDot } from './chatState'
@@ -20,13 +22,14 @@ import { Robot } from './Robot'
 import { Sheet, SheetAction } from './Sheet'
 
 /**
- * The chats, in a drawer that slides over the open chat from the left as the ChatGPT and Claude
- * apps keep theirs: search, a new chat, then the desktop sidebar's projects and chats with its
- * marks, and the connection to the computer at the foot.
+ * The chats, in a drawer that slides over the open chat from the left as the ChatGPT app keeps its
+ * own: the name and a search button at the top, the desktop sidebar's projects and chats with its
+ * marks, and at the foot a floating New chat button and the connection to the computer.
  */
 export function ChatDrawer({
   open,
   chats,
+  projects,
   error,
   currentId,
   collapsed,
@@ -36,11 +39,13 @@ export function ChatDrawer({
   deviceName,
   onOpen,
   onNew,
+  onNewInProject,
   onClose,
   onForget
 }: {
   open: boolean
   chats: CompanionChat[] | null
+  projects: readonly CompanionProject[]
   error: string
   /** The chat on screen, marked as the desktop marks the selected row. */
   currentId: string | null
@@ -53,10 +58,12 @@ export function ChatDrawer({
   deviceName: string
   onOpen: (chat: CompanionChat) => void
   onNew: () => void
+  onNewInProject: (project: CompanionProject) => void
   onClose: () => void
   onForget: () => void
 }) {
   const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const panel = useRef<HTMLElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
@@ -67,7 +74,7 @@ export function ChatDrawer({
     () => (chats && searching ? searchChats(chats, query) : []),
     [chats, query, searching]
   )
-  const groups = useMemo(() => groupChats(chats ?? []), [chats])
+  const groups = useMemo(() => groupChats(chats ?? [], projects), [chats, projects])
 
   const row = (chat: CompanionChat, options: { nested?: boolean; project?: boolean } = {}) => {
     const dot = chatDot(chat)
@@ -81,7 +88,17 @@ export function ChatDrawer({
           onClick={() => onOpen(chat)}
         >
           <span className="cp-row-text">
-            <span className="cp-row-title">{chat.title || 'Untitled chat'}</span>
+            <span className="cp-row-title">
+              {chat.inWorktree && (
+                <GitBranch
+                  size={14}
+                  className="cp-row-worktree"
+                  role="img"
+                  aria-label="In its own worktree"
+                />
+              )}
+              {chat.title || 'Untitled chat'}
+            </span>
             {options.project && chat.projectName && (
               <span className="cp-row-meta">{chat.projectName}</span>
             )}
@@ -128,7 +145,7 @@ export function ChatDrawer({
         Loading chats…
       </p>
     )
-  } else if (chats.length === 0) {
+  } else if (chats.length === 0 && projects.length === 0) {
     body = (
       <div className="cp-empty">
         <Robot className="is-small" />
@@ -153,32 +170,48 @@ export function ChatDrawer({
           section(
             'section:projects',
             'Projects',
-            groups.projects.map((project) => {
-              const key = `project:${project.name}`
+            groups.projects.map((group) => {
+              const key = `project:${group.project?.id ?? group.name}`
               const folded = collapsed.has(key)
               const FolderIcon = folded ? Folder : FolderOpen
-              const holdsCurrent = project.chats.some((chat) => chat.id === currentId)
+              const holdsCurrent = group.chats.some((chat) => chat.id === currentId)
+              const project = group.project
               return (
-                <div className="cp-project" key={project.name}>
-                  <button
-                    type="button"
-                    className={`cp-project-row${holdsCurrent ? ' contains-active' : ''}`}
-                    aria-expanded={!folded}
-                    onClick={() => onToggle(key)}
-                  >
-                    <ChevronDown
-                      size={14}
-                      className={`cp-project-chevron sidebar-section-chevron ${folded ? 'is-collapsed' : ''}`}
-                      aria-hidden="true"
-                    />
-                    <FolderIcon size={16} className="cp-project-icon" aria-hidden="true" />
-                    <span className="cp-project-name">{project.name}</span>
-                  </button>
-                  {!folded && (
-                    <ul className="cp-rows">
-                      {project.chats.map((chat) => row(chat, { nested: true }))}
-                    </ul>
-                  )}
+                <div className="cp-project" key={key}>
+                  <div className={`cp-project-head${holdsCurrent ? ' contains-active' : ''}`}>
+                    <button
+                      type="button"
+                      className="cp-project-row"
+                      aria-expanded={!folded}
+                      onClick={() => onToggle(key)}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className={`cp-project-chevron sidebar-section-chevron ${folded ? 'is-collapsed' : ''}`}
+                        aria-hidden="true"
+                      />
+                      <FolderIcon size={18} className="cp-project-icon" aria-hidden="true" />
+                      <span className="cp-project-name">{group.name}</span>
+                    </button>
+                    {project && (
+                      <button
+                        type="button"
+                        className="cp-project-new"
+                        aria-label={`New chat in ${project.name}`}
+                        onClick={() => onNewInProject(project)}
+                      >
+                        <Plus size={20} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                  {!folded &&
+                    (group.chats.length ? (
+                      <ul className="cp-rows">
+                        {group.chats.map((chat) => row(chat, { nested: true }))}
+                      </ul>
+                    ) : (
+                      <p className="cp-project-empty">No chats yet</p>
+                    ))}
                 </div>
               )
             })
@@ -198,37 +231,46 @@ export function ChatDrawer({
       <div className="cp-drawer-scrim" aria-hidden="true" onClick={onClose} />
       <nav ref={panel} className="cp-drawer" aria-label="Chats">
         <div className="cp-drawer-top">
-          <label className="sidebar-search field-shell cp-search">
-            <Search size={16} aria-hidden="true" />
-            <input
-              ref={searchInput}
-              type="text"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search chats"
-              aria-label="Search chats"
-              enterKeyHint="search"
-            />
-            {query && (
+          {searchOpen ? (
+            <label className="sidebar-search field-shell cp-search">
+              <Search size={16} aria-hidden="true" />
+              <input
+                ref={searchInput}
+                type="text"
+                value={query}
+                autoFocus
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search chats"
+                aria-label="Search chats"
+                enterKeyHint="search"
+              />
               <button
                 type="button"
                 className="cp-search-clear"
-                aria-label="Clear search"
+                aria-label="Close search"
                 onClick={() => {
                   setQuery('')
-                  searchInput.current?.focus()
+                  setSearchOpen(false)
                 }}
               >
                 <X size={15} aria-hidden="true" />
               </button>
-            )}
-          </label>
+            </label>
+          ) : (
+            <>
+              <h2 className="cp-drawer-title">SideKick</h2>
+              <button
+                type="button"
+                className="cp-float-button"
+                aria-label="Search chats"
+                onClick={() => setSearchOpen(true)}
+              >
+                <Search size={20} aria-hidden="true" />
+              </button>
+            </>
+          )}
         </div>
         <div className="cp-scroll cp-list">
-          <button type="button" className="cp-row cp-new-row" onClick={onNew}>
-            <SquarePen size={18} className="cp-new-row-icon" aria-hidden="true" />
-            <span className="cp-row-title">New chat</span>
-          </button>
           {error && (
             <p className="cp-inline-error" role="alert">
               {error}
@@ -236,17 +278,22 @@ export function ChatDrawer({
           )}
           {body}
         </div>
-        <button
-          type="button"
-          className="cp-drawer-connection"
-          aria-haspopup="dialog"
-          onClick={() => setMoreOpen(true)}
-        >
-          <span className={`cp-status-dot${online ? ' is-online' : ''}`} aria-hidden="true" />
-          <span className="cp-drawer-connection-text">
-            {online ? 'Connected to' : online === null ? 'Connecting to' : 'Reconnecting to'} {host}
-          </span>
-        </button>
+        <div className="cp-drawer-foot">
+          <button type="button" className="cp-new-chat" onClick={onNew}>
+            <SquarePen size={19} aria-hidden="true" />
+            New chat
+          </button>
+          <button
+            type="button"
+            className="cp-float-button cp-drawer-phone"
+            aria-haspopup="dialog"
+            aria-label={`This phone: ${online ? 'connected' : online === null ? 'connecting' : 'reconnecting'}`}
+            onClick={() => setMoreOpen(true)}
+          >
+            <Smartphone size={19} aria-hidden="true" />
+            <span className={`cp-status-dot${online ? ' is-online' : ''}`} aria-hidden="true" />
+          </button>
+        </div>
       </nav>
       {moreOpen && (
         <Sheet label="This phone" onClose={() => setMoreOpen(false)}>

@@ -1,5 +1,4 @@
 import { BrowserWindow, ipcMain, nativeImage, safeStorage } from 'electron'
-import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { networkInterfaces } from 'os'
 import { extname, join } from 'path'
@@ -14,8 +13,16 @@ import {
 import type { MessageImageAttachment } from '../../shared/messageImages'
 import { pinnedModelsFromProviderInstances } from '../../shared/providerInstances'
 import type { ProviderSettings } from '../../shared/settings'
+import { checkpointPermissionOperation } from '../../shared/permissions'
 import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
+import { hardResetCheckpoint, rewindToBeforeCheckpoint } from '../services/checkpoints'
+import { permissionBroker } from '../services/permissionBroker'
 import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
+import {
+  certificateServes,
+  createCompanionCertificate,
+  type CompanionCertificate
+} from '../services/companion/companionCertificate'
 import { CompanionDeviceStore } from '../services/companion/companionDeviceStore'
 import {
   isDevelopmentPagePath,
@@ -33,7 +40,13 @@ import {
   startConversationRun
 } from './agentRuns'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
-import { loadStoredSettings } from './settings'
+import { createChatWorktree, getManagedWorktrees } from './worktrees'
+import { getSessionService } from './sessions'
+import { refreshSessionStatuses } from './sessionStatus'
+import { deleteConversation } from '../services/conversationActions'
+import { loadStoredSettings, saveSettingsChanges } from './settings'
+import { broadcastSettingsChanged } from '../control/controlService'
+import type { ReasoningSettings } from '../../shared/reasoning'
 import { appState, getDb, getStore } from './state'
 
 /** A tenth of a second at 16 kHz, as a microphone sends it. */
@@ -96,6 +109,39 @@ function deviceStore(): CompanionDeviceStore {
     decrypt: (value) => safeStorage.decryptString(Buffer.from(value))
   })
   return devices
+}
+
+/**
+ * The page's certificate for this address. It is kept, so a phone that accepted it is not warned
+ * again, until the computer moves to another address or it nears its end. The key is sealed where
+ * the system can seal it.
+ */
+function certificateFor(address: string): CompanionCertificate {
+  const saved = getStore().get('companionCertificate') as
+    | { cert?: unknown; key?: unknown; sealed?: unknown }
+    | undefined
+  if (
+    typeof saved?.cert === 'string' &&
+    typeof saved.key === 'string' &&
+    certificateServes(saved.cert, address)
+  ) {
+    try {
+      const key = saved.sealed
+        ? safeStorage.decryptString(Buffer.from(saved.key, 'base64'))
+        : saved.key
+      return { cert: saved.cert, key }
+    } catch {
+      /* Made again below. */
+    }
+  }
+  const made = createCompanionCertificate(address)
+  const sealed = isSecureCredentialStorageAvailable()
+  getStore().set('companionCertificate', {
+    cert: made.cert,
+    key: sealed ? safeStorage.encryptString(made.key).toString('base64') : made.key,
+    sealed
+  })
+  return made
 }
 
 function rendererDirectory(): string {
@@ -202,20 +248,18 @@ function companionVoice(): CompanionVoice | null {
             : 'Voice is still being set up on the computer.'
       }
     },
-    transcribe: async (samples) => {
-      const sessionId = `phone-${randomUUID()}`
-      const parts: string[] = []
-      const started = await service.startDictation(sessionId, (text, final) => {
-        if (final && text.trim()) parts.push(text.trim())
-      })
-      if (!started.ok) throw new Error(started.message)
-      // In the small pieces a microphone delivers: the speech detector reads audio a short window
-      // at a time, and given seconds at once it heard only part of the recording.
-      for (let offset = 0; offset < samples.length; offset += DICTATION_PIECE)
-        service.pushDictationAudio(sessionId, samples.slice(offset, offset + DICTATION_PIECE))
-      await service.stopDictation(sessionId)
-      return parts.join(' ')
+    startDictation: async (dictationId, onText) => {
+      const started = await service.startDictation(dictationId, onText)
+      return started.ok ? { ok: true } : { ok: false, message: started.message }
     },
+    // In the small pieces a microphone delivers: the speech detector reads audio a short window at
+    // a time, and given seconds at once it heard only part of it.
+    pushDictation: (dictationId, samples) => {
+      for (let offset = 0; offset < samples.length; offset += DICTATION_PIECE)
+        service.pushDictationAudio(dictationId, samples.slice(offset, offset + DICTATION_PIECE))
+    },
+    stopDictation: (dictationId) => service.stopDictation(dictationId),
+    cancelDictation: (dictationId) => service.cancelDictation(dictationId),
     speak: async (speechId, text, onAudio, onEnd) => {
       const started = await service.speak(speechId, text, onAudio)
       if (!started.ok) return { ok: false, message: started.message }
@@ -225,6 +269,31 @@ function companionVoice(): CompanionVoice | null {
     },
     stop: (speechId) => service.stopSpeech(speechId)
   }
+}
+
+/** The window, which asks the user what the phone's request needs asked on the computer. */
+function mainWindowContents(): Electron.WebContents {
+  const window = appState.mainWindowRef
+  if (!window || window.isDestroyed()) throw new Error('Open SideKick on the computer first')
+  return window.webContents
+}
+
+/** As the window's Retry and Edit put files back: through the same permission check. */
+async function restoreFiles(input: {
+  workspaceRoot: string
+  action: 'hard-reset' | 'rewind'
+  hash: string
+}): Promise<void> {
+  const operation = checkpointPermissionOperation(input.action, input.hash, 'auto')
+  const authorization = await permissionBroker.authorize(operation, mainWindowContents())
+  if (!authorization.approved || !authorization.token)
+    throw new Error(authorization.reason || 'Not allowed')
+  permissionBroker.consume(authorization.token, operation)
+  const result =
+    input.action === 'hard-reset'
+      ? await hardResetCheckpoint(input.workspaceRoot, input.hash)
+      : await rewindToBeforeCheckpoint(input.workspaceRoot, input.hash)
+  if (!result.ok) throw new Error('Files changed since that history point')
 }
 
 function queueChanged(conversationId: string): void {
@@ -266,6 +335,13 @@ function companionServer(): CompanionServer {
     steerAdmission: (runId, admissionId) => coordinator.steer({ runId, admissionId }).accepted,
     models: enabledModels,
     resolveModel,
+    reasoningSettings: () => loadStoredSettings() as unknown as ReasoningSettings,
+    setReasoningLevel: (modelId, level) => {
+      const current = (loadStoredSettings() as unknown as ReasoningSettings).reasoningLevels ?? {}
+      broadcastSettingsChanged(
+        saveSettingsChanges({ reasoningLevels: { ...current, [modelId]: level } })
+      )
+    },
     setChatModel: (conversationId, modelId) =>
       coordinator.conversationModels.set(conversationId, modelId),
     messagesChanged: (conversationId) => {
@@ -276,6 +352,21 @@ function companionServer(): CompanionServer {
     shrinkImage,
     readArtifact: readBrowserArtifact,
     voice: companionVoice,
+    canUseWorktree: async (projectId) =>
+      (await getManagedWorktrees().branchOptions(projectId)).isGitRepository,
+    createWorktree: async (conversationId) => {
+      await createChatWorktree(mainWindowContents(), { conversationId })
+    },
+    restoreFiles,
+    chatChanged: (conversationId, removed) => {
+      publishDesktopEvent('conversations:listChanged', { conversationId, removed })
+      server?.broadcast({ type: 'chats.changed' })
+    },
+    archiveChat: (conversationId) => getSessionService().archive(conversationId),
+    deleteChat: async (conversationId) => {
+      await deleteConversation(getDb(), getManagedWorktrees(), conversationId)
+      refreshSessionStatuses([conversationId])
+    },
     sendToDevice: (deviceId, event) => server?.sendTo(deviceId, event)
   })
   companionApi = api
@@ -343,7 +434,7 @@ async function setEnabled(enabled: boolean): Promise<CompanionStatus> {
   const target = companionServer()
   try {
     const preferred = Number(getStore().get('companionPort', DEFAULT_PORT)) || DEFAULT_PORT
-    const listening = await target.start(address, preferred)
+    const listening = await target.start(address, preferred, certificateFor(address))
     getStore().set('companionPort', listening.port)
     target.newPairing()
   } catch (error) {

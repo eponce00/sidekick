@@ -1,18 +1,21 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { ArrowUpRight, Loader2, Menu, SquarePen } from 'lucide-react'
-import type { CompanionChat } from '../../../shared/companion'
+import { ArrowUpRight, EllipsisVertical, Loader2, Menu, SquarePen } from 'lucide-react'
+import type { CompanionChat, CompanionProject } from '../../../shared/companion'
+import { ChatMenu } from './ChatMenu'
 import type { CompanionConnection } from './chatState'
+import { FindBar } from './FindBar'
 import type { HomeSuggestion } from './homeSuggestions'
 import { PhoneChatSurface } from './PhoneChatSurface'
 import { PhoneComposer } from './PhoneComposer'
 import { Robot } from './Robot'
+import { StartInBar, type StartIn } from './StartInBar'
 import { Transcript } from './Transcript'
 import { useCompanionChat, type Subscribe } from './useCompanionChat'
 
 /**
- * One chat, or with no chat the new-chat home, under a top bar laid out as the ChatGPT and Claude
- * apps have theirs: the drawer's menu on the left, the chat's name in the middle, a new chat on the
- * right.
+ * One chat, or with no chat the new-chat home. As in the ChatGPT app, its buttons float over the
+ * chat, which scrolls under them: the drawer's on the left, and on the right a new chat and the
+ * chat's menu, which names it and holds what can be done to it.
  */
 export function ChatView({
   connection,
@@ -21,6 +24,8 @@ export function ChatView({
   subscribe,
   reconnects,
   suggestions,
+  projects,
+  startIn,
   onMenu,
   onNew,
   onOpenChat,
@@ -35,6 +40,9 @@ export function ChatView({
   reconnects: number
   /** What the new-chat home offers. */
   suggestions: readonly HomeSuggestion[]
+  projects: readonly CompanionProject[]
+  /** For the new-chat home: the project it starts in. */
+  startIn: string | null
   onMenu: () => void
   onNew: () => void
   onOpenChat: (chat: CompanionChat) => void
@@ -50,6 +58,17 @@ export function ChatView({
     onFailure
   })
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null)
+  const [where, setWhere] = useState<StartIn>({ projectId: startIn, workIn: 'folder' })
+  // The sent message being edited in the message box.
+  const [editing, setEditing] = useState<{
+    messageId: string
+    text: string
+    nonce: number
+    source: HTMLElement | null
+  } | null>(null)
+  // The ⋮ button while its menu is open.
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null)
+  const [finding, setFinding] = useState(false)
   const scroller = useRef<HTMLDivElement>(null)
   // Follows new output while the reader is at the bottom, and leaves them alone once they scroll up.
   const following = useRef(true)
@@ -60,28 +79,55 @@ export function ChatView({
 
   const home = !chat.conversationId
   const empty = !chat.loading && !chat.messages.length
-  const title = home ? 'SideKick' : chat.chat?.title || fallbackTitle || 'New chat'
-  const project = home ? null : chat.chat?.projectName
+  const shownChat = chat.chat ? { ...chat.chat, title: chat.chat.title || fallbackTitle } : null
   return (
     <div className="cp-screen">
-      <header className="cp-header is-chat">
-        <button type="button" className="cp-icon-button" aria-label="Chats" onClick={onMenu}>
-          <Menu size={20} aria-hidden="true" />
-        </button>
-        <div className="cp-header-text">
-          <h1>{title}</h1>
-          {project && <p>{project}</p>}
-        </div>
-        <button
-          type="button"
-          className="cp-icon-button"
-          aria-label="New chat"
-          disabled={home && empty}
-          onClick={onNew}
-        >
-          <SquarePen size={19} aria-hidden="true" />
-        </button>
-      </header>
+      {finding ? (
+        <header className="cp-topbar is-finding">
+          <FindBar containerRef={scroller} onClose={() => setFinding(false)} />
+        </header>
+      ) : (
+        <header className="cp-topbar">
+          <button type="button" className="cp-float-button" aria-label="Chats" onClick={onMenu}>
+            <Menu size={20} aria-hidden="true" />
+          </button>
+          <div className="cp-float-group">
+            <button
+              type="button"
+              className="cp-float-group-button"
+              aria-label="New chat"
+              disabled={home && empty}
+              onClick={onNew}
+            >
+              <SquarePen size={19} aria-hidden="true" />
+            </button>
+            {shownChat && (
+              <button
+                type="button"
+                className="cp-float-group-button"
+                aria-label="Chat options"
+                aria-haspopup="menu"
+                aria-expanded={menuAnchor !== null}
+                onClick={(event) => setMenuAnchor(event.currentTarget)}
+              >
+                <EllipsisVertical size={19} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </header>
+      )}
+      {menuAnchor && shownChat && (
+        <ChatMenu
+          chat={shownChat}
+          projects={projects}
+          connection={connection}
+          anchor={menuAnchor}
+          onFind={() => setFinding(true)}
+          onChanged={() => void chat.reload()}
+          onGone={onNew}
+          onClose={() => setMenuAnchor(null)}
+        />
+      )}
       <PhoneChatSurface>
         <main
           ref={scroller}
@@ -124,7 +170,23 @@ export function ChatView({
             <Transcript
               messages={chat.messages}
               runActive={chat.runActive}
+              editingMessageId={editing?.messageId ?? null}
               onResolve={chat.resolve}
+              onEdit={(message) =>
+                setEditing({
+                  messageId: message.id,
+                  text: message.content,
+                  nonce: Date.now(),
+                  source:
+                    scroller.current?.querySelector<HTMLElement>(
+                      `.message[data-message-id="${CSS.escape(message.id)}"] .message-bubble`
+                    ) ?? null
+                })
+              }
+              onRetry={(message) => {
+                following.current = true
+                void chat.retry(message.id)
+              }}
             />
           )}
         </main>
@@ -135,6 +197,7 @@ export function ChatView({
             {chat.error}
           </p>
         )}
+        {home && empty && <StartInBar projects={projects} value={where} onChange={setWhere} />}
         <PhoneComposer
           connection={connection}
           runActive={chat.runActive}
@@ -143,12 +206,27 @@ export function ChatView({
           queue={chat.queue}
           models={chat.models}
           prefill={prefill}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+          onSubmitEdit={async (text) => {
+            const target = editing
+            if (!target) return false
+            following.current = true
+            const sent = await chat.retry(target.messageId, text)
+            if (sent) setEditing(null)
+            return sent
+          }}
           onSend={(message) => {
             following.current = true
-            return chat.send(message)
+            return chat.send(
+              home && where.projectId
+                ? { ...message, projectId: where.projectId, workIn: where.workIn }
+                : message
+            )
           }}
           onStop={() => void chat.stop()}
           onUpdateQueue={(queued) => void chat.updateQueue(queued)}
+          onEffortChange={(modelId, level) => void chat.setEffort(modelId, level)}
           onSteerQueued={(id) => void chat.steerQueued(id)}
         />
       </footer>

@@ -12,7 +12,6 @@ import {
   MessageSquareText,
   Microscope,
   Paperclip,
-  Pencil,
   Plus,
   Square,
   StickyNote,
@@ -23,7 +22,6 @@ import type { PinnedModel } from '../types/models.types'
 import type { AgentRunPhase } from '../../../shared/agentRuntime'
 import { ChatComposer } from './ChatComposer'
 import { ChatModelPicker } from './ChatModelPicker'
-import { ReasoningMenu } from './ReasoningMenu'
 import {
   nextReasoningLevel,
   REASONING_LEVEL_LABELS,
@@ -35,6 +33,7 @@ import { promptRefinementModelForPinnedModel } from '../services/providers/promp
 import type { ConversationGoal } from '../../../shared/conversationGoals'
 import type { PromptRefinementHistorySelection } from '../utils/promptRefinementHistory'
 import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
+import { ComposerEditingBar } from './ComposerEditingBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import { PullRequestBar } from './PullRequestBar'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
@@ -50,7 +49,7 @@ import {
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
-import { useVoiceLoop } from '../services/voice/voiceLoop'
+import { useDictating } from '../services/voice/dictationControl'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
   caretAllowsPromptHistoryStep,
@@ -154,6 +153,10 @@ interface ChatInputProps {
   /** A message from the chat is being edited here; sending replaces it and what follows. */
   editingMessageId: string | null
   onCancelEdit?: () => void
+  /** A queued message is being edited here; sending saves it back in the queue. */
+  editingQueuedId?: string | null
+  onEditQueuedMessage: (message: PendingRunMessageItem, source: HTMLElement | null) => void
+  onCancelQueuedEdit?: () => void
   researchSelected: boolean
   researchActive: boolean
   researchPhase: AgentRunPhase | 'idle'
@@ -216,7 +219,6 @@ interface ChatInputProps {
   onOpenWorkspaceMemory: () => void
   workspaceMemoryAvailable: boolean
   workspaceMemoryUnavailableReason?: string
-  onUpdatePendingMessage: (id: string, content: string) => boolean
   onRemovePendingMessage: (id: string) => void
   onMoveQueuedMessage: (id: string, toIndex: number) => void
   onSteerQueuedMessage: (id: string) => void
@@ -242,6 +244,9 @@ export function ChatInput({
   isStopping,
   editingMessageId,
   onCancelEdit,
+  editingQueuedId = null,
+  onEditQueuedMessage,
+  onCancelQueuedEdit,
   researchSelected,
   researchActive,
   researchPhase,
@@ -299,7 +304,6 @@ export function ChatInput({
   onOpenWorkspaceMemory,
   workspaceMemoryAvailable,
   workspaceMemoryUnavailableReason,
-  onUpdatePendingMessage,
   onRemovePendingMessage,
   onMoveQueuedMessage,
   onSteerQueuedMessage,
@@ -313,8 +317,8 @@ export function ChatInput({
   onAddFileMention
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
-  // With voice on, the empty box says what the conversation is doing.
-  const voiceLoop = useVoiceLoop()
+  // While dictating, the empty box says it is listening.
+  const dictating = useDictating()
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
@@ -624,6 +628,11 @@ export function ChatInput({
       onInputChange('')
       return
     }
+    if (editingQueuedId && event.key === 'Escape') {
+      event.preventDefault()
+      onCancelQueuedEdit?.()
+      return
+    }
     if (editingMessageId && event.key === 'Escape') {
       event.preventDefault()
       onCancelEdit?.()
@@ -651,25 +660,21 @@ export function ChatInput({
       value={inputValue}
       inputRef={inputRef}
       placeholder={
-        voiceLoop === 'listening'
-          ? 'Listening… press Enter to send'
-          : voiceLoop === 'waiting'
-            ? 'Waiting for the reply…'
-            : voiceLoop === 'speaking'
-              ? 'Reading the reply aloud · Esc to skip'
-              : goalArmed
-                ? 'Describe the outcome and how SideKick should prove it works…'
-                : goal?.status === 'active'
-                  ? 'Steer the goal or add a constraint…'
-                  : planActive
-                    ? 'Add guidance while the plan is running…'
-                    : planSelected
-                      ? 'What should SideKick plan?'
-                      : researchActive
-                        ? 'Add a follow-up or steer the research…'
-                        : researchSelected
-                          ? 'What should SideKick research?'
-                          : 'Type a message...'
+        dictating
+          ? 'Listening…'
+          : goalArmed
+            ? 'Describe the outcome and how SideKick should prove it works…'
+            : goal?.status === 'active'
+              ? 'Steer the goal or add a constraint…'
+              : planActive
+                ? 'Add guidance while the plan is running…'
+                : planSelected
+                  ? 'What should SideKick plan?'
+                  : researchActive
+                    ? 'Add a follow-up or steer the research…'
+                    : researchSelected
+                      ? 'What should SideKick research?'
+                      : 'Type a message...'
       }
       contextBar={
         <>
@@ -683,15 +688,12 @@ export function ChatInput({
               </button>
             </div>
           )}
-          {editingMessageId && (
-            <div className="composer-editing-bar" role="status">
-              <Pencil size={13} aria-hidden="true" />
-              <strong>Editing your message</strong>
-              <span>Sending replaces it and everything after it.</span>
-              <button type="button" onClick={onCancelEdit} title="Cancel the edit (Esc)">
-                Cancel
-              </button>
-            </div>
+          {editingQueuedId ? (
+            <ComposerEditingBar queued onCancel={() => onCancelQueuedEdit?.()} />
+          ) : (
+            editingMessageId && (
+              <ComposerEditingBar queued={false} onCancel={() => onCancelEdit?.()} />
+            )
           )}
           {goal ? (
             <ConversationGoalBar
@@ -791,10 +793,11 @@ export function ChatInput({
           <QueuedMessageTray
             queuedMessages={queuedMessages}
             pivotMessage={pivotMessage}
-            onUpdate={onUpdatePendingMessage}
             onRemove={onRemovePendingMessage}
             onMove={onMoveQueuedMessage}
             onSteer={onSteerQueuedMessage}
+            onEdit={onEditQueuedMessage}
+            editingId={editingQueuedId}
           />
         ) : undefined
       }
@@ -1152,14 +1155,6 @@ export function ChatInput({
       }
       toolbarRight={
         <>
-          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
-          {reasoningOptions && reasoningLevel && (
-            <ReasoningMenu
-              options={reasoningOptions}
-              level={reasoningLevel}
-              onChange={onReasoningLevelChange}
-            />
-          )}
           <ChatModelPicker
             selectedModelId={selectedModel}
             models={pinnedModels}
@@ -1168,7 +1163,18 @@ export function ChatInput({
             onToggle={onToggleModelMenu}
             onModelChange={onModelChange}
             onManageModels={onOpenModelSearch}
+            reasoning={
+              reasoningOptions && reasoningLevel
+                ? {
+                    options: reasoningOptions,
+                    level: reasoningLevel,
+                    onChange: onReasoningLevelChange
+                  }
+                : null
+            }
           />
+          {/* Next to Send, where it is reached for most. */}
+          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           {isLoading && (
             <button
               className={`stop-button ${isStopping ? 'is-stopping' : ''}`}

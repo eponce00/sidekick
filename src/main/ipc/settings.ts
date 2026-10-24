@@ -21,6 +21,7 @@ import {
 import { showTrustedDialog } from '../services/trustedDialog'
 import { RETIRED_SETTING_KEYS } from '../../shared/settingsSchema'
 import { ACCENT_PALETTE_VERSION, migrateAccentPalette } from '../../shared/accentPalettes'
+import { legacyTextScale } from '../../shared/textScale'
 import {
   resolveStoredToolCallLimit,
   TOOL_CALL_LIMIT_POLICY_VERSION
@@ -218,9 +219,7 @@ export function loadStoredSettings(): SettingsRecord {
  * Changes stored settings in one synchronous read-modify-write. Each writer starts from what is
  * stored at that moment, so none can write back another writer's fields from an older copy.
  */
-function updateStoredSettings(
-  change: (current: SettingsRecord) => SettingsRecord
-): SettingsRecord {
+function updateStoredSettings(change: (current: SettingsRecord) => SettingsRecord): SettingsRecord {
   const store = getStore()
   const stored = store.get('settings', {})
   const next = asSettingsRecord(change(asSettingsRecord(revealSettings(stored))))
@@ -240,6 +239,14 @@ function applySettingsChanges(current: SettingsRecord, changes: SettingsRecord):
       ? randomUUID()
       : current.officeHelperConfigurationId
   return next
+}
+
+/**
+ * Saves settings a main-process caller changes, such as the phone choosing how hard a model
+ * thinks, the way a save from the window applies them.
+ */
+export function saveSettingsChanges(changes: SettingsRecord): SettingsRecord {
+  return updateStoredSettings((current) => applySettingsChanges(current, changes))
 }
 
 export function publicSettings(value: unknown): unknown {
@@ -437,8 +444,29 @@ export function notifySettingsSaved(settings: SettingsRecord): void {
   for (const listener of settingsSavedListeners) listener(settings)
 }
 
+const LEGACY_ZOOM_KEY = 'desktopZoomFactorV1'
+
+/**
+ * Earlier versions sized the window and the conversation text separately. Folds both into the one
+ * text size, keeping what the user saw, and drops the old values.
+ */
+export function migrateTextScale(): void {
+  const store = getStore()
+  const zoom = store.get(LEGACY_ZOOM_KEY)
+  const stored = asSettingsRecord(store.get('settings', {}))
+  if (typeof zoom !== 'number' && !Object.hasOwn(stored, 'contentFontSize')) return
+  updateStoredSettings((current) => {
+    const next = { ...current }
+    if (next.textScale === undefined) next.textScale = legacyTextScale(zoom, next.contentFontSize)
+    delete next.contentFontSize
+    return next
+  })
+  store.delete(LEGACY_ZOOM_KEY)
+}
+
 export function registerSettingsHandlers(): void {
   const store = getStore()
+  migrateTextScale()
   ipcMain.handle('settings:selectOfficeInterpreter', async (event) => {
     const parent = BrowserWindow.fromWebContents(event.sender)
     const options = {

@@ -41,7 +41,8 @@ body {
 }
 
 /* Read at arm's length: the phone's text is a step larger than the desktop's. */
-.cp-header,
+.cp-topbar,
+.cp-popover,
 .cp-drawer,
 .cp-center,
 .cp-connection,
@@ -59,54 +60,177 @@ body {
 }
 
 .cp-screen {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
   min-height: 0;
 }
 
-/* — Top bar: the drawer's menu, the chat's name, a new chat — */
+/* — Top bar: buttons that float over the chat, as the ChatGPT app's do — */
 
-.cp-header {
-  display: grid;
+.cp-topbar {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: calc(env(safe-area-inset-top) + var(--space-2))
+    calc(env(safe-area-inset-right) + var(--space-3)) var(--space-4)
+    calc(env(safe-area-inset-left) + var(--space-3));
+  /* The chat fades out under the buttons rather than running into them. */
+  background: linear-gradient(
+    180deg,
+    var(--app-bg) 0%,
+    color-mix(in srgb, var(--app-bg) 82%, transparent) 55%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.cp-topbar > * {
+  pointer-events: auto;
+}
+
+/* A round button with a raised surface, readable over whatever scrolls under it. */
+.cp-float-button,
+.cp-float-group {
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.12);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.cp-float-button {
+  position: relative;
+  display: inline-grid;
   flex: none;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  padding: 0;
+  border-radius: var(--radius-full);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.cp-float-group {
+  display: inline-flex;
+  align-items: center;
+  height: 46px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full);
+}
+
+.cp-float-group-button {
+  display: inline-grid;
+  width: 42px;
+  height: 40px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.cp-float-group-button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.cp-float-button:active,
+.cp-float-group-button:active:not(:disabled) {
+  background: var(--surface-3);
+}
+
+/* Find in chat takes the bar's place. */
+.cp-topbar.is-finding {
+  justify-content: stretch;
+}
+
+.cp-find {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  height: 48px;
+  padding: 0 var(--space-1) 0 var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-2);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.12);
+}
+
+.cp-find-field {
+  display: flex;
+  flex: 1;
   align-items: center;
   gap: var(--space-2);
-  min-height: calc(env(safe-area-inset-top) + 52px);
-  padding: env(safe-area-inset-top) calc(env(safe-area-inset-right) + var(--space-2)) 0
-    calc(env(safe-area-inset-left) + var(--space-2));
-  background: var(--app-bg);
-}
-
-.cp-header-text {
   min-width: 0;
-  text-align: center;
-}
-
-.cp-header-text h1 {
-  overflow: hidden;
-  font-size: var(--text-base);
-  font-weight: 600;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cp-header-text p {
-  overflow: hidden;
   color: var(--text-muted);
-  font-size: var(--text-xs);
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.cp-find-field input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+
+/* The pill around it shows where typing goes. */
+.cp-find-field input:focus,
+.cp-find-field input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.cp-find:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-subtle));
+}
+
+.cp-find-field input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.cp-find-count {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.cp-find .cp-icon-button {
+  width: 38px;
+  height: 38px;
+}
+
+::highlight(cp-find) {
+  background-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: inherit;
+}
+
+::highlight(cp-find-current) {
+  background-color: color-mix(in srgb, var(--warning) 75%, transparent);
+  color: var(--text-primary);
 }
 
 /* A quiet chip under the top bar while the computer is out of reach. */
 .cp-connection {
   position: absolute;
   z-index: 10;
-  top: calc(env(safe-area-inset-top) + 58px);
+  top: calc(env(safe-area-inset-top) + 64px);
   left: 50%;
   display: inline-flex;
   align-items: center;
@@ -193,20 +317,19 @@ body {
 }
 
 .cp-icon-button:focus-visible,
+.cp-float-button:focus-visible,
+.cp-float-group-button:focus-visible,
+.cp-new-chat:focus-visible,
+.cp-popover-item:focus-visible,
+.cp-popover-back:focus-visible,
 .cp-row:focus-visible,
 .cp-project-row:focus-visible,
+.cp-project-new:focus-visible,
+.cp-start-chip:focus-visible,
 .cp-section-label:focus-visible,
 .cp-search-clear:focus-visible,
 .cp-suggestion:focus-visible,
-.cp-drawer-connection:focus-visible,
 .cp-composer-button:focus-visible,
-.cp-model-chip:focus-visible,
-.cp-sheet-tile:focus-visible,
-.cp-sheet-action:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 /* — Robot — */
 
 .cp-robot {
@@ -452,8 +575,27 @@ body {
 }
 
 .cp-drawer-top {
+  display: flex;
   flex: none;
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: 64px;
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5);
+}
+
+.cp-drawer-title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-drawer-top .cp-search {
+  flex: 1;
 }
 
 .cp-drawer .sidebar-search.cp-search {
@@ -482,45 +624,60 @@ body {
   cursor: pointer;
 }
 
+/* Room under the last chat for the floating buttons. */
 .cp-drawer .cp-list {
-  padding: 0 var(--space-2) var(--space-5);
+  padding: 0 var(--space-2) 104px;
 }
 
-.cp-new-row {
-  margin-bottom: var(--space-3);
-}
-
-.cp-new-row-icon {
-  flex: none;
-  color: var(--text-secondary);
-}
-
-.cp-drawer-connection {
+/* A new chat and the connection float at the foot, as ChatGPT's new chat and account do. */
+.cp-drawer-foot {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
-  flex: none;
   align-items: center;
-  gap: var(--space-3);
-  min-height: 52px;
-  padding: 0 var(--space-5);
+  justify-content: space-between;
+  padding: var(--space-6) var(--space-4) calc(env(safe-area-inset-bottom) + var(--space-4))
+    calc(env(safe-area-inset-left) + var(--space-4));
+  background: linear-gradient(0deg, var(--surface-0) 55%, transparent);
+  pointer-events: none;
+}
+
+.cp-drawer-foot > * {
+  pointer-events: auto;
+}
+
+.cp-new-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 50px;
+  padding: 0 var(--space-6) 0 var(--space-5);
   border: none;
-  border-top: 1px solid var(--border-subtle);
-  background: transparent;
-  color: var(--text-muted);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
   font: inherit;
-  font-size: var(--text-sm);
-  text-align: left;
+  font-size: 17px;
+  font-weight: 600;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 30%, transparent);
   cursor: pointer;
 }
 
-.cp-drawer-connection:active {
-  background: var(--surface-2);
+.cp-new-chat:active {
+  filter: brightness(0.94);
 }
 
-.cp-drawer-connection-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.cp-drawer-phone {
+  color: var(--text-secondary);
+}
+
+.cp-drawer-phone .cp-status-dot {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  box-shadow: 0 0 0 2px var(--surface-2);
 }
 
 .cp-status-dot {
@@ -646,12 +803,55 @@ body {
   color: var(--text-muted);
 }
 
-.cp-project-row.contains-active {
+.cp-project-head.contains-active .cp-project-row {
   color: var(--text-primary);
 }
 
-.cp-project-row.contains-active .cp-project-icon {
+.cp-project-head.contains-active .cp-project-icon {
   color: var(--accent);
+}
+
+/* A project's name, and a new chat in it at the end of the row. */
+.cp-project-head {
+  display: flex;
+  align-items: center;
+}
+
+.cp-project-head .cp-project-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-project-new {
+  display: inline-grid;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cp-project-new:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.cp-project-empty {
+  margin: 0 0 var(--space-1) 36px;
+  padding: var(--space-2) 10px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.cp-row-worktree {
+  margin-right: 6px;
+  color: var(--text-muted);
+  vertical-align: -2px;
 }
 
 .cp-project-name {
@@ -662,6 +862,56 @@ body {
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Where a new chat starts, above its message box: a project, and its folder or a worktree. */
+.cp-start-in {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-2);
+}
+
+.cp-start-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.cp-start-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-start-chip svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cp-start-chip.is-on {
+  border-color: transparent;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.cp-start-chip.is-on svg {
+  color: inherit;
+}
+
+.cp-start-chip:active {
+  background: var(--surface-3);
 }
 
 /* The desktop's marks, a little larger beside a larger title. */
@@ -709,17 +959,20 @@ body {
 
 .cp-app .messages-container.cp-messages {
   gap: var(--space-5);
-  padding: var(--space-3) calc(env(safe-area-inset-right) + var(--space-5)) var(--space-6)
-    calc(env(safe-area-inset-left) + var(--space-5));
+  padding: calc(env(safe-area-inset-top) + 72px) calc(env(safe-area-inset-right) + var(--space-5))
+    var(--space-6) calc(env(safe-area-inset-left) + var(--space-5));
   overscroll-behavior: contain;
 }
 
-/* The transcript's wrapper only listens for a held message; it takes no room. */
-.cp-transcript {
+/* The transcript's wrapper only listens for a tapped message; it and each message's slot take no
+   room. */
+.cp-transcript,
+.cp-message-slot {
   display: contents;
 }
 
-/* What the user sent: a bubble on the right, with no row of buttons under it. */
+/* What the user sent: a bubble on the right. A tap opens its actions in a sheet, so nothing in the
+   chat moves. */
 .cp-messages .message-user {
   align-self: flex-end;
   max-width: 85%;
@@ -728,8 +981,13 @@ body {
 .cp-messages .message-user .message-bubble {
   padding: 10px var(--space-4);
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
-  -webkit-touch-callout: none;
-  user-select: none;
+  cursor: pointer;
+  transition: background var(--duration-fast);
+}
+
+/* The message a sheet is open for. */
+.cp-message-slot.is-selected .message-user .message-bubble {
+  background: color-mix(in srgb, var(--message-user-bg), var(--text-primary) 10%);
 }
 
 .cp-messages .message-user .message-meta {
@@ -763,16 +1021,19 @@ body {
   display: none;
 }
 
-.cp-messages .message-action {
-  width: 38px;
-  height: 38px;
+/* Sized for a finger: 44 px, as Apple and Google ask of touch targets. */
+.cp-messages .message-action,
+.cp-messages .message-footer-popover > summary {
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-full);
   color: var(--text-muted);
 }
 
-.cp-messages .message-action svg {
-  width: 16px;
-  height: 16px;
+.cp-messages .message-action svg,
+.cp-messages .message-footer-popover > summary svg {
+  width: 20px;
+  height: 20px;
   stroke-width: 1.75;
 }
 
@@ -788,13 +1049,6 @@ body {
 /* Sent from this phone and not yet shown back by the computer. */
 .cp-messages .message[data-message-id^='pending:'] .message-bubble {
   opacity: 0.6;
-}
-
-/* Wide content scrolls inside its own box; the page never scrolls sideways. */
-.cp-messages .message-content table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
 }
 
 .cp-messages .katex-display {
@@ -876,18 +1130,58 @@ body > .image-lightbox {
   padding: var(--space-1) var(--space-3) var(--space-3);
 }
 
+/* One pill, as the ChatGPT app's: + on the left, the text, then the mic and Send or Stop. What
+   sits above the text (an edit, a mode, attachments) takes the full width over that row. */
 .cp-input-area .input-container {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'context context context'
+    'attachments attachments attachments'
+    'left input right';
+  align-items: end;
   min-height: 0;
-  gap: var(--space-1);
-  padding: var(--space-3) var(--space-2) var(--space-2);
+  gap: 0;
+  padding: var(--space-1);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-xl);
+  border-radius: 26px;
   background: var(--input-bg);
   box-shadow: none;
 }
 
+.cp-input-area .composer-context-bar {
+  grid-area: context;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
+.cp-input-area .composer-context-bar .composer-editing-bar {
+  padding-bottom: var(--space-2);
+}
+
+.cp-input-area .composer-context-bar .cp-mode-chip {
+  margin: 0 0 var(--space-1);
+}
+
 .cp-input-area .composer-attachments {
-  padding: var(--space-1) var(--space-2) var(--space-2);
+  grid-area: attachments;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+
+.cp-input-area .composer-input-row {
+  grid-area: input;
+  align-self: center;
+}
+
+.cp-input-area .input-toolbar {
+  display: contents;
+}
+
+.cp-input-area .input-toolbar-left {
+  grid-area: left;
+}
+
+.cp-input-area .input-toolbar-right {
+  grid-area: right;
 }
 
 .cp-input-area .composer-attachment {
@@ -898,27 +1192,28 @@ body > .image-lightbox {
 
 /* At 16 px a phone does not zoom in when the box is tapped. */
 .cp-input-area .message-input {
-  min-height: 28px;
-  padding: var(--space-1) var(--space-3) 0;
+  min-height: 44px;
+  padding: 11px var(--space-2);
   font-size: 16px;
-  line-height: 1.4;
-}
-
-.cp-input-area .input-toolbar {
-  gap: var(--space-1);
+  line-height: 22px;
 }
 
 .cp-input-area .input-toolbar-left,
 .cp-input-area .input-toolbar-right {
-  gap: var(--space-1);
+  gap: 2px;
+}
+
+/* Nothing typed: the empty prompt-sharpening status takes no room in the row. */
+.cp-input-area .prompt-sharpen-feedback:empty {
+  display: none;
 }
 
 .cp-composer-button,
 .cp-input-area .dictation-button {
   display: inline-grid;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   place-items: center;
   padding: 0;
   border: none;
@@ -934,12 +1229,32 @@ body > .image-lightbox {
   color: var(--text-primary);
 }
 
+/* The desktop's voice states, over the phone's larger button; the halo stays inside the card. */
+.cp-input-area .dictation-button.is-listening {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+  color: var(--error);
+}
+
+.cp-input-area .dictation-button.is-listening::after {
+  box-shadow: 0 0 0 calc(1px + var(--dictation-level) * 3px)
+    color-mix(in srgb, var(--error) 22%, transparent);
+}
+
+.cp-input-area .dictation-button.is-waiting {
+  color: var(--error);
+}
+
+.cp-input-area .dictation-button.is-speaking {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 /* The one filled button: Send in the accent, Stop in the text colour. */
 .cp-input-area .send-button,
 .cp-input-area .stop-button {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
   margin-left: var(--space-1);
 }
 
@@ -969,8 +1284,8 @@ body > .image-lightbox {
 
 .cp-mode-chip button {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   padding: 0;
   border: none;
@@ -980,54 +1295,27 @@ body > .image-lightbox {
   cursor: pointer;
 }
 
-.cp-model-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  max-width: 100%;
-  height: 36px;
-  padding: 0 var(--space-2) 0 var(--space-3);
-  border: none;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--text-sm);
-  cursor: pointer;
-}
-
 /* The model's name gives way first when the row is narrow. */
-.cp-input-area .input-toolbar-right > .cp-model-chip {
-  flex-shrink: 1;
-}
-
-.cp-model-chip span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cp-model-chip svg {
-  flex: none;
-  color: var(--text-muted);
-}
-
-.cp-model-chip:active {
-  background: var(--surface-3);
+.cp-input-area .input-toolbar-right > /* A finger-sized target for cancelling an edit. */
+.cp-input-area .composer-editing-bar .composer-editing-cancel {
+  width: 30px;
+  height: 30px;
 }
 
 .cp-input-area .queued-message-tray {
-  margin-inline: var(--space-2);
+  margin-inline: var(--space-3);
 }
 
-/* Dragging does not reorder by touch, so the grip gives way to the text, which wraps, with the
-   controls on their own row. */
+/* Dragging does not reorder by touch, so there is no grip: the text, which a tap opens the
+   message's actions from, and Steer, as on the desktop's row. */
 .cp-input-area .queued-message-card {
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: var(--space-1);
-  padding: var(--space-3) var(--space-3) var(--space-1);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 2px 6px 2px 14px;
+}
+
+.cp-input-area .queued-message-card:hover {
+  background: transparent;
 }
 
 .cp-input-area .queued-message-handle {
@@ -1036,21 +1324,35 @@ body > .image-lightbox {
 
 .cp-input-area .queued-message-text {
   display: -webkit-box;
+  padding: var(--space-2) 0;
   overflow: hidden;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  font-size: var(--text-base);
+  -webkit-line-clamp: 2;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cp-input-area .queued-message-text:active {
+  color: var(--text-primary);
 }
 
 .cp-input-area .queued-message-actions {
-  justify-content: flex-end;
   opacity: 1;
 }
 
 .cp-input-area .queued-message-actions button {
-  min-width: 40px;
-  min-height: 40px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.cp-input-area .queued-message-actions button:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
 }
 
 .cp-input-area .queued-message-actions button span {
@@ -1058,7 +1360,7 @@ body > .image-lightbox {
 }
 
 .cp-input-area .queued-message-list {
-  max-height: min(260px, 36dvh);
+  max-height: min(220px, 30dvh);
 }
 
 /* Attachments on their way up. */
@@ -1117,6 +1419,247 @@ body > .image-lightbox {
 .cp-composer-area .dictation-notice {
   max-width: min(280px, calc(100vw - 32px));
   font-size: var(--text-sm);
+}
+
+/* — Menus: cards that open beside their button, as the ChatGPT app's do — */
+
+.cp-popover-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+}
+
+.cp-popover {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  width: min(300px, calc(100vw - 24px));
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 24px;
+  outline: none;
+  background: var(--surface-2);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.28);
+  overscroll-behavior: contain;
+  animation: cp-popover-in var(--duration-normal) var(--ease-out);
+}
+
+.cp-popover.is-below-end {
+  transform-origin: top right;
+}
+
+.cp-popover.is-above-start {
+  transform-origin: bottom left;
+}
+
+@keyframes cp-popover-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cp-popover {
+    animation: none;
+  }
+}
+
+.cp-popover-title {
+  overflow: hidden;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-popover-back {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cp-popover-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 52px;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cp-popover-item:active:not(:disabled),
+.cp-popover-back:active {
+  background: var(--surface-3);
+}
+
+.cp-popover-item:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.cp-popover-item-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  color: var(--text-secondary);
+}
+
+/* The message box's menu shows its icons on round tiles. */
+.cp-popover-item.is-round {
+  gap: var(--space-3);
+  padding-left: var(--space-2);
+}
+
+.cp-popover-item.is-round .cp-popover-item-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.cp-popover-item-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cp-popover-item-label {
+  overflow: hidden;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-popover-item-copy small {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.cp-popover-item-end {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cp-popover-item.is-selected,
+.cp-popover-item.is-selected .cp-popover-item-icon,
+.cp-popover-item.is-selected .cp-popover-item-end {
+  color: var(--accent);
+}
+
+.cp-popover-item.is-selected.is-round .cp-popover-item-icon {
+  background: var(--accent-subtle);
+}
+
+.cp-popover-item.is-danger,
+.cp-popover-item.is-danger .cp-popover-item-icon {
+  color: var(--error);
+}
+
+.cp-popover-note {
+  padding: var(--space-1) var(--space-4) var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.cp-popover-divider {
+  height: 1px;
+  margin: var(--space-1) var(--space-3);
+  background: var(--border-subtle);
+}
+
+/* The model's reasoning in the + menu, laid out as the desktop's effort card. */
+.cp-effort {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-3);
+}
+
+.cp-effort .effort-card-level {
+  font-size: 22px;
+}
+
+.cp-effort .effort-card-model {
+  font-size: var(--text-base);
+}
+
+.cp-effort .effort-card-reset {
+  width: 40px;
+  height: 40px;
+}
+
+.cp-effort .effort-card-head {
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+}
+
+/* Renaming a chat. */
+.cp-rename {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+
+.cp-rename-label {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.cp-rename-input {
+  height: 48px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+}
+
+.cp-rename-input:focus {
+  border-color: var(--accent);
+}
+
+.cp-rename-save {
+  height: 48px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cp-rename-save:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 /* — Sheets — */
@@ -1201,53 +1744,13 @@ body > .image-lightbox {
   font-weight: 500;
 }
 
-/* Camera, photos and files across the top of the + sheet. */
-.cp-sheet-tiles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
-}
-
-.cp-sheet-tile {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 84px;
-  padding: var(--space-3) var(--space-2);
-  border: none;
-  border-radius: var(--radius-lg);
-  background: var(--cp-sheet-raised);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: var(--text-sm);
-  font-weight: 500;
-  cursor: pointer;
-}
-
-.cp-sheet-tile > span {
-  display: grid;
-  color: var(--text-secondary);
-}
-
-.cp-sheet-tile:active:not(:disabled) {
-  background: var(--surface-4);
-}
-
-.cp-sheet-tile:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
 .cp-sheet-note {
   padding: 0 var(--space-2) var(--space-2);
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
 
-/* The sent message a held-message menu is for, so it is plain which one. */
+/* The sent message a sheet is about, so it is plain which one. */
 .cp-sheet-quote {
   display: -webkit-box;
   overflow: hidden;

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { CompanionChat, CompanionEvent } from '../../../shared/companion'
+import type { CompanionChat, CompanionEvent, CompanionProject } from '../../../shared/companion'
 import type { CompanionConnection } from './chatState'
 import { ChatDrawer } from './ChatDrawer'
 import { ChatView } from './ChatView'
@@ -175,6 +175,7 @@ function Connected({
   onRemoved: () => void
 }) {
   const [chats, setChats] = useState<CompanionChat[] | null>(null)
+  const [projects, setProjects] = useState<CompanionProject[]>([])
   const [listError, setListError] = useState('')
   // Null until the stream first opens.
   const [online, setOnline] = useState<boolean | null>(null)
@@ -224,9 +225,20 @@ function Connected({
     }
   }, [connection, onFailure])
 
+  // Projects change rarely, and listing them asks Git about each folder, so once per connection
+  // and when the drawer opens.
+  const refreshProjects = useCallback(async () => {
+    try {
+      setProjects(await connection.call('projects.list', {}))
+    } catch {
+      /* The drawer keeps the projects it has. */
+    }
+  }, [connection])
+
   useEffect(() => {
     void refreshList()
-  }, [refreshList, reconnects])
+    void refreshProjects()
+  }, [refreshList, refreshProjects, reconnects])
 
   // The desktop's components on the phone reach the computer through this connection.
   useEffect(() => {
@@ -313,9 +325,16 @@ function Connected({
     [show, view.chat.id]
   )
   const newChat = useCallback(() => {
-    if (view.chat.id === null) setDrawerOpen(false)
+    if (view.chat.id === null && !view.chat.projectId) setDrawerOpen(false)
     else show(HOME)
-  }, [show, view.chat.id])
+  }, [show, view.chat.id, view.chat.projectId])
+  const newChatIn = useCallback(
+    (project: CompanionProject) => {
+      if (view.chat.id === null && view.chat.projectId === project.id) setDrawerOpen(false)
+      else show({ ...HOME, projectId: project.id })
+    },
+    [show, view.chat.id, view.chat.projectId]
+  )
   const onCreated = useCallback(
     (id: string) => {
       // The home's entry now holds the chat it started; the chat itself stays mounted.
@@ -359,9 +378,12 @@ function Connected({
         subscribe={subscribe}
         reconnects={reconnects}
         suggestions={suggestions}
+        projects={projects}
+        startIn={view.chat.projectId ?? null}
         onMenu={() => {
           setDrawerOpen(true)
           void refreshList()
+          void refreshProjects()
         }}
         onNew={newChat}
         onOpenChat={openChat}
@@ -371,6 +393,7 @@ function Connected({
       <ChatDrawer
         open={drawerOpen}
         chats={chats}
+        projects={projects}
         error={listError}
         currentId={view.chat.id}
         collapsed={collapsed}
@@ -380,6 +403,7 @@ function Connected({
         deviceName={device.name}
         onOpen={openChat}
         onNew={newChat}
+        onNewInProject={newChatIn}
         onClose={closeDrawer}
         onForget={onForget}
       />

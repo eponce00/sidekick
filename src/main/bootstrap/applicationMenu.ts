@@ -2,7 +2,10 @@ import { Menu, type MenuItemConstructorOptions } from 'electron'
 import type { AppCommand } from '../../shared/appCommands'
 import { shortcutAccelerator } from '../../shared/keyboardShortcuts'
 
-export type ApplicationMenuActions = Record<AppCommand | 'check-for-updates', () => void>
+export type ApplicationMenuActions = Record<
+  AppCommand | 'check-for-updates' | 'text-larger' | 'text-smaller' | 'text-reset',
+  () => void
+>
 
 export function applicationMenuTemplate(
   platform: NodeJS.Platform,
@@ -43,9 +46,14 @@ export function applicationMenuTemplate(
     {
       label: 'View',
       submenu: [
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { role: 'resetZoom' },
+        // The text-size setting rather than Chromium's zoom, so the two never stack.
+        { label: 'Larger Text', accelerator: 'CommandOrControl+=', click: actions['text-larger'] },
+        {
+          label: 'Smaller Text',
+          accelerator: 'CommandOrControl+-',
+          click: actions['text-smaller']
+        },
+        { label: 'Actual Size', accelerator: 'CommandOrControl+0', click: actions['text-reset'] },
         { type: 'separator' },
         {
           role: 'togglefullscreen',

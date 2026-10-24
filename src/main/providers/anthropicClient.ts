@@ -11,6 +11,7 @@ import { previewToolCallArguments } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import { anthropicReasoning } from './reasoningCapabilities'
 import { providerConnectionFailureMessage } from '../../shared/providerErrors'
 import { applyProviderModelOverrides, boolean, positiveInteger } from './modelCatalog'
 
@@ -198,14 +199,14 @@ const THINKING_BUDGETS: Partial<Record<ReasoningLevel, number>> = {
 
 function thinkingLevel(request: ProviderChatRequest): ReasoningLevel | undefined {
   const level = requestReasoningLevel(request)
-  return level && level !== 'off' && level !== 'auto' ? level : undefined
+  return level && level !== 'off' ? level : undefined
 }
 
 function effortConfig(request: ProviderChatRequest): { effort: string } | undefined {
   const level = thinkingLevel(request)
   if (!level || level === 'on' || !ADAPTIVE_THINKING.test(request.target.model.toLowerCase()))
     return undefined
-  return { effort: nearestEffort(level, ['low', 'medium', 'high', 'max'] as const) }
+  return { effort: nearestEffort(level, ['low', 'medium', 'high', 'xhigh', 'max'] as const) }
 }
 
 function thinkingConfig(request: ProviderChatRequest): Record<string, unknown> | undefined {
@@ -570,7 +571,10 @@ interface AnthropicCatalogModel {
   capabilities?: {
     image_input?: { supported?: boolean }
     pdf_input?: { supported?: boolean }
-    thinking?: { supported?: boolean }
+    /** `types` says which of adaptive, budgeted and disabled thinking the model takes. */
+    thinking?: { supported?: boolean; types?: Record<string, { supported?: boolean }> }
+    /** One entry per effort level, each `{ supported }`. */
+    effort?: Record<string, unknown>
   } | null
 }
 
@@ -584,11 +588,13 @@ export function normalizeAnthropicModel(model: AnthropicCatalogModel): ProviderI
     supportsPdfInput: boolean(capabilities?.pdf_input?.supported),
     supportsReasoning: boolean(capabilities?.thinking?.supported)
   }
+  const reasoning = anthropicReasoning(capabilities)
   const normalized: ProviderInstanceModel = {
     id: model.id,
     name: model.display_name || model.id,
     enabled: false,
     ...reported,
+    reasoningLevels: reasoning.reasoningLevels,
     // Every model the Messages API serves takes tools.
     supportsTools: true
   }

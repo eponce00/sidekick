@@ -6,19 +6,21 @@ const {
   isEncryptionAvailable,
   getSelectedStorageBackend,
   storeGet,
-  storeSet
+  storeSet,
+  storeDelete
 } = vi.hoisted(() => ({
   decryptString: vi.fn(),
   encryptString: vi.fn(),
   isEncryptionAvailable: vi.fn(),
   getSelectedStorageBackend: vi.fn(),
   storeGet: vi.fn(),
-  storeSet: vi.fn()
+  storeSet: vi.fn(),
+  storeDelete: vi.fn()
 }))
 
 vi.mock('./state', () => ({
   appState: { mainWindowRef: null },
-  getStore: () => ({ get: storeGet, set: storeSet })
+  getStore: () => ({ get: storeGet, set: storeSet, delete: storeDelete })
 }))
 
 vi.mock('electron', () => ({
@@ -40,7 +42,8 @@ import {
   confirmSensitiveSettingsChange,
   mcpServersNeedingApproval,
   loadStoredSettings,
-  registerSettingsHandlers
+  registerSettingsHandlers,
+  migrateTextScale
 } from './settings'
 import { ACCENT_PALETTE_VERSION, DEFAULT_ACCENT_PALETTE } from '../../shared/accentPalettes'
 import { DEFAULT_TOOL_CALL_LIMIT, TOOL_CALL_LIMIT_POLICY_VERSION } from '../../shared/agentLimits'
@@ -531,6 +534,41 @@ describe('retired settings', () => {
     expect(stored).not.toHaveProperty('focusChainReminderInterval')
     expect(stored).toMatchObject({ webSearchEnabled: false })
     expect(loaded).not.toHaveProperty('agentCommandTerminal')
+  })
+})
+
+describe('text size', () => {
+  afterEach(() => {
+    storeGet.mockReset()
+    storeSet.mockReset()
+    storeDelete.mockReset()
+  })
+
+  function storeWith(values: Record<string, unknown>): Record<string, unknown> {
+    storeGet.mockImplementation((key: string, fallback: unknown) =>
+      key in values ? values[key] : fallback
+    )
+    storeSet.mockImplementation((key: string, value: unknown) => {
+      values[key] = value
+    })
+    return values
+  }
+
+  it('folds the old window zoom and conversation text size into one size', () => {
+    const values = storeWith({
+      desktopZoomFactorV1: 1,
+      settings: { contentFontSize: 13, webSearchEnabled: false }
+    })
+    migrateTextScale()
+    expect(values.settings).toMatchObject({ textScale: 110, webSearchEnabled: false })
+    expect(values.settings).not.toHaveProperty('contentFontSize')
+    expect(storeDelete).toHaveBeenCalledWith('desktopZoomFactorV1')
+  })
+
+  it('leaves stored settings alone when there is nothing to move', () => {
+    storeWith({ settings: { textScale: 120 } })
+    migrateTextScale()
+    expect(storeSet).not.toHaveBeenCalled()
   })
 })
 

@@ -17,8 +17,6 @@ export interface VoicePreferences {
   outputDeviceId: string
   voice: SpeechVoiceId
   language: SpeechLanguageCode | 'auto'
-  /** With the mic on, read each reply aloud and then listen again. */
-  readRepliesAloud: boolean
 }
 
 const KEY = 'sidekick.voice.preferences'
@@ -26,8 +24,7 @@ const DEFAULTS: VoicePreferences = {
   inputDeviceId: '',
   outputDeviceId: '',
   voice: DEFAULT_SPEECH_VOICE,
-  language: 'auto',
-  readRepliesAloud: true
+  language: 'auto'
 }
 const listeners = new Set<() => void>()
 let cached: VoicePreferences | undefined
@@ -40,8 +37,7 @@ function read(): VoicePreferences {
       outputDeviceId: typeof stored.outputDeviceId === 'string' ? stored.outputDeviceId : '',
       // A voice of the model SideKick read with before (a number) starts from the default.
       voice: isSpeechVoice(stored.voice) ? stored.voice : DEFAULTS.voice,
-      language: isSpeechLanguage(stored.language) ? stored.language : 'auto',
-      readRepliesAloud: stored.readRepliesAloud !== false
+      language: isSpeechLanguage(stored.language) ? stored.language : 'auto'
     }
   } catch {
     return DEFAULTS

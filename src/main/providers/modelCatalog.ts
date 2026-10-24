@@ -1,4 +1,5 @@
 import type { ProviderInstanceModel } from '../../shared/settings'
+import { lmStudioReasoning, openRouterReasoning } from './reasoningCapabilities'
 
 type FetchImplementation = typeof fetch
 
@@ -86,6 +87,8 @@ export interface OpenRouterCatalogModel {
   }
   top_provider?: { context_length?: number | null; max_completion_tokens?: number | null }
   pricing?: { prompt?: string | number; completion?: string | number }
+  /** Which efforts the model takes, whether it can stop reasoning, and its defaults. */
+  reasoning?: unknown
 }
 
 function stringList(value: unknown): string[] | undefined {
@@ -107,6 +110,7 @@ export function normalizeOpenRouterModel(model: OpenRouterCatalogModel): Provide
       : typeof modality === 'string'
         ? modality.split('->')[0].includes(kind)
         : undefined
+  const reasoning = openRouterReasoning(model.reasoning)
   const prompt = finiteNumber(model.pricing?.prompt)
   const completion = finiteNumber(model.pricing?.completion)
   const normalized: ProviderInstanceModel = {
@@ -118,9 +122,11 @@ export function normalizeOpenRouterModel(model: OpenRouterCatalogModel): Provide
     outputTokenLimit: positiveInteger(model.top_provider?.max_completion_tokens),
     // OpenRouter lists the parameters each model takes; tools and reasoning are among them.
     supportsTools: params ? params.includes('tools') : undefined,
-    supportsReasoning: params
-      ? params.includes('reasoning') || params.includes('include_reasoning')
-      : undefined,
+    supportsReasoning:
+      reasoning.supportsReasoning ??
+      (params ? params.includes('reasoning') || params.includes('include_reasoning') : undefined),
+    reasoningLevels: reasoning.reasoningLevels,
+    reasoningDefault: reasoning.reasoningDefault,
     supportsVision: accepts('image'),
     supportsPdfInput: accepts('file'),
     supportsAudioInput: accepts('audio'),
@@ -205,8 +211,8 @@ export function withLMStudioDetails(
       boolean(capabilities?.vision) ??
       (details.type === 'vlm' ? true : undefined),
     supportsTools: model.supportsTools ?? boolean(capabilities?.trained_for_tool_use),
-    supportsReasoning:
-      model.supportsReasoning ?? (capabilities?.reasoning !== undefined ? true : undefined)
+    ...lmStudioReasoning(capabilities?.reasoning),
+    ...(model.supportsReasoning !== undefined ? { supportsReasoning: model.supportsReasoning } : {})
   }
   return {
     ...enriched,

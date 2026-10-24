@@ -9,6 +9,8 @@ interface DesktopEventPayloads {
   'schedules:changed': import('../../shared/schedules').SchedulesChangedEvent
   'companion:changed': import('../../shared/companion').CompanionStatus
   'conversations:messagesChanged': { conversationId: string }
+  /** A chat was pinned, renamed, moved, archived or deleted outside the window, as from the phone. */
+  'conversations:listChanged': { conversationId: string; removed: boolean }
   'agentRuns:admissionsChanged': { conversationId: string }
 }
 

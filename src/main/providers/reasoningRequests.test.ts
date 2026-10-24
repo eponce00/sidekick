@@ -27,9 +27,9 @@ function request(
 }
 
 describe('OpenAI-compatible reasoning fields', () => {
-  it('sends nothing when the level is left to the model', () => {
+  it('sends nothing for a model with no level to choose', () => {
     for (const kind of ['openrouter', 'litellm', 'lmstudio', 'llamacpp'] as const) {
-      const body = openAIRequest(request(kind, 'm', 'auto'))
+      const body = openAIRequest(request(kind, 'm'))
       expect(body).not.toHaveProperty('reasoning')
       expect(body).not.toHaveProperty('reasoning_effort')
       expect(body).not.toHaveProperty('chat_template_kwargs')
@@ -43,6 +43,10 @@ describe('OpenAI-compatible reasoning fields', () => {
     expect(openAIRequest(request('openrouter', 'openai/o3', 'off'))).toMatchObject({
       reasoning: { effort: 'none' }
     })
+    // A model that reasons without effort levels only switches on.
+    expect(openAIRequest(request('openrouter', 'qwen/qwen3', 'on'))).toMatchObject({
+      reasoning: { enabled: true }
+    })
     expect(openAIRequest(request('litellm', 'gpt-5', 'minimal'))).toMatchObject({
       reasoning_effort: 'minimal'
     })
@@ -50,13 +54,26 @@ describe('OpenAI-compatible reasoning fields', () => {
     expect(openAIRequest(request('lmstudio', 'qwen', 'xhigh'))).toMatchObject({
       reasoning_effort: 'high'
     })
-    expect(openAIRequest(request('llamacpp', 'qwen', 'off'))).toEqual(
-      expect.objectContaining({ chat_template_kwargs: { enable_thinking: false } })
-    )
-    expect(openAIRequest(request('llamacpp', 'qwen', 'off'))).not.toHaveProperty('reasoning_effort')
-    expect(openAIRequest(request('openai-compatible', 'qwen', 'low'))).toMatchObject({
+    expect(openAIRequest(request('lmstudio', 'gemma', 'on'))).toMatchObject({
+      reasoning_effort: 'medium'
+    })
+    // llama.cpp reads `reasoning_effort` in templates that use it and `enable_thinking` in others.
+    expect(openAIRequest(request('llamacpp', 'qwen', 'off'))).toMatchObject({
+      reasoning_effort: 'none',
+      chat_template_kwargs: { enable_thinking: false }
+    })
+    expect(openAIRequest(request('llamacpp', 'gpt-oss', 'low'))).toMatchObject({
       reasoning_effort: 'low',
       chat_template_kwargs: { enable_thinking: true }
+    })
+    // vLLM's templates read one switch or the other.
+    expect(openAIRequest(request('openai-compatible', 'qwen', 'low'))).toMatchObject({
+      reasoning_effort: 'low',
+      chat_template_kwargs: { enable_thinking: true, thinking: true }
+    })
+    expect(openAIRequest(request('openai-compatible', 'granite', 'off'))).toMatchObject({
+      reasoning_effort: 'none',
+      chat_template_kwargs: { enable_thinking: false, thinking: false }
     })
   })
 
@@ -79,7 +96,7 @@ describe('OpenAI-compatible reasoning fields', () => {
 
   it('does not retry a request that carried no reasoning fields', async () => {
     const execute = vi.fn().mockResolvedValue({ ok: false, error: 'reasoning model overloaded' })
-    await executeOpenAICompatibleWithReasoningFallback(request('lmstudio', 'qwen', 'auto'), execute)
+    await executeOpenAICompatibleWithReasoningFallback(request('lmstudio', 'qwen'), execute)
     expect(execute).toHaveBeenCalledOnce()
   })
 })
@@ -144,21 +161,21 @@ describe('Anthropic reasoning', () => {
 })
 
 describe('Ollama reasoning', () => {
-  it('sends think as a switch, or as a level for gpt-oss', async () => {
-    const cases: Array<[string, ReasoningLevel | undefined, unknown]> = [
+  it('sends think as a switch, or as a level for a model that takes levels', async () => {
+    const cases: Array<[string, ReasoningLevel, unknown]> = [
       ['qwen3:8b', 'off', false],
       ['qwen3:8b', 'on', true],
-      ['qwen3:8b', undefined, true],
       ['gpt-oss:20b', 'high', 'high'],
-      ['gpt-oss:20b', 'off', 'low']
+      ['gpt-oss:20b', 'xhigh', 'high']
     ]
     for (const [model, level, think] of cases) {
       const { fetch, sent } = capture()
       await completeOllamaChat(ollama, request('ollama', model, level), fetch)
       expect(sent().body.think, `${model} ${level}`).toEqual(think)
     }
+    // No level leaves the model's own default.
     const { fetch, sent } = capture()
-    await completeOllamaChat(ollama, request('ollama', 'qwen3:8b', 'auto'), fetch)
+    await completeOllamaChat(ollama, request('ollama', 'llama3'), fetch)
     expect(sent().body).not.toHaveProperty('think')
   })
 })
@@ -170,7 +187,7 @@ describe('withReasoningRetry', () => {
       .mockResolvedValueOnce({ ok: false, error: '"qwen2" does not support thinking' })
       .mockResolvedValueOnce({ ok: true })
     await withReasoningRetry(request('ollama', 'qwen2', 'on'), run)
-    expect(run.mock.calls[1][0].reasoningLevel).toBe('auto')
+    expect(run.mock.calls[1][0].reasoningLevel).toBeUndefined()
   })
 
   it('keeps Anthropic thinking adaptively when only the effort is rejected', async () => {

@@ -104,23 +104,3 @@ export function SheetAction({
     </button>
   )
 }
-
-/** The large buttons across the top of the + sheet, as ChatGPT's camera, photos and files. */
-export function SheetTile({
-  icon,
-  label,
-  disabled,
-  onClick
-}: {
-  icon: ReactNode
-  label: string
-  disabled?: boolean
-  onClick: () => void
-}) {
-  return (
-    <button type="button" className="cp-sheet-tile" onClick={onClick} disabled={disabled}>
-      <span aria-hidden="true">{icon}</span>
-      {label}
-    </button>
-  )
-}

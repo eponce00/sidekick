@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  base64ToBytes,
-  bytesToBase64,
-  DICTATION_SAMPLE_RATE,
-  downmix,
-  float32ToBytes,
-  pcm16ToFloat32,
-  resample
-} from './audio'
+import { base64ToBytes, bytesToBase64, float32ToPcm16, pcm16ToFloat32 } from './audio'
 
 /** The computer's encoding of speech, as `pcm16Base64` in the main process writes it. */
 function computerPcm16(samples: number[]): Uint8Array {
@@ -49,44 +41,18 @@ describe('speech samples', () => {
   })
 })
 
-describe('dictation samples', () => {
-  it('are little-endian floats whatever the phone’s byte order', () => {
-    const bytes = float32ToBytes(new Float32Array([1, -0.5]))
-    expect(Array.from(bytes)).toEqual([0, 0, 128, 63, 0, 0, 0, 191])
+describe('microphone samples', () => {
+  it('encode as the computer reads them, little-endian whatever the phone’s byte order', () => {
+    const bytes = float32ToPcm16(new Float32Array([0, 1, -1, 0.5, 2]))
     const view = new DataView(bytes.buffer)
-    expect(view.getFloat32(4, true)).toBe(-0.5)
+    expect([0, 1, 2, 3, 4].map((index) => view.getInt16(index * 2, true))).toEqual([
+      0, 32767, -32768, 16384, 32767
+    ])
+    expect(Array.from(bytes.subarray(2, 4))).toEqual([0xff, 0x7f])
   })
 
-  it('mix several channels into one', () => {
-    const left = new Float32Array([1, 0.5, 0])
-    const right = new Float32Array([0, 0.5, 1, 1])
-    expect(Array.from(downmix([left, right]))).toEqual([0.5, 0.5, 0.5])
-    expect(downmix([left])).toBe(left)
-  })
-
-  it('come down to 16 kHz by averaging what each sample covers', () => {
-    const rate = 48_000
-    const input = Float32Array.from({ length: rate }, (_, index) => (index % 3 === 0 ? 3 : 0))
-    const output = resample(input, rate, DICTATION_SAMPLE_RATE)
-    expect(output).toHaveLength(DICTATION_SAMPLE_RATE)
-    // Each output sample covers three input samples, one of which is 3.
-    expect(output.every((sample) => Math.abs(sample - 1) < 1e-6)).toBe(true)
-  })
-
-  it('keep their length in time from rates that do not divide evenly', () => {
-    const input = new Float32Array(44_100).fill(0.25)
-    const output = resample(input, 44_100, DICTATION_SAMPLE_RATE)
-    expect(output).toHaveLength(16_000)
-    expect(output.every((sample) => Math.abs(sample - 0.25) < 1e-6)).toBe(true)
-  })
-
-  it('go up from a lower rate between neighbouring samples', () => {
-    const output = resample(new Float32Array([0, 1, 0, 1]), 8_000, 16_000)
-    expect(Array.from(output)).toEqual([0, 0.5, 1, 0.5, 0, 0.5, 1, 1])
-  })
-
-  it('are left alone at 16 kHz already', () => {
-    const input = new Float32Array([0.1, 0.2])
-    expect(resample(input, DICTATION_SAMPLE_RATE, DICTATION_SAMPLE_RATE)).toBe(input)
+  it('come back to the same floats', () => {
+    const samples = pcm16ToFloat32(float32ToPcm16(new Float32Array([0.25, -0.75])))
+    expect(Array.from(samples)).toEqual([expect.closeTo(0.25, 4), -0.75])
   })
 })

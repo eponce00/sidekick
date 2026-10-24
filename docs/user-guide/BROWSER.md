@@ -10,7 +10,8 @@ An eligible agent can open a local or remote page, inspect its accessible struct
 screenshot, click or hover an element, type into fields, choose options, scroll, resize the
 viewport, move between tabs, wait for page state, inspect console and failed network activity, and
 verify an expected result. Screenshots are delivered as actual image input when the selected model
-supports vision. To check an animation, the agent can capture a few frames a moment apart, which
+supports vision, and each one the agent is shown also appears as a thumbnail on its step in the
+chat; click it to see it larger. To check an animation, the agent can capture a few frames a moment apart, which
 it sees side by side in one image. An SVG file opened on its own is shown like an image: fitted to
 the page and centred on a checkerboard, so the panel and the agent's screenshots show the whole
 drawing at any size.

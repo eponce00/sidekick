@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto'
 import { COMPANION_MAX_UPLOAD_BYTES, COMPANION_UPLOAD_CHUNK_BYTES } from '../../../shared/companion'
 
-export type CompanionUploadKind = 'image' | 'text' | 'audio'
+export type CompanionUploadKind = 'image' | 'text'
 
 export interface CompanionUpload {
   id: string
@@ -28,8 +28,8 @@ const UPLOAD_TTL_MS = 10 * 60 * 1_000
 const MAX_HELD_BYTES = 64 * 1024 * 1024
 
 /**
- * Files a phone sends in pieces before the message that uses them: images, text files and
- * recorded audio. Each belongs to the phone that sent it and is taken once.
+ * Files a phone sends in pieces before the message that uses them: images and text files. Each
+ * belongs to the phone that sent it and is taken once.
  */
 export class CompanionUploads {
   private uploads = new Map<string, Pending>()
@@ -64,7 +64,7 @@ export class CompanionUploads {
     let upload: Pending | undefined
     if (input.uploadId === undefined) {
       const kind = input.kind
-      if (kind !== 'image' && kind !== 'text' && kind !== 'audio') throw new Error('Invalid upload')
+      if (kind !== 'image' && kind !== 'text') throw new Error('Invalid upload')
       const name =
         typeof input.name === 'string' ? input.name.replace(/[\p{C}/\\]/gu, '').slice(0, 200) : ''
       const mimeType =

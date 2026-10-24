@@ -1,4 +1,5 @@
 import type { ProviderKind } from './providerRegistry'
+import type { ReasoningLevel } from './reasoning'
 import type { ProviderInstanceHealth } from './settings'
 import type { EditingContractCalibration, EditingDialectPreference } from './workspaceMutations'
 
@@ -28,6 +29,9 @@ export interface PinnedModel {
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean
+  /** See `ProviderInstanceModel.reasoningLevels`. */
+  reasoningLevels?: ReasoningLevel[]
+  reasoningDefault?: ReasoningLevel
   supportsAudioInput?: boolean
   supportsAudioOutput?: boolean
   supportsPdfInput?: boolean
