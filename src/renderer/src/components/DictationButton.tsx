@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2, Mic, Volume2 } from 'lucide-react'
+import { Loader2, Mic } from 'lucide-react'
 import { voiceModelProgress } from '../../../shared/voice'
 import { useVoiceState } from '../hooks/useVoice'
 import { captureMicrophone, type MicrophoneCapture } from '../services/voice/microphone'
 import { voicePreferences } from '../services/voice/voicePreferences'
 import { applyDictation, type DictationRange } from '../services/voice/dictationText'
-import { registerDictation } from '../services/voice/dictationControl'
-import {
-  skipVoiceLoopReading,
-  startVoiceLoop,
-  stopVoiceLoop,
-  toggleVoiceLoop,
-  useVoiceLoop,
-  voiceLoopMode
-} from '../services/voice/voiceLoop'
+import { registerDictation, setDictating } from '../services/voice/dictationControl'
 import { isVoiceShortcut, voiceShortcutLabel } from '../services/voice/voiceShortcut'
 import './DictationButton.css'
 
@@ -28,11 +20,7 @@ interface DictationButtonProps {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   onInputChange: (value: string) => void
   disabled?: boolean
-  /**
-   * On the phone page: dictation only, as phone keyboards and chat apps have it. A tap starts and
-   * a tap stops, sending stops it, and nothing is read aloud unless asked. Its browser holds the
-   * microphone, and there is no shortcut.
-   */
+  /** On the phone page: its browser holds the microphone, and there is no shortcut. */
   phone?: boolean
 }
 
@@ -55,9 +43,9 @@ const MICROPHONE_HELP = {
 }
 
 /**
- * The voice conversation switch. On, SideKick listens and writes what is said
- * at the caret as it is spoken; Enter sends, the reply is read aloud, and it
- * listens again. Speech is transcribed on this device.
+ * Dictation into the message box. A click starts listening and writes what is said at the caret
+ * as it is spoken; another click stops it, and sending the message stops it too. Replies are read
+ * aloud only from their own button. Speech is transcribed on this device.
  */
 export function DictationButton({
   inputRef,
@@ -211,51 +199,35 @@ export function DictationButton({
     setPhase('idle')
   }, [])
 
-  // Sending the message ends the dictation, so later words do not refill the box.
-  useEffect(() => registerDictation(cancel), [cancel])
+  /** A tap starts listening; another stops it and keeps what was heard. */
+  const toggle = useCallback((): void => {
+    if (phase === 'idle') void start()
+    else if (phase === 'recording') void stop()
+  }, [phase, start, stop])
 
-  // The voice conversation drives the microphone: listening records; turning
-  // it off keeps the last words; waiting for or reading a reply pauses it, so
-  // SideKick never transcribes the model's own voice.
-  const loop = useVoiceLoop()
-  useEffect(() => {
-    if (phone) return
-    if (loop === 'listening') {
-      if (!session.current && phase === 'idle') {
-        void start().then((started) => {
-          if (!started) stopVoiceLoop()
-        })
-      }
-    } else if (session.current && phase === 'recording') {
-      if (loop === 'off') void stop()
-      else cancel()
-    }
-  }, [phone, loop, phase, start, stop, cancel])
+  // Sending the message ends the dictation, so later words do not refill the box; the shortcut
+  // and the command palette turn it on and off.
+  useEffect(() => registerDictation({ end: cancel, toggle }), [cancel, toggle])
+  useEffect(() => setDictating(phase === 'recording'), [phase])
 
-  // The shortcut turns voice on and off anywhere in the app; Esc skips a reply
-  // being read aloud.
+  // The shortcut turns dictation on and off anywhere in the app.
   useEffect(() => {
     if (phone) return undefined
     const onKey = (event: KeyboardEvent): void => {
-      if (isVoiceShortcut(event)) {
-        event.preventDefault()
-        event.stopPropagation()
-        if (voiceLoopMode() === 'off' && !window.api?.voice) return
-        toggleVoiceLoop()
-      } else if (event.key === 'Escape' && skipVoiceLoopReading()) {
-        event.preventDefault()
-        event.stopPropagation()
-      }
+      if (!isVoiceShortcut(event) || !window.api?.voice) return
+      event.preventDefault()
+      event.stopPropagation()
+      toggle()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [phone])
+  }, [phone, toggle])
 
-  // Leaving the chat ends the conversation rather than leaving the microphone on.
+  // Leaving the chat ends the dictation rather than leaving the microphone on.
   useEffect(
     () => () => {
       cancel()
-      stopVoiceLoop()
+      setDictating(false)
     },
     [cancel]
   )
@@ -265,29 +237,21 @@ export function DictationButton({
   const settingUp = model.status !== 'ready'
   const percent = Math.floor(voiceModelProgress(model) * 100)
   const busy = phase === 'starting' || phase === 'finishing'
-  // The phone's button shows the dictation itself; the desktop's, the voice conversation.
-  const mode = phone ? (phase === 'recording' ? 'listening' : 'off') : loop
+  const listening = phase === 'recording'
+  const shortcut = phone ? '' : ` (${voiceShortcutLabel()})`
   const label = busy
     ? 'Starting the microphone'
-    : phone
-      ? phase === 'recording'
-        ? 'Stop dictating'
-        : settingUp
-          ? `Dictation is being set up (${percent}%)`
-          : 'Dictate'
-      : loop === 'speaking'
-        ? 'Skip reading the reply (Esc)'
-        : loop !== 'off'
-          ? `Turn voice off (${voiceShortcutLabel()})`
-          : settingUp
-            ? `Voice is being set up (${percent}%)`
-            : `Talk to SideKick (${voiceShortcutLabel()})`
+    : listening
+      ? `Stop dictating${shortcut}`
+      : settingUp
+        ? `Dictation is being set up (${percent}%)`
+        : `Dictate${shortcut}`
 
   return (
     <div className="dictation">
       <button
         type="button"
-        className={`dictation-button is-${mode}${busy ? ' is-busy' : ''}${settingUp && mode === 'off' ? ' is-setting-up' : ''}`}
+        className={`dictation-button${listening ? ' is-listening' : ''}${busy ? ' is-busy' : ''}${settingUp && !listening ? ' is-setting-up' : ''}`}
         style={
           {
             '--dictation-level': level.toFixed(3),
@@ -295,26 +259,15 @@ export function DictationButton({
           } as React.CSSProperties
         }
         disabled={disabled}
-        onClick={() => {
-          if (phone) {
-            if (phase === 'idle') void start()
-            else if (phase === 'recording') void stop()
-          } else if (loop === 'off') startVoiceLoop()
-          else if (loop === 'speaking') skipVoiceLoopReading()
-          else stopVoiceLoop()
-        }}
+        onClick={toggle}
         title={label}
         aria-label={label}
-        aria-pressed={mode !== 'off'}
+        aria-pressed={listening}
       >
         {busy ? (
           <Loader2 size={15} className="dictation-spinner" />
-        ) : mode === 'speaking' ? (
-          <Volume2 size={16} strokeWidth={1.9} />
-        ) : mode === 'off' ? (
-          <Mic size={16} strokeWidth={1.9} />
         ) : (
-          <Mic size={16} strokeWidth={2.2} />
+          <Mic size={16} strokeWidth={listening ? 2.2 : 1.9} />
         )}
       </button>
       {notice && (

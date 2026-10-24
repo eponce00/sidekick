@@ -100,7 +100,7 @@ export function buildCommandPaletteItems(context: CommandPaletteContext): Comman
     items.push({
       id: 'action:toggle-voice',
       group: 'actions',
-      title: context.voiceOn ? 'Turn voice off' : 'Turn voice on',
+      title: context.voiceOn ? 'Stop dictating' : 'Dictate',
       keywords: 'toggle voice microphone dictation talk speak',
       shortcut: label('toggle-voice'),
       run: actions.toggleVoice

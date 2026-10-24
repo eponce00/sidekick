@@ -70,7 +70,7 @@ describe('buildCommandPaletteItems', () => {
     expect(byId.get('action:new-chat')?.shortcut).toBe('Ctrl+N')
     expect(byId.get('action:open-settings')?.shortcut).toBe('Ctrl+,')
     expect(byId.get('action:toggle-voice')).toMatchObject({
-      title: 'Turn voice on',
+      title: 'Dictate',
       shortcut: 'Ctrl+Space'
     })
     expect(byId.get('action:next-conversation')?.shortcut).toBe('Ctrl+Shift+]')

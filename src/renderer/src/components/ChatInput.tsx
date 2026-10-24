@@ -50,7 +50,7 @@ import {
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
-import { useVoiceLoop } from '../services/voice/voiceLoop'
+import { useDictating } from '../services/voice/dictationControl'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
   caretAllowsPromptHistoryStep,
@@ -313,8 +313,8 @@ export function ChatInput({
   onAddFileMention
 }: ChatInputProps) {
   const imageInputRef = React.useRef<HTMLInputElement>(null)
-  // With voice on, the empty box says what the conversation is doing.
-  const voiceLoop = useVoiceLoop()
+  // While dictating, the empty box says it is listening.
+  const dictating = useDictating()
   // Ctrl+Shift+V pastes long text into the message itself instead of attaching it.
   const plainPasteRef = React.useRef(false)
   const [commandIndex, setCommandIndex] = React.useState(0)
@@ -651,25 +651,21 @@ export function ChatInput({
       value={inputValue}
       inputRef={inputRef}
       placeholder={
-        voiceLoop === 'listening'
-          ? 'Listening… press Enter to send'
-          : voiceLoop === 'waiting'
-            ? 'Waiting for the reply…'
-            : voiceLoop === 'speaking'
-              ? 'Reading the reply aloud · Esc to skip'
-              : goalArmed
-                ? 'Describe the outcome and how SideKick should prove it works…'
-                : goal?.status === 'active'
-                  ? 'Steer the goal or add a constraint…'
-                  : planActive
-                    ? 'Add guidance while the plan is running…'
-                    : planSelected
-                      ? 'What should SideKick plan?'
-                      : researchActive
-                        ? 'Add a follow-up or steer the research…'
-                        : researchSelected
-                          ? 'What should SideKick research?'
-                          : 'Type a message...'
+        dictating
+          ? 'Listening…'
+          : goalArmed
+            ? 'Describe the outcome and how SideKick should prove it works…'
+            : goal?.status === 'active'
+              ? 'Steer the goal or add a constraint…'
+              : planActive
+                ? 'Add guidance while the plan is running…'
+                : planSelected
+                  ? 'What should SideKick plan?'
+                  : researchActive
+                    ? 'Add a follow-up or steer the research…'
+                    : researchSelected
+                      ? 'What should SideKick research?'
+                      : 'Type a message...'
       }
       contextBar={
         <>

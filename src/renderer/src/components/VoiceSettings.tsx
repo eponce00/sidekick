@@ -6,7 +6,6 @@ import {
   Download,
   Keyboard,
   Languages,
-  MessagesSquare,
   Mic,
   Play,
   Square,
@@ -349,18 +348,10 @@ function VoiceDeviceRows(): React.JSX.Element {
         }
       />
 
-      <ToggleField
-        icon={MessagesSquare}
-        label="Talk back and forth"
-        hint="With the mic on, read each reply aloud, then listen again."
-        checked={preferences.readRepliesAloud}
-        onChange={(readRepliesAloud) => updateVoicePreferences({ readRepliesAloud })}
-      />
-
       <SettingsRow
         icon={Keyboard}
         label="Mic shortcut"
-        description="Turns the mic on and off. Dictation understands 25 European languages."
+        description="Starts and stops dictation. Dictation understands 25 European languages."
         control={<kbd className="settings-kbd">{voiceShortcutLabel()}</kbd>}
       />
       {notice && (

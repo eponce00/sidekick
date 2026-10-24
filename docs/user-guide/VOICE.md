@@ -3,25 +3,16 @@
 SideKick can listen to you, write what you say into the message box, and read messages
 aloud. It all runs on this device: audio is never sent to a provider or any other service.
 
-## Talking with SideKick
+## Dictation
 
-Press **Ctrl+Space** (**⌥Space** on macOS), or click the microphone beside the model picker.
-While the mic is on:
+Press **Ctrl+Space** (**⌥Space** on macOS), or click the microphone beside the model picker, and
+talk. Words appear in the box as you speak, and each phrase is corrected when it ends. You can
+edit the text or type between phrases.
 
-1. **You talk.** Words appear in the box as you speak, and each phrase is corrected when it
-   ends. You can edit the text or type between phrases.
-2. **Enter sends.** You decide when the message is finished, not a silence timer. The mic
-   pauses at once, so it never hears the reply being read.
-3. **The reply is read aloud.** Only its answer is read: not the work before it or reasoning
-   written inline. Press **Esc**, or click the speaker, to skip to the next step.
-4. **It listens again.** Carry on with the next message.
-
-Press the shortcut or click the mic to turn it off; switching to another chat also turns it
-off. The empty message box says what is happening at each step. If no sound reaches SideKick
-for three seconds, it says which microphone it is hearing.
-
-To dictate without having replies read, turn off **Talk back and forth** in the voice
-settings: the mic then keeps listening after you send.
+Click the mic or press the shortcut again to stop; what was heard stays in the box. Sending the
+message stops it too, and so does switching to another chat. Replies are never read aloud on
+their own: only when you click **Read aloud**. If no sound reaches SideKick for three seconds,
+it says which microphone it is hearing.
 
 Dictation understands English, Spanish, and 23 other European languages, detects which one you
 are speaking, and adds punctuation and capitals.
@@ -50,7 +41,6 @@ language is not read; the speaker button says so.
 - the **voice**, one of eight American English voices, Heart by default. A message in another
   language is read by that language's own voice of the same kind, female or male;
 - the **read-aloud language**, detected from each message unless you choose one;
-- **Talk back and forth**, on by default;
 - the **mic shortcut**, for reference.
 
 Device, voice, and language choices apply at once and belong to this machine.

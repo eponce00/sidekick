@@ -63,7 +63,7 @@ import { conversationJumpIndex, matchesShortcut } from '../../shared/keyboardSho
 import { buildCommandPaletteItems, latestProjectConversationId } from './utils/commandPaletteItems'
 import { adjacentConversationId } from './utils/sidebarConversationOrder'
 import { useVoiceState } from './hooks/useVoice'
-import { toggleVoiceLoop, useVoiceLoop } from './services/voice/voiceLoop'
+import { toggleDictation, useDictating } from './services/voice/dictationControl'
 import {
   LAYOUT_MOTION_MS,
   PANEL_GLIDE_MS,
@@ -228,7 +228,7 @@ function App(): React.JSX.Element {
     at: number
   } | null>(null)
   const voiceState = useVoiceState()
-  const voiceLoop = useVoiceLoop()
+  const dictating = useDictating()
   useEffect(() => {
     const media = window.matchMedia('(max-width: 760px)')
     const update = (): void => setIsCompactLayout(media.matches)
@@ -1025,7 +1025,7 @@ function App(): React.JSX.Element {
         currentConversationId,
         sidebarCollapsed: effectiveSidebarCollapsed,
         browserPanelOpen: effectiveActivityPanelPinned && activityTabRef.current === 'browser',
-        voiceOn: voiceAvailable ? voiceLoop !== 'off' : null,
+        voiceOn: voiceAvailable ? dictating : null,
         theme,
         actions: {
           newChat: () => void handleNewConversation(null),
@@ -1034,7 +1034,7 @@ function App(): React.JSX.Element {
           openSettings,
           toggleSidebar,
           toggleBrowserPanel,
-          toggleVoice: toggleVoiceLoop,
+          toggleVoice: () => void toggleDictation(),
           toggleTheme: () =>
             switchThemeFrom(document.querySelector('.theme-toggle-button'), () =>
               setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))

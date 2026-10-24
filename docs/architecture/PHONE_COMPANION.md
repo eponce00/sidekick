@@ -54,9 +54,7 @@ steer and interaction requests.
   tool saved, such as viewed images and screenshots, are fetched by their `sidekick-browser://`
   address through the same checks as the window's protocol (`readBrowserArtifact`).
 - **Voice** uses the computer's own models, through the desktop's own voice API on the phone, so the
-  desktop's microphone button and player run unchanged. The phone's button dictates only, as phone
-  keyboards do: a tap starts and stops it, sending stops it, and the desktop's voice conversation,
-  which reads each reply aloud and listens again, stays on the computer. The phone captures 16 kHz audio
+  desktop's microphone button and player run unchanged. The phone captures 16 kHz audio
   with the desktop's capture worklet and streams it in order, one call at a time, as 16-bit samples
   (`voice.dictation.audio`, at most two seconds a call). The computer writes the words back as
   `dictation.text` events to that phone only, and `dictation.end` follows the last words after a
