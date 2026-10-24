@@ -28,6 +28,33 @@ describe('MessageMarkdown rich media', () => {
     container.remove()
   })
 
+  it('puts a table in its own card, and draws a checklist with the app’s boxes', async () => {
+    await act(async () => {
+      root.render(
+        <MessageMarkdown
+          content={[
+            '| Area | Status |',
+            '| --- | --- |',
+            '| Phone | Done |',
+            '',
+            '- [x] Typecheck',
+            '- [ ] Test on iPhone'
+          ].join('\n')}
+        />
+      )
+    })
+
+    expect(container.querySelector('.markdown-table > table td')?.textContent).toBe('Phone')
+    // The browser's disabled checkboxes are replaced, and still say what they mean.
+    expect(container.querySelector('input')).toBeNull()
+    expect(
+      [...container.querySelectorAll('.markdown-task-box')].map((box) =>
+        box.getAttribute('aria-label')
+      )
+    ).toEqual(['Done', 'Not done'])
+    expect(container.querySelector('.markdown-task-box.is-done svg')).not.toBeNull()
+  })
+
   it('reads two prices on a line as prices, and still typesets math', async () => {
     await act(async () => {
       root.render(

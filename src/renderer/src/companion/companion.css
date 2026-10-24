@@ -1051,13 +1051,6 @@ body {
   opacity: 0.6;
 }
 
-/* Wide content scrolls inside its own box; the page never scrolls sideways. */
-.cp-messages .message-content table {
-  display: block;
-  max-width: 100%;
-  overflow-x: auto;
-}
-
 .cp-messages .katex-display {
   max-width: 100%;
   overflow-x: auto;
