@@ -102,26 +102,28 @@ of its report.
   scheduled run uses its schedule's. When a conversation's model is removed or turned off in
   Settings, the picker marks it **Unavailable** and the message box asks you to choose another
   before sending, rather than switching models for you.
-- **Reasoning:** the model picker shows how much the selected model reasons beside its name, and
-  opens on a slider with a stop for each level the model can take; its name opens the list of
-  models, and the reset button beside the level returns to the model's starting level. Where the model
-  offers its own default, **Let the model decide** chooses it. Each model keeps its own level. The
-  levels follow what its provider can send:
+- **Reasoning:** for a model that lets you choose how much it reasons, the model picker shows the
+  level beside its name and opens on a slider with a stop for each level that model takes; its name
+  opens the list of models, and the reset button beside the level returns to the model's own
+  default. Each model keeps its own level. The levels are the ones the model's server lists for it
+  when you load its models in Settings:
 
-  | Provider                             | Levels                                          |
-  | ------------------------------------ | ----------------------------------------------- |
-  | Ollama, Ollama Cloud                 | On, Off; gpt-oss models take Low, Medium, High  |
-  | Anthropic                            | Off, Low, Medium, High, and Max on newer Claude |
-  | OpenRouter, LiteLLM                  | Model default, Off, Minimal through Extra high  |
-  | LM Studio, OpenAI-compatible servers | Model default, Off, Low, Medium, High           |
-  | llama.cpp                            | Model default, On, Off                          |
+  | Provider             | What the server says                                                  |
+  | -------------------- | --------------------------------------------------------------------- |
+  | LM Studio 0.4.8+     | Each model's allowed options, such as Off and On, and its default     |
+  | Ollama, Ollama Cloud | Each model's `think` values, such as On and Off, or Low, Medium, High |
+  | Anthropic            | Whether thinking can be off, and each effort level the model takes    |
+  | OpenRouter           | Each model's efforts, its default, and whether reasoning can stop     |
+  | LiteLLM              | Each deployment's effort levels, where its model info lists them      |
+  | llama.cpp            | Whether the loaded chat template takes an effort or switches on/off   |
 
-  Model default sends nothing and leaves it to the model or server. A server that rejects a level
-  answers with its own default instead of failing, and some models reason anyway: gpt-oss cannot
-  stop, and some OpenRouter models require reasoning. A model whose provider reports it cannot
-  reason, or whose Reasoning capability is turned off in its settings, has no button. The command
-  palette's Reasoning entry steps to the next level. In a reply, each step of reasoning shows the
-  same brain among the agent's steps; select it to read it in full.
+  Where a server says a model reasons but lists no levels, the picker offers what its protocol can
+  send. A model that cannot reason, always reasons the same way, or whose server says nothing, as
+  with a generic OpenAI-compatible server, has no reasoning control and uses its own default; mark
+  its Reasoning capability as supported in its settings to choose a level for it. A server that
+  rejects a level answers with the model's default instead of failing. The command palette's
+  Reasoning entry steps to the next level. In a reply, each step of reasoning shows the same brain
+  among the agent's steps; select it to read it in full.
 
 ## The side panel
 

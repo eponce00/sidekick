@@ -63,6 +63,7 @@ import {
   resolveProviderInstance,
   resolveProviderInstanceById
 } from './providerResolver'
+import { llamaCppReasoning, type ReasoningCapabilities } from './reasoningCapabilities'
 
 type Emit = (chunk: ProviderStreamChunk) => void
 type ProviderHealthPublisher = (change: ProviderHealthChangedEvent) => void
@@ -389,32 +390,30 @@ const REASONING_FIELDS = ['reasoning', 'reasoning_effort', 'chat_template_kwargs
 /** Each OpenAI-compatible server's own way of carrying a reasoning level. */
 function openAIReasoningFields(request: ProviderChatRequest): Record<string, unknown> {
   const level = requestReasoningLevel(request)
-  if (!level || level === 'auto') return {}
+  if (!level) return {}
   const kind = request.target.providerKind
   if (kind === 'openrouter') {
-    if (request.reasoningTokens && level !== 'off')
-      return { reasoning: { max_tokens: request.reasoningTokens } }
+    if (level === 'off') return { reasoning: { effort: 'none' } }
+    if (level === 'on') return { reasoning: { enabled: true } }
+    if (request.reasoningTokens) return { reasoning: { max_tokens: request.reasoningTokens } }
     return {
       reasoning: {
-        effort:
-          level === 'off'
-            ? 'none'
-            : nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+        effort: nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)
       }
     }
   }
-  // llama.cpp and vLLM switch thinking through the model's chat template.
+  // llama.cpp passes `reasoning_effort` to templates that read it; others switch on
+  // `enable_thinking`. vLLM reads the same template argument.
   const template =
     kind === 'llamacpp' || kind === 'openai-compatible'
       ? { chat_template_kwargs: { enable_thinking: level !== 'off' } }
       : {}
-  if (kind === 'llamacpp') return template
   if (level === 'off') return { reasoning_effort: 'none', ...template }
-  if (level === 'on') return template
+  if (level === 'on') return kind === 'lmstudio' ? { reasoning_effort: 'medium' } : template
   return {
     reasoning_effort:
       kind === 'litellm'
-        ? nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh'] as const)
+        ? nearestEffort(level, ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const)
         : nearestEffort(level, ['low', 'medium', 'high'] as const),
     ...template
   }
@@ -464,10 +463,13 @@ export async function withReasoningRetry<T extends { ok: boolean; error?: string
 ): Promise<T> {
   const result = await run(request)
   const level = requestReasoningLevel(request)
-  if (!level || level === 'auto' || !reasoningWasRejected(result)) return result
-  // Anthropic rejecting an effort level can still think adaptively.
-  const fallback: ReasoningLevel =
-    request.target.providerKind === 'anthropic' && level !== 'off' && level !== 'on' ? 'on' : 'auto'
+  if (!level || !reasoningWasRejected(result)) return result
+  // Anthropic rejecting an effort level can still think adaptively; anything else falls back to
+  // the model's own default.
+  const fallback: ReasoningLevel | undefined =
+    request.target.providerKind === 'anthropic' && level !== 'off' && level !== 'on'
+      ? 'on'
+      : undefined
   return run({ ...request, reasoningLevel: fallback, thinkingEnabled: undefined })
 }
 
@@ -555,17 +557,47 @@ async function discoverOpenAIModels(instance: ProviderInstance): Promise<Provide
     providerDefinitionForInstance(instance).capabilities.context === 'lmstudio-native'
       ? await fetchLMStudioModelDetails(instance.baseUrl, headers)
       : undefined
-  const models = result.data.data
+  const listed = result.data.data
     .filter((model) => isChatModelMode(model.mode ?? model.model_info?.mode))
     .filter((model) => !lmStudio || lmStudioModelChats(lmStudio.get(model.id)))
-    .map((model) =>
+  const templates =
+    kind === 'llamacpp'
+      ? await Promise.all(
+          listed.map((model) => llamaCppTemplateReasoning(instance, model.id, listed.length > 1))
+        )
+      : undefined
+  const models = listed
+    .map((model, index) =>
       applyProviderModelOverrides(
-        withLMStudioDetails(normalizeOpenAIModelMetadata(model), lmStudio?.get(model.id)),
+        {
+          ...withLMStudioDetails(normalizeOpenAIModelMetadata(model), lmStudio?.get(model.id)),
+          ...templates?.[index]
+        },
         configured(model.id)
       )
     )
     .sort((left, right) => left.id.localeCompare(right.id))
   return { ok: true, models }
+}
+
+/**
+ * What llama.cpp's `/props` says the loaded chat template does with reasoning. A server routing
+ * several models answers for one named in the query.
+ */
+async function llamaCppTemplateReasoning(
+  instance: ProviderInstance,
+  model: string,
+  named: boolean
+): Promise<ReasoningCapabilities> {
+  try {
+    const query = named ? `?model=${encodeURIComponent(model)}` : ''
+    const response = await fetch(`${instance.baseUrl.replace(/\/v1$/, '')}/props${query}`, {
+      headers: openAIHeaders(instance)
+    })
+    return response.ok ? llamaCppReasoning(await response.json()) : {}
+  } catch {
+    return {}
+  }
 }
 
 function discoveryInstance(request: ProviderDiscoveryRequest): ProviderInstance {

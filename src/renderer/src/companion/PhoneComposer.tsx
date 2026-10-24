@@ -598,16 +598,6 @@ export function PhoneComposer({
               level={model.reasoning.level}
               onChange={(level) => onEffortChange(model.id, level)}
             />
-            {model.reasoning.levels.includes('auto') && (
-              <button
-                type="button"
-                className={`effort-card-default${model.reasoning.level === 'auto' ? ' is-selected' : ''}`}
-                aria-pressed={model.reasoning.level === 'auto'}
-                onClick={() => onEffortChange(model.id, 'auto')}
-              >
-                Let the model decide
-              </button>
-            )}
           </div>
         </Popover>
       )}

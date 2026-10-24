@@ -1005,7 +1005,9 @@ export class ConversationRunPreparer {
           id: model.id,
           providerKind: target.providerKind,
           model: target.model,
-          supportsReasoning: model.supportsReasoning
+          supportsReasoning: model.supportsReasoning,
+          reasoningLevels: model.reasoningLevels,
+          reasoningDefault: model.reasoningDefault
         },
         currentSettings
       )

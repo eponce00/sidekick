@@ -418,7 +418,9 @@ outcome. Multiple instances of the same provider type are valid. `src/shared/pro
 owns normalization and projection into chat-selectable models.
 
 `src/shared/providerRegistry.ts` is the provider metadata boundary. It distinguishes provider kind from UI transport and wire protocol, including LM Studio versus a generic OpenAI-compatible instance. `src/shared/reasoning.ts` owns
-which reasoning levels each model offers and resolves the one a request carries; each adapter
+which reasoning levels each model offers and resolves the one a request carries. Discovery records
+the levels and default each server reports per model (`src/main/providers/reasoningCapabilities.ts`),
+and a model with fewer than two levels offers no control; each adapter
 translates that level into its protocol's own field (`reasoning.effort`, `reasoning_effort`,
 `chat_template_kwargs.enable_thinking`, Ollama `think`, or Anthropic adaptive thinking with an
 effort or a thinking budget) and retries once with the model's default when a server rejects it. Registry capabilities describe credentials, model discovery, health checks, context metadata, model lifecycle, pricing, generation statistics, thinking controls, and vision payloads. `services/providers/providerDiscovery.ts` is the renderer facade for the trusted discovery runtime.

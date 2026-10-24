@@ -250,7 +250,9 @@ function reasoningModelFor(model: PinnedModel): ReasoningModel {
     id: model.id,
     providerKind: model.providerKind ?? (model.provider as ProviderKind),
     model: model.providerModelId || model.id,
-    supportsReasoning: model.supportsReasoning
+    supportsReasoning: model.supportsReasoning,
+    reasoningLevels: model.reasoningLevels,
+    reasoningDefault: model.reasoningDefault
   }
 }
 

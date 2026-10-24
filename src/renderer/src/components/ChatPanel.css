@@ -3815,27 +3815,6 @@ body[data-theme='light'] .message-user .message-action:hover {
   --effort-thumb: 36px;
 }
 
-.effort-card-default {
-  display: inline-flex;
-  align-self: center;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.effort-card-default.is-selected {
-  border-color: transparent;
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-
 .effort-card-back {
   display: flex;
   align-items: center;

@@ -42,6 +42,10 @@ export interface ProviderInstanceModel {
   supportsTools?: boolean
   supportsVision?: boolean
   supportsReasoning?: boolean
+  /** The reasoning levels the server says the model takes; empty when it offers no choice. */
+  reasoningLevels?: ReasoningLevel[]
+  /** The level the model uses when a request names none, where the server says. */
+  reasoningDefault?: ReasoningLevel
   supportsAudioInput?: boolean
   supportsAudioOutput?: boolean
   supportsPdfInput?: boolean

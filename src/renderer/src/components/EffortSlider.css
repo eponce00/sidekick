@@ -31,10 +31,6 @@
   transition: width var(--duration-fast) var(--ease-out);
 }
 
-.effort-slider.is-unset .effort-slider-fill {
-  width: 0;
-}
-
 .effort-slider-stop {
   position: absolute;
   top: 50%;

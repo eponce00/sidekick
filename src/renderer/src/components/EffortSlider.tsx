@@ -38,7 +38,7 @@ export function EffortSlider({
   return (
     <div
       ref={track}
-      className={`effort-slider${index < 0 ? ' is-unset' : ''}`}
+      className="effort-slider"
       role="slider"
       tabIndex={0}
       aria-label="Reasoning effort"

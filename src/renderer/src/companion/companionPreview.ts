@@ -87,7 +87,7 @@ const MODELS: CompanionModel[] = [
     id: 'qwen-local',
     name: 'Qwen3 Coder 30B · local',
     supportsVision: false,
-    reasoning: { levels: ['auto', 'on', 'off'], initial: 'auto', level: 'auto' }
+    reasoning: { levels: ['off', 'on'], initial: 'on', level: 'on' }
   },
   { id: 'gpt-mini', name: 'GPT-5 mini', supportsVision: true, reasoning: null }
 ]

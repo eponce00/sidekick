@@ -878,7 +878,9 @@ function ChatPanel({
         id: selectedPinnedModel.id,
         providerKind: selectedPinnedModel.providerKind ?? (selectedProvider as ProviderKind),
         model: selectedPinnedModel.providerModelId || selectedPinnedModel.id,
-        supportsReasoning: selectedPinnedModel.supportsReasoning
+        supportsReasoning: selectedPinnedModel.supportsReasoning,
+        reasoningLevels: selectedPinnedModel.reasoningLevels,
+        reasoningDefault: selectedPinnedModel.reasoningDefault
       }
     : null
   const selectedReasoningOptions = reasoningModel ? reasoningOptions(reasoningModel) : null

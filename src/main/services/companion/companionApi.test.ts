@@ -13,7 +13,12 @@ import {
   type CompanionVoice
 } from './companionApi'
 
-const MODEL = { id: 'local:model', name: 'model', provider: 'lmstudio' } as PinnedModel
+const MODEL = {
+  id: 'local:model',
+  name: 'model',
+  provider: 'lmstudio',
+  supportsReasoning: true
+} as PinnedModel
 const BLIND = {
   id: 'local:blind',
   name: 'blind',
@@ -215,10 +220,10 @@ describe('CompanionApi', () => {
     const { models } = (await call('models.list', {})) as {
       models: Array<{ id: string; reasoning: unknown }>
     }
-    // An LM Studio model offers its own default and four levels; this one was set to high.
+    // An LM Studio model that reasons, with no levels listed, takes four; this one was set to high.
     expect(models.find((model) => model.id === 'local:model')?.reasoning).toEqual({
-      levels: ['auto', 'off', 'low', 'medium', 'high'],
-      initial: 'auto',
+      levels: ['off', 'low', 'medium', 'high'],
+      initial: 'medium',
       level: 'high'
     })
     expect(await call('models.setEffort', { modelId: 'local:model', level: 'low' })).toEqual({

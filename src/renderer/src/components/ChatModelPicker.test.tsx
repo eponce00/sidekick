@@ -16,8 +16,8 @@ const MODELS = [
 ] as PinnedModel[]
 
 describe('effortStops', () => {
-  it('orders a model’s levels from the least reasoning to the most, without the default', () => {
-    expect(effortStops(['auto', 'off', 'minimal', 'low', 'medium', 'high', 'xhigh'])).toEqual([
+  it('orders a model’s levels from the least reasoning to the most', () => {
+    expect(effortStops(['xhigh', 'off', 'minimal', 'low', 'medium', 'high'])).toEqual([
       'off',
       'minimal',
       'low',
@@ -25,7 +25,7 @@ describe('effortStops', () => {
       'high',
       'xhigh'
     ])
-    expect(effortStops(['auto', 'on', 'off'])).toEqual(['off', 'on'])
+    expect(effortStops(['on', 'off'])).toEqual(['off', 'on'])
   })
 })
 
@@ -102,18 +102,6 @@ describe('ChatModelPicker with reasoning', () => {
     expect(container.querySelector('.effort-card-level')?.textContent).toBe('Max')
     await act(async () => container.querySelector<HTMLButtonElement>('.effort-card-reset')!.click())
     expect(container.querySelector('.effort-card-level')?.textContent).toBe('Off')
-  })
-
-  it('lets the model decide where the model offers its own default', async () => {
-    await act(async () =>
-      root.render(<Picker levels={['auto', 'off', 'low', 'high']} initial="low" />)
-    )
-    await act(async () => chip().click())
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('.effort-card-default')!.click()
-    )
-    expect(container.querySelector('.effort-card-level')?.textContent).toBe('Model default')
-    expect(slider().classList.contains('is-unset')).toBe(true)
   })
 
   it('reaches the model list from the card, and back', async () => {

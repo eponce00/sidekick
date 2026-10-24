@@ -32,7 +32,6 @@ import { ProviderIcon } from './ProviderIcon'
 
 /** What the chip says for the level: short, since it sits in the composer toolbar. */
 const SHORT_LEVEL: Partial<Record<ReasoningLevel, string>> = {
-  auto: 'Default',
   xhigh: 'X-High'
 }
 
@@ -192,17 +191,6 @@ export function ChatModelPicker({
             level={reasoning.level}
             onChange={reasoning.onChange}
           />
-          {reasoning.options.levels.includes('auto') && (
-            <button
-              type="button"
-              className={`effort-card-default${reasoning.level === 'auto' ? ' is-selected' : ''}`}
-              onClick={() => reasoning.onChange('auto')}
-              aria-pressed={reasoning.level === 'auto'}
-            >
-              Let the model decide
-              {reasoning.level === 'auto' && <Check size={13} aria-hidden="true" />}
-            </button>
-          )}
         </div>
       )}
 

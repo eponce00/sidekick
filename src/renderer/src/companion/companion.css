@@ -1616,12 +1616,6 @@ body > .image-lightbox {
   grid-template-columns: 40px minmax(0, 1fr) 40px;
 }
 
-.cp-effort .effort-card-default {
-  min-height: 36px;
-  padding: 0 var(--space-4);
-  font-size: var(--text-sm);
-}
-
 /* Renaming a chat. */
 .cp-rename {
   display: flex;
