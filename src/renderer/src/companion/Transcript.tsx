@@ -3,7 +3,8 @@ import { Copy } from 'lucide-react'
 import { MessageItem } from '../components/MessageItem'
 import type { Message } from '../types/chat.types'
 import { messageTextForClipboard } from '../utils/messageClipboard'
-import { copyOnPhone, phoneNotice } from './phoneApi'
+import { phoneNotice } from './phoneApi'
+import { copyFormatted } from './richCopy'
 import { Sheet, SheetAction } from './Sheet'
 
 type Resolve = (
@@ -57,8 +58,9 @@ export function Transcript({
     })
   }, [])
 
+  // A reply is copied as it reads, formatted, rather than as the Markdown it was written in.
   const copyMessage = useCallback((message: Message) => {
-    void copyOnPhone(messageTextForClipboard(message)).then((copied) => {
+    void copyFormatted(messageTextForClipboard(message)).then((copied) => {
       if (!copied) return
       setCopiedMessageId(message.id)
       if (copiedTimer.current) clearTimeout(copiedTimer.current)
@@ -132,7 +134,7 @@ export function Transcript({
             label="Copy"
             onClick={() => {
               setMenuFor(null)
-              void copyOnPhone(messageTextForClipboard(menuMessage)).then(
+              void copyFormatted(messageTextForClipboard(menuMessage)).then(
                 (copied) => copied && phoneNotice('Copied')
               )
             }}
