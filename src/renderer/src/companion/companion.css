@@ -1144,22 +1144,26 @@ body > .image-lightbox {
   background: var(--surface-3);
 }
 
+/* A finger-sized target for cancelling an edit. */
+.cp-input-area .composer-editing-bar .composer-editing-cancel {
+  width: 30px;
+  height: 30px;
+}
+
 .cp-input-area .queued-message-tray {
-  margin-inline: var(--space-2);
+  margin-inline: var(--space-3);
 }
 
-/* Dragging does not reorder by touch, so the grip gives way to the text, which wraps, with the
-   controls on their own row. */
+/* Dragging does not reorder by touch, so there is no grip: the text, which a tap opens the
+   message's actions from, and Steer, as on the desktop's row. */
 .cp-input-area .queued-message-card {
-  grid-template-columns: minmax(0, 1fr);
-  row-gap: var(--space-1);
-  padding: var(--space-3) var(--space-3) var(--space-1);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 48px;
+  padding: 2px 6px 2px 14px;
 }
 
-/* The queued message the box is editing. */
-.cp-input-area .queued-message-card.is-editing {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--surface-4));
-  background: var(--accent-subtle);
+.cp-input-area .queued-message-card:hover {
+  background: transparent;
 }
 
 .cp-input-area .queued-message-handle {
@@ -1168,21 +1172,35 @@ body > .image-lightbox {
 
 .cp-input-area .queued-message-text {
   display: -webkit-box;
+  padding: var(--space-2) 0;
   overflow: hidden;
   white-space: normal;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  font-size: var(--text-base);
+  -webkit-line-clamp: 2;
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.cp-input-area .queued-message-text:active {
+  color: var(--text-primary);
 }
 
 .cp-input-area .queued-message-actions {
-  justify-content: flex-end;
   opacity: 1;
 }
 
 .cp-input-area .queued-message-actions button {
-  min-width: 40px;
-  min-height: 40px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.cp-input-area .queued-message-actions button:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
 }
 
 .cp-input-area .queued-message-actions button span {
@@ -1190,7 +1208,7 @@ body > .image-lightbox {
 }
 
 .cp-input-area .queued-message-list {
-  max-height: min(260px, 36dvh);
+  max-height: min(220px, 30dvh);
 }
 
 /* Attachments on their way up. */

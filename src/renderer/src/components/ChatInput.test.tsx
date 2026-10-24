@@ -70,7 +70,7 @@ function baseProps(overrides: Partial<ChatInputProps> = {}): ChatInputProps {
     onOpenWorkspace: vi.fn(),
     onOpenWorkspaceMemory: vi.fn(),
     workspaceMemoryAvailable: true,
-    onUpdatePendingMessage: vi.fn(() => true),
+    onEditQueuedMessage: vi.fn(),
     onRemovePendingMessage: vi.fn(),
     onMoveQueuedMessage: vi.fn(),
     onSteerQueuedMessage: vi.fn(),

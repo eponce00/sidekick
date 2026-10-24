@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpToLine,
   Camera,
+  Pencil,
+  Trash2,
   ChevronDown,
   FileText,
   Images,
   ListChecks,
   Loader2,
   Microscope,
-  Pencil,
   Plus,
   Square,
   X
@@ -16,10 +20,12 @@ import type { ConversationRunMode, PromptAdmissionsResult } from '../../../share
 import { MAX_MESSAGE_IMAGES } from '../../../shared/messageImages'
 import '../components/ChatInput.css'
 import { ChatComposer } from '../components/ChatComposer'
+import { ComposerEditingBar } from '../components/ComposerEditingBar'
 import { DictationButton } from '../components/DictationButton'
 import { ImageAttachmentPreview } from '../components/ImageAttachmentPreview'
 import { QueuedMessageTray } from '../components/QueuedMessageTray'
 import { endDictation } from '../services/voice/dictationControl'
+import { flyIntoComposer } from '../utils/flyIntoComposer'
 import { TEXT_FILE_ACCEPT } from './attachments'
 import type { CompanionConnection } from './chatState'
 import { phoneNotice } from './phoneApi'
@@ -70,7 +76,13 @@ export function PhoneComposer({
    * A sent message being edited, as the desktop's Edit loads one into the box: sending answers it
    * again with the new text. What the box held waits until the edit is sent or cancelled.
    */
-  editing: { messageId: string; text: string; nonce: number } | null
+  editing: {
+    messageId: string
+    text: string
+    nonce: number
+    /** Where the message is on screen, which it moves into the box from. */
+    source: HTMLElement | null
+  } | null
   onCancelEdit: () => void
   onSubmitEdit: (text: string) => Promise<boolean>
   onSend: (message: OutgoingMessage) => Promise<boolean>
@@ -105,10 +117,19 @@ export function PhoneComposer({
   }, [prefill])
   // A queued message is edited in the box as a sent one is: its text in the box, with an Editing
   // chip. Sending saves it in the queue instead of answering anything again.
-  const [queuedEdit, setQueuedEdit] = useState<{ id: string; text: string; nonce: number } | null>(
-    null
-  )
+  const [queuedEdit, setQueuedEdit] = useState<{
+    id: string
+    text: string
+    nonce: number
+    source: HTMLElement | null
+  } | null>(null)
   const activeEdit = queuedEdit ?? editing
+  // The queued message whose actions are open in a sheet, and where it is on screen.
+  const [queuedMenu, setQueuedMenu] = useState<{
+    message: { id: string; content: string }
+    source: HTMLElement | null
+  } | null>(null)
+  const closeQueuedMenu = useCallback(() => setQueuedMenu(null), [])
   const [edited, setEdited] = useState<number | null>(null)
   const setAside = useRef<string | null>(null)
   if (activeEdit && activeEdit.nonce !== edited) {
@@ -118,10 +139,13 @@ export function PhoneComposer({
   }
   useEffect(() => {
     if (!activeEdit) return
+    // After the editing bar has rendered, so the message lands where its text now sits.
     requestAnimationFrame(() => {
       const field = inputRef.current
-      field?.focus()
-      field?.setSelectionRange(activeEdit.text.length, activeEdit.text.length)
+      if (!field) return
+      flyIntoComposer(activeEdit.source, field.closest<HTMLElement>('.input-container'))
+      field.focus()
+      field.setSelectionRange(activeEdit.text.length, activeEdit.text.length)
     })
   }, [activeEdit])
   const endEdit = (): void => {
@@ -212,6 +236,25 @@ export function PhoneComposer({
     input.current?.click()
   }
 
+  const editQueued = (message: { id: string; content: string }, source: HTMLElement | null): void =>
+    setQueuedEdit({ id: message.id, text: message.content, nonce: Date.now(), source })
+  const removeQueued = (id: string): void =>
+    onUpdateQueue(
+      queue.queued
+        .filter((item) => item.id !== id)
+        .map((item) => ({ id: item.id, content: item.content }))
+    )
+  const moveQueued = (id: string, toIndex: number): void => {
+    const order = queue.queued.filter((item) => item.id !== id)
+    const moved = queue.queued.find((item) => item.id === id)
+    if (!moved) return
+    order.splice(Math.max(0, Math.min(order.length, toIndex)), 0, moved)
+    onUpdateQueue(order.map((item) => ({ id: item.id, content: item.content })))
+  }
+  const queuedMenuIndex = queuedMenu
+    ? queue.queued.findIndex((item) => item.id === queuedMenu.message.id)
+    : -1
+
   const imagesFull = files.imageCount >= MAX_MESSAGE_IMAGES
   const imageReason = visionUnavailable
     ? 'This chat’s model cannot see images'
@@ -224,36 +267,12 @@ export function PhoneComposer({
       <QueuedMessageTray
         queuedMessages={queue.queued}
         pivotMessage={queue.pivot}
-        moveButtons
-        onUpdate={(id, content) => {
-          if (!content.trim()) return false
-          onUpdateQueue(
-            queue.queued.map((item) => ({
-              id: item.id,
-              content: item.id === id ? content.trim() : item.content
-            }))
-          )
-          return true
-        }}
-        onRemove={(id) =>
-          onUpdateQueue(
-            queue.queued
-              .filter((item) => item.id !== id)
-              .map((item) => ({ id: item.id, content: item.content }))
-          )
-        }
-        onMove={(id, toIndex) => {
-          const order = queue.queued.filter((item) => item.id !== id)
-          const moved = queue.queued.find((item) => item.id === id)
-          if (!moved) return
-          order.splice(Math.max(0, Math.min(order.length, toIndex)), 0, moved)
-          onUpdateQueue(order.map((item) => ({ id: item.id, content: item.content })))
-        }}
+        onEdit={editQueued}
+        onRemove={removeQueued}
+        onMove={moveQueued}
         onSteer={onSteerQueued}
-        editingInComposerId={queuedEdit?.id ?? null}
-        onEditInComposer={(message) =>
-          setQueuedEdit({ id: message.id, text: message.content, nonce: Date.now() })
-        }
+        onOpenActions={(message, source) => setQueuedMenu({ message, source })}
+        editingId={queuedEdit?.id ?? null}
       />
     ) : undefined
 
@@ -366,16 +385,13 @@ export function PhoneComposer({
                       ? 'Start Plan mode'
                       : 'Send message'
         }
-        toolbarLeft={
+        contextBar={
           activeEdit ? (
-            <span className="cp-mode-chip is-editing" role="status">
-              <Pencil size={15} aria-hidden="true" />
-              {queuedEdit ? 'Editing queued' : 'Editing'}
-              <button type="button" onClick={cancelEdit} aria-label="Cancel the edit">
-                <X size={14} aria-hidden="true" />
-              </button>
-            </span>
-          ) : (
+            <ComposerEditingBar queued={Boolean(queuedEdit)} onCancel={cancelEdit} />
+          ) : undefined
+        }
+        toolbarLeft={
+          activeEdit ? undefined : (
             <>
               <button
                 type="button"
@@ -524,6 +540,63 @@ export function PhoneComposer({
               }}
             />
           </div>
+        </Sheet>
+      )}
+      {queuedMenu && (
+        <Sheet label="Queued message" onClose={closeQueuedMenu}>
+          <p className="cp-sheet-quote">{queuedMenu.message.content}</p>
+          {runActive && queuedMenuIndex >= 0 && (
+            <SheetAction
+              icon={<ArrowUpToLine size={20} />}
+              label="Steer now"
+              description="Hand it to SideKick while it works"
+              onClick={() => {
+                setQueuedMenu(null)
+                onSteerQueued(queuedMenu.message.id)
+              }}
+            />
+          )}
+          <SheetAction
+            icon={<Pencil size={20} />}
+            label="Edit"
+            onClick={() => {
+              setQueuedMenu(null)
+              editQueued(queuedMenu.message, queuedMenu.source)
+            }}
+          />
+          {queue.queued.length > 1 && queuedMenuIndex >= 0 && (
+            <>
+              <SheetAction
+                icon={<ArrowUp size={20} />}
+                label="Move up"
+                disabled={queuedMenuIndex === 0}
+                onClick={() => {
+                  setQueuedMenu(null)
+                  moveQueued(queuedMenu.message.id, queuedMenuIndex - 1)
+                }}
+              />
+              <SheetAction
+                icon={<ArrowDown size={20} />}
+                label="Move down"
+                disabled={queuedMenuIndex === queue.queued.length - 1}
+                onClick={() => {
+                  setQueuedMenu(null)
+                  moveQueued(queuedMenu.message.id, queuedMenuIndex + 1)
+                }}
+              />
+            </>
+          )}
+          {queuedMenuIndex >= 0 && (
+            <SheetAction
+              icon={<Trash2 size={20} />}
+              label="Remove"
+              tone="danger"
+              onClick={() => {
+                setQueuedMenu(null)
+                removeQueued(queuedMenu.message.id)
+              }}
+            />
+          )}
         </Sheet>
       )}
       {sheet === 'model' && models && (

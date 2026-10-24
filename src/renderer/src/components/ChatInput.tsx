@@ -12,7 +12,6 @@ import {
   MessageSquareText,
   Microscope,
   Paperclip,
-  Pencil,
   Plus,
   Square,
   StickyNote,
@@ -35,6 +34,7 @@ import { promptRefinementModelForPinnedModel } from '../services/providers/promp
 import type { ConversationGoal } from '../../../shared/conversationGoals'
 import type { PromptRefinementHistorySelection } from '../utils/promptRefinementHistory'
 import { ConversationGoalBar, GoalArmedBar } from './ConversationGoalBar'
+import { ComposerEditingBar } from './ComposerEditingBar'
 import { QueuedMessageTray } from './QueuedMessageTray'
 import { PullRequestBar } from './PullRequestBar'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
@@ -154,6 +154,10 @@ interface ChatInputProps {
   /** A message from the chat is being edited here; sending replaces it and what follows. */
   editingMessageId: string | null
   onCancelEdit?: () => void
+  /** A queued message is being edited here; sending saves it back in the queue. */
+  editingQueuedId?: string | null
+  onEditQueuedMessage: (message: PendingRunMessageItem, source: HTMLElement | null) => void
+  onCancelQueuedEdit?: () => void
   researchSelected: boolean
   researchActive: boolean
   researchPhase: AgentRunPhase | 'idle'
@@ -216,7 +220,6 @@ interface ChatInputProps {
   onOpenWorkspaceMemory: () => void
   workspaceMemoryAvailable: boolean
   workspaceMemoryUnavailableReason?: string
-  onUpdatePendingMessage: (id: string, content: string) => boolean
   onRemovePendingMessage: (id: string) => void
   onMoveQueuedMessage: (id: string, toIndex: number) => void
   onSteerQueuedMessage: (id: string) => void
@@ -242,6 +245,9 @@ export function ChatInput({
   isStopping,
   editingMessageId,
   onCancelEdit,
+  editingQueuedId = null,
+  onEditQueuedMessage,
+  onCancelQueuedEdit,
   researchSelected,
   researchActive,
   researchPhase,
@@ -299,7 +305,6 @@ export function ChatInput({
   onOpenWorkspaceMemory,
   workspaceMemoryAvailable,
   workspaceMemoryUnavailableReason,
-  onUpdatePendingMessage,
   onRemovePendingMessage,
   onMoveQueuedMessage,
   onSteerQueuedMessage,
@@ -624,6 +629,11 @@ export function ChatInput({
       onInputChange('')
       return
     }
+    if (editingQueuedId && event.key === 'Escape') {
+      event.preventDefault()
+      onCancelQueuedEdit?.()
+      return
+    }
     if (editingMessageId && event.key === 'Escape') {
       event.preventDefault()
       onCancelEdit?.()
@@ -679,15 +689,12 @@ export function ChatInput({
               </button>
             </div>
           )}
-          {editingMessageId && (
-            <div className="composer-editing-bar" role="status">
-              <Pencil size={13} aria-hidden="true" />
-              <strong>Editing your message</strong>
-              <span>Sending replaces it and everything after it.</span>
-              <button type="button" onClick={onCancelEdit} title="Cancel the edit (Esc)">
-                Cancel
-              </button>
-            </div>
+          {editingQueuedId ? (
+            <ComposerEditingBar queued onCancel={() => onCancelQueuedEdit?.()} />
+          ) : (
+            editingMessageId && (
+              <ComposerEditingBar queued={false} onCancel={() => onCancelEdit?.()} />
+            )
           )}
           {goal ? (
             <ConversationGoalBar
@@ -787,10 +794,11 @@ export function ChatInput({
           <QueuedMessageTray
             queuedMessages={queuedMessages}
             pivotMessage={pivotMessage}
-            onUpdate={onUpdatePendingMessage}
             onRemove={onRemovePendingMessage}
             onMove={onMoveQueuedMessage}
             onSteer={onSteerQueuedMessage}
+            onEdit={onEditQueuedMessage}
+            editingId={editingQueuedId}
           />
         ) : undefined
       }

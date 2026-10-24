@@ -2504,24 +2504,11 @@ body[data-theme='light'] .message-user .message-action:hover {
   font-size: var(--text-xs);
 }
 
-.queued-message-editor {
-  width: 100%;
-  min-height: 28px;
-  max-height: 132px;
-  resize: none;
-  padding: 5px 8px;
-  color: var(--text-primary);
-  background: var(--surface-1);
-  border: 1px solid var(--surface-4);
-  border-radius: var(--radius-sm);
-  outline: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  line-height: 1.35;
-}
-
-.queued-message-editor:focus {
-  border-color: color-mix(in srgb, var(--accent) 58%, var(--surface-4));
+/* The queued message the box is editing steps back, as an edited sent message does. */
+.queued-message-card.is-editing {
+  filter: blur(1px) saturate(0.6);
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .queued-message-actions {
@@ -2572,8 +2559,7 @@ body[data-theme='light'] .message-user .message-action:hover {
   cursor: default;
 }
 
-.queued-message-actions button:focus-visible,
-.queued-message-editor:focus-visible {
+.queued-message-actions button:focus-visible {
   box-shadow: var(--focus-ring);
 }
 
@@ -2713,6 +2699,29 @@ body[data-theme='light'] .message-user .message-action:hover {
 .composer-editing-bar button:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+/* Cancelling an edit: a small cross in the error colour, as a removal is shown. */
+.composer-editing-bar .composer-editing-cancel {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: color-mix(in srgb, var(--error) 80%, var(--text-secondary));
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.composer-editing-bar .composer-editing-cancel svg {
+  color: inherit;
+}
+
+.composer-editing-bar .composer-editing-cancel:hover,
+.composer-editing-bar .composer-editing-cancel:active {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 18%, transparent);
 }
 
 /* Above the message box while the chat's model is no longer set up. */

@@ -1,16 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
-import type { DragEvent, KeyboardEvent } from 'react'
-import TextareaAutosize from 'react-textarea-autosize'
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpToLine,
-  Check,
-  GripVertical,
-  Pencil,
-  Trash2,
-  X
-} from 'lucide-react'
+import { useState } from 'react'
+import type { DragEvent, KeyboardEvent, MouseEvent } from 'react'
+import { ArrowUpToLine, GripVertical, Pencil, Trash2 } from 'lucide-react'
 import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import {
   isPastedTextAttachment,
@@ -34,73 +24,44 @@ function attachmentCountLabel(attachments: readonly MessageContextAttachment[]):
 interface QueuedMessageTrayProps {
   pivotMessage: PendingRunMessageItem | null
   queuedMessages: PendingRunMessageItem[]
-  onUpdate: (id: string, content: string) => boolean
+  /**
+   * Edits a message in the message box, as a sent message is edited; `source` is its text on
+   * screen, which moves into the box.
+   */
+  onEdit: (message: PendingRunMessageItem, source: HTMLElement | null) => void
   onRemove: (id: string) => void
   onMove: (id: string, toIndex: number) => void
   onSteer: (id: string) => void
-  /** Move buttons beside each message, for touch screens, where dragging does not reorder. */
-  moveButtons?: boolean
   /**
-   * Edits a message in the message box instead of in its card, as a sent message is edited on the
-   * phone, where a second text box inside the tray is cramped.
+   * For touch screens, where dragging does not reorder and a row of small buttons is hard to hit:
+   * a tap on a message opens its actions (steer, edit, move, remove) instead, and only Steer stays
+   * on the row.
    */
-  onEditInComposer?: (message: PendingRunMessageItem) => void
-  /** The message the message box is editing, marked as the one being changed. */
-  editingInComposerId?: string | null
+  onOpenActions?: (message: PendingRunMessageItem, source: HTMLElement | null) => void
+  /** The message the message box is editing, which steps back as an edited sent message does. */
+  editingId?: string | null
 }
 
 export function QueuedMessageTray({
   pivotMessage,
   queuedMessages,
-  onUpdate,
+  onEdit,
   onRemove,
   onMove,
   onSteer,
-  moveButtons = false,
-  onEditInComposer,
-  editingInComposerId = null
+  onOpenActions,
+  editingId = null
 }: QueuedMessageTrayProps): React.JSX.Element | null {
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dropTargetId, setDropTargetId] = useState<string | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
-  const editorRef = useRef<HTMLTextAreaElement>(null)
   const pendingCount = queuedMessages.length + (pivotMessage ? 1 : 0)
-  useEffect(() => {
-    if (!editingId) return
-    editorRef.current?.focus()
-    editorRef.current?.select()
-  }, [editingId])
 
   if (!pendingCount) return null
 
-  const beginEdit = (message: PendingRunMessageItem): void => {
-    if (onEditInComposer) return onEditInComposer(message)
-    setEditingId(message.id)
-    setDraft(message.content)
-  }
-
-  const cancelEdit = (): void => {
-    setEditingId(null)
-    setDraft('')
-  }
-
-  const saveEdit = (): void => {
-    if (!editingId || !onUpdate(editingId, draft)) return
-    cancelEdit()
-  }
-
-  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      cancelEdit()
-      return
-    }
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault()
-      saveEdit()
-    }
-  }
+  /** The message's text, which moves into the box, from anywhere in its card. */
+  const textOf = (element: HTMLElement): HTMLElement | null =>
+    element.closest('.queued-message-card')?.querySelector<HTMLElement>('.queued-message-text') ??
+    null
 
   const handleDrop = (event: DragEvent<HTMLElement>, targetId: string): void => {
     event.preventDefault()
@@ -120,11 +81,26 @@ export function QueuedMessageTray({
     index: number,
     isPivot: boolean
   ): React.JSX.Element => {
-    const isEditing = editingId === message.id
+    const textHandlers = onOpenActions
+      ? {
+          role: 'button',
+          tabIndex: 0,
+          onClick: (event: MouseEvent<HTMLElement>) => onOpenActions(message, event.currentTarget),
+          onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault()
+            onOpenActions(message, event.currentTarget)
+          },
+          'aria-label': `Actions for ${message.content || 'the queued message'}`
+        }
+      : {
+          onDoubleClick: (event: MouseEvent<HTMLElement>) => onEdit(message, event.currentTarget),
+          title: 'Edit queued message'
+        }
     return (
       <article
         key={message.id}
-        className={`queued-message-card ${isPivot ? 'is-steering' : ''} ${draggedId === message.id ? 'is-dragging' : ''} ${dropTargetId === message.id ? 'is-drop-target' : ''} ${editingInComposerId === message.id ? 'is-editing' : ''}`.trim()}
+        className={`queued-message-card ${isPivot ? 'is-steering' : ''} ${draggedId === message.id ? 'is-dragging' : ''} ${dropTargetId === message.id ? 'is-drop-target' : ''} ${editingId === message.id ? 'is-editing' : ''}`.trim()}
         onDragOver={(event) => {
           if (isPivot || !draggedId || draggedId === message.id) return
           event.preventDefault()
@@ -141,7 +117,7 @@ export function QueuedMessageTray({
         <span
           className="queued-message-handle"
           aria-hidden="true"
-          draggable={!isPivot && !isEditing}
+          draggable={!isPivot && !onOpenActions}
           onDragStart={(event) => {
             setDraggedId(message.id)
             event.dataTransfer.effectAllowed = 'move'
@@ -155,106 +131,47 @@ export function QueuedMessageTray({
           {isPivot ? <span className="queued-message-pulse" /> : <GripVertical size={15} />}
         </span>
         <div className="queued-message-body">
-          {isEditing ? (
-            <TextareaAutosize
-              ref={editorRef}
-              className="queued-message-editor"
-              value={draft}
-              minRows={1}
-              maxRows={6}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleEditorKeyDown}
-              aria-label="Edit queued message"
-            />
-          ) : (
-            <div
-              className="queued-message-text"
-              onDoubleClick={() => beginEdit(message)}
-              title="Edit queued message"
-            >
-              {isPivot && <span className="queued-message-state">Steering</span>}
-              {message.content ||
-                (message.images?.length
-                  ? 'Image attachment'
-                  : message.attachments?.length
-                    ? message.attachments.some(isPastedTextAttachment)
-                      ? 'Pasted text'
-                      : message.attachments.some(isReviewCommentAttachment)
-                        ? 'Comment on changes'
-                        : 'Project attachment'
-                    : '')}
-              {Boolean(message.images?.length) && (
-                <span className="queued-message-image-count">
-                  {message.images!.length} image{message.images!.length === 1 ? '' : 's'}
-                </span>
-              )}
-              {Boolean(message.attachments?.length) && (
-                <span className="queued-message-image-count">
-                  {attachmentCountLabel(message.attachments!)}
-                </span>
-              )}
-            </div>
-          )}
+          <div className="queued-message-text" {...textHandlers}>
+            {isPivot && <span className="queued-message-state">Steering</span>}
+            {message.content ||
+              (message.images?.length
+                ? 'Image attachment'
+                : message.attachments?.length
+                  ? message.attachments.some(isPastedTextAttachment)
+                    ? 'Pasted text'
+                    : message.attachments.some(isReviewCommentAttachment)
+                      ? 'Comment on changes'
+                      : 'Project attachment'
+                  : '')}
+            {Boolean(message.images?.length) && (
+              <span className="queued-message-image-count">
+                {message.images!.length} image{message.images!.length === 1 ? '' : 's'}
+              </span>
+            )}
+            {Boolean(message.attachments?.length) && (
+              <span className="queued-message-image-count">
+                {attachmentCountLabel(message.attachments!)}
+              </span>
+            )}
+          </div>
         </div>
         <div className="queued-message-actions">
-          {isEditing ? (
+          {!isPivot && (
+            <button
+              type="button"
+              onClick={() => onSteer(message.id)}
+              title="Steer with this message now"
+              aria-label="Steer with queued message now"
+            >
+              <ArrowUpToLine size={14} />
+              <span>Steer</span>
+            </button>
+          )}
+          {!onOpenActions && (
             <>
               <button
                 type="button"
-                onClick={saveEdit}
-                disabled={!draft.trim()}
-                title="Save edit"
-                aria-label="Save queued message edit"
-              >
-                <Check size={14} />
-              </button>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                title="Discard edit"
-                aria-label="Discard queued message edit"
-              >
-                <X size={14} />
-              </button>
-            </>
-          ) : (
-            <>
-              {moveButtons && !isPivot && queuedMessages.length > 1 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => onMove(message.id, index - 1)}
-                    disabled={index === 0}
-                    title="Move up"
-                    aria-label="Move queued message up"
-                  >
-                    <ArrowUp size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onMove(message.id, index + 1)}
-                    disabled={index === queuedMessages.length - 1}
-                    title="Move down"
-                    aria-label="Move queued message down"
-                  >
-                    <ArrowDown size={14} />
-                  </button>
-                </>
-              )}
-              {!isPivot && (
-                <button
-                  type="button"
-                  onClick={() => onSteer(message.id)}
-                  title="Steer with this message now"
-                  aria-label="Steer with queued message now"
-                >
-                  <ArrowUpToLine size={14} />
-                  <span>Steer</span>
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => beginEdit(message)}
+                onClick={(event) => onEdit(message, textOf(event.currentTarget))}
                 title="Edit queued message"
                 aria-label="Edit queued message"
               >

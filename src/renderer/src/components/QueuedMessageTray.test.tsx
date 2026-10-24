@@ -30,14 +30,15 @@ describe('QueuedMessageTray', () => {
 
   function renderTray(overrides?: {
     pivotMessage?: PendingRunMessageItem | null
-    onUpdate?: (id: string, content: string) => boolean
+    onEdit?: (message: PendingRunMessageItem, source: HTMLElement | null) => void
     onRemove?: (id: string) => void
     onMove?: (id: string, toIndex: number) => void
     onSteer?: (id: string) => void
-    moveButtons?: boolean
+    onOpenActions?: (message: PendingRunMessageItem, source: HTMLElement | null) => void
+    editingId?: string | null
   }) {
     const callbacks = {
-      onUpdate: overrides?.onUpdate ?? vi.fn(() => true),
+      onEdit: overrides?.onEdit ?? vi.fn(),
       onRemove: overrides?.onRemove ?? vi.fn(),
       onMove: overrides?.onMove ?? vi.fn(),
       onSteer: overrides?.onSteer ?? vi.fn()
@@ -47,32 +48,14 @@ describe('QueuedMessageTray', () => {
         <QueuedMessageTray
           pivotMessage={overrides?.pivotMessage ?? null}
           queuedMessages={queuedMessages}
-          moveButtons={overrides?.moveButtons}
+          onOpenActions={overrides?.onOpenActions}
+          editingId={overrides?.editingId}
           {...callbacks}
         />
       )
     })
     return callbacks
   }
-
-  it('offers move buttons only where dragging cannot reorder', () => {
-    renderTray()
-    expect(container.querySelector('[aria-label="Move queued message up"]')).toBeNull()
-
-    const callbacks = renderTray({ moveButtons: true })
-    const up = container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Move queued message up"]'
-    )
-    const down = container.querySelectorAll<HTMLButtonElement>(
-      '[aria-label="Move queued message down"]'
-    )
-    expect(up[0].disabled).toBe(true)
-    expect(down[1].disabled).toBe(true)
-    act(() => down[0].click())
-    act(() => up[1].click())
-    expect(callbacks.onMove).toHaveBeenNthCalledWith(1, 'queued-1', 1)
-    expect(callbacks.onMove).toHaveBeenNthCalledWith(2, 'queued-2', 0)
-  })
 
   it('renders compact queue rows and exposes steer, edit, and remove actions', () => {
     const callbacks = renderTray()
@@ -92,39 +75,48 @@ describe('QueuedMessageTray', () => {
     expect(callbacks.onRemove).toHaveBeenCalledWith('queued-1')
   })
 
-  it('edits a queued message in place and supports save and discard', () => {
-    const onUpdate = vi.fn(() => true)
-    renderTray({ onUpdate })
-
+  it('edits in the message box, from the message text, as a sent message is edited', () => {
+    const onEdit = vi.fn()
+    renderTray({ onEdit })
     act(() => {
       ;(container.querySelector('[aria-label="Edit queued message"]') as HTMLElement).click()
     })
-    const editor = container.querySelector(
-      'textarea[aria-label="Edit queued message"]'
-    ) as HTMLTextAreaElement
-    expect(editor).not.toBeNull()
+    const [message, source] = onEdit.mock.calls[0]
+    expect(message).toMatchObject({ id: 'queued-1' })
+    expect((source as HTMLElement).classList.contains('queued-message-text')).toBe(true)
+    // No second text box opens inside the tray.
+    expect(container.querySelector('textarea')).toBeNull()
 
-    const valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-    act(() => {
-      valueSetter?.call(editor, 'Add validation and integration coverage')
-      editor.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    act(() => {
-      ;(container.querySelector('[aria-label="Save queued message edit"]') as HTMLElement).click()
-    })
+    renderTray({ onEdit, editingId: 'queued-1' })
+    expect(
+      container
+        .querySelector('[data-pending-message-id="queued-1"]')
+        ?.classList.contains('is-editing')
+    ).toBe(true)
+  })
 
-    expect(onUpdate).toHaveBeenCalledWith('queued-1', 'Add validation and integration coverage')
-    expect(container.querySelector('textarea[aria-label="Edit queued message"]')).toBeNull()
-
-    act(() => {
-      ;(container.querySelector('[aria-label="Edit queued message"]') as HTMLElement).click()
-    })
+  it('opens a message’s actions with a tap on touch screens, keeping only Steer on the row', () => {
+    const onOpenActions = vi.fn()
+    const callbacks = renderTray({ onOpenActions })
+    expect(container.querySelector('[aria-label="Edit queued message"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Remove queued message"]')).toBeNull()
     act(() => {
       ;(
-        container.querySelector('[aria-label="Discard queued message edit"]') as HTMLElement
+        container.querySelector(
+          '[aria-label="Actions for Then update the release notes"]'
+        ) as HTMLElement
       ).click()
     })
-    expect(onUpdate).toHaveBeenCalledOnce()
+    expect(onOpenActions).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'queued-2' }),
+      expect.any(HTMLElement)
+    )
+    act(() => {
+      ;(
+        container.querySelector('[aria-label="Steer with queued message now"]') as HTMLElement
+      ).click()
+    })
+    expect(callbacks.onSteer).toHaveBeenCalledWith('queued-1')
   })
 
   it('connects drag and drop to stable queue identities', () => {

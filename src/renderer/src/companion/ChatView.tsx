@@ -58,9 +58,12 @@ export function ChatView({
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null)
   const [where, setWhere] = useState<StartIn>({ projectId: startIn, workIn: 'folder' })
   // The sent message being edited in the message box.
-  const [editing, setEditing] = useState<{ messageId: string; text: string; nonce: number } | null>(
-    null
-  )
+  const [editing, setEditing] = useState<{
+    messageId: string
+    text: string
+    nonce: number
+    source: HTMLElement | null
+  } | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
   // Follows new output while the reader is at the bottom, and leaves them alone once they scroll up.
   const following = useRef(true)
@@ -138,7 +141,15 @@ export function ChatView({
               editingMessageId={editing?.messageId ?? null}
               onResolve={chat.resolve}
               onEdit={(message) =>
-                setEditing({ messageId: message.id, text: message.content, nonce: Date.now() })
+                setEditing({
+                  messageId: message.id,
+                  text: message.content,
+                  nonce: Date.now(),
+                  source:
+                    scroller.current?.querySelector<HTMLElement>(
+                      `.message[data-message-id="${CSS.escape(message.id)}"] .message-bubble`
+                    ) ?? null
+                })
               }
               onRetry={(message) => {
                 following.current = true

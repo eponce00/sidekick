@@ -7,7 +7,10 @@
   appears in the reply where the agent took it in. When the reply cannot take it (it is waiting on
   an approval or a question, or is finishing), SideKick stops the reply and starts a new one from
   your message instead.
-- **Queue:** a message added to the queue waits for the reply to finish and is sent next.
+- **Queue:** a message added to the queue waits for the reply to finish and is sent next. Drag
+  queued messages to reorder them. **Edit** moves one into the message box, as editing a sent
+  message does; sending saves it back in the queue, and **Cancel** or Esc leaves it as it was and
+  brings back what the box held.
 - **Live progress:** a line at the foot of the reply shows what the agent is doing (waiting for
   the model, thinking, using tools, writing, compacting context, or waiting for you), how long it
   has worked since your message, how many tokens the model has written and how fast, and how full
