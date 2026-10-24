@@ -69,23 +69,6 @@ export interface AgentRunChangedEvent {
   event: AgentRunEvent
 }
 
-export interface BrowserHumanTakeoverSnapshot {
-  active: boolean
-  conversationId: string
-  sessionId: string
-  pageTitle: string
-  url: string
-  humanVerificationRequired: boolean
-  message?: string
-  screenshot?: {
-    id: string
-    url: string
-    kind: 'viewport' | 'fullPage' | 'element'
-    width: number
-    height: number
-  }
-}
-
 export interface PromptAdmissionItem {
   id: string
   conversationId: string

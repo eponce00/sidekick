@@ -34,8 +34,7 @@ view into the trusted application window using bounded panel coordinates. No rel
 renderer preload, or replacement page is involved. Hidden panels and closed application windows
 detach views back to their rendering host. The rendering host is hidden while embedded; background
 rendering retains a non-focusable host because Chromium screenshots require a live compositor.
-The macOS background host uses near-zero opacity to avoid a visibly relocated window. An explicit
-human takeover without a mounted panel can still use the existing fallback window.
+The macOS background host uses near-zero opacity to avoid a visibly relocated window.
 
 The renderer polls small tab/control metadata, not screenshots or AX trees. Live page painting
 happens directly in Chromium. Main-process-owned IDs select the view; renderer-supplied arbitrary
@@ -43,9 +42,10 @@ WebContents IDs are never accepted. Browser content has no SideKick preload or N
 
 Manual input claims a conversation-scoped user-control flag when an agent action is not executing.
 The active action completes atomically; new agent browser actions wait while the user edits.
-Programmatic tool gestures are marked separately so they do not trigger user takeover. Resuming
-invalidates semantic refs. Existing CAPTCHA reservations remain independent and must still be
-completed through their existing interaction card. Useful pages remain available across turns.
+Programmatic tool gestures are marked separately so they do not count as the user's input.
+Resuming invalidates semantic refs. A human check is cleared the same way: `browser_request_human`
+holds the session, marks the run `awaiting_user`, opens the panel on the page, and polls until the
+check is gone, with no card. Useful pages remain available across turns.
 
 ## Verification
 

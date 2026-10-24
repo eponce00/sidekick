@@ -37,7 +37,6 @@ describe('shared browser workspace', () => {
       sessionId: 'session',
       activeTabId: 'tab',
       busy: false,
-      userControl: true,
       tabs: [
         { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: false }
       ]
@@ -74,7 +73,6 @@ describe('shared browser workspace', () => {
       sessionId: 'session',
       activeTabId: 'tab',
       busy: false,
-      userControl: false,
       tabs: [
         { id: 'tab', title: 'Shop', url: 'https://shop.example/', active: true, loading: false }
       ],
@@ -144,7 +142,6 @@ describe('shared browser workspace', () => {
       sessionId: 'session',
       activeTabId: 'tab',
       busy: true,
-      userControl: false,
       tabs: [
         { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: false }
       ]
@@ -157,17 +154,17 @@ describe('shared browser workspace', () => {
     expect(document.activeElement).toBe(input)
     expect(container.textContent).not.toContain('Take control')
   })
-  it('keeps verification completion on its dedicated handoff card', async () => {
+  it('says the agent goes on by itself once the user finishes the page check', async () => {
     request.mockResolvedValue({
       sessionId: 'session',
       activeTabId: 'tab',
       busy: false,
-      userControl: true,
-      verificationHandoff: true,
+      waitingForUser: true,
       tabs: []
     })
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('[aria-label*="conversation handoff card"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label*="continues once you finish"]')).not.toBeNull()
     expect(container.textContent).not.toContain('Resume agent')
+    expect(container.textContent).not.toContain('Take control')
   })
 })

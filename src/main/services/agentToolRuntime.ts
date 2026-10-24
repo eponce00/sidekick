@@ -475,16 +475,6 @@ export class AgentToolRuntime {
     this.credentials = access
   }
 
-  async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.beginHumanTakeover(conversationId, expectedSessionId)
-  }
-
-  async completeBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.completeHumanTakeover(conversationId, expectedSessionId)
-  }
-
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const officeSession = this.officeHelpers?.session(input.workspaceRoot)
@@ -714,10 +704,15 @@ export class AgentToolRuntime {
         releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
         ...(this.browser
           ? {
-              reserveBrowserHumanTakeover: (conversationId: string) =>
-                this.browser!.reserveHumanTakeover(conversationId),
-              releaseBrowserHumanTakeover: (conversationId: string, expectedSessionId: string) =>
-                this.browser!.releaseHumanTakeover(conversationId, expectedSessionId)
+              reserveBrowserForHumanCheck: (conversationId: string) =>
+                this.browser!.reserveForHumanCheck(conversationId),
+              waitForBrowserHumanCheck: (
+                conversationId: string,
+                expectedSessionId: string,
+                signal: AbortSignal
+              ) => this.browser!.waitForHumanCheck(conversationId, expectedSessionId, signal),
+              releaseBrowserHumanCheck: (conversationId: string, expectedSessionId: string) =>
+                this.browser!.releaseHumanCheck(conversationId, expectedSessionId)
             }
           : {})
       }
@@ -815,7 +810,10 @@ export class AgentToolRuntime {
     if (name === 'browser_click')
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
     if (name === 'browser_hold') return 'Press and hold browser control'
-    if (name === 'browser_request_human') return 'Human browser verification'
+    if (name === 'browser_request_human') {
+      const reason = stringArg(args, 'reason')
+      return reason ? `Waiting for you in the browser: ${reason}` : 'Waiting for you in the browser'
+    }
     if (name === 'browser_type') return 'Type in browser'
     if (name === 'browser_select') return 'Select browser option'
     if (name === 'browser_fill_form') return 'Fill browser form'

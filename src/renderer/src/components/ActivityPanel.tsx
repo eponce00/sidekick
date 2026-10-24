@@ -159,6 +159,7 @@ function ActivityPanel({
   }
   const [browserActivity, setBrowserActivity] =
     useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
+  const autoOpenedWaitRef = useRef<string | null>(null)
   const autoOpenedBrowserRunRef = useRef<string | null>(null)
   // While the edge is dragged nothing else moves: a phantom shows where the panel will land and
   // what letting go will do. Let go, the panel glides there once (is-gliding), so the chat and the
@@ -342,8 +343,13 @@ function ActivityPanel({
       setBrowserActivity(state)
       const latest = state.timeline[state.timeline.length - 1]
       const isLive = latest?.status === 'running' || latest?.status === 'pending'
-      if (!state.runId || !isLive || autoOpenedBrowserRunRef.current === state.runId) return
+      if (!state.runId || !isLive) return
+      // The agent waits for the user to clear a check on the page: show it to them.
+      const waitsForUser =
+        latest.name === 'browser_request_human' && autoOpenedWaitRef.current !== latest.callId
+      if (autoOpenedBrowserRunRef.current === state.runId && !waitsForUser) return
       autoOpenedBrowserRunRef.current = state.runId
+      if (waitsForUser) autoOpenedWaitRef.current = latest.callId
       setActiveTab('browser')
       if (!isPinned) onTogglePin()
     },

@@ -165,12 +165,6 @@ interface AgentRunsAPI {
     afterSequence?: number
   ) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
   latest: (threadId: string) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
-  beginBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
-  completeBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>

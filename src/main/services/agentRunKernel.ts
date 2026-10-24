@@ -150,8 +150,14 @@ export interface AgentKernelToolRouter {
     args: Record<string, unknown>,
     context: AgentCredentialContext
   ) => RequestedAccess | 'always' | undefined
-  reserveBrowserHumanTakeover?: (conversationId: string) => Promise<string>
-  releaseBrowserHumanTakeover?: (conversationId: string, expectedSessionId: string) => Promise<void>
+  /** Holds the conversation's browser while the user clears a human check on its page. */
+  reserveBrowserForHumanCheck?: (conversationId: string) => Promise<string>
+  waitForBrowserHumanCheck?: (
+    conversationId: string,
+    expectedSessionId: string,
+    signal: AbortSignal
+  ) => Promise<void>
+  releaseBrowserHumanCheck?: (conversationId: string, expectedSessionId: string) => Promise<void>
   /**
    * The approval a call that names a stored credential needs, or why the call is refused when its
    * scope does not allow that use here. Undefined when it names none.
@@ -243,6 +249,8 @@ export interface AgentKernelPlanController {
 
 /** Files named in one message that are read up front; more are left for the model to open. */
 const MAX_PRELOADED_READS = 4
+// How long a run waits for the user to clear a human check in the Browser panel.
+const HUMAN_CHECK_WAIT_MS = 10 * 60_000
 
 /**
  * How long a turn whose stream broke off waits before it is asked again, once. A local model
@@ -830,76 +838,90 @@ export class AgentRunKernel {
     })
   }
 
+  /**
+   * Waits, with no card, while the user clears a human check in the Browser panel: the step's
+   * title says what to do, the panel opens on the page, and the run goes on once the check is
+   * gone. It gives up after `HUMAN_CHECK_WAIT_MS`.
+   */
   private async executeBrowserRequestHuman(
     runId: string,
     title: string,
-    args: Record<string, unknown>,
     toolRouter: AgentKernelToolRouter,
     signal: AbortSignal,
     startedAt: number
   ): Promise<ToolExecutionResult> {
     const run = this.store.get(runId)
     const conversationId = run?.threadId ?? ''
-    if (!conversationId || !toolRouter.reserveBrowserHumanTakeover) {
+    if (
+      !conversationId ||
+      !toolRouter.reserveBrowserForHumanCheck ||
+      !toolRouter.waitForBrowserHumanCheck
+    ) {
       return toolExecutionFailed({
         title,
         code: 'not_found',
-        message: 'No browser session is available for human takeover',
+        message: 'No browser session is open for the user to finish this check in',
         recoveryAction: 'change_strategy',
         startedAt
       })
     }
-    const reason = String(args.reason || 'A human-only browser step is required.')
-      .trim()
-      .slice(0, 2_000)
-    const challengeType = String(args.challenge_type || 'other')
     let browserSessionId: string
     try {
-      browserSessionId = await toolRouter.reserveBrowserHumanTakeover(conversationId)
+      browserSessionId = await toolRouter.reserveBrowserForHumanCheck(conversationId)
     } catch (error) {
       return toolExecutionFailed({
         title,
         code: 'not_found',
-        message: error instanceof Error ? error.message : 'Browser takeover could not be reserved',
+        message:
+          error instanceof Error ? error.message : 'The browser could not be held for the user',
         recoveryAction: 'change_strategy',
         startedAt
       })
     }
+    const timeout = AbortSignal.timeout(HUMAN_CHECK_WAIT_MS)
+    // Waiting on the user, as for a question: the chat shows as waiting and frees its run slot.
+    this.transition(runId, 'awaiting_user')
     try {
-      const interaction = await this.suspendForInteraction(
-        runId,
-        'question',
-        {
-          intent: 'browser_takeover',
-          conversationId,
-          browserSessionId,
-          reason,
-          challengeType
-        },
-        signal
+      await toolRouter.waitForBrowserHumanCheck(
+        conversationId,
+        browserSessionId,
+        AbortSignal.any([signal, timeout])
       )
-      if (interaction.status !== 'resolved') {
+      return toolExecutionSucceeded({
+        title,
+        data: { completed: true },
+        modelContent:
+          'The user cleared the check on the page. Call browser_observe now and continue from the fresh page state.',
+        startedAt
+      })
+    } catch (error) {
+      if (signal.aborted) {
         return toolExecutionFailed({
           title,
           code: 'cancelled',
-          message: 'Human browser takeover was cancelled',
+          message: 'The run stopped while waiting for the user',
           status: 'cancelled',
           startedAt
         })
       }
-      const completed = interaction.response?.completed === true
-      return toolExecutionSucceeded({
+      return toolExecutionFailed({
         title,
-        data: { completed },
-        modelContent: completed
-          ? 'The user completed the human-only browser step in the same session. Call browser_observe now and continue from the fresh page state.'
-          : 'The user could not complete the human-only browser step. Use a legitimate alternate source or explain the remaining blocker; do not retry or bypass the challenge.',
+        code: timeout.aborted ? 'timeout' : 'not_found',
+        message: timeout.aborted
+          ? 'The user did not clear the check in time'
+          : error instanceof Error
+            ? error.message
+            : 'The browser page is no longer available',
+        recoveryAction: 'change_strategy',
+        recovery:
+          'Use a legitimate alternate source, or tell the user in one sentence what is still blocked. Do not retry or bypass the check.',
         startedAt
       })
     } finally {
-      if (toolRouter.releaseBrowserHumanTakeover) {
+      if (!signal.aborted) this.transition(runId, 'executing_tool')
+      if (toolRouter.releaseBrowserHumanCheck) {
         await toolRouter
-          .releaseBrowserHumanTakeover(conversationId, browserSessionId)
+          .releaseBrowserHumanCheck(conversationId, browserSessionId)
           .catch(() => undefined)
       }
     }
@@ -2320,7 +2342,6 @@ The user approved this exact plan revision. Act capabilities are now available a
               result = await this.executeBrowserRequestHuman(
                 input.id,
                 title,
-                call.arguments,
                 input.toolRouter,
                 signal,
                 startedAt

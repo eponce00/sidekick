@@ -1,6 +1,7 @@
 import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/browserDevices'
 import { dirname, join, resolve } from 'path'
 import { readFile, writeFile } from 'fs/promises'
+import { setTimeout as abortableDelay } from 'timers/promises'
 import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
 import { OutsideProjectError } from '../utils/workspacePaths'
@@ -30,7 +31,6 @@ import {
   type BrowserActionResult,
   type BrowserFillFormResult,
   type BrowserFormFieldInput,
-  type BrowserHumanTakeoverResult,
   type BrowserNavigateInput,
   type BrowserObservation,
   type BrowserScreenshotArtifact,
@@ -82,6 +82,8 @@ export const AGENT_WEBMCP_TOOL_NAMES = [
 // current conversation and one recently used conversation; older inactive scopes
 // are closed before opening another browser instead of accumulating for app lifetime.
 const DEFAULT_MAX_CONVERSATION_SESSIONS = 2
+// How often the browser looks again while the user clears a human check.
+const HUMAN_CHECK_POLL_MS = 1_500
 const MAX_PERSISTED_SEMANTIC_LINES = 300
 const MAX_ACTION_SEMANTIC_LINES = 60
 const MAX_ACTION_SEMANTIC_LINE_CHARS = 480
@@ -122,8 +124,8 @@ interface BrowserScopeEntry {
   sessionId: string
   lastUsed: number
   active: number
-  humanTakeoverPending: boolean
-  humanTakeoverActive: boolean
+  /** The agent waits for the user to clear a human check on this page. */
+  waitingForUser: boolean
   consoleCursor: number
   networkCursor: number
   workspaceRootKey: string
@@ -776,7 +778,7 @@ function errorResult(
       message: 'The site requires human verification before automation can continue.',
       recoveryAction: 'change_strategy',
       recovery:
-        'Keep the current browser session open and call browser_request_human for same-session takeover.'
+        'Use another legitimate source if there is one. If this page is the only way to finish the task, call browser_request_human so the user clears the check in the Browser panel.'
     })
   }
   if (isMissingSessionError(error)) {
@@ -860,8 +862,7 @@ export class AgentBrowserSessionManager {
     try {
       return {
         ...this.service.workspaceSnapshot(entry.sessionId),
-        userControl: entry.humanTakeoverActive,
-        verificationHandoff: entry.humanTakeoverPending || entry.humanTakeoverActive,
+        waitingForUser: entry.waitingForUser,
         busy: entry.active > 0
       }
     } catch (error) {
@@ -917,7 +918,7 @@ export class AgentBrowserSessionManager {
     const entry = this.scopes.get(scope)
     if (!entry) return false
     if (entry.active > 0) return false
-    if (!entry.humanTakeoverActive) this.userControlled.add(scope)
+    this.userControlled.add(scope)
     entry.lastUsed = this.now()
     // Record stale observations, not persistent ownership. The next agent action
     // automatically refreshes after manual input; no resume gesture is required.
@@ -1054,8 +1055,8 @@ export class AgentBrowserSessionManager {
       if (!entry) return undefined
       if (entry.active > 0)
         throw new Error('Browser action in progress. Try again when it finishes.')
-      if (entry.humanTakeoverPending || entry.humanTakeoverActive) {
-        throw new Error('Human browser takeover is pending; wait for the user to finish')
+      if (entry.waitingForUser) {
+        throw new Error('The agent is waiting for the user to clear a check on this page')
       }
       if (this.userControlled.has(scope)) {
         this.service.refreshAfterUserInput(entry.sessionId)
@@ -1105,8 +1106,8 @@ export class AgentBrowserSessionManager {
       if (current) {
         if (current.active > 0)
           throw new Error('Browser action in progress. Try again when it finishes.')
-        if (current.humanTakeoverPending || current.humanTakeoverActive) {
-          throw new Error('Human browser takeover is pending; wait for the user to finish')
+        if (current.waitingForUser) {
+          throw new Error('The agent is waiting for the user to clear a check on this page')
         }
         if (this.userControlled.has(scope)) {
           this.service.refreshAfterUserInput(current.sessionId)
@@ -1133,10 +1134,7 @@ export class AgentBrowserSessionManager {
       }
       while (this.scopes.size >= this.maxConversationSessions) {
         const evictable = [...this.scopes.entries()]
-          .filter(
-            ([, entry]) =>
-              entry.active === 0 && !entry.humanTakeoverPending && !entry.humanTakeoverActive
-          )
+          .filter(([, entry]) => entry.active === 0 && !entry.waitingForUser)
           .sort((left, right) => left[1].lastUsed - right[1].lastUsed)[0]
         if (!evictable) {
           throw new Error('All browser conversation sessions are currently active')
@@ -1161,8 +1159,7 @@ export class AgentBrowserSessionManager {
         sessionId: observation.sessionId,
         lastUsed: this.now(),
         active: 1,
-        humanTakeoverPending: false,
-        humanTakeoverActive: false,
+        waitingForUser: false,
         consoleCursor: 0,
         networkCursor: 0,
         workspaceRootKey: workspaceRootKey(allowedFileRoots[0])
@@ -1198,8 +1195,8 @@ export class AgentBrowserSessionManager {
   async closeScope(scope: string): Promise<{ closedSessions: string[]; closedTabs: string[] }> {
     const entry = await this.locked(() => {
       const value = this.scopes.get(scope)
-      if (value?.humanTakeoverPending || value?.humanTakeoverActive) {
-        throw new Error('Human browser takeover is pending; wait for the user to finish')
+      if (value?.waitingForUser) {
+        throw new Error('The agent is waiting for the user to clear a check on this page')
       }
       this.scopes.delete(scope)
       this.userControlled.delete(scope)
@@ -1214,77 +1211,44 @@ export class AgentBrowserSessionManager {
     }
   }
 
-  async reserveHumanTakeover(scope: string): Promise<string> {
+  /** Holds the conversation's browser for the user while they clear a human check. */
+  async reserveForHumanCheck(scope: string): Promise<string> {
     return this.locked(() => {
       const entry = this.scopes.get(scope)
       if (!entry) throw new Error('No browser session exists for this conversation')
       if (entry.active > 0) throw new Error('The conversation browser is still executing an action')
-      entry.humanTakeoverPending = true
+      entry.waitingForUser = true
       entry.lastUsed = this.now()
       return entry.sessionId
     })
   }
 
-  async beginHumanTakeover(
+  /**
+   * Waits while the user clears the page's human check in the Browser panel, looking again every
+   * `HUMAN_CHECK_POLL_MS`, until the check is gone or `signal` ends the wait.
+   */
+  async waitForHumanCheck(
     scope: string,
-    expectedSessionId: string
-  ): Promise<BrowserHumanTakeoverResult> {
-    return this.locked(async () => {
+    expectedSessionId: string,
+    signal: AbortSignal
+  ): Promise<void> {
+    for (;;) {
       const entry = this.scopes.get(scope)
-      if (!entry) throw new Error('No browser session exists for this conversation')
-      if (entry.sessionId !== expectedSessionId) {
-        throw new Error('The reserved browser session is no longer available')
-      }
-      if (!entry.humanTakeoverPending) throw new Error('Human browser takeover is not reserved')
-      if (entry.active > 0) throw new Error('The conversation browser is still executing an action')
-      entry.lastUsed = this.now()
-      const result = await this.service.beginHumanTakeover(entry.sessionId)
-      if (!result.active) {
-        await this.service.completeHumanTakeover(entry.sessionId).catch(() => undefined)
-        throw new Error('The browser window could not be opened for human takeover')
-      }
-      entry.humanTakeoverActive = true
-      return result
-    })
-  }
-
-  async completeHumanTakeover(
-    scope: string,
-    expectedSessionId: string
-  ): Promise<BrowserHumanTakeoverResult> {
-    return this.locked(async () => {
-      const entry = this.scopes.get(scope)
-      if (!entry) throw new Error('No browser session exists for this conversation')
-      if (entry.sessionId !== expectedSessionId) {
-        throw new Error('The reserved browser session is no longer available')
-      }
-      if (!entry.humanTakeoverPending || !entry.humanTakeoverActive) {
-        throw new Error('Human browser takeover is not active')
+      if (!entry || entry.sessionId !== expectedSessionId || !entry.waitingForUser) {
+        throw new Error('The browser session is no longer available')
       }
       entry.lastUsed = this.now()
-      try {
-        return await this.service.completeHumanTakeover(entry.sessionId)
-      } finally {
-        entry.humanTakeoverActive = false
-      }
-    })
+      if (!(await this.service.humanVerificationRequired(expectedSessionId, { signal }))) return
+      await abortableDelay(HUMAN_CHECK_POLL_MS, undefined, { signal })
+    }
   }
 
-  async releaseHumanTakeover(scope: string, expectedSessionId: string): Promise<void> {
-    await this.locked(async () => {
+  async releaseHumanCheck(scope: string, expectedSessionId: string): Promise<void> {
+    await this.locked(() => {
       const entry = this.scopes.get(scope)
       if (!entry || entry.sessionId !== expectedSessionId) return
-      try {
-        if (entry.humanTakeoverActive) {
-          await this.service.completeHumanTakeover(entry.sessionId)
-        }
-      } catch (error) {
-        if (!isMissingSessionError(error)) throw error
-      } finally {
-        entry.humanTakeoverActive = false
-        entry.humanTakeoverPending = false
-        entry.lastUsed = this.now()
-      }
+      entry.waitingForUser = false
+      entry.lastUsed = this.now()
     })
   }
 

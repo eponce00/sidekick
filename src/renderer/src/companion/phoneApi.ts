@@ -132,9 +132,7 @@ export function createPhoneApi() {
           ...(input.cancelled ? { cancelled: true } : {})
         })
         return { success: true }
-      },
-      beginBrowserHumanTakeover: refuse,
-      completeBrowserHumanTakeover: refuse
+      }
     },
     // Chats an agent suggests are started where their folders are.
     sessions: {

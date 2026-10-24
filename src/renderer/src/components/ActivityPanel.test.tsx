@@ -256,6 +256,38 @@ describe('ActivityPanel inspector', () => {
     expect(window.localStorage.getItem('activityPanelTab')).toBe('browser')
   })
 
+  it('opens Browser again when the agent waits there for the user', async () => {
+    const toggle = vi.fn()
+    await renderPanel(false, toggle)
+    await act(async () => {
+      browserListener?.({ event: runEvent(1, 'run.started', { threadId: 'chat-1' }) })
+      browserListener?.({
+        event: runEvent(2, 'tool.running', { name: 'browser_open', toolCallId: 'open-1' })
+      })
+    })
+    await act(async () => {
+      browserListener?.({
+        event: runEvent(3, 'tool.completed', {
+          name: 'browser_open',
+          toolCallId: 'open-1',
+          result: { status: 'success' }
+        })
+      })
+    })
+    expect(toggle).toHaveBeenCalledTimes(1)
+    // The user may have closed the panel since; the page they have to finish is in it.
+    await act(async () => {
+      browserListener?.({
+        event: runEvent(4, 'tool.running', {
+          name: 'browser_request_human',
+          toolCallId: 'check-1',
+          title: 'Waiting for you in the browser: Confirm you are human.'
+        })
+      })
+    })
+    expect(toggle).toHaveBeenCalledTimes(2)
+  })
+
   it('shows a requested tab and reports the tab it shows', async () => {
     const onActiveTabChange = vi.fn()
     const render = (tabRequest: { tab: 'browser' | 'files'; at: number } | null) =>

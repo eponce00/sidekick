@@ -82,16 +82,16 @@ the site says to; it always counts as a change.
 ## Human-only site checks
 
 When SideKick detects a CAPTCHA or anti-bot verification, automated input and page evaluation stop.
-The run stays suspended and a **Take control** card appears. Choose it to reveal the exact isolated
-browser tab, complete the site check yourself, and then choose **I've finished — resume**. SideKick
-recaptures the same tab and continues only after the challenge has cleared. The session is pinned
-while the card is pending, popups stay in the visible takeover window, and cancelling the run parks
-the browser safely. If the check cannot be completed, **Use another source** tells the agent to take
-a legitimate alternate route.
+The agent first tries another source, such as another search engine, without bothering you. Only
+when that page is the one way to finish the task does it wait for you: its step in the chat says what
+the site wants, for example **Waiting for you in the browser: DuckDuckGo wants you to confirm you
+are human**, the chat shows as waiting, and the Browser panel opens on the page. Complete the check
+right there in the panel. SideKick notices when it is gone and the agent continues on the same page
+by itself; there is nothing to press. If you stop the run, or the check is still there after ten
+minutes, the agent moves on without it.
 
-When the Browser panel is open, takeover stays inside it. The fallback takeover window's native title
-bar shows a main-process-owned origin. CAPTCHA and anti-bot
-checks are always human-only; SideKick does not ask the model to bypass or solve them.
+CAPTCHA and anti-bot checks are always human-only; SideKick does not ask the model to bypass or solve
+them.
 
 ## Isolation and safety
 

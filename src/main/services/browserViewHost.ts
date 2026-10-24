@@ -239,8 +239,8 @@ export function parkBrowserView(id: number): void {
   entry.host = undefined
   entry.panelBounds = undefined
   entry.allowInput = undefined
-  // Parked views back automation and human takeover, which size the page from
-  // the parking window itself, so they belong at natural scale.
+  // Parked views back automation, which sizes the page from the parking window
+  // itself, so they belong at natural scale.
   entry.zoom = 1
   if (!entry.parking.isDestroyed() && !entry.view.webContents.isDestroyed()) {
     entry.parking.contentView.addChildView(entry.view)
@@ -388,7 +388,7 @@ export async function showBrowserPointer(id: number, x: number, y: number): Prom
   overlay.hideTimer = setTimeout(() => hidePointer(host), POINTER_VISIBLE_MS)
 }
 
-/** Marks a main-process tool gesture so its synthetic input is not treated as user takeover. */
+/** Marks a main-process tool gesture so its synthetic input is not taken for the user's. */
 export async function browserAgentInput<T>(
   id: number,
   operation: () => T | Promise<T>

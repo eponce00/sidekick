@@ -275,11 +275,11 @@ export function BrowserWorkspace({
             </span>
           )}
         </button>
-        {state?.verificationHandoff ? (
+        {state?.waitingForUser ? (
           <span
-            className="browser-workspace-status"
-            title="Finish the verification using the conversation handoff card"
-            aria-label="Finish the verification using the conversation handoff card"
+            className="browser-workspace-status is-waiting"
+            title="The agent continues once you finish this page's check"
+            aria-label="The agent continues once you finish this page's check"
           >
             <Pause size={14} />
           </span>

@@ -938,14 +938,15 @@ const browserHold = definition(
 
 const browserRequestHuman = definition(
   'browser_request_human',
-  'Pause the run for same-session human browser takeover when a CAPTCHA, anti-bot checkpoint, login confirmation, or another explicitly human-only browser step blocks progress. Keep the browser open. After the user completes the step, SideKick resumes the agent with the same cookies, DOM state, and history.',
+  "Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. First use another legitimate source if there is one, such as another search engine or site. SideKick shows the page in the user's Browser panel and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue. Never try to complete the check yourself.",
   {
     type: 'object',
     required: ['reason'],
     properties: {
       reason: {
         type: 'string',
-        description: 'Concise explanation of the human-only step that blocks browser progress.'
+        description:
+          'One short sentence telling the user what to do, shown to them as written, such as "DuckDuckGo wants you to confirm you are human."'
       },
       challenge_type: {
         type: 'string',

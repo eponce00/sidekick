@@ -7,7 +7,6 @@ import {
   ListChecks,
   Loader2,
   MessageCircleQuestionMark,
-  MonitorUp,
   ShieldAlert,
   Workflow,
   X
@@ -262,17 +261,12 @@ function handleOptionKeys(event: React.KeyboardEvent<HTMLDivElement>): void {
 export default function AgentInteractionCard({
   interaction,
   onResolve
-}: AgentInteractionCardProps): React.JSX.Element {
+}: AgentInteractionCardProps): React.JSX.Element | null {
   const questions = useMemo(() => questionsFrom(interaction), [interaction])
   const [answers, setAnswers] = useState<Record<string, QuestionAnswer>>({})
   const [questionIndex, setQuestionIndex] = useState(0)
   const [planFeedback, setPlanFeedback] = useState('')
   const [showPlanFeedback, setShowPlanFeedback] = useState(false)
-  const [takeoverState, setTakeoverState] = useState<'idle' | 'opening' | 'active' | 'checking'>(
-    'idle'
-  )
-  const [takeoverError, setTakeoverError] = useState('')
-  const [takeoverUrl, setTakeoverUrl] = useState('')
   const pending = interaction.status === 'pending'
   const workerIdentity = useWorkerChatIdentity()
   const { computerOnly } = useChatSurface()
@@ -433,21 +427,16 @@ export default function AgentInteractionCard({
   }
 
   const intent = interaction.kind === 'question' ? interaction.request.intent : undefined
-  // Starting chats in the computer's folders and taking over its browser happen on the computer.
-  if (computerOnly && pending && (intent === 'start_sessions' || intent === 'browser_takeover')) {
+  // A human check is now cleared in the Browser panel with no card; an older chat's card stays
+  // hidden.
+  if (intent === 'browser_takeover') return null
+  // Starting chats in the computer's folders happens on the computer.
+  if (computerOnly && pending && intent === 'start_sessions') {
     return (
       <div className="agent-interaction agent-interaction-pending">
         <div className="agent-interaction-heading">
-          {intent === 'start_sessions' ? (
-            <Workflow size={14} aria-hidden="true" />
-          ) : (
-            <MonitorUp size={14} aria-hidden="true" />
-          )}
-          <span>
-            {intent === 'start_sessions'
-              ? 'SideKick wants to start other chats'
-              : 'Human browser verification required'}
-          </span>
+          <Workflow size={14} aria-hidden="true" />
+          <span>SideKick wants to start other chats</span>
         </div>
         <div className="agent-interaction-copy">{computerOnly}</div>
       </div>
@@ -456,117 +445,6 @@ export default function AgentInteractionCard({
 
   if (interaction.kind === 'question' && interaction.request.intent === 'start_sessions') {
     return <StartSessionsCard interaction={interaction} onResolve={onResolve} />
-  }
-
-  if (interaction.kind === 'question' && interaction.request.intent === 'browser_takeover') {
-    const reason = String(
-      interaction.request.reason || 'This site needs a human-only browser step before continuing.'
-    )
-    const completed = interaction.response?.completed === true
-    const beginTakeover = async (): Promise<void> => {
-      setTakeoverError('')
-      setTakeoverState('opening')
-      try {
-        const snapshot = await window.api.agentRuns.beginBrowserHumanTakeover(interaction.id)
-        setTakeoverUrl(snapshot.url)
-        setTakeoverState(snapshot.active ? 'active' : 'idle')
-        if (!snapshot.active) setTakeoverError('The browser window could not be opened.')
-      } catch (error) {
-        setTakeoverState('idle')
-        setTakeoverError(error instanceof Error ? error.message : 'Could not open the browser.')
-      }
-    }
-    const completeTakeover = async (): Promise<void> => {
-      setTakeoverError('')
-      setTakeoverState('checking')
-      try {
-        const snapshot = await window.api.agentRuns.completeBrowserHumanTakeover(interaction.id)
-        setTakeoverUrl(snapshot.url)
-        if (snapshot.humanVerificationRequired) {
-          setTakeoverState('idle')
-          setTakeoverError(
-            snapshot.message ||
-              'Human verification is still visible. Take control again and finish the step.'
-          )
-          return
-        }
-        await onResolve(interaction.id, { completed: true })
-      } catch (error) {
-        setTakeoverState('idle')
-        setTakeoverError(
-          error instanceof Error ? error.message : 'Could not verify the browser state.'
-        )
-      }
-    }
-    const continueWithoutTakeover = async (): Promise<void> => {
-      if (takeoverState === 'active') {
-        await window.api.agentRuns
-          .completeBrowserHumanTakeover(interaction.id)
-          .catch(() => undefined)
-      }
-      await onResolve(interaction.id, { completed: false })
-    }
-    return (
-      <div
-        className={`agent-interaction agent-interaction-browser-takeover agent-interaction-${interaction.status}`}
-      >
-        <div className="agent-interaction-heading">
-          <MonitorUp size={14} aria-hidden="true" />
-          <span>Human browser verification required</span>
-        </div>
-        <div className="agent-interaction-copy">{reason}</div>
-        {takeoverUrl && (
-          <div className="agent-browser-takeover-url" title={takeoverUrl}>
-            {takeoverUrl}
-          </div>
-        )}
-        {takeoverError && <div className="agent-browser-takeover-error">{takeoverError}</div>}
-        {pending ? (
-          <div className="agent-interaction-actions">
-            {takeoverState === 'active' ? (
-              <button
-                type="button"
-                className="agent-interaction-primary"
-                onClick={() => void completeTakeover()}
-              >
-                I’ve finished — resume
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="agent-interaction-primary"
-                disabled={takeoverState === 'opening' || takeoverState === 'checking'}
-                onClick={() => void beginTakeover()}
-              >
-                {takeoverState === 'opening' ? (
-                  <>
-                    <Loader2 size={12} className="icon-spin" /> Opening browser…
-                  </>
-                ) : takeoverState === 'checking' ? (
-                  <>
-                    <Loader2 size={12} className="icon-spin" /> Checking…
-                  </>
-                ) : (
-                  'Take control'
-                )}
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={takeoverState === 'opening' || takeoverState === 'checking'}
-              onClick={() => void continueWithoutTakeover()}
-            >
-              Use another source
-            </button>
-          </div>
-        ) : (
-          <div className="agent-interaction-status">
-            {completed ? <Check size={12} /> : <X size={12} />}
-            {completed ? 'Verification completed' : 'Continued without verification'}
-          </div>
-        )}
-      </div>
-    )
   }
 
   if (interaction.kind === 'plan_approval') {

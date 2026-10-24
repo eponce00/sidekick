@@ -11,8 +11,8 @@ import type { BrowserPageTool } from './webMcp'
 export interface BrowserWorkspaceState {
   sessionId: string
   activeTabId: string
-  userControl: boolean
-  verificationHandoff?: boolean
+  /** The agent waits for the user to clear a human check on the active tab's page. */
+  waitingForUser?: boolean
   busy: boolean
   canGoBack?: boolean
   canGoForward?: boolean

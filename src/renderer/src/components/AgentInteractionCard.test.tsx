@@ -15,21 +15,9 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 describe('AgentInteractionCard question workflow', () => {
   let container: HTMLDivElement
   let root: Root
-  let beginBrowserHumanTakeover: ReturnType<typeof vi.fn>
-  let completeBrowserHumanTakeover: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    beginBrowserHumanTakeover = vi.fn()
-    completeBrowserHumanTakeover = vi.fn()
-    Object.defineProperty(window, 'api', {
-      configurable: true,
-      value: {
-        agentRuns: {
-          beginBrowserHumanTakeover,
-          completeBrowserHumanTakeover
-        }
-      }
-    })
+    Object.defineProperty(window, 'api', { configurable: true, value: { agentRuns: {} } })
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -423,89 +411,23 @@ describe('AgentInteractionCard question workflow', () => {
     draft.remove()
   })
 
-  it('opens the exact suspended browser session and resumes after verification clears', async () => {
-    const resolve = vi.fn()
-    beginBrowserHumanTakeover.mockResolvedValue({
-      active: true,
-      url: 'https://example.test/challenge',
-      title: 'Security check',
-      humanVerificationRequired: true,
-      message: 'Press and hold to continue.'
-    })
-    completeBrowserHumanTakeover.mockResolvedValue({
-      active: false,
-      url: 'https://example.test/complete',
-      title: 'Example',
-      humanVerificationRequired: false
-    })
-
+  it('shows no card for a human check an older chat asked for', async () => {
+    // Checks are cleared in the Browser panel now; this card's buttons no longer do anything.
     await act(async () =>
       root.render(
         <AgentInteractionCard
           interaction={{
             id: 'takeover-1',
             kind: 'question',
-            status: 'pending',
-            request: {
-              intent: 'browser_takeover',
-              reason: 'The site requires a human verification step.',
-              conversationId: 'chat-1'
-            }
+            status: 'resolved',
+            request: { intent: 'browser_takeover', reason: 'The site requires a check.' },
+            response: { completed: true }
           }}
-          onResolve={resolve}
+          onResolve={vi.fn()}
         />
       )
     )
-
-    const button = (label: string): HTMLButtonElement =>
-      [...container.querySelectorAll('button')].find((item) => item.textContent?.includes(label))!
-    await act(async () => button('Take control').click())
-    expect(beginBrowserHumanTakeover).toHaveBeenCalledWith('takeover-1')
-    expect(container.textContent).toContain('https://example.test/challenge')
-
-    await act(async () => button('I’ve finished — resume').click())
-    expect(completeBrowserHumanTakeover).toHaveBeenCalledWith('takeover-1')
-    expect(resolve).toHaveBeenCalledWith('takeover-1', { completed: true })
-  })
-
-  it('keeps the run suspended when human verification is still visible', async () => {
-    const resolve = vi.fn()
-    beginBrowserHumanTakeover.mockResolvedValue({
-      active: true,
-      url: 'https://example.test/challenge',
-      title: 'Security check',
-      humanVerificationRequired: true
-    })
-    completeBrowserHumanTakeover.mockResolvedValue({
-      active: false,
-      url: 'https://example.test/challenge',
-      title: 'Security check',
-      humanVerificationRequired: true,
-      message: 'Verification is still visible.'
-    })
-
-    await act(async () =>
-      root.render(
-        <AgentInteractionCard
-          interaction={{
-            id: 'takeover-2',
-            kind: 'question',
-            status: 'pending',
-            request: { intent: 'browser_takeover', reason: 'Please complete the site check.' }
-          }}
-          onResolve={resolve}
-        />
-      )
-    )
-
-    const button = (label: string): HTMLButtonElement =>
-      [...container.querySelectorAll('button')].find((item) => item.textContent?.includes(label))!
-    await act(async () => button('Take control').click())
-    await act(async () => button('I’ve finished — resume').click())
-
-    expect(container.textContent).toContain('Verification is still visible.')
-    expect(container.textContent).toContain('Take control')
-    expect(resolve).not.toHaveBeenCalled()
+    expect(container.innerHTML).toBe('')
   })
 
   it('offers the most common approval first and a chat-wide one only for a scoped request', async () => {

@@ -1128,9 +1128,8 @@ export class CompanionApi {
       } else throw new Error('Choose an answer')
     } else if (interaction.kind === 'question') {
       const intent = interaction.request.intent
-      // These cards act on the computer itself: starting chats in folders, or taking over its browser.
-      if (intent === 'start_sessions' || intent === 'browser_takeover')
-        throw new Error('Answer this on the computer.')
+      // This card acts on the computer itself: it starts chats in its folders.
+      if (intent === 'start_sessions') throw new Error('Answer this on the computer.')
       const questions = Array.isArray(interaction.request.questions)
         ? (interaction.request.questions as Array<Record<string, unknown>>)
         : []

@@ -182,7 +182,7 @@ export interface BrowserObservation {
   pointer?: BrowserPointer | null
   semanticSnapshot?: string
   semanticNodeCount?: number
-  /** A site-owned anti-bot checkpoint that requires same-session human takeover. */
+  /** A site-owned anti-bot checkpoint only the user can clear, in the Browser panel. */
   humanVerification?: BrowserHumanVerification | null
   screenshot?: BrowserScreenshotArtifact
   /** Capture failed transiently; no image was observed. The page remains usable. */
@@ -522,11 +522,6 @@ export interface BrowserCloseInput {
   deleteArtifacts?: boolean
 }
 
-export interface BrowserHumanTakeoverResult {
-  active: boolean
-  observation: BrowserObservation
-}
-
 export interface NativeBrowserSessionServiceOptions {
   artifactRoot: string
   /** Destination for filled copies of PDFs opened from remote URLs. */
@@ -581,9 +576,6 @@ export interface NativeBrowserSurface {
   fetch(url: string, init?: RequestInit): Promise<Response>
   stop(): void
   close(): Promise<void>
-  showForHumanTakeover(): void
-  hideHumanTakeover(): void
-  isHumanTakeoverVisible(): boolean
   focus(): void
   insertText(text: string): Promise<void>
   sendInputEvent(event: MouseInputEvent | MouseWheelInputEvent | KeyboardInputEvent): void
@@ -732,7 +724,6 @@ interface SessionState {
   tabs: Map<string, TabState>
   pendingTabs: Set<OpeningReservation>
   activeTabId: string
-  humanTakeoverTabId?: string
   console: BrowserConsoleEntry[]
   failures: BrowserNetworkFailure[]
   consoleSequence: number
@@ -1144,8 +1135,6 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   private readonly openUrlListeners = new Set<(url: string) => void>()
   private navigationGuard: (url: string) => boolean = (url) => url === 'about:blank'
   private debuggerOwned = false
-  private closing = false
-  private humanTakeoverVisible = false
   /** A viewport the agent set, and the scale it is drawn at where it is shown. */
   private agentViewport?: BrowserViewport
   private agentViewportScale = 1
@@ -1157,20 +1146,6 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
     private readonly view?: import('electron').WebContentsView
   ) {
     this.webContentsId = contents.id
-    ownerWindow?.on('close', (event) => {
-      if (this.closing || !this.humanTakeoverVisible) return
-      // Closing the takeover window returns control to SideKick without
-      // destroying the isolated tab, cookies, form state, or browser history.
-      event.preventDefault()
-      this.hideHumanTakeover()
-    })
-    ownerWindow?.on('page-title-updated', (event) => {
-      if (!this.humanTakeoverVisible) return
-      event.preventDefault()
-      this.updateTakeoverTitle()
-    })
-    contents.on('did-navigate', () => this.updateTakeoverTitle())
-    contents.on('did-navigate-in-page', () => this.updateTakeoverTitle())
     contents.on('dom-ready', () => {
       void contents.insertCSS(STANDALONE_SVG_VIEWER_CSS).catch(() => undefined)
     })
@@ -1308,9 +1283,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
 
   async close(): Promise<void> {
     if (this.contents.isDestroyed()) return
-    this.closing = true
     parkBrowserView(this.webContentsId)
-    this.humanTakeoverVisible = false
     this.detachDebugger()
     this.clearListeners()
     if (!this.attached) {
@@ -1318,60 +1291,6 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       if (this.ownerWindow && !this.ownerWindow.isDestroyed()) this.ownerWindow.destroy()
       else this.contents.close({ waitForBeforeUnload: false })
     }
-  }
-
-  showForHumanTakeover(): void {
-    const host = browserViewHost(this.webContentsId)
-    if (host && !host.isDestroyed()) {
-      this.humanTakeoverVisible = true
-      host.focus()
-      this.contents.focus()
-      return
-    }
-    if (!this.ownerWindow || this.ownerWindow.isDestroyed() || this.contents.isDestroyed()) {
-      throw new Error('This browser surface cannot be shown for human takeover')
-    }
-    this.humanTakeoverVisible = true
-    this.ownerWindow.setOpacity(1)
-    this.ownerWindow.setFocusable(true)
-    this.ownerWindow.setSkipTaskbar(false)
-    this.ownerWindow.center()
-    this.updateTakeoverTitle()
-    this.ownerWindow.show()
-    this.ownerWindow.focus()
-    this.contents.focus()
-  }
-
-  hideHumanTakeover(): void {
-    this.humanTakeoverVisible = false
-    if (browserViewHost(this.webContentsId)) return
-    if (this.ownerWindow && !this.ownerWindow.isDestroyed()) {
-      this.ownerWindow.setSkipTaskbar(true)
-      this.ownerWindow.setOpacity(0)
-      this.ownerWindow.setFocusable(false)
-      this.ownerWindow.showInactive()
-    }
-  }
-
-  isHumanTakeoverVisible(): boolean {
-    return Boolean(
-      this.humanTakeoverVisible &&
-      this.ownerWindow &&
-      !this.ownerWindow.isDestroyed() &&
-      (browserViewHost(this.webContentsId)?.isVisible() || this.ownerWindow.isVisible())
-    )
-  }
-
-  private updateTakeoverTitle(): void {
-    if (!this.humanTakeoverVisible || !this.ownerWindow || this.ownerWindow.isDestroyed()) return
-    let origin = 'unknown origin'
-    try {
-      const url = new URL(this.contents.getURL())
-      origin = url.protocol === 'file:' ? 'local file' : url.origin
-    } catch {
-      // Keep a main-process-owned title even for a transient navigation URL.
-    }
-    this.ownerWindow.setTitle(`SideKick Browser — ${origin}`)
   }
 
   focus(): void {
@@ -1679,9 +1598,9 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
         // Chromium's own WebMCP, off by default in Electron 43: pages can offer tools that the
         // agent lists and calls through the DevTools WebMCP domain. Only these tabs get it.
         enableBlinkFeatures: 'WebMCP',
-        // Use a normal WebContents so this exact tab can be revealed for
-        // same-session human takeover. Full-page CDP capture briefly wakes
-        // the window offscreen to keep Chromium's compositor responsive.
+        // Use a normal WebContents so the Browser panel can show this exact
+        // tab. Full-page CDP capture briefly wakes the window offscreen to
+        // keep Chromium's compositor responsive.
         offscreen: false,
         devTools: false
       }
@@ -1702,8 +1621,7 @@ class ElectronNativeBrowserRuntime implements NativeBrowserRuntime {
       browserSession.on('will-download', (event) => event.preventDefault())
     }
     // Keep Chromium's compositor live for background automation without
-    // putting the browser in the taskbar or on a usable display. Takeover
-    // moves this exact window on screen; completion parks it here again.
+    // putting the browser in the taskbar or on a usable display.
     window.showInactive()
     return new ElectronNativeBrowserSurface(view.webContents, window, false, view)
   }
@@ -2187,7 +2105,7 @@ export class NativeBrowserSessionService {
       ),
       surface.onDestroyed(() => this.handleSurfaceDestroyed(session, tab)),
       surface.onOpenUrl((url) => {
-        void this.openPopup(session, tab, url).catch((error) => {
+        void this.openPopup(session, url).catch((error) => {
           this.recordConsole(session, tab, {
             level: 'error',
             message: `Blocked popup: ${error instanceof Error ? error.message : String(error)}`
@@ -2335,7 +2253,6 @@ export class NativeBrowserSessionService {
     void this.cleanupTemporaryPdfSources(tab)
     for (const dispose of tab.disposers.splice(0)) dispose()
     session.tabs.delete(tab.id)
-    if (session.humanTakeoverTabId === tab.id) session.humanTakeoverTabId = undefined
     if (session.activeTabId === tab.id) session.activeTabId = session.tabs.keys().next().value ?? ''
     if (!session.tabs.size) {
       this.retireSession(session)
@@ -2431,21 +2348,9 @@ export class NativeBrowserSessionService {
       : new Error('Chromium failed to commit the browser bootstrap document')
   }
 
-  private async openPopup(
-    session: SessionState,
-    opener: TabState,
-    inputUrl: string
-  ): Promise<void> {
+  private async openPopup(session: SessionState, inputUrl: string): Promise<void> {
     const url = await this.normalizeNavigationUrl(inputUrl, session.allowedFileRoots)
     await this.withSessionLock(session, {}, async (signal) => {
-      if (session.humanTakeoverTabId === opener.id && session.tabs.has(opener.id)) {
-        // A popup cannot safely become a second hidden window while the user
-        // owns the visible takeover surface. Keep the navigation in that exact
-        // window so completion always recaptures what the user interacted with.
-        session.activeTabId = opener.id
-        await this.navigateUnlocked(session, opener, url, signal)
-        return
-      }
       const viewport = await this.currentViewport(this.getTab(session))
       const tab = await this.createOwnedTab(session, viewport, signal)
       session.activeTabId = tab.id
@@ -3752,8 +3657,8 @@ export class NativeBrowserSessionService {
       await this.assertAutomatedMutationAllowed(tab, signal)
       const target = await this.resolveTarget(tab, input.target, true, signal)
       // Press-and-hold is useful for ordinary canvas, map, slider, and test UI.
-      // It is not an automated CAPTCHA solver; detected anti-bot checkpoints
-      // always cross the same-session human-takeover boundary.
+      // It is not an automated CAPTCHA solver; a detected anti-bot checkpoint
+      // stops automated input until the user clears it in the Browser panel.
       const startedAt = this.now()
       this.setPointer(tab, target, 'hold', startedAt)
       tab.surface.focus()
@@ -5842,53 +5747,21 @@ export class NativeBrowserSessionService {
     })
   }
 
-  async beginHumanTakeover(
+  /**
+   * Whether the active tab still shows a human check. Once the user has cleared it, refs from
+   * before their clicks are dropped and the page has settled.
+   */
+  async humanVerificationRequired(
     sessionId: string,
     operation: BrowserOperationOptions = {}
-  ): Promise<BrowserHumanTakeoverResult> {
+  ): Promise<boolean> {
     const session = this.getSession(sessionId)
     return this.withSessionLock(session, operation, async (signal) => {
       const tab = this.getTab(session)
-      session.humanTakeoverTabId = tab.id
-      try {
-        tab.surface.showForHumanTakeover()
-        const observation = await this.observeUnlocked(
-          session,
-          { tabId: tab.id, screenshot: 'none', includeSemanticSnapshot: true },
-          signal
-        )
-        return {
-          active: tab.surface.isHumanTakeoverVisible(),
-          observation
-        }
-      } catch (error) {
-        tab.surface.hideHumanTakeover()
-        session.humanTakeoverTabId = undefined
-        throw error
-      }
-    })
-  }
-
-  async completeHumanTakeover(
-    sessionId: string,
-    operation: BrowserOperationOptions = {}
-  ): Promise<BrowserHumanTakeoverResult> {
-    const session = this.getSession(sessionId)
-    return this.withSessionLock(session, operation, async (signal) => {
-      if (!session.humanTakeoverTabId) throw new Error('Human browser takeover is not active')
-      const tab = this.getTab(session, session.humanTakeoverTabId)
-      tab.surface.hideHumanTakeover()
-      session.humanTakeoverTabId = undefined
+      if (await this.detectHumanVerification(tab, undefined, signal)) return true
       this.invalidateSemanticRefs(tab)
       await this.waitForQuiescence(tab, { idleMs: 200, maxWaitMs: 2_000 }, signal)
-      return {
-        active: false,
-        observation: await this.observeUnlocked(
-          session,
-          { tabId: tab.id, screenshot: 'viewport', includeSemanticSnapshot: true },
-          signal
-        )
-      }
+      return false
     })
   }
 

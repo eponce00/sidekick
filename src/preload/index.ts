@@ -190,10 +190,6 @@ const api = {
     events: (runId: string, afterSequence?: number) =>
       ipcRenderer.invoke('agentRuns:events', runId, afterSequence),
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),
-    beginBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverBegin', interactionId),
-    completeBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverComplete', interactionId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
     steer: (input: import('../shared/agentRunApi').SteerConversationRunInput) =>
