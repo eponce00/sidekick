@@ -403,11 +403,15 @@ function openAIReasoningFields(request: ProviderChatRequest): Record<string, unk
     }
   }
   // llama.cpp passes `reasoning_effort` to templates that read it; others switch on
-  // `enable_thinking`. vLLM reads the same template argument.
+  // `enable_thinking`. vLLM templates read `enable_thinking` (Qwen3, Gemma 4) or `thinking`
+  // (Granite, DeepSeek-V3.1); a template ignores the one it does not use.
+  const thinking = level !== 'off'
   const template =
-    kind === 'llamacpp' || kind === 'openai-compatible'
-      ? { chat_template_kwargs: { enable_thinking: level !== 'off' } }
-      : {}
+    kind === 'llamacpp'
+      ? { chat_template_kwargs: { enable_thinking: thinking } }
+      : kind === 'openai-compatible'
+        ? { chat_template_kwargs: { enable_thinking: thinking, thinking } }
+        : {}
   if (level === 'off') return { reasoning_effort: 'none', ...template }
   if (level === 'on') return kind === 'lmstudio' ? { reasoning_effort: 'medium' } : template
   return {

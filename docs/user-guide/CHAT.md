@@ -119,8 +119,9 @@ of its report.
 
   Where a server says a model reasons but lists no levels, the picker offers what its protocol can
   send. A model that cannot reason, always reasons the same way, or whose server says nothing, as
-  with a generic OpenAI-compatible server, has no reasoning control and uses its own default; mark
-  its Reasoning capability as supported in its settings to choose a level for it. A server that
+  with a generic OpenAI-compatible server such as vLLM, has no reasoning control and uses its own
+  default; mark its Reasoning capability as supported in its settings to choose a level for it. A
+  server that
   rejects a level answers with the model's default instead of failing. The command palette's
   Reasoning entry steps to the next level. In a reply, each step of reasoning shows the same brain
   among the agent's steps; select it to read it in full.

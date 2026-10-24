@@ -66,9 +66,14 @@ describe('OpenAI-compatible reasoning fields', () => {
       reasoning_effort: 'low',
       chat_template_kwargs: { enable_thinking: true }
     })
+    // vLLM's templates read one switch or the other.
     expect(openAIRequest(request('openai-compatible', 'qwen', 'low'))).toMatchObject({
       reasoning_effort: 'low',
-      chat_template_kwargs: { enable_thinking: true }
+      chat_template_kwargs: { enable_thinking: true, thinking: true }
+    })
+    expect(openAIRequest(request('openai-compatible', 'granite', 'off'))).toMatchObject({
+      reasoning_effort: 'none',
+      chat_template_kwargs: { enable_thinking: false, thinking: false }
     })
   })
 
