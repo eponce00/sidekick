@@ -148,6 +148,11 @@ The fold button at the end of the tab row, or clicking the tab already showing, 
 away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.
 
+In **Files**, the trash button beside a file or folder, or **Move to Recycle Bin** (**Move to
+Trash** on macOS and Linux) in its right-click menu, asks first, saying how many items a folder
+holds, and then moves it to the Recycle Bin, where you can restore it. The project folder itself and
+Git's `.git` folders cannot be moved this way.
+
 ## Going back
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the

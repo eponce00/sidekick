@@ -30,6 +30,7 @@ import {
   Workflow
 } from 'lucide-react'
 import ConfirmDialog from './ConfirmDialog'
+import { trashQuestion, trashRefusal } from '../../../shared/workspaceTrash'
 import { TerminalPanel } from './TerminalPanel'
 import { subscribeTerminalView, useTerminalSessions } from '../utils/terminalSessionStore'
 import { terminalSessionIsLive } from '../../../shared/terminalSessions'
@@ -484,7 +485,12 @@ function ActivityPanel({
   useEffect(() => {
     setViewedFile(null)
   }, [workspaceFolder])
-  const [pendingFileDelete, setPendingFileDelete] = useState<string | null>(null)
+  /** The file or folder waiting on "Move to Recycle Bin?", with what a folder holds. */
+  const [pendingFileDelete, setPendingFileDelete] = useState<{
+    path: string
+    isDirectory: boolean
+    items?: { count: number; more: boolean }
+  } | null>(null)
   const [deletingFile, setDeletingFile] = useState<string | null>(null)
   const [fileActionError, setFileActionError] = useState<string | null>(null)
 
@@ -613,11 +619,25 @@ function ActivityPanel({
     }
   }
 
+  /** Asks before a file or folder goes to the Recycle Bin; a folder's question says what it holds. */
+  const requestTrash = async (filePath: string, isDirectory: boolean): Promise<void> => {
+    if (!workspaceFolder || trashRefusal(filePath)) return
+    setFileActionError(null)
+    const items = isDirectory
+      ? await window.api.workspace.countPathItems(workspaceFolder, filePath).catch(() => undefined)
+      : undefined
+    setPendingFileDelete({ path: filePath, isDirectory, ...(items ? { items } : {}) })
+  }
+
   const showPathMenu = (filePath: string, isDirectory: boolean): void => {
     if (!workspaceFolder) return
     setFileActionError(null)
+    const offerTrash = !isAgentBusy && deletingFile === null && !trashRefusal(filePath)
     void window.api.workspace
-      .showPathMenu(filePath, workspaceFolder, isDirectory)
+      .showPathMenu(filePath, workspaceFolder, isDirectory, offerTrash)
+      .then((choice) => {
+        if (choice === 'trash') void requestTrash(filePath, isDirectory)
+      })
       .catch((error) => setFileActionError(error instanceof Error ? error.message : String(error)))
   }
 
@@ -740,18 +760,15 @@ function ActivityPanel({
             >
               <MoreHorizontal size={13} />
             </button>
-            {!isDir && (
+            {!trashRefusal(withoutTrailing) && (
               <button
                 className="file-node-delete"
-                onClick={() => {
-                  setFileActionError(null)
-                  setPendingFileDelete(child)
-                }}
+                onClick={() => void requestTrash(withoutTrailing, isDir)}
                 disabled={deletingFile !== null || isAgentBusy}
                 title={`Delete ${name}`}
-                aria-label={`Delete ${child}`}
+                aria-label={`Delete ${withoutTrailing}`}
               >
-                {deletingFile === child ? (
+                {deletingFile === withoutTrailing ? (
                   <Loader2 size={12} className="icon-spin" />
                 ) : (
                   <Trash2 size={12} />
@@ -1262,13 +1279,13 @@ ${viewedFile.filePath}`}
         )}
         <ConfirmDialog
           isOpen={pendingFileDelete !== null}
-          title="Delete file?"
-          message={`Move “${pendingFileDelete || ''}” to the ${systemTrashName}? You can restore it from there.`}
+          title={pendingFileDelete?.isDirectory ? 'Delete folder?' : 'Delete file?'}
+          message={pendingFileDelete ? trashQuestion(pendingFileDelete, systemTrashName) : ''}
           confirmText={`Move to ${systemTrashName}`}
           cancelText="Cancel"
           variant="danger"
           onConfirm={() => {
-            const filePath = pendingFileDelete
+            const filePath = pendingFileDelete?.path
             setPendingFileDelete(null)
             if (filePath) void moveFileToTrash(filePath)
           }}

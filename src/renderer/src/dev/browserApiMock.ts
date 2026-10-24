@@ -1491,7 +1491,8 @@ export function installBrowserApiMock(): void {
         path: fileReference
       }),
       revealFile: async () => {},
-      showPathMenu: async () => {},
+      showPathMenu: async () => undefined,
+      countPathItems: async () => ({ count: 12, more: false }),
       watchFiles: () => () => {}
     }
   }

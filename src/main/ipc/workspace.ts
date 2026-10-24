@@ -32,6 +32,8 @@ import { workspaceWatchers } from '../services/workspaceWatchers'
 import type { ProjectContextAttachment } from '../../shared/messageContextAttachments'
 import { showAppMenu } from '../services/appMenus'
 import { showTrustedDialog } from '../services/trustedDialog'
+import { countPathItems } from '../services/pathItems'
+import { trashRefusal } from '../../shared/workspaceTrash'
 
 const workspaceReads = new WorkspaceReadService()
 
@@ -316,7 +318,7 @@ export function registerWorkspaceHandlers(): void {
     }
   )
 
-  // Workspace: move a user-selected file to the system Trash / Recycle Bin.
+  // Workspace: move a user-selected file or folder to the system Trash / Recycle Bin.
   ipcMain.handle(
     'workspace:trashFile',
     async (
@@ -338,6 +340,8 @@ export function registerWorkspaceHandlers(): void {
         const workspaceRoot = resolveKnownWorkspace(passedRoot)
         const fullPath = join(workspaceRoot, filePath)
         assertInsideWorkspace(fullPath, workspaceRoot)
+        const refusal = trashRefusal(relative(workspaceRoot, fullPath))
+        if (refusal) throw new Error(refusal)
         await shell.trashItem(fullPath)
         return { ok: true }
       } catch (err) {
@@ -485,15 +489,41 @@ export function registerWorkspaceHandlers(): void {
       }
     }
   )
+  // How much a folder holds, for the question before it goes to the Recycle Bin.
+  ipcMain.handle('workspace:countPathItems', async (_, passedRoot: string, folderPath: string) => {
+    const workspaceRoot = resolveKnownWorkspace(passedRoot)
+    return countPathItems(await resolveSecureWorkspacePath(workspaceRoot, folderPath))
+  })
+
   ipcMain.handle('workspace:revealFile', async (_, filePath: string, passedRoot?: string) => {
     shell.showItemInFolder(await resolveShellTarget(filePath, passedRoot))
   })
   ipcMain.handle(
     'workspace:showPathMenu',
-    async (event, requestedPath: string, passedRoot?: string, isDirectory = false) => {
+    async (
+      event,
+      requestedPath: string,
+      passedRoot?: string,
+      isDirectory = false,
+      offerTrash = false
+    ): Promise<'trash' | undefined> => {
       const workspaceRoot = passedRoot ? resolveKnownWorkspace(passedRoot) : getStoredWorkspace()
       const target = await resolveShellTarget(requestedPath, passedRoot)
       const relativePath = relative(workspaceRoot, target).replace(/\\/g, '/')
+      // The window asks before it moves anything, so the menu only says which item was chosen.
+      let chose: (choice: 'trash' | undefined) => void = () => undefined
+      const chosen = new Promise<'trash' | undefined>((resolve) => (chose = resolve))
+      const closed = (): void => void setTimeout(() => chose(undefined), 50)
+      const trash: MenuItemConstructorOptions[] =
+        offerTrash && !trashRefusal(relativePath)
+          ? [
+              { type: 'separator' },
+              {
+                label: `Move to ${process.platform === 'win32' ? 'Recycle Bin' : 'Trash'}`,
+                click: () => chose('trash')
+              }
+            ]
+          : []
       const revealLabel = process.platform === 'win32' ? 'Show in File Explorer' : 'Show in Folder'
       const [openers, revealIcon] = await Promise.all([
         discoverExternalOpeners(),
@@ -582,12 +612,17 @@ export function registerWorkspaceHandlers(): void {
                 click: () => clipboard.writeText(relativePath)
               }
             ]
-          : [])
+          : []),
+        ...trash
       ]
-      if (!showAppMenu(event.sender, template)) {
+      if (!showAppMenu(event.sender, template, undefined, closed)) {
         const window = BrowserWindow.fromWebContents(event.sender)
-        Menu.buildFromTemplate(template).popup(window ? { window } : undefined)
+        Menu.buildFromTemplate(template).popup({
+          ...(window ? { window } : {}),
+          callback: closed
+        })
       }
+      return chosen
     }
   )
 }

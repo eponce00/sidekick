@@ -31,7 +31,7 @@ The stricter modes are available per conversation from the composer and in Setti
 | Agent and child-agent tools       | Shared catalog policy      | Same kernel suspension and result envelope                                          |
 | Agent starting other chats        | Mode-dependent             | Start card unless Full access; a new project always asks; see below                 |
 | Checkpoint restore/rewind/reset   | Confirm                    | Exact broker grant consumed before private-History mutation                         |
-| User file deletion                | Auto after in-app intent   | Exact broker grant consumed before system Trash / Recycle Bin                       |
+| User file or folder deletion      | Auto after in-app intent   | Exact broker grant consumed before system Trash / Recycle Bin                       |
 | External browser navigation       | Auto                       | Main-window policy before opening                                                   |
 
 A shell command counts as only reading when every command in it is one of a short list of

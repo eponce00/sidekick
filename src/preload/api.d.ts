@@ -392,7 +392,18 @@ interface WorkspaceAPI {
     error?: string
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
-  showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
+  /** Resolves with `trash` when Move to Recycle Bin was chosen, which `offerTrash` adds. */
+  showPathMenu: (
+    filePath: string,
+    workspaceRoot?: string,
+    isDirectory?: boolean,
+    offerTrash?: boolean
+  ) => Promise<'trash' | undefined>
+  /** How many files and folders a folder holds, at any depth; `more` past 10,000. */
+  countPathItems: (
+    workspaceRoot: string,
+    folderPath: string
+  ) => Promise<{ count: number; more: boolean }>
   /** Calls back when files under the folder change; returns the function that stops watching. */
   watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }

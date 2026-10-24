@@ -563,8 +563,21 @@ const api = {
       ipcRenderer.invoke('workspace:openFileReference', fileReference, workspaceRoot),
     revealFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
-    showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
-      ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
+    showPathMenu: (
+      filePath: string,
+      workspaceRoot?: string,
+      isDirectory?: boolean,
+      offerTrash?: boolean
+    ) =>
+      ipcRenderer.invoke(
+        'workspace:showPathMenu',
+        filePath,
+        workspaceRoot,
+        isDirectory,
+        offerTrash
+      ),
+    countPathItems: (workspaceRoot: string, folderPath: string) =>
+      ipcRenderer.invoke('workspace:countPathItems', workspaceRoot, folderPath),
     watchFiles: (workspaceRoot: string, callback: () => void) => {
       let subscriptionId: string | null = null
       let stopped = false

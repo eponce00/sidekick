@@ -95,6 +95,57 @@ describe('ActivityPanel inspector', () => {
     expect(container.textContent).toContain('No browser activity yet')
   })
 
+  it('moves a folder to the bin after saying what it holds, but never Git’s folder', async () => {
+    const api = window.api as unknown as {
+      workspace: Record<string, unknown>
+      permissions?: Record<string, unknown>
+    }
+    const trashFile = vi.fn(async () => ({ ok: true }))
+    const countPathItems = vi.fn(async () => ({ count: 214, more: false }))
+    Object.assign(api.workspace, {
+      listFiles: vi.fn(async () => ({
+        ok: true,
+        files: ['src/', 'src/app.ts', '.git/', 'README.md']
+      })),
+      trashFile,
+      countPathItems
+    })
+    api.permissions = {
+      authorize: vi.fn(async () => ({ approved: true, token: 'token' }))
+    }
+    await act(async () =>
+      root.render(
+        <ActivityPanel
+          isPinned
+          onTogglePin={vi.fn()}
+          conversationId="chat-1"
+          focusChainTodos={[]}
+          workspaceFolder="C:/project"
+        />
+      )
+    )
+    await act(async () => new Promise((done) => setTimeout(done, 0)))
+
+    expect(container.querySelector('button[aria-label="Delete .git"]')).toBeNull()
+    expect(container.querySelector('button[aria-label="Delete README.md"]')).not.toBeNull()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('button[aria-label="Delete src"]')!.click()
+    )
+    expect(countPathItems).toHaveBeenCalledWith('C:/project', 'src')
+    expect(document.body.textContent).toContain(
+      'Move the folder “src” and the 214 items in it to the Recycle Bin?'
+    )
+    const confirm = [...document.body.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Move to Recycle Bin'
+    )!
+    await act(async () => confirm.click())
+    expect(trashFile).toHaveBeenCalledWith(
+      'C:/project',
+      'src',
+      expect.objectContaining({ authorizationToken: 'token' })
+    )
+  })
+
   it('drags its edge to any width, snapping, taking the window, and folding away', async () => {
     const onSettle = vi.fn()
     let state = { width: 500, size: 'wide' as 'wide' | 'full', pinned: true }
