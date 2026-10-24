@@ -73,6 +73,9 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
     queueChanged: vi.fn(),
     shrinkImage: vi.fn(async (image) => ({ ...image, dataUrl: 'data:image/jpeg;base64,small' })),
     readArtifact: vi.fn(async () => null),
+    canUseWorktree: vi.fn(async (projectId: string) => projectId === 'repo'),
+    createWorktree: vi.fn(async () => undefined),
+    restoreFiles: vi.fn(async () => undefined),
     sendToDevice: vi.fn(),
     later: (work) => queued.push(work),
     ...overrides
@@ -121,6 +124,222 @@ describe('CompanionApi', () => {
         needsAnswer: true
       })
     ])
+  })
+
+  function addProject(db: Database.Database, id: string, name: string, folder: string): void {
+    db.prepare(
+      `INSERT INTO projects (id, name, folder_path, is_pinned, created_at, updated_at)
+       VALUES (?, ?, ?, 0, 1, 1)`
+    ).run(id, name, folder)
+  }
+
+  function addMessage(
+    db: Database.Database,
+    conversationId: string,
+    message: {
+      id: string
+      role: string
+      content: string
+      timestamp: number
+      checkpoint?: string
+      folder?: string
+      startsGoal?: boolean
+    }
+  ): void {
+    db.prepare(
+      `INSERT INTO messages
+       (id, conversation_id, role, content, timestamp, checkpoint_hash, checkpoint_workspace_root,
+        starts_goal)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      message.id,
+      conversationId,
+      message.role,
+      message.content,
+      message.timestamp,
+      message.checkpoint ?? null,
+      message.folder ?? null,
+      message.startsGoal ? 1 : 0
+    )
+  }
+
+  it('lists projects with whether their chats can use worktrees', async () => {
+    const { call, db } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    addProject(db, 'notes', 'Notes', 'C:/notes')
+    expect(await call('projects.list', {})).toEqual(
+      expect.arrayContaining([
+        { id: 'repo', name: 'sidekick', canUseWorktree: true },
+        { id: 'notes', name: 'Notes', canUseWorktree: false }
+      ])
+    )
+  })
+
+  it('starts a new chat in a project, and in its own worktree when asked', async () => {
+    const { call, db, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    const inFolder = (await call('chat.send', { text: 'Fix it', projectId: 'repo' })) as {
+      conversationId: string
+    }
+    expect(
+      db.prepare('SELECT project_id FROM conversations WHERE id = ?').get(inFolder.conversationId)
+    ).toEqual({ project_id: 'repo' })
+    expect(deps.createWorktree).not.toHaveBeenCalled()
+    const inWorktree = (await call('chat.send', {
+      text: 'Try it apart',
+      projectId: 'repo',
+      workIn: 'worktree'
+    })) as { conversationId: string }
+    expect(deps.createWorktree).toHaveBeenCalledWith(inWorktree.conversationId)
+    // The worktree exists before the first run uses the folder.
+    expect(vi.mocked(deps.createWorktree).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(deps.startRun).mock.invocationCallOrder.at(-1)!
+    )
+    expect(
+      (await call('chats.list', {})) as Array<{ projectId: string | null; projectName: string }>
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: inFolder.conversationId,
+          projectId: 'repo',
+          projectName: 'sidekick'
+        })
+      ])
+    )
+  })
+
+  it('leaves no chat behind when its worktree cannot be made, and refuses one without a project', async () => {
+    const { call, db } = setup({
+      createWorktree: vi.fn(async () => {
+        throw new Error('not a repository')
+      })
+    })
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    const before = (db.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n
+    await expect(
+      call('chat.send', { text: 'x', projectId: 'repo', workIn: 'worktree' })
+    ).rejects.toThrow(/worktree could not be made: not a repository/)
+    await expect(call('chat.send', { text: 'x', workIn: 'worktree' })).rejects.toThrow(/project/)
+    await expect(call('chat.send', { text: 'x', projectId: 'gone' })).rejects.toThrow(/project/)
+    expect((db.prepare('SELECT COUNT(*) AS n FROM conversations').get() as { n: number }).n).toBe(
+      before
+    )
+  })
+
+  it('retries a reply from the message it answered, putting the files back first', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ?, home_workspace_root = ? WHERE id = ?').run(
+      'repo',
+      'C:/code/sidekick',
+      chat.id
+    )
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'First', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Done',
+      timestamp: 20,
+      checkpoint: 'aaaaaaa1',
+      folder: 'C:/code/sidekick'
+    })
+    addMessage(db, chat.id, { id: 'u2', role: 'user', content: 'Second', timestamp: 30 })
+    addMessage(db, chat.id, {
+      id: 'a2',
+      role: 'agent',
+      content: 'Changed files',
+      timestamp: 40,
+      checkpoint: 'bbbbbbb2',
+      folder: 'C:/code/sidekick'
+    })
+    const { runId } = (await call('chat.retry', { conversationId: chat.id, messageId: 'a2' })) as {
+      runId: string
+    }
+    // Back to the history point before the retried message, as the window does.
+    expect(deps.restoreFiles).toHaveBeenCalledWith({
+      workspaceRoot: 'C:/code/sidekick',
+      action: 'hard-reset',
+      hash: 'aaaaaaa1'
+    })
+    expect(
+      db
+        .prepare('SELECT id FROM messages WHERE conversation_id = ? ORDER BY timestamp')
+        .all(chat.id)
+    ).toEqual([{ id: 'u1' }, { id: 'a1' }, { id: 'u2' }])
+    expect(deps.startRun).toHaveBeenCalledWith(
+      expect.objectContaining({ id: runId, conversationId: chat.id, mode: 'conversation' })
+    )
+    expect(deps.messagesChanged).toHaveBeenCalledWith(chat.id)
+  })
+
+  it('edits a message and answers it again, rewinding to before its own history point', async () => {
+    const { call, db, chat, deps } = setup()
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ? WHERE id = ?').run('repo', chat.id)
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Fix it', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Fixed',
+      timestamp: 20,
+      checkpoint: 'ccccccc3',
+      folder: 'C:/code/sidekick'
+    })
+    await call('chat.retry', { conversationId: chat.id, messageId: 'u1', text: '  Fix it better ' })
+    expect(deps.restoreFiles).toHaveBeenCalledWith({
+      workspaceRoot: 'C:/code/sidekick',
+      action: 'rewind',
+      hash: 'ccccccc3'
+    })
+    expect(
+      db.prepare('SELECT id, content FROM messages WHERE conversation_id = ?').all(chat.id)
+    ).toEqual([{ id: 'u1', content: 'Fix it better' }])
+  })
+
+  it('still answers again when the files cannot go back, as the window does', async () => {
+    const { call, db, chat, deps } = setup({
+      restoreFiles: vi.fn(async () => {
+        throw new Error('Not allowed')
+      })
+    })
+    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
+    db.prepare('UPDATE conversations SET project_id = ? WHERE id = ?').run('repo', chat.id)
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Go', timestamp: 10 })
+    addMessage(db, chat.id, {
+      id: 'a1',
+      role: 'agent',
+      content: 'Went',
+      timestamp: 20,
+      checkpoint: 'ddddddd4',
+      folder: 'C:/code/sidekick'
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    await call('chat.retry', { conversationId: chat.id, messageId: 'a1' })
+    warn.mockRestore()
+    expect(deps.startRun).toHaveBeenCalled()
+  })
+
+  it('refuses to retry while a run works, across a goal, or with an empty edit', async () => {
+    const { call, db, chat, runs, deps } = setup()
+    addMessage(db, chat.id, { id: 'u1', role: 'user', content: 'Go', timestamp: 10 })
+    addMessage(db, chat.id, { id: 'a1', role: 'agent', content: 'Went', timestamp: 20 })
+    await expect(
+      call('chat.retry', { conversationId: chat.id, messageId: 'u1', text: '   ' })
+    ).rejects.toThrow(/Write the message/)
+    await expect(
+      call('chat.retry', { conversationId: chat.id, messageId: 'gone' })
+    ).rejects.toThrow(/no longer/)
+    runs.set('run-1', run({ threadId: chat.id, phase: 'streaming' }))
+    await expect(call('chat.retry', { conversationId: chat.id, messageId: 'a1' })).rejects.toThrow(
+      /Stop it first/
+    )
+    runs.clear()
+    db.prepare('UPDATE messages SET starts_goal = 1 WHERE id = ?').run('u1')
+    await expect(call('chat.retry', { conversationId: chat.id, messageId: 'a1' })).rejects.toThrow(
+      /goal/
+    )
+    expect(deps.startRun).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT COUNT(*) AS n FROM messages').get()).toEqual({ n: 2 })
   })
 
   it('saves a message and starts a run in the chosen mode, on the path the window uses', async () => {

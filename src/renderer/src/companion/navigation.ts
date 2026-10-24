@@ -13,6 +13,8 @@ export interface ShownChat {
   /** Null for the new-chat home, until its first message creates the chat. */
   id: string | null
   title: string
+  /** For the new-chat home: the project its first message starts the chat in. */
+  projectId?: string
 }
 
 export interface NavEntry {
@@ -39,7 +41,8 @@ export function readEntry(state: unknown): NavEntry | null {
     return null
   const id = typeof chat.id === 'string' ? chat.id : null
   const title = typeof chat.title === 'string' ? chat.title : ''
-  return { nav, chat: { id, title }, layer }
+  const projectId = !id && typeof chat.projectId === 'string' ? chat.projectId : undefined
+  return { nav, chat: { id, title, ...(projectId ? { projectId } : {}) }, layer }
 }
 
 interface Layer {

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
-import { Copy } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { RotateCcw } from 'lucide-react'
 import { MessageItem } from '../components/MessageItem'
 import type { Message } from '../types/chat.types'
 import { messageTextForClipboard } from '../utils/messageClipboard'
@@ -14,33 +14,41 @@ type Resolve = (
 ) => Promise<void>
 
 const NOTHING = (): void => undefined
-const RETRY_ON_COMPUTER = 'Retry this reply on the computer.'
-/** How long a finger rests on a sent message before its menu opens. */
-const LONG_PRESS_MS = 450
+const WAIT_FOR_RUN = 'Wait for SideKick to finish, or stop it first.'
 
-/** The sent message under an event, by the id the desktop's message view puts on each one. */
-function userMessageId(event: SyntheticEvent): string | null {
+/** The sent message a tap landed on, unless it landed on one of its buttons. */
+function tappedUserMessage(event: MouseEvent): string | null {
   const target = event.target instanceof Element ? event.target : null
-  const message = target?.closest('.message-user[data-message-id]')
-  return message?.getAttribute('data-message-id') ?? null
+  if (!target || target.closest('button, a, .message-actions, .message-footer-popover')) return null
+  return target.closest('.message-user[data-message-id]')?.getAttribute('data-message-id') ?? null
 }
 
 /**
  * The chat drawn by the desktop's own message view, so replies, tools, cards and footers look and
- * work as they do there. What changes the chat's history, such as editing, rewinding or forking,
- * stays on the computer, so the messages are shown read-only.
+ * work as they do there. A reply keeps its row of buttons in view, as there is no pointer to bring
+ * it up; a sent message shows its own (copy, read aloud, edit, retry) when tapped, as the phone
+ * apps do. Forking and rewinding stay on the computer.
  */
 export function Transcript({
   messages,
   runActive,
-  onResolve
+  editingMessageId,
+  onResolve,
+  onEdit,
+  onRetry
 }: {
   messages: readonly Message[]
   runActive: boolean
+  /** The sent message being edited in the message box, which steps back as on the desktop. */
+  editingMessageId: string | null
   onResolve: Resolve
+  onEdit: (message: Message) => void
+  onRetry: (message: Message) => void
 }) {
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(() => new Set())
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
+  const [revealed, setRevealed] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState<Message | null>(null)
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
     () => () => {
@@ -68,75 +76,69 @@ export function Transcript({
     })
   }, [])
 
-  // A sent message has no row of buttons under it, as in the phone apps: holding it opens a menu.
-  const [menuFor, setMenuFor] = useState<string | null>(null)
-  const press = useRef<{ timer: ReturnType<typeof setTimeout>; x: number; y: number } | null>(null)
-  const cancelPress = (): void => {
-    if (press.current) clearTimeout(press.current.timer)
-    press.current = null
-  }
-  useEffect(() => cancelPress, [])
-  const closeMenu = useCallback(() => setMenuFor(null), [])
-  const menuMessage = menuFor ? messages.find((message) => message.id === menuFor) : undefined
+  const editMessage = useCallback(
+    (message: Message) => {
+      if (runActive) return phoneNotice(WAIT_FOR_RUN)
+      setRevealed(null)
+      onEdit(message)
+    },
+    [runActive, onEdit]
+  )
+  const askRetry = useCallback(
+    (message: Message) => {
+      if (runActive) return phoneNotice(WAIT_FOR_RUN)
+      setRetrying(message)
+    },
+    [runActive]
+  )
+  const closeRetry = useCallback(() => setRetrying(null), [])
 
   const last = messages.length - 1
   return (
     <div
       className="cp-transcript"
-      onContextMenu={(event) => {
-        const id = userMessageId(event)
-        if (!id) return
-        event.preventDefault()
-        cancelPress()
-        setMenuFor(id)
+      onClick={(event) => {
+        const id = tappedUserMessage(event)
+        if (id) setRevealed((current) => (current === id ? null : id))
       }}
-      onTouchStart={(event) => {
-        const id = userMessageId(event)
-        cancelPress()
-        if (!id || event.touches.length !== 1) return
-        const { clientX: x, clientY: y } = event.touches[0]
-        press.current = { x, y, timer: setTimeout(() => setMenuFor(id), LONG_PRESS_MS) }
-      }}
-      onTouchMove={(event) => {
-        const start = press.current
-        const touch = event.touches[0]
-        if (start && Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10)
-          cancelPress()
-      }}
-      onTouchEnd={cancelPress}
-      onTouchCancel={cancelPress}
     >
       {messages.map((message, index) => (
-        <MessageItem
+        <div
           key={message.id}
-          message={message}
-          index={index}
-          isLoading={runActive && index === last && message.role === 'agent'}
-          expandedThinking={expandedThinking}
-          editingMessageId={null}
-          copiedMessageId={copiedMessageId}
-          onToggleThinking={toggleThinking}
-          onHandleArtifactResult={NOTHING}
-          onEditMessage={NOTHING}
-          onCopyMessage={copyMessage}
-          onRetryMessage={() => phoneNotice(RETRY_ON_COMPUTER)}
-          onApproveToolLimitDecision={(id) => void onResolve(id, { approved: true })}
-          onDenyToolLimitDecision={(id) => void onResolve(id, { approved: false })}
-          onResolveAgentInteraction={onResolve}
-          readOnly
-        />
+          className={`cp-message-slot${revealed === message.id ? ' is-revealed' : ''}`}
+        >
+          <MessageItem
+            message={message}
+            index={index}
+            isLoading={runActive && index === last && message.role === 'agent'}
+            expandedThinking={expandedThinking}
+            editingMessageId={editingMessageId}
+            copiedMessageId={copiedMessageId}
+            onToggleThinking={toggleThinking}
+            onHandleArtifactResult={NOTHING}
+            onEditMessage={editMessage}
+            onCopyMessage={copyMessage}
+            onRetryMessage={askRetry}
+            onApproveToolLimitDecision={(id) => void onResolve(id, { approved: true })}
+            onDenyToolLimitDecision={(id) => void onResolve(id, { approved: false })}
+            onResolveAgentInteraction={onResolve}
+          />
+        </div>
       ))}
-      {menuMessage && (
-        <Sheet label="Message" onClose={closeMenu}>
-          <p className="cp-sheet-quote">{menuMessage.content}</p>
+      {retrying && (
+        <Sheet label="Retry" onClose={closeRetry}>
+          {retrying.role === 'user' && <p className="cp-sheet-quote">{retrying.content}</p>}
+          <p className="cp-sheet-note">
+            SideKick answers this message again. The replies after it leave the chat, and the files
+            it changed since are put back.
+          </p>
           <SheetAction
-            icon={<Copy size={18} />}
-            label="Copy"
+            icon={<RotateCcw size={18} />}
+            label="Answer again"
             onClick={() => {
-              setMenuFor(null)
-              void copyFormatted(messageTextForClipboard(menuMessage)).then(
-                (copied) => copied && phoneNotice('Copied')
-              )
+              setRetrying(null)
+              setRevealed(null)
+              onRetry(retrying)
             }}
           />
         </Sheet>

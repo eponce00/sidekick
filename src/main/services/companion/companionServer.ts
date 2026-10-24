@@ -360,6 +360,17 @@ export class CompanionServer {
       }
       const status = error instanceof HttpError ? error.status : 500
       const code = error instanceof HttpError ? error.code : 'failed'
+      if (status === 413) {
+        // The phone is still sending. Reading the rest lets it hear this answer rather than a
+        // reset; one that keeps sending well past the limit is cut off.
+        let discarded = 0
+        request.on('data', (chunk: Buffer) => {
+          discarded += chunk.length
+          if (discarded > 4 * COMPANION_MAX_REQUEST_BYTES) request.socket.destroy()
+        })
+        request.resume()
+        response.setHeader('Connection', 'close')
+      }
       if (!(error instanceof HttpError) && !(error instanceof CompanionProtocolError))
         console.warn('[Companion] A request failed:', error)
       json(response, error instanceof CompanionProtocolError ? 400 : status, {

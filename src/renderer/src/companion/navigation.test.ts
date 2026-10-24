@@ -10,6 +10,13 @@ describe('history entries', () => {
       chat: { id: null, title: '' },
       layer: 0
     })
+    // A new chat's home remembers the project it starts in; an open chat has its own.
+    const home = { nav: 2, chat: { id: null, title: '', projectId: 'p1' }, layer: 0 }
+    expect(readEntry(entryState(home))).toEqual(home)
+    expect(
+      readEntry(entryState({ nav: 4, chat: { id: 'c', title: '', projectId: 'p1' }, layer: 0 }))
+        ?.chat
+    ).toEqual({ id: 'c', title: '' })
   })
 
   it('ignore states another page or an older version wrote', () => {

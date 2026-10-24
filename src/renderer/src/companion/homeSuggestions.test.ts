@@ -8,7 +8,9 @@ function chat(id: string, title: string, updatedAt: number, pinned = false): Com
     title,
     updatedAt,
     pinned,
+    projectId: null,
     projectName: null,
+    inWorktree: false,
     activePhase: null,
     needsAnswer: false
   }

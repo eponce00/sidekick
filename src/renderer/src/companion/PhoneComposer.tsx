@@ -7,6 +7,7 @@ import {
   ListChecks,
   Loader2,
   Microscope,
+  Pencil,
   Plus,
   Square,
   X
@@ -49,6 +50,9 @@ export function PhoneComposer({
   queue,
   models,
   prefill,
+  editing,
+  onCancelEdit,
+  onSubmitEdit,
   onSend,
   onStop,
   onUpdateQueue,
@@ -62,6 +66,13 @@ export function PhoneComposer({
   models: ModelList | null
   /** Text put in the box for review, as a home suggestion does; a new nonce puts it again. */
   prefill?: { text: string; nonce: number } | null
+  /**
+   * A sent message being edited, as the desktop's Edit loads one into the box: sending answers it
+   * again with the new text. What the box held waits until the edit is sent or cancelled.
+   */
+  editing: { messageId: string; text: string; nonce: number } | null
+  onCancelEdit: () => void
+  onSubmitEdit: (text: string) => Promise<boolean>
   onSend: (message: OutgoingMessage) => Promise<boolean>
   onStop: () => void
   onUpdateQueue: (queued: Array<{ id: string; content: string }>) => void
@@ -92,6 +103,26 @@ export function PhoneComposer({
       field?.setSelectionRange(prefill.text.length, prefill.text.length)
     })
   }, [prefill])
+  const [edited, setEdited] = useState<number | null>(null)
+  const setAside = useRef<string | null>(null)
+  if (editing && editing.nonce !== edited) {
+    setEdited(editing.nonce)
+    if (setAside.current === null) setAside.current = text
+    setText(editing.text)
+  }
+  useEffect(() => {
+    if (!editing) return
+    requestAnimationFrame(() => {
+      const field = inputRef.current
+      field?.focus()
+      field?.setSelectionRange(editing.text.length, editing.text.length)
+    })
+  }, [editing])
+  const endEdit = (): void => {
+    setText(setAside.current ?? '')
+    setAside.current = null
+    setEdited(null)
+  }
 
   const modelId = chosenModelId ?? models?.selectedModelId ?? null
   const model = models?.models.find((candidate) => candidate.id === modelId) ?? null
@@ -101,6 +132,13 @@ export function PhoneComposer({
   const steerFirst = runActive && !hasContent && queue.queued.length > 0
 
   const submit = async (): Promise<void> => {
+    if (editing) {
+      const edit = text.trim()
+      if (!edit || sending) return
+      endDictation()
+      if (await onSubmitEdit(edit)) endEdit()
+      return
+    }
     if (steerFirst) {
       onSteerQueued(queue.queued[0].id)
       return
@@ -242,8 +280,8 @@ export function PhoneComposer({
   // One round button at the end of the row, as in the phone apps: Send once there is something to
   // send, Stop while SideKick works with nothing typed. A queued message steers from its own Steer
   // button, or with Ctrl+Enter in an empty box on a hardware keyboard.
-  const showSend = hasContent
-  const showStop = runActive && !hasContent
+  const showSend = editing ? Boolean(text.trim()) : hasContent
+  const showStop = runActive && !hasContent && !editing
 
   return (
     <>
@@ -255,13 +293,15 @@ export function PhoneComposer({
         minRows={1}
         maxRows={6}
         placeholder={
-          mode === 'research'
-            ? 'What should SideKick research?'
-            : mode === 'plan'
-              ? 'What should SideKick plan?'
-              : runActive
-                ? 'Queue a message for SideKick'
-                : 'Message SideKick'
+          editing
+            ? 'Edit your message'
+            : mode === 'research'
+              ? 'What should SideKick research?'
+              : mode === 'plan'
+                ? 'What should SideKick plan?'
+                : runActive
+                  ? 'Queue a message for SideKick'
+                  : 'Message SideKick'
         }
         queueTray={queueTray}
         attachmentTray={attachmentTray}
@@ -277,45 +317,64 @@ export function PhoneComposer({
         sendDisabled={!showSend || sending || files.uploading}
         sendButtonClassName={showSend ? '' : 'cp-hidden'}
         sendTitle={
-          files.uploading
-            ? 'Waiting for attachments to upload'
-            : runActive
-              ? 'Add message to queue'
-              : mode === 'research'
-                ? 'Start research report'
-                : mode === 'plan'
-                  ? 'Start Plan mode'
-                  : 'Send message'
+          editing
+            ? 'Send the edited message'
+            : files.uploading
+              ? 'Waiting for attachments to upload'
+              : runActive
+                ? 'Add message to queue'
+                : mode === 'research'
+                  ? 'Start research report'
+                  : mode === 'plan'
+                    ? 'Start Plan mode'
+                    : 'Send message'
         }
         toolbarLeft={
-          <>
-            <button
-              type="button"
-              className="cp-composer-button"
-              onClick={() => setSheet('add')}
-              aria-label="Add an attachment or agent behavior"
-              aria-haspopup="dialog"
-            >
-              <Plus size={20} aria-hidden="true" />
-            </button>
-            {mode !== 'conversation' && (
-              <span className="cp-mode-chip" role="status">
-                {mode === 'plan' ? (
-                  <ListChecks size={15} aria-hidden="true" />
-                ) : (
-                  <Microscope size={15} aria-hidden="true" />
-                )}
-                {MODE_CHIP[mode]}
-                <button
-                  type="button"
-                  onClick={() => setMode('conversation')}
-                  aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
-                >
-                  <X size={14} aria-hidden="true" />
-                </button>
-              </span>
-            )}
-          </>
+          editing ? (
+            <span className="cp-mode-chip is-editing" role="status">
+              <Pencil size={15} aria-hidden="true" />
+              Editing
+              <button
+                type="button"
+                onClick={() => {
+                  endEdit()
+                  onCancelEdit()
+                }}
+                aria-label="Cancel the edit"
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </span>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="cp-composer-button"
+                onClick={() => setSheet('add')}
+                aria-label="Add an attachment or agent behavior"
+                aria-haspopup="dialog"
+              >
+                <Plus size={20} aria-hidden="true" />
+              </button>
+              {mode !== 'conversation' && (
+                <span className="cp-mode-chip" role="status">
+                  {mode === 'plan' ? (
+                    <ListChecks size={15} aria-hidden="true" />
+                  ) : (
+                    <Microscope size={15} aria-hidden="true" />
+                  )}
+                  {MODE_CHIP[mode]}
+                  <button
+                    type="button"
+                    onClick={() => setMode('conversation')}
+                    aria-label={mode === 'plan' ? 'Remove Plan mode' : 'Remove research mode'}
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </span>
+              )}
+            </>
+          )
         }
         toolbarRight={
           <>

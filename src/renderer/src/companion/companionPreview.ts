@@ -158,6 +158,12 @@ const DIFF = `--- a/src/upload/UploadButton.css
  }
 `
 
+/** The preview's projects; a chat's project is known by its name here. */
+const PROJECTS = [
+  { id: 'sidekick', name: 'sidekick', canUseWorktree: true },
+  { id: 'notes', name: 'Notes', canUseWorktree: false }
+]
+
 /** What the pretend dictation writes. */
 const DICTATED = 'Also check the retry logic in the upload client.'
 
@@ -806,6 +812,10 @@ export class CompanionPreview implements CompanionConnection {
       }
       case 'chat.send':
         return this.send(input as Input<'chat.send'>)
+      case 'projects.list':
+        return PROJECTS satisfies Output<'projects.list'>
+      case 'chat.retry':
+        return this.retry(input as Input<'chat.retry'>)
       case 'queue.list':
         return this.queue((input as Input<'queue.list'>).conversationId)
       case 'queue.update':
@@ -953,7 +963,13 @@ export class CompanionPreview implements CompanionConnection {
       throw new Error("This chat's model cannot see images. Choose one that can, or remove them.")
     if (!id) {
       id = this.id('chat')
-      this.chats.push(chat(id, input.text.slice(0, 40) || 'New chat', Date.now(), null))
+      const project = PROJECTS.find((candidate) => candidate.id === input.projectId)
+      if (input.projectId && !project) throw new Error('That project no longer exists')
+      this.chats.push(
+        chat(id, input.text.slice(0, 40) || 'New chat', Date.now(), project?.name ?? null, {
+          inWorktree: Boolean(project?.canUseWorktree && input.workIn === 'worktree')
+        })
+      )
     }
     if (input.modelId) this.chatModels.set(id, input.modelId)
     const run = this.activeRun(id)
@@ -970,6 +986,26 @@ export class CompanionPreview implements CompanionConnection {
     }
     const started = this.begin(id, input.text, mode, images, files)
     return { conversationId: id, runId: started.snapshot.id, steered: false, queued: false }
+  }
+
+  /** Answers a sent message again, as the computer does: what came after it leaves. */
+  private retry(input: Input<'chat.retry'>): Output<'chat.retry'> {
+    const { conversationId, messageId } = input
+    if (this.activeRun(conversationId)) throw new Error('SideKick is still working in this chat.')
+    const saved = this.messages.get(conversationId) ?? []
+    let index = saved.findIndex((item) => item.id === messageId)
+    while (index >= 0 && saved[index].role !== 'user') index--
+    if (index < 0) throw new Error('That message is no longer in the chat')
+    const target = saved[index]
+    this.messages.set(conversationId, saved.slice(0, index))
+    const started = this.begin(
+      conversationId,
+      input.text?.trim() || target.content,
+      target.runMode ?? 'conversation',
+      target.images ?? [],
+      target.attachments ?? []
+    )
+    return { runId: started.snapshot.id }
   }
 
   /** Saves the user's message and starts a run that answers it. */
@@ -1209,7 +1245,9 @@ function chat(
     title,
     updatedAt,
     pinned: false,
+    projectId: projectName,
     projectName,
+    inWorktree: false,
     activePhase: null,
     needsAnswer: false,
     ...extra

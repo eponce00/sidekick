@@ -33,6 +33,15 @@ and the agent's other chats.
 
 - **Send** a message in a chat, or start a new chat, in Chat, Research or Plan mode and on the model
   you choose for the chat.
+- **Start a chat in a project** with the **+** beside the project in the chat list, or by choosing
+  the project above the message box of a new chat. For a project in a Git repository, choose
+  **New worktree** there to have the chat work in its own copy of the project, as **Work in** does
+  on the computer.
+- **Tap a message you sent** for its buttons: **Copy**, **Read aloud**, **Edit** and **Retry**.
+  **Edit** puts the message back in the message box to change and send again; **Retry** answers it
+  again. Either way, the replies after it leave the chat, and the files SideKick changed since are
+  put back, as on the computer. Where your permission settings ask before that, the computer asks.
+  A reply's own buttons are always under it.
 - **While the agent works**, a message you send is queued, as on the computer, and is sent when the
   reply finishes. The queue is the same one the computer's composer shows: edit, reorder or remove
   messages from either, or **Steer** one to hand it to the agent now. A message steered while the

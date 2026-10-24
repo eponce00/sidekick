@@ -37,6 +37,9 @@ export interface OutgoingMessage {
   modelId?: string
   images: Array<{ uploadId: string; preview: CompanionImage }>
   files: Array<{ uploadId: string; name: string }>
+  /** For a new chat: the project it starts in, and whether in its own worktree of it. */
+  projectId?: string
+  workIn?: 'folder' | 'worktree'
 }
 
 const NO_QUEUE: PromptAdmissionsResult = { queued: [], pivot: null }
@@ -244,7 +247,11 @@ export function useCompanionChat({
       try {
         const id = idRef.current
         const result = await connection.call('chat.send', {
-          ...(id ? { conversationId: id } : {}),
+          ...(id
+            ? { conversationId: id }
+            : message.projectId
+              ? { projectId: message.projectId, workIn: message.workIn ?? 'folder' }
+              : {}),
           text: message.text,
           mode: message.mode,
           ...(message.modelId ? { modelId: message.modelId } : {}),
@@ -279,6 +286,34 @@ export function useCompanionChat({
       }
     },
     [connection, detail, liveSegments, pending, runActive, load, loadQueue, onCreated, fail]
+  )
+
+  /**
+   * Answers a sent message again, with new text for an edit, as the desktop's Retry and Edit do.
+   * The replies after it leave as the computer deletes them.
+   */
+  const retry = useCallback(
+    async (messageId: string, text?: string): Promise<boolean> => {
+      const id = idRef.current
+      if (!id) return false
+      setSending(true)
+      setError('')
+      try {
+        await connection.call('chat.retry', {
+          conversationId: id,
+          messageId,
+          ...(text !== undefined ? { text } : {})
+        })
+        await load()
+        return true
+      } catch (failure) {
+        fail(failure)
+        return false
+      } finally {
+        setSending(false)
+      }
+    },
+    [connection, fail, load]
   )
 
   const stop = useCallback(async () => {
@@ -371,6 +406,7 @@ export function useCompanionChat({
     error,
     setError,
     send,
+    retry,
     stop,
     resolve,
     updateQueue,

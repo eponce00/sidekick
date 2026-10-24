@@ -3,14 +3,16 @@ import {
   ChevronDown,
   Folder,
   FolderOpen,
+  GitBranch,
   Loader2,
+  Plus,
   Search,
   Smartphone,
   SquarePen,
   Unlink,
   X
 } from 'lucide-react'
-import type { CompanionChat } from '../../../shared/companion'
+import type { CompanionChat, CompanionProject } from '../../../shared/companion'
 import { SIDEBAR_DOT_LABELS } from '../utils/sessionFamilies'
 import { groupChats, searchChats } from './chatGroups'
 import { chatDot } from './chatState'
@@ -27,6 +29,7 @@ import { Sheet, SheetAction } from './Sheet'
 export function ChatDrawer({
   open,
   chats,
+  projects,
   error,
   currentId,
   collapsed,
@@ -36,11 +39,13 @@ export function ChatDrawer({
   deviceName,
   onOpen,
   onNew,
+  onNewInProject,
   onClose,
   onForget
 }: {
   open: boolean
   chats: CompanionChat[] | null
+  projects: readonly CompanionProject[]
   error: string
   /** The chat on screen, marked as the desktop marks the selected row. */
   currentId: string | null
@@ -53,6 +58,7 @@ export function ChatDrawer({
   deviceName: string
   onOpen: (chat: CompanionChat) => void
   onNew: () => void
+  onNewInProject: (project: CompanionProject) => void
   onClose: () => void
   onForget: () => void
 }) {
@@ -67,7 +73,7 @@ export function ChatDrawer({
     () => (chats && searching ? searchChats(chats, query) : []),
     [chats, query, searching]
   )
-  const groups = useMemo(() => groupChats(chats ?? []), [chats])
+  const groups = useMemo(() => groupChats(chats ?? [], projects), [chats, projects])
 
   const row = (chat: CompanionChat, options: { nested?: boolean; project?: boolean } = {}) => {
     const dot = chatDot(chat)
@@ -81,7 +87,17 @@ export function ChatDrawer({
           onClick={() => onOpen(chat)}
         >
           <span className="cp-row-text">
-            <span className="cp-row-title">{chat.title || 'Untitled chat'}</span>
+            <span className="cp-row-title">
+              {chat.inWorktree && (
+                <GitBranch
+                  size={14}
+                  className="cp-row-worktree"
+                  role="img"
+                  aria-label="In its own worktree"
+                />
+              )}
+              {chat.title || 'Untitled chat'}
+            </span>
             {options.project && chat.projectName && (
               <span className="cp-row-meta">{chat.projectName}</span>
             )}
@@ -128,7 +144,7 @@ export function ChatDrawer({
         Loading chats…
       </p>
     )
-  } else if (chats.length === 0) {
+  } else if (chats.length === 0 && projects.length === 0) {
     body = (
       <div className="cp-empty">
         <Robot className="is-small" />
@@ -153,32 +169,48 @@ export function ChatDrawer({
           section(
             'section:projects',
             'Projects',
-            groups.projects.map((project) => {
-              const key = `project:${project.name}`
+            groups.projects.map((group) => {
+              const key = `project:${group.project?.id ?? group.name}`
               const folded = collapsed.has(key)
               const FolderIcon = folded ? Folder : FolderOpen
-              const holdsCurrent = project.chats.some((chat) => chat.id === currentId)
+              const holdsCurrent = group.chats.some((chat) => chat.id === currentId)
+              const project = group.project
               return (
-                <div className="cp-project" key={project.name}>
-                  <button
-                    type="button"
-                    className={`cp-project-row${holdsCurrent ? ' contains-active' : ''}`}
-                    aria-expanded={!folded}
-                    onClick={() => onToggle(key)}
-                  >
-                    <ChevronDown
-                      size={14}
-                      className={`cp-project-chevron sidebar-section-chevron ${folded ? 'is-collapsed' : ''}`}
-                      aria-hidden="true"
-                    />
-                    <FolderIcon size={16} className="cp-project-icon" aria-hidden="true" />
-                    <span className="cp-project-name">{project.name}</span>
-                  </button>
-                  {!folded && (
-                    <ul className="cp-rows">
-                      {project.chats.map((chat) => row(chat, { nested: true }))}
-                    </ul>
-                  )}
+                <div className="cp-project" key={key}>
+                  <div className={`cp-project-head${holdsCurrent ? ' contains-active' : ''}`}>
+                    <button
+                      type="button"
+                      className="cp-project-row"
+                      aria-expanded={!folded}
+                      onClick={() => onToggle(key)}
+                    >
+                      <ChevronDown
+                        size={16}
+                        className={`cp-project-chevron sidebar-section-chevron ${folded ? 'is-collapsed' : ''}`}
+                        aria-hidden="true"
+                      />
+                      <FolderIcon size={18} className="cp-project-icon" aria-hidden="true" />
+                      <span className="cp-project-name">{group.name}</span>
+                    </button>
+                    {project && (
+                      <button
+                        type="button"
+                        className="cp-project-new"
+                        aria-label={`New chat in ${project.name}`}
+                        onClick={() => onNewInProject(project)}
+                      >
+                        <Plus size={20} aria-hidden="true" />
+                      </button>
+                    )}
+                  </div>
+                  {!folded &&
+                    (group.chats.length ? (
+                      <ul className="cp-rows">
+                        {group.chats.map((chat) => row(chat, { nested: true }))}
+                      </ul>
+                    ) : (
+                      <p className="cp-project-empty">No chats yet</p>
+                    ))}
                 </div>
               )
             })

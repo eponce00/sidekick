@@ -39,6 +39,15 @@ steer and interaction requests.
   (`agentRuns:admissionsChanged`, `queue.changed`). The window sends the next queued message when a
   run it follows ends; for a chat no window follows, the main process does, shortly after, and
   taking an item is atomic, so it is never sent twice.
+- **Retry and Edit** (`chat.retry`) follow the window's `useConversationActions`, in the main
+  process: the chat's folder goes back to its last history point before the message (or to before
+  the first one after it) through the permission broker, as the window's checkpoint calls do; then
+  an edit's new text is saved, the messages after it are deleted, the chat's summaries from there
+  on are invalidated, and a run starts. Nothing is retried while a run works or across a goal's
+  first message.
+- **New chats in a project** are created as the window creates them, and with `workIn: 'worktree'`
+  moved into a worktree of their own before the first run (`createChatWorktree`, shared with the
+  window's handler, including the project's setup).
 - **Uploads** arrive in pieces of at most 128 KB, up to 20 MB each and 64 MB held across phones,
   belong to the phone that sent them, are taken once and expire after ten minutes.
 - **Images** go to the phone as reduced copies, at most 1,600 pixels on the longer side. Images a

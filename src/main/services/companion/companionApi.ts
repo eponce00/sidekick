@@ -24,6 +24,7 @@ import {
   type CompanionEvent,
   type CompanionImage,
   type CompanionMessage,
+  type CompanionProject,
   type CompanionVoiceState
 } from '../../../shared/companion'
 import { createFallbackConversationTitle } from '../../../shared/conversationTitles'
@@ -44,7 +45,9 @@ import {
   AGENT_PERMISSION_DECISIONS,
   type AgentPermissionDecision
 } from '../../../shared/permissions'
+import { ConversationCompactionStore } from '../conversationCompactionStore'
 import { createConversation } from '../conversationCreation'
+import { ProjectStore } from '../projectStore'
 import { PromptAdmissionStore } from '../promptAdmissionStore'
 import { CompanionUploads } from './companionUploads'
 
@@ -101,6 +104,19 @@ export interface CompanionApiDependencies {
   /** An image a tool result names by its `sidekick-browser://artifact/` address. */
   readArtifact: (url: string) => Promise<{ data: Buffer; contentType: string } | null>
   voice?: () => CompanionVoice | null
+  /** Whether a project's folder is in a Git repository, so its chats can work in worktrees. */
+  canUseWorktree: (projectId: string) => Promise<boolean>
+  /** Moves a chat into its own worktree of its project, as the window's Work in does. */
+  createWorktree: (conversationId: string) => Promise<void>
+  /**
+   * Puts a chat's folder back to a history point, as the window's Retry and Edit do: `hard-reset`
+   * returns to it, `rewind` to before it. Permission settings decide whether the computer asks.
+   */
+  restoreFiles: (input: {
+    workspaceRoot: string
+    action: 'hard-reset' | 'rewind'
+    hash: string
+  }) => Promise<void>
   /** An event for one phone only, such as its speech. */
   sendToDevice: (deviceId: string, event: CompanionEvent) => void
   /** Runs work after a delay; tests run it at once. */
@@ -179,8 +195,25 @@ interface ConversationRow {
   title: string
   updated_at: number
   is_pinned: number
+  project_id: string | null
+  worktree_id: string | null
   home_project_name: string | null
   project_name: string | null
+}
+
+const CHAT_COLUMNS = `c.id, c.title, c.updated_at, c.is_pinned, c.project_id, c.worktree_id,
+  c.home_project_name, p.name AS project_name`
+
+/** A saved message as Retry and Edit read it. */
+interface HistoryRow {
+  id: string
+  role: string
+  content: string
+  timestamp: number
+  run_mode: ConversationRunMode | null
+  starts_goal: number | null
+  checkpoint_hash: string | null
+  checkpoint_workspace_root: string | null
 }
 
 /** A phone's live dictation; the voice service knows it by an ID of its own. */
@@ -227,6 +260,10 @@ export class CompanionApi {
     switch (call) {
       case 'chats.list':
         return this.chats()
+      case 'projects.list':
+        return this.projects()
+      case 'chat.retry':
+        return this.retry(input)
       case 'chat.open':
         return this.open(requireId(input.conversationId, 'chat'))
       case 'chat.send':
@@ -296,7 +333,9 @@ export class CompanionApi {
       title: row.title,
       updatedAt: row.updated_at,
       pinned: row.is_pinned === 1,
+      projectId: row.project_id,
       projectName: row.project_name ?? row.home_project_name ?? null,
+      inWorktree: Boolean(row.worktree_id),
       activePhase: active,
       needsAnswer: Boolean(active && WAITING_PHASES.has(active))
     }
@@ -305,7 +344,7 @@ export class CompanionApi {
   private chatRow(conversationId: string): ConversationRow {
     const row = this.deps.db
       .prepare(
-        `SELECT c.id, c.title, c.updated_at, c.is_pinned, c.home_project_name, p.name AS project_name
+        `SELECT ${CHAT_COLUMNS}
          FROM conversations c LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ? AND c.archived_at IS NULL`
       )
@@ -317,7 +356,7 @@ export class CompanionApi {
   chats(): CompanionChat[] {
     const rows = this.deps.db
       .prepare(
-        `SELECT c.id, c.title, c.updated_at, c.is_pinned, c.home_project_name, p.name AS project_name
+        `SELECT ${CHAT_COLUMNS}
          FROM conversations c LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.archived_at IS NULL
          ORDER BY c.is_pinned DESC, c.updated_at DESC
@@ -325,6 +364,18 @@ export class CompanionApi {
       )
       .all(MAX_CHATS) as ConversationRow[]
     return rows.map((row) => this.chatFrom(row))
+  }
+
+  /** The projects in the desktop sidebar's order. */
+  async projects(): Promise<CompanionProject[]> {
+    const projects = new ProjectStore(this.deps.db).list().slice(0, MAX_CHATS)
+    return Promise.all(
+      projects.map(async (project) => ({
+        id: project.id,
+        name: project.name,
+        canUseWorktree: await this.deps.canUseWorktree(project.id).catch(() => false)
+      }))
+    )
   }
 
   async open(conversationId: string): Promise<CompanionChatDetail> {
@@ -467,12 +518,18 @@ export class CompanionApi {
       input.modelId === undefined ? undefined : requireId(input.modelId, 'model')
     let conversationId: string
     let created = false
+    let worktree = false
     if (input.conversationId === undefined) {
+      const projectId = input.projectId === undefined ? null : requireId(input.projectId, 'project')
+      if (projectId && !new ProjectStore(this.deps.db).get(projectId))
+        throw new Error('That project no longer exists')
+      worktree = input.workIn === 'worktree'
+      if (worktree && !projectId) throw new Error('A worktree belongs to a project; choose one')
       const model = this.deps.resolveModel('', requestedModel)
       const title = typeof input.text === 'string' && input.text.trim() ? input.text : 'New chat'
       conversationId = createConversation(this.deps.db, {
         title: createFallbackConversationTitle(title),
-        projectId: null,
+        projectId,
         titleSource: 'fallback',
         modelId: model?.id ?? null
       }).id
@@ -489,6 +546,16 @@ export class CompanionApi {
       if (created)
         this.deps.db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
       throw error
+    }
+    if (worktree) {
+      try {
+        await this.deps.createWorktree(conversationId)
+      } catch (error) {
+        this.deps.db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+        throw new Error(
+          `The worktree could not be made: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
     }
     if (requestedModel && model) this.deps.setChatModel(conversationId, model.id)
     const latest = this.deps.latestRun(conversationId)
@@ -605,6 +672,100 @@ export class CompanionApi {
       return { steered: false }
     }
     return { steered: await this.steer(conversationId, latest.id, item) }
+  }
+
+  /**
+   * Retry and Edit, as the window does them (`useConversationActions`): the files go back to
+   * before the message, the replies after it are deleted, and the chat answers it again.
+   */
+  private async retry(input: Record<string, unknown>): Promise<{ runId: string }> {
+    const conversationId = this.chatRow(requireId(input.conversationId, 'chat')).id
+    const latest = this.deps.latestRun(conversationId)
+    if (latest && ACTIVE_PHASES.has(latest.phase))
+      throw new Error('SideKick is still working in this chat. Stop it first.')
+    const rows = this.deps.db
+      .prepare(
+        `SELECT id, role, content, timestamp, run_mode, starts_goal, checkpoint_hash,
+                checkpoint_workspace_root
+         FROM messages WHERE conversation_id = ? ORDER BY timestamp ASC`
+      )
+      .all(conversationId) as HistoryRow[]
+    let index = rows.findIndex((row) => row.id === input.messageId)
+    if (index < 0) throw new Error('That message is no longer in the chat')
+    // A reply is answered again from the message it answered.
+    while (index >= 0 && rows[index].role !== 'user') index--
+    if (index < 0) throw new Error('There is no message before this reply to answer again')
+    const target = rows[index]
+    // A goal is chat state the window restarts or ends with its first message; the phone leaves it.
+    if (rows.slice(index).some((row) => row.starts_goal === 1))
+      throw new Error('This changes a goal. Retry it on the computer.')
+    let text: string | null = null
+    if (input.text !== undefined) {
+      text = typeof input.text === 'string' ? input.text.trim() : ''
+      if (!text) throw new Error('Write the message first')
+      if (text.length > COMPANION_MAX_MESSAGE_LENGTH) throw new Error('That message is too long')
+    }
+    const model = this.deps.resolveModel(conversationId)
+    if (!model) throw new Error('This chat has no model. Choose one first.')
+
+    await this.restoreFilesBefore(conversationId, rows, index)
+    const compactions = new ConversationCompactionStore(this.deps.db)
+    this.deps.db.transaction(() => {
+      if (text !== null) {
+        this.deps.db
+          .prepare('UPDATE messages SET content = ? WHERE id = ? AND conversation_id = ?')
+          .run(text, target.id, conversationId)
+        compactions.invalidateFromTimestamp(conversationId, target.timestamp)
+      }
+      this.deps.db
+        .prepare('DELETE FROM messages WHERE conversation_id = ? AND timestamp > ?')
+        .run(conversationId, target.timestamp)
+      compactions.invalidateAfterTimestamp(conversationId, target.timestamp)
+      this.deps.db
+        .prepare('UPDATE conversations SET updated_at = ? WHERE id = ?')
+        .run(this.now(), conversationId)
+    })()
+    this.deps.messagesChanged(conversationId)
+    const runId = randomUUID()
+    await this.deps.startRun({
+      id: runId,
+      conversationId,
+      assistantMessageId: randomUUID(),
+      model,
+      mode: target.run_mode ?? 'conversation'
+    })
+    return { runId }
+  }
+
+  /**
+   * The chat's folder as it was before the message at `index`: back to the last earlier history
+   * point there, or, with none, to before the first one after it.
+   */
+  private async restoreFilesBefore(
+    conversationId: string,
+    rows: HistoryRow[],
+    index: number
+  ): Promise<void> {
+    const workspaceRoot = new ProjectStore(this.deps.db).getConversationContext(
+      conversationId
+    ).workspaceRoot
+    if (!workspaceRoot) return
+    const here = (row: HistoryRow): boolean =>
+      Boolean(row.checkpoint_hash) && row.checkpoint_workspace_root === workspaceRoot
+    const prior = rows.slice(0, index).reverse().find(here)
+    const own = prior ? undefined : rows.slice(index + 1).find(here)
+    const point = prior ?? own
+    if (!point?.checkpoint_hash) return
+    try {
+      await this.deps.restoreFiles({
+        workspaceRoot,
+        action: prior ? 'hard-reset' : 'rewind',
+        hash: point.checkpoint_hash
+      })
+    } catch (error) {
+      // As in the window: the chat is answered again even when its files could not go back.
+      console.warn('[Companion] Files could not be put back:', error)
+    }
   }
 
   /** Saves the user's message and starts a run on the same path the window uses. */

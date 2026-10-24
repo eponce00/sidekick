@@ -13,7 +13,10 @@ import {
 import type { MessageImageAttachment } from '../../shared/messageImages'
 import { pinnedModelsFromProviderInstances } from '../../shared/providerInstances'
 import type { ProviderSettings } from '../../shared/settings'
+import { checkpointPermissionOperation } from '../../shared/permissions'
 import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
+import { hardResetCheckpoint, rewindToBeforeCheckpoint } from '../services/checkpoints'
+import { permissionBroker } from '../services/permissionBroker'
 import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
 import {
   certificateServes,
@@ -37,6 +40,7 @@ import {
   startConversationRun
 } from './agentRuns'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
+import { createChatWorktree, getManagedWorktrees } from './worktrees'
 import { loadStoredSettings } from './settings'
 import { appState, getDb, getStore } from './state'
 
@@ -262,6 +266,31 @@ function companionVoice(): CompanionVoice | null {
   }
 }
 
+/** The window, which asks the user what the phone's request needs asked on the computer. */
+function mainWindowContents(): Electron.WebContents {
+  const window = appState.mainWindowRef
+  if (!window || window.isDestroyed()) throw new Error('Open SideKick on the computer first')
+  return window.webContents
+}
+
+/** As the window's Retry and Edit put files back: through the same permission check. */
+async function restoreFiles(input: {
+  workspaceRoot: string
+  action: 'hard-reset' | 'rewind'
+  hash: string
+}): Promise<void> {
+  const operation = checkpointPermissionOperation(input.action, input.hash, 'auto')
+  const authorization = await permissionBroker.authorize(operation, mainWindowContents())
+  if (!authorization.approved || !authorization.token)
+    throw new Error(authorization.reason || 'Not allowed')
+  permissionBroker.consume(authorization.token, operation)
+  const result =
+    input.action === 'hard-reset'
+      ? await hardResetCheckpoint(input.workspaceRoot, input.hash)
+      : await rewindToBeforeCheckpoint(input.workspaceRoot, input.hash)
+  if (!result.ok) throw new Error('Files changed since that history point')
+}
+
 function queueChanged(conversationId: string): void {
   publishDesktopEvent('agentRuns:admissionsChanged', { conversationId })
   server?.broadcast({ type: 'queue.changed', conversationId })
@@ -311,6 +340,12 @@ function companionServer(): CompanionServer {
     shrinkImage,
     readArtifact: readBrowserArtifact,
     voice: companionVoice,
+    canUseWorktree: async (projectId) =>
+      (await getManagedWorktrees().branchOptions(projectId)).isGitRepository,
+    createWorktree: async (conversationId) => {
+      await createChatWorktree(mainWindowContents(), { conversationId })
+    },
+    restoreFiles,
     sendToDevice: (deviceId, event) => server?.sendTo(deviceId, event)
   })
   companionApi = api

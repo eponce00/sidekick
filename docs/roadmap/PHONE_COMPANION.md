@@ -14,7 +14,7 @@ read aloud. Still open:
   finished run or a waiting card only while the page is open.
 - **Other files.** The phone attaches images and text files; documents such as PDFs need the
   conversion the agent's attachment import does on the computer.
-- **New chats in a project.** A chat started on the phone has no project; choosing one from the
-  phone.
+- **Fork and rewind.** The phone edits and retries messages; forking a chat from a message, and
+  rewinding to one without answering again, are on the computer only.
 - **Cards that act on the computer**, such as starting chats in project folders, once the phone can
   show what they would change.

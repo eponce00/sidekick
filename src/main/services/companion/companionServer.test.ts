@@ -30,7 +30,8 @@ const certificate = createCompanionCertificate('127.0.0.1')
 const FINGERPRINT = new X509Certificate(certificate.cert).fingerprint256
 // No authority vouches for the certificate, as for a phone, so these requests check that the server
 // presents exactly this one, as a browser that accepted it does.
-const TLS = { rejectUnauthorized: false }
+// A new connection each time: a resumed TLS session does not present the certificate again.
+const TLS = { rejectUnauthorized: false, agent: false } as const
 
 function presentsOurCertificate(response: IncomingMessage): void {
   const peer = (response.socket as TLSSocket).getPeerCertificate()

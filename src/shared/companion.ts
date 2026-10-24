@@ -36,7 +36,10 @@ export interface CompanionChat {
   title: string
   updatedAt: number
   pinned: boolean
+  projectId: string | null
   projectName: string | null
+  /** The chat works in its own worktree of its project. */
+  inWorktree: boolean
   /** The phase of the chat's latest run while it is active. */
   activePhase: AgentRunPhase | null
   /** A card in the chat waits for an answer. */
@@ -76,6 +79,14 @@ export interface CompanionModel {
   supportsVision: boolean
 }
 
+/** A project the phone can start a chat in. */
+export interface CompanionProject {
+  id: string
+  name: string
+  /** Its folder is in a Git repository, so a chat can work in its own worktree. */
+  canUseWorktree: boolean
+}
+
 /** A file the phone sends with a message, uploaded first with `upload.put`. */
 export interface CompanionUploadRef {
   uploadId: string
@@ -101,14 +112,18 @@ export interface CompanionChatDetail {
 /** The calls a paired phone can make, and what each returns. */
 export interface CompanionCalls {
   'chats.list': { input: Record<string, never>; output: CompanionChat[] }
+  'projects.list': { input: Record<string, never>; output: CompanionProject[] }
   'chat.open': { input: { conversationId: string }; output: CompanionChatDetail }
   /**
    * Sends a message. With no run it starts one; while one works it is queued (the default) or
-   * handed to the run now (`steer`), as the desktop composer does. No chat starts a new one.
+   * handed to the run now (`steer`), as the desktop composer does. No chat starts a new one, in
+   * a project when one is named, and in its own worktree of it when `workIn` says so.
    */
   'chat.send': {
     input: {
       conversationId?: string
+      projectId?: string
+      workIn?: 'folder' | 'worktree'
       text: string
       mode?: ConversationRunMode
       modelId?: string
@@ -119,6 +134,15 @@ export interface CompanionCalls {
       files?: CompanionUploadRef[]
     }
     output: { conversationId: string; runId: string | null; steered: boolean; queued: boolean }
+  }
+  /**
+   * Answers a sent message again, as the desktop's Retry does, or with its text changed first, as
+   * its Edit does: the replies after it leave the chat, the files SideKick changed since are put
+   * back, and a new reply starts. A reply names the message it answered.
+   */
+  'chat.retry': {
+    input: { conversationId: string; messageId: string; text?: string }
+    output: { runId: string }
   }
   /** The chat's queued messages and its pending steer, shared with the desktop composer. */
   'queue.list': { input: { conversationId: string }; output: PromptAdmissionsResult }
@@ -196,8 +220,10 @@ export type CompanionCallName = keyof CompanionCalls
 
 export const COMPANION_CALL_NAMES: readonly CompanionCallName[] = [
   'chats.list',
+  'projects.list',
   'chat.open',
   'chat.send',
+  'chat.retry',
   'queue.list',
   'queue.update',
   'queue.steer',

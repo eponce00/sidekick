@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Loader2, Menu, SquarePen } from 'lucide-react'
-import type { CompanionChat } from '../../../shared/companion'
+import type { CompanionChat, CompanionProject } from '../../../shared/companion'
 import {
   stopVoiceLoop,
   voiceLoopReplyFinished,
@@ -12,6 +12,7 @@ import type { HomeSuggestion } from './homeSuggestions'
 import { PhoneChatSurface } from './PhoneChatSurface'
 import { PhoneComposer } from './PhoneComposer'
 import { Robot } from './Robot'
+import { StartInBar, type StartIn } from './StartInBar'
 import { Transcript } from './Transcript'
 import { useCompanionChat, type Subscribe } from './useCompanionChat'
 
@@ -27,6 +28,8 @@ export function ChatView({
   subscribe,
   reconnects,
   suggestions,
+  projects,
+  startIn,
   onMenu,
   onNew,
   onOpenChat,
@@ -41,6 +44,9 @@ export function ChatView({
   reconnects: number
   /** What the new-chat home offers. */
   suggestions: readonly HomeSuggestion[]
+  projects: readonly CompanionProject[]
+  /** For the new-chat home: the project it starts in. */
+  startIn: string | null
   onMenu: () => void
   onNew: () => void
   onOpenChat: (chat: CompanionChat) => void
@@ -56,6 +62,11 @@ export function ChatView({
     onFailure
   })
   const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null)
+  const [where, setWhere] = useState<StartIn>({ projectId: startIn, workIn: 'folder' })
+  // The sent message being edited in the message box.
+  const [editing, setEditing] = useState<{ messageId: string; text: string; nonce: number } | null>(
+    null
+  )
   const scroller = useRef<HTMLDivElement>(null)
   // Follows new output while the reader is at the bottom, and leaves them alone once they scroll up.
   const following = useRef(true)
@@ -155,7 +166,15 @@ export function ChatView({
             <Transcript
               messages={chat.messages}
               runActive={chat.runActive}
+              editingMessageId={editing?.messageId ?? null}
               onResolve={chat.resolve}
+              onEdit={(message) =>
+                setEditing({ messageId: message.id, text: message.content, nonce: Date.now() })
+              }
+              onRetry={(message) => {
+                following.current = true
+                void chat.retry(message.id)
+              }}
             />
           )}
         </main>
@@ -166,6 +185,7 @@ export function ChatView({
             {chat.error}
           </p>
         )}
+        {home && empty && <StartInBar projects={projects} value={where} onChange={setWhere} />}
         <PhoneComposer
           connection={connection}
           runActive={chat.runActive}
@@ -174,9 +194,23 @@ export function ChatView({
           queue={chat.queue}
           models={chat.models}
           prefill={prefill}
+          editing={editing}
+          onCancelEdit={() => setEditing(null)}
+          onSubmitEdit={async (text) => {
+            const target = editing
+            if (!target) return false
+            following.current = true
+            const sent = await chat.retry(target.messageId, text)
+            if (sent) setEditing(null)
+            return sent
+          }}
           onSend={(message) => {
             following.current = true
-            return chat.send(message)
+            return chat.send(
+              home && where.projectId
+                ? { ...message, projectId: where.projectId, workIn: where.workIn }
+                : message
+            )
           }}
           onStop={() => void chat.stop()}
           onUpdateQueue={(queued) => void chat.updateQueue(queued)}

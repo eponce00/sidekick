@@ -195,6 +195,8 @@ body {
 .cp-icon-button:focus-visible,
 .cp-row:focus-visible,
 .cp-project-row:focus-visible,
+.cp-project-new:focus-visible,
+.cp-start-chip:focus-visible,
 .cp-section-label:focus-visible,
 .cp-search-clear:focus-visible,
 .cp-suggestion:focus-visible,
@@ -646,12 +648,55 @@ body {
   color: var(--text-muted);
 }
 
-.cp-project-row.contains-active {
+.cp-project-head.contains-active .cp-project-row {
   color: var(--text-primary);
 }
 
-.cp-project-row.contains-active .cp-project-icon {
+.cp-project-head.contains-active .cp-project-icon {
   color: var(--accent);
+}
+
+/* A project's name, and a new chat in it at the end of the row. */
+.cp-project-head {
+  display: flex;
+  align-items: center;
+}
+
+.cp-project-head .cp-project-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-project-new {
+  display: inline-grid;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.cp-project-new:active {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.cp-project-empty {
+  margin: 0 0 var(--space-1) 36px;
+  padding: var(--space-2) 10px;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.cp-row-worktree {
+  margin-right: 6px;
+  color: var(--text-muted);
+  vertical-align: -2px;
 }
 
 .cp-project-name {
@@ -662,6 +707,56 @@ body {
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Where a new chat starts, above its message box: a project, and its folder or a worktree. */
+.cp-start-in {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-2);
+}
+
+.cp-start-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.cp-start-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cp-start-chip svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.cp-start-chip.is-on {
+  border-color: transparent;
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.cp-start-chip.is-on svg {
+  color: inherit;
+}
+
+.cp-start-chip:active {
+  background: var(--surface-3);
 }
 
 /* The desktop's marks, a little larger beside a larger title. */
@@ -714,12 +809,14 @@ body {
   overscroll-behavior: contain;
 }
 
-/* The transcript's wrapper only listens for a held message; it takes no room. */
-.cp-transcript {
+/* The transcript's wrapper only listens for a tapped message; it and each message's slot take no
+   room. */
+.cp-transcript,
+.cp-message-slot {
   display: contents;
 }
 
-/* What the user sent: a bubble on the right, with no row of buttons under it. */
+/* What the user sent: a bubble on the right, whose row of buttons shows when it is tapped. */
 .cp-messages .message-user {
   align-self: flex-end;
   max-width: 85%;
@@ -728,12 +825,21 @@ body {
 .cp-messages .message-user .message-bubble {
   padding: 10px var(--space-4);
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
-  -webkit-touch-callout: none;
-  user-select: none;
+  cursor: pointer;
+}
+
+.cp-message-slot:not(.is-revealed) .message-user .message-meta {
+  display: none;
 }
 
 .cp-messages .message-user .message-meta {
-  display: none;
+  justify-content: flex-end;
+  margin-top: var(--space-1);
+}
+
+.cp-messages .message-user .message-actions {
+  margin-right: calc(-1 * var(--space-2));
+  animation: motion-fade-in var(--duration-fast) ease;
 }
 
 /* The desktop sizes message text by its container, which gives it no width of its own; a bubble
@@ -763,16 +869,19 @@ body {
   display: none;
 }
 
-.cp-messages .message-action {
-  width: 38px;
-  height: 38px;
+/* Sized for a finger: 44 px, as Apple and Google ask of touch targets. */
+.cp-messages .message-action,
+.cp-messages .message-footer-popover > summary {
+  width: 44px;
+  height: 44px;
   border-radius: var(--radius-full);
   color: var(--text-muted);
 }
 
-.cp-messages .message-action svg {
-  width: 16px;
-  height: 16px;
+.cp-messages .message-action svg,
+.cp-messages .message-footer-popover > summary svg {
+  width: 20px;
+  height: 20px;
   stroke-width: 1.75;
 }
 
@@ -916,9 +1025,9 @@ body > .image-lightbox {
 .cp-composer-button,
 .cp-input-area .dictation-button {
   display: inline-grid;
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
   place-items: center;
   padding: 0;
   border: none;
@@ -957,9 +1066,9 @@ body > .image-lightbox {
 /* The one filled button: Send in the accent, Stop in the text colour. */
 .cp-input-area .send-button,
 .cp-input-area .stop-button {
-  width: 36px;
-  min-width: 36px;
-  height: 36px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
   margin-left: var(--space-1);
 }
 
@@ -989,8 +1098,8 @@ body > .image-lightbox {
 
 .cp-mode-chip button {
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   padding: 0;
   border: none;
@@ -1006,7 +1115,7 @@ body > .image-lightbox {
   gap: 2px;
   min-width: 0;
   max-width: 100%;
-  height: 36px;
+  height: 44px;
   padding: 0 var(--space-2) 0 var(--space-3);
   border: none;
   border-radius: var(--radius-full);
@@ -1267,7 +1376,7 @@ body > .image-lightbox {
   font-size: var(--text-sm);
 }
 
-/* The sent message a held-message menu is for, so it is plain which one. */
+/* The sent message a sheet is about, so it is plain which one. */
 .cp-sheet-quote {
   display: -webkit-box;
   overflow: hidden;

@@ -29,7 +29,9 @@ function chat(extra: Partial<CompanionChat>): CompanionChat {
     title: 'Chat',
     updatedAt: 0,
     pinned: false,
+    projectId: null,
     projectName: null,
+    inWorktree: false,
     activePhase: null,
     needsAnswer: false,
     ...extra
