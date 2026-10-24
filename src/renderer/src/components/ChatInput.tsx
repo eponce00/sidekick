@@ -1156,7 +1156,6 @@ export function ChatInput({
       }
       toolbarRight={
         <>
-          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           {reasoningOptions && reasoningLevel && (
             <ReasoningMenu
               options={reasoningOptions}
@@ -1173,6 +1172,8 @@ export function ChatInput({
             onModelChange={onModelChange}
             onManageModels={onOpenModelSearch}
           />
+          {/* Next to Send, where it is reached for most. */}
+          <DictationButton inputRef={inputRef} onInputChange={onInputChange} />
           {isLoading && (
             <button
               className={`stop-button ${isStopping ? 'is-stopping' : ''}`}
