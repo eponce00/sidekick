@@ -140,21 +140,3 @@ export function sendBaseline(
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
-
-/**
- * Puts dictated words where the cursor is, replacing any selection, with a space between them and
- * the text around them; returns the new text and where the cursor goes.
- */
-export function insertAtCursor(
-  value: string,
-  start: number,
-  end: number,
-  words: string
-): { value: string; cursor: number } {
-  const before = value.slice(0, start)
-  const after = value.slice(end)
-  const lead = before && !/\s$/.test(before) ? ' ' : ''
-  const trail = after && !/^\s/.test(after) ? ' ' : ''
-  const inserted = `${lead}${words}${trail}`
-  return { value: before + inserted + after, cursor: before.length + lead.length + words.length }
-}

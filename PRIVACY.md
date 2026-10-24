@@ -82,8 +82,8 @@ disconnect connectors you no longer use.
 With **Phone access** on, SideKick listens on your local network so a phone you allowed can show
 and drive your chats. It sends that phone your chat titles, messages, reduced copies of their
 images, and the agent's live progress and speech, encrypted, directly over the network, never
-through a service. Photos, text files and recordings you send from the phone come to this computer
-the same way; recordings are transcribed on this computer and not kept. It never sends credentials,
+through a service. Photos, text files and dictation you send from the phone come to this computer
+the same way; dictation is transcribed on this computer as you speak and not kept. It never sends credentials,
 settings or files. The phones you allowed are stored on this computer; removing one, or turning
 phone access off, ends its access. See [Use SideKick from your phone](docs/user-guide/PHONE.md).
 

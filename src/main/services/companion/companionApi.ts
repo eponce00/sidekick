@@ -14,6 +14,7 @@ import type {
   PendingAgentInteraction
 } from '../../../shared/agentRuntime'
 import {
+  COMPANION_DICTATION_PIECE_SAMPLES,
   COMPANION_MAX_MESSAGES,
   COMPANION_MAX_MESSAGE_LENGTH,
   type CompanionCallName,
@@ -50,8 +51,16 @@ import { CompanionUploads } from './companionUploads'
 /** The computer's voice, as the phone's buttons use it. */
 export interface CompanionVoice {
   state: () => CompanionVoiceState
-  /** The text in 16 kHz mono audio. */
-  transcribe: (samples: Float32Array) => Promise<string>
+  /** Live dictation: `onText` gets drafts of the phrase being spoken, then each phrase final. */
+  startDictation: (
+    dictationId: string,
+    onText: (text: string, final: boolean) => void
+  ) => Promise<{ ok: boolean; message?: string }>
+  /** 16 kHz mono samples, in order. */
+  pushDictation: (dictationId: string, samples: Float32Array) => void
+  /** Resolves once everything heard so far is written. */
+  stopDictation: (dictationId: string) => Promise<void>
+  cancelDictation: (dictationId: string) => void
   speak: (
     speechId: string,
     text: string,
@@ -117,6 +126,9 @@ const DRAIN_DELAY_MS = 1_500
 const MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 /** Thirty minutes of dictation at 16 kHz. */
 const MAX_DICTATION_SAMPLES = 16_000 * 60 * 30
+/** A phone streams its microphone without pause; this long without audio means it went away. */
+const DICTATION_IDLE_MS = 15_000
+const MAX_DICTATIONS_PER_PHONE = 2
 const MAX_SPEECH_CHARACTERS = 60_000
 
 /**
@@ -171,6 +183,15 @@ interface ConversationRow {
   project_name: string | null
 }
 
+/** A phone's live dictation; the voice service knows it by an ID of its own. */
+interface Dictation {
+  deviceId: string
+  dictationId: string
+  serviceId: string
+  samples: number
+  idle: ReturnType<typeof setTimeout> | null
+}
+
 /** What one message carries, ready to save or queue. */
 interface PreparedMessage {
   content: string
@@ -187,6 +208,8 @@ export class CompanionApi {
   private readonly uploads: CompanionUploads
   /** Speech each phone started, so one phone cannot stop another's. */
   private readonly speeches = new Map<string, string>()
+  /** Live dictations by phone and the phone's ID for them, so a phone reaches only its own. */
+  private readonly dictations = new Map<string, Dictation>()
 
   constructor(private readonly deps: CompanionApiDependencies) {
     this.now = deps.now ?? Date.now
@@ -239,8 +262,16 @@ export class CompanionApi {
         return this.media(input)
       case 'voice.state':
         return this.voice()?.state() ?? { dictation: false, speech: false, message: null }
-      case 'voice.transcribe':
-        return this.transcribe(input, deviceId)
+      case 'voice.dictation.start':
+        return this.startDictation(input, deviceId)
+      case 'voice.dictation.audio':
+        return this.dictationAudio(input, deviceId)
+      case 'voice.dictation.stop':
+        await this.finishDictation(deviceId, this.dictationId(input.dictationId))
+        return { stopped: true }
+      case 'voice.dictation.cancel':
+        this.cancelDictation(`${deviceId}/${this.dictationId(input.dictationId)}`)
+        return { cancelled: true }
       case 'voice.speak':
         return this.speak(input, deviceId)
       case 'voice.stop': {
@@ -672,20 +703,106 @@ export class CompanionApi {
     return { dataUrl: `data:${file.contentType};base64,${file.data.toString('base64')}` }
   }
 
-  private async transcribe(
+  private dictationId(value: unknown): string {
+    const dictationId = requireId(value, 'dictation')
+    if (!/^[\w-]{1,80}$/.test(dictationId)) throw new Error('Invalid dictation')
+    return dictationId
+  }
+
+  private async startDictation(
     input: Record<string, unknown>,
     deviceId: string
-  ): Promise<{ text: string }> {
+  ): Promise<{ ok: boolean; message?: string }> {
     const voice = this.voice()
     if (!voice?.state().dictation)
-      throw new Error(voice?.state().message ?? 'Dictation is not available on this computer')
-    const upload = this.uploads.take(deviceId, input.uploadId, 'audio')
-    if (upload.data.length % 4 || upload.data.length / 4 > MAX_DICTATION_SAMPLES)
-      throw new Error('That recording could not be read')
-    const samples = new Float32Array(upload.data.length / 4)
+      return {
+        ok: false,
+        message: voice?.state().message ?? 'Dictation is not available on this computer.'
+      }
+    const dictationId = this.dictationId(input.dictationId)
+    const key = `${deviceId}/${dictationId}`
+    if (this.dictations.has(key)) throw new Error('That dictation already started')
+    const own = [...this.dictations.entries()].filter(([, item]) => item.deviceId === deviceId)
+    while (own.length >= MAX_DICTATIONS_PER_PHONE) this.cancelDictation(own.shift()![0])
+    const dictation: Dictation = {
+      deviceId,
+      dictationId,
+      serviceId: `phone-${randomUUID()}`,
+      samples: 0,
+      idle: null
+    }
+    this.dictations.set(key, dictation)
+    const started = await voice.startDictation(dictation.serviceId, (text, final) =>
+      this.deps.sendToDevice(deviceId, { type: 'dictation.text', dictationId, text, final })
+    )
+    // Cancelled while it started.
+    if (this.dictations.get(key) !== dictation) {
+      if (started.ok) voice.cancelDictation(dictation.serviceId)
+      return { ok: false, message: 'Dictation was stopped.' }
+    }
+    if (!started.ok) {
+      this.dictations.delete(key)
+      return { ok: false, message: started.message }
+    }
+    this.keepDictation(key, dictation)
+    return { ok: true }
+  }
+
+  private dictationAudio(input: Record<string, unknown>, deviceId: string): { accepted: boolean } {
+    const key = `${deviceId}/${this.dictationId(input.dictationId)}`
+    const dictation = this.dictations.get(key)
+    const voice = this.voice()
+    // A dictation that ended (stopped, or idle too long) takes no more audio.
+    if (!dictation || !voice) return { accepted: false }
+    const pcm = typeof input.pcm === 'string' ? input.pcm : ''
+    const bytes =
+      pcm.length <= Math.ceil((COMPANION_DICTATION_PIECE_SAMPLES * 2) / 3) * 4
+        ? Buffer.from(pcm, 'base64')
+        : null
+    if (!bytes?.length || bytes.length % 2 || bytes.length / 2 > COMPANION_DICTATION_PIECE_SAMPLES)
+      throw new Error('That audio could not be read')
+    const samples = new Float32Array(bytes.length / 2)
     for (let index = 0; index < samples.length; index++)
-      samples[index] = upload.data.readFloatLE(index * 4)
-    return { text: (await voice.transcribe(samples)).trim() }
+      samples[index] = bytes.readInt16LE(index * 2) / 0x8000
+    dictation.samples += samples.length
+    if (dictation.samples > MAX_DICTATION_SAMPLES) {
+      void this.finishDictation(deviceId, dictation.dictationId)
+      return { accepted: false }
+    }
+    voice.pushDictation(dictation.serviceId, samples)
+    this.keepDictation(key, dictation)
+    return { accepted: true }
+  }
+
+  /** Writes what was heard, then tells the phone its last words were sent. */
+  private async finishDictation(deviceId: string, dictationId: string): Promise<void> {
+    const key = `${deviceId}/${dictationId}`
+    const dictation = this.dictations.get(key)
+    if (dictation) {
+      this.dictations.delete(key)
+      if (dictation.idle) clearTimeout(dictation.idle)
+      await this.voice()
+        ?.stopDictation(dictation.serviceId)
+        .catch(() => undefined)
+    }
+    this.deps.sendToDevice(deviceId, { type: 'dictation.end', dictationId })
+  }
+
+  private cancelDictation(key: string): void {
+    const dictation = this.dictations.get(key)
+    if (!dictation) return
+    this.dictations.delete(key)
+    if (dictation.idle) clearTimeout(dictation.idle)
+    this.voice()?.cancelDictation(dictation.serviceId)
+  }
+
+  private keepDictation(key: string, dictation: Dictation): void {
+    if (dictation.idle) clearTimeout(dictation.idle)
+    dictation.idle = setTimeout(() => {
+      if (this.dictations.get(key) === dictation)
+        void this.finishDictation(dictation.deviceId, dictation.dictationId)
+    }, DICTATION_IDLE_MS)
+    dictation.idle.unref?.()
   }
 
   private async speak(
@@ -780,9 +897,10 @@ export class CompanionApi {
     return { success: true }
   }
 
-  /** Forgets uploads and speech, as when phone access is turned off. */
+  /** Forgets uploads, speech and dictation, as when phone access is turned off. */
   reset(): void {
     this.uploads.clear()
+    for (const key of [...this.dictations.keys()]) this.cancelDictation(key)
     for (const speechId of this.speeches.keys()) this.voice()?.stop(speechId)
     this.speeches.clear()
   }

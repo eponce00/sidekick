@@ -9,11 +9,15 @@ user-facing behavior is in the [phone guide](../user-guide/PHONE.md).
   page or other service, and nothing is installed on the phone.
 - **Only the user's phone.** Others on the same network must not be able to use or read the
   connection, even with the link.
-- **No certificate step.** Phones only trust HTTPS for a private address after the user installs a
-  root certificate in system settings, which was judged too much friction. A self-signed certificate
-  warns on every visit and still does not give the page a secure context.
+- **No certificate install.** Phones only trust HTTPS for a private address after the user installs
+  a root certificate in system settings, which was judged too much friction.
+- **A secure page.** Browsers give the microphone, the rich clipboard and `crypto.subtle` only to a
+  secure context, which plain HTTP is not.
 
-The page is therefore served over plain HTTP, and security comes from pairing and from encryption
+The page is therefore served over HTTPS with a certificate SideKick makes for the computer's
+address. The phone does not know it and warns; once the user continues past the warning, Chrome
+treats the page as a secure context. The certificate only makes the page secure: who may
+connect, and what others on the network can read, are decided by pairing and by the encryption
 inside the connection. OpenCode exposes its web interface on the network behind a password; T3 Code
 pairs with a one-time QR token and relies on Tailscale for HTTPS. SideKick uses a one-time QR
 secret, an approval on the computer and per-device keys, with no outside service.
@@ -40,8 +44,13 @@ steer and interaction requests.
 - **Images** go to the phone as reduced copies, at most 1,600 pixels on the longer side. Images a
   tool saved, such as viewed images and screenshots, are fetched by their `sidekick-browser://`
   address through the same checks as the window's protocol (`readBrowserArtifact`).
-- **Voice** uses the computer's own models. The phone records with its recorder, decodes and
-  resamples the recording to 16 kHz itself, and the computer transcribes it; speech is streamed to
+- **Voice** uses the computer's own models, through the desktop's own voice API on the phone, so the
+  desktop's microphone button, voice loop and player run unchanged. The phone captures 16 kHz audio
+  with the desktop's capture worklet and streams it in order, one call at a time, as 16-bit samples
+  (`voice.dictation.audio`, at most two seconds a call). The computer writes the words back as
+  `dictation.text` events to that phone only, and `dictation.end` follows the last words after a
+  stop. A dictation belongs to the phone that started it, ends after 15 seconds without audio and
+  after thirty minutes, and the voice service knows it by an ID of its own. Speech is streamed to
   the phone that asked as 16-bit samples, and only that phone can stop it.
 
 The phone page is its own small bundle, `src/renderer/companion.html`, built with the renderer. In
@@ -51,6 +60,15 @@ development the server fetches it from the renderer's development server.
 
 - The server listens only while phone access is on, on one private IPv4 address of a real network
   adapter (Wi-Fi first), on a remembered port so a home-screen icon keeps working.
+- It speaks HTTPS (TLS 1.2 or later) with a certificate from `companionCertificate.ts`: an ECDSA
+  P-256 key and a self-signed certificate for that address only (not an authority, server use
+  only), valid for 397 days. It is kept, with its key sealed by the operating system's key store
+  where it has one, so a phone that accepted it is not warned again; it is replaced when the
+  address changes or a month before it ends. Plain HTTP on the same port, which an address saved
+  before the page was HTTPS uses, gets a redirect to the HTTPS page after the same address and
+  `Host` checks, and nothing else.
+- The page may use the microphone (`Permissions-Policy: microphone=(self)`); the camera and
+  location stay refused, and photos come from the phone's camera app through a file input.
 - Requests from addresses outside the private, link-local and unique-local ranges are refused, as
   are requests whose `Host` is not that address and port (DNS rebinding) and API requests from
   another `Origin`.
@@ -61,7 +79,7 @@ development the server fetches it from the renderer's development server.
 
 ## Pairing
 
-The QR code holds `http://<address>:<port>/#p=<secret>`, a 128-bit secret in the URL fragment,
+The QR code holds `https://<address>:<port>/#p=<secret>`, a 128-bit secret in the URL fragment,
 which browsers never send. It works once and for two minutes.
 
 1. The phone creates a random device ID and a 256-bit device secret and sends them sealed with
@@ -94,14 +112,17 @@ Removing a device ends its sessions and streams at once. Turning phone access of
 and forgets every session.
 
 Both ends use the same implementation, `src/shared/companionProtocol.ts`, built on the audited
-[noble](https://paulmillr.com/noble/) libraries, because phones offer no built-in crypto on plain
-HTTP.
+[noble](https://paulmillr.com/noble/) libraries, so the phone and the computer run identical code
+whatever the browser offers.
 
 ## The risk that remains
 
-An attacker who controls the network can change the page while it loads, since nothing
-authenticates the HTTP response that carries the page. Such a page could read what the phone stores
-and act as that phone. Nothing that keeps to the constraints above closes this. The mitigations are
+An attacker who controls the network can serve their own page with their own certificate. The
+phone warns about it as it warns about SideKick's, and a user who continues past that warning gets
+the attacker's page, which could read what the phone stores and act as that phone. Once a phone
+accepted SideKick's certificate, a different one warns again, but browsers forget the choice after
+a while, so the user is used to continuing. Nothing that keeps to the constraints above closes
+this. The mitigations are
 that phone access is off until turned on and stays a deliberate choice, the guidance to use it only
 on trusted Wi-Fi, the connection dot and **Remove**, and the narrow API: no credentials, settings,
 files or terminal input, and no cards that act on the computer itself.
@@ -110,8 +131,12 @@ files or terminal input, and no cards that act on the computer itself.
 
 - `src/shared/companionProtocol.test.ts`: key agreement, sealing, tampering, cross-purpose and
   replayed messages.
-- `src/main/services/companion/companionServer.test.ts` drives a real server: reused, expired and
-  forged codes, a refused pairing, unknown and removed devices, a device without its secret,
-  tampered and replayed calls, unknown calls, wrong `Host` and `Origin`, outside addresses,
-  oversized and non-JSON bodies, and one-time event tickets.
-- `src/main/services/companion/companionApi.test.ts`: the phone's calls and their checks.
+- `src/main/services/companion/companionServer.test.ts` drives a real HTTPS server, checking its
+  certificate: reused, expired and forged codes, a refused pairing, unknown and removed devices, a
+  device without its secret, tampered and replayed calls, unknown calls, wrong `Host` and `Origin`,
+  outside addresses, oversized and non-JSON bodies, one-time event tickets, the plain-HTTP redirect
+  and the permissions the page gets.
+- `src/main/services/companion/companionCertificate.test.ts`: the certificate's address, key,
+  extensions and validity, and when a saved one is replaced.
+- `src/main/services/companion/companionApi.test.ts`: the phone's calls and their checks, including
+  dictation that only its own phone reaches.

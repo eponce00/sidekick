@@ -1,5 +1,4 @@
 import { BrowserWindow, ipcMain, nativeImage, safeStorage } from 'electron'
-import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { networkInterfaces } from 'os'
 import { extname, join } from 'path'
@@ -16,6 +15,11 @@ import { pinnedModelsFromProviderInstances } from '../../shared/providerInstance
 import type { ProviderSettings } from '../../shared/settings'
 import { readBrowserArtifact } from '../bootstrap/artifactProtocol'
 import { CompanionApi, trimForPhone, type CompanionVoice } from '../services/companion/companionApi'
+import {
+  certificateServes,
+  createCompanionCertificate,
+  type CompanionCertificate
+} from '../services/companion/companionCertificate'
 import { CompanionDeviceStore } from '../services/companion/companionDeviceStore'
 import {
   isDevelopmentPagePath,
@@ -96,6 +100,39 @@ function deviceStore(): CompanionDeviceStore {
     decrypt: (value) => safeStorage.decryptString(Buffer.from(value))
   })
   return devices
+}
+
+/**
+ * The page's certificate for this address. It is kept, so a phone that accepted it is not warned
+ * again, until the computer moves to another address or it nears its end. The key is sealed where
+ * the system can seal it.
+ */
+function certificateFor(address: string): CompanionCertificate {
+  const saved = getStore().get('companionCertificate') as
+    | { cert?: unknown; key?: unknown; sealed?: unknown }
+    | undefined
+  if (
+    typeof saved?.cert === 'string' &&
+    typeof saved.key === 'string' &&
+    certificateServes(saved.cert, address)
+  ) {
+    try {
+      const key = saved.sealed
+        ? safeStorage.decryptString(Buffer.from(saved.key, 'base64'))
+        : saved.key
+      return { cert: saved.cert, key }
+    } catch {
+      /* Made again below. */
+    }
+  }
+  const made = createCompanionCertificate(address)
+  const sealed = isSecureCredentialStorageAvailable()
+  getStore().set('companionCertificate', {
+    cert: made.cert,
+    key: sealed ? safeStorage.encryptString(made.key).toString('base64') : made.key,
+    sealed
+  })
+  return made
 }
 
 function rendererDirectory(): string {
@@ -202,20 +239,18 @@ function companionVoice(): CompanionVoice | null {
             : 'Voice is still being set up on the computer.'
       }
     },
-    transcribe: async (samples) => {
-      const sessionId = `phone-${randomUUID()}`
-      const parts: string[] = []
-      const started = await service.startDictation(sessionId, (text, final) => {
-        if (final && text.trim()) parts.push(text.trim())
-      })
-      if (!started.ok) throw new Error(started.message)
-      // In the small pieces a microphone delivers: the speech detector reads audio a short window
-      // at a time, and given seconds at once it heard only part of the recording.
-      for (let offset = 0; offset < samples.length; offset += DICTATION_PIECE)
-        service.pushDictationAudio(sessionId, samples.slice(offset, offset + DICTATION_PIECE))
-      await service.stopDictation(sessionId)
-      return parts.join(' ')
+    startDictation: async (dictationId, onText) => {
+      const started = await service.startDictation(dictationId, onText)
+      return started.ok ? { ok: true } : { ok: false, message: started.message }
     },
+    // In the small pieces a microphone delivers: the speech detector reads audio a short window at
+    // a time, and given seconds at once it heard only part of it.
+    pushDictation: (dictationId, samples) => {
+      for (let offset = 0; offset < samples.length; offset += DICTATION_PIECE)
+        service.pushDictationAudio(dictationId, samples.slice(offset, offset + DICTATION_PIECE))
+    },
+    stopDictation: (dictationId) => service.stopDictation(dictationId),
+    cancelDictation: (dictationId) => service.cancelDictation(dictationId),
     speak: async (speechId, text, onAudio, onEnd) => {
       const started = await service.speak(speechId, text, onAudio)
       if (!started.ok) return { ok: false, message: started.message }
@@ -343,7 +378,7 @@ async function setEnabled(enabled: boolean): Promise<CompanionStatus> {
   const target = companionServer()
   try {
     const preferred = Number(getStore().get('companionPort', DEFAULT_PORT)) || DEFAULT_PORT
-    const listening = await target.start(address, preferred)
+    const listening = await target.start(address, preferred, certificateFor(address))
     getStore().set('companionPort', listening.port)
     target.newPairing()
   } catch (error) {

@@ -15,11 +15,13 @@ import type { ConversationRunMode, PromptAdmissionsResult } from '../../../share
 import { MAX_MESSAGE_IMAGES } from '../../../shared/messageImages'
 import '../components/ChatInput.css'
 import { ChatComposer } from '../components/ChatComposer'
+import { DictationButton } from '../components/DictationButton'
 import { ImageAttachmentPreview } from '../components/ImageAttachmentPreview'
 import { QueuedMessageTray } from '../components/QueuedMessageTray'
+import { endDictation } from '../services/voice/dictationControl'
+import { voiceLoopSent } from '../services/voice/voiceLoop'
 import { TEXT_FILE_ACCEPT } from './attachments'
-import { insertAtCursor, type CompanionConnection } from './chatState'
-import { PhoneDictation } from './PhoneDictation'
+import type { CompanionConnection } from './chatState'
 import { useCompanionVoice } from './phoneVoice'
 import { Sheet, SheetAction, SheetSection, SheetTile } from './Sheet'
 import type { ModelList, OutgoingMessage } from './useCompanionChat'
@@ -104,6 +106,10 @@ export function PhoneComposer({
       return
     }
     if (!hasContent || sending || files.uploading) return
+    // As on the desktop: what was dictated goes with the message, and with voice on the
+    // microphone waits for the reply to be read aloud.
+    endDictation()
+    voiceLoopSent()
     const message = text.trim()
     const attached = files.take()
     setText('')
@@ -130,18 +136,6 @@ export function PhoneComposer({
     // Nothing typed or attached is lost when the send fails.
     setText((current) => current || message)
     files.restore(attached)
-  }
-
-  const insertDictation = (words: string): void => {
-    const field = inputRef.current
-    const start = field?.selectionStart ?? text.length
-    const end = field?.selectionEnd ?? text.length
-    const next = insertAtCursor(text, start, end, words)
-    setText(next.value)
-    requestAnimationFrame(() => {
-      inputRef.current?.focus()
-      inputRef.current?.setSelectionRange(next.cursor, next.cursor)
-    })
   }
 
   const pick = (input: React.RefObject<HTMLInputElement | null>): void => {
@@ -338,7 +332,7 @@ export function PhoneComposer({
               </button>
             )}
             {voice?.dictation && (
-              <PhoneDictation connection={connection} onText={insertDictation} />
+              <DictationButton inputRef={inputRef} onInputChange={setText} phone />
             )}
             {showStop && (
               <button

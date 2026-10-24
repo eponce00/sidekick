@@ -28,6 +28,26 @@ interface DictationButtonProps {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   onInputChange: (value: string) => void
   disabled?: boolean
+  /** On the phone page: its browser holds the microphone, and there is no shortcut. */
+  phone?: boolean
+}
+
+/** What to do when the microphone cannot be used, where the user can do it. */
+const MICROPHONE_HELP = {
+  desktop: {
+    denied:
+      'SideKick could not use the microphone. Allow microphone access for SideKick in your system privacy settings.',
+    missing: 'No microphone was found. Connect one, or choose it in Settings → General → Voice.',
+    silent: (label: string) =>
+      `No sound is reaching SideKick from “${label}”. Choose your microphone in Settings → General → Voice, or check it in your system sound settings.`
+  },
+  phone: {
+    denied:
+      'The browser did not allow the microphone. Allow it for this page in the browser’s site settings, then try again.',
+    missing: 'This phone’s browser offered no microphone.',
+    silent: () =>
+      'No sound is reaching SideKick from the microphone. Check that no other app is using it.'
+  }
 }
 
 /**
@@ -38,9 +58,11 @@ interface DictationButtonProps {
 export function DictationButton({
   inputRef,
   onInputChange,
-  disabled = false
+  disabled = false,
+  phone = false
 }: DictationButtonProps): React.JSX.Element | null {
   const voice = useVoiceState()
+  const help = MICROPHONE_HELP[phone ? 'phone' : 'desktop']
   const [phase, setPhase] = useState<Phase>('idle')
   const [notice, setNotice] = useState('')
   const [level, setLevel] = useState(0)
@@ -141,14 +163,10 @@ export function DictationButton({
       void api.cancelDictation(id)
       setPhase('idle')
       const denied = (error as DOMException)?.name === 'NotAllowedError'
-      showNotice(
-        denied
-          ? 'SideKick could not use the microphone. Allow microphone access for SideKick in your system privacy settings.'
-          : 'No microphone was found. Connect one, or choose it in Settings → General → Voice.'
-      )
+      showNotice(denied ? help.denied : help.missing)
       return false
     }
-  }, [place, showNotice])
+  }, [place, showNotice, help])
 
   // The level ring, the timer, and a warning when the device sends only silence.
   useEffect(() => {
@@ -165,16 +183,14 @@ export function DictationButton({
         const ms = Date.now() - active.startedAt
         if (!warned && ms > SILENT_DEVICE_MS && loudest < SILENT_LEVEL) {
           warned = true
-          showNotice(
-            `No sound is reaching SideKick from “${active.capture?.label}”. Choose your microphone in Settings → General → Voice, or check it in your system sound settings.`
-          )
+          showNotice(help.silent(active.capture?.label ?? 'the microphone'))
         }
       }
       frame = window.requestAnimationFrame(tick)
     }
     frame = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(frame)
-  }, [phase, showNotice])
+  }, [phase, showNotice, help])
 
   /** Ends listening at once, keeping what is in the box and dropping the rest. */
   const cancel = useCallback((): void => {
@@ -242,17 +258,19 @@ export function DictationButton({
   const model = voice.models.dictation
   const settingUp = model.status !== 'ready'
   const percent = Math.floor(voiceModelProgress(model) * 100)
-  const shortcut = voiceShortcutLabel()
+  const shortcut = phone ? '' : ` (${voiceShortcutLabel()})`
   const busy = phase === 'starting' || phase === 'finishing'
   const label = busy
     ? 'Starting the microphone'
     : loop === 'speaking'
-      ? 'Skip reading the reply (Esc)'
+      ? phone
+        ? 'Skip reading the reply'
+        : 'Skip reading the reply (Esc)'
       : loop !== 'off'
-        ? `Turn voice off (${shortcut})`
+        ? `Turn voice off${shortcut}`
         : settingUp
           ? `Voice is being set up (${percent}%)`
-          : `Talk to SideKick (${shortcut})`
+          : `Talk to SideKick${shortcut}`
 
   return (
     <div className="dictation">

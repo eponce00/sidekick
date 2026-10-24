@@ -4,7 +4,6 @@ import type { CompanionChat, CompanionMessage } from '../../../shared/companion'
 import {
   chatDot,
   firstGapAfter,
-  insertAtCursor,
   mergeRunEvents,
   runEventAction,
   sendBaseline,
@@ -149,26 +148,5 @@ describe('sent messages', () => {
     expect(second.baseline).toBe(1)
     // The first arrived; the second is still on its way.
     expect(unconfirmedSends([first, second], [userMessage('ok')], [])).toEqual([second])
-  })
-})
-
-describe('insertAtCursor', () => {
-  it('puts dictated words at the cursor with a space on each side', () => {
-    expect(insertAtCursor('Draft it and', 12, 12, 'send it')).toEqual({
-      value: 'Draft it and send it',
-      cursor: 20
-    })
-    expect(insertAtCursor('Fix  please', 4, 4, 'the build')).toEqual({
-      value: 'Fix the build please',
-      cursor: 13
-    })
-  })
-
-  it('replaces a selection and fills an empty box', () => {
-    expect(insertAtCursor('Fix the tests', 4, 7, 'every')).toEqual({
-      value: 'Fix every tests',
-      cursor: 9
-    })
-    expect(insertAtCursor('', 0, 0, 'Hello')).toEqual({ value: 'Hello', cursor: 5 })
   })
 })

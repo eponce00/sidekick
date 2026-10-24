@@ -35,6 +35,9 @@ const QR_FRAME = 176
 
 const REMOVE_CONFIRM_MS = 3000
 
+const CERTIFICATE_NOTE =
+  'SideKick makes its own certificate, so the page can use your phone’s microphone; phones do not know it, so they warn. Your chats stay encrypted with keys only this computer and your phone hold.'
+
 const SAFETY_NOTE =
   'Turn this on only on Wi-Fi you trust, like home. Anyone who can tamper with your network could interfere with the page as it loads.'
 
@@ -233,6 +236,11 @@ function PairingCode({
           >
             <RefreshCw size={13} aria-hidden="true" />
           </button>
+        </p>
+      )}
+      {!expired && (
+        <p className="phone-popover-note" title={CERTIFICATE_NOTE}>
+          If it says the connection isn’t private, open the details and continue.
         </p>
       )}
     </div>

@@ -1,6 +1,12 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Loader2, Menu, SquarePen } from 'lucide-react'
 import type { CompanionChat } from '../../../shared/companion'
+import {
+  stopVoiceLoop,
+  voiceLoopReplyFinished,
+  voiceLoopReplyStarted
+} from '../services/voice/voiceLoop'
+import { finalAnswerText } from '../utils/segmentGrouping'
 import type { CompanionConnection } from './chatState'
 import type { HomeSuggestion } from './homeSuggestions'
 import { PhoneChatSurface } from './PhoneChatSurface'
@@ -57,6 +63,31 @@ export function ChatView({
     const element = scroller.current
     if (element && following.current) element.scrollTop = element.scrollHeight
   }, [chat.messages, chat.error, chat.queue])
+
+  // Voice conversation, as the desktop's chat drives it: each finished reply's answer is read
+  // aloud, then the microphone listens again. Another chat ends it; a new chat getting its ID as
+  // the first message is sent is the same chat.
+  const messagesRef = useRef(chat.messages)
+  useEffect(() => {
+    messagesRef.current = chat.messages
+  }, [chat.messages])
+  const voiceRun = useRef({ conversationId: chat.conversationId, runActive: chat.runActive })
+  useEffect(() => {
+    const previous = voiceRun.current
+    voiceRun.current = { conversationId: chat.conversationId, runActive: chat.runActive }
+    if (previous.conversationId && previous.conversationId !== chat.conversationId) {
+      stopVoiceLoop()
+      return undefined
+    }
+    if (chat.runActive && !previous.runActive) voiceLoopReplyStarted()
+    if (chat.runActive || !previous.runActive) return undefined
+    // The saved message replaces the streamed one a moment after the run ends.
+    const timer = window.setTimeout(() => {
+      const reply = messagesRef.current.findLast((message) => message.role === 'agent')
+      voiceLoopReplyFinished(reply ? finalAnswerText(reply) : '')
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [chat.conversationId, chat.runActive])
 
   const home = !chat.conversationId
   const empty = !chat.loading && !chat.messages.length

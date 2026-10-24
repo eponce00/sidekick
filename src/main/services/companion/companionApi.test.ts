@@ -81,7 +81,7 @@ function setup(overrides: Partial<CompanionApiDependencies> = {}) {
   const call = (name: Parameters<CompanionApi['handle']>[0], input: unknown, device = DEVICE) =>
     api.handle(name, input, device)
   const upload = async (
-    kind: 'image' | 'text' | 'audio',
+    kind: 'image' | 'text',
     data: Buffer,
     mimeType = 'image/png',
     device = DEVICE
@@ -486,10 +486,24 @@ describe('CompanionApi', () => {
     await expect(call('media.get', { url: 'file:///C:/secret.png' })).rejects.toThrow()
   })
 
-  it('transcribes recorded audio and speaks to the phone that asked', async () => {
-    const voice: CompanionVoice = {
+  function fakeVoice(): CompanionVoice & {
+    heard: Map<string, number[]>
+    writers: Map<string, (text: string, final: boolean) => void>
+  } {
+    const heard = new Map<string, number[]>()
+    const writers = new Map<string, (text: string, final: boolean) => void>()
+    return {
+      heard,
+      writers,
       state: () => ({ dictation: true, speech: true, message: null }),
-      transcribe: vi.fn(async (samples: Float32Array) => ` heard ${samples.length} samples `),
+      startDictation: vi.fn(async (id: string, onText: (text: string, final: boolean) => void) => {
+        heard.set(id, [])
+        writers.set(id, onText)
+        return { ok: true }
+      }),
+      pushDictation: vi.fn((id: string, samples: Float32Array) => heard.get(id)?.push(...samples)),
+      stopDictation: vi.fn(async (id: string) => writers.get(id)?.('the last words', true)),
+      cancelDictation: vi.fn(),
       speak: vi.fn(async (_id, _text, onAudio, onEnd) => {
         onAudio(new Float32Array([0, 1, -1]), 24_000)
         onEnd()
@@ -497,13 +511,94 @@ describe('CompanionApi', () => {
       }),
       stop: vi.fn()
     }
-    const { call, upload, deps } = setup({ voice: () => voice })
-    const samples = Buffer.alloc(16)
-    for (let index = 0; index < 4; index++) samples.writeFloatLE(0.5, index * 4)
-    const audio = await upload('audio', samples, 'audio/pcm')
-    expect(await call('voice.transcribe', { uploadId: audio })).toEqual({
-      text: 'heard 4 samples'
+  }
+
+  const pcm = (...samples: number[]): string => {
+    const bytes = Buffer.alloc(samples.length * 2)
+    samples.forEach((sample, index) => bytes.writeInt16LE(sample, index * 2))
+    return bytes.toString('base64')
+  }
+
+  it('dictates live: audio in order, words back as they come, the last before the end', async () => {
+    const voice = fakeVoice()
+    const { call, deps } = setup({ voice: () => voice })
+    expect(await call('voice.dictation.start', { dictationId: 'd1' })).toEqual({ ok: true })
+    const serviceId = vi.mocked(voice.startDictation).mock.calls[0][0]
+    // The voice service knows the dictation by an ID of its own, not one the phone chose.
+    expect(serviceId).toMatch(/^phone-/)
+    expect(
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(16_384, -32_768) })
+    ).toEqual({ accepted: true })
+    expect(await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(0) })).toEqual({
+      accepted: true
     })
+    expect(voice.heard.get(serviceId)).toEqual([0.5, -1, 0])
+    voice.writers.get(serviceId)!('hello', false)
+    expect(deps.sendToDevice).toHaveBeenLastCalledWith(DEVICE, {
+      type: 'dictation.text',
+      dictationId: 'd1',
+      text: 'hello',
+      final: false
+    })
+    expect(await call('voice.dictation.stop', { dictationId: 'd1' })).toEqual({ stopped: true })
+    const sent = vi.mocked(deps.sendToDevice).mock.calls.map(([, event]) => event)
+    expect(sent.slice(-2)).toEqual([
+      { type: 'dictation.text', dictationId: 'd1', text: 'the last words', final: true },
+      { type: 'dictation.end', dictationId: 'd1' }
+    ])
+    // Once stopped it takes no more audio.
+    expect(await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) })).toEqual({
+      accepted: false
+    })
+  })
+
+  it('keeps each phone to its own dictation and refuses audio it cannot read', async () => {
+    const voice = fakeVoice()
+    const { call } = setup({ voice: () => voice })
+    await call('voice.dictation.start', { dictationId: 'd1' })
+    const serviceId = vi.mocked(voice.startDictation).mock.calls[0][0]
+    expect(
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) }, 'device-2')
+    ).toEqual({ accepted: false })
+    await call('voice.dictation.cancel', { dictationId: 'd1' }, 'device-2')
+    expect(voice.cancelDictation).not.toHaveBeenCalled()
+    await expect(
+      call('voice.dictation.audio', { dictationId: 'd1', pcm: Buffer.from([1]).toString('base64') })
+    ).rejects.toThrow(/could not be read/)
+    await expect(
+      call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(...new Array(32_001).fill(1)) })
+    ).rejects.toThrow(/could not be read/)
+    await expect(call('voice.dictation.start', { dictationId: '../d' })).rejects.toThrow()
+    await expect(call('voice.dictation.start', { dictationId: 'd1' })).rejects.toThrow(/already/)
+    expect(voice.heard.get(serviceId)).toEqual([])
+    await call('voice.dictation.cancel', { dictationId: 'd1' })
+    expect(voice.cancelDictation).toHaveBeenCalledWith(serviceId)
+  })
+
+  it('ends a dictation the phone stopped sending audio to, keeping what was heard', async () => {
+    vi.useFakeTimers()
+    try {
+      const voice = fakeVoice()
+      const { call, deps } = setup({ voice: () => voice })
+      await call('voice.dictation.start', { dictationId: 'd1' })
+      await vi.advanceTimersByTimeAsync(10_000)
+      await call('voice.dictation.audio', { dictationId: 'd1', pcm: pcm(1) })
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(voice.stopDictation).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(6_000)
+      expect(voice.stopDictation).toHaveBeenCalledTimes(1)
+      expect(deps.sendToDevice).toHaveBeenLastCalledWith(DEVICE, {
+        type: 'dictation.end',
+        dictationId: 'd1'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('speaks to the phone that asked', async () => {
+    const voice = fakeVoice()
+    const { call, deps } = setup({ voice: () => voice })
     expect(await call('voice.speak', { speechId: 's1', text: 'Hello' })).toEqual({ ok: true })
     expect(deps.sendToDevice).toHaveBeenCalledWith(DEVICE, {
       type: 'speech.audio',
@@ -524,6 +619,7 @@ describe('CompanionApi', () => {
       message: null
     })
     expect(await call('voice.speak', { speechId: 's1', text: 'hi' })).toMatchObject({ ok: false })
+    expect(await call('voice.dictation.start', { dictationId: 'd1' })).toMatchObject({ ok: false })
   })
 
   it('encodes speech as 16-bit samples', () => {

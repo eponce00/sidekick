@@ -934,6 +934,26 @@ body > .image-lightbox {
   color: var(--text-primary);
 }
 
+/* The desktop's voice states, over the phone's larger button; the halo stays inside the card. */
+.cp-input-area .dictation-button.is-listening {
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+  color: var(--error);
+}
+
+.cp-input-area .dictation-button.is-listening::after {
+  box-shadow: 0 0 0 calc(1px + var(--dictation-level) * 3px)
+    color-mix(in srgb, var(--error) 22%, transparent);
+}
+
+.cp-input-area .dictation-button.is-waiting {
+  color: var(--error);
+}
+
+.cp-input-area .dictation-button.is-speaking {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
 /* The one filled button: Send in the accent, Stop in the text colour. */
 .cp-input-area .send-button,
 .cp-input-area .stop-button {

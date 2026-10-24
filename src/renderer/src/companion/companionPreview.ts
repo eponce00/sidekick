@@ -158,6 +158,9 @@ const DIFF = `--- a/src/upload/UploadButton.css
  }
 `
 
+/** What the pretend dictation writes. */
+const DICTATED = 'Also check the retry logic in the upload client.'
+
 type Output<Name extends CompanionCallName> = CompanionCalls[Name]['output']
 type Input<Name extends CompanionCallName> = CompanionCalls[Name]['input']
 
@@ -172,6 +175,8 @@ export class CompanionPreview implements CompanionConnection {
   private chatModels = new Map<string, string>()
   private uploads = new Map<string, PreviewUpload>()
   private speeches = new Map<string, Set<ReturnType<typeof setTimeout>>>()
+  /** Seconds of microphone each dictation has sent. */
+  private dictations = new Map<string, number>()
   private onEvent: ((event: CompanionEvent) => void) | null = null
   private timers = new Set<ReturnType<typeof setTimeout>>()
   private nextId = 1
@@ -849,13 +854,25 @@ export class CompanionPreview implements CompanionConnection {
       }
       case 'voice.state':
         return { dictation: true, speech: true, message: null } satisfies Output<'voice.state'>
-      case 'voice.transcribe': {
-        const { uploadId } = input as Input<'voice.transcribe'>
-        const upload = this.take(uploadId, 'audio')
-        const seconds = upload.length / 4 / 16_000
-        return {
-          text: seconds > 0.2 ? 'Also check the retry logic in the upload client.' : ''
-        } satisfies Output<'voice.transcribe'>
+      case 'voice.dictation.start': {
+        const { dictationId } = input as Input<'voice.dictation.start'>
+        this.dictations.set(dictationId, 0)
+        return { ok: true } satisfies Output<'voice.dictation.start'>
+      }
+      case 'voice.dictation.audio':
+        return this.dictate(input as Input<'voice.dictation.audio'>)
+      case 'voice.dictation.stop': {
+        const { dictationId } = input as Input<'voice.dictation.stop'>
+        const words = this.dictatedWords(dictationId)
+        this.dictations.delete(dictationId)
+        if (words) this.onEvent?.({ type: 'dictation.text', dictationId, text: words, final: true })
+        this.onEvent?.({ type: 'dictation.end', dictationId })
+        return { stopped: true } satisfies Output<'voice.dictation.stop'>
+      }
+      case 'voice.dictation.cancel': {
+        const { dictationId } = input as Input<'voice.dictation.cancel'>
+        this.dictations.delete(dictationId)
+        return { cancelled: true } satisfies Output<'voice.dictation.cancel'>
       }
       case 'voice.speak':
         return this.speak(input as Input<'voice.speak'>)
@@ -1091,6 +1108,25 @@ export class CompanionPreview implements CompanionConnection {
       this.reply(conversationId, 'Thanks, carrying on with that.')
     })
     return { success: true }
+  }
+
+  /** Writes a pretend sentence a word at a time as the microphone streams, drafts first. */
+  private dictate({
+    dictationId,
+    pcm
+  }: Input<'voice.dictation.audio'>): Output<'voice.dictation.audio'> {
+    const heard = this.dictations.get(dictationId)
+    if (heard === undefined) return { accepted: false }
+    this.dictations.set(dictationId, heard + base64ToBytes(pcm).length / 2 / 16_000)
+    const words = this.dictatedWords(dictationId)
+    if (words) this.onEvent?.({ type: 'dictation.text', dictationId, text: words, final: false })
+    return { accepted: true }
+  }
+
+  private dictatedWords(dictationId: string): string {
+    const words = DICTATED.split(' ')
+    const count = Math.min(words.length, Math.floor((this.dictations.get(dictationId) ?? 0) * 2.5))
+    return words.slice(0, count).join(' ')
   }
 
   /** Speaks in tones: a pretend voice, sent in pieces as the computer sends real speech. */

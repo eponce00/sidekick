@@ -83,7 +83,7 @@ export interface CompanionUploadRef {
 
 /** What the computer can do for the phone's voice buttons. */
 export interface CompanionVoiceState {
-  /** Dictation is installed and on; the phone records, the computer transcribes. */
+  /** Dictation is installed and on; the phone streams its microphone, the computer writes it. */
   dictation: boolean
   /** Read aloud is installed and on; the computer speaks, the phone plays. */
   speech: boolean
@@ -153,7 +153,7 @@ export interface CompanionCalls {
   'upload.put': {
     input: {
       uploadId?: string
-      kind: 'image' | 'text' | 'audio'
+      kind: 'image' | 'text'
       name: string
       mimeType: string
       data: string
@@ -164,8 +164,24 @@ export interface CompanionCalls {
   /** An image the agent viewed or captured, by the address its tool result gives. */
   'media.get': { input: { url: string }; output: { dataUrl: string } }
   'voice.state': { input: Record<string, never>; output: CompanionVoiceState }
-  /** Transcribes uploaded audio: 16 kHz mono 32-bit float little-endian samples. */
-  'voice.transcribe': { input: { uploadId: string }; output: { text: string } }
+  /**
+   * Live dictation, as the desktop's microphone does it. The phone streams its microphone in
+   * `voice.dictation.audio` pieces, in order, and the words come back as `dictation.text` events:
+   * drafts of the phrase being spoken, then each phrase final. After a stop, `dictation.end`
+   * follows the last words.
+   */
+  'voice.dictation.start': {
+    input: { dictationId: string }
+    output: { ok: boolean; message?: string }
+  }
+  /** At most COMPANION_DICTATION_PIECE_SAMPLES 16 kHz mono 16-bit little-endian samples, base64. */
+  'voice.dictation.audio': {
+    input: { dictationId: string; pcm: string }
+    output: { accepted: boolean }
+  }
+  'voice.dictation.stop': { input: { dictationId: string }; output: { stopped: true } }
+  /** Ends dictation at once, dropping words not yet written. */
+  'voice.dictation.cancel': { input: { dictationId: string }; output: { cancelled: true } }
   /** Speaks text in the computer's voice; the audio arrives as `speech.audio` events. */
   'voice.speak': {
     input: { speechId: string; text: string }
@@ -192,7 +208,10 @@ export const COMPANION_CALL_NAMES: readonly CompanionCallName[] = [
   'upload.put',
   'media.get',
   'voice.state',
-  'voice.transcribe',
+  'voice.dictation.start',
+  'voice.dictation.audio',
+  'voice.dictation.stop',
+  'voice.dictation.cancel',
   'voice.speak',
   'voice.stop',
   'events.ticket'
@@ -216,9 +235,15 @@ export type CompanionEvent =
   /** Speech for this phone only: 16-bit little-endian mono samples, base64. */
   | { type: 'speech.audio'; speechId: string; sampleRate: number; pcm: string }
   | { type: 'speech.end'; speechId: string; error?: string }
+  /** Dictation for this phone only: a draft of the phrase being spoken, or a phrase final. */
+  | { type: 'dictation.text'; dictationId: string; text: string; final: boolean }
+  /** A stopped dictation's last words have been sent. */
+  | { type: 'dictation.end'; dictationId: string }
 
 /** The longest message a phone may send. */
 export const COMPANION_MAX_MESSAGE_LENGTH = 100_000
+/** The most audio one dictation piece carries: two seconds at 16 kHz. */
+export const COMPANION_DICTATION_PIECE_SAMPLES = 32_000
 /** The most an upload piece carries before base64, inside the request limit. */
 export const COMPANION_UPLOAD_CHUNK_BYTES = 128 * 1024
 /** The most one upload may hold. Phones reduce photos before sending them. */

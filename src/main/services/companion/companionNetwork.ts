@@ -73,7 +73,7 @@ export function hostMatches(host: string | undefined, address: string, port: num
 
 /** Whether a request's Origin, when present, is this server's own page. */
 export function originMatches(origin: string | undefined, address: string, port: number): boolean {
-  return origin === undefined || origin === `http://${address}:${port}`
+  return origin === undefined || origin === `https://${address}:${port}`
 }
 
 /**
