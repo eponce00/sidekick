@@ -20,7 +20,6 @@ import { DictationButton } from '../components/DictationButton'
 import { ImageAttachmentPreview } from '../components/ImageAttachmentPreview'
 import { QueuedMessageTray } from '../components/QueuedMessageTray'
 import { endDictation } from '../services/voice/dictationControl'
-import { voiceLoopSent } from '../services/voice/voiceLoop'
 import { TEXT_FILE_ACCEPT } from './attachments'
 import type { CompanionConnection } from './chatState'
 import { useCompanionVoice } from './phoneVoice'
@@ -144,10 +143,8 @@ export function PhoneComposer({
       return
     }
     if (!hasContent || sending || files.uploading) return
-    // As on the desktop: what was dictated goes with the message, and with voice on the
-    // microphone waits for the reply to be read aloud.
+    // What was dictated goes with the message, and the microphone stops.
     endDictation()
-    voiceLoopSent()
     const message = text.trim()
     const attached = files.take()
     setText('')

@@ -49,11 +49,10 @@ and the agent's other chats.
 - **Attach** photos from the phone, take one with the camera, or attach text files such as notes,
   logs or code. Photos are reduced on the phone before they are sent. The chat's model must be able
   to see images.
-- **Talk** with SideKick's microphone button, as on the computer: your words appear in the
-  message box as you speak, written by the computer's own dictation. **Send** sends them; the reply
-  is then read aloud and the microphone listens again, so you can talk back and forth. Tap the
-  microphone again to stop. The first time, the browser asks whether the page may use the
-  microphone.
+- **Dictate** with SideKick's microphone button: tap it and your words appear in the message box
+  as you speak, written by the computer's own dictation. Tap it again to stop, or send the message,
+  which stops it too. Replies are read aloud only when you tap **Read aloud**. The first time, the
+  browser asks whether the page may use the microphone.
 - **Read aloud** a reply: the computer speaks it in its own voice, and the phone plays it.
 - **Copy** a reply: it pastes with its headings, lists and tables where the app you paste into
   keeps formatting, such as notes or mail, and as plain text everywhere else.

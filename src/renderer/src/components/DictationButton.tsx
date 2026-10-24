@@ -28,7 +28,11 @@ interface DictationButtonProps {
   inputRef: React.RefObject<HTMLTextAreaElement | null>
   onInputChange: (value: string) => void
   disabled?: boolean
-  /** On the phone page: its browser holds the microphone, and there is no shortcut. */
+  /**
+   * On the phone page: dictation only, as phone keyboards and chat apps have it. A tap starts and
+   * a tap stops, sending stops it, and nothing is read aloud unless asked. Its browser holds the
+   * microphone, and there is no shortcut.
+   */
   phone?: boolean
 }
 
@@ -215,6 +219,7 @@ export function DictationButton({
   // SideKick never transcribes the model's own voice.
   const loop = useVoiceLoop()
   useEffect(() => {
+    if (phone) return
     if (loop === 'listening') {
       if (!session.current && phase === 'idle') {
         void start().then((started) => {
@@ -225,11 +230,12 @@ export function DictationButton({
       if (loop === 'off') void stop()
       else cancel()
     }
-  }, [loop, phase, start, stop, cancel])
+  }, [phone, loop, phase, start, stop, cancel])
 
   // The shortcut turns voice on and off anywhere in the app; Esc skips a reply
   // being read aloud.
   useEffect(() => {
+    if (phone) return undefined
     const onKey = (event: KeyboardEvent): void => {
       if (isVoiceShortcut(event)) {
         event.preventDefault()
@@ -243,7 +249,7 @@ export function DictationButton({
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [])
+  }, [phone])
 
   // Leaving the chat ends the conversation rather than leaving the microphone on.
   useEffect(
@@ -258,25 +264,30 @@ export function DictationButton({
   const model = voice.models.dictation
   const settingUp = model.status !== 'ready'
   const percent = Math.floor(voiceModelProgress(model) * 100)
-  const shortcut = phone ? '' : ` (${voiceShortcutLabel()})`
   const busy = phase === 'starting' || phase === 'finishing'
+  // The phone's button shows the dictation itself; the desktop's, the voice conversation.
+  const mode = phone ? (phase === 'recording' ? 'listening' : 'off') : loop
   const label = busy
     ? 'Starting the microphone'
-    : loop === 'speaking'
-      ? phone
-        ? 'Skip reading the reply'
-        : 'Skip reading the reply (Esc)'
-      : loop !== 'off'
-        ? `Turn voice off${shortcut}`
+    : phone
+      ? phase === 'recording'
+        ? 'Stop dictating'
         : settingUp
-          ? `Voice is being set up (${percent}%)`
-          : `Talk to SideKick${shortcut}`
+          ? `Dictation is being set up (${percent}%)`
+          : 'Dictate'
+      : loop === 'speaking'
+        ? 'Skip reading the reply (Esc)'
+        : loop !== 'off'
+          ? `Turn voice off (${voiceShortcutLabel()})`
+          : settingUp
+            ? `Voice is being set up (${percent}%)`
+            : `Talk to SideKick (${voiceShortcutLabel()})`
 
   return (
     <div className="dictation">
       <button
         type="button"
-        className={`dictation-button is-${loop}${busy ? ' is-busy' : ''}${settingUp && loop === 'off' ? ' is-setting-up' : ''}`}
+        className={`dictation-button is-${mode}${busy ? ' is-busy' : ''}${settingUp && mode === 'off' ? ' is-setting-up' : ''}`}
         style={
           {
             '--dictation-level': level.toFixed(3),
@@ -285,19 +296,22 @@ export function DictationButton({
         }
         disabled={disabled}
         onClick={() => {
-          if (loop === 'off') startVoiceLoop()
+          if (phone) {
+            if (phase === 'idle') void start()
+            else if (phase === 'recording') void stop()
+          } else if (loop === 'off') startVoiceLoop()
           else if (loop === 'speaking') skipVoiceLoopReading()
           else stopVoiceLoop()
         }}
         title={label}
         aria-label={label}
-        aria-pressed={loop !== 'off'}
+        aria-pressed={mode !== 'off'}
       >
         {busy ? (
           <Loader2 size={15} className="dictation-spinner" />
-        ) : loop === 'speaking' ? (
+        ) : mode === 'speaking' ? (
           <Volume2 size={16} strokeWidth={1.9} />
-        ) : loop === 'off' ? (
+        ) : mode === 'off' ? (
           <Mic size={16} strokeWidth={1.9} />
         ) : (
           <Mic size={16} strokeWidth={2.2} />
