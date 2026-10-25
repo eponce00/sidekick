@@ -2,7 +2,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getArtifactFallbackTheme } from '../../../shared/artifactTheme'
-import { listenToHost, measureContentHeight } from './artifactFrameChannel'
+import { listenToHost, measureContentHeight, watchContentHeight } from './artifactFrameChannel'
 
 describe('the frame side of the artifact channel', () => {
   afterEach(() => vi.restoreAllMocks())
@@ -34,6 +34,27 @@ describe('the frame side of the artifact channel', () => {
     expect(onCommand).toHaveBeenCalledTimes(1)
     expect(onCommand).toHaveBeenCalledWith({ type: 'theme', theme })
     other.remove()
+  })
+
+  it('scrolls sideways only for content genuinely wider than the frame, not a sub-pixel more', () => {
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe = vi.fn()
+        disconnect = vi.fn()
+      }
+    )
+    const root = document.documentElement
+    vi.spyOn(root, 'clientWidth', 'get').mockReturnValue(655)
+    const width = vi.spyOn(root, 'scrollWidth', 'get').mockReturnValue(656)
+    const watcher = watchContentHeight(document, () => undefined)
+    expect(root.style.overflowX).toBe('hidden')
+
+    width.mockReturnValue(900)
+    watcher.measure()
+    expect(root.style.overflowX).toBe('auto')
+    watcher.stop()
+    vi.unstubAllGlobals()
   })
 
   it('measures the content, not the frame, so a frame can shrink with it', () => {
