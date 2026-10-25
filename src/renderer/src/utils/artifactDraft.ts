@@ -235,7 +235,13 @@ export function undefinedDraftComponents(code: string, provided: ReadonlySet<str
   for (const match of code.matchAll(/\b(?:function|class|const|let|var)\s+([A-Z][\w$]*)/g)) {
     declared.add(match[1]!)
   }
-  for (const match of code.matchAll(/\bimport\s+([\s\S]*?)\s+from\b/g)) {
+  // Imports and destructuring, such as `const { Sun } = lucideReact`: every name in them counts,
+  // since a placeholder declared beside a real declaration is a syntax error.
+  const lists = [
+    ...code.matchAll(/\bimport\s+([\s\S]*?)\s+from\b/g),
+    ...code.matchAll(/\b(?:const|let|var)\s*[{[]([^}\]]*)[}\]]/g)
+  ]
+  for (const match of lists) {
     for (const name of match[1]!.match(/[A-Za-z_$][\w$]*/g) ?? []) declared.add(name)
   }
   return [...used].filter((name) => !declared.has(name) && !provided.has(name))

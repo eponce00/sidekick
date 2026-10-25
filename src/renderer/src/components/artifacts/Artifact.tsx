@@ -186,8 +186,12 @@ function ArtifactView({
   onResult
 }: ArtifactViewProps): React.JSX.Element {
   const nextKey = useRef(1)
-  // Versions that failed here are not loaded again; the next one is.
-  const failedCodes = useRef(new Set<string>())
+  // Versions that failed here, with why: not loaded again, and shown as the failure if one of
+  // them is still the version when the call finishes.
+  const failures = useRef(new Map<string, { error: string; visible: boolean }>())
+  // A draft frame keeps showing the last code that arrived until a complete version replaces it.
+  const [lastDraft, setLastDraft] = useState('')
+  if (draftCode !== null && draftCode !== lastDraft) setLastDraft(draftCode)
   const [current, setCurrent] = useState<FrameSlot | null>(() =>
     code !== null ? { key: 0, code } : draftCode !== null ? { key: 0, code: null } : null
   )
@@ -217,9 +221,19 @@ function ArtifactView({
       return
     }
     if (code === null || code === current.code || code === incoming?.code) return
-    if (failedCodes.current.has(code)) return
+    if (failures.current.has(code)) return
     setIncoming({ key: nextKey.current++, code })
   }, [code, current, draftCode, incoming?.code])
+
+  // A call can finish on a version that failed while it was reviewed, when no fix ran.
+  useEffect(() => {
+    if (phase !== null || code === null || failure) return
+    const failed = failures.current.get(code)
+    if (!failed) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- known only once the call ends
+    setFailure(current?.code === code ? failed : { error: failed.error, visible: false })
+    onResultRef.current?.({ title: artifact.title, success: false, error: failed.error, code })
+  }, [artifact.title, code, current?.code, failure, phase])
 
   // What it replaced fades out over what replaced it, then goes.
   useEffect(() => {
@@ -244,6 +258,7 @@ function ArtifactView({
     if (slot.code === null) return
     report(slot.code, status, phase === null)
     if (status.status === 'rendered') return
+    failures.current.set(slot.code, { error: status.error, visible: status.visible })
     // A version still being reviewed may fail; the review replaces it. A finished one that fails
     // before it shows replaces itself with the failure, and after, keeps a note beneath it.
     if (phase !== null && !status.visible) return
@@ -262,7 +277,7 @@ function ArtifactView({
       setFailure(null)
       return
     }
-    failedCodes.current.add(slot.code)
+    failures.current.set(slot.code, { error: status.error, visible: false })
     setIncoming(null)
     // While it is reviewed, a version that fails waits for the next one; the one showing stays.
     // A finished version that fails shows its failure only where nothing ran before it.
@@ -275,7 +290,7 @@ function ArtifactView({
     setFailure(null)
     setShowDetails(false)
     const latest = incoming?.code ?? code ?? current?.code
-    failedCodes.current.clear()
+    failures.current.clear()
     setIncoming(null)
     if (latest) setCurrent({ key: nextKey.current++, code: latest })
   }
@@ -299,7 +314,7 @@ function ArtifactView({
     <div key={slot.key} className={`artifact-layer is-${layer}`} aria-hidden={layer !== 'current'}>
       <ArtifactFrame
         kind={kind}
-        code={source(slot.code ?? draftCode ?? '')}
+        code={source(slot.code ?? lastDraft)}
         title={title}
         draft={slot.code === null}
         pendingLabel={slot.code === null ? `Writing ${title}` : `Rendering ${title}`}

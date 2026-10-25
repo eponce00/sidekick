@@ -2546,6 +2546,38 @@ describe('AgentRunKernel', () => {
     )
   })
 
+  it("runs an artifact builder's edit without a permission card nobody would see", async () => {
+    catalog = {
+      surface: 'subagent',
+      webSearchEnabled: false,
+      capabilities: ['artifacts'],
+      artifactBuilder: true
+    }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'edit-1',
+            function: {
+              name: 'edit_artifact',
+              arguments: { edits: [{ old_text: 'a', new_text: 'b' }] }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Fixed' })
+    )
+    const router = { execute: vi.fn(async () => ({ ok: true })) }
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+
+    expect((await new AgentRunKernel(store, undefined, sampler).start(runInput)).phase).toBe(
+      'completed'
+    )
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(store.listEvents('run-1').map(({ type }) => type)).not.toContain('permission.requested')
+  })
+
   it.each([
     [{ approved: true, decision: 'allow_once' }, 'approved', 'success'],
     [{ approved: false, decision: 'deny' }, 'denied', 'denied']

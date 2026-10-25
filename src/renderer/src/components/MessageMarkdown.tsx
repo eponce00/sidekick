@@ -789,6 +789,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   content,
   allowRichMedia,
   workspaceRoot,
+  isStreaming,
   onArtifactResult
 }: MarkdownFragmentProps): React.JSX.Element {
   const renderCode = ({
@@ -808,7 +809,10 @@ const MarkdownFragment = memo(function MarkdownFragment({
         return artifactSegments.map((segment, index) => (
           <Artifact
             key={`${segment.artifact!.title}-${index}`}
-            artifact={segment.artifact!}
+            // An artifact left unclosed when the reply ended runs as it is, and says if it fails.
+            artifact={
+              isStreaming ? segment.artifact! : { ...segment.artifact!, isStreaming: false }
+            }
             onResult={(result) => onArtifactResult(segment.artifact!.title, result)}
           />
         ))

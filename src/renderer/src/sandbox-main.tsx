@@ -439,15 +439,22 @@ function renderDraft(code: string, theme: ArtifactTheme): void {
   const closed = closeArtifactDraft(code)
   if (!closed || closed === draftSource) return
   draftSource = closed
+  let component: React.ElementType | null
   try {
-    const component = compileArtifact(closed, true)
-    if (!component) return
-    draftComponent = component
-    draftKey += 1
-    renderDraftComponent()
+    component = compileArtifact(closed, true)
   } catch {
-    // Not runnable yet; the last draft that ran stays.
+    // A placeholder can clash with a declaration the scan missed; without them it may still run.
+    try {
+      component = compileArtifact(closed, false)
+    } catch {
+      // Not runnable yet; the last draft that ran stays.
+      return
+    }
   }
+  if (!component) return
+  draftComponent = component
+  draftKey += 1
+  renderDraftComponent()
 }
 
 reportErrorsToHost(() => frameMode !== 'draft')

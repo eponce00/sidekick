@@ -85,8 +85,8 @@ function render(code: string, theme: ArtifactTheme): void {
 }
 
 /**
- * The markup that has arrived, shown without running its scripts: the parser closes what is
- * still open, and the styles it has so far apply.
+ * The markup that has arrived, shown without running its scripts or inline event handlers: the
+ * parser closes what is still open, and the styles it has so far apply.
  */
 function renderDraft(code: string, theme: ArtifactTheme): void {
   if (!drafting) {
@@ -99,6 +99,11 @@ function renderDraft(code: string, theme: ArtifactTheme): void {
   applyTheme(theme)
   const parsed = new DOMParser().parseFromString(buildArtifactDocument(code, ''), 'text/html')
   for (const script of parsed.querySelectorAll('script')) script.remove()
+  for (const element of parsed.querySelectorAll('*')) {
+    for (const { name } of [...element.attributes]) {
+      if (/^on/i.test(name)) element.removeAttribute(name)
+    }
+  }
   const styles = [...parsed.querySelectorAll('style')].map((style) => style.textContent).join('\n')
   let draftStyle = document.getElementById('sidekick-artifact-draft-style')
   if (!draftStyle) {

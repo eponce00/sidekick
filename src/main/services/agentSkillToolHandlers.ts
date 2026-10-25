@@ -21,7 +21,9 @@ export function artifactToolResult(
   inspection: ArtifactInspection | undefined,
   visionEnabled: boolean,
   /** A builder has already reviewed and fixed it, so the model is not asked to. */
-  reviewed = false
+  reviewed = false,
+  /** How the model fixes it: a builder edits the version in place. */
+  revise: 'create_artifact' | 'edit_artifact' = 'create_artifact'
 ): ToolExecutionResult {
   const name = `Artifact "${artifact.title || 'Untitled'}"`
   const warnings = inspection?.warnings ?? []
@@ -62,7 +64,7 @@ export function artifactToolResult(
   const look = media
     ? reviewed
       ? 'A screenshot of it as the user sees it is attached.'
-      : 'A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with create_artifact.'
+      : `A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with ${revise}.`
     : 'No screenshot was attached because this model does not take images, so how it looks is unverified.'
   const fold = inspection.chatFrameHeight
     ? ` It is taller than the ${inspection.chatFrameHeight}px an artifact grows to in the chat: the user first sees its top ${inspection.chatFrameHeight}px, scrolls inside it or opens it full screen for the rest.${media ? ' The screenshot shows that top part.' : ''}`
@@ -87,7 +89,7 @@ export function artifactToolResult(
     ? `\nErrors:\n${inspection.errors.map((error) => `- ${error}`).join('\n')}`
     : ''
   const recovery =
-    `Fix the code and call create_artifact again with the complete code. ${media ? 'A screenshot of the failure is attached.' : ''}`.trim()
+    `${revise === 'edit_artifact' ? 'Fix it with edit_artifact, replacing only the code that has to change.' : 'Fix the code and call create_artifact again with the complete code.'} ${media ? 'A screenshot of the failure is attached.' : ''}`.trim()
   return toolExecutionFailed({
     title,
     code: 'command_failed',
@@ -237,7 +239,14 @@ export function registerSkillToolHandlers(
       inspectWith(candidate, context.signal)
     if (builderVersion) builderVersion = artifact
     const inspection = await inspect(artifact)
-    let result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
+    let result = artifactToolResult(
+      title,
+      artifact,
+      inspection,
+      options.visionEnabled === true,
+      false,
+      options.builderArtifact ? 'edit_artifact' : 'create_artifact'
+    )
     // In a chat, the review-and-fix loop runs in a builder the chat does not
     // show, so the conversation gets one artifact, not every attempt at it.
     // Without a render, or with nothing wrong and no screenshot to judge, there
@@ -309,7 +318,9 @@ export function registerSkillToolHandlers(
         title,
         artifact,
         await inspectWith(artifact, context.signal),
-        options.visionEnabled === true
+        options.visionEnabled === true,
+        false,
+        'edit_artifact'
       )
     })
   }
