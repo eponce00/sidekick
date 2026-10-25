@@ -46,7 +46,9 @@ export function PanelSections({
   onChange,
   renderApp,
   onFold,
-  onTearOut
+  onTearOut,
+  elsewhere = {},
+  arriving = null
 }: {
   layout: PanelLayout
   /** The apps that can open here now, with how their tabs look. */
@@ -57,6 +59,10 @@ export function PanelSections({
   onFold?: () => void
   /** A tab let go outside the window: it opens in a window of its own. */
   onTearOut?: (app: PanelApp, screen: { x: number; y: number }) => void
+  /** Apps open in windows of their own, each with how to bring its window forward. */
+  elsewhere?: Partial<Record<PanelApp, () => void>>
+  /** An app just put back from its own window: its tab lights up as it lands. */
+  arriving?: PanelApp | null
 }): React.JSX.Element {
   const [dragging, setDragging] = useState<string | null>(null)
   const [target, setTarget] = useState<PanelDrop | null>(null)
@@ -160,7 +166,7 @@ export function PanelSections({
                       key={tab.id}
                       className={`panel-tab${selected ? ' is-active' : ''}${
                         dragging === tab.id ? ' is-dragged' : ''
-                      }${zone?.type === 'tabs' && zone.beforeTabId === tab.id ? ' is-drop-before' : ''}`}
+                      }${arriving === tab.kind ? ' is-arriving' : ''}${zone?.type === 'tabs' && zone.beforeTabId === tab.id ? ' is-drop-before' : ''}`}
                       draggable
                       onDragStart={(event) => {
                         event.dataTransfer.setData(DRAG_TYPE, tab.id)
@@ -288,7 +294,12 @@ export function PanelSections({
                         openApps={
                           new Set(layout.sections.flatMap((item) => item.tabs.map((t) => t.kind)))
                         }
-                        onChoose={(app) => onChange(chooseApp(layout, tab.id, app))}
+                        elsewhere={elsewhere}
+                        onChoose={(app) => {
+                          const there = elsewhere[app]
+                          if (there) there()
+                          else onChange(chooseApp(layout, tab.id, app))
+                        }}
                       />
                     )
                   ) : (
@@ -314,10 +325,12 @@ export function PanelSections({
 function PanelLauncher({
   apps,
   openApps,
+  elsewhere,
   onChoose
 }: {
   apps: Partial<Record<PanelApp, PanelAppInfo>>
   openApps: Set<PanelTabKind>
+  elsewhere: Partial<Record<PanelApp, () => void>>
   onChoose: (app: PanelApp) => void
 }): React.JSX.Element {
   const entries = Object.entries(apps) as Array<[PanelApp, PanelAppInfo]>
@@ -335,7 +348,11 @@ function PanelLauncher({
             <span className="panel-launcher-icon">{info.icon}</span>
             <span className="panel-launcher-name">{info.label}</span>
             <span className="panel-launcher-description">
-              {openApps.has(app) ? 'Open in another tab: go to it' : info.description}
+              {elsewhere[app]
+                ? 'In a window of its own: go to it'
+                : openApps.has(app)
+                  ? 'Open in another tab: go to it'
+                  : info.description}
             </span>
           </button>
         ))}

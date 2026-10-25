@@ -60,6 +60,25 @@
   opacity: 0.45;
 }
 
+/* Put back from its own window: the tab drops into place with a glow of the accent. */
+.panel-tab.is-arriving {
+  animation: panel-tab-arrive 700ms var(--ease-out);
+}
+
+@keyframes panel-tab-arrive {
+  from {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+    transform: translateY(-6px) scale(0.96);
+  }
+  35% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+    transform: none;
+  }
+  to {
+    box-shadow: 0 0 0 3px transparent;
+  }
+}
+
 /* Where a dragged tab would land: a bar before the tab, or after the last. */
 .panel-tab.is-drop-before::before,
 .panel-tabs.is-drop-end > .panel-tab-new::before {
@@ -311,6 +330,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .panel-tab.is-arriving,
   .panel-launcher,
   .panel-launcher-app {
     animation: none;

@@ -25,6 +25,18 @@ Development Electron launches use a separate `sidekick-dev` user-data directory 
 This prevents an unsigned/dev Electron process from requesting access to the packaged app's macOS
 Safe Storage key or mutating its production settings and database.
 
+## Panel windows
+
+A side panel app dragged out of the main window opens in a panel window
+(`src/main/bootstrap/panelWindows.ts`): the same renderer page and preload, loaded with
+`?panel=<app>&conversation=<id>` so `main.tsx` renders only that app. Both window kinds get the
+guards in `appWindowGuards.ts` (navigation kept on the app's page, links outside only with
+permission, no webviews, the shared text size). Only the main window opens, lists or focuses panel
+windows over IPC; a panel window may only put itself back, which tells the main window to show the
+app in its panel. Panel windows close with the main window. Run events already reach every window;
+the shared browser mounts its page into whichever window asks, and voice stays with the main
+window's page.
+
 ## Platform window chrome
 
 Window controls follow the host platform instead of forcing one convention everywhere.

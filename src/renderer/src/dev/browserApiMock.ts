@@ -1304,6 +1304,14 @@ export function installBrowserApiMock(): void {
       onMaximizedChange: () => () => undefined,
       onFullScreenChange: () => () => undefined
     },
+    panelWindows: {
+      open: async () => false,
+      list: async () => [],
+      focus: async () => false,
+      dock: () => {},
+      onChanged: () => () => undefined,
+      onDocked: () => () => undefined
+    },
     notification: { show: async () => ({ ok: true }) },
     siteIcons: { get: async () => ({ dataUrl: null }) },
     app: {

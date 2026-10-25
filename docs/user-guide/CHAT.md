@@ -167,6 +167,11 @@ give it a section of its own above or below, with its own tabs, up to four; drag
 two sections to share the height between them. Drop a tab on another section's row, or in the
 middle of its page, to move it there. The panel keeps its tabs and sections for next time.
 
+Drag **Files**, **Browser** or **Terminal** out of the window and let go to open it in a window of
+its own, for the same chat, where you let go. Its title bar names the app and the chat; **Put back**
+returns it to the panel. While it has its own window, choosing it in the panel brings that window
+forward, and closing SideKick's main window closes it too.
+
 Drag the panel's left edge to resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
 with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
 chat and the left sidebar make room.

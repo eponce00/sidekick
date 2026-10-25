@@ -871,4 +871,6 @@
   height: 100%;
   object-fit: fill;
   pointer-events: none;
+  transform-origin: top left;
+  transition: transform var(--duration-fast) var(--ease-out);
 }

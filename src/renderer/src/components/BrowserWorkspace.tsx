@@ -60,7 +60,7 @@ export function BrowserWorkspace({
   const viewport = useRef<HTMLDivElement>(null)
   // The page is drawn above the app, so it hides while one of SideKick's menus is open; this
   // picture of it fills its place until the menu closes.
-  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [snapshot, setSnapshot] = useState<{ image: string; zoom: number } | null>(null)
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
   // While an address is being opened, or the page is still loading.
@@ -140,7 +140,8 @@ export function BrowserWorkspace({
     const result = await window.api.agentRuns
       .browserWorkspace({ conversationId, action: 'snapshot' })
       .catch(() => null)
-    if (result?.snapshot) setSnapshot(result.snapshot)
+    if (result?.snapshot)
+      setSnapshot({ image: result.snapshot, zoom: result.zoom ?? DEFAULT_BROWSER_ZOOM })
     setShownTool(null)
     setPopover(which)
   }
@@ -727,7 +728,16 @@ export function BrowserWorkspace({
         aria-label="Live browser page"
       >
         {snapshot && (
-          <img className="browser-workspace-snapshot" src={snapshot} alt="" aria-hidden="true" />
+          // Zoomed while a menu covers it, the page's picture zooms too, so the step shows at once.
+          <img
+            className="browser-workspace-snapshot"
+            src={snapshot.image}
+            alt=""
+            aria-hidden="true"
+            style={{
+              transform: `scale(${(state?.zoom ?? snapshot.zoom) / snapshot.zoom})`
+            }}
+          />
         )}
         {!state && (
           <p>

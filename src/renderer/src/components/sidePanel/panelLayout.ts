@@ -55,7 +55,18 @@ function normalize(layout: PanelLayout): PanelLayout {
   const focusedSectionId = sections.some((item) => item.id === layout.focusedSectionId)
     ? layout.focusedSectionId
     : sections[0].id
-  return { sections, focusedSectionId }
+  // Shares add up to one per section, so the sections always fill the panel: a lone section
+  // left with half a share would otherwise take half the height.
+  const total = sections.reduce((sum, item) => sum + item.weight, 0)
+  const scale = total > 0 ? sections.length / total : 1
+  return {
+    sections: sections.map((item) =>
+      Math.abs(item.weight * scale - item.weight) < 1e-6
+        ? item
+        : { ...item, weight: item.weight * scale }
+    ),
+    focusedSectionId
+  }
 }
 
 export function findApp(
@@ -76,15 +87,22 @@ export function shownApps(layout: PanelLayout): PanelTabKind[] {
   )
 }
 
+/** Shows a tab. A new tab left without an app chosen on it closes: it holds nothing. */
 export function selectTab(layout: PanelLayout, sectionId: string, tabId: string): PanelLayout {
-  return {
+  const host = layout.sections.find((item) => item.id === sectionId)
+  if (!host?.tabs.some((tab) => tab.id === tabId)) return { ...layout, focusedSectionId: sectionId }
+  return normalize({
     sections: layout.sections.map((item) =>
-      item.id === sectionId && item.tabs.some((tab) => tab.id === tabId)
-        ? { ...item, activeTabId: tabId }
+      item.id === sectionId
+        ? {
+            ...item,
+            tabs: item.tabs.filter((tab) => tab.kind !== 'launcher' || tab.id === tabId),
+            activeTabId: tabId
+          }
         : item
     ),
     focusedSectionId: sectionId
-  }
+  })
 }
 
 /**

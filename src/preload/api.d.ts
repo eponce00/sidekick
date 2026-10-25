@@ -412,6 +412,7 @@ export interface DesktopApi {
   credentials: import('../shared/credentials').CredentialsAPI
   pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
+  panelWindows: import('../shared/panelWindows').PanelWindowsAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI
   app: AppAPI

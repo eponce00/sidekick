@@ -414,6 +414,27 @@ const api = {
       return () => ipcRenderer.removeListener('window:fullscreen-changed', listener)
     }
   },
+  panelWindows: {
+    open: (entry) => ipcRenderer.invoke('panelWindows:open', entry),
+    list: () => ipcRenderer.invoke('panelWindows:list'),
+    focus: (entry) => ipcRenderer.invoke('panelWindows:focus', entry),
+    dock: () => ipcRenderer.send('panelWindows:dock'),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, entries: unknown): void => {
+        if (Array.isArray(entries)) callback(entries)
+      }
+      ipcRenderer.on('panelWindows:changed', listener)
+      return () => ipcRenderer.removeListener('panelWindows:changed', listener)
+    },
+    onDocked: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        entry: import('../shared/panelWindows').PanelWindowEntry
+      ): void => callback(entry)
+      ipcRenderer.on('panelWindows:docked', listener)
+      return () => ipcRenderer.removeListener('panelWindows:docked', listener)
+    }
+  } satisfies import('../shared/panelWindows').PanelWindowsAPI,
   notification: {
     show: (request: import('../shared/desktopNotifications').DesktopNotificationRequest) =>
       ipcRenderer.invoke('notification:show', request)
