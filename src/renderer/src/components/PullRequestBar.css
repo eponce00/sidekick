@@ -21,17 +21,17 @@
 
 .pull-request-bar-icon.is-success,
 .pull-request-bar-merge.is-success {
-  color: var(--success);
+  color: var(--color-success);
 }
 
 .pull-request-bar-icon.is-warning,
 .pull-request-bar-merge.is-warning {
-  color: var(--warning);
+  color: var(--color-warning);
 }
 
 .pull-request-bar-icon.is-failure,
 .pull-request-bar-merge.is-failure {
-  color: var(--error);
+  color: var(--color-error);
 }
 
 .pull-request-bar-icon.is-merged,
@@ -75,16 +75,16 @@
   display: inline-flex;
   gap: var(--space-1);
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .pull-request-bar-lines .is-added {
-  color: var(--success);
+  color: var(--color-success);
 }
 
 .pull-request-bar-lines .is-removed {
-  color: var(--error);
+  color: var(--color-error);
 }
 
 .pull-request-bar a.pull-request-bar-create {
@@ -115,15 +115,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .pull-request-bar-refresh {
   flex: none;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -147,7 +147,7 @@
   align-items: center;
   gap: var(--space-2);
   margin-top: var(--space-1);
-  color: var(--warning);
+  color: var(--color-warning);
 }
 
 .pull-request-bar-error span {
@@ -158,11 +158,11 @@
 .pull-request-bar-error button {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -183,7 +183,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: 22px;
+  height: 24px;
   padding: 0 var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-full);
@@ -207,16 +207,16 @@
 }
 
 .pull-request-checks-trigger.is-success .pull-request-checks-dot {
-  background: var(--success);
+  background: var(--color-success);
 }
 
 .pull-request-checks-trigger.is-pending .pull-request-checks-dot {
-  background: var(--warning);
+  background: var(--color-warning);
   animation: pull-request-checks-pulse 1.6s ease-in-out infinite;
 }
 
 .pull-request-checks-trigger.is-failure .pull-request-checks-dot {
-  background: var(--error);
+  background: var(--color-error);
 }
 
 @keyframes pull-request-checks-pulse {
@@ -238,12 +238,14 @@
   left: 0;
   width: 340px;
   max-width: calc(100vw - 32px);
-  padding: var(--space-3);
-  border: 1px solid var(--border-color);
+  padding: var(--space-4);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius-md);
-  background: var(--panel-bg);
-  box-shadow: var(--shadow-md);
+  background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
   color: var(--text-secondary);
+  animation: motion-menu-in var(--duration-normal) var(--ease-out);
 }
 
 .pull-request-checks-heading {
@@ -283,15 +285,15 @@
 }
 
 .pull-request-checks-list li.is-success > svg {
-  color: var(--success);
+  color: var(--color-success);
 }
 
 .pull-request-checks-list li.is-failure > svg {
-  color: var(--error);
+  color: var(--color-error);
 }
 
 .pull-request-checks-list li.is-pending > svg {
-  color: var(--warning);
+  color: var(--color-warning);
 }
 
 .pull-request-checks-list li.is-skipped > svg {

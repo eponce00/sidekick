@@ -1802,9 +1802,7 @@ function ChatPanel({
         {isEmptyChat ? (
           <div className="empty-state">
             <h2>{workspaceFolder ? projectName || 'Your project' : 'What’s next?'}</h2>
-            {pinnedModels.length === 0 && (
-              <p className="hint">Click the + button above to add a model</p>
-            )}
+            {pinnedModels.length === 0 && <p className="hint">Choose a model below to start</p>}
             {pinnedModels.length > 0 && (
               <div className="starter-prompts" aria-label="Suggested prompts">
                 {welcomeSuggestions.map((suggestion) => (

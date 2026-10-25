@@ -725,7 +725,6 @@ function MarkdownLink({
       {mapLink && <MapPin size={13} aria-hidden="true" />}
       {!mapLink && external && href && <SiteIcon url={href} size={14} />}
       <span>{children}</span>
-      {!mapLink && <ExternalLink className="markdown-link-external" size={11} aria-hidden="true" />}
     </a>
   )
 }

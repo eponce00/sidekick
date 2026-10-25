@@ -28,7 +28,7 @@
   color: var(--text-primary);
   cursor: pointer;
   isolation: isolate;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 7%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
 }
 
 .message-image-tile::after {
@@ -410,20 +410,9 @@ img[data-twemoji],
   opacity: 0.6;
 }
 
-.message-content .markdown-link:not(.markdown-map-link) .markdown-link-external {
-  display: inline;
-  margin-left: 3px;
-  vertical-align: -1px;
-  opacity: 0;
-  transition: opacity var(--duration-fast) ease;
-}
-
 .message-content .markdown-link:not(.markdown-map-link):hover {
   text-decoration: underline;
-}
-
-.message-content .markdown-link:not(.markdown-map-link):hover .markdown-link-external {
-  opacity: 0.75;
+  text-underline-offset: 2px;
 }
 
 .message-content p:has(> .markdown-map-link) {
@@ -450,10 +439,6 @@ img[data-twemoji],
 
 .message-content .markdown-map-link > svg:first-child {
   color: currentColor;
-}
-
-.message-content .markdown-map-link .markdown-link-external {
-  color: var(--text-muted);
 }
 
 @media (max-width: 620px) {

@@ -123,14 +123,19 @@ function PastedTextDialog({
         tabIndex={-1}
       >
         <div className="pasted-text-dialog-header">
-          <ClipboardPaste size={16} aria-hidden="true" />
           <div>
             <h2 id={titleId}>Pasted text</h2>
             <p>
               {lineLabel(lines)} · {attachment.content.length.toLocaleString()} characters
             </p>
           </div>
-          <button type="button" onClick={onClose} title="Close" aria-label="Close">
+          <button
+            type="button"
+            className="settings-ghost-action is-small is-icon"
+            onClick={onClose}
+            title="Close"
+            aria-label="Close"
+          >
             <X size={16} />
           </button>
         </div>
@@ -140,6 +145,7 @@ function PastedTextDialog({
         <div className="pasted-text-dialog-footer">
           <button
             type="button"
+            className="settings-secondary-action"
             onClick={() => {
               void copyText(attachment.content).then((written) => {
                 if (!written) return
@@ -152,13 +158,17 @@ function PastedTextDialog({
             {copied ? 'Copied' : 'Copy'}
           </button>
           {onInsert && (
-            <button type="button" onClick={onInsert}>
+            <button type="button" className="settings-secondary-action" onClick={onInsert}>
               <TextCursorInput size={14} />
               Insert as text
             </button>
           )}
           {onRemove && (
-            <button type="button" className="pasted-text-dialog-remove" onClick={onRemove}>
+            <button
+              type="button"
+              className="settings-danger-action pasted-text-dialog-remove"
+              onClick={onRemove}
+            >
               <Trash2 size={14} />
               Remove
             </button>

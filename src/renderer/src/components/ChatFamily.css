@@ -22,7 +22,7 @@
 }
 
 .session-dot-done {
-  background: var(--accent);
+  background: var(--text-muted);
 }
 
 .session-dot-failed {
@@ -106,9 +106,13 @@ button.session-chip:hover {
   color: var(--color-error);
 }
 
-.session-chip-state-done,
 .session-chip-state-working {
   color: var(--accent);
+}
+
+/* Finished is neither live nor a success claim, so it stays grey. */
+.session-chip-state-done {
+  color: var(--text-secondary);
 }
 
 .session-chip-project {
@@ -686,25 +690,25 @@ button.session-chip:hover {
   margin-top: 18px;
 }
 
+/* The chats started here: one group, a row each, split by hairlines. */
 .chats-panel-list {
-  display: grid;
-  gap: 8px;
   margin: 0;
   padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
   list-style: none;
 }
 
 .chats-panel-card {
   display: grid;
   gap: 4px;
-  padding: 10px 11px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--surface-1);
+  padding: 10px 12px 8px;
 }
 
-.chats-panel-card.is-waiting {
-  border-color: color-mix(in srgb, var(--color-warning) 45%, var(--border-color));
+.chats-panel-card + .chats-panel-card {
+  border-top: 1px solid var(--border-subtle);
 }
 
 .chats-panel-card-top {
@@ -763,10 +767,6 @@ button.session-chip:hover {
   white-space: nowrap;
 }
 
-.chats-panel-ahead {
-  color: var(--accent);
-}
-
 .chats-panel-actions {
   display: flex;
   flex-wrap: wrap;
@@ -817,7 +817,7 @@ button.session-chip:hover {
 .chats-panel-meter > span {
   display: block;
   height: 100%;
-  background: var(--accent);
+  background: var(--text-muted);
 }
 
 .chats-panel-tree,
@@ -895,11 +895,7 @@ button.session-chip:hover {
   line-height: 1.5;
 }
 
-.chats-panel-detach .chats-panel-actions {
-  margin: 0;
-}
-
-.chats-panel-detach .chats-panel-actions button {
-  border: 1px solid var(--border-color);
-  padding: 3px 10px;
+.chats-panel-detach-actions {
+  display: flex;
+  gap: var(--space-2);
 }

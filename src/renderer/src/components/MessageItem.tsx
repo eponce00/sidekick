@@ -1514,23 +1514,34 @@ function MessageItemInner({
                       >
                         <strong>Rewind to before this message</strong>
                         <p>
-                          This message and everything after it leave the chat, and the message goes
-                          back into the box to change or send.
+                          It and everything after it leave the chat; the message returns to the box.
                           {rewindCanRestoreFiles &&
-                            ' The agent changed files since: take them back too, or keep them.'}
+                            ' Files the agent changed since can go back too.'}
                         </p>
                         <div className="message-rewind-actions">
                           {rewindCanRestoreFiles ? (
                             <>
-                              <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                                Rewind chat and files
-                              </button>
-                              <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                              <button
+                                type="button"
+                                className="settings-secondary-action is-small"
+                                onClick={() => onRewindMessage(msg, false)}
+                              >
                                 Chat only
+                              </button>
+                              <button
+                                type="button"
+                                className="settings-primary-action is-small"
+                                onClick={() => onRewindMessage(msg, true)}
+                              >
+                                Rewind chat and files
                               </button>
                             </>
                           ) : (
-                            <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                            <button
+                              type="button"
+                              className="settings-primary-action is-small"
+                              onClick={() => onRewindMessage(msg, false)}
+                            >
                               Rewind
                             </button>
                           )}
