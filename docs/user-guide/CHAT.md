@@ -65,7 +65,10 @@ it as an artifact that runs inside the reply.
   its charts in again; a version that fails along the way is never shown. While it is still being
   written it does not load data; the finished version does.
 - **Changes in place:** ask for a change to an artifact, such as a color or a new column, and the
-  agent edits just that part of it, which takes seconds rather than writing it again.
+  agent edits just that part of it, which takes seconds rather than writing it again. Within a
+  reply, the artifact stays where it is and says **Updating** until the changed version replaces
+  it; a change asked for in a later message shows the new version in that reply, and the earlier
+  one stays as it was.
 - **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no
   card or frame around it. It uses SideKick's font, colors and accent, and follows your light or
   dark theme and accent as you change them.

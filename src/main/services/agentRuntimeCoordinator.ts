@@ -880,13 +880,18 @@ export class AgentRuntimeCoordinator {
       model: target.model,
       catalog: session.catalog,
       messages,
-      // Reviewing a render against a list of found defects and editing a few lines needs no long
-      // reasoning; with it, one review spent 6,800 tokens thinking before a one-line fix.
+      // Reviewing a render against a list of found defects and editing a few lines needs little
+      // reasoning; at the chat's level, one review spent 6,800 tokens thinking before a one-line
+      // fix. The least the model offers, and nothing for a model that does not reason.
       request: {
         ...parentInput.request,
         purpose: 'sub-agent',
-        reasoningLevel: 'off',
-        thinkingEnabled: false
+        ...(parentInput.request.reasoningLevel === undefined
+          ? {}
+          : {
+              reasoningLevel:
+                parent.prepared.lightestReasoningLevel ?? parentInput.request.reasoningLevel
+            })
       },
       maxToolRounds: ARTIFACT_BUILDER_FIXES,
       permissionMode: parentInput.permissionMode,

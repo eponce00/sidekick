@@ -107,13 +107,20 @@ describe('following the end of a streaming reply', () => {
     expect(scrollDistanceFromBottom(view)).toBe(404)
   })
 
+  it('does not land growth at once while a key the reader pressed is still scrolling', () => {
+    line.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }))
+    height += 40
+    follower.keepAtEnd({ immediate: true })
+    expect(top).toBe(1_500)
+  })
+
   it('lands growth at once, and moves no more once the reader scrolls up', () => {
     height += 40
-    follower.keepAtEnd()
+    follower.keepAtEnd({ immediate: true })
     expect(top).toBe(1_540)
     view.dispatchEvent(new WheelEvent('wheel', { deltaY: -4, bubbles: true }))
     height += 40
-    follower.keepAtEnd()
+    follower.keepAtEnd({ immediate: true })
     runFrames()
     expect(top).toBe(1_540)
     expect(follower.following).toBe(false)

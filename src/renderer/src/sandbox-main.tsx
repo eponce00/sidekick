@@ -47,7 +47,7 @@ installArtifactContrastGuard(document)
 
 // Tailwind's reset is not in a cascade layer, so it would undo SideKick's base layer for buttons,
 // fields and headings. Given again as Tailwind's own base layer, the same rules land after its
-// reset and before its utilities. Without Tailwind (offline), this element is ignored.
+// reset and before its utilities.
 const tailwindBase = document.createElement('style')
 tailwindBase.setAttribute('type', 'text/tailwindcss')
 tailwindBase.textContent = artifactBaseCss.replace(/@layer\s+sidekick\s*\{/, '@layer base {')
@@ -257,7 +257,8 @@ const PRELUDE_NAMES = new Set([
     (match[1] ?? match[2]!).split(',').map((name) => name.trim())
   )
 ])
-const providedToCode = (name: string): boolean => PRELUDE_NAMES.has(name) || name in window
+const providedToCode = (name: string, asElement: boolean): boolean =>
+  PRELUDE_NAMES.has(name) || (!asElement && name in window)
 
 /** Where a draft uses a component it has not defined yet. */
 function DraftPlaceholder(): React.ReactElement {
@@ -490,10 +491,14 @@ function makeDraftPart(name: string): React.ElementType {
     private mount = 0
     private attemptAt = -1
     private attempt = 0
+    /** Drafts in a row that showed the part's earlier version because the newer one failed. */
+    private heldBack = 0
     static getDerivedStateFromError(error: unknown): { failedAt: number; hooksChanged: boolean } {
+      const message = error instanceof Error ? error.message : String(error)
       return {
         failedAt: draftKey,
-        hooksChanged: /hook/i.test(error instanceof Error ? error.message : String(error))
+        // Production React names hook-count errors only by number: #310 more, #300 fewer.
+        hooksChanged: /hook|#(?:300|310)\b/i.test(message)
       }
     }
     componentDidCatch(): void {
@@ -506,7 +511,9 @@ function makeDraftPart(name: string): React.ElementType {
       this.shown()
     }
     private shown(): void {
-      if (this.state.failedAt !== draftKey) shownParts.set(name, latestParts.get(name)!)
+      if (this.state.failedAt === draftKey) return
+      shownParts.set(name, latestParts.get(name)!)
+      this.heldBack = 0
     }
     render(): React.ReactNode {
       const version = (render: React.ElementType | undefined): React.ReactNode =>
@@ -524,7 +531,12 @@ function makeDraftPart(name: string): React.ElementType {
       }
       this.attempt += 1
       // First, what it showed before, in the same place: same state, same elements, nothing moves.
-      if (this.attempt === 1 && !this.state.hooksChanged) return version(shownParts.get(name))
+      // A part that keeps failing that way is likely one whose hooks changed in a way the error did
+      // not say, so after two drafts it is started afresh instead.
+      if (this.attempt === 1 && !this.state.hooksChanged && this.heldBack < 2) {
+        this.heldBack += 1
+        return version(shownParts.get(name))
+      }
       // A draft that added or removed a hook cannot reuse the state before it: once, start afresh.
       if (this.attempt <= 2) {
         this.mount += 1

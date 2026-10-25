@@ -30,6 +30,7 @@ import {
   isWorkSegmentGroup
 } from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
+import { artifactSlots } from '../utils/artifactSlots'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
@@ -981,16 +982,10 @@ function MessageItemInner({
           <div className="message-segments">
             {(() => {
               const groupedSegments = groupSegments(msg.segments)
-              // A model that fixes or revises an artifact makes it again under the
-              // same title. Only the latest one is the result; the attempts it
-              // replaced are work, and showing each one stacked the chat with
-              // broken and outdated copies.
-              const latestArtifactByTitle = new Map<string, unknown>()
-              for (const segment of msg.segments) {
-                if (segment.type === 'artifact' && segment.artifact) {
-                  latestArtifactByTitle.set(segment.artifact.title, segment)
-                }
-              }
+              // An artifact the model makes again or edits shows once, where it first
+              // appeared, as its latest version: stacking each attempt filled the chat
+              // with broken and outdated copies.
+              const artifactsShown = artifactSlots(msg.segments)
               const lastWorkIndex = groupedSegments.findLastIndex(isWorkSegmentGroup)
               const finalAnswerIndex = groupedSegments.findIndex(
                 (group, groupIndex) =>
@@ -1153,12 +1148,11 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
-                    latestArtifactByTitle.get(group.segment.artifact.title) !==
-                    group.segment ? null : (
+                    !artifactsShown.get(group.segment) ? null : (
                       // Standalone artifact (not grouped with thinking)
                       <div className="artifact-segment">
                         <Artifact
-                          artifact={group.segment.artifact}
+                          artifact={artifactsShown.get(group.segment)!}
                           onResult={(result) =>
                             onHandleArtifactResult(group.segment.artifact!.title, result)
                           }

@@ -341,7 +341,10 @@ chat shows only the latest version of an artifact within a reply, and a failed o
 line that expands to its error and code.
 
 `edit_artifact` replaces exact snippets of an artifact's current version and renders the result as
-`create_artifact` does. It finds the artifact by title among this run's versions and then among
+`create_artifact` does. Within a reply, `artifactSlots.ts` shows every version of an artifact in the
+place its first version appeared, keyed by that place, so an edit or a rewrite replaces it there
+(a running edit keeps the current version with an Updating line); a later reply shows its own
+version. It finds the artifact by title among this run's versions and then among
 earlier replies' (`conversationArtifacts`), and replayed history keeps the full current code in
 the call or edit result that made it. In a chat, a builder child run, without extended reasoning,
 reviews the agent's version when it failed, has layout problems, or the model can see images; it
@@ -373,7 +376,7 @@ scroll anchoring, and the chat's follower lands content growth in the same frame
 redeclare names the prelude provides, and Babel strips TypeScript annotations.
 
 Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own
-document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind; HTML
+document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind (its v3 browser build ships in `src/renderer/public/vendor` with its license, so artifacts are styled without a network); HTML
 and SVG artifacts run in `html-sandbox.html`, which writes the artifact as its whole document so
 its inline scripts run under that page's policy and its load events fire. The two pages share one
 Content-Security-Policy, except that the HTML page also allows inline scripts, which an HTML

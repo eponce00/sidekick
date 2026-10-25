@@ -146,12 +146,13 @@ function ArtifactFullScreen({
 }
 
 /** What a live artifact is doing, said beneath it until it is finished. */
-type ArtifactPhase = 'writing' | 'checking' | 'refining'
+type ArtifactPhase = 'writing' | 'checking' | 'refining' | 'updating'
 
 const PHASE_LABELS: Record<ArtifactPhase, string> = {
   writing: 'Writing',
   checking: 'Checking how it looks',
-  refining: 'Polishing'
+  refining: 'Polishing',
+  updating: 'Updating'
 }
 
 /** A version replacing one that shows waits at least this long after it runs... */
@@ -209,6 +210,10 @@ function ArtifactView({
   const [incomingReady, setIncomingReady] = useState(false)
   const incomingReadyAt = useRef(0)
   const incomingChangedAt = useRef(0)
+  // Stable, so the frame tells it only of real changes in height, not of every render.
+  const noteIncomingChange = useCallback(() => {
+    incomingChangedAt.current = Date.now()
+  }, [])
   const [height, setHeight] = useState<number | null>(null)
   const [failure, setFailure] = useState<{ error: string; visible: boolean } | null>(null)
   const [showDetails, setShowDetails] = useState(false)
@@ -234,6 +239,8 @@ function ArtifactView({
     }
     if (code === null || code === current.code || code === incoming?.code) return
     if (failures.current.has(code)) return
+    // A version replacing one still settling starts its own wait.
+    setIncomingReady(false)
     setIncoming({ key: nextKey.current++, code, still: true })
   }, [code, current, draftCode, incoming?.code])
 
@@ -364,13 +371,7 @@ function ArtifactView({
         }
         onPointer={layer === 'current' ? setPointerInside : undefined}
         onHeight={
-          layer === 'current'
-            ? setHeight
-            : layer === 'incoming'
-              ? () => {
-                  incomingChangedAt.current = Date.now()
-                }
-              : undefined
+          layer === 'current' ? setHeight : layer === 'incoming' ? noteIncomingChange : undefined
         }
       />
     </div>
@@ -531,11 +532,13 @@ function ArtifactInstance({ artifact, onResult }: ArtifactProps): React.JSX.Elem
   const code = !live ? artifact.code : fromCall ? (builder.code ?? (artifact.code || null)) : null
   const phase: ArtifactPhase | null = !live
     ? null
-    : !fromCall || !artifact.code
-      ? 'writing'
-      : builder.refining
-        ? 'refining'
-        : 'checking'
+    : artifact.editing
+      ? 'updating'
+      : !fromCall || !artifact.code
+        ? 'writing'
+        : builder.refining
+          ? 'refining'
+          : 'checking'
   return (
     <ArtifactView
       artifact={artifact}
@@ -567,8 +570,13 @@ function ArtifactElsewhere({
 function Artifact(props: ArtifactProps): React.JSX.Element {
   const { computerOnly } = useChatSurface()
   if (computerOnly) return <ArtifactElsewhere artifact={props.artifact} note={computerOnly} />
-  // Keyed by its call, so it stays one artifact from its first code to its finished version.
-  return <ArtifactInstance key={props.artifact.toolCallId ?? props.artifact.title} {...props} />
+  // Keyed by its place, so it stays one artifact from its first code through every later version.
+  return (
+    <ArtifactInstance
+      key={props.artifact.slotKey ?? props.artifact.toolCallId ?? props.artifact.title}
+      {...props}
+    />
+  )
 }
 
 export default Artifact

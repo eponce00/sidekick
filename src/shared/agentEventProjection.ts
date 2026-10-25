@@ -46,6 +46,8 @@ export type ProjectedContentSegment =
         toolCallId: string
         /** The builder reviewing it, while it does. */
         childRunId?: string
+        /** An edit_artifact call that has not finished: the chat keeps the version it changes. */
+        editing?: boolean
       }
     }
   | {
@@ -163,9 +165,22 @@ const HIDDEN_CONTROL_TOOLS = new Set(['enter_plan_mode', 'present_plan', 'comple
  * the start, so it takes shape there and the finished one replaces it in place.
  */
 function liveArtifact(tool: ProjectedToolExecution): ProjectedContentSegment | null {
-  if (tool.name !== 'create_artifact' || (tool.status !== 'pending' && tool.status !== 'running')) {
-    return null
+  if (tool.status !== 'pending' && tool.status !== 'running') return null
+  if (tool.name === 'edit_artifact') {
+    const title = typeof tool.input?.title === 'string' ? tool.input.title : ''
+    return {
+      type: 'artifact',
+      artifact: {
+        type: 'react',
+        title,
+        code: '',
+        isStreaming: true,
+        toolCallId: tool.id,
+        editing: true
+      }
+    }
   }
+  if (tool.name !== 'create_artifact') return null
   const input = tool.input ?? {}
   const data =
     tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : {}
