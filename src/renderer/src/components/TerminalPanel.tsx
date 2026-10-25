@@ -317,7 +317,7 @@ function PipeInput({ session }: { session: TerminalSessionSummary }): React.JSX.
         placeholder="Type a line for the command"
         aria-label="Input for the command"
       />
-      <button type="submit">
+      <button type="submit" className="settings-secondary-action is-small">
         <CornerDownLeft size={12} />
         Send
       </button>
@@ -524,10 +524,13 @@ export function TerminalPanel({
         <SquareTerminal size={22} aria-hidden="true" />
         <strong>No terminals yet</strong>
         <span>
-          Open a terminal of your own, in this chat&apos;s folder. Commands the agent runs here show
-          up too, as they run, so you can watch them, stop them, and type into them.
+          Open a shell in this chat&apos;s folder. The agent&apos;s commands show here as they run.
         </span>
-        <button type="button" className="terminal-panel-empty-new" onClick={openShell}>
+        <button
+          type="button"
+          className="settings-secondary-action terminal-panel-empty-new"
+          onClick={openShell}
+        >
           <Plus size={13} />
           New terminal
         </button>

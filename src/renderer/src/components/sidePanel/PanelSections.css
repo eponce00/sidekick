@@ -20,7 +20,7 @@
     white-space: nowrap;
   }
 
-  .panel-tab:not(.is-active) .panel-tab-select {
+  .panel-tabs .panel-tab:not(.is-active) .panel-tab-select {
     padding: 0 7px;
   }
 
@@ -83,18 +83,18 @@
   opacity: 0.45;
 }
 
-/* Put back from its own window: the tab drops into place with a glow of the accent. */
+/* Put back from its own window: the tab drops into place, ringed by the accent as it lands. */
 .panel-tab.is-arriving {
   animation: panel-tab-arrive 700ms var(--ease-out);
 }
 
 @keyframes panel-tab-arrive {
   from {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+    box-shadow: 0 0 0 2px var(--accent);
     transform: translateY(-6px) scale(0.96);
   }
   35% {
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent);
+    box-shadow: 0 0 0 3px var(--accent-muted);
     transform: none;
   }
   to {
@@ -123,9 +123,16 @@
   align-items: center;
   gap: 7px;
   padding: 0 4px 0 9px;
+  border-radius: inherit;
   font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
+}
+
+/* An inactive tab keeps no room for its close button: it shows over the end of the name on
+   hover, so the names, not hidden buttons, get the strip's width. */
+.panel-tab:not(.is-active) .panel-tab-select {
+  padding-right: 9px;
 }
 
 .panel-tab-icon {
@@ -135,10 +142,6 @@
   height: 16px;
   flex: none;
   place-items: center;
-}
-
-.panel-tab.is-active .panel-tab-icon {
-  color: var(--accent);
 }
 
 .panel-tab-label {
@@ -170,6 +173,16 @@
   opacity: 0;
 }
 
+.panel-tab:not(.is-active) .panel-tab-close {
+  position: absolute;
+  right: 0;
+  background: var(--surface-2);
+}
+
+.panel-tab:not(.is-active) .panel-tab-close:hover {
+  background: var(--surface-3);
+}
+
 .panel-tab:hover .panel-tab-close,
 .panel-tab.is-active .panel-tab-close,
 .panel-tab-close:focus-visible {
@@ -182,7 +195,7 @@
 }
 
 .panel-tab.is-active .panel-tab-close:hover {
-  background: var(--surface-4, var(--surface-2));
+  background: var(--surface-4);
 }
 
 .panel-tab-new {
@@ -249,9 +262,9 @@
   z-index: 5;
   right: 6px;
   left: 6px;
-  border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border: 1px dashed var(--accent);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--accent-subtle);
   pointer-events: none;
   transition:
     top var(--duration-fast) var(--ease-out),
@@ -317,7 +330,7 @@
 
 .panel-launcher-app:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  background: var(--surface-2);
 }
 
 .panel-launcher-app:focus-visible {
@@ -334,9 +347,7 @@
   border-radius: var(--radius-lg);
   color: var(--text-secondary);
   background: var(--surface-2);
-  box-shadow:
-    inset 0 0 0 1px var(--border-subtle),
-    0 1px 2px var(--shadow);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
   transition:
     color var(--duration-fast),
     background var(--duration-fast),
@@ -356,7 +367,7 @@
 
 .panel-launcher-app:hover .panel-launcher-icon,
 .panel-launcher-app:focus-visible .panel-launcher-icon {
-  color: var(--accent);
+  color: var(--text-primary);
   background: var(--surface-3);
 }
 

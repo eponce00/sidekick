@@ -17,7 +17,7 @@
 }
 
 .panel-window-app svg {
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .panel-window-dock {

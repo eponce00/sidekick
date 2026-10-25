@@ -528,7 +528,11 @@ function ActivityPanel({
         active && (
           <div className="activity-empty">
             <p>{panelApps[kind]?.label ?? 'This app'} is in a window of its own</p>
-            <button type="button" className="activity-detached-focus" onClick={() => showApp(kind)}>
+            <button
+              type="button"
+              className="settings-secondary-action is-small activity-detached-focus"
+              onClick={() => showApp(kind)}
+            >
               Go to it
             </button>
           </div>
@@ -616,7 +620,7 @@ function ActivityPanel({
               data-landing={landing}
               aria-hidden="true"
             >
-              {/* Remounted on each landing, so the edge and the icon pop as it settles. */}
+              {/* Remounted on each landing, so the icon fades in as it settles. */}
               <span key={`edge-${landing}`} className="activity-panel-phantom-edge" />
               {(landing !== 'fold' || isPinned) && landing !== 'free' && (
                 <span key={landing} className="activity-panel-phantom-icon">
@@ -659,6 +663,9 @@ function ActivityPanel({
                 aria-label={familyRole === 'manager' ? 'Open Chats' : 'Open Details'}
               >
                 <Workflow size={16} />
+                {familyWaiting && (
+                  <span className="browser-live-dot is-waiting" aria-hidden="true" />
+                )}
               </button>
             )}
             <button
@@ -672,21 +679,28 @@ function ActivityPanel({
             <button
               className="activity-tab-vertical"
               onClick={() => openCollapsedTab('browser')}
-              title="Open Browser activity"
+              title={browserIsLive ? 'Open Browser activity · Working' : 'Open Browser activity'}
               aria-label="Open Browser activity"
             >
               <MonitorUp size={16} />
-              {browserIsLive && <span className="collapsed-tab-badge">Live</span>}
+              {browserIsLive && <span className="browser-live-dot" aria-hidden="true" />}
             </button>
             <button
               className="activity-tab-vertical"
               onClick={() => openCollapsedTab('terminal')}
-              title="Open Terminal"
+              title={
+                terminalIsLive
+                  ? `Open Terminal · ${terminalIsWaiting ? 'Waiting for input' : 'Running'}`
+                  : 'Open Terminal'
+              }
               aria-label="Open Terminal"
             >
               <SquareTerminal size={16} />
               {terminalIsLive && (
-                <span className="collapsed-tab-badge">{terminalIsWaiting ? 'Input' : 'Live'}</span>
+                <span
+                  className={`browser-live-dot${terminalIsWaiting ? ' is-waiting' : ''}`}
+                  aria-hidden="true"
+                />
               )}
             </button>
           </div>

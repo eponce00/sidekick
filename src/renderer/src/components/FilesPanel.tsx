@@ -310,7 +310,7 @@ ${viewedFile.filePath}`}
           {fileTreeLoading ? (
             <div className="activity-empty">
               <Loader2 size={16} className="icon-spin" />
-              <p>Loading files...</p>
+              <p>Loading files…</p>
             </div>
           ) : fileMap.size === 0 ? (
             <div className="activity-empty">
