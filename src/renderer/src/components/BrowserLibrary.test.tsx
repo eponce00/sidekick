@@ -79,7 +79,10 @@ describe('imported browser data in the Browser panel', () => {
     }
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { agentRuns: { browserWorkspace }, browserLibrary: library }
+      value: {
+        agentRuns: { browserWorkspace, onBrowserAnnotationsChanged: () => () => undefined },
+        browserLibrary: library
+      }
     })
     container = document.createElement('div')
     document.body.append(container)
