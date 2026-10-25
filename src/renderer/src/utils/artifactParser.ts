@@ -7,6 +7,10 @@ export interface ParsedArtifact {
   toolCallId?: string
   /** The builder reviewing it, while it does. */
   childRunId?: string
+  /** An edit_artifact call is changing it; the code is the version being changed, or empty. */
+  editing?: boolean
+  /** The identity of the place it shows in, kept as later versions replace it there. */
+  slotKey?: string
 }
 
 export interface ParsedMessage {

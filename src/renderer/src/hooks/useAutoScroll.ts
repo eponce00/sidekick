@@ -123,12 +123,13 @@ export function useAutoScroll<T>(
     if (!container || typeof window.ResizeObserver !== 'function') return
 
     const observedChildren = new Set<Element>()
-    const followSettledLayout = (): void => {
+    const followSettledLayout = (immediate = false): void => {
       const follower = followerRef.current
-      if (follower?.following) follower.keepAtEnd()
+      if (follower?.following) follower.keepAtEnd({ immediate })
       else updatePosition()
     }
-    const resizeObserver = new window.ResizeObserver(followSettledLayout)
+    // Layout is already done when a resize observer runs, so growth lands before paint.
+    const resizeObserver = new window.ResizeObserver(() => followSettledLayout(true))
     const observeTimelineChildren = (): void => {
       for (const child of Array.from(container.children)) {
         if (observedChildren.has(child)) continue

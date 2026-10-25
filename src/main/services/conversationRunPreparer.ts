@@ -1,4 +1,8 @@
-import { resolveReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
+import {
+  reasoningOptions,
+  resolveReasoningLevel,
+  type ReasoningLevel
+} from '../../shared/reasoning'
 import type Database from 'better-sqlite3'
 import { agentRunProfile, getAgentToolDefinitions } from '../../shared/agentToolCatalog'
 import { normalizeToolCallLimit } from '../../shared/agentLimits'
@@ -78,6 +82,8 @@ export interface PreparedConversationAgentRun {
   latestUserMessage: MessageRow | null
   onWorkspaceWillMutate: () => Promise<void>
   goalId?: string
+  /** The least reasoning the run's model offers, for work that needs little, such as an artifact's review. */
+  lightestReasoningLevel?: ReasoningLevel
 }
 
 function parseJson<T>(value: string | null, fallback: T): T {
@@ -519,7 +525,6 @@ export function replyCoveredByCompaction(
   return covered
 }
 
-/** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
 /** The tools whose results hold a version of an artifact. */
 const ARTIFACT_TOOLS = new Set(['create_artifact', 'edit_artifact'])
 
@@ -553,6 +558,7 @@ export function conversationArtifacts(
   return versions
 }
 
+/** Whether the conversation's latest reply made or changed an artifact the next turn may be asked to change. */
 export function previousReplyMadeArtifact(db: Database.Database, conversationId: string): boolean {
   const row = db
     .prepare(
@@ -1043,22 +1049,20 @@ export class ConversationRunPreparer {
         console.warn('[Compaction] Could not save the summary:', error)
       }
     }
+    const reasoningModel = (target: ProviderTarget, model: PinnedModel) => ({
+      id: model.id,
+      providerKind: target.providerKind,
+      model: target.model,
+      supportsReasoning: model.supportsReasoning,
+      reasoningLevels: model.reasoningLevels,
+      reasoningDefault: model.reasoningDefault
+    })
     // The level chosen for this model, or its starting level.
     const reasoningLevel = (
       target: ProviderTarget,
       model: PinnedModel
     ): ReasoningLevel | undefined =>
-      resolveReasoningLevel(
-        {
-          id: model.id,
-          providerKind: target.providerKind,
-          model: target.model,
-          supportsReasoning: model.supportsReasoning,
-          reasoningLevels: model.reasoningLevels,
-          reasoningDefault: model.reasoningDefault
-        },
-        currentSettings
-      )
+      resolveReasoningLevel(reasoningModel(target, model), currentSettings)
     const createRuntime = (
       target: ProviderTarget,
       model: PinnedModel,
@@ -1120,6 +1124,9 @@ export class ConversationRunPreparer {
       latestUserMessage,
       onWorkspaceWillMutate,
       ...(goal ? { goalId: goal.id } : {}),
+      // Levels run from the least reasoning to the most.
+      lightestReasoningLevel: reasoningOptions(reasoningModel(executionTarget, input.model))
+        ?.levels[0],
       toolSession,
       kernelInput: {
         projectStartCommands: projectStartCommands(

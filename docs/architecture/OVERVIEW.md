@@ -341,7 +341,10 @@ chat shows only the latest version of an artifact within a reply, and a failed o
 line that expands to its error and code.
 
 `edit_artifact` replaces exact snippets of an artifact's current version and renders the result as
-`create_artifact` does. It finds the artifact by title among this run's versions and then among
+`create_artifact` does. Within a reply, `artifactSlots.ts` shows every version of an artifact in the
+place its first version appeared, keyed by that place, so an edit or a rewrite replaces it there
+(a running edit keeps the current version with an Updating line); a later reply shows its own
+version. It finds the artifact by title among this run's versions and then among
 earlier replies' (`conversationArtifacts`), and replayed history keeps the full current code in
 the call or edit result that made it. In a chat, a builder child run, without extended reasoning,
 reviews the agent's version when it failed, has layout problems, or the model can see images; it

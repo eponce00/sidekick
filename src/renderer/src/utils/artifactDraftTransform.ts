@@ -19,10 +19,11 @@ export const DRAFT_CHILD = '__draftChild'
 const isComponentName = (name: string): boolean => /^[A-Z]/.test(name)
 
 /**
- * @param provided Names the code may use without defining them: the sandbox's prelude and the
- *   page's globals.
+ * @param provided Whether the code may use a name without defining it, used as an element or as a
+ *   value: a component is only ever the prelude's, while a value may also be one of the page's
+ *   globals, such as Math. A component named Map or Image is the artifact's own, still to come.
  */
-export function draftTransformPlugin(provided: (name: string) => boolean) {
+export function draftTransformPlugin(provided: (name: string, asElement: boolean) => boolean) {
   return ({ types: t }: BabelApi) => {
     const register = (name: string, value: any): any =>
       t.callExpression(t.identifier(DRAFT_COMPONENT), [t.stringLiteral(name), value])
@@ -70,9 +71,6 @@ export function draftTransformPlugin(provided: (name: string) => boolean) {
                 }
               }
             }
-            const missing = Object.keys(path.scope.globals).filter(
-              (name) => !provided(name) && !path.scope.hasBinding(name)
-            )
             // Used as an element, a missing name is a component; otherwise a value, such as data.
             const elements = new Set<string>()
             path.traverse({
@@ -80,6 +78,9 @@ export function draftTransformPlugin(provided: (name: string) => boolean) {
                 if (t.isJSXIdentifier(element.node.name)) elements.add(element.node.name.name)
               }
             })
+            const missing = Object.keys(path.scope.globals).filter(
+              (name) => !provided(name, elements.has(name)) && !path.scope.hasBinding(name)
+            )
             if (missing.length) {
               path.unshiftContainer(
                 'body',
