@@ -363,6 +363,19 @@ const api = {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
     revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
   },
+  // Names a browser and a profile it was shown; never a path, and nothing secret comes back.
+  browserLibrary: {
+    importSources: () => ipcRenderer.invoke('browserLibrary:importSources'),
+    previewImport: (browser: string, profileId: string) =>
+      ipcRenderer.invoke('browserLibrary:previewImport', browser, profileId),
+    runImport: (request: import('../shared/browserLibrary').BrowserImportRequest) =>
+      ipcRenderer.invoke('browserLibrary:runImport', request),
+    importBookmarksFile: () => ipcRenderer.invoke('browserLibrary:importBookmarksFile'),
+    sources: () => ipcRenderer.invoke('browserLibrary:sources'),
+    bookmarks: () => ipcRenderer.invoke('browserLibrary:bookmarks'),
+    suggest: (query: string) => ipcRenderer.invoke('browserLibrary:suggest', query),
+    remove: (sourceId?: string) => ipcRenderer.invoke('browserLibrary:remove', sourceId)
+  },
   // Set and replace only: no call returns a stored value.
   credentials: {
     status: () => ipcRenderer.invoke('credentials:status'),

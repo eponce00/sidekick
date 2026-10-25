@@ -1,6 +1,7 @@
 import { previewTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import { previewCredentialsApi } from './credentialsPreview'
+import { previewBrowserLibraryApi } from './browserLibraryPreview'
 import { previewCompanionApi } from './companionPreview'
 import {
   previewSessionConversations,
@@ -1291,6 +1292,7 @@ export function installBrowserApiMock(): void {
       }
     },
     credentials: previewCredentialsApi(),
+    browserLibrary: previewBrowserLibraryApi(),
     companion: previewCompanionApi(),
     pullRequests: previewPullRequestsApi(),
     window: {

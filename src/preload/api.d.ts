@@ -440,6 +440,7 @@ export interface DesktopApi {
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  browserLibrary: import('../shared/browserLibrary').BrowserLibraryAPI
   credentials: import('../shared/credentials').CredentialsAPI
   pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI

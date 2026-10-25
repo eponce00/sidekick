@@ -9,6 +9,7 @@ import {
   MonitorSmartphone,
   Pause,
   Plug,
+  Bookmark,
   ChevronRight,
   MessageSquarePlus
 } from 'lucide-react'
@@ -18,6 +19,8 @@ import type {
 } from '../../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 import { webMcpSite } from '../../../shared/webMcp'
+import type { BrowserSuggestion } from '../../../shared/browserLibrary'
+import { BrowserBookmarks, BrowserImportDialog, BrowserSuggestions } from './BrowserLibrary'
 import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../../shared/messageContextAttachments'
 import './BrowserMarkChip.css'
 
@@ -57,6 +60,13 @@ export function BrowserWorkspace({
   const [notes, setNotes] = useState<Record<string, string>>({})
   const noteFields = useRef(new Map<string, HTMLInputElement>())
   const [focusMark, setFocusMark] = useState<string | null>(null)
+  const [bookmarksOpen, setBookmarksOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [libraryVersion, setLibraryVersion] = useState(0)
+  // What the user typed since focusing the address bar; null until they type.
+  const [query, setQuery] = useState<string | null>(null)
+  const [suggestions, setSuggestions] = useState<BrowserSuggestion[]>([])
+  const [activeSuggestion, setActiveSuggestion] = useState(-1)
 
   // Another site, or a page without tools, starts with the popover closed.
   useEffect(() => {
@@ -106,6 +116,26 @@ export function BrowserWorkspace({
   useEffect(() => {
     if (!editing.current) setAddress(activeUrl)
   }, [activeUrl])
+
+  // Imported bookmarks and history that match what the user types.
+  useEffect(() => {
+    setActiveSuggestion(-1)
+    if (!query?.trim()) {
+      setSuggestions([])
+      return
+    }
+    let current = true
+    const timer = setTimeout(() => {
+      void window.api.browserLibrary
+        .suggest(query)
+        .then((list) => current && setSuggestions(list))
+        .catch(() => current && setSuggestions([]))
+    }, 60)
+    return () => {
+      current = false
+      clearTimeout(timer)
+    }
+  }, [query])
 
   const refresh = useCallback(async () => {
     const element = viewport.current
@@ -237,6 +267,14 @@ export function BrowserWorkspace({
     }
   }
 
+  const openAddress = (text: string): void => {
+    editing.current = false
+    setQuery(null)
+    setAddress(text)
+    void act('url', { url: /^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}` })
+  }
+  const shownSuggestions = query === null ? [] : suggestions
+
   return (
     <div className="browser-workspace">
       <div className="browser-workspace-topbar">
@@ -281,10 +319,7 @@ export function BrowserWorkspace({
         className="browser-workspace-toolbar"
         onSubmit={(event) => {
           event.preventDefault()
-          editing.current = false
-          void act('url', {
-            url: /^[a-z][a-z\d+.-]*:/i.test(address) ? address : `https://${address}`
-          })
+          openAddress(shownSuggestions[activeSuggestion]?.url ?? address)
         }}
       >
         <button
@@ -319,13 +354,37 @@ export function BrowserWorkspace({
             value={address}
             disabled={pending}
             placeholder="Enter a URL"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={shownSuggestions.length > 0}
+            aria-controls="browser-suggestions"
+            aria-activedescendant={
+              activeSuggestion >= 0 ? `browser-suggestions-${activeSuggestion}` : undefined
+            }
             onFocus={() => {
               editing.current = true
             }}
             onBlur={() => {
               editing.current = false
+              setQuery(null)
             }}
-            onChange={(event) => setAddress(event.target.value)}
+            onKeyDown={(event) => {
+              if (!shownSuggestions.length) return
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault()
+                // Cycles through the suggestions and back to what was typed (-1).
+                const step = event.key === 'ArrowDown' ? 1 : -1
+                const states = shownSuggestions.length + 1
+                setActiveSuggestion((index) => ((index + 1 + step + states) % states) - 1)
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setQuery(null)
+              }
+            }}
+            onChange={(event) => {
+              setAddress(event.target.value)
+              setQuery(event.target.value)
+            }}
           />
           {pageTools && (
             <button
@@ -410,6 +469,17 @@ export function BrowserWorkspace({
         </button>
         <button
           type="button"
+          className="browser-workspace-bookmarks"
+          aria-label="Bookmarks"
+          aria-expanded={bookmarksOpen}
+          aria-controls="browser-bookmarks"
+          title="Bookmarks you imported from another browser"
+          onClick={() => setBookmarksOpen((open) => !open)}
+        >
+          <Bookmark size={15} aria-hidden="true" />
+        </button>
+        <button
+          type="button"
           className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
           aria-label="Device size"
           disabled={!state || pending || state.busy}
@@ -460,6 +530,29 @@ export function BrowserWorkspace({
           </span>
         ) : null}
       </form>
+      {shownSuggestions.length > 0 && (
+        <BrowserSuggestions
+          id="browser-suggestions"
+          suggestions={shownSuggestions}
+          active={activeSuggestion}
+          onPick={(suggestion) => openAddress(suggestion.url)}
+        />
+      )}
+      {bookmarksOpen && (
+        <BrowserBookmarks
+          version={libraryVersion}
+          onOpen={(url) => {
+            setBookmarksOpen(false)
+            openAddress(url)
+          }}
+          onImport={() => setImportOpen(true)}
+        />
+      )}
+      <BrowserImportDialog
+        isOpen={importOpen}
+        onClose={() => setImportOpen(false)}
+        onImported={() => setLibraryVersion((version) => version + 1)}
+      />
       {(error || layoutError) && (
         <div role="alert" className="browser-workspace-error">
           {error || layoutError}
