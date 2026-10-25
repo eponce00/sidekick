@@ -3,6 +3,10 @@ export interface ParsedArtifact {
   title: string
   code: string
   isStreaming?: boolean
+  /** The create_artifact call that made it; it streams and is reviewed under this call. */
+  toolCallId?: string
+  /** The builder reviewing it, while it does. */
+  childRunId?: string
 }
 
 export interface ParsedMessage {

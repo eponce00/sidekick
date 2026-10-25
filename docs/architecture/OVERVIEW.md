@@ -323,8 +323,12 @@ the chat's own components in the user's theme, waits for it to report success an
 requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
 width as the chat shows it, and says when it is taller than the height an artifact grows to in the
 chat, where the user first sees its top and scrolls inside it or opens it full screen for the rest.
-The model receives the render status, errors, and, when it accepts images, the capture as a
-small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
+Because the inspection page shares the artifact origin, it also reads the rendered document for
+layout defects (`artifactLayoutCheck.ts`): content wider than the column, sideways scrolling, text
+cut off by its box or squeezed into a column of letters, SVG chart labels past their chart's edge,
+and visible `NaN`, `undefined` or `Infinity`. The model receives the render status, errors, those
+layout problems with what to change, and, when it accepts images, the capture as a small inline
+JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
 unverified. The run ledger keeps tool arguments as a bounded preview, so replayed history restores
 the current version of each artifact whole from its result, marks that result as the current
@@ -335,6 +339,25 @@ artifact made before the skill loaded is still rendered, and its result carries 
 guidance unless the previous reply made an artifact and the guidance is already in history. The
 chat shows only the latest version of an artifact within a reply, and a failed one as a single
 line that expands to its error and code.
+
+In a chat, a builder child run reviews the agent's version when it failed, has layout problems, or
+the model can see images. It fixes with `edit_artifact`, offered only to builders, which replaces
+exact snippets of its current version and renders the result as `create_artifact` does; its last
+version that rendered becomes the call's result. The artifact is not hidden while this happens.
+While the model writes a `create_artifact` call, the provider clients decode its partial `code`
+argument at most every 250 ms (`ToolCallPreviews`); the kernel sends it on the live, unstored
+`agentRuns:artifactDraft` channel and keeps it out of the run ledger, whose tool previews carry only
+small fields. The projection gives a pending or running `create_artifact` call an artifact segment
+in its final place, so the chat holds one slot for the artifact from its first code to its result.
+That slot runs drafts in a frame of their own: the React sandbox cuts the partial code at the last
+complete JSX element or word (`artifactDraft.ts`), closes what is still open, renders absent
+components as placeholders, and keeps the last draft that ran when a newer one throws; the HTML
+sandbox shows the markup that has arrived without its scripts. A draft frame never reports
+errors, its requests never return, and it does not animate. Each complete version then loads in a
+new, transparent frame over the one showing and replaces it once it reports success, so failures
+and the moments between versions are never seen; frames stay in creation order because moving an
+iframe reloads it. React code runs in a function scope inside the sandbox's prelude, so it may
+redeclare names the prelude provides, and Babel strips TypeScript annotations.
 
 Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own
 document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind; HTML

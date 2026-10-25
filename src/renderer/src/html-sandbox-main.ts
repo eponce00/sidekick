@@ -23,13 +23,17 @@ import { buildArtifactDocument } from './utils/htmlArtifactDocument'
 let stopWatching: (() => void) | null = null
 let stopListening: (() => void) | null = null
 let failed = false
+/** This frame shows drafts of the artifact while it is written, and reports nothing but height. */
+let drafting = false
 
 function onError(event: ErrorEvent): void {
+  if (drafting) return
   failed = true
   postToHost({ type: 'error', error: event.message || 'HTML artifact error' })
 }
 
 function onRejection(event: PromiseRejectionEvent): void {
+  if (drafting) return
   failed = true
   const reason = event.reason instanceof Error ? event.reason.message : String(event.reason)
   postToHost({ type: 'error', error: reason })
@@ -80,9 +84,43 @@ function render(code: string, theme: ArtifactTheme): void {
   else window.addEventListener('load', finish, { once: true })
 }
 
+/**
+ * The markup that has arrived, shown without running its scripts or inline event handlers: the
+ * parser closes what is still open, and the styles it has so far apply.
+ */
+function renderDraft(code: string, theme: ArtifactTheme): void {
+  if (!drafting) {
+    drafting = true
+    document.body.replaceChildren()
+    stopWatching = watchContentHeight(document, (height) =>
+      postToHost({ type: 'resize', height })
+    ).stop
+  }
+  applyTheme(theme)
+  const parsed = new DOMParser().parseFromString(buildArtifactDocument(code, ''), 'text/html')
+  for (const script of parsed.querySelectorAll('script')) script.remove()
+  for (const element of parsed.querySelectorAll('*')) {
+    for (const { name } of [...element.attributes]) {
+      if (/^on/i.test(name)) element.removeAttribute(name)
+    }
+  }
+  const styles = [...parsed.querySelectorAll('style')].map((style) => style.textContent).join('\n')
+  let draftStyle = document.getElementById('sidekick-artifact-draft-style')
+  if (!draftStyle) {
+    draftStyle = document.createElement('style')
+    draftStyle.id = 'sidekick-artifact-draft-style'
+    document.head.appendChild(draftStyle)
+  }
+  draftStyle.textContent = styles
+  for (const style of parsed.body.querySelectorAll('style')) style.remove()
+  document.body.innerHTML = parsed.body.innerHTML
+}
+
 function handle(command: ArtifactHostCommand): void {
-  if (command.type === 'render') render(command.code, command.theme)
-  else applyTheme(command.theme)
+  if (command.type === 'draft') renderDraft(command.code, command.theme)
+  else if (command.type === 'render') {
+    if (!drafting) render(command.code, command.theme)
+  } else applyTheme(command.theme)
 }
 
 listen()

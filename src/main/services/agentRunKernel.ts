@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import type { AgentArtifactDraft } from '../../shared/agentRunApi'
 import {
   AgentToolLoopError,
   classifyAgentKernelFailure,
@@ -520,6 +521,8 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
+    // Offered only to an artifact's builder, whose card the chat does not show to ask from.
+    'edit_artifact',
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',
     'send_message',
@@ -623,7 +626,8 @@ export class AgentRunKernel {
     private readonly store: AgentRunStore,
     private readonly tools = new AgentToolRegistry(),
     private readonly sample: AgentKernelProviderSampler = sampleProviderTurn,
-    private readonly publish: (event: AgentRunEvent) => void = () => undefined
+    private readonly publish: (event: AgentRunEvent) => void = () => undefined,
+    private readonly publishArtifactDraft: (draft: AgentArtifactDraft) => void = () => undefined
   ) {}
 
   start(input: StartAgentKernelRunInput): Promise<AgentKernelRunResult> {
@@ -728,6 +732,23 @@ export class AgentRunKernel {
       this.pendingResolvers.delete(interactionId)
     }
     return interaction
+  }
+
+  /** Sends on an artifact's code as far as it has streamed; it is shown, never stored. */
+  private draftArtifact(runId: string, toolCallId: string, call: ProviderToolCall): void {
+    const args = call.function.arguments
+    if (!args || typeof args !== 'object' || typeof args.code !== 'string') return
+    try {
+      this.publishArtifactDraft({
+        runId,
+        toolCallId,
+        type: args.type === 'html' || args.type === 'svg' ? args.type : 'react',
+        title: typeof args.title === 'string' ? args.title : '',
+        code: args.code
+      })
+    } catch (error) {
+      console.warn('[AgentRun] Could not send an artifact draft:', error)
+    }
   }
 
   private append(
@@ -1716,6 +1737,8 @@ The user approved this exact plan revision. Act capabilities are now available a
                 for (const [position, call] of (chunk.message?.tool_calls ?? []).entries()) {
                   runaway ??= runawayGuard.begin(guardKey(call, position))
                   const id = call.id || `tool_index_${call.index ?? 0}`
+                  if (call.function.name === 'create_artifact')
+                    this.draftArtifact(input.id, id, call)
                   const preview = safePreview(call)
                   const signature = JSON.stringify([call.function.name, preview])
                   if (previewSignatures.get(id) === signature) continue

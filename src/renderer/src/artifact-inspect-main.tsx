@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client'
 import Artifact from './components/artifacts/Artifact'
+import { findArtifactLayoutProblems } from './utils/artifactLayoutCheck'
 import { MAX_ARTIFACT_FRAME_HEIGHT } from './utils/artifactFrameSize'
 import {
   ARTIFACT_INSPECTION_MAX_ERRORS,
@@ -40,9 +41,15 @@ window.__sidekickInspectArtifact = (request: ArtifactInspectionRequest) =>
         const stage = container.querySelector<HTMLElement>('.artifact-stage')
         const exceedsChatFrame =
           Number(stage?.dataset.contentHeight ?? 0) > MAX_ARTIFACT_FRAME_HEIGHT
+        // The frame is on this page's origin, so its document can be read for layout defects.
+        const warnings =
+          status === 'rendered'
+            ? findArtifactLayoutProblems(container.querySelector('iframe')?.contentDocument)
+            : []
         resolve({
           status,
           errors: errors.slice(0, ARTIFACT_INSPECTION_MAX_ERRORS),
+          ...(warnings.length ? { warnings } : {}),
           ...(exceedsChatFrame ? { chatFrameHeight: MAX_ARTIFACT_FRAME_HEIGHT } : {}),
           width: ARTIFACT_INSPECTION_WIDTH,
           // The artifact's own extent, not the page's, which is at least as

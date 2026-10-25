@@ -69,6 +69,19 @@ export interface AgentRunChangedEvent {
   event: AgentRunEvent
 }
 
+/**
+ * An artifact's code as far as the model has written it, sent while the call streams so the chat
+ * can show the artifact taking shape. Live only: it is never stored, and the finished call's
+ * arguments are the artifact.
+ */
+export interface AgentArtifactDraft {
+  runId: string
+  toolCallId: string
+  type: 'react' | 'html' | 'svg'
+  title: string
+  code: string
+}
+
 export interface PromptAdmissionItem {
   id: string
   conversationId: string

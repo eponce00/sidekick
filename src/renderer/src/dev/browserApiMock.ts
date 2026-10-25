@@ -1199,7 +1199,8 @@ export function installBrowserApiMock(): void {
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
       onAdmissionsChanged: () => () => undefined,
-      onEvent: () => () => undefined
+      onEvent: () => () => undefined,
+      onArtifactDraft: () => () => undefined
     },
     terminal: previewTerminalApi(),
     userTerminal: previewUserTerminalApi(),

@@ -97,16 +97,17 @@ shell and everything it started; quitting SideKick ends them all.
 - Persistent goals add `update_goal`.
 - Plan mode adds `enter_plan_mode`, `present_plan`, and `complete_plan` at the appropriate phase.
 - Installed skills may add `create_artifact` and trusted bundled helpers. `create_artifact` renders
-  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, and,
-  for models that accept images, a screenshot, so the model can check its own result.
+  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, layout
+  problems found in the rendered page (content wider than the chat, sideways scrolling, cut-off or
+  squeezed text, chart labels past the chart's edge, values such as `NaN`), and, for models that
+  accept images, a screenshot, so the model can check its own result.
   The tool is offered even before its skill loads, so the tool list stays the same across turns;
   an artifact made without the skill's guidance is rendered and the guidance comes back with it.
-- In a chat, an artifact is checked before it appears. A builder reviews how the agent's version
-  rendered and fixes what is wrong with it, up to three times, while the reply shows one
-  **Building** row with the version it is on. The chat then shows only the finished artifact;
-  open the row while it works to see each version. When there is nothing to review, because the
-  artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
-  appears as the agent made it.
+- In a chat, the artifact shows while the agent writes it. A builder then reviews how it rendered
+  and fixes what is wrong, up to three times, with `edit_artifact`, which replaces exact snippets
+  of the code rather than rewriting it; each fix replaces the artifact in place. When there is
+  nothing to review, because the artifact could not be rendered, or it rendered cleanly with no
+  layout problems and the model cannot see images, it stays as the agent made it.
 - The Schedules skill adds `schedules_list`, `schedules_create`, `schedules_update`, and
   `schedules_delete` to the run that loads it, and only then, so other runs carry none of them. A
   later run that calls one first is told to load the skill. Listing changes nothing; every create,

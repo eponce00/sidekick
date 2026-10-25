@@ -32,8 +32,42 @@
   height: 100%;
 }
 
+.artifact-preview {
+  position: relative;
+  overflow: hidden;
+  transition: height var(--duration-layout) var(--ease-out);
+}
+
 .artifact-preview[hidden] {
   display: none;
+}
+
+/* A new version loads unseen over the one showing, then takes its place as the old one fades. */
+.artifact-layer.is-incoming,
+.artifact-layer.is-leaving {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+}
+
+/* Transparent rather than hidden: a hidden frame stops laying out, so its height would be unknown
+   when it takes over. */
+.artifact-layer {
+  transition: opacity var(--duration-slow) ease;
+}
+
+.artifact-layer.is-incoming {
+  opacity: 0;
+}
+
+.artifact-layer.is-leaving {
+  animation: artifact-layer-out var(--duration-slow) ease forwards;
+}
+
+@keyframes artifact-layer-out {
+  to {
+    opacity: 0;
+  }
 }
 
 /* While it first renders: one quiet line where it will be. */
@@ -46,7 +80,7 @@
   pointer-events: none;
 }
 
-.artifact.is-building .artifact-pending {
+.artifact-pending.is-alone {
   position: static;
 }
 
@@ -73,6 +107,26 @@
   to {
     background-position: -150% 0;
   }
+}
+
+/* ---- What it is doing while it is written and checked ---- */
+.artifact-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.artifact-status > svg {
+  flex: none;
+}
+
+/* While it is live, what it is doing stands where its name and controls would. */
+.artifact[aria-busy='true'] > .artifact-caption {
+  display: none;
 }
 
 /* ---- Name and controls, beneath it, on hover or focus ---- */
@@ -371,7 +425,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .artifact-stage,
+  .artifact-preview,
   .artifact-frame,
+  .artifact-layer,
   .artifact-caption,
   .artifact-fullscreen {
     transition: none;

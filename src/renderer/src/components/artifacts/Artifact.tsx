@@ -1,7 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AlertTriangle, Check, Code2, Copy, Maximize2, Monitor, RotateCcw, X } from 'lucide-react'
+import {
+  AlertTriangle,
+  Check,
+  Code2,
+  Copy,
+  Loader2,
+  Maximize2,
+  Monitor,
+  RotateCcw,
+  X
+} from 'lucide-react'
 import { useChatSurface } from '../chatSurface'
+import { useSubAgentRun } from '../../hooks/useSubAgentRun'
+import { useArtifactDraft } from '../../services/artifactDrafts'
 import type { ParsedArtifact } from '../../utils/artifactParser'
 import { svgArtifactDocument } from '../../utils/htmlArtifactDocument'
 import ArtifactFrame, { type ArtifactFrameStatus } from './ArtifactFrame'
@@ -133,49 +145,154 @@ function ArtifactFullScreen({
   )
 }
 
+/** What a live artifact is doing, said beneath it until it is finished. */
+type ArtifactPhase = 'writing' | 'checking' | 'refining'
+
+const PHASE_LABELS: Record<ArtifactPhase, string> = {
+  writing: 'Writing',
+  checking: 'Checking how it looks',
+  refining: 'Polishing'
+}
+
+/** One frame in the artifact's place: a draft (`code` null) or a version of it that runs. */
+interface FrameSlot {
+  key: number
+  code: string | null
+}
+
+type FrameLayer = 'current' | 'incoming' | 'leaving'
+
+interface ArtifactViewProps {
+  artifact: ParsedArtifact
+  /** The code so far while it is written, or null. */
+  draftCode: string | null
+  /** The version to show: the latest that is complete, or null while there is none. */
+  code: string | null
+  phase: ArtifactPhase | null
+  onResult?: (result: ArtifactResult) => void
+}
+
 /**
  * An artifact as part of the reply: no card around it, as wide as the text, as tall as its
- * content. Its name and its controls (code, copy, full screen) show beneath it on hover or focus.
+ * content. It takes shape in place while it is written; each later version loads behind the one
+ * showing and replaces it once it runs, so a version that fails, or the moment between two, is
+ * never seen. Its name and controls (code, copy, full screen) show beneath it on hover or focus.
  */
-function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element {
-  const [attempt, setAttempt] = useState(0)
+function ArtifactView({
+  artifact,
+  draftCode,
+  code,
+  phase,
+  onResult
+}: ArtifactViewProps): React.JSX.Element {
+  const nextKey = useRef(1)
+  // Versions that failed here, with why: not loaded again, and shown as the failure if one of
+  // them is still the version when the call finishes.
+  const failures = useRef(new Map<string, { error: string; visible: boolean }>())
+  // A draft frame keeps showing the last code that arrived until a complete version replaces it.
+  const [lastDraft, setLastDraft] = useState('')
+  if (draftCode !== null && draftCode !== lastDraft) setLastDraft(draftCode)
+  const [current, setCurrent] = useState<FrameSlot | null>(() =>
+    code !== null ? { key: 0, code } : draftCode !== null ? { key: 0, code: null } : null
+  )
+  const [incoming, setIncoming] = useState<FrameSlot | null>(null)
+  const [leaving, setLeaving] = useState<FrameSlot | null>(null)
+  const [height, setHeight] = useState<number | null>(null)
   const [failure, setFailure] = useState<{ error: string; visible: boolean } | null>(null)
   const [showDetails, setShowDetails] = useState(false)
   const [showCode, setShowCode] = useState(false)
   const [fullScreen, setFullScreen] = useState(false)
   const [pointerInside, setPointerInside] = useState(false)
-  const [copied, copy] = useCopyCode(artifact.code)
   const onResultRef = useRef(onResult)
   useEffect(() => {
     onResultRef.current = onResult
   })
-  const { kind, code } = frameSource(artifact)
+  const shownCode = current?.code ?? draftCode ?? code ?? ''
+  const [copied, copy] = useCopyCode(shownCode)
+  const kind = frameSource({ ...artifact, code: '' }).kind
+  const source = (value: string): string => frameSource({ ...artifact, code: value }).code
   const blocked = failure !== null && !failure.visible
 
-  const handleStatus = useCallback(
-    (status: ArtifactFrameStatus) => {
-      if (status.status === 'rendered') {
-        onResultRef.current?.({ title: artifact.title, success: true })
-        return
-      }
-      // An error after the artifact showed leaves it in place, with a note; before, it replaces it.
-      setFailure((current) =>
-        current && !current.visible ? current : { error: status.error, visible: status.visible }
+  // A draft starts the moment its first code arrives; a complete version loads behind what shows.
+  useEffect(() => {
+    if (current === null) {
+      if (code !== null) setCurrent({ key: nextKey.current++, code })
+      else if (draftCode !== null) setCurrent({ key: nextKey.current++, code: null })
+      return
+    }
+    if (code === null || code === current.code || code === incoming?.code) return
+    if (failures.current.has(code)) return
+    setIncoming({ key: nextKey.current++, code })
+  }, [code, current, draftCode, incoming?.code])
+
+  // A call can finish on a version that failed while it was reviewed, when no fix ran.
+  useEffect(() => {
+    if (phase !== null || code === null || failure) return
+    const failed = failures.current.get(code)
+    if (!failed) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- known only once the call ends
+    setFailure(current?.code === code ? failed : { error: failed.error, visible: false })
+    onResultRef.current?.({ title: artifact.title, success: false, error: failed.error, code })
+  }, [artifact.title, code, current?.code, failure, phase])
+
+  // What it replaced fades out over what replaced it, then goes.
+  useEffect(() => {
+    if (!leaving) return undefined
+    const timer = window.setTimeout(() => setLeaving(null), 320)
+    return () => window.clearTimeout(timer)
+  }, [leaving])
+
+  const report = useCallback(
+    (frameCode: string, status: ArtifactFrameStatus, final: boolean) => {
+      if (!final) return
+      onResultRef.current?.(
+        status.status === 'rendered'
+          ? { title: artifact.title, success: true }
+          : { title: artifact.title, success: false, error: status.error, code: frameCode }
       )
-      onResultRef.current?.({
-        title: artifact.title,
-        success: false,
-        error: status.error,
-        code: artifact.code
-      })
     },
-    [artifact.code, artifact.title]
+    [artifact.title]
   )
+
+  const handleCurrentStatus = (slot: FrameSlot, status: ArtifactFrameStatus): void => {
+    if (slot.code === null) return
+    report(slot.code, status, phase === null)
+    if (status.status === 'rendered') return
+    failures.current.set(slot.code, { error: status.error, visible: status.visible })
+    // A version still being reviewed may fail; the review replaces it. A finished one that fails
+    // before it shows replaces itself with the failure, and after, keeps a note beneath it.
+    if (phase !== null && !status.visible) return
+    setFailure((existing) =>
+      existing && !existing.visible ? existing : { error: status.error, visible: status.visible }
+    )
+  }
+
+  const handleIncomingStatus = (slot: FrameSlot, status: ArtifactFrameStatus): void => {
+    if (slot.code === null) return
+    report(slot.code, status, phase === null)
+    if (status.status === 'rendered') {
+      setLeaving(current)
+      setCurrent(slot)
+      setIncoming(null)
+      setFailure(null)
+      return
+    }
+    failures.current.set(slot.code, { error: status.error, visible: false })
+    setIncoming(null)
+    // While it is reviewed, a version that fails waits for the next one; the one showing stays.
+    // A finished version that fails shows its failure only where nothing ran before it.
+    if (phase === null && (current?.code === null || current === null)) {
+      setFailure({ error: status.error, visible: false })
+    }
+  }
 
   const retry = (): void => {
     setFailure(null)
     setShowDetails(false)
-    setAttempt((value) => value + 1)
+    const latest = incoming?.code ?? code ?? current?.code
+    failures.current.clear()
+    setIncoming(null)
+    if (latest) setCurrent({ key: nextKey.current++, code: latest })
   }
 
   // The frame says when the pointer leaves it, but a pointer that moves fast may leave without
@@ -191,13 +308,36 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
 
   const closeFullScreen = useCallback(() => setFullScreen(false), [])
   const summary = failure?.error.split('\n')[0]
+  const title = artifact.title || 'artifact'
+
+  const frame = (slot: FrameSlot, layer: FrameLayer): React.JSX.Element => (
+    <div key={slot.key} className={`artifact-layer is-${layer}`} aria-hidden={layer !== 'current'}>
+      <ArtifactFrame
+        kind={kind}
+        code={source(slot.code ?? lastDraft)}
+        title={title}
+        draft={slot.code === null}
+        pendingLabel={slot.code === null ? `Writing ${title}` : `Rendering ${title}`}
+        onStatus={
+          layer === 'current'
+            ? (status) => handleCurrentStatus(slot, status)
+            : layer === 'incoming'
+              ? (status) => handleIncomingStatus(slot, status)
+              : undefined
+        }
+        onPointer={layer === 'current' ? setPointerInside : undefined}
+        onHeight={layer === 'current' ? setHeight : undefined}
+      />
+    </div>
+  )
 
   return (
     <figure
       className={`artifact${showCode ? ' is-showing-code' : ''}${blocked ? ' is-failed' : ''}${
         pointerInside ? ' is-pointer-inside' : ''
-      }`}
+      }${phase ? ` is-${phase}` : ''}`}
       data-artifact-type={artifact.type}
+      aria-busy={phase !== null}
     >
       {blocked ? (
         <div className="artifact-failure" role="status">
@@ -208,7 +348,7 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
             aria-expanded={showDetails}
           >
             <AlertTriangle size={14} aria-hidden="true" />
-            <span className="artifact-failure-title">Couldn’t show {artifact.title}</span>
+            <span className="artifact-failure-title">Couldn’t show {title}</span>
             {!showDetails && <span className="artifact-failure-reason">{summary}</span>}
           </button>
           <button type="button" className="artifact-text-button" onClick={retry}>
@@ -217,24 +357,41 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
           </button>
           {showDetails && <pre className="artifact-failure-details">{failure.error}</pre>}
         </div>
+      ) : current ? (
+        <div
+          className="artifact-preview"
+          hidden={showCode}
+          style={height === null ? undefined : { height }}
+        >
+          {/* In the order they were made: a frame moved within the page would load again. */}
+          {(
+            [
+              [current, 'current'],
+              [leaving, 'leaving'],
+              [incoming, 'incoming']
+            ] as const
+          )
+            .filter((entry): entry is readonly [FrameSlot, FrameLayer] => entry[0] !== null)
+            .sort(([a], [b]) => a.key - b.key)
+            .map(([slot, layer]) => frame(slot, layer))}
+        </div>
       ) : (
-        <div className="artifact-preview" hidden={showCode}>
-          <ArtifactFrame
-            key={attempt}
-            kind={kind}
-            code={code}
-            title={artifact.title}
-            onStatus={handleStatus}
-            onPointer={setPointerInside}
-          />
+        <div className="artifact-pending is-alone" aria-hidden="true">
+          <span className="artifact-pending-label">Writing {title}</span>
         </div>
       )}
       {showCode && (
-        <pre className="artifact-code" aria-label={`${artifact.title} code`}>
-          <code>{artifact.code}</code>
+        <pre className="artifact-code" aria-label={`${title} code`}>
+          <code>{shownCode}</code>
         </pre>
       )}
-      {failure?.visible && !showCode && (
+      {phase && current && !blocked && (
+        <p className="artifact-status" role="status">
+          <Loader2 size={12} className="icon-spin" aria-hidden="true" />
+          <span>{PHASE_LABELS[phase]}</span>
+        </p>
+      )}
+      {failure?.visible && !showCode && !phase && (
         <p className="artifact-note" role="status" title={failure.error}>
           <AlertTriangle size={12} aria-hidden="true" />
           <span>{summary}</span>
@@ -242,7 +399,7 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
       )}
       <figcaption className="artifact-caption">
         <span className="artifact-caption-name">
-          <span className="artifact-caption-title">{artifact.title}</span>
+          <span className="artifact-caption-title">{title}</span>
           <span className="artifact-caption-type">{TYPE_LABELS[artifact.type]}</span>
         </span>
         <span className="artifact-actions">
@@ -251,7 +408,7 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
             className={`artifact-action${showCode ? ' is-active' : ''}`}
             onClick={() => setShowCode((value) => !value)}
             aria-pressed={showCode}
-            aria-label={showCode ? `Show ${artifact.title}` : 'View code'}
+            aria-label={showCode ? `Show ${title}` : 'View code'}
             title={showCode ? 'Show artifact' : 'View code'}
           >
             <Code2 size={14} />
@@ -265,12 +422,12 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
           >
             {copied ? <Check size={14} /> : <Copy size={14} />}
           </button>
-          {!blocked && (
+          {!blocked && current?.code && (
             <button
               type="button"
               className="artifact-action"
               onClick={() => setFullScreen(true)}
-              aria-label={`Open ${artifact.title} full screen`}
+              aria-label={`Open ${title} full screen`}
               title="Open full screen"
             >
               <Maximize2 size={14} />
@@ -278,55 +435,69 @@ function ArtifactView({ artifact, onResult }: ArtifactProps): React.JSX.Element 
           )}
         </span>
       </figcaption>
-      {fullScreen && <ArtifactFullScreen artifact={artifact} onClose={closeFullScreen} />}
+      {fullScreen && current?.code && (
+        <ArtifactFullScreen
+          artifact={{ ...artifact, code: current.code }}
+          onClose={closeFullScreen}
+        />
+      )}
     </figure>
   )
 }
 
-/** An artifact whose code is still arriving, from a reply that writes it inline. */
-function ArtifactBuilding({ artifact }: { artifact: ParsedArtifact }): React.JSX.Element {
+/**
+ * The latest version an artifact's builder made that ran, and whether it is making another.
+ * Followed only while the builder works; the finished call carries the version it chose.
+ */
+function useBuilderVersion(childRunId: string | undefined): {
+  code: string | null
+  refining: boolean
+} {
+  const { snapshot } = useSubAgentRun(childRunId ?? null, Boolean(childRunId))
+  return useMemo(() => {
+    let code: string | null = null
+    let refining = false
+    for (const segment of snapshot.projection.segments) {
+      if (segment.type !== 'tool') continue
+      if (segment.tool.name !== 'create_artifact' && segment.tool.name !== 'edit_artifact') continue
+      const { status, data } = segment.tool
+      if (status === 'pending' || status === 'running') refining = true
+      else if (status === 'success') {
+        const built = (data as { artifact?: { code?: unknown } } | undefined)?.artifact?.code
+        if (typeof built === 'string') code = built
+      }
+    }
+    return { code, refining }
+  }, [snapshot])
+}
+
+function ArtifactInstance({ artifact, onResult }: ArtifactProps): React.JSX.Element {
+  const live = Boolean(artifact.isStreaming)
+  const fromCall = Boolean(artifact.toolCallId)
+  // A call streams its code apart from the reply; an artifact written in the reply's text is its
+  // own draft until its closing tag arrives.
+  const streamed = useArtifactDraft(
+    live && fromCall && !artifact.code ? artifact.toolCallId : undefined
+  )
+  const builder = useBuilderVersion(live && fromCall ? artifact.childRunId : undefined)
+  const draftCode = !live ? null : fromCall ? (artifact.code ? null : streamed) : artifact.code
+  const code = !live ? artifact.code : fromCall ? (builder.code ?? (artifact.code || null)) : null
+  const phase: ArtifactPhase | null = !live
+    ? null
+    : !fromCall || !artifact.code
+      ? 'writing'
+      : builder.refining
+        ? 'refining'
+        : 'checking'
   return (
-    <figure className="artifact is-building" data-artifact-type={artifact.type}>
-      <div className="artifact-pending">
-        <span className="artifact-pending-label">Building {artifact.title}</span>
-      </div>
-    </figure>
+    <ArtifactView
+      artifact={artifact}
+      draftCode={draftCode}
+      code={code}
+      phase={phase}
+      onResult={onResult}
+    />
   )
-}
-
-/** Code still arriving after this long is unlikely to finish: run what has arrived. */
-const STREAMING_TIMEOUT_MS = 10_000
-
-function ArtifactInstance(props: ArtifactProps): React.JSX.Element {
-  const { artifact, onResult } = props
-  const [timedOut, setTimedOut] = useState(false)
-  const streaming = Boolean(artifact.isStreaming) && !timedOut
-  // Started once, when the code has begun to arrive; more code does not restart it.
-  const arriving = Boolean(artifact.isStreaming) && artifact.code.length > 100
-  const latest = useRef({ artifact, onResult })
-  useEffect(() => {
-    latest.current = { artifact, onResult }
-  })
-
-  useEffect(() => {
-    if (!arriving) return undefined
-    const timer = window.setTimeout(() => {
-      setTimedOut(true)
-      const { artifact: current, onResult: report } = latest.current
-      report?.({
-        title: current.title,
-        success: false,
-        error:
-          'Artifact took too long to complete streaming. The closing </artifact> tag may be missing.',
-        code: current.code
-      })
-    }, STREAMING_TIMEOUT_MS)
-    return () => window.clearTimeout(timer)
-  }, [arriving])
-
-  if (streaming) return <ArtifactBuilding artifact={artifact} />
-  // New code is a new artifact: libraries such as Chart.js need a fresh document.
-  return <ArtifactView key={artifact.code} {...props} />
 }
 
 /** An artifact where it cannot run, as on the phone: its name and where to open it. */
@@ -349,7 +520,8 @@ function ArtifactElsewhere({
 function Artifact(props: ArtifactProps): React.JSX.Element {
   const { computerOnly } = useChatSurface()
   if (computerOnly) return <ArtifactElsewhere artifact={props.artifact} note={computerOnly} />
-  return <ArtifactInstance key={props.artifact.title} {...props} />
+  // Keyed by its call, so it stays one artifact from its first code to its finished version.
+  return <ArtifactInstance key={props.artifact.toolCallId ?? props.artifact.title} {...props} />
 }
 
 export default Artifact

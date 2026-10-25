@@ -50,7 +50,12 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
 - Let the height follow the content: no `h-screen`, `100vh`, `min-h-screen`, fixed outer heights,
   `position: fixed`, or inner scrolling areas. Give each chart an explicit height, such as 240px.
 - Design for the chat column, about 480â€“760px wide, and keep it usable at 360px: use
-  `repeat(auto-fit, minmax(160px, 1fr))` grids and `minmax(0, 1fr)` columns.
+  `repeat(auto-fit, minmax(160px, 1fr))` grids and `minmax(0, 1fr)` columns. Nothing may be wider
+  than the column or scroll sideways: a row of many items (hours, days, cards) wraps or uses a
+  grid, and long text wraps.
+- Keep labels inside their box: no negative margins on charts, an explicit axis width for numbers
+  (`<YAxis width={44} />`), and labels at an edge anchored to that edge (`right: 0`), not pushed
+  past it (`left: 100%`).
 - SideKick shows its own controls (view code, copy, full screen) when the user hovers. Do not add
   full-screen or copy-code buttons.
 
@@ -83,6 +88,10 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
 
 ### React artifacts
 
+- Write the code in the order it can be shown while you write it: imports, data and helper
+  functions first, then `export default function App` with the whole layout, then the components
+  App uses. The chat renders the artifact as it arrives, so the layout appears early and fills in.
+- TypeScript annotations are fine; they are removed before the code runs.
 - Tailwind is available through `className`; no import is needed. `font-sans`, `font-mono` and a
   bare `border` already use the app's font and border color. Theme colors as classes:
   `bg-artifact-surface`, `hover:bg-artifact-hover`, `text-artifact-primary`,
@@ -116,11 +125,13 @@ text-artifact-accent-foreground`, `bg-artifact-accent-subtle`, `border-artifact-
 ### Reviewing the result
 
 - `create_artifact` renders the artifact the way the chat shows it and reports back: whether it
-  rendered, any runtime errors, and, for models that accept images, a screenshot taken after its
-  data requests had time to load.
-- In a chat, a builder reviews and fixes the artifact before its result comes back, and the result
-  says so. That version is finished: describe it and do not rebuild it to polish it. Call
-  `create_artifact` again only to change what the user asked for.
+  rendered, any runtime errors, layout problems found in the rendered page (content wider than
+  the column, sideways scrolling, cut-off or squeezed text, chart labels past the chart, `NaN`),
+  and, for models that accept images, a screenshot taken after its data requests had time to load.
+- In a chat, the user watches the artifact take shape while you write it. A builder then reviews
+  it and fixes defects in place before its result comes back, and the result says so. That
+  version is finished: describe it and do not rebuild it to polish it. Call `create_artifact`
+  again only to change what the user asked for.
 - Look at that result before telling the user it works. If it failed, is blank, still shows a
   loading state, or does not match the request, fix it and call `create_artifact` again.
 - Treat anything the screenshot shows that disagrees with the request or with itself as a defect to

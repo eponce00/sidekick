@@ -177,8 +177,11 @@ export interface AgentToolRuntimeSessionInput {
   browserEnabled?: boolean
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
   artifactContinuation?: boolean
-  /** This run is an artifact builder: its create_artifact renders directly, never through another builder. */
-  artifactBuilder?: boolean
+  /**
+   * This run is an artifact's builder, starting from this version: its create_artifact renders
+   * directly, never through another builder, and it may edit the version in place.
+   */
+  artifactBuilder?: { type: InspectedArtifactType; title: string; code: string }
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -538,7 +541,8 @@ export class AgentToolRuntime {
       visionEnabled: input.browserEnabled === true,
       artifactContinuation: input.artifactContinuation === true,
       // A chat's artifacts are refined out of sight; a builder renders its own directly.
-      buildArtifacts: input.surface === 'conversation' && input.artifactBuilder !== true
+      buildArtifacts: input.surface === 'conversation' && !input.artifactBuilder,
+      builderArtifact: input.artifactBuilder
     })
     handlers.register(
       ['office_preflight', 'office_validate'],
@@ -652,7 +656,8 @@ export class AgentToolRuntime {
       planStage: input.plan?.stage() ?? 'inactive',
       codeIntelligenceAvailable,
       codeIntelligenceRisk: sessionState.codeIntelligenceRisk,
-      editingDialect: input.editingDialect
+      editingDialect: input.editingDialect,
+      artifactBuilder: Boolean(input.artifactBuilder)
     })
     // A model that can see pages is asked to look at what it changed before it finishes.
     const verificationController = this.verification.createTerminalController(
