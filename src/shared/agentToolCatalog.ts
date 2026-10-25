@@ -25,6 +25,14 @@ import {
 } from './appSettingsTools'
 import { credentialsListTool, credentialsRequestTool } from './credentialTools'
 import { httpRequestTool } from './httpRequestTool'
+import {
+  SCHEDULES_SKILL_ID,
+  scheduleToolTitle,
+  schedulesCreateTool,
+  schedulesDeleteTool,
+  schedulesListTool,
+  schedulesUpdateTool
+} from './scheduleTools'
 import { webMcpSite } from './webMcp'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
@@ -168,6 +176,8 @@ function presentationTitle(
     return { kind, title: `Change SideKick setting ${key}`.trim(), subject: key }
   }
   if (name === 'provider_request_key') return { kind, title: 'Ask for a provider key in Settings' }
+  const scheduleTitle = scheduleToolTitle(name, args)
+  if (scheduleTitle) return { kind, title: scheduleTitle }
   if (name === 'credentials_list') return { kind, title: 'List stored credentials' }
   if (name === 'credentials_request') {
     const alias = stringArgument(args, 'alias')
@@ -1561,6 +1571,15 @@ const coreEntries: AgentToolCatalogEntry[] = [
 
 const goalEntries: AgentToolCatalogEntry[] = [entry(updateGoal, 'goal', 'write')]
 
+// The schedules handler asks the user before every change itself, whatever the permission mode,
+// and refuses an invalid one without a card.
+const scheduleEntries: AgentToolCatalogEntry[] = [
+  entry(schedulesListTool, 'schedules', 'read'),
+  entry(schedulesCreateTool, 'schedules', 'write'),
+  entry(schedulesUpdateTool, 'schedules', 'write'),
+  entry(schedulesDeleteTool, 'schedules', 'write')
+]
+
 const planEntries: Record<Exclude<AgentPlanStage, 'kept'>, AgentToolCatalogEntry[]> = {
   inactive: [entry(enterPlanMode, 'plan', 'read')],
   planning: [entry(presentPlan, 'plan', 'read')],
@@ -1606,7 +1625,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'settings',
     'sessions',
     'credentials',
-    'web.request'
+    'web.request',
+    'schedules'
   ],
   subagent: [
     'workspace.read',
@@ -1691,7 +1711,23 @@ function workspaceEntries(options: AgentToolCatalogOptions): AgentToolCatalogEnt
 }
 
 export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEntry[] {
-  return skillId === WEB_ARTIFACTS_SKILL_ID ? [entry(createArtifact, 'artifacts', 'write')] : []
+  if (skillId === WEB_ARTIFACTS_SKILL_ID) return [entry(createArtifact, 'artifacts', 'write')]
+  return skillId === SCHEDULES_SKILL_ID ? scheduleEntries : []
+}
+
+/**
+ * Skills whose tools stay out of the tool list until the skill loads, so the many runs that never
+ * need them carry none of their schemas. They are needed rarely enough that the prompt cache lost
+ * when they arrive costs less than carrying them always; a later run that calls one before
+ * loading the skill is told to load it.
+ */
+const SKILLS_WITH_GATED_TOOLS = [SCHEDULES_SKILL_ID] as const
+
+/** The skill that must be loaded before a gated tool is offered, if `name` is one. */
+export function gatingSkillForTool(name: string): string | undefined {
+  return SKILLS_WITH_GATED_TOOLS.find((skillId) =>
+    getSkillToolCatalogEntries(skillId).some(({ definition }) => definition.function.name === name)
+  )
 }
 
 const SKILLS_WITH_TOOLS = [WEB_ARTIFACTS_SKILL_ID] as const
@@ -1770,6 +1806,9 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     // cache from that point, and a tool missing from a follow-up turn was a
     // dead end; the handler brings in the skill's guidance instead.
     ...SKILLS_WITH_TOOLS.flatMap(getSkillToolCatalogEntries),
+    ...SKILLS_WITH_GATED_TOOLS.filter((skillId) =>
+      options.activeSkillIds?.includes(skillId)
+    ).flatMap(getSkillToolCatalogEntries),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )
@@ -1812,7 +1851,7 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
     return 'workspace.read'
   }
-  return [...coreEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.capability
 }
@@ -1822,7 +1861,7 @@ export function toolRiskForName(name: string): ToolRisk | undefined {
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'
-  return [...coreEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.risk
 }

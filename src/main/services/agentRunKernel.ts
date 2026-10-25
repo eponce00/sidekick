@@ -39,6 +39,7 @@ import {
   providerStreamDropped
 } from '../../shared/providerErrors'
 import { resolveMaxOutputTokens } from '../../shared/contextBudget'
+import { SCHEDULE_CHANGE_TOOLS } from '../../shared/scheduleTools'
 import {
   countTranscriptImages,
   enforceImageBudget,
@@ -522,7 +523,10 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',
     'send_message',
-    'stop_session'
+    'stop_session',
+    // A valid schedule change asks every time through the router; an invalid one is refused by
+    // its handler, which saves nothing, without a card.
+    ...SCHEDULE_CHANGE_TOOLS
   ].includes(name)
 }
 

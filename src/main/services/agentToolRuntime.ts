@@ -80,6 +80,8 @@ import {
   registerSettingsToolHandlers,
   type AppSettingsToolAccess
 } from './agentSettingsToolHandlers'
+import { registerScheduleToolHandlers, type ScheduleToolAccess } from './agentScheduleToolHandlers'
+import { scheduleToolTitle } from '../../shared/scheduleTools'
 import {
   registerCredentialToolHandlers,
   type CredentialToolAccess
@@ -432,6 +434,7 @@ export class AgentToolRuntime {
   private artifactInspector?: ArtifactInspectorLike
   private appSettings?: AppSettingsToolAccess
   private credentials?: CredentialToolAccess
+  private schedules?: ScheduleToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -475,6 +478,11 @@ export class AgentToolRuntime {
     this.credentials = access
   }
 
+  /** Lets the agent list the user's schedules and, with approval each time, change them. */
+  setSchedules(access: ScheduleToolAccess): void {
+    this.schedules = access
+  }
+
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const officeSession = this.officeHelpers?.session(input.workspaceRoot)
@@ -514,6 +522,11 @@ export class AgentToolRuntime {
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
+    const scheduleTools = this.schedules
+      ? registerScheduleToolHandlers(handlers, this.schedules, {
+          permissionMode: input.permissionMode
+        })
+      : undefined
     if (this.credentials) registerCredentialToolHandlers(handlers, this.credentials)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
@@ -684,7 +697,7 @@ export class AgentToolRuntime {
         requestedAccess: (name, args, context) =>
           name === 'browser_call_webmcp_tool' && this.browser
             ? webMcpCallAccess(this.browser, browserScope(context), args, context)
-            : undefined,
+            : scheduleTools?.requestedAccess(name, args, context),
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
           return uses
@@ -794,6 +807,8 @@ export class AgentToolRuntime {
       return `Change SideKick setting ${stringArg(args, 'key')}`.trim()
     }
     if (name === SETTINGS_READ_TOOL) return 'Read SideKick settings'
+    const scheduleTitle = scheduleToolTitle(name, args)
+    if (scheduleTitle) return scheduleTitle
     if (name === PROVIDER_REQUEST_KEY_TOOL) return 'Ask for a provider key in Settings'
     if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {

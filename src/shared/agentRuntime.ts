@@ -31,7 +31,8 @@ export const AGENT_CAPABILITIES = [
   'settings',
   'sessions',
   'credentials',
-  'web.request'
+  'web.request',
+  'schedules'
 ] as const
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number]
@@ -101,6 +102,11 @@ export interface AgentApprovalPreview {
   changes: Array<{ label: string; before: string; after: string }>
   /** Plain facts about the request, such as which credential it uses and where it goes. */
   facts?: Array<{ label: string; value: string }>
+  /**
+   * Text the agent wrote that the approval would save word for word, such as a schedule's
+   * prompt, shown whole so nothing in it is approved unseen.
+   */
+  quote?: { label: string; text: string }
 }
 
 export interface AgentRunProfile {

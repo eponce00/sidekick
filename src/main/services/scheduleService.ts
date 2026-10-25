@@ -166,6 +166,14 @@ export class ScheduleService {
     return this.store.list()
   }
 
+  get(id: string): Schedule | undefined {
+    return this.store.get(id)
+  }
+
+  activeAgentCreatedCount(): number {
+    return this.store.activeAgentCreatedCount()
+  }
+
   runs(id: string): ScheduleRun[] {
     return this.store.runs(id)
   }
@@ -186,12 +194,14 @@ export class ScheduleService {
     return requested
   }
 
-  create(input: ScheduleInput): Schedule {
+  /** `createdIn` is the chat the agent created the schedule in, which the schedule is labelled with. */
+  create(input: ScheduleInput, createdIn?: { conversationId: string }): Schedule {
     const now = this.now()
     const schedule = this.store.create(
       { ...input, permissionCeiling: this.ceiling(input) },
       nextScheduleOccurrence(input, now),
-      now
+      now,
+      createdIn
     )
     this.changed()
     return schedule

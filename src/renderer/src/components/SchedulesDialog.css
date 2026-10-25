@@ -231,6 +231,12 @@
   color: var(--color-warning) !important;
 }
 
+.schedule-card-origin {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .schedule-link {
   padding: 0;
   border: 0;

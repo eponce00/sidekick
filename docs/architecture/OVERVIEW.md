@@ -420,8 +420,9 @@ cannot complete one. It reports a completion in the conversation as an app-autho
 `ScheduleService` starts saved prompts on a schedule. Each run is a new conversation started
 through the same engine request as a chat the user sends, so the kernel, permission mode, and
 chat status are unchanged; a run that needs approval waits for the user. Missed runs
-collapse into one late run, and a schedule holds one active run at a time. See
-[Scheduled runs](SCHEDULES.md).
+collapse into one late run, and a schedule holds one active run at a time. The agent can manage
+schedules through the gated tools of the `schedules` skill, each change approved by the user in
+every mode. See [Scheduled runs](SCHEDULES.md).
 
 ### Chat status
 

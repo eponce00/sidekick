@@ -329,7 +329,8 @@ const READ_ONLY_EXCLUDED: readonly AgentCapability[] = [
   'mcp',
   'browser',
   'artifacts',
-  'subagents'
+  'subagents',
+  'schedules'
 ]
 
 /**

@@ -1,5 +1,6 @@
 import type { AgentToolDefinition } from '../../shared/agentToolDefinitions'
 import {
+  gatingSkillForTool,
   getAgentToolCatalog,
   getAgentToolEntry,
   type AgentToolCatalogOptions
@@ -544,6 +545,18 @@ export function validatePreparedAgentToolCall(
   argumentSnapshotFailed = false
 ): ToolExecutionResult | null {
   const catalogEntry = getAgentToolEntry(catalog, call.name)
+  const gatingSkill = catalogEntry ? undefined : gatingSkillForTool(call.name)
+  if (gatingSkill && !catalog.activeSkillIds?.includes(gatingSkill)) {
+    // A later run sees the tool in history but not in its list until the skill loads again.
+    return toolExecutionFailed({
+      title,
+      code: 'unknown_tool',
+      message: `${call.name} arrives with the ${gatingSkill} skill, which is not loaded in this run.`,
+      recoveryAction: 'change_strategy',
+      recovery: `Call use_skill with skill_id "${gatingSkill}", then call ${call.name} again.`,
+      startedAt
+    })
+  }
   if (!catalogEntry) {
     const equivalent = otherHarnessEquivalent(call.name, toolNames(catalog))
     const required = equivalent

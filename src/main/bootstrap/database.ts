@@ -138,6 +138,13 @@ const REQUIRED_COLUMNS = [
   // Whether each run starts a new chat or continues the last run's.
   { table: 'schedules', column: 'chat_mode', definition: "TEXT NOT NULL DEFAULT 'new'" },
   { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' },
+  // Who made a schedule: the user, or the agent in a chat, which the Schedules dialog shows.
+  { table: 'schedules', column: 'created_by_kind', definition: "TEXT NOT NULL DEFAULT 'user'" },
+  {
+    table: 'schedules',
+    column: 'created_by_conversation_id',
+    definition: 'TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+  },
   // The model the chat runs with. Each chat keeps its own; the setting is only where new chats start.
   { table: 'conversations', column: 'model_id', definition: 'TEXT' }
 ] as const
@@ -161,6 +168,8 @@ const SCHEDULE_TABLES = `
     run_count INTEGER NOT NULL DEFAULT 0,
     permission_ceiling TEXT,
     chat_mode TEXT NOT NULL DEFAULT 'new',
+    created_by_kind TEXT NOT NULL DEFAULT 'user',
+    created_by_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );

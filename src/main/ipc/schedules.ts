@@ -2,7 +2,9 @@ import { BrowserWindow, ipcMain, Notification, powerMonitor } from 'electron'
 import icon from '../../../resources/icon.png?asset'
 import { normalizeDesktopNotificationBody } from '../../shared/desktopNotifications'
 import { normalizePermissionMode } from '../../shared/permissions'
+import { pinnedModelsFromProviderInstances } from '../../shared/providerInstances'
 import { validateScheduleInput } from '../../shared/schedules'
+import { resolveConversationModel } from '../services/conversationModelStore'
 import { ScheduleService, type ScheduledRunFinishedNotice } from '../services/scheduleService'
 import { ScheduleStore } from '../services/scheduleStore'
 import { createScheduledConversationLauncher } from '../services/scheduledConversationLauncher'
@@ -85,6 +87,43 @@ export function registerScheduleHandlers(): void {
     onFinished: announceFinished
   })
   const schedules = service
+  const coordinator = getAgentRuntimeCoordinator()
+  const settings = (): ProviderSettings => loadStoredSettings() as unknown as ProviderSettings
+  const enabledModels = () => pinnedModelsFromProviderInstances(settings().providerInstances ?? [])
+  coordinator.tools.setSchedules({
+    schedules,
+    models: () => enabledModels().map(({ id, name }) => ({ id, name })),
+    projects: () =>
+      db.prepare('SELECT id, name FROM projects ORDER BY name COLLATE NOCASE').all() as Array<{
+        id: string
+        name: string
+      }>,
+    chat: (conversationId) => {
+      // Families are one level deep, so a chat's starter is the only other chat to check.
+      const row = db
+        .prepare(
+          `SELECT c.project_id,
+                  c.schedule_id IS NOT NULL OR c.started_by_kind = 'schedule'
+                    OR s.schedule_id IS NOT NULL OR s.started_by_kind = 'schedule' AS scheduled
+           FROM conversations c
+           LEFT JOIN conversations s ON s.id = c.started_by_conversation_id
+           WHERE c.id = ?`
+        )
+        .get(conversationId) as { project_id: string | null; scheduled: number } | undefined
+      if (!row) return undefined
+      const model = resolveConversationModel(enabledModels(), {
+        own: coordinator.conversationModels.get(conversationId),
+        latestRun: coordinator.store.latest(conversationId),
+        defaultModelId: settings().selectedModel
+      })
+      return {
+        projectId: row.project_id,
+        modelId: model?.id ?? null,
+        startedBySchedule: row.scheduled === 1
+      }
+    },
+    settingMode: () => normalizePermissionMode(settings().commandPermissionMode)
+  })
   observeAgentRunEvents((event) => {
     if (event.type === 'run.phase' || event.type === 'run.completed') {
       schedules.agentRunChanged(event.runId, event.type === 'run.completed')
