@@ -304,6 +304,34 @@ const previewSchedules: Schedule[] = [
     runCount: 2,
     createdAt: Date.now() - 3 * 86_400_000,
     updatedAt: Date.now() - 86_400_000
+  },
+  {
+    id: 'preview-schedule-2',
+    name: 'Weekly dependency check',
+    prompt:
+      'Check this repository for outdated or vulnerable npm dependencies and list what to update. Do not change any files.',
+    projectId: 'preview-project-1',
+    modelId: 'ollama:ollama-local/qwen3:8b',
+    cadence: 'weekly',
+    hour: 10,
+    minute: 30,
+    weekday: 1,
+    catchUp: true,
+    chatMode: 'new',
+    permissionCeiling: 'always-ask',
+    enabled: true,
+    nextRunAt: nextScheduleOccurrence(
+      { cadence: 'weekly', hour: 10, minute: 30, weekday: 1 },
+      Date.now()
+    ),
+    runCount: 0,
+    createdBy: {
+      kind: 'agent',
+      conversationId: 'preview-3',
+      conversationTitle: 'Build release checklist'
+    },
+    createdAt: Date.now() - 3_600_000,
+    updatedAt: Date.now() - 3_600_000
   }
 ]
 

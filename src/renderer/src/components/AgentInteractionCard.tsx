@@ -135,11 +135,18 @@ function approvalPreview(value: unknown): AgentApprovalPreview | null {
   const facts = (Array.isArray(preview.facts) ? preview.facts : [])
     .filter((fact) => fact && typeof fact.label === 'string' && typeof fact.value === 'string')
     .slice(0, 10)
-  if (!changes.length && !facts.length) return null
+  const quote =
+    preview.quote &&
+    typeof preview.quote.label === 'string' &&
+    typeof preview.quote.text === 'string'
+      ? { label: preview.quote.label.slice(0, 120), text: preview.quote.text.slice(0, 20_000) }
+      : null
+  if (!changes.length && !facts.length && !quote) return null
   return {
     ...(typeof preview.summary === 'string' ? { summary: preview.summary.slice(0, 600) } : {}),
     changes,
-    ...(facts.length ? { facts } : {})
+    ...(facts.length ? { facts } : {}),
+    ...(quote ? { quote } : {})
   }
 }
 
@@ -368,6 +375,13 @@ export default function AgentInteractionCard({
                 </div>
               ))}
             </dl>
+            {preview.quote && (
+              // Shown whole, and set apart as the agent's words, so none of it is approved unread.
+              <figure className="agent-interaction-quote">
+                <figcaption>{preview.quote.label}</figcaption>
+                <blockquote tabIndex={0}>{preview.quote.text}</blockquote>
+              </figure>
+            )}
           </div>
         )}
         {detail && pending && !resolving && (

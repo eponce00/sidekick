@@ -30,6 +30,35 @@ Each schedule shows its next run, its last run, and what it is doing now. From i
 outcome; each run that started has a chat you can open, and the chats it started are listed
 under it with their state. Deleting a schedule keeps the chats it created.
 
+## Asking the agent
+
+You can also ask SideKick in a chat, for example "every weekday at 9, check the build and tell me
+what failed". The agent loads its Schedules skill, which lets it list your schedules with their
+recent runs and create, change, pause, resume, or delete them. It writes a prompt that stands on its
+own, since each run starts without this chat, and it asks you when the time or the project is not
+clear. Unless you say otherwise, a new schedule uses this chat's project, model, and permission mode,
+and starts a new chat for each run.
+
+Every create, change, pause, resume, and delete asks you first, whatever your
+[permission mode](PERMISSIONS.md), even Full access. The card shows exactly what will be saved:
+the name, the whole prompt as the agent wrote it, the project, the model, how often it repeats and
+when it runs next, whether each run starts a new chat or continues the last one, and what runs may
+do without asking. A change also shows what it changes from. Nothing is saved until you choose
+**Allow once**; if you deny it, the agent is told nothing was saved. **Allow for this chat** is not
+offered.
+
+The agent is held to a few limits:
+
+- A schedule it saves may never do more without asking than the chat that asked for it. In a chat
+  that asks for sensitive actions, its schedules ask at least as often.
+- A scheduled run, and the chats it starts, cannot create schedules, and can only pause or delete
+  them.
+- At most ten schedules the agent made can be active at once. It asks you to pause or delete one,
+  or to create the new one here yourself, when the limit is reached.
+
+A schedule the agent made says so in **Schedules**, with a link to the chat it was asked in. Pause
+or delete it from its row like any other.
+
 ## Chats in the sidebar
 
 A schedule's chats are grouped into one sidebar row with the schedule's name and how many runs

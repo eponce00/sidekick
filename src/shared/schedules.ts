@@ -60,8 +60,19 @@ export interface Schedule extends ScheduleInput {
   runCount: number
   /** The run still working or waiting for the user, if any. */
   activeRun?: { conversationId: string; agentRunId: string; phase: AgentRunPhase }
+  /**
+   * Set when SideKick's agent created the schedule, with the chat it was asked in. The chat is
+   * null once it was deleted.
+   */
+  createdBy?: ScheduleCreator
   createdAt: number
   updatedAt: number
+}
+
+export interface ScheduleCreator {
+  kind: 'agent'
+  conversationId: string | null
+  conversationTitle?: string
 }
 
 /** Phases in which a run still holds its schedule's one chat at a time. */
@@ -127,6 +138,11 @@ export interface SchedulesAPI {
 }
 
 export const SCHEDULE_NAME_MAX_LENGTH = 120
+/**
+ * Schedules the agent created that may be active at once. Each one starts chats on its own, so
+ * the agent cannot fill the computer with them; the user can always add more themselves.
+ */
+export const AGENT_ACTIVE_SCHEDULE_LIMIT = 10
 export const SCHEDULE_PROMPT_MAX_LENGTH = 20_000
 
 /**

@@ -412,6 +412,23 @@ function ScheduleCard({
             )}
             {schedule.lastRunAt ? ` · Last run ${formatScheduleTime(schedule.lastRunAt)}` : ''}
           </span>
+          {schedule.createdBy && (
+            // The agent made it, so say in which chat; pausing and deleting are on this row.
+            <span className="schedule-card-origin">
+              Made by the agent in{' '}
+              {schedule.createdBy.conversationId ? (
+                <button
+                  type="button"
+                  className="schedule-link"
+                  onClick={() => onOpenConversation(schedule.createdBy!.conversationId!)}
+                >
+                  {schedule.createdBy.conversationTitle || 'its chat'}
+                </button>
+              ) : (
+                'a chat that was deleted'
+              )}
+            </span>
+          )}
           {schedule.pausedReason && (
             <span className="schedule-card-warning">{schedule.pausedReason}</span>
           )}

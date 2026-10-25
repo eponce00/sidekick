@@ -107,12 +107,17 @@ shell and everything it started; quitting SideKick ends them all.
   open the row while it works to see each version. When there is nothing to review, because the
   artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
   appears as the agent made it.
+- The Schedules skill adds `schedules_list`, `schedules_create`, `schedules_update`, and
+  `schedules_delete` to the run that loads it, and only then, so other runs carry none of them. A
+  later run that calls one first is told to load the skill. Listing changes nothing; every create,
+  change, pause, resume, and delete asks you first, even in Full access. See
+  [Asking the agent](SCHEDULES.md#asking-the-agent).
 - User-configured MCP servers add their advertised tools after schema normalization.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
-mutations, MCP, artifacts, starting or messaging other chats, and child agents remain unavailable even when the
-global policy is Full access.
+mutations, MCP, artifacts, schedules, starting or messaging other chats, and child agents remain
+unavailable even when the global policy is Full access.
 
 ## Execution guarantees
 

@@ -768,7 +768,8 @@ describe('chat tools', () => {
         'mcp',
         'browser',
         'artifacts',
-        'subagents'
+        'subagents',
+        'schedules'
       ].sort()
     )
     const tools = getAgentToolDefinitions({
