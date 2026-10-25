@@ -311,18 +311,6 @@
   max-height: calc(100vh - 150px);
   transform-origin: top right;
 }
-.browser-workspace-menu .app-menu-item {
-  width: 100%;
-  height: auto;
-  border-radius: var(--radius-sm);
-  font: inherit;
-  text-align: left;
-}
-.browser-workspace-menu .app-menu-item:focus-visible {
-  box-shadow: none;
-  color: var(--text-primary);
-  background: var(--surface-3);
-}
 .browser-workspace-menu-back {
   color: var(--text-primary);
   font-weight: 600;

@@ -20,19 +20,10 @@
   font-size: var(--text-sm);
 }
 
+/* A fact about the folder, not a state: grey like the text beside it. */
 .workspace-bar-icon {
   flex: none;
-  color: var(--accent);
-}
-
-.workspace-bar-branch {
-  overflow: hidden;
-  max-width: 320px;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--text-muted);
 }
 
 .workspace-bar-muted {
@@ -44,22 +35,9 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-weight: 600;
-  letter-spacing: 0.02em;
 }
 
-.workspace-bar-link {
-  all: unset;
-  margin-left: auto;
-  color: var(--accent);
-  font-size: var(--text-xs);
-  cursor: pointer;
-}
-
-.workspace-bar-link:hover {
-  text-decoration: underline;
-}
-
-.workspace-bar-link:focus-visible,
+/* Every control in the bar is 28px: the segments, the base branch and the settings button. */
 .workspace-bar-icon-button:focus-visible,
 .workspace-bar-segments button:focus-visible {
   outline: none;
@@ -68,8 +46,8 @@
 
 .workspace-bar-segments {
   display: inline-flex;
+  gap: 2px;
   padding: 2px;
-  border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
 }
@@ -77,11 +55,12 @@
 .workspace-bar-segments button {
   all: unset;
   display: inline-flex;
+  min-height: 24px;
   align-items: center;
   gap: 5px;
-  padding: 3px 9px;
-  border-radius: calc(var(--radius-sm) - 2px);
-  color: var(--text-muted);
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-xs);
+  color: var(--text-secondary);
   font-size: var(--text-xs);
   cursor: pointer;
 }
@@ -93,7 +72,7 @@
 .workspace-bar-segments button.is-selected {
   color: var(--text-primary);
   background: var(--surface-4);
-  box-shadow: 0 0 0 1px var(--border-strong);
+  font-weight: 500;
 }
 
 .workspace-bar-segments button:disabled {
@@ -107,39 +86,19 @@
   gap: 5px;
 }
 
-.workspace-bar-field input,
-.workspace-bar-field :is(select, .ui-select) {
-  height: 24px;
-  padding: 0 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  background: var(--input-bg);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-.workspace-bar-field input {
-  width: 220px;
-}
-
-.workspace-bar-field :is(select, .ui-select) {
+.workspace-bar-field .ui-select {
+  height: 28px;
   max-width: 180px;
-  font-family: var(--font-sans);
-}
-
-.workspace-bar-field input:focus,
-.workspace-bar-field :is(select, .ui-select):focus {
-  border-color: var(--accent);
-  outline: none;
+  padding: 0 var(--space-3);
+  font-size: var(--text-xs);
 }
 
 .workspace-bar-icon-button {
   all: unset;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   margin-left: auto;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
