@@ -40,12 +40,15 @@ import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
 import type { ProviderImageProfile } from '../../../shared/imagePreparation'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel,
   shouldAttachPastedText,
+  type BrowserAnnotationAttachment,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
@@ -145,6 +148,9 @@ interface ChatInputProps {
   /** What the selected model accepts, so an image's chip can say it will get a smaller copy. */
   imageSendProfile?: ProviderImageProfile
   attachedContext: MessageContextAttachment[]
+  /** Places marked in the Browser panel, which go with the next message. */
+  browserMarks?: BrowserAnnotationAttachment[]
+  onRemoveBrowserMark?: (id: string) => void
   attachmentError: string | null
   visionAvailable: boolean
   visionUnavailableReason?: string
@@ -237,6 +243,8 @@ export function ChatInput({
   attachedImages,
   imageSendProfile,
   attachedContext,
+  browserMarks = [],
+  onRemoveBrowserMark,
   attachmentError,
   visionAvailable,
   visionUnavailableReason,
@@ -920,8 +928,19 @@ export function ChatInput({
             : undefined
       }
       attachmentTray={
-        attachedImages.length || attachedContext.length || attachmentError ? (
+        attachedImages.length ||
+        attachedContext.length ||
+        browserMarks.length ||
+        attachmentError ? (
           <div className="composer-attachments" aria-label="Message attachments">
+            {browserMarks.map((mark) => (
+              <BrowserMarkChip
+                key={mark.id}
+                mark={mark}
+                className="composer-context-attachment"
+                onRemove={onRemoveBrowserMark && (() => onRemoveBrowserMark(mark.id))}
+              />
+            ))}
             {attachedContext.map((attachment) =>
               isPastedTextAttachment(attachment) ? (
                 <PastedTextAttachmentCard
@@ -949,6 +968,14 @@ export function ChatInput({
                     <X size={11} />
                   </button>
                 </div>
+              ) : isBrowserAnnotationAttachment(attachment) ? (
+                // A message being edited keeps the marks it was sent with.
+                <BrowserMarkChip
+                  key={attachment.id}
+                  mark={attachment}
+                  className="composer-context-attachment"
+                  onRemove={() => onRemoveContextAttachment(attachment.id)}
+                />
               ) : (
                 <div
                   className="composer-context-attachment"
@@ -1000,7 +1027,10 @@ export function ChatInput({
         <ScrollToBottomButton visible={showScrollToBottom} onClick={onScrollToBottom} />
       }
       sendDisabled={
-        (!inputValue.trim() && !attachedImages.length && !attachedContext.length) ||
+        (!inputValue.trim() &&
+          !attachedImages.length &&
+          !attachedContext.length &&
+          !browserMarks.length) ||
         Boolean(commandMatch) ||
         isStopping
       }

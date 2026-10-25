@@ -182,6 +182,25 @@ const api = {
   agentRuns: {
     browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
       ipcRenderer.invoke('agentRuns:browserWorkspace', input),
+    browserAnnotations: (
+      input:
+        | { conversationId: string; action: 'list' }
+        | {
+            conversationId: string
+            action: 'take'
+            ids: string[]
+          }
+    ) => ipcRenderer.invoke('agentRuns:browserAnnotations', input),
+    onBrowserAnnotationsChanged: (
+      callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/browserWorkspace').BrowserAnnotationsChange
+      ): void => callback(change)
+      ipcRenderer.on('agentRuns:browserAnnotationsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:browserAnnotationsChanged', listener)
+    },
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),

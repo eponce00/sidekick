@@ -1660,6 +1660,24 @@ export class NativeBrowserSessionService {
     }
   }
 
+  /**
+   * The active tab, for the marks the user makes on it in the Browser panel. They are read over
+   * the protocol only, never by running script in the page, and outside the session's action
+   * queue: reading does not change the page, and the user may mark it while the agent works.
+   */
+  annotationPage(sessionId: string): import('./browserAnnotations').BrowserAnnotationPage {
+    const session = this.getSession(sessionId)
+    const tab = this.getTab(session)
+    return {
+      tabId: tab.id,
+      webContentsId: tab.surface.webContentsId,
+      url: this.tabUrl(tab),
+      title: tab.surface.getTitle(),
+      send: (method, params) => tab.surface.sendDebuggerCommand(method, params),
+      secretShownAsText: () => this.secretShownAsText(tab)
+    }
+  }
+
   refreshAfterUserInput(sessionId: string): void {
     const session = this.getSession(sessionId)
     for (const tab of session.tabs.values()) this.invalidateSemanticRefs(tab)

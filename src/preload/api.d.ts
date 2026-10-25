@@ -152,6 +152,19 @@ interface AgentRunsAPI {
   browserWorkspace: (
     input: import('../shared/browserWorkspace').BrowserWorkspaceRequest
   ) => Promise<import('../shared/browserWorkspace').BrowserWorkspaceState | null>
+  /** The marks made on this conversation's pages; `take` hands them to a message being sent. */
+  browserAnnotations: (
+    input:
+      | { conversationId: string; action: 'list' }
+      | {
+          conversationId: string
+          action: 'take'
+          ids: string[]
+        }
+  ) => Promise<import('../shared/messageContextAttachments').BrowserAnnotationAttachment[]>
+  onBrowserAnnotationsChanged: (
+    callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+  ) => () => void
   startConversation: (
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>

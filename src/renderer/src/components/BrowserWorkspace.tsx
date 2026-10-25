@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,7 +9,8 @@ import {
   MonitorSmartphone,
   Pause,
   Plug,
-  ChevronRight
+  ChevronRight,
+  MessageSquarePlus
 } from 'lucide-react'
 import type {
   BrowserWorkspaceRequest,
@@ -17,6 +18,16 @@ import type {
 } from '../../../shared/browserWorkspace'
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 import { webMcpSite } from '../../../shared/webMcp'
+import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../../shared/messageContextAttachments'
+import './BrowserMarkChip.css'
+
+/** The app's accent and the text it carries, so marks drawn over the page match the app. */
+function accentColors(): { accent?: string; accentText?: string } {
+  const style = getComputedStyle(document.documentElement)
+  const accent = style.getPropertyValue('--accent').trim()
+  const accentText = style.getPropertyValue('--on-accent').trim()
+  return { ...(accent ? { accent } : {}), ...(accentText ? { accentText } : {}) }
+}
 
 export function BrowserWorkspace({
   conversationId
@@ -40,6 +51,12 @@ export function BrowserWorkspace({
   const toolsPopover = useRef<HTMLElement>(null)
   const pageTools = state?.pageTools?.tools.length ? state.pageTools : null
   const toolsOrigin = pageTools?.origin ?? null
+  const annotating = Boolean(state?.annotating)
+  const marks = useMemo(() => state?.annotations ?? [], [state?.annotations])
+  // Notes as typed; each is saved when its field is left or Enter is pressed.
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const noteFields = useRef(new Map<string, HTMLInputElement>())
+  const [focusMark, setFocusMark] = useState<string | null>(null)
 
   // Another site, or a page without tools, starts with the popover closed.
   useEffect(() => {
@@ -165,6 +182,44 @@ export function BrowserWorkspace({
       void window.api.agentRuns.browserWorkspace({ conversationId, action: 'unmount' })
     }
   }, [conversationId, refresh])
+
+  // A mark just made gets its note field; the main process reports errors from the page here.
+  useEffect(
+    () =>
+      window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
+        if (change.conversationId !== conversationId) return
+        if (change.error) setError(change.error)
+        if (change.focus) setFocusMark(change.focus)
+        void window.api.agentRuns
+          .browserWorkspace({ conversationId, action: 'state' })
+          .then((result) => result && setState(result))
+          .catch(() => undefined)
+      }),
+    [conversationId]
+  )
+
+  useEffect(() => {
+    if (!focusMark) return
+    const field = noteFields.current.get(focusMark)
+    if (!field) return
+    field.focus()
+    setFocusMark(null)
+  }, [focusMark, marks])
+
+  // Escape leaves a field without keeping what was typed in it.
+  const discarding = useRef<string | null>(null)
+  const saveNote = (id: string): void => {
+    const note = notes[id]
+    const discard = discarding.current === id
+    discarding.current = null
+    setNotes(({ [id]: _saved, ...rest }) => rest)
+    const mark = marks.find((candidate) => candidate.id === id)
+    if (discard || note === undefined || !mark || note === mark.note) return
+    void window.api.agentRuns
+      .browserWorkspace({ conversationId, action: 'annotationNote', annotationId: id, note })
+      .then((result) => result && setState(result))
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }
 
   const act = async (
     action: BrowserWorkspaceRequest['action'],
@@ -337,6 +392,24 @@ export function BrowserWorkspace({
         </div>
         <button
           type="button"
+          className="browser-workspace-annotate"
+          aria-pressed={annotating}
+          aria-label={
+            marks.length ? `Annotate the page, ${marks.length} marked` : 'Annotate the page'
+          }
+          disabled={!state}
+          title={
+            annotating
+              ? 'Stop annotating (Esc). Your marks stay until you send them.'
+              : 'Annotate: click an element or drag over an area, and write a note for the agent'
+          }
+          onClick={() => void act('annotate', { annotate: !annotating, ...accentColors() })}
+        >
+          <MessageSquarePlus size={15} aria-hidden="true" />
+          {marks.length > 0 && <span>{marks.length}</span>}
+        </button>
+        <button
+          type="button"
           className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
           aria-label="Device size"
           disabled={!state || pending || state.busy}
@@ -392,7 +465,11 @@ export function BrowserWorkspace({
           {error || layoutError}
         </div>
       )}
-      <div ref={viewport} className="browser-workspace-viewport" aria-label="Live browser page">
+      <div
+        ref={viewport}
+        className={`browser-workspace-viewport${annotating ? ' is-annotating' : ''}`}
+        aria-label="Live browser page"
+      >
         {snapshot && (
           <img className="browser-workspace-snapshot" src={snapshot} alt="" aria-hidden="true" />
         )}
@@ -402,6 +479,62 @@ export function BrowserWorkspace({
           </p>
         )}
       </div>
+      {(annotating || marks.length > 0) && (
+        // Below the page, never over it: the page is drawn above the app.
+        <section className="browser-workspace-annotations" aria-label="Marks for your next message">
+          <p className="browser-workspace-annotations-hint">
+            {annotating
+              ? 'Click an element, or drag over an area, then write what should change. Esc stops.'
+              : 'These marks go with your next message.'}
+          </p>
+          {marks.length > 0 && (
+            <ol>
+              {marks.map((mark) => (
+                <li key={mark.id} className={mark.onPage ? undefined : 'is-elsewhere'}>
+                  <span className="browser-mark-number" aria-hidden="true">
+                    {mark.number}
+                  </span>
+                  <span className="browser-workspace-annotation-name" title={mark.name}>
+                    {mark.name}
+                  </span>
+                  <input
+                    ref={(field) => {
+                      if (field) noteFields.current.set(mark.id, field)
+                      else noteFields.current.delete(mark.id)
+                    }}
+                    aria-label={`Note for mark ${mark.number}, ${mark.name}`}
+                    placeholder="What should change here?"
+                    maxLength={MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS}
+                    value={notes[mark.id] ?? mark.note}
+                    onChange={(event) =>
+                      setNotes((previous) => ({ ...previous, [mark.id]: event.target.value }))
+                    }
+                    onBlur={() => saveNote(mark.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        event.currentTarget.blur()
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault()
+                        discarding.current = mark.id
+                        event.currentTarget.blur()
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    aria-label={`Remove mark ${mark.number}, ${mark.name}`}
+                    title="Remove this mark"
+                    onClick={() => void act('annotationRemove', { annotationId: mark.id })}
+                  >
+                    <X size={13} />
+                  </button>
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
     </div>
   )
 }

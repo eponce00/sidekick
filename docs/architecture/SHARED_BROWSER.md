@@ -47,6 +47,50 @@ Resuming invalidates semantic refs. A human check is cleared the same way: `brow
 holds the session, marks the run `awaiting_user`, opens the panel on the page, and polls until the
 check is gone, with no card. Useful pages remain available across turns.
 
+## Annotations
+
+The user marks places on a page for the agent, as in the Codex in-app browser's annotation mode,
+Cursor's element picker and Claude Code's preview element selection: a toolbar toggle, click an
+element or drag an area, a note per mark, numbered marks that go with the next message.
+[The user guide](../user-guide/BROWSER.md#pointing-at-the-page) describes the behavior.
+
+The page is untrusted, so nothing about a mark involves the page's own JavaScript:
+
+- **Input and drawing.** While annotating, `browserAnnotationOverlay.ts` raises a transparent
+  WebContentsView of SideKick's own over the page view, at its exact bounds, like the agent's
+  cursor view. Its document only draws: the main process reads its mouse and keys from Chromium's
+  `before-mouse-event` and `before-input-event`, and sends it what to draw with labels set as text.
+  The page receives no events while it is covered; the wheel is replayed to the page as the user's
+  own input, subject to the same user-control check as a click.
+- **Facts.** `browserAnnotationCapture.ts` uses CDP only. `DOM.getNodeForLocation` finds what a
+  click would reach, so a layer with `pointer-events: none` cannot take the mark;
+  `DOM.getDocument` with `pierce` gives the tree through shadow roots and same-process frames for
+  the selector (`>>` enters a shadow root or frame) and the text; `Accessibility.getPartialAXTree`
+  gives the role and name. No `value` is read, from the accessibility tree or the DOM. Text skips
+  fields, lists, editable areas, hidden elements and scripts, and a name built from content that
+  holds a field falls back to the element's `aria-label`.
+- **Picture.** `Page.captureScreenshot` with a clip around the mark, in CSS pixels at twice their
+  size (the clip's scale is divided by the device pixel ratio Chromium multiplies it by). Before it
+  leaves the function, every text field, list, editable area, and frame or plugin whose document
+  is in another process is covered, and the mark is outlined, in greys only so the bitmap's channel
+  order does not matter. No picture is taken while a stored sign-in's password shows as text.
+
+`BrowserAnnotationController` keeps marks per conversation in the main process only, numbered in
+order and renumbered when one is removed, at most `MAX_BROWSER_ANNOTATIONS`. Element marks follow
+their node's box as the page changes; area marks are kept in document coordinates. A mark whose
+tab changed while it was read is dropped. The panel gets them without pictures in its workspace
+state; `agentRuns:browserAnnotations` lists them for the composer and hands them over (`take`)
+when a message is sent, and `agentRuns:browserAnnotationsChanged` tells the window to refresh and
+which note field to focus.
+
+A sent mark is a `browser` message context attachment (`src/shared/messageContextAttachments.ts`),
+validated with the rest, its picture checked to be the PNG or JPEG it claims. `providerMessage`
+appends the pictures after the message's own images, so every provider receives them as image
+input under its usual image budget, and adds a `<sidekick_browser_annotations>` block that marks
+the note as the user's and everything else as page data, with page strings quoted on one line and
+closing tags broken up. A model without vision gets the block without pictures. The phone receives
+the marks without their pictures, which come with the message's reduced images.
+
 ## Verification
 
 - Real Electron: mount the original page into an app window, agent types, native input edits,

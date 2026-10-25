@@ -1,6 +1,7 @@
 import type { ConversationRunMode, PromptAdmissionsResult } from './agentRunApi'
 import type { AgentRunEvent, AgentRunPhase, AgentRunSnapshot } from './agentRuntime'
 import type { ReasoningLevel } from './reasoning'
+import type { BrowserAnnotationAttachment } from './messageContextAttachments'
 
 /** A phone the user approved. */
 export interface CompanionDevice {
@@ -49,7 +50,7 @@ export interface CompanionChat {
 
 /**
  * A saved message as the phone shows it. Its images are sent reduced, small enough for a phone;
- * its attachments by name and kind only.
+ * its attachments by name and kind only, except marks on browser pages.
  */
 export interface CompanionMessage {
   id: string
@@ -60,7 +61,10 @@ export interface CompanionMessage {
   runMode?: ConversationRunMode
   segments?: unknown[]
   images?: CompanionImage[]
-  attachments?: Array<{ id: string; kind: string; name: string }>
+  /** A place marked on a browser page comes with its note; its picture is among the images. */
+  attachments?: Array<
+    { id: string; kind: string; name: string } | Omit<BrowserAnnotationAttachment, 'image'>
+  >
   /** What the reply used: tokens, time and cost, for its footer. */
   tokenUsage?: Record<string, unknown>
 }

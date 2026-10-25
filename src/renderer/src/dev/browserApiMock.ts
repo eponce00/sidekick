@@ -1057,6 +1057,8 @@ export function installBrowserApiMock(): void {
           : []
       },
       browserWorkspace: async () => null,
+      browserAnnotations: async () => [],
+      onBrowserAnnotationsChanged: () => () => undefined,
       startConversation: async (input) => ({
         run: {
           id: input.id,

@@ -46,6 +46,39 @@ pause the agent. Right-click offers native text editing actions.
 
 The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
+## Pointing at the page
+
+To show the agent what you mean, choose **Annotate** (the speech-bubble button beside the address
+bar). The pointer becomes a crosshair and the element under it is outlined with its tag. Click an
+element, or drag over an area, and write what should change in the note field that opens under the
+page; Enter keeps the note, Escape leaves it as it was. Each mark is numbered on the page and listed
+under it, where you can change its note or remove it. Press Escape on the page, or choose
+**Annotate** again, to stop marking. The wheel still scrolls the page while you mark, except
+during an agent's action on it, like the rest of your input. Marking works the same on a page you
+opened and on one the agent is using, even while the agent works.
+
+Your marks appear as numbered chips above the message box and go with your next message, up to
+eight at a time. Each one tells the agent:
+
+- your note;
+- the page's address and title;
+- for an element, its role and accessible name as the browser reports them, a CSS selector, the text
+  it shows, and where it is; for an area, where it is and the element at its centre;
+- a picture of what you saw around the mark, with the mark outlined.
+
+A model that can see images gets the pictures as images; a model that cannot gets everything else.
+Many models take only a few images per request: the first marks' pictures are kept and the agent is
+told the rest were left out. The sent message shows the marks and their pictures, on
+[your phone](PHONE.md) too. Marks you have not sent stay until you close SideKick.
+
+The page cannot tell you are marking it: the outline and numbers are drawn by SideKick over the
+page, and nothing runs in the page to read the marks. What you type into the page is never sent:
+text from fields, lists and editable areas is left out, and in the picture those, and frames from
+other sites, are covered with grey stripes, so a marked field shows as grey. No picture is taken
+while a password a stored sign-in filled in is shown as plain text. A user name or password in the
+page's address is removed. What the page says about itself, such as its title, an element's name and
+its text, reaches the agent marked as the page's content, never as your words.
+
 ## Tools that websites offer
 
 Some websites offer tools to in-browser agents through

@@ -44,11 +44,13 @@ import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { ReadAloudButton } from './ReadAloudButton'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import type { Message } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import {
@@ -911,15 +913,44 @@ function MessageItemInner({
             ))}
           </div>
         )}
-        {Boolean(msg.images?.length) && (
+        {Boolean(msg.attachments?.some(isBrowserAnnotationAttachment)) && (
+          <div className="message-context-attachments" aria-label="Places marked on pages">
+            {msg.attachments!.filter(isBrowserAnnotationAttachment).map((attachment) => (
+              <BrowserMarkChip
+                key={attachment.id}
+                mark={attachment}
+                className="message-browser-mark"
+              />
+            ))}
+          </div>
+        )}
+        {Boolean(
+          msg.images?.length ||
+          msg.attachments?.some((a) => isBrowserAnnotationAttachment(a) && a.image)
+        ) && (
           <div className="message-image-attachments" aria-label="Attached images">
-            {msg.images!.map((image) => (
+            {msg.images?.map((image) => (
               <ImageAttachmentPreview
                 key={image.id}
                 image={image}
                 className="message-image-preview"
               />
             ))}
+            {/* The pictures of the marks, in the order the model sees them, after the images. */}
+            {msg.attachments?.filter(isBrowserAnnotationAttachment).map((mark) =>
+              mark.image ? (
+                <ImageAttachmentPreview
+                  key={mark.id}
+                  image={{
+                    id: mark.id,
+                    name: `Mark ${mark.number}: ${mark.name}`,
+                    mimeType: mark.image.mimeType,
+                    dataUrl: mark.image.dataUrl
+                  }}
+                  className="message-image-preview"
+                />
+              ) : null
+            )}
           </div>
         )}
         {msg.role === 'system' ? (
