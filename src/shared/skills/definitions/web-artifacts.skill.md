@@ -94,6 +94,9 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
   Put state logic, effects, timers, game loops and event handlers in a custom hook (for example
   `const game = useSnakeGame()`) and in components defined after App, so the layout appears early
   and each part fills in as its code arrives.
+- Keep it compact, a few hundred lines: build repeated elements (grid cells, rooms, rows, days)
+  from arrays with `map` and compute data rather than writing every value out. An artifact too
+  long for one reply is cut off and lost.
 - TypeScript annotations are fine; they are removed before the code runs.
 - Tailwind is available through `className`; no import is needed. `font-sans`, `font-mono` and a
   bare `border` already use the app's font and border color. Theme colors as classes:
