@@ -2550,8 +2550,7 @@ describe('AgentRunKernel', () => {
     catalog = {
       surface: 'subagent',
       webSearchEnabled: false,
-      capabilities: ['artifacts'],
-      artifactBuilder: true
+      capabilities: ['artifacts']
     }
     const sampler = sequence(
       sampledTurn({

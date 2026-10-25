@@ -520,7 +520,7 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
-    // Offered only to an artifact's builder, whose card the chat does not show to ask from.
+    // Changes an artifact in place, as create_artifact makes one; a builder's card is not shown.
     'edit_artifact',
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',

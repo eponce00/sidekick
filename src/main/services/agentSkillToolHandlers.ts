@@ -21,9 +21,7 @@ export function artifactToolResult(
   inspection: ArtifactInspection | undefined,
   visionEnabled: boolean,
   /** A builder has already reviewed and fixed it, so the model is not asked to. */
-  reviewed = false,
-  /** How the model fixes it: a builder edits the version in place. */
-  revise: 'create_artifact' | 'edit_artifact' = 'create_artifact'
+  reviewed = false
 ): ToolExecutionResult {
   const name = `Artifact "${artifact.title || 'Untitled'}"`
   const warnings = inspection?.warnings ?? []
@@ -64,7 +62,7 @@ export function artifactToolResult(
   const look = media
     ? reviewed
       ? 'A screenshot of it as the user sees it is attached.'
-      : `A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with ${revise}.`
+      : `A screenshot of it as the user sees it is attached. Check it shows what was asked for, including any data it loads; if it is blank, broken, or wrong, fix it with edit_artifact.`
     : 'No screenshot was attached because this model does not take images, so how it looks is unverified.'
   const fold = inspection.chatFrameHeight
     ? ` It is taller than the ${inspection.chatFrameHeight}px an artifact grows to in the chat: the user first sees its top ${inspection.chatFrameHeight}px, scrolls inside it or opens it full screen for the rest.${media ? ' The screenshot shows that top part.' : ''}`
@@ -89,7 +87,7 @@ export function artifactToolResult(
     ? `\nErrors:\n${inspection.errors.map((error) => `- ${error}`).join('\n')}`
     : ''
   const recovery =
-    `${revise === 'edit_artifact' ? 'Fix it with edit_artifact, replacing only the code that has to change.' : 'Fix the code and call create_artifact again with the complete code.'} ${media ? 'A screenshot of the failure is attached.' : ''}`.trim()
+    `Fix it with edit_artifact, replacing only the code that has to change. ${media ? 'A screenshot of the failure is attached.' : ''}`.trim()
   return toolExecutionFailed({
     title,
     code: 'command_failed',
@@ -127,8 +125,14 @@ export function withArtifactBuild(
   return {
     ...final,
     data: { ...data, childRunId: built.childRunId, versions: built.versions },
-    modelContent: `${final.modelContent}\n${review} It is finished: do not rebuild it to polish it; call create_artifact again only to change what the user asked for.${code}`
+    modelContent: `${final.modelContent}\n${review} It is finished: do not rebuild it to polish it; change it with edit_artifact only for what the user asks.${code}`
   }
+}
+
+export interface ArtifactVersion {
+  type: InspectedArtifactType
+  title: string
+  code: string
 }
 
 /**
@@ -152,12 +156,28 @@ export function registerSkillToolHandlers(
     artifactContinuation?: boolean
     /** Refine each artifact in a builder run rather than in the conversation. */
     buildArtifacts?: boolean
-    /** This run is an artifact's builder, starting from this version; it may edit it in place. */
-    builderArtifact?: { type: InspectedArtifactType; title: string; code: string }
+    /** This run is an artifact's builder, starting from this version; its edits apply to it. */
+    builderArtifact?: ArtifactVersion
+    /** The current version of each artifact earlier replies made, by title, oldest first. */
+    conversationArtifacts?: () => ReadonlyMap<string, ArtifactVersion>
   }
 ): void {
   // The version a builder's next edit applies to: the last one it made, or the agent's.
   let builderVersion = options.builderArtifact
+  // The latest version of each artifact this run made or changed, by title.
+  const runVersions = new Map<string, ArtifactVersion>()
+  const remember = (version: ArtifactVersion): void => {
+    if (builderVersion) builderVersion = version
+    runVersions.delete(version.title)
+    runVersions.set(version.title, version)
+  }
+  /** The artifact an edit names, or with no name the latest one, made here or earlier. */
+  const currentArtifact = (named: string): ArtifactVersion | undefined => {
+    if (builderVersion) return builderVersion
+    const earlier = options.conversationArtifacts?.() ?? new Map<string, ArtifactVersion>()
+    if (named) return runVersions.get(named) ?? earlier.get(named)
+    return [...runVersions.values()].at(-1) ?? [...earlier.values()].at(-1)
+  }
   const inspectWith = (
     candidate: { type: InspectedArtifactType; title: string; code: string },
     signal: AbortSignal | undefined,
@@ -211,7 +231,7 @@ export function registerSkillToolHandlers(
         // Say what loading changed: the model otherwise treated a reload as
         // instructions only and never looked for the tool it had just gained.
         (skillToolNames(skill.id).length
-          ? `Loaded. ${skillToolNames(skill.id).join(', ')} is ready to use in this run.\n`
+          ? `Loaded. ${skillToolNames(skill.id).join(' and ')} ${skillToolNames(skill.id).length > 1 ? 'are' : 'is'} ready to use in this run.\n`
           : '') +
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n` +
         `${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n` +
@@ -237,16 +257,9 @@ export function registerSkillToolHandlers(
     }
     const inspect = (candidate: typeof artifact): Promise<ArtifactInspection | undefined> =>
       inspectWith(candidate, context.signal)
-    if (builderVersion) builderVersion = artifact
+    remember(artifact)
     const inspection = await inspect(artifact)
-    let result = artifactToolResult(
-      title,
-      artifact,
-      inspection,
-      options.visionEnabled === true,
-      false,
-      options.builderArtifact ? 'edit_artifact' : 'create_artifact'
-    )
+    let result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
     // In a chat, the review-and-fix loop runs in a builder the chat does not
     // show, so the conversation gets one artifact, not every attempt at it.
     // Without a render, or with nothing wrong and no screenshot to judge, there
@@ -269,6 +282,7 @@ export function registerSkillToolHandlers(
           true
         )
         result = withArtifactBuild(final, built, changed)
+        remember(built.artifact)
       } catch (error) {
         context.signal?.throwIfAborted()
         console.warn('[create_artifact] The builder failed; keeping the first version:', error)
@@ -279,51 +293,59 @@ export function registerSkillToolHandlers(
     return {
       ...result,
       modelContent:
-        `${result.modelContent}\n\nThis artifact was made before the web-artifacts guidance was loaded. Check it against the guidance below and revise it with create_artifact if it does not follow it.\n` +
+        `${result.modelContent}\n\nThis artifact was made before the web-artifacts guidance was loaded. Check it against the guidance below and revise it with edit_artifact if it does not follow it.\n` +
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n</skill_instructions>`
     }
   })
 
-  if (options.builderArtifact) {
-    registry.register('edit_artifact', async ({ title, arguments: args, context }) => {
-      const current = builderVersion!
-      const edits = Array.isArray(args.edits) ? (args.edits as unknown[]) : []
-      if (!edits.length) {
+  registry.register('edit_artifact', async ({ title, arguments: args, context }) => {
+    options.activeSkillIds.add(WEB_ARTIFACTS_SKILL_ID)
+    const named = typeof args.title === 'string' ? args.title.trim() : ''
+    const current = currentArtifact(named)
+    if (!current) {
+      return toolExecutionFailed({
+        title,
+        code: 'not_found',
+        message: named
+          ? `No artifact titled "${named}" is in this conversation to change. Use the exact title of an existing artifact, or make a new one with create_artifact.`
+          : 'There is no artifact in this conversation to change; make one with create_artifact.',
+        recoveryAction: 'correct_input'
+      })
+    }
+    const edits = Array.isArray(args.edits) ? (args.edits as unknown[]) : []
+    if (!edits.length) {
+      return toolExecutionFailed({
+        title,
+        code: 'invalid_arguments',
+        message: 'No edits were given; nothing was changed.',
+        recoveryAction: 'correct_input'
+      })
+    }
+    let code = current.code
+    for (const [index, raw] of edits.entries()) {
+      const edit = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+      const oldText = typeof edit.old_text === 'string' ? edit.old_text : ''
+      const newText = typeof edit.new_text === 'string' ? edit.new_text : ''
+      const matches = oldText ? code.split(oldText).length - 1 : 0
+      if (matches !== 1) {
         return toolExecutionFailed({
           title,
           code: 'invalid_arguments',
-          message: 'No edits were given; nothing was changed.',
+          message: `Edit ${index + 1} ${matches ? `matches ${matches} places in` : 'matches nothing in'} the current code, so no edit was made. Copy old_text exactly from the current version, with enough around it to match one place.`,
           recoveryAction: 'correct_input'
         })
       }
-      let code = current.code
-      for (const [index, raw] of edits.entries()) {
-        const edit = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-        const oldText = typeof edit.old_text === 'string' ? edit.old_text : ''
-        const newText = typeof edit.new_text === 'string' ? edit.new_text : ''
-        const matches = oldText ? code.split(oldText).length - 1 : 0
-        if (matches !== 1) {
-          return toolExecutionFailed({
-            title,
-            code: 'invalid_arguments',
-            message: `Edit ${index + 1} ${matches ? `matches ${matches} places in` : 'matches nothing in'} the current code, so no edit was made. Copy old_text exactly from the current version, with enough around it to match one place.`,
-            recoveryAction: 'correct_input'
-          })
-        }
-        code = code.replace(oldText, () => newText)
-      }
-      const artifact = { ...current, code }
-      builderVersion = artifact
-      return artifactToolResult(
-        title,
-        artifact,
-        await inspectWith(artifact, context.signal),
-        options.visionEnabled === true,
-        false,
-        'edit_artifact'
-      )
-    })
-  }
+      code = code.replace(oldText, () => newText)
+    }
+    const artifact = { ...current, code }
+    remember(artifact)
+    return artifactToolResult(
+      title,
+      artifact,
+      await inspectWith(artifact, context.signal),
+      options.visionEnabled === true
+    )
+  })
 
   registry.register('spawn_subagent', async ({ title, arguments: args, context }) => {
     const launcher = options.childLauncher()

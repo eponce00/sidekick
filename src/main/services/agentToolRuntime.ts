@@ -180,6 +180,11 @@ export interface AgentToolRuntimeSessionInput {
    * directly, never through another builder, and it may edit the version in place.
    */
   artifactBuilder?: { type: InspectedArtifactType; title: string; code: string }
+  /** The current version of each artifact earlier replies made, by title, oldest first. */
+  conversationArtifacts?: () => ReadonlyMap<
+    string,
+    { type: InspectedArtifactType; title: string; code: string }
+  >
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -529,7 +534,8 @@ export class AgentToolRuntime {
       artifactContinuation: input.artifactContinuation === true,
       // A chat's artifacts are refined out of sight; a builder renders its own directly.
       buildArtifacts: input.surface === 'conversation' && !input.artifactBuilder,
-      builderArtifact: input.artifactBuilder
+      builderArtifact: input.artifactBuilder,
+      conversationArtifacts: input.conversationArtifacts
     })
     handlers.register(
       ['office_preflight', 'office_validate'],
@@ -643,8 +649,7 @@ export class AgentToolRuntime {
       planStage: input.plan?.stage() ?? 'inactive',
       codeIntelligenceAvailable,
       codeIntelligenceRisk: sessionState.codeIntelligenceRisk,
-      editingDialect: input.editingDialect,
-      artifactBuilder: Boolean(input.artifactBuilder)
+      editingDialect: input.editingDialect
     })
     // A model that can see pages is asked to look at what it changed before it finishes.
     const verificationController = this.verification.createTerminalController(

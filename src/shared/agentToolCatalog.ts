@@ -51,8 +51,6 @@ export interface AgentToolCatalogOptions {
    * only messages its family. Without it no chat tools are offered.
    */
   sessionRole?: 'manager' | 'worker'
-  /** The run is an artifact's builder, which may edit that artifact in place. */
-  artifactBuilder?: boolean
 }
 
 function definition(
@@ -1488,11 +1486,16 @@ const createArtifact = definition(
 
 const editArtifact = definition(
   'edit_artifact',
-  'Change the artifact under review in place: each edit replaces old_text, copied exactly from its current code and matching one place, with new_text. Then it renders and is checked as create_artifact is. Prefer it for fixes; use create_artifact only to rewrite most of the code.',
+  'Change an existing artifact in place instead of writing it again: each edit replaces old_text, copied exactly from the current code and matching one place, with new_text. The artifact then renders and is checked as with create_artifact, and the chat shows the new version. Prefer it for any change that touches part of the code; use create_artifact only for a new artifact or to rewrite most of one.',
   {
     type: 'object',
     required: ['edits'],
     properties: {
+      title: {
+        type: 'string',
+        description:
+          'Exact title of the artifact to change. Omit it to change the latest one, or the one under review.'
+      },
       edits: {
         type: 'array',
         minItems: 1,
@@ -1720,7 +1723,9 @@ function workspaceEntries(options: AgentToolCatalogOptions): AgentToolCatalogEnt
 }
 
 export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEntry[] {
-  return skillId === WEB_ARTIFACTS_SKILL_ID ? [entry(createArtifact, 'artifacts', 'write')] : []
+  return skillId === WEB_ARTIFACTS_SKILL_ID
+    ? [entry(createArtifact, 'artifacts', 'write'), entry(editArtifact, 'artifacts', 'write')]
+    : []
 }
 
 const SKILLS_WITH_TOOLS = [WEB_ARTIFACTS_SKILL_ID] as const
@@ -1799,7 +1804,6 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     // cache from that point, and a tool missing from a follow-up turn was a
     // dead end; the handler brings in the skill's guidance instead.
     ...SKILLS_WITH_TOOLS.flatMap(getSkillToolCatalogEntries),
-    ...(options.artifactBuilder ? [entry(editArtifact, 'artifacts', 'write')] : []),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )
