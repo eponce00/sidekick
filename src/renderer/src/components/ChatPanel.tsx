@@ -303,6 +303,7 @@ function ChatPanel({
   // Places marked on this chat's browser pages. The main process holds them until a message
   // takes them, so the chips follow its list.
   const [browserMarks, setBrowserMarks] = useState<BrowserAnnotationAttachment[]>([])
+  const submitFromPageRef = useRef<() => void>(() => undefined)
   useEffect(() => {
     setBrowserMarks([])
     if (!conversationId) return
@@ -317,7 +318,10 @@ function ChatPanel({
     }
     load()
     const stop = window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
-      if (change.conversationId === conversationId && !change.error) load()
+      if (change.conversationId !== conversationId || change.error) return
+      // Send on the page sends this chat's message, with the marks, as its send button would.
+      if (change.send) submitFromPageRef.current()
+      else load()
     })
     return () => {
       stopped = true
@@ -1295,6 +1299,8 @@ function ChatPanel({
     }
     submitMessage()
   }
+
+  submitFromPageRef.current = handleSubmit
 
   const sendArrow = (): Element | null | undefined =>
     inputRef.current?.closest('.input-container')?.querySelector('.send-button svg')

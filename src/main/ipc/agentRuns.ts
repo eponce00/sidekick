@@ -1,6 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, webContents, type IpcMainInvokeEvent } from 'electron'
-import { showAppMenu } from '../services/appMenus'
-import { browserDeviceMenuTemplate } from './browserDeviceMenu'
+import { app, BrowserWindow, ipcMain, webContents, type IpcMainInvokeEvent } from 'electron'
 import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
 import type {
   ResolveAgentInteractionInput,
@@ -26,13 +24,15 @@ import {
   mountBrowserView,
   unmountBrowserHost
 } from '../services/browserViewHost'
-import type {
-  BrowserAnnotationsChange,
-  BrowserWorkspaceRequest,
-  BrowserWorkspaceState
+import {
+  MAX_BROWSER_FIND_CHARACTERS,
+  type BrowserAnnotationsChange,
+  type BrowserWorkspaceRequest,
+  type BrowserWorkspaceState
 } from '../../shared/browserWorkspace'
 import { BrowserAnnotationController } from '../services/browserAnnotations'
 import { createBrowserAnnotationOverlay } from '../services/browserAnnotationOverlay'
+import { findInBrowserPage } from '../services/browserPageFind'
 import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../shared/messageContextAttachments'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
@@ -240,15 +240,15 @@ function browserAnnotations(): BrowserAnnotationController {
       if (!page || page.webContentsId !== webContentsId) return
       const send = page.send
       // A wheel at that point through the page's debugger, so Chromium scrolls whatever is under
-      // it, an inner list included, as the user's own wheel would. Electron reports turning the
-      // wheel down as a negative delta; DevTools takes it in the page's sign, as positive.
+      // it, an inner list included, as the user's own wheel would. The overlay reports it in the
+      // page's own sign, in window pixels; the page takes CSS pixels.
       void browserAgentInput(webContentsId, () =>
         send('Input.dispatchMouseEvent', {
           type: 'mouseWheel',
           x: input.x / placement.scale,
           y: input.y / placement.scale,
-          deltaX: -input.deltaX,
-          deltaY: -input.deltaY
+          deltaX: input.deltaX / placement.scale,
+          deltaY: input.deltaY / placement.scale
         })
       ).catch(() => undefined)
     },
@@ -414,15 +414,26 @@ export function registerAgentRunHandlers(): void {
         'select',
         'close',
         'device',
-        'deviceMenu',
         'snapshot',
         'annotate',
         'annotationNote',
         'annotationRemove',
-        'zoom'
+        'annotationDictation',
+        'zoom',
+        'print',
+        'find',
+        'screenshot'
       ].includes(input.action) ||
       (input.zoomStep !== undefined && !isBrowserZoomStep(input.zoomStep)) ||
       (input.annotate !== undefined && typeof input.annotate !== 'boolean') ||
+      (input.theme !== undefined && input.theme !== 'dark' && input.theme !== 'light') ||
+      (input.canDictate !== undefined && typeof input.canDictate !== 'boolean') ||
+      (input.dictation !== undefined &&
+        (typeof input.dictation?.listening !== 'boolean' ||
+          (input.dictation.text !== undefined &&
+            (typeof input.dictation.text !== 'string' ||
+              input.dictation.text.length > MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS)) ||
+          (input.dictation.final !== undefined && typeof input.dictation.final !== 'boolean'))) ||
       [input.accent, input.accentText].some(
         (color) => color !== undefined && (typeof color !== 'string' || color.length > 64)
       ) ||
@@ -430,8 +441,11 @@ export function registerAgentRunHandlers(): void {
       (input.note !== undefined &&
         (typeof input.note !== 'string' ||
           input.note.length > MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS)) ||
-      (input.menuPosition !== undefined &&
-        !(Number.isFinite(input.menuPosition?.x) && Number.isFinite(input.menuPosition?.y))) ||
+      (input.find !== undefined &&
+        (typeof input.find?.text !== 'string' ||
+          input.find.text.length > MAX_BROWSER_FIND_CHARACTERS ||
+          (input.find.forward !== undefined && typeof input.find.forward !== 'boolean') ||
+          (input.find.next !== undefined && typeof input.find.next !== 'boolean'))) ||
       (input.device !== undefined && typeof input.device !== 'string')
     ) {
       throw new Error('Invalid browser workspace request')
@@ -446,13 +460,18 @@ export function registerAgentRunHandlers(): void {
     if (
       input.action === 'annotate' ||
       input.action === 'annotationNote' ||
-      input.action === 'annotationRemove'
+      input.action === 'annotationRemove' ||
+      input.action === 'annotationDictation'
     ) {
       const marks = browserAnnotations()
-      if (input.action === 'annotate')
+      if (input.action === 'annotationDictation') {
+        if (input.dictation) marks.dictated(input.conversationId, input.dictation)
+      } else if (input.action === 'annotate')
         marks.setAnnotating(input.conversationId, input.annotate === true, {
           accent: input.accent,
-          accentText: input.accentText
+          accentText: input.accentText,
+          theme: input.theme,
+          canDictate: input.canDictate
         })
       else if (!input.annotationId) throw new Error('Invalid browser workspace request')
       else if (input.action === 'annotationNote')
@@ -527,55 +546,54 @@ export function registerAgentRunHandlers(): void {
       stepBrowserViewZoom(tab.webContentsId, input.zoomStep)
       return publicWorkspaceState(state)
     }
-    if (input.action === 'deviceMenu' || input.action === 'snapshot') {
+    if (
+      input.action === 'snapshot' ||
+      input.action === 'print' ||
+      input.action === 'find' ||
+      input.action === 'screenshot'
+    ) {
       const state = manager.workspaceState(input.conversationId)
-      if (!state) return null
+      const activeTab = state?.tabs.find((tab) => tab.active)
+      const page = activeTab ? webContents.fromId(activeTab.webContentsId) : undefined
+      if (!state || !activeTab || !page || page.isDestroyed())
+        return state && publicWorkspaceState(state)
+      const result = publicWorkspaceState(state)
+      if (input.action === 'print') {
+        page.print()
+        return result
+      }
+      if (input.action === 'find') {
+        const sessionId = manager.sessionFor(input.conversationId)
+        let cdp: ReturnType<typeof manager.service.annotationPage> | undefined
+        try {
+          cdp = sessionId ? manager.service.annotationPage(sessionId) : undefined
+        } catch {
+          return result
+        }
+        if (cdp?.webContentsId !== activeTab.webContentsId) return result
+        const found = await findInBrowserPage(cdp, input.find)
+        return { ...result, ...(found ? { found } : {}) }
+      }
+      if (input.action === 'screenshot') {
+        const marks = browserAnnotations()
+        marks.setAnnotating(input.conversationId, true, {
+          accent: input.accent,
+          accentText: input.accentText,
+          theme: input.theme,
+          canDictate: input.canDictate
+        })
+        await marks.sync(host, input.conversationId, activeTab.webContentsId)
+        await marks.screenshot(input.conversationId)
+        const next = manager.workspaceState(input.conversationId)
+        return next && publicWorkspaceState(next)
+      }
       // The page is drawn above the app, so SideKick's menu or popover would open under it. The
       // panel shows a picture of the page instead while either is open, and the page hides.
-      const activeTab = state.tabs.find((tab) => tab.active)
-      const page = activeTab ? webContents.fromId(activeTab.webContentsId) : undefined
-      const snapshot =
-        page && !page.isDestroyed()
-          ? await page
-              .capturePage()
-              .then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
-              .catch(() => undefined)
-          : undefined
-      const result = { ...publicWorkspaceState(state), ...(snapshot ? { snapshot } : {}) }
-      // The panel opens its own popover once it has the picture.
-      if (input.action === 'snapshot') return result
-      const zoomTab = activeTab?.webContentsId
-      const template = browserDeviceMenuTemplate(
-        state.device,
-        (device) => {
-          void manager
-            .workspaceAction(input.conversationId, {
-              conversationId: input.conversationId,
-              action: 'device',
-              device
-            })
-            .catch((error) => console.warn('[Browser] Could not change the device size:', error))
-        },
-        zoomTab === undefined
-          ? undefined
-          : {
-              percent: browserViewZoom(zoomTab),
-              step: (step) => void stepBrowserViewZoom(zoomTab, step)
-            }
-      )
-      if (!showAppMenu(event.sender, template, input.menuPosition)) {
-        const zoom = event.sender.getZoomFactor()
-        Menu.buildFromTemplate(template).popup({
-          window: host,
-          ...(input.menuPosition
-            ? {
-                x: Math.round(input.menuPosition.x * zoom),
-                y: Math.round(input.menuPosition.y * zoom)
-              }
-            : {})
-        })
-      }
-      return result
+      const snapshot = await page
+        .capturePage()
+        .then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
+        .catch(() => undefined)
+      return { ...result, ...(snapshot ? { snapshot } : {}) }
     }
     const result = await manager.workspaceAction(input.conversationId, input)
     return result && publicWorkspaceState(result)

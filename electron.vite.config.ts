@@ -11,7 +11,17 @@ export default defineConfig({
       }
     }
   },
-  preload: {},
+  preload: {
+    build: {
+      rollupOptions: {
+        // The annotation overlay gets a preload of its own, with nothing but its two calls.
+        input: {
+          index: resolve('src/preload/index.ts'),
+          annotationOverlay: resolve('src/preload/annotationOverlay.ts')
+        }
+      }
+    }
+  },
   renderer: {
     resolve: {
       alias: {
@@ -27,7 +37,9 @@ export default defineConfig({
           'html-sandbox': resolve('src/renderer/html-sandbox.html'),
           'artifact-inspect': resolve('src/renderer/artifact-inspect.html'),
           // The page SideKick serves to paired phones on the local network.
-          companion: resolve('src/renderer/companion.html')
+          companion: resolve('src/renderer/companion.html'),
+          // SideKick's own page over a live web page while the user marks it.
+          'annotation-overlay': resolve('src/renderer/annotation-overlay.html')
         }
       }
     }

@@ -33,6 +33,11 @@ import type {
   BrowserAnnotationOverlayInput,
   BrowserAnnotationOverlayState
 } from './browserAnnotationOverlay'
+import {
+  ANNOTATION_STYLE_PROPERTIES,
+  annotationStyleValue,
+  type AnnotationStyleValues
+} from '../../shared/annotationOverlay'
 
 /** The active tab of a conversation's browser, as marks are made on it. */
 export interface BrowserAnnotationPage {
@@ -82,6 +87,23 @@ interface Scope {
   hover?: BrowserAnnotationHit
   pointer?: { x: number; y: number }
   press?: { x: number; y: number; dragging: boolean; last: { x: number; y: number } }
+  /** The mark whose note is open on the page. */
+  editing?: string
+  markersHidden: boolean
+  theme: 'dark' | 'light'
+  /**
+   * A mark's element restyled live from the editor: the styles it opened with, the element's own
+   * style attribute to put back, and what the user changed.
+   */
+  restyle?: {
+    id: string
+    nodeId: number
+    original: string | null
+    values: AnnotationStyleValues
+    changed: AnnotationStyleValues
+  }
+  canDictate: boolean
+  dictation?: { listening: boolean; heard?: { seq: number; text: string; final: boolean } }
   /** Marks are made one at a time, in the order the user made them. */
   work: Promise<void>
   hovering: boolean
@@ -185,6 +207,9 @@ export class BrowserAnnotationController {
         accent: DEFAULT_ACCENT,
         accentText: DEFAULT_ACCENT_TEXT,
         marks: [],
+        markersHidden: false,
+        theme: 'dark',
+        canDictate: false,
         work: Promise.resolve(),
         hovering: false,
         hoverAgain: false,
@@ -249,17 +274,34 @@ export class BrowserAnnotationController {
     const before = scope.marks.length
     scope.marks = scope.marks.filter((mark) => mark.attachment.id !== id)
     if (scope.marks.length === before) return
+    if (scope.editing === id) scope.editing = undefined
     this.renumber(scope)
+    this.changed(conversationId)
+  }
+
+  /** Removes every mark on every page of the conversation. */
+  clear(conversationId: string): void {
+    const scope = this.scopes.get(conversationId)
+    if (!scope?.marks.length) return
+    scope.marks = []
+    scope.editing = undefined
     this.changed(conversationId)
   }
 
   setAnnotating(
     conversationId: string,
     on: boolean,
-    colors: { accent?: unknown; accentText?: unknown } = {}
+    colors: { accent?: unknown; accentText?: unknown; theme?: unknown; canDictate?: unknown } = {}
   ): void {
     const scope = this.scope(conversationId)
     scope.annotating = on
+    if (colors.theme === 'dark' || colors.theme === 'light') scope.theme = colors.theme
+    if (typeof colors.canDictate === 'boolean') scope.canDictate = colors.canDictate
+    if (!on) {
+      scope.editing = undefined
+      void this.endStyle(conversationId, scope, false)
+      this.stopDictation(conversationId, scope)
+    }
     scope.accent = safeAccent(colors.accent) ?? scope.accent
     scope.accentText = safeAccent(colors.accentText) ?? scope.accentText
     scope.hover = undefined
@@ -349,17 +391,105 @@ export class BrowserAnnotationController {
     return { page: { ...page, send: withPageTimeout(page.send) }, scale: placement.scale }
   }
 
-  input(conversationId: string, input: BrowserAnnotationOverlayInput): void {
+  input(conversationId: string, message: BrowserAnnotationOverlayInput): void {
     const scope = this.scopes.get(conversationId)
     if (!scope?.annotating) return
-    if (input.type === 'escape') {
-      if (scope.press?.dragging) {
-        scope.press = undefined
+    switch (message.type) {
+      case 'stop':
+        if (scope.press?.dragging) {
+          scope.press = undefined
+          void this.draw(conversationId)
+        } else this.setAnnotating(conversationId, false)
+        return
+      case 'edit': {
+        const next =
+          message.id && scope.marks.some((mark) => mark.attachment.id === message.id)
+            ? message.id
+            : undefined
+        if (next !== scope.editing) {
+          this.stopDictation(conversationId, scope)
+          // Another note, or none: the changes made so far stay on the page.
+          void this.endStyle(conversationId, scope, true)
+        }
+        scope.editing = next
         void this.draw(conversationId)
-      } else this.setAnnotating(conversationId, false)
-      return
+        return
+      }
+      case 'styleOpen':
+        scope.work = scope.work
+          .then(() => this.openStyle(conversationId, scope, message.id))
+          .catch((error: unknown) =>
+            this.options.notify({
+              conversationId,
+              error: `Could not read that element's style: ${error instanceof Error ? error.message : String(error)}`
+            })
+          )
+        return
+      case 'style':
+        scope.work = scope.work
+          .then(() => this.applyStyle(conversationId, scope, message.id, message.styles))
+          .catch(() => undefined)
+        return
+      case 'styleDone':
+        if (scope.restyle?.id === message.id)
+          scope.work = scope.work.then(() => this.endStyle(conversationId, scope, message.keep))
+        return
+      case 'dictate':
+        if (!message.on) {
+          // The last words still being transcribed reach the note before the app says it is done.
+          if (scope.dictation?.listening) {
+            scope.dictation = { ...scope.dictation, listening: false }
+            this.options.notify({ conversationId, dictate: false })
+            void this.draw(conversationId)
+          }
+        } else if (scope.canDictate && scope.editing && !scope.dictation?.listening) {
+          scope.dictation = { listening: true }
+          this.options.notify({ conversationId, dictate: true })
+          void this.draw(conversationId)
+        }
+        return
+      case 'note':
+        if (scope.marks.some((mark) => mark.attachment.id === message.id))
+          this.setNote(conversationId, message.id, message.note)
+        return
+      case 'remove':
+        this.remove(conversationId, message.id)
+        return
+      case 'clear':
+        this.clear(conversationId)
+        return
+      case 'markers':
+        scope.markersHidden = message.hidden
+        void this.draw(conversationId)
+        return
+      case 'screenshot':
+        void this.screenshot(conversationId)
+        return
+      case 'send':
+        // The chat sends its message with the marks, as its send button would.
+        scope.editing = undefined
+        this.options.notify({ conversationId, send: true })
+        return
+      case 'wheel':
+        if (scope.webContentsId !== undefined)
+          this.options.scroll(conversationId, scope.webContentsId, message)
+        setTimeout(() => {
+          this.hoverAt(conversationId)
+          void this.draw(conversationId)
+        }, 80)
+        return
+      case 'pointer':
+        this.pointer(conversationId, scope, message.kind, { x: message.x, y: message.y })
     }
-    if (input.type === 'leave') {
+  }
+
+  private pointer(
+    conversationId: string,
+    scope: Scope,
+    kind: 'move' | 'down' | 'up' | 'leave',
+    point: { x: number; y: number }
+  ): void {
+    if (kind === 'leave') {
       scope.pointer = undefined
       scope.hover = undefined
       // A drag that leaves the page ends where it last was.
@@ -368,23 +498,12 @@ export class BrowserAnnotationController {
       void this.draw(conversationId)
       return
     }
-    if (input.type === 'wheel') {
-      if (scope.webContentsId !== undefined)
-        this.options.scroll(conversationId, scope.webContentsId, input)
-      setTimeout(() => {
-        this.hoverAt(conversationId)
-        void this.draw(conversationId)
-      }, 80)
-      return
-    }
-    const point = { x: input.x, y: input.y }
-    if (input.type === 'down') {
+    if (kind === 'down') {
       scope.press = { ...point, dragging: false, last: point }
       return
     }
-    if (input.type === 'move') {
+    if (kind === 'move') {
       scope.pointer = point
-      // Chromium keeps a pressed mouse on the view it was pressed in, so the release comes here.
       const press = scope.press
       if (press) {
         press.last = point
@@ -400,7 +519,7 @@ export class BrowserAnnotationController {
       this.hoverAt(conversationId)
       return
     }
-    if (input.type === 'up' && scope.press) {
+    if (scope.press) {
       this.finishPress(conversationId, scope, point)
       scope.press = undefined
     }
@@ -461,9 +580,137 @@ export class BrowserAnnotationController {
     })()
   }
 
+  /** What the app window heard for the open note, or that it stopped listening. */
+  dictated(
+    conversationId: string,
+    heard: { listening: boolean; text?: string; final?: boolean }
+  ): void {
+    const scope = this.scopes.get(conversationId)
+    if (!scope?.dictation) return
+    if (typeof heard.text === 'string') {
+      scope.dictation = {
+        listening: scope.dictation.listening,
+        heard: {
+          seq: (scope.dictation.heard?.seq ?? 0) + 1,
+          text: heard.text.slice(0, MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS),
+          final: heard.final === true
+        }
+      }
+    } else if (!heard.listening) scope.dictation = undefined
+    void this.draw(conversationId)
+  }
+
+  private stopDictation(conversationId: string, scope: Scope): void {
+    if (!scope.dictation) return
+    scope.dictation = undefined
+    this.options.notify({ conversationId, dictate: false })
+    void this.draw(conversationId)
+  }
+
+  /** Reads a marked element's styles for the editor, from the page as it is now. */
+  private async openStyle(conversationId: string, scope: Scope, id: string): Promise<void> {
+    if (!scope.annotating) return
+    await this.endStyle(conversationId, scope, true)
+    const mark = scope.marks.find((item) => item.attachment.id === id)
+    const live = this.livePage(conversationId, scope)
+    if (!mark?.backendNodeId || !live || !this.onPage(mark, live.page)) return
+    const { send } = live.page
+    const pushed = await send<{ nodeIds?: number[] }>('DOM.pushNodesByBackendIdsToFrontend', {
+      backendNodeIds: [mark.backendNodeId]
+    })
+    const nodeId = pushed.nodeIds?.[0]
+    if (!nodeId) throw new Error('The element is no longer on the page')
+    await send('CSS.enable').catch(() => undefined)
+    const [computed, attributes] = await Promise.all([
+      send<{ computedStyle?: Array<{ name: string; value: string }> }>(
+        'CSS.getComputedStyleForNode',
+        { nodeId }
+      ),
+      send<{ attributes?: string[] }>('DOM.getAttributes', { nodeId })
+    ])
+    const values: AnnotationStyleValues = {}
+    for (const property of ANNOTATION_STYLE_PROPERTIES) {
+      // The page's own values, kept only when they are plain CSS.
+      const value = annotationStyleValue(
+        computed.computedStyle?.find((entry) => entry.name === property)?.value
+      )
+      if (value) values[property] = value
+    }
+    const list = attributes.attributes ?? []
+    const at = list.findIndex((name, index) => index % 2 === 0 && name === 'style')
+    scope.restyle = {
+      id,
+      nodeId,
+      original: at >= 0 ? (list[at + 1] ?? '') : null,
+      values,
+      changed: {}
+    }
+    await this.draw(conversationId)
+  }
+
+  /** Shows the user's changes on the element at once, over its own style. */
+  private async applyStyle(
+    conversationId: string,
+    scope: Scope,
+    id: string,
+    styles: AnnotationStyleValues
+  ): Promise<void> {
+    const restyle = scope.restyle
+    const live = this.livePage(conversationId, scope)
+    if (!restyle || restyle.id !== id || !live) return
+    restyle.changed = { ...restyle.changed, ...styles }
+    const added = Object.entries(restyle.changed)
+      .filter(([, value]) => value)
+      .map(([property, value]) => `${property}: ${value} !important`)
+      .join('; ')
+    const own = restyle.original?.trim()
+    const base = own ? own.replace(/;?$/, ';') : ''
+    await live.page.send('DOM.setAttributeValue', {
+      nodeId: restyle.nodeId,
+      name: 'style',
+      value: added ? `${base} ${added}`.trim() : (restyle.original ?? '')
+    })
+    await this.draw(conversationId)
+  }
+
+  /** Closes the editor; without `keep` the element gets its own style back. */
+  private async endStyle(conversationId: string, scope: Scope, keep: boolean): Promise<void> {
+    const restyle = scope.restyle
+    if (!restyle) return
+    scope.restyle = undefined
+    const live = this.livePage(conversationId, scope)
+    if (!keep && live && Object.keys(restyle.changed).length) {
+      await (
+        restyle.original === null
+          ? live.page.send('DOM.removeAttribute', { nodeId: restyle.nodeId, name: 'style' })
+          : live.page.send('DOM.setAttributeValue', {
+              nodeId: restyle.nodeId,
+              name: 'style',
+              value: restyle.original
+            })
+      ).catch(() => undefined)
+    }
+    await this.draw(conversationId)
+  }
+
+  /** Marks all of the page in view, as a picture the user can write a note for. */
+  screenshot(conversationId: string): Promise<void> {
+    const scope = this.scopes.get(conversationId)
+    if (!scope?.annotating) return Promise.resolve()
+    scope.work = scope.work
+      .then(() => this.mark(conversationId, 'view', 'area'))
+      .catch((error: unknown) =>
+        this.options.notify({
+          conversationId,
+          error: `Could not take a screenshot: ${error instanceof Error ? error.message : String(error)}`
+        })
+      )
+    return scope.work
+  }
+
   private async mark(
     conversationId: string,
-    at: { x: number; y: number } | BrowserAnnotationBox,
+    at: { x: number; y: number } | BrowserAnnotationBox | 'view',
     target: 'element' | 'area'
   ): Promise<void> {
     const scope = this.scopes.get(conversationId)
@@ -482,13 +729,17 @@ export class BrowserAnnotationController {
     const viewport = await annotationViewport(send)
     // The overlay's pixels are window pixels; the page's are CSS pixels at the panel's scale.
     const area: BrowserAnnotationBox | undefined =
-      'width' in at
-        ? { x: at.x / scale, y: at.y / scale, width: at.width / scale, height: at.height / scale }
-        : undefined
+      at === 'view'
+        ? { x: 0, y: 0, width: viewport.width, height: viewport.height }
+        : 'width' in at
+          ? { x: at.x / scale, y: at.y / scale, width: at.width / scale, height: at.height / scale }
+          : undefined
     const probe = area
       ? { x: area.x + area.width / 2, y: area.y + area.height / 2 }
-      : { x: at.x / scale, y: at.y / scale }
-    const hit = await annotationHitTest(send, probe.x, probe.y)
+      : at !== 'view' && { x: at.x / scale, y: at.y / scale }
+    // A screenshot is of the whole view, not of what lies at its middle.
+    const hit =
+      at === 'view' || !probe ? undefined : await annotationHitTest(send, probe.x, probe.y)
     const box = area ?? hit?.box
     if (!box) return
     const visible = clampBox(box, viewport.width, viewport.height)
@@ -514,7 +765,10 @@ export class BrowserAnnotationController {
       id: randomUUID(),
       kind: 'browser',
       // Named by the clicked element's tag when its details could not be read.
-      name: markName(target, box, element ?? (hit ? { tag: hit.tag } : undefined)),
+      name:
+        at === 'view'
+          ? 'Screenshot of the page'
+          : markName(target, box, element ?? (hit ? { tag: hit.tag } : undefined)),
       number: scope.marks.length + 1,
       note: '',
       url: shownUrl(page.url),
@@ -540,7 +794,8 @@ export class BrowserAnnotationController {
         : {})
     })
     scope.hover = undefined
-    this.changed(conversationId, { focus: attachment.id })
+    scope.editing = attachment.id
+    this.changed(conversationId)
   }
 
   /** Draws the marks on this page where they are now, with the hover box or the area being dragged. */
@@ -583,15 +838,28 @@ export class BrowserAnnotationController {
           if (box)
             marks.push({
               ...toOverlay(box),
+              id: mark.attachment.id,
               number: mark.attachment.number,
-              area: mark.attachment.target === 'area'
+              area: mark.attachment.target === 'area',
+              name: mark.attachment.name,
+              note: mark.attachment.note
             })
         }
         const press = scope.press
         overlay.render({
           accent: scope.accent,
           accentText: scope.accentText,
+          theme: scope.theme,
           marks,
+          markersHidden: scope.markersHidden,
+          canDictate: scope.canDictate,
+          ...(scope.dictation ? { dictation: scope.dictation } : {}),
+          ...(scope.restyle && scope.restyle.id === scope.editing
+            ? { style: { id: scope.restyle.id, values: scope.restyle.values } }
+            : {}),
+          ...(scope.editing && marks.some((mark) => mark.id === scope.editing)
+            ? { editing: scope.editing }
+            : {}),
           ...(press?.dragging
             ? {
                 drag: {

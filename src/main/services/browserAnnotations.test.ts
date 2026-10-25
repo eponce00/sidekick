@@ -160,8 +160,8 @@ function setup(options: { secretShown?: boolean; scale?: number } = {}) {
   })
   const input = (event: BrowserAnnotationOverlayInput): void => onInput!(event)
   const click = async (x: number, y: number): Promise<void> => {
-    input({ type: 'down', x, y })
-    input({ type: 'up', x, y })
+    input({ type: 'pointer', kind: 'down', x, y })
+    input({ type: 'pointer', kind: 'up', x, y })
     await flush()
   }
   return { host, controller, overlay, rendered, notify, scroll, input, click, page, calls, send }
@@ -182,7 +182,7 @@ describe('browser annotations', () => {
     expect(context.overlay.visible).toBe(true)
     expect(context.overlay.placed.at(-1)).toEqual({ x: 300, y: 80, width: 400, height: 300 })
     expect(context.rendered.at(-1)).toMatchObject({ accent: '#2850b8', accentText: '#ffffff' })
-    context.input({ type: 'escape' })
+    context.input({ type: 'stop' })
     await flush()
     expect(context.overlay.visible).toBe(false)
     expect(context.controller.panelState('chat').annotating).toBe(false)
@@ -209,11 +209,13 @@ describe('browser annotations', () => {
       box: { x: 10, y: 20, width: 100, height: 32 },
       viewport: { width: 400, height: 300 }
     })
-    expect(context.notify).toHaveBeenCalledWith({ conversationId: 'chat', focus: mark.id })
+    expect(context.notify).toHaveBeenCalledWith({ conversationId: 'chat' })
     // Drawn at the page's scale in the overlay, with its number.
-    expect(context.rendered.at(-1)?.marks).toEqual([
+    expect(context.rendered.at(-1)?.marks).toMatchObject([
       { x: 5, y: 10, width: 50, height: 16, number: 1, area: false }
     ])
+    // Its note opens on the page.
+    expect(context.rendered.at(-1)?.editing).toBe(mark.id)
     expect(context.controller.panelState('chat').annotations).toEqual([
       {
         id: mark.id,
@@ -231,12 +233,12 @@ describe('browser annotations', () => {
   it('marks a dragged area, which moves with the page as it scrolls', async () => {
     const context = setup()
     await annotating(context)
-    context.input({ type: 'down', x: 150, y: 150 })
-    context.input({ type: 'move', x: 160, y: 160 })
+    context.input({ type: 'pointer', kind: 'down', x: 150, y: 150 })
+    context.input({ type: 'pointer', kind: 'move', x: 160, y: 160 })
     await flush()
     expect(context.rendered.at(-1)?.drag).toEqual({ x: 150, y: 150, width: 10, height: 10 })
-    context.input({ type: 'move', x: 250, y: 200 })
-    context.input({ type: 'up', x: 250, y: 200 })
+    context.input({ type: 'pointer', kind: 'move', x: 250, y: 200 })
+    context.input({ type: 'pointer', kind: 'up', x: 250, y: 200 })
     await flush()
     const [mark] = context.controller.list('chat')
     expect(mark).toMatchObject({
@@ -255,7 +257,7 @@ describe('browser annotations', () => {
     })
     await new Promise((resolve) => setTimeout(resolve, 120))
     await flush()
-    expect(context.rendered.at(-1)?.marks).toEqual([
+    expect(context.rendered.at(-1)?.marks).toMatchObject([
       { x: 150, y: 110, width: 100, height: 50, number: 1, area: true }
     ])
   })
@@ -263,9 +265,9 @@ describe('browser annotations', () => {
   it('ignores a drag too small to be an area and a click on nothing it can read', async () => {
     const context = setup()
     await annotating(context)
-    context.input({ type: 'down', x: 150, y: 150 })
-    context.input({ type: 'move', x: 156, y: 153 })
-    context.input({ type: 'up', x: 156, y: 153 })
+    context.input({ type: 'pointer', kind: 'down', x: 150, y: 150 })
+    context.input({ type: 'pointer', kind: 'move', x: 156, y: 153 })
+    context.input({ type: 'pointer', kind: 'up', x: 156, y: 153 })
     await flush()
     expect(context.controller.list('chat')).toEqual([])
   })

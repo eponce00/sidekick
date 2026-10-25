@@ -1562,6 +1562,10 @@ function App(): React.JSX.Element {
           snapWidths={panelSnapWidths}
           onSettle={() => setPanelGlide((count) => count + 1)}
           onOpenConversation={(id) => void handleSelectConversation(id)}
+          onOpenBrowserSettings={() => {
+            setSettingsInitialSection('agent')
+            setIsSettingsOpen(true)
+          }}
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }

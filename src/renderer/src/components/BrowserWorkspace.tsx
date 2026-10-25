@@ -6,11 +6,13 @@ import {
   Plus,
   X,
   Globe,
-  MonitorSmartphone,
   Pause,
-  Plug,
+  Puzzle,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   MessageSquarePlus,
+  MoreHorizontal,
   ZoomIn,
   ZoomOut
 } from 'lucide-react'
@@ -21,24 +23,34 @@ import type {
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 import { webMcpSite } from '../../../shared/webMcp'
 import type { BrowserSuggestion } from '../../../shared/browserLibrary'
-import { BrowserSuggestions } from './BrowserLibrary'
+import { BrowserImportDialog, BrowserSuggestions } from './BrowserLibrary'
+import { BrowserMenu, type BrowserMenuCommand } from './BrowserMenu'
 import { browserAddress } from '../../../shared/browserAddress'
 import { DEFAULT_BROWSER_ZOOM } from '../../../shared/browserZoom'
-import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../../shared/messageContextAttachments'
+import { BROWSER_RESPONSIVE_DEVICE } from '../../../shared/browserDevices'
+import { useVoiceState } from '../hooks/useVoice'
+import { startNoteDictation, type NoteDictation } from '../services/voice/noteDictation'
 import './BrowserMarkChip.css'
 
-/** The app's accent and the text it carries, so marks drawn over the page match the app. */
-function accentColors(): { accent?: string; accentText?: string } {
+/** The app's accent, the text it carries and its theme, so what is drawn over the page matches. */
+function accentColors(): { accent?: string; accentText?: string; theme: 'dark' | 'light' } {
   const style = getComputedStyle(document.documentElement)
   const accent = style.getPropertyValue('--accent').trim()
   const accentText = style.getPropertyValue('--on-accent').trim()
-  return { ...(accent ? { accent } : {}), ...(accentText ? { accentText } : {}) }
+  return {
+    ...(accent ? { accent } : {}),
+    ...(accentText ? { accentText } : {}),
+    theme: document.body.dataset.theme === 'light' ? 'light' : 'dark'
+  }
 }
 
 export function BrowserWorkspace({
-  conversationId
+  conversationId,
+  onOpenSettings
 }: {
   conversationId: string
+  /** Opens Settings where the browser's own settings are. */
+  onOpenSettings?: () => void
 }): React.JSX.Element {
   const [state, setState] = useState<BrowserWorkspaceState | null>(null)
   const [address, setAddress] = useState('')
@@ -56,66 +68,81 @@ export function BrowserWorkspace({
   // Shown only when the page is not at 100%, as a browser does.
   const zoomed =
     state?.zoom !== undefined && state.zoom !== DEFAULT_BROWSER_ZOOM ? state.zoom : null
-  const [toolsOpen, setToolsOpen] = useState(false)
+  const [popover, setPopover] = useState<'tools' | 'menu' | null>(null)
+  const toolsOpen = popover === 'tools'
   const [shownTool, setShownTool] = useState<string | null>(null)
   const toolsButton = useRef<HTMLButtonElement>(null)
   const toolsPopover = useRef<HTMLElement>(null)
+  const menuButton = useRef<HTMLButtonElement>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  // Find in page: the text, and which match is selected of how many.
+  const [findOpen, setFindOpen] = useState(false)
+  const [findText, setFindText] = useState('')
+  const [found, setFound] = useState<{ active: number; matches: number } | null>(null)
+  const findField = useRef<HTMLInputElement>(null)
   const pageTools = state?.pageTools?.tools.length ? state.pageTools : null
   const toolsOrigin = pageTools?.origin ?? null
   const annotating = Boolean(state?.annotating)
+  const voice = useVoiceState()
+  const canDictate = Boolean(voice?.enabled && window.api?.voice)
   const marks = useMemo(() => state?.annotations ?? [], [state?.annotations])
-  // Notes as typed; each is saved when its field is left or Enter is pressed.
-  const [notes, setNotes] = useState<Record<string, string>>({})
-  const noteFields = useRef(new Map<string, HTMLInputElement>())
-  const [focusMark, setFocusMark] = useState<string | null>(null)
   // What the user typed since focusing the address bar; null until they type.
   const [query, setQuery] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<BrowserSuggestion[]>([])
   const [activeSuggestion, setActiveSuggestion] = useState(-1)
 
-  // Another site, or a page without tools, starts with the popover closed.
+  // Another site starts with the tools closed.
   useEffect(() => {
-    setToolsOpen(false)
+    setPopover((open) => (open === 'tools' ? null : open))
     setShownTool(null)
   }, [toolsOrigin])
 
+  const closePopover = useCallback((focusButton: boolean): void => {
+    setPopover((open) => {
+      if (focusButton) (open === 'tools' ? toolsButton : menuButton).current?.focus()
+      return null
+    })
+    setShownTool(null)
+  }, [])
+
   useEffect(() => {
-    if (!toolsOpen) return
-    const close = (focusButton: boolean): void => {
-      setToolsOpen(false)
-      setShownTool(null)
-      if (focusButton) toolsButton.current?.focus()
-    }
+    if (!popover) return
+    const button = popover === 'tools' ? toolsButton : menuButton
     const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target as Node
-      if (!toolsPopover.current?.contains(target) && !toolsButton.current?.contains(target))
-        close(false)
+      const target = event.target as Element
+      if (button.current?.contains(target)) return
+      const inside =
+        popover === 'tools'
+          ? toolsPopover.current?.contains(target)
+          : target.closest?.('.browser-workspace-menu')
+      if (!inside) closePopover(false)
     }
+    // The menu handles its own keys.
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') close(true)
+      if (event.key === 'Escape' && popover === 'tools') closePopover(true)
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
-    toolsPopover.current?.focus()
+    if (popover === 'tools') toolsPopover.current?.focus()
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [toolsOpen])
+  }, [popover, closePopover])
 
-  const toggleTools = async (): Promise<void> => {
-    if (toolsOpen) {
-      setToolsOpen(false)
-      setShownTool(null)
+  const togglePopover = async (which: 'tools' | 'menu'): Promise<void> => {
+    if (popover === which) {
+      closePopover(false)
       return
     }
-    // The popover opens over the page, which hides while it is open; a picture of the page fills
+    // A popover opens over the page, which hides while it is open; a picture of the page fills
     // its place, so the picture comes first.
     const result = await window.api.agentRuns
       .browserWorkspace({ conversationId, action: 'snapshot' })
       .catch(() => null)
     if (result?.snapshot) setSnapshot(result.snapshot)
-    setToolsOpen(true)
+    setShownTool(null)
+    setPopover(which)
   }
 
   useEffect(() => {
@@ -218,13 +245,12 @@ export function BrowserWorkspace({
     }
   }, [conversationId, refresh])
 
-  // A mark just made gets its note field; the main process reports errors from the page here.
+  // The main process reports errors from the page here.
   useEffect(
     () =>
       window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
         if (change.conversationId !== conversationId) return
         if (change.error) setError(change.error)
-        if (change.focus) setFocusMark(change.focus)
         void window.api.agentRuns
           .browserWorkspace({ conversationId, action: 'state' })
           .then((result) => result && setState(result))
@@ -233,28 +259,37 @@ export function BrowserWorkspace({
     [conversationId]
   )
 
+  // A note on the page asked for the microphone: this window listens, on this device, and hands
+  // on what it hears. The page's overlay never holds the microphone itself.
   useEffect(() => {
-    if (!focusMark) return
-    const field = noteFields.current.get(focusMark)
-    if (!field) return
-    field.focus()
-    setFocusMark(null)
-  }, [focusMark, marks])
-
-  // Escape leaves a field without keeping what was typed in it.
-  const discarding = useRef<string | null>(null)
-  const saveNote = (id: string): void => {
-    const note = notes[id]
-    const discard = discarding.current === id
-    discarding.current = null
-    setNotes(({ [id]: _saved, ...rest }) => rest)
-    const mark = marks.find((candidate) => candidate.id === id)
-    if (discard || note === undefined || !mark || note === mark.note) return
-    void window.api.agentRuns
-      .browserWorkspace({ conversationId, action: 'annotationNote', annotationId: id, note })
-      .then((result) => result && setState(result))
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-  }
+    let dictation: Promise<NoteDictation | null> | null = null
+    const report = (heard: NonNullable<BrowserWorkspaceRequest['dictation']>): void =>
+      void window.api.agentRuns
+        .browserWorkspace({ conversationId, action: 'annotationDictation', dictation: heard })
+        .catch(() => undefined)
+    const stopListening = (): void => {
+      const current = dictation
+      dictation = null
+      void current?.then((active) => active?.stop()).then(() => report({ listening: false }))
+    }
+    const stop = window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
+      if (change.conversationId !== conversationId) return
+      if (change.dictate === true && !dictation) {
+        dictation = startNoteDictation((text, final) =>
+          report({ listening: true, text, final })
+        ).catch((e: unknown) => {
+          dictation = null
+          setError(e instanceof Error ? e.message : String(e))
+          report({ listening: false })
+          return null
+        })
+      } else if (change.dictate === false) stopListening()
+    })
+    return () => {
+      stop()
+      stopListening()
+    }
+  }, [conversationId])
 
   const act = async (
     action: BrowserWorkspaceRequest['action'],
@@ -270,6 +305,45 @@ export function BrowserWorkspace({
     } finally {
       setPending(false)
     }
+  }
+
+  const find = async (text: string, next?: { forward: boolean }): Promise<void> => {
+    const result = await window.api.agentRuns
+      .browserWorkspace({
+        conversationId,
+        action: 'find',
+        find: { text, ...(next ? { forward: next.forward, next: true } : {}) }
+      })
+      .catch(() => null)
+    setFound(text ? (result?.found ?? { active: 0, matches: 0 }) : null)
+  }
+  const closeFind = (): void => {
+    setFindOpen(false)
+    setFindText('')
+    setFound(null)
+    void find('')
+  }
+  useEffect(() => {
+    if (findOpen) findField.current?.focus()
+  }, [findOpen])
+
+  const runMenuCommand = (command: BrowserMenuCommand): void => {
+    closePopover(false)
+    if (command === 'find') {
+      setFindOpen(true)
+      findField.current?.select()
+    } else if (command === 'print' || command === 'screenshot') {
+      // The page shows again once the menu is gone, and only then is it printed or pictured.
+      requestAnimationFrame(
+        () =>
+          void refresh()
+            .catch(() => undefined)
+            .then(() =>
+              act(command, command === 'screenshot' ? { ...accentColors(), canDictate } : {})
+            )
+      )
+    } else if (command === 'import') setImportOpen(true)
+    else onOpenSettings?.()
   }
 
   const openAddress = (text: string): void => {
@@ -333,37 +407,36 @@ export function BrowserWorkspace({
           className={`browser-workspace-progress${loading ? ' is-loading' : ''}`}
           aria-hidden="true"
         />
-        <button
-          type="button"
-          aria-label="Go back"
-          disabled={!state?.canGoBack || pending || state.busy}
-          onClick={() => void act('back')}
-        >
-          <ArrowLeft size={15} />
-        </button>
-        <button
-          type="button"
-          aria-label="Go forward"
-          disabled={!state?.canGoForward || pending || state.busy}
-          onClick={() => void act('forward')}
-        >
-          <ArrowRight size={15} />
-        </button>
-        <button
-          type="button"
-          aria-label="Reload page"
-          disabled={!state || pending || state.busy}
-          onClick={() => void act('reload')}
-        >
-          <RotateCw size={14} />
-        </button>
-        {/* Page tools sit inside the address field, like a browser's page actions, so the field
-            and the page never move when a page offers them. */}
-        <div
-          className={`browser-workspace-address${pageTools ? ' has-tools' : ''}${
-            zoomed ? ' has-zoom' : ''
-          }`}
-        >
+        <div className="browser-workspace-nav" role="group" aria-label="Page navigation">
+          <button
+            type="button"
+            aria-label="Go back"
+            title="Back"
+            disabled={!state?.canGoBack || pending || state.busy}
+            onClick={() => void act('back')}
+          >
+            <ArrowLeft size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label="Go forward"
+            title="Forward"
+            disabled={!state?.canGoForward || pending || state.busy}
+            onClick={() => void act('forward')}
+          >
+            <ArrowRight size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label="Reload page"
+            title="Reload"
+            disabled={!state || pending || state.busy}
+            onClick={() => void act('reload')}
+          >
+            <RotateCw size={14} />
+          </button>
+        </div>
+        <div className="browser-workspace-address field-shell">
           <input
             aria-label="Browser address"
             aria-busy={loading}
@@ -377,8 +450,9 @@ export function BrowserWorkspace({
             aria-activedescendant={
               activeSuggestion >= 0 ? `browser-suggestions-${activeSuggestion}` : undefined
             }
-            onFocus={() => {
+            onFocus={(event) => {
               editing.current = true
+              event.currentTarget.select()
             }}
             onBlur={() => {
               editing.current = false
@@ -402,10 +476,24 @@ export function BrowserWorkspace({
               setQuery(event.target.value)
             }}
           />
+          {state?.device && (
+            <button
+              type="button"
+              className="browser-workspace-chip is-device"
+              aria-label={`${state.device.label}, ${state.device.width} × ${state.device.height}. Back to Responsive`}
+              title={`${state.device.label}, ${state.device.width} × ${state.device.height}${
+                state.device.source === 'agent' ? ', set by the agent' : ''
+              }. Click to fit the page to the panel again.`}
+              disabled={pending || state.busy}
+              onClick={() => void act('device', { device: BROWSER_RESPONSIVE_DEVICE })}
+            >
+              {state.device.width} × {state.device.height}
+            </button>
+          )}
           {zoomed && (
             <button
               type="button"
-              className="browser-workspace-zoom"
+              className="browser-workspace-chip"
               aria-label={`Page zoom ${zoomed}%. Reset to 100%`}
               title={`Zoomed to ${zoomed}%. Click for 100%; Ctrl + and Ctrl − on the page zoom it.`}
               onClick={() => void act('zoom', { zoomStep: 'reset' })}
@@ -417,68 +505,6 @@ export function BrowserWorkspace({
               )}
               <span>{zoomed}%</span>
             </button>
-          )}
-          {pageTools && (
-            <button
-              ref={toolsButton}
-              type="button"
-              className="browser-workspace-tools"
-              aria-label={`Tools this page offers the agent: ${pageTools.tools.length}`}
-              aria-expanded={toolsOpen}
-              aria-haspopup="dialog"
-              aria-controls={toolsOpen ? 'browser-page-tools' : undefined}
-              title={`${webMcpSite(pageTools.origin)} offers the agent ${toolCount(
-                pageTools.tools.length
-              )}`}
-              onClick={() => void toggleTools()}
-            >
-              <Plug size={13} aria-hidden="true" />
-            </button>
-          )}
-          {pageTools && toolsOpen && (
-            <section
-              ref={toolsPopover}
-              id="browser-page-tools"
-              className="browser-workspace-page-tools"
-              role="dialog"
-              aria-label="Tools this page offers the agent"
-              tabIndex={-1}
-            >
-              <header>
-                <strong>{webMcpSite(pageTools.origin)}</strong>
-                <span>offers the agent {toolCount(pageTools.tools.length)}</span>
-              </header>
-              <ul>
-                {pageTools.tools.map((tool, index) => {
-                  const shown = shownTool === tool.name
-                  return (
-                    <li key={tool.name}>
-                      <button
-                        type="button"
-                        aria-expanded={shown}
-                        aria-controls={shown ? `browser-page-tool-${index}` : undefined}
-                        onClick={() => setShownTool(shown ? null : tool.name)}
-                      >
-                        <ChevronRight size={12} aria-hidden="true" />
-                        <code>{tool.name}</code>
-                        {tool.readOnly && (
-                          <span className="browser-workspace-page-tool-mark">Read-only</span>
-                        )}
-                        {tool.form && (
-                          <span className="browser-workspace-page-tool-mark">Form</span>
-                        )}
-                      </button>
-                      {shown && (
-                        // The site's own words, set apart as a quote and shown as text.
-                        <blockquote id={`browser-page-tool-${index}`}>
-                          {tool.description || 'The site gives no description.'}
-                        </blockquote>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            </section>
           )}
         </div>
         <button
@@ -494,45 +520,121 @@ export function BrowserWorkspace({
               ? 'Stop annotating (Esc). Your marks stay until you send them.'
               : 'Annotate: click an element or drag over an area, and write a note for the agent'
           }
-          onClick={() => void act('annotate', { annotate: !annotating, ...accentColors() })}
+          onClick={() =>
+            void act('annotate', { annotate: !annotating, ...accentColors(), canDictate })
+          }
         >
           <MessageSquarePlus size={15} aria-hidden="true" />
           {marks.length > 0 && <span>{marks.length}</span>}
         </button>
-        <button
-          type="button"
-          className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
-          aria-label="Device size"
-          disabled={!state || pending || state.busy}
-          title={
-            state?.device
-              ? `${state.device.label}, ${state.device.width} × ${state.device.height}${
-                  state.device.source === 'agent' ? ', set by the agent' : ''
-                }. Choose a size, or Responsive to fit the panel.`
-              : 'Responsive: the page fits the panel. Choose a phone, tablet, laptop, or desktop size.'
-          }
-          onClick={(event) => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            void window.api.agentRuns
-              .browserWorkspace({
-                conversationId,
-                action: 'deviceMenu',
-                menuPosition: { x: rect.left, y: rect.bottom + 4 }
-              })
-              .then((result) => {
-                if (result?.snapshot && document.querySelector('.app-menu'))
-                  setSnapshot(result.snapshot)
-              })
-              .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-          }}
-        >
-          <MonitorSmartphone size={15} aria-hidden="true" />
-          {state?.device && (
-            <span>
-              {state.device.width} × {state.device.height}
-            </span>
+        <div className="browser-workspace-anchor">
+          <button
+            ref={toolsButton}
+            type="button"
+            className="browser-workspace-tools"
+            aria-label={
+              pageTools
+                ? `Tools this page offers the agent: ${pageTools.tools.length}`
+                : 'Tools this page offers the agent'
+            }
+            aria-expanded={toolsOpen}
+            aria-haspopup="dialog"
+            aria-controls={toolsOpen ? 'browser-page-tools' : undefined}
+            disabled={!state}
+            title={
+              pageTools
+                ? `${webMcpSite(pageTools.origin)} offers the agent ${toolCount(pageTools.tools.length)}`
+                : 'Page tools'
+            }
+            onClick={() => void togglePopover('tools')}
+          >
+            <Puzzle size={15} aria-hidden="true" />
+            {pageTools && <span className="browser-workspace-tools-dot" aria-hidden="true" />}
+          </button>
+          {toolsOpen && (
+            <section
+              ref={toolsPopover}
+              id="browser-page-tools"
+              className="browser-workspace-page-tools"
+              role="dialog"
+              aria-label="Tools this page offers the agent"
+              tabIndex={-1}
+            >
+              {pageTools ? (
+                <>
+                  <header>
+                    <strong>{webMcpSite(pageTools.origin)}</strong>
+                    <span>offers the agent {toolCount(pageTools.tools.length)}</span>
+                  </header>
+                  <ul>
+                    {pageTools.tools.map((tool, index) => {
+                      const shown = shownTool === tool.name
+                      return (
+                        <li key={tool.name}>
+                          <button
+                            type="button"
+                            aria-expanded={shown}
+                            aria-controls={shown ? `browser-page-tool-${index}` : undefined}
+                            onClick={() => setShownTool(shown ? null : tool.name)}
+                          >
+                            <ChevronRight size={12} aria-hidden="true" />
+                            <code>{tool.name}</code>
+                            {tool.readOnly && (
+                              <span className="browser-workspace-page-tool-mark">Read-only</span>
+                            )}
+                            {tool.form && (
+                              <span className="browser-workspace-page-tool-mark">Form</span>
+                            )}
+                          </button>
+                          {shown && (
+                            // The site's own words, set apart as a quote and shown as text.
+                            <blockquote id={`browser-page-tool-${index}`}>
+                              {tool.description || 'The site gives no description.'}
+                            </blockquote>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </>
+              ) : (
+                <p className="browser-workspace-page-tools-empty">
+                  This page offers the agent no tools of its own. Sites built for agents list theirs
+                  here, and the agent can use them instead of clicking.
+                </p>
+              )}
+            </section>
           )}
-        </button>
+        </div>
+        <div className="browser-workspace-anchor">
+          <button
+            ref={menuButton}
+            type="button"
+            className="browser-workspace-more"
+            aria-label="Browser menu"
+            title="More"
+            aria-haspopup="menu"
+            aria-expanded={popover === 'menu'}
+            disabled={!state}
+            onClick={() => void togglePopover('menu')}
+          >
+            <MoreHorizontal size={16} aria-hidden="true" />
+          </button>
+          {popover === 'menu' && state && (
+            <BrowserMenu
+              zoom={state.zoom ?? DEFAULT_BROWSER_ZOOM}
+              device={state.device}
+              canScreenshot={!state.busy}
+              onCommand={runMenuCommand}
+              onZoom={(step) => void act('zoom', { zoomStep: step })}
+              onDevice={(device) => {
+                closePopover(false)
+                void act('device', { device })
+              }}
+              onClose={closePopover}
+            />
+          )}
+        </div>
         {state?.waitingForUser ? (
           <span
             className="browser-workspace-status is-waiting"
@@ -551,6 +653,59 @@ export function BrowserWorkspace({
           </span>
         ) : null}
       </form>
+      {findOpen && (
+        <div className="browser-workspace-find" role="search" aria-label="Find in page">
+          <div className="browser-workspace-find-field field-shell">
+            <input
+              ref={findField}
+              value={findText}
+              placeholder="Find in page"
+              aria-label="Find in page"
+              maxLength={500}
+              onChange={(event) => {
+                setFindText(event.target.value)
+                void find(event.target.value)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  if (findText) void find(findText, { forward: !event.shiftKey })
+                } else if (event.key === 'Escape') {
+                  event.preventDefault()
+                  closeFind()
+                }
+              }}
+            />
+            {found && (
+              <span className="browser-workspace-find-count" aria-live="polite">
+                {found.matches ? `${found.active} of ${found.matches}` : 'No matches'}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            aria-label="Previous match"
+            title="Previous (Shift+Enter)"
+            disabled={!found?.matches}
+            onClick={() => void find(findText, { forward: false })}
+          >
+            <ChevronUp size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label="Next match"
+            title="Next (Enter)"
+            disabled={!found?.matches}
+            onClick={() => void find(findText, { forward: true })}
+          >
+            <ChevronDown size={15} />
+          </button>
+          <button type="button" aria-label="Close find" title="Close (Esc)" onClick={closeFind}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+      <BrowserImportDialog isOpen={importOpen} onClose={() => setImportOpen(false)} />
       {shownSuggestions.length > 0 && (
         <BrowserSuggestions
           id="browser-suggestions"
@@ -578,76 +733,6 @@ export function BrowserWorkspace({
           </p>
         )}
       </div>
-      {(annotating || marks.length > 0) && (
-        // Below the page, never over it: the page is drawn above the app.
-        <section className="browser-workspace-annotations" aria-label="Marks for your next message">
-          <p className="browser-workspace-annotations-hint">
-            {annotating ? (
-              <>
-                <span className="browser-workspace-annotations-live" aria-hidden="true" />
-                <span>Click an element or drag over an area</span>
-                <kbd>Esc</kbd>
-                <span>to stop</span>
-              </>
-            ) : (
-              <span>
-                {marks.length === 1 ? 'This mark goes' : `These ${marks.length} marks go`} with your
-                next message
-              </span>
-            )}
-          </p>
-          {marks.length > 0 && (
-            <ol>
-              {marks.map((mark) => (
-                <li key={mark.id} className={mark.onPage ? undefined : 'is-elsewhere'}>
-                  <span className="browser-mark-number" aria-hidden="true">
-                    {mark.number}
-                  </span>
-                  <div className="browser-workspace-annotation-body">
-                    <span className="browser-workspace-annotation-name" title={mark.name}>
-                      {mark.name}
-                      {!mark.onPage && <span> · on another page</span>}
-                    </span>
-                    <input
-                      ref={(field) => {
-                        if (field) noteFields.current.set(mark.id, field)
-                        else noteFields.current.delete(mark.id)
-                      }}
-                      aria-label={`Note for mark ${mark.number}, ${mark.name}`}
-                      placeholder="Add a note for the agent…"
-                      maxLength={MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS}
-                      value={notes[mark.id] ?? mark.note}
-                      onChange={(event) =>
-                        setNotes((previous) => ({ ...previous, [mark.id]: event.target.value }))
-                      }
-                      onBlur={() => saveNote(mark.id)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          event.currentTarget.blur()
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault()
-                          discarding.current = mark.id
-                          event.currentTarget.blur()
-                        }
-                      }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="browser-workspace-annotation-remove"
-                    aria-label={`Remove mark ${mark.number}, ${mark.name}`}
-                    title="Remove this mark"
-                    onClick={() => void act('annotationRemove', { annotationId: mark.id })}
-                  >
-                    <X size={13} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          )}
-        </section>
-      )}
     </div>
   )
 }

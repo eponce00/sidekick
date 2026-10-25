@@ -35,9 +35,10 @@ results. The batch intentionally omits a result screenshot because text fields c
 values visually; the live Browser panel still shows the current page. Custom widgets and
 autocomplete controls remain explicit single-action work.
 
-The Browser tab in the right workspace panel contains the actual interactive page. Type an address
-and press Enter to open it; anything that is not an address, such as a few words, is searched on
-DuckDuckGo. Use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
+The Browser tab in the right workspace panel contains the actual interactive page. Its toolbar
+reads like a browser's: back, forward and reload, the address field, **Annotate**, the page's tools
+(the puzzle piece), and the **⋯** menu. Type an address and press Enter to open it; anything that is
+not an address, such as a few words, is searched on DuckDuckGo. Create and switch tabs yourself; the agent uses these same tabs. Click
 the page to type, scroll, select text, and edit forms. Ordinary browsing has no takeover or
 resume button: the agent can use the same session on its next browser action without waiting
 for your approval. Manual page input is blocked during an in-flight browser action to avoid
@@ -45,17 +46,41 @@ interleaving; retry your input when it finishes. Manual changes invalidate old e
 so the agent must observe fresh state before reusing them. Focusing the address bar does not
 pause the agent. Right-click offers native text editing actions.
 
-The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. Zoom it as in a browser: Ctrl + and Ctrl − while the page has focus, Ctrl 0 for 100%, or the zoom items at the top of the device menu. A tab keeps its zoom, and the address bar shows it while it is not 100%; select it to return to 100%. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
+The **⋯** menu holds the rest, as in a browser:
+
+- **Find in page** opens a find bar under the toolbar. Matches are highlighted on the page, the
+  selected one brighter, with how many there are; Enter and Shift+Enter move between them, Escape
+  closes the bar.
+- **Print…** opens the system's print dialog for the page.
+- **Zoom** steps the page out and in, and the percentage returns it to 100%; the menu stays open
+  while you zoom.
+- **Device size** lists the standard sizes described below.
+- **Take a screenshot** marks all of the page in view, as a picture with a note, for your next
+  message (see [Pointing at the page](#pointing-at-the-page)).
+- **Import bookmarks and history…** opens the import described
+  [below](#bookmarks-and-history-from-your-other-browsers).
+- **Browser settings** opens Settings where the browser's settings are.
+
+The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. Zoom it as in a browser: Ctrl + and Ctrl − while the page has focus, Ctrl 0 for 100%, or the zoom row in the **⋯** menu. A tab keeps its zoom, and the address field shows it while it is not 100%; select it to return to 100%. **Device size** chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the address field shows the size in effect: select it, or choose **Responsive**, to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
 ## Pointing at the page
 
 To show the agent what you mean, choose **Annotate** (the speech-bubble button beside the address
-bar). The pointer becomes a crosshair and the part of the page under it is outlined and named, such
+field). The pointer becomes a crosshair and the part of the page under it is outlined and named, such
 as **Image** or **Link**. Click an element, or drag over an area: the mark is numbered on the page,
-and a card for it opens under the page with its name, such as **Heading “Almost 1,000 arrested…”**,
-and a note field ready for what should change; Enter keeps the note, Escape leaves it as it was.
-Each card can be edited or removed later. Press Escape on the page, or choose
-**Annotate** again, to stop marking. The wheel still scrolls the page while you mark, except
+and a comment field floats beside it, ready for what should change. Type, or choose the microphone
+to dictate it when [voice](VOICE.md) is on; Enter or the check keeps the note and the field goes
+away, Escape leaves it as it was. Select a mark's number to edit its note again, or remove it.
+
+For an element, the sliders button in the comment field opens a style editor: text size, weight,
+font, text color, background and opacity. Each change shows on the page at once, so you can try what
+you mean; the note then says what you changed, such as “Style: text size 20px, text color #1d4ed8”.
+**Reset** puts the element back. The changes stay on the page until it reloads.
+
+A bar at the top of the page, which you can drag elsewhere, counts your marks and has a screenshot
+button that marks all of the page in view, buttons to hide the marks and to remove them all,
+**Send**, which sends your message with them, and a close button. Press Escape on the page, close
+the bar, or choose **Annotate** again, to stop marking. The wheel still scrolls the page while you mark, except
 during an agent's action on it, like the rest of your input. Marking works the same on a page you
 opened and on one the agent is using, even while the agent works.
 
@@ -73,8 +98,10 @@ Many models take only a few images per request: the first marks' pictures are ke
 told the rest were left out. The sent message shows the marks and their pictures, on
 [your phone](PHONE.md) too. Marks you have not sent stay until you close SideKick.
 
-The page cannot tell you are marking it: the outline and numbers are drawn by SideKick over the
-page, and nothing runs in the page to read the marks. What you type into the page is never sent:
+The page cannot tell you are marking it: the outline, numbers, comment field and bar are drawn by
+SideKick over the page, and nothing runs in the page to read the marks. Only a style you change is
+written to the page, on that element. Dictation is heard and transcribed by SideKick on this
+computer; the page never has the microphone. What you type into the page is never sent:
 text from fields, lists and editable areas is left out, and in the picture those, and frames from
 other sites, are covered with grey stripes, so a marked field shows as grey. No picture is taken
 while a password a stored sign-in filled in is shown as plain text. A user name or password in the
@@ -126,9 +153,9 @@ so the agent can sign in for you without seeing the password.
 
 Some websites offer tools to in-browser agents through
 [WebMCP](https://webmachinelearning.github.io/webmcp/): a store might offer "add to cart", a travel
-site "search flights". When the page in the active tab offers tools, a small plug icon appears at
-the end of the Browser panel's address field; pages without tools show nothing. Choose it to see
-which site offers them and each tool's name, and whether the site marks it read-only. Choose a tool
+site "search flights". The puzzle piece beside the address field shows a dot when the page in the
+active tab offers tools. Choose it to see which site offers them and each tool's name, and whether
+the site marks it read-only; a page without tools says so. Choose a tool
 to read the site's own description of it.
 
 The agent learns which tools a page offers when it looks at the page. It lists them with

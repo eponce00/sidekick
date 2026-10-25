@@ -58,10 +58,24 @@ The page is untrusted, so nothing about a mark involves the page's own JavaScrip
 
 - **Input and drawing.** While annotating, `browserAnnotationOverlay.ts` raises a transparent
   WebContentsView of SideKick's own over the page view, at its exact bounds, like the agent's
-  cursor view. Its document only draws: the main process reads its mouse and keys from Chromium's
-  `before-mouse-event` and `before-input-event`, and sends it what to draw with labels set as text.
-  The page receives no events while it is covered; the wheel is replayed to the page as the user's
-  own input, subject to the same user-control check as a click.
+  cursor view. It loads `annotation-overlay.html`, a React page of the app's
+  (`src/renderer/src/annotationOverlay`), in its own partition, sandboxed, with a preload of two
+  calls: the state to draw, and what the user did. Every message is checked by
+  `parseAnnotationOverlayMessage` (`src/shared/annotationOverlay.ts`) before the controller sees
+  it, and positions are converted between the overlay's pixels, at the app's zoom, and the
+  window's. The overlay draws the marks, the hover outline, the floating comment field and the
+  bar. The page receives no events while it is covered; the wheel is replayed to the page through
+  CDP `Input.dispatchMouseEvent` as the user's own input, subject to the same user-control check as
+  a click.
+- **Style editor.** The only change a mark makes to the page. `CSS.getComputedStyleForNode` reads
+  the element's styles for the editor; each change rewrites its `style` attribute with
+  `DOM.setAttributeValue` over the attribute it had, which **Reset** puts back. Only the listed
+  properties are offered, and a value with anything beyond CSS words, numbers and colors (a `;`,
+  a brace, `url(`) is refused.
+- **Dictation.** The overlay never has the microphone. Its mic button asks the controller, which
+  tells the app window (`dictate` on `agentRuns:browserAnnotationsChanged`); the window runs its
+  usual on-device dictation and returns each piece of text with `annotationDictation`, which the
+  controller hands to the overlay for the open note.
 - **Facts.** `browserAnnotationCapture.ts` uses CDP only. `DOM.getNodeForLocation` finds what a
   click would reach, so a layer with `pointer-events: none` cannot take the mark;
   `DOM.getDocument` with `pierce` gives the tree through shadow roots and same-process frames for
@@ -80,8 +94,9 @@ order and renumbered when one is removed, at most `MAX_BROWSER_ANNOTATIONS`. Ele
 their node's box as the page changes; area marks are kept in document coordinates. A mark whose
 tab changed while it was read is dropped. The panel gets them without pictures in its workspace
 state; `agentRuns:browserAnnotations` lists them for the composer and hands them over (`take`)
-when a message is sent, and `agentRuns:browserAnnotationsChanged` tells the window to refresh and
-which note field to focus.
+when a message is sent, and `agentRuns:browserAnnotationsChanged` tells the window to refresh, to
+send when the user chose **Send** on the page, or to listen for a note. A screenshot is an area mark
+of the whole view.
 
 A sent mark is a `browser` message context attachment (`src/shared/messageContextAttachments.ts`),
 validated with the rest, its picture checked to be the PNG or JPEG it claims. `providerMessage`
@@ -90,6 +105,14 @@ input under its usual image budget, and adds a `<sidekick_browser_annotations>` 
 the note as the user's and everything else as page data, with page strings quoted on one line and
 closing tags broken up. A model without vision gets the block without pictures. The phone receives
 the marks without their pictures, which come with the message's reduced images.
+
+## Find in page
+
+Electron's `findInPage` reports nothing for a page in a WebContentsView, so `browserPageFind.ts`
+searches through CDP in an isolated world (`Page.createIsolatedWorld`) that shares only the document
+with page scripts. It walks visible text, marks matches with the CSS Custom Highlight API, the
+selected one under its own name, and scrolls it into view; an empty search removes the highlights
+and their style element. The world is remade after a navigation.
 
 ## Verification
 

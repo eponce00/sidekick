@@ -119,6 +119,8 @@ interface ActivityPanelProps {
   onSettle?: () => void
   /** Opens another chat, from the Chats tab. */
   onOpenConversation?: (conversationId: string) => void
+  /** Opens Settings where the browser's own settings are. */
+  onOpenBrowserSettings?: () => void
 }
 
 function ActivityPanel({
@@ -144,7 +146,8 @@ function ActivityPanel({
   sideBySideMaxWidth,
   snapWidths = [ACTIVITY_PANEL_NARROW_WIDTH],
   onSettle,
-  onOpenConversation
+  onOpenConversation,
+  onOpenBrowserSettings
 }: ActivityPanelProps): React.JSX.Element {
   const systemTrashName = window.api.app.platform === 'windows' ? 'Recycle Bin' : 'Trash'
   const [activeTab, setActiveTab] = useState<ActivityTab>(storedActivityTab)
@@ -1216,6 +1219,7 @@ ${viewedFile.filePath}`}
               <BrowserActivityPanel
                 conversationId={conversationId}
                 onActivityChange={handleBrowserActivityChange}
+                onOpenSettings={onOpenBrowserSettings}
               />
             </div>
           </div>
@@ -1274,6 +1278,7 @@ ${viewedFile.filePath}`}
             <BrowserActivityPanel
               conversationId={conversationId}
               onActivityChange={handleBrowserActivityChange}
+              onOpenSettings={onOpenBrowserSettings}
             />
           </div>
         )}

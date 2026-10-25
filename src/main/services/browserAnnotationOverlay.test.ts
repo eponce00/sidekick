@@ -1,54 +1,46 @@
-import { JSDOM } from 'jsdom'
 import { describe, expect, it } from 'vitest'
-import { OVERLAY_PAGE, overlayInput } from './browserAnnotationOverlay'
+import { parseAnnotationOverlayMessage } from '../../shared/annotationOverlay'
 
-describe('the annotation overlay', () => {
-  it("draws the page's labels as text, never as markup", () => {
-    const dom = new JSDOM(OVERLAY_PAGE, { runScripts: 'dangerously' })
-    const window = dom.window as unknown as Window & { render: (state: unknown) => void }
-    window.render({
-      accent: '#2850b8',
-      accentText: '#ffffff',
-      hover: {
-        x: 10,
-        y: 4,
-        width: 80,
-        height: 20,
-        label: '<img src=x onerror="document.title=1">'
-      },
-      marks: [{ x: 5, y: 30, width: 40, height: 10, number: 1, area: true }]
+describe('messages from the annotation overlay', () => {
+  it('accepts what the overlay sends and nothing else', () => {
+    expect(parseAnnotationOverlayMessage({ type: 'pointer', kind: 'down', x: 4, y: 8 })).toEqual({
+      type: 'pointer',
+      kind: 'down',
+      x: 4,
+      y: 8
     })
-    const document = window.document
-    expect(document.querySelector('img')).toBeNull()
-    expect(document.querySelector('.label')?.textContent).toBe(
-      '<img src=x onerror="document.title=1">'
-    )
-    // Too near the top for a label above the box, so it goes below.
-    expect(document.querySelector('.label')?.className).toBe('label below')
-    expect(document.querySelector('.mark.area .badge')?.textContent).toBe('1')
-    expect(document.documentElement.style.getPropertyValue('--accent')).toBe('#2850b8')
-    window.render({ accent: '#2850b8', accentText: '#ffffff', marks: [] })
-    expect(document.body.children).toHaveLength(0)
-    dom.window.close()
-  })
-
-  it("reads only the left button's clicks and drags, the pointer, and the wheel", () => {
+    expect(parseAnnotationOverlayMessage({ type: 'note', id: 'm1', note: 'Bigger' })).toEqual({
+      type: 'note',
+      id: 'm1',
+      note: 'Bigger'
+    })
     expect(
-      overlayInput({ type: 'mouseDown', button: 'left', x: 3, y: 4, modifiers: ['leftbuttondown'] })
-    ).toEqual({ type: 'down', x: 3, y: 4 })
-    expect(overlayInput({ type: 'mouseDown', button: 'right', x: 3, y: 4 })).toBeUndefined()
-    expect(overlayInput({ type: 'mouseMove', x: 5, y: 6 })).toEqual({
-      type: 'move',
-      x: 5,
-      y: 6
+      parseAnnotationOverlayMessage({
+        type: 'style',
+        id: 'm1',
+        styles: { color: 'rgb(255, 0, 0)', 'font-family': "'Times New Roman', serif" }
+      })
+    ).toEqual({
+      type: 'style',
+      id: 'm1',
+      styles: { color: 'rgb(255, 0, 0)', 'font-family': "'Times New Roman', serif" }
     })
-    expect(overlayInput({ type: 'mouseWheel', x: 1, y: 2, deltaY: -120 } as never)).toEqual({
-      type: 'wheel',
-      x: 1,
-      y: 2,
-      deltaX: 0,
-      deltaY: -120
-    })
-    expect(overlayInput({ type: 'contextMenu', x: 1, y: 2 })).toBeUndefined()
+    for (const bad of [
+      null,
+      'send',
+      { type: 'eval', code: 'x' },
+      { type: 'pointer', kind: 'down', x: Number.NaN, y: 1 },
+      { type: 'pointer', kind: 'click', x: 1, y: 1 },
+      { type: 'note', id: 'm1', note: 'x'.repeat(5_000) },
+      { type: 'remove', id: { toString: () => 'm1' } },
+      { type: 'wheel', x: 1, y: 1, deltaX: 0, deltaY: 1e9 },
+      // A style value never ends its declaration, adds another, or loads anything.
+      { type: 'style', id: 'm1', styles: { color: 'red; position: fixed' } },
+      { type: 'style', id: 'm1', styles: { 'background-color': 'url(https://x.test/a.png)' } },
+      { type: 'style', id: 'm1', styles: { color: 'red } body { display: none' } },
+      { type: 'style', id: 'm1', styles: { opacity: 1 } },
+      { type: 'dictate', on: 'yes' }
+    ])
+      expect(parseAnnotationOverlayMessage(bad), JSON.stringify(bad)).toBeNull()
   })
 })

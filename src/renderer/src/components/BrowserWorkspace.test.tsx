@@ -10,9 +10,7 @@ describe('shared browser workspace', () => {
   let root: Root
   let container: HTMLDivElement
   const request = vi.fn()
-  let annotationsChanged: ((change: { conversationId: string; focus?: string }) => void) | null
   beforeEach(() => {
-    annotationsChanged = null
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -48,12 +46,7 @@ describe('shared browser workspace', () => {
       value: {
         agentRuns: {
           browserWorkspace: request,
-          onBrowserAnnotationsChanged: (listener: typeof annotationsChanged) => {
-            annotationsChanged = listener
-            return () => {
-              annotationsChanged = null
-            }
-          }
+          onBrowserAnnotationsChanged: () => () => undefined
         }
       }
     })
@@ -80,11 +73,6 @@ describe('shared browser workspace', () => {
     expect(container.querySelector('.browser-workspace-topbar')).not.toBeNull()
     expect(container.textContent).not.toContain('Resume agent')
   })
-  it('shows nothing for a page without tools', async () => {
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('.browser-workspace-tools')).toBeNull()
-    expect(container.querySelector('.browser-workspace-address.has-tools')).toBeNull()
-  })
   it("names the page's WebMCP tools in a popover over a picture of the page", async () => {
     const state = {
       sessionId: 'session',
@@ -105,10 +93,7 @@ describe('shared browser workspace', () => {
       input.action === 'snapshot' ? { ...state, snapshot: 'data:image/png;base64,AA==' } : state
     )
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    // The indicator lives inside the address field, so nothing around it moves.
-    const button = container.querySelector<HTMLButtonElement>(
-      '.browser-workspace-address .browser-workspace-tools'
-    )!
+    const button = container.querySelector<HTMLButtonElement>('.browser-workspace-tools')!
     expect(button.getAttribute('aria-expanded')).toBe('false')
     expect(button.getAttribute('aria-label')).toBe('Tools this page offers the agent: 2')
     expect(button.textContent).toBe('')
@@ -173,8 +158,8 @@ describe('shared browser workspace', () => {
     expect(container.querySelector('#browser-page-tools')).toBeNull()
   })
 
-  it('marks the page: toggles annotating, lists each mark below the page, and edits notes', async () => {
-    const page = {
+  it('toggles annotating in the app’s colors and theme, with the count on its button', async () => {
+    request.mockResolvedValue({
       sessionId: 'session',
       activeTabId: 'tab',
       busy: false,
@@ -183,77 +168,26 @@ describe('shared browser workspace', () => {
       ],
       annotating: false,
       annotations: [
-        {
-          id: 'mark-1',
-          number: 1,
-          name: 'button “<img src=x onerror=alert(1)>”',
-          note: '',
-          target: 'element',
-          onPage: true
-        }
+        { id: 'mark-1', number: 1, name: 'Button', note: '', target: 'element', onPage: true }
       ]
-    }
-    request.mockResolvedValue(page)
+    })
     document.documentElement.style.setProperty('--accent', '#2850b8')
     document.documentElement.style.setProperty('--on-accent', '#ffffff')
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-
     const toggle = container.querySelector<HTMLButtonElement>('.browser-workspace-annotate')!
     expect(toggle.getAttribute('aria-pressed')).toBe('false')
-    expect(toggle.textContent).toBe('1')
-    const list = container.querySelector('.browser-workspace-annotations')!
-    // Below the page, never over it, and the page's words are text, never markup.
-    expect(container.querySelector('.browser-workspace-viewport')?.nextElementSibling).toBe(list)
-    expect(list.querySelector('img')).toBeNull()
-    expect(list.textContent).toContain('<img src=x onerror=alert(1)>')
-
+    expect(toggle.textContent).toContain('1')
+    // Notes are written on the page now; nothing grows under it.
+    expect(container.querySelector('.browser-workspace-annotations')).toBeNull()
     await act(async () => toggle.click())
     expect(request).toHaveBeenCalledWith({
       conversationId: 'chat',
       action: 'annotate',
       annotate: true,
       accent: '#2850b8',
-      accentText: '#ffffff'
-    })
-
-    // A mark just made gets its note field.
-    const field = list.querySelector<HTMLInputElement>('input')!
-    await act(async () => annotationsChanged?.({ conversationId: 'chat', focus: 'mark-1' }))
-    expect(document.activeElement).toBe(field)
-    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
-    await act(async () => {
-      setValue.call(field, 'Make it blue')
-      field.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () =>
-      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    )
-    expect(request).toHaveBeenCalledWith({
-      conversationId: 'chat',
-      action: 'annotationNote',
-      annotationId: 'mark-1',
-      note: 'Make it blue'
-    })
-
-    // Escape leaves the field without saving what was typed.
-    request.mockClear()
-    field.focus()
-    await act(async () => {
-      setValue.call(field, 'Never mind')
-      field.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () =>
-      field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-    )
-    expect(request.mock.calls.some(([input]) => input.action === 'annotationNote')).toBe(false)
-
-    await act(async () =>
-      list.querySelector<HTMLButtonElement>('[aria-label^="Remove mark 1"]')!.click()
-    )
-    expect(request).toHaveBeenCalledWith({
-      conversationId: 'chat',
-      action: 'annotationRemove',
-      annotationId: 'mark-1'
+      accentText: '#ffffff',
+      theme: 'dark',
+      canDictate: false
     })
   })
 
@@ -354,7 +288,7 @@ describe('shared browser workspace', () => {
 
   it('shows the page’s zoom only when it is not 100%, and resets it', async () => {
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    expect(container.querySelector('.browser-workspace-zoom')).toBeNull()
+    expect(container.querySelector('.browser-workspace-chip')).toBeNull()
     request.mockResolvedValue({
       sessionId: 'session',
       activeTabId: 'tab',
@@ -365,7 +299,7 @@ describe('shared browser workspace', () => {
       ]
     })
     await act(async () => root.render(<BrowserWorkspace conversationId="other" />))
-    const chip = container.querySelector<HTMLButtonElement>('.browser-workspace-zoom')!
+    const chip = container.querySelector<HTMLButtonElement>('.browser-workspace-chip')!
     expect(chip.textContent).toBe('125%')
     await act(async () => chip.click())
     expect(request).toHaveBeenCalledWith({

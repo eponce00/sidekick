@@ -21,6 +21,7 @@ import { BrowserWorkspace } from './BrowserWorkspace'
 export interface BrowserActivityPanelProps {
   conversationId: string | null
   onActivityChange?: (state: BrowserActivityState) => void
+  onOpenSettings?: () => void
 }
 
 function activityStatus(
@@ -46,20 +47,23 @@ function statusLabel(state: BrowserActivityState): string {
 
 export function BrowserActivityPanel({
   conversationId,
-  onActivityChange
+  onActivityChange,
+  onOpenSettings
 }: BrowserActivityPanelProps): React.JSX.Element {
   return (
     <BrowserActivityPanelSession
       key={conversationId ?? 'no-conversation'}
       conversationId={conversationId}
       onActivityChange={onActivityChange}
+      onOpenSettings={onOpenSettings}
     />
   )
 }
 
 function BrowserActivityPanelSession({
   conversationId,
-  onActivityChange
+  onActivityChange,
+  onOpenSettings
 }: BrowserActivityPanelProps): React.JSX.Element {
   const [activity, setActivity] = useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const [failedScreenshot, setFailedScreenshot] = useState<string | null>(null)
@@ -149,7 +153,7 @@ function BrowserActivityPanelSession({
       )}
 
       {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
-        <BrowserWorkspace conversationId={conversationId} />
+        <BrowserWorkspace conversationId={conversationId} onOpenSettings={onOpenSettings} />
       ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />
