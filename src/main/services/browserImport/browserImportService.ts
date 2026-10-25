@@ -1,5 +1,6 @@
 import { basename, join } from 'path'
 import {
+  browserImportSourceId,
   IMPORT_BROWSER_NAMES,
   IMPORT_BROWSERS,
   type BrowserImportPreview,
@@ -207,7 +208,7 @@ export class BrowserImportService {
       const data = await readProfile(profile, parts, this.options.tempRoot)
       const label = profileLabel(profile)
       this.store.replace(
-        { id: `${profile.browser}:${profile.id}`, label },
+        { id: browserImportSourceId(profile.browser, profile.id), label },
         { bookmarks: data.bookmarks, history: data.history }
       )
       return {

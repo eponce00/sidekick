@@ -5,7 +5,7 @@ import type {
   BrowserLibrarySource,
   ImportBrowser
 } from '../../../shared/browserLibrary'
-import { IMPORT_BROWSER_NAMES } from '../../../shared/browserLibrary'
+import { browserImportSourceId, IMPORT_BROWSER_NAMES } from '../../../shared/browserLibrary'
 
 const PREVIEW_BROWSERS: BrowserImportSource[] = [
   {
@@ -42,8 +42,20 @@ const PREVIEW_BOOKMARKS: Array<Omit<BrowserBookmark, 'sourceId'>> = [
 
 /** Imported browser data for the renderer preview, kept in memory. */
 export function previewBrowserLibraryApi(): BrowserLibraryAPI {
-  let sources: BrowserLibrarySource[] = []
-  let bookmarks: BrowserBookmark[] = []
+  // One earlier import, so the dialog shows what importing that profile again replaces.
+  let sources: BrowserLibrarySource[] = [
+    {
+      id: browserImportSourceId('chrome', 'Default'),
+      label: `${IMPORT_BROWSER_NAMES.chrome} (Personal)`,
+      importedAt: Date.now() - 3 * 24 * 60 * 60 * 1000,
+      bookmarks: PREVIEW_BOOKMARKS.length,
+      history: 1_284
+    }
+  ]
+  let bookmarks: BrowserBookmark[] = PREVIEW_BOOKMARKS.map((bookmark) => ({
+    ...bookmark,
+    sourceId: browserImportSourceId('chrome', 'Default')
+  }))
   const label = (browser: ImportBrowser, profileId: string): string => {
     const source = PREVIEW_BROWSERS.find((entry) => entry.browser === browser)
     const profile = source?.profiles.find((entry) => entry.id === profileId)
@@ -51,6 +63,8 @@ export function previewBrowserLibraryApi(): BrowserLibraryAPI {
   }
   return {
     importSources: async () => PREVIEW_BROWSERS,
+    // No icons are bundled for the preview; the dialog falls back to its neutral icon.
+    browserIcon: async () => null,
     previewImport: async (browser, profileId) => ({
       browser,
       profileId,
@@ -68,7 +82,7 @@ export function previewBrowserLibraryApi(): BrowserLibraryAPI {
           : []
     }),
     runImport: async (request) => {
-      const id = `${request.browser}:${request.profileId}`
+      const id = browserImportSourceId(request.browser, request.profileId)
       const name = label(request.browser, request.profileId)
       if (request.bookmarks) {
         bookmarks = [

@@ -54,6 +54,7 @@ describe('imported browser data in the Browser panel', () => {
           ]
         }
       ]),
+      browserIcon: vi.fn().mockResolvedValue(null),
       previewImport: vi.fn().mockResolvedValue({
         browser: 'chrome',
         profileId: 'Default',

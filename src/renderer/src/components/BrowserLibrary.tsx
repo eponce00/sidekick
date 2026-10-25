@@ -1,12 +1,26 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { Bookmark, FileUp, History, Import, X } from 'lucide-react'
-import type {
-  BrowserImportPreview,
-  BrowserImportResult,
-  BrowserImportSource,
-  BrowserSuggestion,
-  ImportBrowser
+import {
+  Bookmark,
+  Check,
+  CircleAlert,
+  FileUp,
+  Globe,
+  History,
+  Info,
+  Loader2,
+  Lock,
+  TriangleAlert,
+  X
+} from 'lucide-react'
+import {
+  browserImportSourceId,
+  type BrowserImportPreview,
+  type BrowserImportResult,
+  type BrowserImportSource,
+  type BrowserLibrarySource,
+  type BrowserSuggestion,
+  type ImportBrowser
 } from '../../../shared/browserLibrary'
 import { useModalDialog } from '../hooks/useModalDialog'
 import { Select } from './Select'
@@ -84,6 +98,95 @@ export function BrowserSuggestions({
   )
 }
 
+// Asked once per browser while the app runs: an installed browser's icon does not change.
+const browserIcons = new Map<ImportBrowser, Promise<string | null>>()
+
+function loadBrowserIcon(browser: ImportBrowser): Promise<string | null> {
+  let icon = browserIcons.get(browser)
+  if (!icon) {
+    icon = window.api.browserLibrary.browserIcon(browser).catch(() => null)
+    browserIcons.set(browser, icon)
+  }
+  return icon
+}
+
+/** The installed browser's own icon from the system, or a neutral globe when it has none. */
+function BrowserIcon({ browser }: { browser: ImportBrowser }): React.JSX.Element {
+  const [icon, setIcon] = useState<string | null>(null)
+  useEffect(() => {
+    let current = true
+    void loadBrowserIcon(browser).then((found) => current && setIcon(found))
+    return () => {
+      current = false
+    }
+  }, [browser])
+  return (
+    <span className="browser-import-browser-icon" aria-hidden="true">
+      {icon ? <img src={icon} alt="" draggable={false} /> : <Globe size={20} />}
+    </span>
+  )
+}
+
+const ARROW_STEPS: Record<string, number> = {
+  ArrowRight: 1,
+  ArrowDown: 1,
+  ArrowLeft: -1,
+  ArrowUp: -1
+}
+
+/** The browsers found, as one choice: arrow keys move it, as in any radio group. */
+function BrowserChoice({
+  sources,
+  value,
+  disabled,
+  labelledBy,
+  onChange
+}: {
+  sources: BrowserImportSource[]
+  value: ImportBrowser | ''
+  disabled: boolean
+  labelledBy: string
+  onChange: (source: BrowserImportSource) => void
+}): React.JSX.Element {
+  const groupRef = useRef<HTMLDivElement>(null)
+  const move = (event: KeyboardEvent<HTMLButtonElement>, index: number): void => {
+    const step = ARROW_STEPS[event.key]
+    if (!step) return
+    event.preventDefault()
+    const next = (index + step + sources.length) % sources.length
+    onChange(sources[next])
+    groupRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus()
+  }
+  return (
+    <div
+      ref={groupRef}
+      role="radiogroup"
+      aria-labelledby={labelledBy}
+      className="browser-import-browsers"
+    >
+      {sources.map((source, index) => {
+        const selected = source.browser === value
+        return (
+          <button
+            key={source.browser}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
+            disabled={disabled}
+            className={`browser-import-browser${selected ? ' is-selected' : ''}`}
+            onClick={() => onChange(source)}
+            onKeyDown={(event) => move(event, index)}
+          >
+            <BrowserIcon browser={source.browser} />
+            <span className="browser-import-browser-name">{source.name}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /** Chooses a browser and profile, shows what it holds, and imports the parts the user keeps. */
 export function BrowserImportDialog({
   isOpen,
@@ -96,7 +199,10 @@ export function BrowserImportDialog({
 }): React.JSX.Element | null {
   const dialogRef = useModalDialog<HTMLDivElement>(isOpen, onClose)
   const titleId = useId()
+  const browsersLabelId = useId()
+  const partsLabelId = useId()
   const [sources, setSources] = useState<BrowserImportSource[] | null>(null)
+  const [imported, setImported] = useState<BrowserLibrarySource[]>([])
   const [browser, setBrowser] = useState<ImportBrowser | ''>('')
   const [profileId, setProfileId] = useState('')
   const [preview, setPreview] = useState<BrowserImportPreview | null>(null)
@@ -121,6 +227,11 @@ export function BrowserImportDialog({
         setProfileId(found[0]?.profiles[0]?.id ?? '')
       })
       .catch((e) => current && setError(errorText(e)))
+    // Only says when a profile was imported before; the dialog works without it.
+    void window.api.browserLibrary
+      .sources()
+      .then((kept) => current && setImported(kept))
+      .catch(() => undefined)
     return () => {
       current = false
     }
@@ -151,6 +262,11 @@ export function BrowserImportDialog({
   if (!isOpen) return null
 
   const source = sources?.find((entry) => entry.browser === browser)
+  const previous = browser
+    ? imported.find((entry) => entry.id === browserImportSourceId(browser, profileId))
+    : undefined
+  const found = Boolean(sources?.length)
+  const keptAnything = Boolean(result && (result.bookmarks || result.history))
   const finish = (done: BrowserImportResult): void => {
     setResult(done)
     onImported?.(done)
@@ -167,6 +283,7 @@ export function BrowserImportDialog({
       setBusy(false)
     }
   }
+  const importFile = (): void => void run(() => window.api.browserLibrary.importBookmarksFile())
   const problemFor = (part: 'bookmarks' | 'history'): string | undefined =>
     preview?.problems.find((problem) => problem.part === part)?.message
 
@@ -187,63 +304,66 @@ export function BrowserImportDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="browser-import-header">
-          <span className="browser-import-icon">
-            <Import size={18} aria-hidden="true" />
-          </span>
           <div>
-            <h2 id={titleId}>Import from another browser</h2>
-            <p>
-              Bookmarks and history fill the Browser panel&apos;s bookmarks and suggest addresses as
-              you type. They stay on this computer, and the agent never sees them. Passwords,
-              cookies, and sign-ins are not imported.
-            </p>
+            <h2 id={titleId}>Import browser data</h2>
+            <p>Bookmarks and history stay on this computer.</p>
           </div>
           <button type="button" onClick={onClose} disabled={busy} aria-label="Close">
             <X size={16} />
           </button>
         </div>
 
-        {result ? (
-          <div className="browser-import-body" role="status">
-            <p className="browser-import-result">{importSummary(result)}</p>
-            {result.problems.map((problem) => (
-              <p key={problem.part} className="browser-import-problem">
-                {problem.message}
-              </p>
-            ))}
-          </div>
-        ) : (
-          <div className="browser-import-body">
-            {sources === null && !error ? (
-              <p className="browser-library-note">Looking for browsers on this computer…</p>
-            ) : sources?.length === 0 ? (
-              <p className="browser-library-note">
+        <div className="browser-import-body">
+          {result ? (
+            <div className="browser-import-done" role="status">
+              <span className={`browser-import-done-icon${keptAnything ? ' is-success' : ''}`}>
+                {keptAnything ? <Check size={16} /> : <Info size={16} />}
+              </span>
+              <div>
+                <p className="browser-import-result">{importSummary(result)}</p>
+                {result.problems.map((problem) => (
+                  <p key={problem.part} className="browser-import-problem">
+                    <TriangleAlert size={13} aria-hidden="true" />
+                    {problem.message}
+                  </p>
+                ))}
+              </div>
+            </div>
+          ) : sources === null && !error ? (
+            <div className="browser-import-loading" role="status">
+              <Loader2 size={16} className="icon-spin" aria-hidden="true" />
+              Looking for browsers on this computer…
+            </div>
+          ) : sources?.length === 0 ? (
+            <div className="browser-import-empty">
+              <span className="browser-import-empty-icon">
+                <Globe size={20} aria-hidden="true" />
+              </span>
+              <strong>No browsers found</strong>
+              <p>
                 SideKick found no Chrome, Edge, Brave, Chromium, Arc, Firefox, or Safari data on
-                this computer. You can still import a bookmarks file exported from any browser.
+                this computer. You can import a bookmarks file exported from any browser instead.
               </p>
-            ) : sources ? (
-              <>
-                <label className="browser-import-field">
-                  <span>Browser</span>
-                  <Select
-                    aria-label="Browser"
-                    value={browser}
-                    disabled={busy}
-                    onChange={(event) => {
-                      const next = sources.find((entry) => entry.browser === event.target.value)
-                      setBrowser(next?.browser ?? '')
-                      setProfileId(next?.profiles[0]?.id ?? '')
-                    }}
-                  >
-                    {sources.map((entry) => (
-                      <option key={entry.browser} value={entry.browser}>
-                        {entry.name}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
+            </div>
+          ) : sources ? (
+            <>
+              <section className="browser-import-section">
+                <span id={browsersLabelId} className="browser-import-label">
+                  Browser
+                </span>
+                <BrowserChoice
+                  sources={sources}
+                  value={browser}
+                  disabled={busy}
+                  labelledBy={browsersLabelId}
+                  onChange={(next) => {
+                    if (next.browser === browser) return
+                    setBrowser(next.browser)
+                    setProfileId(next.profiles[0]?.id ?? '')
+                  }}
+                />
                 {source && source.profiles.length > 1 && (
-                  <label className="browser-import-field">
+                  <div className="browser-import-profile">
                     <span>Profile</span>
                     <Select
                       aria-label="Profile"
@@ -257,13 +377,23 @@ export function BrowserImportDialog({
                         </option>
                       ))}
                     </Select>
-                  </label>
+                  </div>
                 )}
-                <fieldset className="browser-import-parts" aria-busy={!preview}>
-                  <legend>What to import</legend>
+              </section>
+
+              <section
+                className="browser-import-section"
+                aria-labelledby={partsLabelId}
+                aria-busy={!preview}
+              >
+                <span id={partsLabelId} className="browser-import-label">
+                  Include
+                </span>
+                <div className="browser-import-parts">
                   {(['bookmarks', 'history'] as const).map((part) => {
                     const total = preview?.[part] ?? 0
                     const problem = problemFor(part)
+                    const Icon = part === 'bookmarks' ? Bookmark : History
                     return (
                       <label key={part} className="browser-import-part">
                         <input
@@ -274,52 +404,63 @@ export function BrowserImportDialog({
                             setParts((current) => ({ ...current, [part]: event.target.checked }))
                           }
                         />
-                        <span>
-                          <strong>{part === 'bookmarks' ? 'Bookmarks' : 'History'}</strong>
-                          <small>
-                            {!preview
-                              ? 'Reading…'
-                              : problem
-                                ? problem
-                                : part === 'bookmarks'
-                                  ? total
-                                    ? count(total, 'bookmark', 'bookmarks')
-                                    : 'No bookmarks'
-                                  : total
-                                    ? `${count(total, 'page', 'pages')}, most visited first`
-                                    : 'No history'}
-                          </small>
+                        <Icon size={14} aria-hidden="true" />
+                        <span className="browser-import-part-name">
+                          {part === 'bookmarks' ? 'Bookmarks' : 'History'}
                         </span>
+                        <span className="browser-import-part-count">
+                          {!preview
+                            ? 'Reading…'
+                            : problem
+                              ? 'Unavailable'
+                              : total
+                                ? part === 'bookmarks'
+                                  ? count(total, 'bookmark', 'bookmarks')
+                                  : count(total, 'page', 'pages')
+                                : 'None'}
+                        </span>
+                        {problem && <span className="browser-import-part-problem">{problem}</span>}
                       </label>
                     )
                   })}
-                </fieldset>
-                <p className="browser-library-note">
-                  Importing the same profile again replaces what it imported before.
-                </p>
-              </>
-            ) : null}
-          </div>
-        )}
+                </div>
+                {previous && (
+                  <p className="browser-library-note">
+                    Imported {new Date(previous.importedAt).toLocaleDateString()}. Importing again
+                    replaces it.
+                  </p>
+                )}
+              </section>
+            </>
+          ) : null}
 
-        {error && (
-          <p role="alert" className="browser-import-error">
-            {error}
-          </p>
-        )}
+          {error && (
+            <p role="alert" className="browser-import-error">
+              <CircleAlert size={14} aria-hidden="true" />
+              {error}
+            </p>
+          )}
+
+          {!result && found && (
+            <p className="browser-import-footnote">
+              <Lock size={11} aria-hidden="true" />
+              The agent never sees imported data. Passwords, cookies, and sign-ins are not imported.
+            </p>
+          )}
+        </div>
 
         <div className="browser-import-footer">
           {result ? (
             <button type="button" className="browser-import-button is-primary" onClick={onClose}>
               Done
             </button>
-          ) : (
+          ) : found ? (
             <>
               <button
                 type="button"
-                className="browser-import-button is-link"
+                className="browser-import-button is-quiet"
                 disabled={busy}
-                onClick={() => void run(() => window.api.browserLibrary.importBookmarksFile())}
+                onClick={importFile}
               >
                 <FileUp size={14} aria-hidden="true" />
                 Import a bookmarks file…
@@ -346,7 +487,28 @@ export function BrowserImportDialog({
                   )
                 }
               >
+                {busy && <Loader2 size={14} className="icon-spin" aria-hidden="true" />}
                 {busy ? 'Importing…' : 'Import'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="browser-import-button"
+                disabled={busy}
+                onClick={onClose}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="browser-import-button is-primary"
+                disabled={busy || (sources === null && !error)}
+                onClick={importFile}
+              >
+                <FileUp size={14} aria-hidden="true" />
+                Import a bookmarks file…
               </button>
             </>
           )}

@@ -41,6 +41,11 @@ All reading happens in the main process, in `src/main/services/browserImport`:
   shown. Imports run one at a time.
 - A bookmarks file is chosen in a system open dialog in the main process; the renderer never
   passes a path.
+- `browserIcons` gives the import dialog each installed browser's own icon as a data URL. The
+  renderer names only a browser id; the main process looks at fixed install locations: the
+  executable through `app.getFileIcon` on Windows, the `.app` bundle on macOS, and the browser's
+  PNG in the freedesktop icon theme on Linux, where `getFileIcon` answers with a generic icon. No
+  logo ships with SideKick, and a browser without an icon gets a neutral globe.
 - `BrowserLibraryStore` keeps the results in SideKick's database (`browser_library_sources`,
   `browser_library_bookmarks`, `browser_library_history`). The renderer reads them through
   `window.api.browserLibrary`: up to six suggestions for typed text, and the sources with counts. Nothing in the agent's tool registry reads these tables.

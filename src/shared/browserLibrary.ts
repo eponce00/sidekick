@@ -68,6 +68,11 @@ export interface BrowserImportResult {
   problems: BrowserImportProblem[]
 }
 
+/** The id an import from a browser profile is kept under, so importing it again replaces it. */
+export function browserImportSourceId(browser: ImportBrowser, profileId: string): string {
+  return `${browser}:${profileId}`
+}
+
 /** One import kept in SideKick; importing the same profile again replaces it. */
 export interface BrowserLibrarySource {
   id: string
@@ -103,6 +108,8 @@ export const BROWSER_IMPORT_LIMITS = {
 export interface BrowserLibraryAPI {
   /** Browsers and profiles found on this computer. */
   importSources: () => Promise<BrowserImportSource[]>
+  /** The installed browser's own icon as a data URL, or null when the system has none for it. */
+  browserIcon: (browser: ImportBrowser) => Promise<string | null>
   /** Counts what a profile holds, without keeping anything. */
   previewImport: (browser: ImportBrowser, profileId: string) => Promise<BrowserImportPreview>
   runImport: (request: BrowserImportRequest) => Promise<BrowserImportResult>

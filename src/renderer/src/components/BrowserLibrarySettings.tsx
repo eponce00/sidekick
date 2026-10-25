@@ -30,7 +30,7 @@ export function BrowserLibrarySettings(): React.JSX.Element {
     <SettingsSection
       icon={Library}
       title="Imported browser data"
-      description="Bookmarks and history from your other browsers, for the Browser panel's bookmarks and address suggestions. They stay on this computer and the agent never sees them. Passwords, cookies, and sign-ins are not imported."
+      description="Bookmarks and history from your other browsers suggest addresses in the Browser panel. They stay on this computer."
       actions={
         <button
           type="button"

@@ -384,6 +384,7 @@ const api = {
   // Names a browser and a profile it was shown; never a path, and nothing secret comes back.
   browserLibrary: {
     importSources: () => ipcRenderer.invoke('browserLibrary:importSources'),
+    browserIcon: (browser: string) => ipcRenderer.invoke('browserLibrary:browserIcon', browser),
     previewImport: (browser: string, profileId: string) =>
       ipcRenderer.invoke('browserLibrary:previewImport', browser, profileId),
     runImport: (request: import('../shared/browserLibrary').BrowserImportRequest) =>

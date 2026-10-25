@@ -1,5 +1,6 @@
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import type { BrowserImportRequest } from '../../shared/browserLibrary'
+import { browserIcon } from '../services/browserImport/browserIcons'
 import { BrowserImportService } from '../services/browserImport/browserImportService'
 import { BrowserLibraryStore } from '../services/browserImport/browserLibraryStore'
 import { getDb } from './state'
@@ -8,6 +9,7 @@ export function registerBrowserLibraryHandlers(): void {
   const store = new BrowserLibraryStore(getDb)
   const imports = new BrowserImportService(store)
   ipcMain.handle('browserLibrary:importSources', () => imports.sources())
+  ipcMain.handle('browserLibrary:browserIcon', (_event, browser: unknown) => browserIcon(browser))
   ipcMain.handle('browserLibrary:previewImport', (_event, browser: unknown, profileId: unknown) =>
     imports.preview(browser, profileId)
   )
