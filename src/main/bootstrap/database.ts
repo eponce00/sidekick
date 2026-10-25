@@ -1048,6 +1048,31 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       last_seen_at INTEGER,
       last_address TEXT
     );
+
+    -- Bookmarks and history the user imported from another browser, for the Browser panel only.
+    CREATE TABLE IF NOT EXISTS browser_library_sources (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      imported_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_library_bookmarks (
+      source_id TEXT NOT NULL REFERENCES browser_library_sources(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      PRIMARY KEY (source_id, position)
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_library_history (
+      source_id TEXT NOT NULL REFERENCES browser_library_sources(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      visit_count INTEGER NOT NULL,
+      last_visit_at INTEGER,
+      PRIMARY KEY (source_id, url)
+    );
   `)
   db.exec(SCHEDULE_TABLES)
 
