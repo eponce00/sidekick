@@ -88,9 +88,12 @@ Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web â€
 
 ### React artifacts
 
-- Write the code in the order it can be shown while you write it: imports, data and helper
-  functions first, then `export default function App` with the whole layout, then the components
-  App uses. The chat renders the artifact as it arrives, so the layout appears early and fills in.
+- Write the code in the order it can be shown while you write it: imports, data and small helper
+  functions first, then `export default function App`, then everything App uses. The chat renders
+  the artifact as it arrives, so keep App to the layout: its JSX should start within a few lines.
+  Put state logic, effects, timers, game loops and event handlers in a custom hook (for example
+  `const game = useSnakeGame()`) and in components defined after App, so the layout appears early
+  and each part fills in as its code arrives.
 - TypeScript annotations are fine; they are removed before the code runs.
 - Tailwind is available through `className`; no import is needed. `font-sans`, `font-mono` and a
   bare `border` already use the app's font and border color. Theme colors as classes:

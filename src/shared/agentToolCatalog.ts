@@ -1480,7 +1480,7 @@ const createArtifact = definition(
       code: {
         type: 'string',
         description:
-          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App, then the components it uses, so the chat can show it while it streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App as a short layout, then the hooks and components it uses (state logic, effects and handlers in a custom hook below App), so the chat can show the layout while the rest streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
       }
     }
   }
