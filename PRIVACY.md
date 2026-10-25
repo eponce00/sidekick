@@ -1,6 +1,6 @@
 # Privacy
 
-Last updated: October 15, 2026
+Last updated: October 24, 2026
 
 SideKick is a local-first desktop application. It does not require a SideKick account and does not
 send application data through a SideKick-operated backend. The app does not include analytics,
@@ -14,13 +14,16 @@ informed choice before connecting a provider or granting an agent broader permis
 
 SideKick keeps the following data in the operating system's application-data directory:
 
-- conversations, messages, projects, messages between chats, plans, goals, run state, permission records, and
-  workspace memory in a local SQLite database;
+- conversations, messages, projects, messages between chats, plans, goals, run state, permission records,
+  workspace memory, and imported bookmarks and history in a local SQLite database;
 - application preferences and provider or connector configuration;
 - SideKick History snapshots for changes made through SideKick;
 - command output retained for durable runs, plus local operational and update logs; and
 - encrypted provider and connector credentials, and credentials you store for the agent, with a
-  record of when each was added, changed and used.
+  record of when each was added, changed and used; and
+- bookmarks and history you import from another browser on this computer, for the Browser panel.
+  The agent cannot read them, and **Settings › Agent › Imported browser data** removes them. Cookies
+  and passwords are never imported.
 
 Provider and connector secrets, and credentials you store for the agent, are encrypted with
 Electron `safeStorage` when the operating system's credential service is available. Decrypted

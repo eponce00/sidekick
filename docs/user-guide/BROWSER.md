@@ -46,6 +46,50 @@ pause the agent. Right-click offers native text editing actions.
 
 The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
+## Bookmarks and history from your other browsers
+
+To make the Browser panel feel like your own browser, import the bookmarks and history you already
+have. Choose the bookmark button beside the address bar, then **Import from another browser**, or
+use **Settings › Agent › Imported browser data**. Pick the browser and, if it has several, the
+profile; SideKick shows how many bookmarks and pages of history it holds before anything is kept,
+and you choose which of the two to import.
+
+| Browser                              | Where                 |
+| ------------------------------------ | --------------------- |
+| Google Chrome, Microsoft Edge, Brave | Windows, macOS, Linux |
+| Chromium                             | Windows, macOS, Linux |
+| Arc                                  | macOS                 |
+| Firefox, including Snap and Flatpak  | Windows, macOS, Linux |
+| Safari                               | macOS                 |
+
+Any other browser, or a browser on another computer, can export its bookmarks as an HTML file; choose
+**Import a bookmarks file** in the same window. Arc keeps its sidebar in its own format, so its
+pinned tabs and spaces do not come across; its history does.
+
+- **Bookmarks** appear in the bookmark list with their folders, such as **Bookmarks bar › Work**.
+  Choose one to open it in the current tab.
+- **History** brings the 20,000 most visited pages. Typing in the address bar suggests matching
+  bookmarks and pages; use the arrow keys and Enter, or click one. Your own browsing in SideKick is
+  not added to it.
+- Only web addresses are imported: bookmarklets (`javascript:`), local files, browser pages such as
+  `chrome://settings`, and addresses with a username or password in them are left out.
+- Importing the same profile again replaces what it imported before, for each kind you chose. Each
+  import is listed in Settings, where you can remove it.
+
+The browser can stay open while you import: SideKick reads a private copy of its files and leaves
+the browser undisturbed. If the browser holds a file locked, quit it and try again. macOS shows
+Safari's data only to apps you have given Full Disk Access in System Settings; without it, export
+Safari's bookmarks with **File › Export › Bookmarks** and import that file instead.
+
+Imported bookmarks and history stay on this computer, in SideKick's database. The agent has no tool
+that reads them and never sees them.
+
+**Sign-ins are not imported.** SideKick does not read another browser's cookies or saved passwords:
+browsers encrypt them so that other programs, including malware, cannot take them, and SideKick does
+not work around that. To use a site signed in, sign in in the Browser panel, which lasts as long as
+that chat's browser session, or store the sign-in in [Credentials](CREDENTIALS.md#browser-sign-in)
+so the agent can sign in for you without seeing the password.
+
 ## Tools that websites offer
 
 Some websites offer tools to in-browser agents through
