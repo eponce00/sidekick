@@ -1,6 +1,20 @@
 import { createPrivateKey, createPublicKey, X509Certificate } from 'crypto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { certificateServes, createCompanionCertificate } from './companionCertificate'
+
+// The serial's random bytes, replaceable for one certificate.
+const nextSerial = vi.hoisted(() => ({ bytes: null as Buffer | null }))
+vi.mock('crypto', async (original) => {
+  const actual = await original<typeof import('crypto')>()
+  return {
+    ...actual,
+    randomBytes: (size: number) => {
+      const bytes = nextSerial.bytes
+      nextSerial.bytes = null
+      return bytes ?? actual.randomBytes(size)
+    }
+  }
+})
 
 const DAY_MS = 24 * 60 * 60 * 1_000
 const NOW = Date.UTC(2026, 9, 23)
@@ -19,6 +33,13 @@ describe('createCompanionCertificate', () => {
     expect(Date.parse(parsed.validFrom)).toBe(NOW - DAY_MS)
     expect(Date.parse(parsed.validTo)).toBe(NOW + 397 * DAY_MS)
     expect(createPublicKey(key).asymmetricKeyDetails?.namedCurve).toBe('prime256v1')
+  })
+
+  it('encodes a serial that starts with zero bytes, about one in 256 serials', () => {
+    // DER refuses a leading zero byte before one under 0x80, so these failed to parse.
+    nextSerial.bytes = Buffer.from([0x00, 0x00, 0x12, ...Array(13).fill(0xab)])
+    const parsed = new X509Certificate(createCompanionCertificate('10.0.0.3', NOW).cert)
+    expect(parsed.serialNumber).toBe('12' + 'AB'.repeat(13))
   })
 
   it('gives each certificate a new key and serial number', () => {

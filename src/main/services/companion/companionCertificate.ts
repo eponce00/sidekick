@@ -48,8 +48,15 @@ function objectId(dotted: string): Buffer {
   return tlv(0x06, Buffer.from(bytes))
 }
 
+/**
+ * A non-negative DER INTEGER: in its fewest bytes, so a random serial that starts with zero bytes
+ * is not refused as non-minimal, with a zero byte in front when the top bit would make it negative.
+ */
 function positiveInteger(value: Buffer): Buffer {
-  return tlv(0x02, value[0] & 0x80 ? Buffer.concat([Buffer.from([0]), value]) : value)
+  let start = 0
+  while (start < value.length - 1 && value[start] === 0) start += 1
+  const minimal = value.subarray(start)
+  return tlv(0x02, minimal[0] & 0x80 ? Buffer.concat([Buffer.from([0]), minimal]) : minimal)
 }
 
 function time(at: Date): Buffer {
