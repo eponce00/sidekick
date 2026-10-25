@@ -208,9 +208,16 @@ describe('MessageItem shared-channel presentation', () => {
 
     const cards = [...container.querySelectorAll('.artifact-segment')]
     expect(cards).toHaveLength(2)
-    expect(container.innerHTML).toContain('data-version="2"')
-    expect(container.innerHTML).not.toContain('data-version="1"')
-    expect(container.innerHTML).toContain('data-version="other"')
+    // Artifacts run in a sandbox; their code is in the chat's DOM only in code view.
+    for (const card of cards) {
+      await act(async () =>
+        card.querySelector<HTMLButtonElement>('[aria-label="View code"]')!.click()
+      )
+    }
+    const code = cards.map((card) => card.querySelector('.artifact-code')?.textContent).join(' ')
+    expect(code).toContain('data-version="2"')
+    expect(code).not.toContain('data-version="1"')
+    expect(code).toContain('data-version="other"')
   })
 
   it('renders app notices as compact status rows without chat hover metadata', async () => {

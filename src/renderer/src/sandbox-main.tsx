@@ -12,17 +12,38 @@ import * as ReactLeaflet from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import * as d3 from 'd3'
 import * as dateFns from 'date-fns'
+import '@fontsource/inter/400.css'
+import '@fontsource/inter/500.css'
+import '@fontsource/inter/600.css'
+import '@fontsource/inter/700.css'
 import { installArtifactContrastGuard } from './utils/artifactContrast'
+import {
+  listenToHost,
+  postToHost,
+  reportErrorsToHost,
+  reportPointerToHost,
+  watchContentHeight
+} from './utils/artifactFrameChannel'
 import { resolveArtifactComponent } from './utils/artifactModule'
 import {
   applyArtifactTheme,
   getArtifactFallbackTheme,
   type ArtifactTheme
 } from './utils/artifactTheme'
-import './styles/artifactSandbox.css'
+import './styles/artifactTokens.css'
+import './styles/artifactBase.css'
+import artifactBaseCss from './styles/artifactBase.css?raw'
 
 Chart.register(...registerables)
 installArtifactContrastGuard(document)
+
+// Tailwind's reset is not in a cascade layer, so it would undo SideKick's base layer for buttons,
+// fields and headings. Given again as Tailwind's own base layer, the same rules land after its
+// reset and before its utilities. Without Tailwind (offline), this element is ignored.
+const tailwindBase = document.createElement('style')
+tailwindBase.setAttribute('type', 'text/tailwindcss')
+tailwindBase.textContent = artifactBaseCss.replace(/@layer\s+sidekick\s*\{/, '@layer base {')
+document.head.appendChild(tailwindBase)
 
 // ---------------------------------------------------------------------------
 // Library map: package name -> pre-loaded module
@@ -156,7 +177,7 @@ class SandboxErrorBoundary extends ReactComponent<EBProps, EBState> {
       return React.createElement(
         'div',
         {
-          style: { color: '#f44', padding: 8, fontSize: 13 }
+          style: { color: 'var(--color-error)', fontSize: 'var(--content-text)' }
         },
         `Runtime Error: ${this.state.error?.message || 'Unknown'}`
       )
@@ -174,32 +195,19 @@ let activeTheme: ArtifactTheme | null = null
 let activeComponent: React.ElementType | null = null
 let activeErrorHandler: ((err: Error) => void) | null = null
 
-function postToParent(msg: Record<string, unknown>): void {
-  window.parent.postMessage(msg, '*')
-}
-
-function reportHeight(): void {
-  const root = document.getElementById('root')
-  if (!root) return
-  const rootRectHeight = Math.ceil(root.getBoundingClientRect().height)
-  const height = Math.max(
-    root.scrollHeight,
-    rootRectHeight,
-    root.offsetHeight,
-    document.body.scrollHeight,
-    document.body.offsetHeight,
-    document.documentElement.scrollHeight,
-    document.documentElement.offsetHeight
-  )
-  postToParent({ type: 'resize', height })
-}
-
-const resizeObserver = new ResizeObserver(() => reportHeight())
+const contentHeight = watchContentHeight(document, (height) =>
+  postToHost({ type: 'resize', height })
+)
+const reportHeight = contentHeight.measure
 
 function updateTheme(theme: ArtifactTheme): ArtifactTheme {
   if (activeTheme) Object.assign(activeTheme, theme)
   else activeTheme = { ...theme }
   applyArtifactTheme(document, activeTheme)
+  // Canvas charts cannot read CSS variables, so Chart.js gets the theme as its defaults.
+  Chart.defaults.color = activeTheme.textSecondary
+  Chart.defaults.borderColor = activeTheme.border
+  Chart.defaults.font.family = activeTheme.fontSans
   document.dispatchEvent(new Event('sidekick-artifact-themechange'))
   return activeTheme
 }
@@ -222,7 +230,7 @@ async function renderCode(code: string, theme?: ArtifactTheme): Promise<void> {
   // stored in LIBS so sandboxRequire resolves them normally.
   const unavailable = await prefetchCDNImports(code)
   if (unavailable.length > 0) {
-    postToParent({
+    postToHost({
       type: 'error',
       error:
         `Could not load package${unavailable.length > 1 ? 's' : ''} from CDN: ${unavailable.join(', ')}. ` +
@@ -240,7 +248,7 @@ async function renderCode(code: string, theme?: ArtifactTheme): Promise<void> {
     }).code
 
     if (!transpiled) {
-      postToParent({ type: 'error', error: 'Transpilation returned empty code' })
+      postToHost({ type: 'error', error: 'Transpilation returned empty code' })
       return
     }
 
@@ -288,7 +296,7 @@ return __resolveArtifactComponent(
     )
 
     if (!AppComponent || (typeof AppComponent !== 'function' && typeof AppComponent !== 'object')) {
-      postToParent({ type: 'error', error: 'Artifact must define a component named "App".' })
+      postToHost({ type: 'error', error: 'Artifact must define a component named "App".' })
       return
     }
 
@@ -301,57 +309,42 @@ return __resolveArtifactComponent(
     const handleError = (err: Error): void => {
       if (errorReported) return
       errorReported = true
-      postToParent({ type: 'error', error: err.message })
+      postToHost({ type: 'error', error: err.message })
     }
 
     activeComponent = AppComponent as React.ElementType
     activeErrorHandler = handleError
     renderActiveComponent()
 
-    resizeObserver.disconnect()
-    resizeObserver.observe(container)
-    resizeObserver.observe(document.body)
-
-    // Some layouts/charts settle after the initial render tick.
-    requestAnimationFrame(() => {
-      reportHeight()
-      requestAnimationFrame(reportHeight)
-    })
-    setTimeout(reportHeight, 150)
-    setTimeout(reportHeight, 500)
+    // Later layout, such as charts settling, reaches the chat through the content observer.
+    reportHeight()
 
     setTimeout(() => {
       if (!errorReported) {
-        postToParent({ type: 'success' })
+        postToHost({ type: 'success' })
         reportHeight()
       }
     }, 800)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    postToParent({ type: 'error', error: msg })
+    postToHost({ type: 'error', error: msg })
   }
 }
 
-window.addEventListener('error', (event) => {
-  postToParent({ type: 'error', error: event.message || 'Uncaught error' })
-})
-window.addEventListener('unhandledrejection', (event) => {
-  const msg = event.reason instanceof Error ? event.reason.message : String(event.reason)
-  postToParent({ type: 'error', error: msg })
-})
+reportErrorsToHost()
+reportPointerToHost()
 
-window.addEventListener('message', (event) => {
-  if (event.source !== window.parent) return
-  if (event.data?.type === 'render') {
-    void renderCode(event.data.code, event.data.theme)
-  } else if (event.data?.type === 'theme-update' && event.data.theme) {
-    updateTheme(event.data.theme)
+listenToHost((command) => {
+  if (command.type === 'render') {
+    void renderCode(command.code, command.theme)
+  } else {
+    updateTheme(command.theme)
     renderActiveComponent()
-    requestAnimationFrame(reportHeight)
+    reportHeight()
   }
 })
 
-postToParent({ type: 'ready' })
+postToHost({ type: 'ready' })
 
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('artifact-preview')) {
   const mode =

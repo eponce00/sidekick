@@ -3,7 +3,6 @@ import Artifact from './components/artifacts/Artifact'
 import { MAX_ARTIFACT_FRAME_HEIGHT } from './utils/artifactFrameSize'
 import {
   ARTIFACT_INSPECTION_MAX_ERRORS,
-  ARTIFACT_INSPECTION_MAX_FRAME_HEIGHT,
   ARTIFACT_INSPECTION_SETTLE_MS,
   ARTIFACT_INSPECTION_TIMEOUT_MS,
   ARTIFACT_INSPECTION_WIDTH,
@@ -38,11 +37,9 @@ window.__sidekickInspectArtifact = (request: ArtifactInspectionRequest) =>
       // A short pause so an error banner or late layout is in place before
       // capture. Not requestAnimationFrame: an unshown window may never fire it.
       window.setTimeout(() => {
-        const frame = [...container.querySelectorAll('iframe')].find(
-          (candidate) => candidate.style.display !== 'none'
-        )
+        const stage = container.querySelector<HTMLElement>('.artifact-stage')
         const exceedsChatFrame =
-          frame !== undefined && frame.getBoundingClientRect().height > MAX_ARTIFACT_FRAME_HEIGHT
+          Number(stage?.dataset.contentHeight ?? 0) > MAX_ARTIFACT_FRAME_HEIGHT
         resolve({
           status,
           errors: errors.slice(0, ARTIFACT_INSPECTION_MAX_ERRORS),
@@ -50,8 +47,9 @@ window.__sidekickInspectArtifact = (request: ArtifactInspectionRequest) =>
           width: ARTIFACT_INSPECTION_WIDTH,
           // The artifact's own extent, not the page's, which is at least as
           // tall as the viewport and would pad the capture with empty space.
+          // Its controls show only on hover, so the capture ends with it.
           height: Math.ceil(
-            (container.firstElementChild ?? container).getBoundingClientRect().bottom
+            (stage ?? container.firstElementChild ?? container).getBoundingClientRect().bottom
           )
         })
       }, 60)
@@ -62,7 +60,6 @@ window.__sidekickInspectArtifact = (request: ArtifactInspectionRequest) =>
     root.render(
       <Artifact
         artifact={{ type: request.type, title: request.title, code: request.code }}
-        maxFrameHeight={ARTIFACT_INSPECTION_MAX_FRAME_HEIGHT}
         onResult={(result) => {
           if (result.success) {
             // Success is reported as soon as the component mounts; the data it

@@ -1477,7 +1477,7 @@ const createArtifact = definition(
       code: {
         type: 'string',
         description:
-          'Complete artifact code. React artifacts define App and use SideKick semantic theme colors. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
       }
     }
   }

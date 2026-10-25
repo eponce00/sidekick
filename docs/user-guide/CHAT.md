@@ -51,6 +51,26 @@ not asked for one. Select the status
 to see the commands and their results. The footer appears when you point at the reply, except after
 a failed check, which stays in sight.
 
+## Artifacts
+
+When you ask for something live, such as a chart, a calculator or a small tool, the agent can build
+it as an artifact that runs inside the reply.
+
+- **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no
+  card or frame around it. It uses SideKick's font, colors and accent, and follows your light or
+  dark theme and accent as you change them.
+- **As tall as it needs:** it grows to fit what it shows, and grows or shrinks smoothly when that
+  changes. While it first renders, one quiet line holds its place. Something taller than about two
+  screens stops there and scrolls inside; open it full screen to see all of it. Scrolling over an
+  artifact that does not scroll itself scrolls the chat.
+- **Controls when you want them:** point at an artifact, or move focus into it, to see its name and
+  three buttons beneath it: **View code** shows its code in its place, **Copy code**, and **Open
+  full screen**, which shows it across the window until you press Esc or **Close**.
+- **When it fails:** an artifact that could not run shows one line saying so. Select it to read the
+  error, or choose **Retry**. An error after it showed leaves it in place, with a short note under
+  it.
+- **On the phone,** an artifact shows as its name and a note to open it on the computer.
+
 ## Sub-agents
 
 When the agent delegates part of the work, the reply shows a row for the task. While the
