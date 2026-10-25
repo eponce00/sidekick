@@ -158,14 +158,16 @@ export function registerSkillToolHandlers(
   let builderVersion = options.builderArtifact
   const inspectWith = (
     candidate: { type: InspectedArtifactType; title: string; code: string },
-    signal: AbortSignal | undefined
+    signal: AbortSignal | undefined,
+    /** Take a recent render of the same code. A model that resends its code wants a fresh one. */
+    reuse = false
   ): Promise<ArtifactInspection | undefined> => {
     const inspector = options.artifactInspector?.()
     if (!inspector) return Promise.resolve(undefined)
     const cache = recentInspections.get(inspector) ?? new Map<string, ArtifactInspection>()
     recentInspections.set(inspector, cache)
     const key = `${candidate.type}\n${candidate.code}`
-    const recent = cache.get(key)
+    const recent = reuse ? cache.get(key) : undefined
     if (recent) return Promise.resolve(recent)
     return inspector.inspect(candidate, signal).then(
       (inspection) => {
@@ -253,7 +255,7 @@ export function registerSkillToolHandlers(
         const final = artifactToolResult(
           title,
           built.artifact,
-          changed ? await inspect(built.artifact) : inspection,
+          changed ? await inspectWith(built.artifact, context.signal, true) : inspection,
           options.visionEnabled === true,
           true
         )
