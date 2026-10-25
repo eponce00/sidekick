@@ -129,6 +129,13 @@ export function withArtifactBuild(
   }
 }
 
+/**
+ * Recent inspections by artifact. A builder's final version was inspected in the builder; its
+ * result for the agent reuses that inspection instead of rendering the same code again.
+ */
+const recentInspections = new WeakMap<ArtifactInspectorLike, Map<string, ArtifactInspection>>()
+const RECENT_INSPECTIONS = 8
+
 export function registerSkillToolHandlers(
   registry: AgentToolHandlerRegistry,
   options: {
@@ -154,13 +161,24 @@ export function registerSkillToolHandlers(
     signal: AbortSignal | undefined
   ): Promise<ArtifactInspection | undefined> => {
     const inspector = options.artifactInspector?.()
-    return inspector
-      ? inspector.inspect(candidate, signal).catch((error) => {
-          signal?.throwIfAborted()
-          console.warn('[create_artifact] Inspection failed:', error)
-          return undefined
-        })
-      : Promise.resolve(undefined)
+    if (!inspector) return Promise.resolve(undefined)
+    const cache = recentInspections.get(inspector) ?? new Map<string, ArtifactInspection>()
+    recentInspections.set(inspector, cache)
+    const key = `${candidate.type}\n${candidate.code}`
+    const recent = cache.get(key)
+    if (recent) return Promise.resolve(recent)
+    return inspector.inspect(candidate, signal).then(
+      (inspection) => {
+        cache.set(key, inspection)
+        while (cache.size > RECENT_INSPECTIONS) cache.delete(cache.keys().next().value!)
+        return inspection
+      },
+      (error) => {
+        signal?.throwIfAborted()
+        console.warn('[create_artifact] Inspection failed:', error)
+        return undefined
+      }
+    )
   }
 
   registry.register('use_skill', async ({ title, arguments: args }) => {
