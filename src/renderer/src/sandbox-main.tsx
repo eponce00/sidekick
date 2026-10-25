@@ -47,7 +47,7 @@ installArtifactContrastGuard(document)
 
 // Tailwind's reset is not in a cascade layer, so it would undo SideKick's base layer for buttons,
 // fields and headings. Given again as Tailwind's own base layer, the same rules land after its
-// reset and before its utilities. Without Tailwind (offline), this element is ignored.
+// reset and before its utilities.
 const tailwindBase = document.createElement('style')
 tailwindBase.setAttribute('type', 'text/tailwindcss')
 tailwindBase.textContent = artifactBaseCss.replace(/@layer\s+sidekick\s*\{/, '@layer base {')

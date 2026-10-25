@@ -373,7 +373,7 @@ scroll anchoring, and the chat's follower lands content growth in the same frame
 redeclare names the prelude provides, and Babel strips TypeScript annotations.
 
 Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own
-document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind; HTML
+document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind (its v3 browser build ships in `src/renderer/public/vendor` with its license, so artifacts are styled without a network); HTML
 and SVG artifacts run in `html-sandbox.html`, which writes the artifact as its whole document so
 its inline scripts run under that page's policy and its load events fire. The two pages share one
 Content-Security-Policy, except that the HTML page also allows inline scripts, which an HTML
