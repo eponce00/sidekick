@@ -180,10 +180,18 @@ test(
       const page = await application.firstWindow()
       await page.getByRole('button', { name: 'More', exact: true }).click()
       await page.getByRole('menuitem', { name: 'New chat' }).click()
+      // A folded panel opens on the Browser from its rail; an open one shows it from its tab, or
+      // from a new tab's launcher when it has none.
       const expand = page.getByRole('button', { name: 'Open Browser activity', exact: true })
       if (await expand.isVisible()) await expand.click()
-      else await page.getByRole('button', { name: 'Open browser activity', exact: true }).click()
-      const address = page.getByRole('textbox', { name: 'Browser address' })
+      else if (await page.getByRole('tab', { name: 'Browser', exact: true }).isVisible())
+        await page.getByRole('tab', { name: 'Browser', exact: true }).click()
+      else {
+        await page.getByRole('button', { name: 'New tab', exact: true }).first().click()
+        await page.getByRole('button', { name: 'Browser', exact: true }).click()
+      }
+      // The address field offers matching bookmarks and history, so it is a combobox.
+      const address = page.getByRole('combobox', { name: 'Browser address' })
       await address.fill(`http://127.0.0.1:${server.address().port}/`)
       // The new chat focuses its composer a moment after it opens; that must not take the
       // address bar's keystrokes.

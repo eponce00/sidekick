@@ -208,7 +208,7 @@ export function PanelSections({
                         role="tab"
                         aria-selected={selected}
                         className="panel-tab-select"
-                        title={info.description || info.label}
+                        title={info.description ? `${info.label}: ${info.description}` : info.label}
                         onClick={() => onChange(selectTab(layout, section.id, tab.id))}
                         onAuxClick={(event) => {
                           if (event.button === 1) onChange(closeTab(layout, tab.id))
@@ -336,27 +336,69 @@ function PanelLauncher({
   const entries = Object.entries(apps) as Array<[PanelApp, PanelAppInfo]>
   return (
     <div className="panel-launcher">
-      <h2>Open in this tab</h2>
-      <div className="panel-launcher-grid">
-        {entries.map(([app, info]) => (
-          <button
-            key={app}
-            type="button"
-            className="panel-launcher-app"
-            onClick={() => onChoose(app)}
-          >
-            <span className="panel-launcher-icon">{info.icon}</span>
-            <span className="panel-launcher-name">{info.label}</span>
-            <span className="panel-launcher-description">
-              {elsewhere[app]
-                ? 'In a window of its own: go to it'
-                : openApps.has(app)
-                  ? 'Open in another tab: go to it'
-                  : info.description}
-            </span>
-          </button>
-        ))}
+      <div
+        className="panel-launcher-grid"
+        role="group"
+        aria-label="Open in this tab"
+        onKeyDown={moveLauncherFocus}
+      >
+        {entries.map(([app, info]) => {
+          const where = elsewhere[app]
+            ? 'In a window of its own'
+            : openApps.has(app)
+              ? 'Open in another tab'
+              : null
+          return (
+            <button
+              key={app}
+              type="button"
+              className={`panel-launcher-app${where ? ' is-open' : ''}`}
+              aria-label={where ? `${info.label}, ${where.toLowerCase()}: go to it` : info.label}
+              title={where ? `${info.description}\n${where}: go to it` : info.description}
+              onClick={() => onChoose(app)}
+            >
+              <span className="panel-launcher-icon" aria-hidden="true">
+                {info.icon}
+              </span>
+              <span className="panel-launcher-name">{info.label}</span>
+              <span className="panel-launcher-open" aria-hidden="true" />
+            </button>
+          )
+        })}
       </div>
     </div>
   )
+}
+
+/** Arrow keys move between the launcher's apps as they sit on screen; Home and End to the ends. */
+function moveLauncherFocus(event: React.KeyboardEvent<HTMLElement>): void {
+  const tiles = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button'))
+  const index = tiles.indexOf(document.activeElement as HTMLElement)
+  if (index < 0) return
+  let next: HTMLElement | undefined
+  if (event.key === 'ArrowRight') next = tiles[(index + 1) % tiles.length]
+  else if (event.key === 'ArrowLeft') next = tiles[(index - 1 + tiles.length) % tiles.length]
+  else if (event.key === 'Home') next = tiles[0]
+  else if (event.key === 'End') next = tiles[tiles.length - 1]
+  else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    // The tiles wrap into rows as the panel narrows, so the row above or below is found by place.
+    const from = tiles[index].getBoundingClientRect()
+    const down = event.key === 'ArrowDown'
+    const row = tiles
+      .map((tile) => ({ tile, rect: tile.getBoundingClientRect() }))
+      .filter(({ rect }) => (down ? rect.top > from.bottom - 1 : rect.bottom < from.top + 1))
+    const nearestTop = down
+      ? Math.min(...row.map(({ rect }) => rect.top))
+      : Math.max(...row.map(({ rect }) => rect.top))
+    const centre = from.left + from.width / 2
+    next = row
+      .filter(({ rect }) => rect.top === nearestTop)
+      .sort(
+        (a, b) =>
+          Math.abs(a.rect.left + a.rect.width / 2 - centre) -
+          Math.abs(b.rect.left + b.rect.width / 2 - centre)
+      )[0]?.tile
+  } else return
+  event.preventDefault()
+  next?.focus()
 }
