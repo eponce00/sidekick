@@ -8,7 +8,8 @@ import {
   Globe,
   MonitorSmartphone,
   Pause,
-  Plug
+  Plug,
+  ChevronRight
 } from 'lucide-react'
 import type {
   BrowserWorkspaceRequest,
@@ -34,13 +35,56 @@ export function BrowserWorkspace({
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [shownTool, setShownTool] = useState<string | null>(null)
+  const toolsButton = useRef<HTMLButtonElement>(null)
+  const toolsPopover = useRef<HTMLElement>(null)
   const pageTools = state?.pageTools?.tools.length ? state.pageTools : null
-  const hasPageTools = Boolean(pageTools)
+  const toolsOrigin = pageTools?.origin ?? null
 
-  // A page that offers tools again later starts with its list closed.
+  // Another site, or a page without tools, starts with the popover closed.
   useEffect(() => {
-    if (!hasPageTools) setToolsOpen(false)
-  }, [hasPageTools])
+    setToolsOpen(false)
+    setShownTool(null)
+  }, [toolsOrigin])
+
+  useEffect(() => {
+    if (!toolsOpen) return
+    const close = (focusButton: boolean): void => {
+      setToolsOpen(false)
+      setShownTool(null)
+      if (focusButton) toolsButton.current?.focus()
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target as Node
+      if (!toolsPopover.current?.contains(target) && !toolsButton.current?.contains(target))
+        close(false)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') close(true)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    toolsPopover.current?.focus()
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [toolsOpen])
+
+  const toggleTools = async (): Promise<void> => {
+    if (toolsOpen) {
+      setToolsOpen(false)
+      setShownTool(null)
+      return
+    }
+    // The popover opens over the page, which hides while it is open; a picture of the page fills
+    // its place, so the picture comes first.
+    const result = await window.api.agentRuns
+      .browserWorkspace({ conversationId, action: 'snapshot' })
+      .catch(() => null)
+    if (result?.snapshot) setSnapshot(result.snapshot)
+    setToolsOpen(true)
+  }
 
   useEffect(() => {
     if (!editing.current) setAddress(activeUrl)
@@ -212,35 +256,85 @@ export function BrowserWorkspace({
         >
           <RotateCw size={14} />
         </button>
-        <input
-          aria-label="Browser address"
-          value={address}
-          disabled={pending}
-          placeholder="Enter a URL"
-          onFocus={() => {
-            editing.current = true
-          }}
-          onBlur={() => {
-            editing.current = false
-          }}
-          onChange={(event) => setAddress(event.target.value)}
-        />
-        {pageTools && (
-          <button
-            type="button"
-            className="browser-workspace-tools"
-            aria-label={`Tools this page offers the agent: ${pageTools.tools.length}`}
-            aria-expanded={toolsOpen}
-            aria-controls="browser-page-tools"
-            title={`${webMcpSite(pageTools.origin)} offers ${pageTools.tools.length} ${
-              pageTools.tools.length === 1 ? 'tool' : 'tools'
-            } to the agent (WebMCP)`}
-            onClick={() => setToolsOpen((open) => !open)}
-          >
-            <Plug size={14} aria-hidden="true" />
-            <span>{pageTools.tools.length}</span>
-          </button>
-        )}
+        {/* Page tools sit inside the address field, like a browser's page actions, so the field
+            and the page never move when a page offers them. */}
+        <div className={`browser-workspace-address${pageTools ? ' has-tools' : ''}`}>
+          <input
+            aria-label="Browser address"
+            value={address}
+            disabled={pending}
+            placeholder="Enter a URL"
+            onFocus={() => {
+              editing.current = true
+            }}
+            onBlur={() => {
+              editing.current = false
+            }}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+          {pageTools && (
+            <button
+              ref={toolsButton}
+              type="button"
+              className="browser-workspace-tools"
+              aria-label={`Tools this page offers the agent: ${pageTools.tools.length}`}
+              aria-expanded={toolsOpen}
+              aria-haspopup="dialog"
+              aria-controls={toolsOpen ? 'browser-page-tools' : undefined}
+              title={`${webMcpSite(pageTools.origin)} offers the agent ${toolCount(
+                pageTools.tools.length
+              )}`}
+              onClick={() => void toggleTools()}
+            >
+              <Plug size={13} aria-hidden="true" />
+            </button>
+          )}
+          {pageTools && toolsOpen && (
+            <section
+              ref={toolsPopover}
+              id="browser-page-tools"
+              className="browser-workspace-page-tools"
+              role="dialog"
+              aria-label="Tools this page offers the agent"
+              tabIndex={-1}
+            >
+              <header>
+                <strong>{webMcpSite(pageTools.origin)}</strong>
+                <span>offers the agent {toolCount(pageTools.tools.length)}</span>
+              </header>
+              <ul>
+                {pageTools.tools.map((tool, index) => {
+                  const shown = shownTool === tool.name
+                  return (
+                    <li key={tool.name}>
+                      <button
+                        type="button"
+                        aria-expanded={shown}
+                        aria-controls={shown ? `browser-page-tool-${index}` : undefined}
+                        onClick={() => setShownTool(shown ? null : tool.name)}
+                      >
+                        <ChevronRight size={12} aria-hidden="true" />
+                        <code>{tool.name}</code>
+                        {tool.readOnly && (
+                          <span className="browser-workspace-page-tool-mark">Read-only</span>
+                        )}
+                        {tool.form && (
+                          <span className="browser-workspace-page-tool-mark">Form</span>
+                        )}
+                      </button>
+                      {shown && (
+                        // The site's own words, set apart as a quote and shown as text.
+                        <blockquote id={`browser-page-tool-${index}`}>
+                          {tool.description || 'The site gives no description.'}
+                        </blockquote>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </section>
+          )}
+        </div>
         <button
           type="button"
           className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
@@ -293,33 +387,6 @@ export function BrowserWorkspace({
           </span>
         ) : null}
       </form>
-      {pageTools && toolsOpen && (
-        // Laid out above the page, never over it: the page is drawn above the app.
-        <section
-          id="browser-page-tools"
-          className="browser-workspace-page-tools"
-          aria-label="Tools this page offers the agent"
-        >
-          <p className="browser-workspace-page-tools-heading">
-            <strong>{webMcpSite(pageTools.origin)}</strong> offers these tools to the agent. Their
-            descriptions are the site&apos;s own.
-          </p>
-          <ul>
-            {pageTools.tools.map((tool) => (
-              <li key={tool.name}>
-                <div className="browser-workspace-page-tool-name">
-                  <code>{tool.name}</code>
-                  {tool.readOnly && (
-                    <span className="browser-workspace-page-tool-mark">Read-only</span>
-                  )}
-                  {tool.form && <span className="browser-workspace-page-tool-mark">Form</span>}
-                </div>
-                <p title={tool.description}>{tool.description}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
       {(error || layoutError) && (
         <div role="alert" className="browser-workspace-error">
           {error || layoutError}
@@ -337,4 +404,8 @@ export function BrowserWorkspace({
       </div>
     </div>
   )
+}
+
+function toolCount(count: number): string {
+  return `${count} ${count === 1 ? 'tool' : 'tools'}`
 }

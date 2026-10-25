@@ -291,7 +291,8 @@ export function registerAgentRunHandlers(): void {
         'select',
         'close',
         'device',
-        'deviceMenu'
+        'deviceMenu',
+        'snapshot'
       ].includes(input.action) ||
       (input.menuPosition !== undefined &&
         !(Number.isFinite(input.menuPosition?.x) && Number.isFinite(input.menuPosition?.y))) ||
@@ -382,20 +383,11 @@ export function registerAgentRunHandlers(): void {
         }
       )
     }
-    if (input.action === 'deviceMenu') {
+    if (input.action === 'deviceMenu' || input.action === 'snapshot') {
       const state = manager.workspaceState(input.conversationId)
       if (!state) return null
-      // The page is drawn above the app, so SideKick's menu would open under it. The panel shows a
-      // picture of the page instead while the menu is open, and the page hides under the menu.
-      const template = browserDeviceMenuTemplate(state.device, (device) => {
-        void manager
-          .workspaceAction(input.conversationId, {
-            conversationId: input.conversationId,
-            action: 'device',
-            device
-          })
-          .catch((error) => console.warn('[Browser] Could not change the device size:', error))
-      })
+      // The page is drawn above the app, so SideKick's menu or popover would open under it. The
+      // panel shows a picture of the page instead while either is open, and the page hides.
       const activeTab = state.tabs.find((tab) => tab.active)
       const page = activeTab ? webContents.fromId(activeTab.webContentsId) : undefined
       const snapshot =
@@ -405,6 +397,28 @@ export function registerAgentRunHandlers(): void {
               .then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
               .catch(() => undefined)
           : undefined
+      const result = {
+        ...state,
+        ...(snapshot ? { snapshot } : {}),
+        tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+          id,
+          title,
+          url,
+          active,
+          loading
+        }))
+      }
+      // The panel opens its own popover once it has the picture.
+      if (input.action === 'snapshot') return result
+      const template = browserDeviceMenuTemplate(state.device, (device) => {
+        void manager
+          .workspaceAction(input.conversationId, {
+            conversationId: input.conversationId,
+            action: 'device',
+            device
+          })
+          .catch((error) => console.warn('[Browser] Could not change the device size:', error))
+      })
       if (!showAppMenu(event.sender, template, input.menuPosition)) {
         const zoom = event.sender.getZoomFactor()
         Menu.buildFromTemplate(template).popup({
@@ -417,17 +431,7 @@ export function registerAgentRunHandlers(): void {
             : {})
         })
       }
-      return {
-        ...state,
-        ...(snapshot ? { snapshot } : {}),
-        tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
-          id,
-          title,
-          url,
-          active,
-          loading
-        }))
-      }
+      return result
     }
     const result = await manager.workspaceAction(input.conversationId, input)
     return (

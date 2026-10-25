@@ -22,8 +22,9 @@ export interface BrowserWorkspaceState {
   /** The WebMCP tools the active tab's page offers the agent, with the page's origin. */
   pageTools?: { origin: string; tools: BrowserPageTool[] } | null
   /**
-   * A picture of the page, sent with the device menu: the page is drawn above the app, so it hides
-   * while SideKick's menu is open and the panel shows this in its place.
+   * A picture of the page, sent with the device menu and for `snapshot`: the page is drawn above
+   * the app, so it hides while SideKick's menu or popover is open and the panel shows this in its
+   * place.
    */
   snapshot?: string
 }
@@ -45,6 +46,8 @@ export interface BrowserWorkspaceRequest {
     | 'close'
     | 'device'
     | 'deviceMenu'
+    /** A picture of the page, for a popover of SideKick's that opens over it. */
+    | 'snapshot'
   bounds?: BrowserPanelBounds
   /** For `deviceMenu`: where to open it, in the app window's CSS pixels. */
   menuPosition?: { x: number; y: number }
