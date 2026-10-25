@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Bookmark, ChevronRight, FileUp, Folder, History, Import, X } from 'lucide-react'
 import type {
   BrowserBookmark,
@@ -332,7 +333,8 @@ export function BrowserImportDialog({
   const problemFor = (part: 'bookmarks' | 'history'): string | undefined =>
     preview?.problems.find((problem) => problem.part === part)?.message
 
-  return (
+  // On the page body, so no panel's stacking context can draw the chat above the dialog.
+  return createPortal(
     <div
       className="browser-import-backdrop"
       role="presentation"
@@ -513,6 +515,7 @@ export function BrowserImportDialog({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
