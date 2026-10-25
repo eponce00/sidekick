@@ -1,5 +1,5 @@
 import { useId } from 'react'
-import { FolderGit2, FolderOpen, Users, X } from 'lucide-react'
+import { FolderGit2, FolderOpen, X } from 'lucide-react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import type { WorkspaceOccupant } from '../../../shared/worktrees'
 import './ForkConversationDialog.css'
@@ -48,9 +48,6 @@ export function WorkspaceBusyDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="fork-dialog-header">
-          <span className="fork-dialog-icon is-warning">
-            <Users size={18} />
-          </span>
           <div>
             <h2 id={titleId}>Another agent is working in this folder</h2>
             <p>
@@ -77,7 +74,7 @@ export function WorkspaceBusyDialog({
             disabled={busy || !canUseWorktree}
             autoFocus
           >
-            <FolderGit2 size={18} />
+            <FolderGit2 size={16} />
             <span>
               <strong>{hasHistory ? 'Fork into a new worktree' : 'Start in a new worktree'}</strong>
               <small>
@@ -90,7 +87,7 @@ export function WorkspaceBusyDialog({
             </span>
           </button>
           <button type="button" onClick={() => onChoose('share')} disabled={busy}>
-            <FolderOpen size={18} />
+            <FolderOpen size={16} />
             <span>
               <strong>Work here anyway</strong>
               <small>

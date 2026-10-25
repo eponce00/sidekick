@@ -17,10 +17,10 @@
   width: min(560px, 100%);
   max-height: min(480px, 76vh);
   overflow: hidden;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-panel);
 }
 
 .command-palette:focus {
@@ -31,7 +31,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  min-height: 44px;
+  padding: 0 var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-muted);
 }
@@ -58,11 +59,23 @@
   padding: var(--space-1) var(--space-2) var(--space-2);
 }
 
+/* The quiet thumb the sidebar's list uses, not the platform's arrows. */
+.command-palette-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.command-palette-list::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  background-clip: padding-box;
+}
+
 .command-palette-group-label {
   padding: var(--space-2) var(--space-2) var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .command-palette-option {
@@ -107,19 +120,24 @@
   white-space: nowrap;
 }
 
+/* As a menu shows them: plain text at the end of the row. */
 .command-palette-shortcut {
   margin-left: auto;
   flex: 0 0 auto;
+  padding-left: var(--space-5);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: var(--text-xs);
 }
 
-.command-palette kbd {
-  padding: 1px 5px;
+.command-palette-footer kbd {
+  padding: 0 5px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs);
   background: var(--surface-2);
   color: var(--text-secondary);
   font-family: var(--font-sans);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
 }
 
 .command-palette-empty {
