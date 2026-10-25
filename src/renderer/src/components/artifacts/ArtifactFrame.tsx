@@ -36,6 +36,8 @@ interface ArtifactFrameProps {
    * comes, and reports no status. The finished code runs in a frame of its own.
    */
   draft?: boolean
+  /** It replaces what the user already sees, so its charts appear drawn rather than drawn in. */
+  still?: boolean
   /** The quiet line in its place before it first shows. */
   pendingLabel?: string
   onStatus?: (status: ArtifactFrameStatus) => void
@@ -57,6 +59,7 @@ function ArtifactFrame({
   fill = false,
   maxHeight = MAX_ARTIFACT_FRAME_HEIGHT,
   draft = false,
+  still = false,
   pendingLabel = `Rendering ${title}`,
   onStatus,
   onPointer,
@@ -102,17 +105,26 @@ function ArtifactFrame({
       switch (message.type) {
         case 'ready':
           readyRef.current = true
-          send({
-            type: draft ? 'draft' : 'render',
-            code: codeRef.current,
-            theme: getArtifactTheme()
-          })
+          send(
+            draft
+              ? { type: 'draft', code: codeRef.current, theme: getArtifactTheme() }
+              : { type: 'render', code: codeRef.current, theme: getArtifactTheme(), still }
+          )
           break
-        case 'resize':
+        case 'resize': {
+          // Sized here and now, not on React's next render: the frame's page has already drawn
+          // its new layout, and until the chat makes room the growth pushes the reply down.
+          const frame = iframeRef.current
+          if (frame && !fill && shownRef.current && message.height > 0) {
+            const height = `${boundedArtifactFrameHeight(message.height, maxHeight)}px`
+            frame.style.height = height
+            if (frame.parentElement) frame.parentElement.style.height = height
+          }
           setContentHeight(message.height)
           if (message.height > 0 && !draft) rememberArtifactHeight(kind, code, message.height)
           if (message.height > 0 && settledRef.current !== 'failed') show()
           break
+        }
         case 'pointer':
           onPointerRef.current?.(message.inside)
           break
@@ -151,9 +163,10 @@ function ArtifactFrame({
       stopTheme()
       window.clearTimeout(timeout)
     }
-    // runCode stands for code: a draft's code changes without starting the frame again.
+    // runCode stands for code: a draft's code changes without starting the frame again. fill and
+    // maxHeight are fixed for a frame's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runCode, kind, draft])
+  }, [runCode, kind, draft, still])
 
   useEffect(() => {
     if (draft && readyRef.current) {

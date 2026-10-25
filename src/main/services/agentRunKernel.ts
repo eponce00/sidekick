@@ -412,7 +412,8 @@ const tokenCount = (value: number): string => `${value.toLocaleString('en-US')} 
 function cutOffToolResult(
   title: string,
   cutOff: ToolBatchCutOff,
-  startedAt: number
+  startedAt: number,
+  toolName: string
 ): ToolExecutionResult {
   const room =
     cutOffLimit(cutOff) === 'shrunk'
@@ -428,8 +429,11 @@ function cutOffToolResult(
       `their arguments may be incomplete.${room}`,
     retryable: true,
     recoveryAction: 'change_strategy',
+    // An artifact cannot be written in parts; the same artifact written more tightly fits.
     recovery:
-      'Re-issue fewer, smaller calls in a new response. Split a long file into several edits or appends, and save a long script to a file in parts before running it. Do not assume any call from this batch ran.',
+      toolName === 'create_artifact'
+        ? 'Write the artifact again, more compactly: build repeated elements from arrays with map, compute data instead of listing it value by value, and keep it to a few hundred lines. Plan it briefly: thinking counts toward the same limit.'
+        : 'Re-issue fewer, smaller calls in a new response. Split a long file into several edits or appends, and save a long script to a file in parts before running it. Do not assume any call from this batch ran.',
     startedAt
   })
 }
@@ -521,7 +525,7 @@ function toolNeedsPolicyDecision(catalog: AgentToolCatalogOptions, name: string)
     'update_goal',
     'complete_plan',
     'create_artifact',
-    // Offered only to an artifact's builder, whose card the chat does not show to ask from.
+    // Changes an artifact in place, as create_artifact makes one; a builder's card is not shown.
     'edit_artifact',
     // The sessions handler shows its own start card when the permission mode asks for one.
     'start_session',
@@ -2321,7 +2325,7 @@ The user approved this exact plan revision. Act capabilities are now available a
           if (parallelResult) {
             result = parallelResult
           } else if (cutOff) {
-            result = cutOffToolResult(title, cutOff, startedAt)
+            result = cutOffToolResult(title, cutOff, startedAt, call.name)
           } else if (goalAlreadyComplete) {
             result = toolExecutionFailed({
               title,

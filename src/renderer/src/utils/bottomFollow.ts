@@ -283,6 +283,14 @@ export function followBottom(view: HTMLElement, options: FollowOptions = {}): Bo
       const requested = options.glide ?? 'never'
       if (GLIDE_RANK[requested] > GLIDE_RANK[glide]) glide = requested
       if (options.settleMs) settleUntil = Math.max(settleUntil, Date.now() + options.settleMs)
+      // Growth that needs no glide lands at once. Called from a resize observer, that is before
+      // paint, so the frame that shows new content already shows the end: waiting for the next
+      // frame painted everything one frame lower first, a visible jolt as an artifact grew.
+      if (glide === 'never' && !gliding && scrollDistanceFromBottom(view) > AT_END_PX) {
+        view.scrollTop = view.scrollHeight
+        lastTop = view.scrollTop
+        lastDistance = scrollDistanceFromBottom(view)
+      }
       if (frame !== null) return
       settledFrames = 0
       lastFrameAt = null

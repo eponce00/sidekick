@@ -154,10 +154,19 @@ const PHASE_LABELS: Record<ArtifactPhase, string> = {
   refining: 'Polishing'
 }
 
+/** A version replacing one that shows waits at least this long after it runs... */
+const SETTLE_MIN_MS = 1_200
+/** ...and until its layout has not changed for this long... */
+const SETTLE_QUIET_MS = 500
+/** ...but no longer than this. */
+const SETTLE_MAX_MS = 4_000
+
 /** One frame in the artifact's place: a draft (`code` null) or a version of it that runs. */
 interface FrameSlot {
   key: number
   code: string | null
+  /** It replaced something already showing, so it appears without its charts animating in. */
+  still?: boolean
 }
 
 type FrameLayer = 'current' | 'incoming' | 'leaving'
@@ -197,6 +206,9 @@ function ArtifactView({
   )
   const [incoming, setIncoming] = useState<FrameSlot | null>(null)
   const [leaving, setLeaving] = useState<FrameSlot | null>(null)
+  const [incomingReady, setIncomingReady] = useState(false)
+  const incomingReadyAt = useRef(0)
+  const incomingChangedAt = useRef(0)
   const [height, setHeight] = useState<number | null>(null)
   const [failure, setFailure] = useState<{ error: string; visible: boolean } | null>(null)
   const [showDetails, setShowDetails] = useState(false)
@@ -222,7 +234,7 @@ function ArtifactView({
     }
     if (code === null || code === current.code || code === incoming?.code) return
     if (failures.current.has(code)) return
-    setIncoming({ key: nextKey.current++, code })
+    setIncoming({ key: nextKey.current++, code, still: true })
   }, [code, current, draftCode, incoming?.code])
 
   // A call can finish on a version that failed while it was reviewed, when no fix ran.
@@ -230,7 +242,6 @@ function ArtifactView({
     if (phase !== null || code === null || failure) return
     const failed = failures.current.get(code)
     if (!failed) return
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- known only once the call ends
     setFailure(current?.code === code ? failed : { error: failed.error, visible: false })
     onResultRef.current?.({ title: artifact.title, success: false, error: failed.error, code })
   }, [artifact.title, code, current?.code, failure, phase])
@@ -267,14 +278,39 @@ function ArtifactView({
     )
   }
 
+  const promote = useCallback(
+    (slot: FrameSlot) => {
+      setLeaving(current)
+      setCurrent(slot)
+      setIncoming(null)
+      setIncomingReady(false)
+      setFailure(null)
+    },
+    [current]
+  )
+
+  // Over something already showing, a new version takes its place only once it has settled out of
+  // sight: its charts have drawn and its layout has stopped changing, so the change is the content,
+  // never a version still animating in.
+  useEffect(() => {
+    if (!incomingReady || !incoming) return undefined
+    const timer = window.setInterval(() => {
+      const now = Date.now()
+      const ready = now - incomingReadyAt.current
+      const settled = ready >= SETTLE_MIN_MS && now - incomingChangedAt.current >= SETTLE_QUIET_MS
+      if (settled || ready >= SETTLE_MAX_MS) promote(incoming)
+    }, 100)
+    return () => window.clearInterval(timer)
+  }, [incoming, incomingReady, promote])
+
   const handleIncomingStatus = (slot: FrameSlot, status: ArtifactFrameStatus): void => {
     if (slot.code === null) return
     report(slot.code, status, phase === null)
     if (status.status === 'rendered') {
-      setLeaving(current)
-      setCurrent(slot)
-      setIncoming(null)
-      setFailure(null)
+      if (current && !blocked) {
+        incomingReadyAt.current = Date.now()
+        setIncomingReady(true)
+      } else promote(slot)
       return
     }
     failures.current.set(slot.code, { error: status.error, visible: false })
@@ -292,7 +328,7 @@ function ArtifactView({
     const latest = incoming?.code ?? code ?? current?.code
     failures.current.clear()
     setIncoming(null)
-    if (latest) setCurrent({ key: nextKey.current++, code: latest })
+    if (latest) setCurrent({ key: nextKey.current++, code: latest, still: true })
   }
 
   // The frame says when the pointer leaves it, but a pointer that moves fast may leave without
@@ -317,6 +353,7 @@ function ArtifactView({
         code={source(slot.code ?? lastDraft)}
         title={title}
         draft={slot.code === null}
+        still={slot.still}
         pendingLabel={slot.code === null ? `Writing ${title}` : `Rendering ${title}`}
         onStatus={
           layer === 'current'
@@ -326,7 +363,15 @@ function ArtifactView({
               : undefined
         }
         onPointer={layer === 'current' ? setPointerInside : undefined}
-        onHeight={layer === 'current' ? setHeight : undefined}
+        onHeight={
+          layer === 'current'
+            ? setHeight
+            : layer === 'incoming'
+              ? () => {
+                  incomingChangedAt.current = Date.now()
+                }
+              : undefined
+        }
       />
     </div>
   )
@@ -361,7 +406,9 @@ function ArtifactView({
         <div
           className="artifact-preview"
           hidden={showCode}
-          style={height === null ? undefined : { height }}
+          // Held at the showing version's height only while two versions cross; otherwise it is as
+          // tall as its frame, the moment the frame grows.
+          style={height === null || !leaving ? undefined : { height }}
         >
           {/* In the order they were made: a frame moved within the page would load again. */}
           {(

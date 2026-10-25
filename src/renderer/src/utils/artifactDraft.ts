@@ -226,23 +226,3 @@ export function closeArtifactDraft(code: string): string | null {
 function cut(code: string, safe: { at: number; closers: string }): string {
   return code.slice(0, safe.at) + safe.closers
 }
-
-/** Component names a draft uses before it defines them, which run as placeholders until they arrive. */
-export function undefinedDraftComponents(code: string, provided: ReadonlySet<string>): string[] {
-  const used = new Set<string>()
-  for (const match of code.matchAll(/<([A-Z][\w$]*)[\s/>]/g)) used.add(match[1]!)
-  const declared = new Set<string>()
-  for (const match of code.matchAll(/\b(?:function|class|const|let|var)\s+([A-Z][\w$]*)/g)) {
-    declared.add(match[1]!)
-  }
-  // Imports and destructuring, such as `const { Sun } = lucideReact`: every name in them counts,
-  // since a placeholder declared beside a real declaration is a syntax error.
-  const lists = [
-    ...code.matchAll(/\bimport\s+([\s\S]*?)\s+from\b/g),
-    ...code.matchAll(/\b(?:const|let|var)\s*[{[]([^}\]]*)[}\]]/g)
-  ]
-  for (const match of lists) {
-    for (const name of match[1]!.match(/[A-Za-z_$][\w$]*/g) ?? []) declared.add(name)
-  }
-  return [...used].filter((name) => !declared.has(name) && !provided.has(name))
-}

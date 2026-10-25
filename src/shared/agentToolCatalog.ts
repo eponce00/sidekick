@@ -59,8 +59,6 @@ export interface AgentToolCatalogOptions {
    * only messages its family. Without it no chat tools are offered.
    */
   sessionRole?: 'manager' | 'worker'
-  /** The run is an artifact's builder, which may edit that artifact in place. */
-  artifactBuilder?: boolean
 }
 
 function definition(
@@ -1490,7 +1488,7 @@ const createArtifact = definition(
       code: {
         type: 'string',
         description:
-          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App, then the components it uses, so the chat can show it while it streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App as a short layout, then the hooks and components it uses (state logic, effects and handlers in a custom hook below App), so the chat can show the layout while the rest streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
       }
     }
   }
@@ -1498,11 +1496,16 @@ const createArtifact = definition(
 
 const editArtifact = definition(
   'edit_artifact',
-  'Change the artifact under review in place: each edit replaces old_text, copied exactly from its current code and matching one place, with new_text. Then it renders and is checked as create_artifact is. Prefer it for fixes; use create_artifact only to rewrite most of the code.',
+  'Change an existing artifact in place instead of writing it again: each edit replaces old_text, copied exactly from the current code and matching one place, with new_text. The artifact then renders and is checked as with create_artifact, and the chat shows the new version. Prefer it for any change that touches part of the code; use create_artifact only for a new artifact or to rewrite most of one.',
   {
     type: 'object',
     required: ['edits'],
     properties: {
+      title: {
+        type: 'string',
+        description:
+          'Exact title of the artifact to change. Omit it to change the latest one, or the one under review.'
+      },
       edits: {
         type: 'array',
         minItems: 1,
@@ -1740,7 +1743,8 @@ function workspaceEntries(options: AgentToolCatalogOptions): AgentToolCatalogEnt
 }
 
 export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEntry[] {
-  if (skillId === WEB_ARTIFACTS_SKILL_ID) return [entry(createArtifact, 'artifacts', 'write')]
+  if (skillId === WEB_ARTIFACTS_SKILL_ID)
+    return [entry(createArtifact, 'artifacts', 'write'), entry(editArtifact, 'artifacts', 'write')]
   return skillId === SCHEDULES_SKILL_ID ? scheduleEntries : []
 }
 
@@ -1838,7 +1842,6 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     ...SKILLS_WITH_GATED_TOOLS.filter((skillId) =>
       options.activeSkillIds?.includes(skillId)
     ).flatMap(getSkillToolCatalogEntries),
-    ...(options.artifactBuilder ? [entry(editArtifact, 'artifacts', 'write')] : []),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )

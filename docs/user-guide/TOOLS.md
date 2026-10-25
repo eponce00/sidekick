@@ -103,11 +103,15 @@ shell and everything it started; quitting SideKick ends them all.
   accept images, a screenshot, so the model can check its own result.
   The tool is offered even before its skill loads, so the tool list stays the same across turns;
   an artifact made without the skill's guidance is rendered and the guidance comes back with it.
+- `edit_artifact` changes an existing artifact, this reply's or an earlier one's, by replacing exact
+  snippets of its code, then renders and checks it the same way; the chat shows the new version.
 - In a chat, the artifact shows while the agent writes it. A builder then reviews how it rendered
-  and fixes what is wrong, up to three times, with `edit_artifact`, which replaces exact snippets
-  of the code rather than rewriting it; each fix replaces the artifact in place. When there is
-  nothing to review, because the artifact could not be rendered, or it rendered cleanly with no
-  layout problems and the model cannot see images, it stays as the agent made it.
+  and fixes what is wrong, up to three times, with `edit_artifact`; each fix replaces the artifact
+  in place. The builder works without extended reasoning. When there is nothing to review, because
+  the artifact could not be rendered, or it rendered cleanly with no layout problems and the model
+  cannot see images, it stays as the agent made it.
+- An artifact cut off by the reply's output limit is not run; the agent is told to write it again
+  more compactly.
 - The Schedules skill adds `schedules_list`, `schedules_create`, `schedules_update`, and
   `schedules_delete` to the run that loads it, and only then, so other runs carry none of them. A
   later run that calls one first is told to load the skill. Listing changes nothing; every create,

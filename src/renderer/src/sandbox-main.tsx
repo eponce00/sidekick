@@ -24,7 +24,14 @@ import {
   reportPointerToHost,
   watchContentHeight
 } from './utils/artifactFrameChannel'
-import { closeArtifactDraft, undefinedDraftComponents } from './utils/artifactDraft'
+import { closeArtifactDraft } from './utils/artifactDraft'
+import {
+  DRAFT_CHILD,
+  DRAFT_COMPONENT,
+  DRAFT_HOLE,
+  DRAFT_PLACEHOLDER,
+  draftTransformPlugin
+} from './utils/artifactDraftTransform'
 import { resolveArtifactComponent } from './utils/artifactModule'
 import {
   applyArtifactTheme,
@@ -85,6 +92,40 @@ const LIBS: Record<string, unknown> = {
 }
 
 const SUPPORTED_IMPORTS = Object.keys(LIBS)
+
+/** Recharts series that animate as they appear and as their data changes. */
+const ANIMATED_SERIES = [
+  'Area',
+  'Bar',
+  'Funnel',
+  'Line',
+  'Pie',
+  'Radar',
+  'RadialBar',
+  'Sankey',
+  'Scatter',
+  'SunburstChart',
+  'Treemap'
+] as const
+
+/**
+ * Charts that appear already drawn. A draft redraws its charts as more code arrives, and a version
+ * replacing one the user already sees should not draw its charts in again: in either, an entrance
+ * animation replays, unfinished, every time. Set before the artifact's code first runs.
+ */
+function stillCharts(): void {
+  const still: Record<string, unknown> = { ...Recharts }
+  for (const name of ANIMATED_SERIES) {
+    const Series = (Recharts as Record<string, unknown>)[name] as React.ElementType | undefined
+    if (!Series) continue
+    const StillSeries = (props: Record<string, unknown>): React.ReactElement =>
+      React.createElement(Series, { ...props, isAnimationActive: false })
+    StillSeries.displayName = name
+    still[name] = StillSeries
+  }
+  LIBS.recharts = asEsModule(still)
+  Chart.defaults.animation = false
+}
 
 // ---------------------------------------------------------------------------
 // CDN fallback — unknown packages are fetched from esm.sh before execution
@@ -191,13 +232,6 @@ class SandboxErrorBoundary extends ReactComponent<EBProps, EBState> {
 // Renderer
 // ---------------------------------------------------------------------------
 
-// Names the prelude below gives every artifact without an import.
-const PRELUDE_NAMES = new Set(
-  'React Fragment Suspense Recharts LineChart Line BarChart Bar PieChart Pie AreaChart Area ScatterChart Scatter RadarChart Radar RadialBarChart RadialBar ComposedChart Treemap Funnel FunnelChart XAxis YAxis ZAxis CartesianGrid Tooltip Legend ResponsiveContainer Cell LabelList Brush ReferenceLine ReferenceArea ReferenceDot Chart'.split(
-    ' '
-  )
-)
-
 const PRELUDE = `
 var React = require('react').default || require('react');
 var { Fragment, useState, useEffect, useMemo, useRef, useCallback, useReducer, useContext, createContext, memo, forwardRef, lazy, Suspense } = React;
@@ -214,6 +248,17 @@ var ReactLeaflet = require('react-leaflet');
 var theme = __theme__;
 `
 
+// Names the code may use without defining them: the prelude's, and the page's own globals.
+const PRELUDE_NAMES = new Set([
+  'require',
+  'module',
+  'exports',
+  ...[...PRELUDE.matchAll(/var\s+(?:\{([^}]*)\}|(\w+))/g)].flatMap((match) =>
+    (match[1] ?? match[2]!).split(',').map((name) => name.trim())
+  )
+])
+const providedToCode = (name: string): boolean => PRELUDE_NAMES.has(name) || name in window
+
 /** Where a draft uses a component it has not defined yet. */
 function DraftPlaceholder(): React.ReactElement {
   return React.createElement('div', {
@@ -229,34 +274,43 @@ let activeErrorHandler: ((err: Error) => void) | null = null
 /** A frame runs either the finished artifact or drafts of it, decided by its first command. */
 let frameMode: 'run' | 'draft' | null = null
 
+const PRESETS = [
+  'react',
+  ['typescript', { isTSX: true, allExtensions: true }]
+] as unknown as string[]
+
 /**
  * The artifact's component. Its code runs in a scope of its own inside the prelude's, so it may
  * declare names the prelude also provides, such as `theme` or `Tooltip`, without a syntax error.
+ * Models often write TypeScript in a component; its types are dropped, not rejected. (Babel's
+ * typings only know presets by name, though it takes a name with options too.)
  */
 function compileArtifact(code: string, draft: boolean): React.ElementType | null {
-  const transpiled = Babel.transform(code, {
-    // Models often write TypeScript in a component; its types are dropped, not rejected. The
-    // typings only know presets by name, though Babel takes a name with options too.
-    presets: ['react', ['typescript', { isTSX: true, allExtensions: true }]] as unknown as string[],
+  const prepared = draft
+    ? Babel.transform(code, {
+        presets: PRESETS,
+        plugins: [draftTransformPlugin(providedToCode)] as unknown as string[],
+        filename: 'artifact.tsx'
+      }).code
+    : code
+  const transpiled = Babel.transform(prepared ?? '', {
+    presets: draft ? [] : PRESETS,
     plugins: ['transform-modules-commonjs'],
     filename: 'artifact.tsx'
   }).code
   if (!transpiled) throw new Error('Transpilation returned empty code')
-  const placeholders = draft
-    ? undefinedDraftComponents(code, PRELUDE_NAMES)
-        .map((name) => `var ${name} = __DraftPlaceholder;`)
-        .join('\n')
-    : ''
   const factory = new Function(
     'require',
     'module',
     'exports',
     '__theme__',
     '__resolveArtifactComponent',
-    '__DraftPlaceholder',
+    DRAFT_COMPONENT,
+    DRAFT_PLACEHOLDER,
+    DRAFT_HOLE,
+    DRAFT_CHILD,
     `${PRELUDE}
 return (function () {
-${placeholders}
 ${transpiled}
 return __resolveArtifactComponent(
   typeof module !== 'undefined' ? module.exports : undefined,
@@ -271,7 +325,10 @@ return __resolveArtifactComponent(
     moduleObj.exports,
     activeTheme || {},
     resolveArtifactComponent,
-    DraftPlaceholder
+    draftComponent,
+    DraftPlaceholder,
+    draftHole,
+    draftChild
   )
   return component && (typeof component === 'function' || typeof component === 'object')
     ? (component as React.ElementType)
@@ -368,38 +425,145 @@ async function renderCode(code: string, theme?: ArtifactTheme): Promise<void> {
 // Drafts: the artifact taking shape while the model writes it
 // ---------------------------------------------------------------------------
 
-/** Shows a draft, or the last one that rendered when this one throws. */
-class DraftBoundary extends ReactComponent<
-  { fallback: React.ElementType | null; onShown: () => void; children?: React.ReactNode },
-  { failed: boolean }
-> {
-  state = { failed: false }
-  static getDerivedStateFromError(): { failed: boolean } {
-    return { failed: true }
-  }
-  componentDidCatch(): void {
-    // A draft that throws is expected; the next one usually runs.
-  }
-  componentDidMount(): void {
-    if (!this.state.failed) this.props.onShown()
-  }
-  render(): React.ReactNode {
-    if (this.state.failed) {
-      return this.props.fallback ? React.createElement(this.props.fallback) : null
-    }
-    return this.props.children
-  }
-}
+// Each draft is compiled anew, but its components stay the same React components from one draft
+// to the next, registered by name; React then changes only what the newer code changed, so what is
+// already shown stays exactly where it is. A part that cannot run yet keeps what it last showed,
+// in place, or a still placeholder, while the rest of the draft renders.
 
 let draftSource = ''
-let draftComponent: React.ElementType | null = null
-let shownDraft: React.ElementType | null = null
 let draftKey = 0
+let draftRoot: React.ElementType | null = null
+const latestParts = new Map<string, React.ElementType>()
+const shownParts = new Map<string, React.ElementType>()
+const draftParts = new Map<string, React.ElementType>()
+const DRAFT_PART = Symbol('sidekick-draft-part')
+
+const ARRAY_RESULTS = new Set(['map', 'filter', 'flatMap', 'slice', 'concat', 'sort', 'reverse'])
+
+/**
+ * A value the draft uses before defining it, such as data still to come: empty as a list, blank
+ * as text, and itself again when read from or called.
+ */
+// A function, so the proxy can be called and constructed.
+const draftHole: unknown = new Proxy(
+  function hole() {
+    return undefined
+  },
+  {
+    get(_target, key) {
+      if (key === Symbol.toPrimitive || key === 'toString' || key === 'valueOf') return () => ''
+      if (key === Symbol.iterator) return () => [][Symbol.iterator]()
+      if (key === 'length') return 0
+      if (typeof key === 'string' && ARRAY_RESULTS.has(key)) return () => []
+      return draftHole
+    },
+    apply: () => draftHole,
+    construct: () => draftHole as object,
+    has: () => false
+  }
+)
+
+/** A value placed among elements: one still to come renders as nothing. */
+function draftChild(value: unknown): unknown {
+  if (value === draftHole) return null
+  return Array.isArray(value) ? value.map(draftChild) : value
+}
+
+/** Runs one version of a part: a plain call, so the part's state stays with the part. */
+function DraftVersion({
+  render,
+  props
+}: {
+  render: (props: Record<string, unknown>) => React.ReactNode
+  props: Record<string, unknown>
+}): React.ReactNode {
+  return render(props)
+}
+
+function makeDraftPart(name: string): React.ElementType {
+  class DraftPart extends ReactComponent<
+    Record<string, unknown>,
+    { failedAt: number; hooksChanged: boolean }
+  > {
+    static displayName = name
+    state = { failedAt: -1, hooksChanged: false }
+    private mount = 0
+    private attemptAt = -1
+    private attempt = 0
+    static getDerivedStateFromError(error: unknown): { failedAt: number; hooksChanged: boolean } {
+      return {
+        failedAt: draftKey,
+        hooksChanged: /hook/i.test(error instanceof Error ? error.message : String(error))
+      }
+    }
+    componentDidCatch(): void {
+      // A part that cannot run yet is expected; the next draft usually completes it.
+    }
+    componentDidMount(): void {
+      this.shown()
+    }
+    componentDidUpdate(): void {
+      this.shown()
+    }
+    private shown(): void {
+      if (this.state.failedAt !== draftKey) shownParts.set(name, latestParts.get(name)!)
+    }
+    render(): React.ReactNode {
+      const version = (render: React.ElementType | undefined): React.ReactNode =>
+        render
+          ? React.createElement(DraftVersion, {
+              key: this.mount,
+              render: render as (props: Record<string, unknown>) => React.ReactNode,
+              props: this.props
+            })
+          : React.createElement(DraftPlaceholder)
+      if (this.state.failedAt !== draftKey) return version(latestParts.get(name))
+      if (this.attemptAt !== draftKey) {
+        this.attemptAt = draftKey
+        this.attempt = 0
+      }
+      this.attempt += 1
+      // First, what it showed before, in the same place: same state, same elements, nothing moves.
+      if (this.attempt === 1 && !this.state.hooksChanged) return version(shownParts.get(name))
+      // A draft that added or removed a hook cannot reuse the state before it: once, start afresh.
+      if (this.attempt <= 2) {
+        this.mount += 1
+        return version(latestParts.get(name))
+      }
+      return version(shownParts.get(name))
+    }
+  }
+  ;(DraftPart as unknown as Record<symbol, boolean>)[DRAFT_PART] = true
+  return DraftPart
+}
+
+/** Registers a component of the draft by name and gives back the part that runs it. */
+function draftComponent(name: string, component: unknown): unknown {
+  const candidate = component as { prototype?: { isReactComponent?: unknown } } & Record<
+    symbol,
+    unknown
+  >
+  if (
+    typeof component !== 'function' ||
+    candidate[DRAFT_PART] ||
+    candidate.prototype?.isReactComponent
+  )
+    return component
+  latestParts.set(name, component as React.ElementType)
+  let part = draftParts.get(name)
+  if (!part) {
+    part = makeDraftPart(name)
+    draftParts.set(name, part)
+  }
+  return part
+}
 
 function enterDraftMode(): void {
   frameMode = 'draft'
+  stillCharts()
   // A draft only shows: its requests never return, so it waits in its loading state instead of
-  // asking the network again for every draft, and nothing animates between drafts.
+  // asking the network for every draft, and nothing in it moves, flashes or fades: new parts
+  // simply appear where they belong.
   window.fetch = () => new Promise<Response>(() => undefined)
   XMLHttpRequest.prototype.send = () => undefined
   FramerMotion.MotionGlobalConfig.skipAnimations = true
@@ -410,28 +574,13 @@ function enterDraftMode(): void {
   min-height: 2.5rem;
   border-radius: var(--radius-md, 10px);
   background: var(--surface-2);
-  animation: sidekick-draft-pulse 1.4s ease-in-out infinite alternate !important;
-}
-@keyframes sidekick-draft-pulse { from { opacity: 0.45; } to { opacity: 0.9; } }`
+  opacity: 0.6;
+}`
   document.head.appendChild(style)
 }
 
 function renderDraftComponent(): void {
-  if (!draftComponent) return
-  const component = draftComponent
-  root().render(
-    React.createElement(
-      DraftBoundary,
-      {
-        key: draftKey,
-        fallback: shownDraft,
-        onShown: () => {
-          shownDraft = component
-        }
-      },
-      React.createElement(component)
-    )
-  )
+  if (draftRoot) root().render(React.createElement(draftRoot))
 }
 
 function renderDraft(code: string, theme: ArtifactTheme): void {
@@ -443,17 +592,12 @@ function renderDraft(code: string, theme: ArtifactTheme): void {
   try {
     component = compileArtifact(closed, true)
   } catch {
-    // A placeholder can clash with a declaration the scan missed; without them it may still run.
-    try {
-      component = compileArtifact(closed, false)
-    } catch {
-      // Not runnable yet; the last draft that ran stays.
-      return
-    }
+    // Not runnable yet; the last draft that ran stays.
+    return
   }
   if (!component) return
-  draftComponent = component
   draftKey += 1
+  draftRoot = draftComponent('App', component) as React.ElementType
   renderDraftComponent()
 }
 
@@ -467,6 +611,7 @@ listenToHost((command) => {
   } else if (command.type === 'render') {
     if (frameMode === 'draft') return
     frameMode = 'run'
+    if (command.still) stillCharts()
     void renderCode(command.code, command.theme)
   } else {
     updateTheme(command.theme)

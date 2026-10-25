@@ -102,7 +102,7 @@ describe('create_artifact', () => {
     // The model gets the failure, not its own code back.
     expect(result.modelContent).toContain("reading 'current'")
     expect(result.modelContent).not.toContain('xxxx')
-    expect(result.error?.recovery).toContain('call create_artifact again')
+    expect(result.error?.recovery).toContain('Fix it with edit_artifact')
     expect(result.data).toMatchObject({ artifact: { title: 'Clima en Reno' } })
   })
 
@@ -269,7 +269,7 @@ it('says loading a skill makes its tool ready, without telling the model to relo
     })
 
   const artifacts = (await load('web-artifacts')).modelContent
-  expect(artifacts).toContain('create_artifact is ready to use in this run')
+  expect(artifacts).toContain('create_artifact and edit_artifact are ready to use in this run')
   expect(artifacts).not.toContain('load it again')
   expect((await load('pdf')).modelContent).not.toContain('is ready to use')
 })

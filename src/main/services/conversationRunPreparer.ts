@@ -380,7 +380,7 @@ function ledgerReplies(
           )
         : []
       for (const call of calls) {
-        if (call.function.name === 'create_artifact') artifactCalls.push({ call, outputMessageId })
+        if (ARTIFACT_TOOLS.has(call.function.name)) artifactCalls.push({ call, outputMessageId })
         if (isWorkspaceMutationTool(call.function.name)) {
           call.function.arguments = historicalEditArguments(
             call.function.arguments as Record<string, unknown>
@@ -410,7 +410,7 @@ function ledgerReplies(
       const artifact = (
         result.data as { artifact?: { title?: unknown; code?: unknown } } | undefined
       )?.artifact
-      if (name === 'create_artifact' && typeof artifact?.code === 'string') {
+      if (ARTIFACT_TOOLS.has(name) && typeof artifact?.code === 'string') {
         artifactResults.set(String(payload.toolCallId || ''), {
           title: typeof artifact.title === 'string' ? artifact.title : '',
           code: artifact.code
@@ -430,7 +430,7 @@ function ledgerReplies(
         ...(media.length ? { media } : {})
       }
       history.push(toolMessage)
-      if (name === 'create_artifact') {
+      if (ARTIFACT_TOOLS.has(name)) {
         artifactResultMessages.set(String(payload.toolCallId || ''), toolMessage)
       }
     }
@@ -521,6 +521,39 @@ export function replyCoveredByCompaction(
 }
 
 /** Whether the conversation's latest reply created an artifact the next turn may be asked to change. */
+/** The tools whose results hold a version of an artifact. */
+const ARTIFACT_TOOLS = new Set(['create_artifact', 'edit_artifact'])
+
+/** The current version of each artifact this conversation's replies made, by title, oldest first. */
+export function conversationArtifacts(
+  db: Database.Database,
+  conversationId: string
+): Map<string, { type: 'react' | 'html' | 'svg'; title: string; code: string }> {
+  const rows = db
+    .prepare(
+      `SELECT json_extract(e.payload_json, '$.result.data.artifact') AS artifact
+       FROM messages m
+       JOIN agent_run_events e ON e.run_id = m.run_id
+       WHERE m.conversation_id = ? AND m.role = 'agent'
+         AND e.type = 'tool.completed'
+         AND json_extract(e.payload_json, '$.name') IN ('create_artifact', 'edit_artifact')
+       ORDER BY m.timestamp ASC, e.sequence ASC`
+    )
+    .all(conversationId) as Array<{ artifact: string | null }>
+  const versions = new Map<
+    string,
+    { type: 'react' | 'html' | 'svg'; title: string; code: string }
+  >()
+  for (const row of rows) {
+    const artifact = parseJson<Record<string, unknown>>(row.artifact ?? '', {})
+    if (typeof artifact.title !== 'string' || typeof artifact.code !== 'string') continue
+    const type = artifact.type === 'html' || artifact.type === 'svg' ? artifact.type : 'react'
+    versions.delete(artifact.title)
+    versions.set(artifact.title, { type, title: artifact.title, code: artifact.code })
+  }
+  return versions
+}
+
 export function previousReplyMadeArtifact(db: Database.Database, conversationId: string): boolean {
   const row = db
     .prepare(
@@ -531,7 +564,7 @@ export function previousReplyMadeArtifact(db: Database.Database, conversationId:
          ORDER BY timestamp DESC LIMIT 1
        )
        AND type = 'tool.completed'
-       AND json_extract(payload_json, '$.name') = 'create_artifact'
+       AND json_extract(payload_json, '$.name') IN ('create_artifact', 'edit_artifact')
        LIMIT 1`
     )
     .get(conversationId)
@@ -568,10 +601,12 @@ function historicalEditArguments(args: Record<string, unknown>): Record<string, 
  * and the render failed on it.
  *
  * The current version of each artifact is the document being edited, so it is
- * restored whole from its result and its result says so. Versions it replaced
- * point to it instead of repeating their code; a note that merely called them
- * omitted led a model to conclude the artifact's code had been removed. A call
- * that never ran has no code worth showing.
+ * restored whole and its result says so: in the arguments of the create_artifact
+ * call that made it, or in the result of the edit_artifact call that made it,
+ * whose arguments hold only the edits. Versions it replaced point to it instead
+ * of repeating their code; a note that merely called them omitted led a model to
+ * conclude the artifact's code had been removed. A call that never ran has no
+ * code worth showing.
  */
 function restoreArtifactCode(
   calls: readonly ProviderToolCall[],
@@ -586,23 +621,30 @@ function restoreArtifactCode(
   for (const call of calls) {
     const result = call.id ? results.get(call.id) : undefined
     const args = call.function.arguments as Record<string, unknown>
+    const created = call.function.name === 'create_artifact'
     if (!result) {
-      call.function.arguments = {
-        ...args,
-        code: '[This call did not run, so its code was not kept.]'
+      if (created) {
+        call.function.arguments = {
+          ...args,
+          code: '[This call did not run, so its code was not kept.]'
+        }
       }
       continue
     }
     const current = latestByTitle.get(result.title) === call.id
-    call.function.arguments = {
-      ...args,
-      code: current
-        ? result.code
-        : `[Superseded version of "${result.title}", not repeated here. The complete current code of "${result.title}" is in its latest create_artifact call.]`
+    if (created) {
+      call.function.arguments = {
+        ...args,
+        code: current
+          ? result.code
+          : `[Superseded version of "${result.title}", not repeated here. The complete current code of "${result.title}" is with its latest version below.]`
+      }
     }
     const message = call.id ? resultMessages.get(call.id) : undefined
     if (current && message && typeof message.content === 'string') {
-      message.content = `${message.content}\nThis is the current version of "${result.title}". The create_artifact call above holds its complete code; start from it to change the artifact.`
+      message.content = created
+        ? `${message.content}\nThis is the current version of "${result.title}". The create_artifact call above holds its complete code; change it with edit_artifact.`
+        : `${message.content}\nThis is the current version of "${result.title}"; change it with edit_artifact. Its complete code:\n\`\`\`\n${result.code}\n\`\`\``
     }
   }
 }
@@ -814,6 +856,7 @@ export class ConversationRunPreparer {
       // "Add a chart to it" right after an artifact is the same work: the
       // web-artifacts guidance is already in history and need not be reloaded.
       artifactContinuation: previousReplyMadeArtifact(this.db, input.conversationId),
+      conversationArtifacts: () => conversationArtifacts(this.db, input.conversationId),
       capabilities: input.model.supportsTools === false ? [] : sessions?.capabilities,
       sessions: sessions?.handler,
       persistentSkillIds: activeSkillIds,

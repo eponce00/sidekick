@@ -880,7 +880,14 @@ export class AgentRuntimeCoordinator {
       model: target.model,
       catalog: session.catalog,
       messages,
-      request: { ...parentInput.request, purpose: 'sub-agent' },
+      // Reviewing a render against a list of found defects and editing a few lines needs no long
+      // reasoning; with it, one review spent 6,800 tokens thinking before a one-line fix.
+      request: {
+        ...parentInput.request,
+        purpose: 'sub-agent',
+        reasoningLevel: 'off',
+        thinkingEnabled: false
+      },
       maxToolRounds: ARTIFACT_BUILDER_FIXES,
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
