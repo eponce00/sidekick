@@ -37,55 +37,81 @@ Examples: `import * as THREE from 'three'`, `import { v4 as uuidv4 } from 'uuid'
 Packages that use Node.js APIs (fs, child_process, etc.) will not work in the browser sandbox.
 Do NOT use Box, Material UI, styled-components, @emotion, or react-native-web — they conflict with the sandbox React instance.
 
-### Styling in React artifacts
+### How an artifact sits in the chat
 
-**Tailwind CSS is available globally — the best choice for layout and styling.**
-Just use `className` with utility classes (e.g. `className="flex flex-col gap-4 p-6 rounded-xl"`).
-No import is needed. Tailwind's Play CDN is already injected in the sandbox.
+- It renders directly in your reply, as wide as the text and on the chat's own background, with
+  no card, border or title bar around it. Its frame grows to fit the content, up to about two
+  screens; beyond that it scrolls, and the user can open it full screen.
+- Leave the page background transparent and start with the content. Do not wrap the whole artifact
+  in a card, panel, border, shadow or padded box; use cards only for things that are cards inside
+  it, such as a metric tile or an item in a list.
+- Put the title and explanations in your reply, not inside the artifact. Do not repeat its title as
+  a heading.
+- Let the height follow the content: no `h-screen`, `100vh`, `min-h-screen`, fixed outer heights,
+  `position: fixed`, or inner scrolling areas. Give each chart an explicit height, such as 240px.
+- Design for the chat column, about 480–760px wide, and keep it usable at 360px: use
+  `repeat(auto-fit, minmax(160px, 1fr))` grids and `minmax(0, 1fr)` columns.
+- SideKick shows its own controls (view code, copy, full screen) when the user hovers. Do not add
+  full-screen or copy-code buttons.
 
-Use the Sidekick semantic Tailwind colors for the artifact shell and interactive controls so they
-remain readable in both themes:
+### SideKick's look, by default
 
-- Backgrounds: `bg-artifact-bg`, `bg-artifact-panel`, `bg-artifact-surface`, `hover:bg-artifact-hover`
-- Text: `text-artifact-primary`, `text-artifact-secondary`, `text-artifact-muted`
-- Accent: `bg-artifact-accent text-artifact-accent-foreground`
-- Other: `border-artifact-border`, `text-artifact-success`, `text-artifact-error`, `text-artifact-warning`
+- Text already uses the app's font at the chat's size, in the user's light or dark theme and accent
+  color, and follows them live. Do not load fonts or set a font family.
+- Plain elements are already styled like SideKick: `button` is quiet, and the one main action gets
+  the `primary` class or `type="submit"`; `input`, `select`, `textarea`, sliders and checkboxes use
+  the accent; `table` is a rounded card with lines between rows; `code`, `pre`, `blockquote`,
+  headings and links match replies. Write bare elements and add only layout. Your own styles always
+  win over these.
+- Use the theme's CSS variables, never fixed app-shell colors:
+  - Surfaces: `--surface-1` to `--surface-4` (tiles and cards: `--surface-2`), `--input-bg`
+  - Text: `--text-primary`, `--text-secondary`, `--text-muted`
+  - Accent: `--accent`, `--accent-strong`, `--accent-subtle`, `--accent-muted`, and `--on-accent`
+    for text on the accent
+  - Lines: `--border`, `--border-subtle`, `--border-strong`
+  - Status: `--color-success`, `--color-warning`, `--color-error`
+  - Data series: `--chart-1` (the accent) to `--chart-5`
+  - Shape: `--radius-sm` (6px), `--radius-md` (10px, controls), `--radius-lg` (14px, cards),
+    `--space-1` to `--space-8`, `--font-mono`
+- Show restraint. The accent marks the primary action, the main series and the selected state;
+  neutral surfaces carry everything else. No gradients, glows, heavy shadows, emoji icons or
+  decorative backgrounds. Use weights 400 to 600, sentence case, and rounded, tabular numbers.
+- If a hover, selected or active state changes a background, give it a matching text color too.
+  Use fixed colors only for data that needs them, and check their contrast in both themes. A
+  subtree may opt out of SideKick's severe-contrast repair only when intentional (for example,
+  text used as an image mask) with `data-sidekick-contrast="preserve"`.
 
-Do not use fixed `text-black`, `text-gray-900`, or `text-white` on theme-aware surfaces. If a hover,
-selected, or active state changes the background, explicitly give that state a compatible semantic
-text color too. Use fixed content colors only when they communicate data and verify their contrast.
+### React artifacts
 
-The sandbox also exposes a complete CSS-variable contract for inline styles and custom CSS:
-`--app-bg`, `--panel-bg`, `--surface-0` through `--surface-4`, `--surface-hover`, `--input-bg`,
-`--border`, `--border-subtle`, `--border-strong`, `--text-primary`, `--text-secondary`,
-`--text-muted`, `--accent`, `--accent-strong`, `--accent-pressed`, `--accent-subtle`,
-`--accent-muted`, `--on-accent`, `--color-success`, `--color-error`, and `--color-warning`.
+- Tailwind is available through `className`; no import is needed. `font-sans`, `font-mono` and a
+  bare `border` already use the app's font and border color. Theme colors as classes:
+  `bg-artifact-surface`, `hover:bg-artifact-hover`, `text-artifact-primary`,
+  `text-artifact-secondary`, `text-artifact-muted`, `bg-artifact-accent
+text-artifact-accent-foreground`, `bg-artifact-accent-subtle`, `border-artifact-border`,
+  `text-artifact-success`, `text-artifact-error`, `text-artifact-warning`, and
+  `bg-artifact-chart-1` to `bg-artifact-chart-5`. Do not use `bg-white`, `bg-gray-900`,
+  `text-black` or `text-white` on theme surfaces.
+- Code can read the live `theme` object: the camelCase equivalents of the variables plus
+  `theme.themeMode` (`"dark"` or `"light"`). It updates when SideKick's theme changes.
+- Chart.js already uses the theme's text color, grid color and font. For Recharts, pass the
+  variables, for example `stroke="var(--chart-1)"`; axis text and tooltips are already themed.
+- Lucide icons: import as **named exports**, for example `import { Flame, Star } from 'lucide-react'`.
+  Do NOT import the namespace as `import { lucideReact }`; that is not a valid export.
+- Use framer-motion for transitions only where motion helps understanding.
 
-React code can also read the live `theme` object. It contains the camelCase equivalents plus
-`theme.themeMode` (`"dark"` or `"light"`) and updates when the Sidekick theme changes.
+### HTML and SVG artifacts
 
-Lucide icons: import as **named exports** — e.g. `import { Flame, Star } from 'lucide-react'`.
-Do NOT import the namespace as `import { lucideReact }` — that is not a valid export.
+- Write a fragment or a whole document with embedded `<style>` and inline `<script>`. Scripts run,
+  and `DOMContentLoaded` and `load` fire as in any page. External stylesheets and scripts from
+  CDNs do not load.
+- HTML and SVG receive the same variables and base styles as React, and update with the theme.
+  An SVG can use the variables in `fill` and `stroke`, for example `fill="var(--accent)"`.
 
-Use framer-motion for smooth transitions and animations when motion adds value.
+### Component patterns
 
-### Styling in HTML artifacts
-
-- Use embedded `<style>` blocks — no external CSS CDN is guaranteed to load.
-- The HTML document receives the same live CSS variables and safe control defaults as React.
-- Prefer those variables over hardcoded app-shell colors and define readable `:hover`, `:focus`,
-  `:active`, and selected-state foreground/background pairs.
-- Generated CSS is inserted after Sidekick's base layer, so intentional artifact styles still win.
-
-### Design Quality
-
-- NEVER use excessive centered layouts, purple gradients, uniform rounded corners everywhere, or Inter as the only font — these are hallmarks of generic AI output.
-- Pick a purposeful color palette specific to the content/topic. One color should dominate (60–70% visual weight), with 1–2 supporting tones and one sharp accent.
-- Choose an interesting font pairing when the artifact benefits from it.
-- Every section needs a visual element — avoid walls of text.
-- Check the result mentally in both light and dark themes, including hover and focused controls.
-- A subtree may opt out of Sidekick's severe-contrast repair only when intentional (for example,
-  text used as an image mask) by setting `data-sidekick-contrast="preserve"`.
+- For multiple views, use a simple tab or segmented control with `useState`.
+- Derive displayed values; do not hardcode data that should be calculated.
+- Add accessibility attributes (`aria-label`, `role`) on interactive elements.
 
 ### Reviewing the result
 
@@ -104,16 +130,3 @@ Use framer-motion for smooth transitions and animations when motion adds value.
   complete updated code. Never send a shortened or partial version.
 - Describe only what the result showed. If no screenshot was returned, say how it looks is
   unverified rather than describing it.
-
-### Component Patterns (React artifacts)
-
-- For complex UI with multiple views, use a simple tab/nav state pattern with `useState`.
-- Keep components focused and readable.
-- Derive displayed values — don't hardcode data that should be calculated.
-- Add accessibility attributes (`aria-label`, `role`) on interactive elements.
-
-### Layout Guidance
-
-- Use CSS Grid or Flexbox, not fixed pixel positions.
-- Use `clamp()` or responsive units so the artifact looks good at different widths.
-- Respect the compact chat panel context — don't design for a full 1920px viewport.

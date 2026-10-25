@@ -22,9 +22,10 @@ export interface ArtifactInspectionResult {
   width: number
   height: number
   /**
-   * The chat shows an artifact in a frame of bounded height and scrolls the
-   * rest inside it. Set when the artifact is taller than that frame, so the
-   * user sees its top first; the capture itself shows all of it.
+   * The chat grows an artifact to its content's height up to a limit, and
+   * scrolls the rest inside it. Set when the artifact is taller than that
+   * limit, so the user sees its top first and opens it full screen for all of
+   * it; the capture shows what the chat shows.
    */
   chatFrameHeight?: number
 }
@@ -36,8 +37,6 @@ export const ARTIFACT_INSPECTION_SETTLE_MS = 1_800
 /** Longest an inspection may wait for the artifact to report anything. */
 export const ARTIFACT_INSPECTION_TIMEOUT_MS = 20_000
 export const ARTIFACT_INSPECTION_MAX_ERRORS = 5
-/** Frame height while inspecting, so the capture holds the whole artifact rather than its top. */
-export const ARTIFACT_INSPECTION_MAX_FRAME_HEIGHT = 1_500
 
 export const ARTIFACT_INSPECTION_PAGE = 'sidekick-artifact://app/artifact-inspect.html'
 

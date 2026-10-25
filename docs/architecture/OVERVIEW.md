@@ -306,9 +306,10 @@ An artifact made with `create_artifact` is observed the same way before its resu
 `ArtifactInspector` loads `artifact-inspect.html` from the artifact protocol in an offscreen window
 that is never shown, cannot open windows, and cannot navigate. That page renders the artifact with
 the chat's own components in the user's theme, waits for it to report success and then for its data
-requests to settle, and reports runtime errors. The inspector captures the whole artifact at the
-chat's width, and says when it is taller than the chat's bounded frame, where the user first sees
-its top and scrolls inside the card for the rest. The model receives the render status, errors, and, when it accepts images, the capture as a
+requests to settle, and reports runtime errors. The inspector captures the artifact at the chat's
+width as the chat shows it, and says when it is taller than the height an artifact grows to in the
+chat, where the user first sees its top and scrolls inside it or opens it full screen for the rest.
+The model receives the render status, errors, and, when it accepts images, the capture as a
 small inline JPEG; it no longer receives its own code back. A failed or unfinished render is a
 failed tool call, and when inspection itself is unavailable the result says the artifact is
 unverified. The run ledger keeps tool arguments as a bounded preview, so replayed history restores
@@ -320,6 +321,36 @@ artifact made before the skill loaded is still rendered, and its result carries 
 guidance unless the previous reply made an artifact and the guidance is already in history. The
 chat shows only the latest version of an artifact within a reply, and a failed one as a single
 line that expands to its error and code.
+
+Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own
+document. React artifacts run in `sandbox.html`, which bundles the libraries and Tailwind; HTML
+and SVG artifacts run in `html-sandbox.html`, which writes the artifact as its whole document so
+its inline scripts run under that page's policy and its load events fire. The two pages share one
+Content-Security-Policy, except that the HTML page also allows inline scripts, which an HTML
+artifact is made of; the React page already evaluates the model's code. The renderer embeds either
+page in an iframe sandboxed to scripts and its own origin. The chat and a frame talk only through
+the messages in `src/shared/artifactFrame.ts`, and each side reads the other's through that file's
+readers, which accept exactly those shapes. The chat sends `render`, with the code and theme, once
+the frame says it is ready, addressed to the artifact origin, and `theme` when the app's theme or
+accent changes. The frame sends `ready`, its content's `resize`, `success`, `error`, and `pointer`
+when the pointer enters or leaves it, which the chat cannot see inside a frame from another origin.
+The chat accepts a message only from its own frame's window and the artifact origin; the frame only
+from the window that embeds it. Theme values become CSS only after `readArtifactTheme` has refused
+anything that could end a declaration, rule or element, or fetch a resource.
+
+In the chat an artifact has no card. Its frame's page is transparent, so the conversation shows
+through, and its width is the reply's. The frame measures its content's own height rather than the
+document's scroll height, which never drops below the frame's, so it can shrink as well as grow;
+the chat follows that height with a short transition, up to 1,600 pixels, beyond which the frame
+scrolls. The frame hides its scrollbar while the chat is catching up, so scrolling over an
+artifact that fits reaches the chat. Before an artifact first shows, one quiet line holds its place,
+or the height it last rendered at when it is shown again. Each sandbox loads SideKick's fonts and
+a base stylesheet in a cascade layer, so any style the artifact writes wins; with Tailwind the same
+rules are also given as Tailwind's base layer, after its reset and before its utilities, and no
+selector in them is more specific than one element. The design follows the published guidance for
+inline generated interfaces in conversations, from Claude's inline widgets and MCP Apps' host
+theming to OpenAI's Apps SDK inline cards: a transparent frame on host variables, height that fits
+the content without nested scrolling, and an expand control rather than chrome around the content.
 
 Screenshots are durable, bounded files under the SideKick user-data directory. Tool results keep a
 typed file reference in the append-only run ledger; provider adapters materialize it only at the
