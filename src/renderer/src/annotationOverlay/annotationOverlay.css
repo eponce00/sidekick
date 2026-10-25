@@ -9,7 +9,15 @@ body,
   background: transparent !important;
 }
 
+/* Only the accent itself comes from the app's palette, so its steps are derived from it here. */
 .ao-root {
+  --accent-subtle: color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-muted: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+  --field-focus-border: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  --field-focus-glow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+
   position: fixed;
   inset: 0;
   font-family: var(--font-sans);
@@ -23,20 +31,21 @@ body,
   cursor: crosshair;
 }
 
-/* A mark on the page: the accent, with a white ring so it stands out on any page. */
+/* A mark on the page: the accent, haloed so it stands out on any page. Its badge and the hover
+   label are ringed in white, which separates them from the page under them in either theme. */
 .ao-mark,
 .ao-hover,
 .ao-drag {
   position: absolute;
   box-sizing: border-box;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   pointer-events: none;
 }
 
 .ao-mark {
   border: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  background: var(--accent-subtle);
+  box-shadow: 0 0 0 4px var(--accent-muted);
 }
 
 .ao-mark.is-area {
@@ -44,7 +53,7 @@ body,
 }
 
 .ao-mark.is-editing {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  background: var(--accent-muted);
 }
 
 .ao-badge {
@@ -60,21 +69,21 @@ body,
   background: var(--accent);
   box-shadow:
     0 0 0 2px #fff,
-    0 3px 10px rgba(0, 0, 0, 0.28);
-  font: 700 11px / 1 var(--font-sans);
+    0 2px 8px var(--shadow);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
   font-variant-numeric: tabular-nums;
   pointer-events: auto;
   cursor: pointer;
-  transition: transform var(--duration-fast) var(--ease-out);
+  transition: background-color var(--duration-fast);
 }
 
 .ao-badge:hover {
-  transform: scale(1.1);
+  background: var(--accent-strong);
 }
 
 .ao-hover {
   border: 1.5px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--accent-subtle);
 }
 
 .ao-hover > span {
@@ -90,8 +99,8 @@ body,
   background: var(--accent);
   box-shadow:
     0 0 0 1.5px rgba(255, 255, 255, 0.85),
-    0 3px 10px rgba(0, 0, 0, 0.25);
-  font: 600 11px / 1 var(--font-sans);
+    0 2px 8px var(--shadow);
+  font: 600 var(--text-xs) / 1 var(--font-sans);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -104,7 +113,7 @@ body,
 
 .ao-drag {
   border: 1.5px dashed var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--accent-subtle);
 }
 
 /* The note and its style editor open together beside the mark. */
@@ -116,19 +125,17 @@ body,
   animation: ao-rise var(--duration-normal) var(--ease-out);
 }
 
-/* Floating pieces share one look: a glass pill over whatever the page shows. */
+/* Floating pieces are drawn as SideKick's menus are, over whatever the page shows. */
 .ao-note,
 .ao-bar,
 .ao-style {
   display: flex;
   align-items: center;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border: 1px solid var(--panel-border);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--surface-1) 94%, transparent);
-  box-shadow:
-    0 12px 36px rgba(0, 0, 0, 0.32),
-    0 2px 6px rgba(0, 0, 0, 0.18);
-  backdrop-filter: blur(18px) saturate(1.3);
+  background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
   user-select: auto;
 }
 
@@ -155,7 +162,7 @@ body,
   border-radius: var(--radius-full);
   color: var(--on-accent);
   background: var(--accent);
-  font: 700 11px / 1 var(--font-sans);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
 }
 
 .ao-note input {
@@ -214,7 +221,7 @@ body,
 
 @keyframes ao-listen {
   50% {
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: 0 0 0 5px var(--accent-muted);
   }
 }
 
@@ -371,23 +378,24 @@ body,
   cursor: default;
 }
 
+/* Keeping a note is the note's own step; Send on the bar is the one accent-filled control. */
 .ao-note-save {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   flex: none;
   place-items: center;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  color: var(--on-accent);
-  background: var(--accent);
+  color: var(--text-primary);
+  background: var(--surface-3);
   cursor: pointer;
-  transition: filter var(--duration-fast);
+  transition: background-color var(--duration-fast);
 }
 
 .ao-note-save:hover {
-  filter: brightness(1.08);
+  background: var(--surface-4);
 }
 
 .ao-bar {
@@ -408,7 +416,7 @@ body,
   width: 26px;
   height: 32px;
   place-items: center;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--text-muted);
   cursor: grab;
   touch-action: none;
@@ -439,15 +447,16 @@ body,
   margin: 0 2px 0 4px;
   padding: 0 14px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   color: var(--on-accent);
   background: var(--accent);
   font: 600 var(--text-sm) / 1 var(--font-sans);
   cursor: pointer;
+  transition: background-color var(--duration-fast);
 }
 
 .ao-send:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--accent-strong);
 }
 
 @keyframes ao-rise {

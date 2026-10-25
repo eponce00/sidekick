@@ -11,7 +11,7 @@
   border-radius: var(--radius-full);
   color: var(--on-accent);
   background: var(--accent);
-  font: 700 11px / 1 var(--font-sans);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
   font-variant-numeric: tabular-nums;
 }
 
@@ -28,7 +28,7 @@
 .browser-mark-chip > .browser-mark-number {
   min-width: 20px;
   overflow: visible;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .browser-mark-chip > span:not(.browser-mark-number) {
@@ -53,12 +53,18 @@
   height: 30px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 0 10px 0 6px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   color: var(--text-secondary);
   background: var(--surface-2);
+}
+
+/* Once sent, a mark is a record rather than something on the page now, so its number is grey. */
+.message-browser-mark > .browser-mark-number {
+  color: var(--text-primary);
+  background: var(--surface-4);
 }
 
 .browser-mark-chip .visually-hidden {

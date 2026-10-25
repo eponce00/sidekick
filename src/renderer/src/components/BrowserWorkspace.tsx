@@ -382,6 +382,7 @@ export function BrowserWorkspace({
                 <span>{tab.title || 'New tab'}</span>
               </button>
               <button
+                className="browser-workspace-tab-close"
                 aria-label={`Close ${tab.title || 'tab'}`}
                 disabled={pending || state.busy}
                 onClick={() => void act('close', { tabId: tab.id })}
@@ -482,7 +483,7 @@ export function BrowserWorkspace({
           {state?.device && (
             <button
               type="button"
-              className="browser-workspace-chip is-device"
+              className="browser-workspace-chip"
               aria-label={`${state.device.label}, ${state.device.width} × ${state.device.height}. Back to Responsive`}
               title={`${state.device.label}, ${state.device.width} × ${state.device.height}${
                 state.device.source === 'agent' ? ', set by the agent' : ''
@@ -602,8 +603,7 @@ export function BrowserWorkspace({
                 </>
               ) : (
                 <p className="browser-workspace-page-tools-empty">
-                  This page offers the agent no tools of its own. Sites built for agents list theirs
-                  here, and the agent can use them instead of clicking.
+                  This page offers the agent no tools. Sites built for agents list theirs here.
                 </p>
               )}
             </section>
@@ -739,11 +739,7 @@ export function BrowserWorkspace({
             }}
           />
         )}
-        {!state && (
-          <p>
-            Open a page above, or ask the agent to browse. You share the same tabs and page state.
-          </p>
-        )}
+        {!state && <p>Open a page, or ask the agent to browse. You both use these tabs.</p>}
       </div>
     </div>
   )

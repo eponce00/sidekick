@@ -73,9 +73,10 @@ export function AnnotationOverlay(): React.JSX.Element | null {
 
   useEffect(() => {
     if (!state) return
+    // On the body, as the app sets its palette: the light theme's own accent is declared there.
     document.body.dataset.theme = state.theme
-    document.documentElement.style.setProperty('--accent', state.accent)
-    document.documentElement.style.setProperty('--on-accent', state.accentText)
+    document.body.style.setProperty('--accent', state.accent)
+    document.body.style.setProperty('--on-accent', state.accentText)
   }, [state])
 
   // A note opened for another mark keeps what was typed in the last one.
