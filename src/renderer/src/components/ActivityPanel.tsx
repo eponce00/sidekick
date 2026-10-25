@@ -513,7 +513,7 @@ function ActivityPanel({
     },
     terminal: {
       label: 'Terminal',
-      description: "The agent's commands",
+      description: "Your terminals and the agent's commands",
       icon: <SquareTerminal size={15} />,
       ...(terminalIsLive
         ? { badge: terminalIsWaiting ? ('waiting' as const) : ('live' as const) }
@@ -681,8 +681,8 @@ function ActivityPanel({
             <button
               className="activity-tab-vertical"
               onClick={() => openCollapsedTab('terminal')}
-              title="Open the agent's terminal"
-              aria-label="Open the agent's terminal"
+              title="Open Terminal"
+              aria-label="Open Terminal"
             >
               <SquareTerminal size={16} />
               {terminalIsLive && (

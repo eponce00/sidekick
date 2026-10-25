@@ -253,6 +253,24 @@ const api = {
       return () => ipcRenderer.removeListener('terminal:event', listener)
     }
   },
+  userTerminal: {
+    list: () => ipcRenderer.invoke('userTerminal:list'),
+    create: (input: { conversationId: string | null; cols: number; rows: number }) =>
+      ipcRenderer.invoke('userTerminal:create', input),
+    read: (id: string, offset?: number) => ipcRenderer.invoke('userTerminal:read', id, offset),
+    write: (id: string, data: string) => ipcRenderer.invoke('userTerminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('userTerminal:resize', id, cols, rows),
+    close: (id: string) => ipcRenderer.invoke('userTerminal:close', id),
+    onEvent: (callback: (event: import('../shared/userTerminals').UserTerminalEvent) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        event: import('../shared/userTerminals').UserTerminalEvent
+      ): void => callback(event)
+      ipcRenderer.on('userTerminal:event', listener)
+      return () => ipcRenderer.removeListener('userTerminal:event', listener)
+    }
+  },
   conversationGoals: {
     current: (conversationId: string) =>
       ipcRenderer.invoke('conversationGoals:current', conversationId),

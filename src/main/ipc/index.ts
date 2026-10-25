@@ -23,6 +23,7 @@ import { registerAppMenuHandlers } from './appMenus'
 import { registerCredentialHandlers } from './credentials'
 import { registerCompanionHandlers } from './companion'
 import { registerPanelWindowHandlers } from './panelWindows'
+import { registerUserTerminalHandlers } from './userTerminals'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
@@ -48,6 +49,7 @@ export function registerAllHandlers(): void {
   registerPullRequestHandlers()
   registerSupportHandlers()
   registerAgentRunHandlers()
+  registerUserTerminalHandlers()
   registerSessionStatusHandlers()
   registerCommandLineHandlers()
   registerScheduleHandlers()

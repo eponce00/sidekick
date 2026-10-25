@@ -17,6 +17,7 @@ import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentR
 import { setCompanionVoice, shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
+import { shutdownUserTerminals } from './ipc/userTerminals'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
   configureCheckpointStorageRoot,
@@ -68,6 +69,7 @@ function prepareApplicationShutdown(): Promise<void> {
   appUpdateService?.stop()
   stopScheduler()
   voiceService?.dispose()
+  shutdownUserTerminals()
   applicationShutdown = Promise.allSettled([
     stopControlEndpoint?.(),
     shutdownCompanion(),

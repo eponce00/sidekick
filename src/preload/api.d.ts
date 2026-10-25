@@ -405,6 +405,8 @@ export interface DesktopApi {
   companion: import('../shared/companion').CompanionAPI
   sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
+  /** The user's own shells; no agent tool can reach them. */
+  userTerminal: import('../shared/userTerminals').UserTerminalAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI

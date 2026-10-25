@@ -1,35 +1,100 @@
+/* Like an editor's terminal panel: the selected terminal fills the left, the list sits right. */
 .terminal-panel {
   display: flex;
-  flex-direction: column;
   height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+}
+
+.terminal-panel-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
 }
 
-.terminal-panel-list {
+.terminal-panel-side {
+  display: flex;
   flex: 0 0 auto;
-  max-height: 34%;
-  margin: 0;
-  padding: 6px;
-  overflow-y: auto;
-  list-style: none;
-  border-bottom: 1px solid var(--border-subtle);
+  flex-direction: column;
+  width: clamp(132px, 32%, 200px);
+  min-height: 0;
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-0);
 }
 
-.terminal-panel-item {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+.terminal-panel-side-head {
+  display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 30px;
-  padding: 4px 8px;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 6px 6px 4px 10px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.terminal-panel-new,
+.terminal-panel-item-action {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  text-align: left;
+  color: var(--text-muted);
   cursor: pointer;
+}
+
+.terminal-panel-new:hover:not(:disabled),
+.terminal-panel-item-action:hover {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+
+.terminal-panel-new:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.terminal-panel-new:focus-visible,
+.terminal-panel-item-action:focus-visible,
+.terminal-panel-item-select:focus-visible,
+.terminal-panel-empty-new:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.terminal-panel-lists {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 4px 6px;
+}
+
+.terminal-panel-group {
+  padding: 8px 6px 2px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.terminal-panel-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.terminal-panel-item {
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
 }
 
 .terminal-panel-item:hover {
@@ -41,33 +106,43 @@
   color: var(--text-primary);
 }
 
-.terminal-panel-item:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+.terminal-panel-item-select {
+  display: grid;
+  flex: 1;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 3px 4px 3px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.terminal-panel-item-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
+/* The icon carries the state: accent while running, warning at a prompt, error on failure. */
+.terminal-panel-item-icon {
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
 }
 
-.terminal-panel-item.is-running .terminal-panel-item-dot {
-  background: var(--accent);
+.terminal-panel-item.is-running .terminal-panel-item-icon {
+  color: var(--accent);
 }
 
-.terminal-panel-item.is-waiting_for_input .terminal-panel-item-dot {
-  background: var(--warning);
+.terminal-panel-item.is-waiting_for_input .terminal-panel-item-icon,
+.terminal-panel-item.is-waiting_for_input .terminal-panel-item-meta {
+  color: var(--warning);
 }
 
-.terminal-panel-item.is-exited .terminal-panel-item-dot {
-  background: var(--success);
-}
-
-.terminal-panel-item.is-failed .terminal-panel-item-dot,
-.terminal-panel-item.is-timed_out .terminal-panel-item-dot {
-  background: var(--error);
+.terminal-panel-item.is-failed .terminal-panel-item-icon,
+.terminal-panel-item.is-timed_out .terminal-panel-item-icon {
+  color: var(--error);
 }
 
 .terminal-panel-item-title {
@@ -81,6 +156,64 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The row's own action shows on hover or when it is the one shown, as in an editor's list. */
+.terminal-panel-item-action {
+  width: 22px;
+  height: 22px;
+  margin-right: 2px;
+  visibility: hidden;
+}
+
+.terminal-panel-item:hover .terminal-panel-item-action,
+.terminal-panel-item.is-selected .terminal-panel-item-action,
+.terminal-panel-item-action:focus-visible {
+  visibility: visible;
+}
+
+.terminal-panel-item-action:hover {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+}
+
+.terminal-panel-error {
+  margin: 0 8px 6px;
+  color: var(--error);
+  font-size: var(--text-xs);
+}
+
+/* A narrow panel keeps the terminal wide: the list shrinks to its icons, named by tooltip. */
+@container (max-width: 420px) {
+  .terminal-panel-side {
+    width: 40px;
+  }
+
+  .terminal-panel-side-head {
+    justify-content: center;
+    padding: 6px 0 4px;
+  }
+
+  .terminal-panel-side-head > span,
+  .terminal-panel-group,
+  .terminal-panel-item-title,
+  .terminal-panel-item-meta,
+  .terminal-panel-item-action {
+    display: none;
+  }
+
+  .terminal-panel-group + .terminal-panel-list {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .terminal-panel-item-select {
+    grid-template-columns: auto;
+    justify-content: center;
+    padding: 4px 0;
+  }
 }
 
 .terminal-panel-view {
@@ -106,6 +239,25 @@
   font-size: 12px;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.terminal-panel-shell {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.terminal-panel-shell svg {
+  flex: none;
+  color: var(--accent);
 }
 
 .terminal-panel-command span {
@@ -195,6 +347,11 @@
   height: 100%;
 }
 
+/* Rows rarely fill the host exactly; the strip left below them is the terminal's own colour. */
+.terminal-panel-host .xterm .xterm-viewport {
+  background-color: var(--surface-1);
+}
+
 .terminal-panel-input {
   display: flex;
   gap: 6px;
@@ -235,6 +392,10 @@
 
 .terminal-panel-empty {
   display: grid;
+  /* It fills the panel, so a new shell can be sized from it before its view exists. */
+  height: 100%;
+  box-sizing: border-box;
+  align-content: start;
   justify-items: center;
   gap: 8px;
   padding: 48px 24px;
@@ -249,4 +410,23 @@
 
 .terminal-panel-item.is-waiting_for_input .terminal-panel-item-meta {
   color: var(--warning);
+}
+
+.terminal-panel-empty-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.terminal-panel-empty-new:hover {
+  background: var(--surface-2);
 }

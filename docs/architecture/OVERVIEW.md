@@ -263,7 +263,7 @@ run only after their whole turn has arrived, so the broken turn ran none of its 
 `run.retrying` event (`stream_dropped`, `discardsPartialTurn`) makes the shared projection drop the
 partial text, thinking and tool previews it streamed.
 
-The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
+The renderer bridge exposes run start, stop, event reads, recovery, and durable interaction resolution. For agent commands it exposes only the user's own terminal controls: list and read a conversation's commands, stop one, move one to the background, and type into one. The user's own shells have a separate `userTerminal` bridge, described under [User terminals](#user-terminals). It does not expose raw provider streaming, model-initiated command execution, workspace mutation, MCP execution, or web search. Shared `projectAgentRunEvents` is the only event-to-message projection for streamed text, thinking, tools, artifacts, permissions, questions, tool limits, compaction, usage, and terminal state.
 
 `useConversationRun` owns optimistic user-message insertion plus mode-aware queue/pivot UI behavior,
 but no provider or tool execution. Research report is a run profile on the same kernel, not a
@@ -597,6 +597,25 @@ a message from another chat. Foreground commands cannot detach themselves with s
 cancellation targets the command's whole process group; on Windows the tree is ended with
 `taskkill`, and children orphaned by a shell that died first are found by their parent ID, so no
 child keeps the loop stuck by inheriting output.
+
+## User terminals
+
+The Terminal panel also opens the user's own interactive shells. `UserTerminalService`
+(`src/main/services/userTerminals.ts`) spawns the user's default shell in a node-pty
+pseudo-terminal, sized and resized by the view, with the user's environment, and keeps its raw
+output in memory for a view to replay. It is deliberately not part of the agent runtime: the agent's
+command tools reach only `CommandService` and its `TerminalSessionStore`, so a user terminal's ID
+is unknown to `read_command_output` and `send_command_input`, and nothing the user types passes
+through permissions. The renderer names a chat, never a folder; the service resolves the chat's
+workspace from `ProjectStore` and falls back to the home folder. The `userTerminal:*` handlers
+answer only the top-level document of the main window or a torn-out panel window, and output
+events go only to those windows. Every shell is ended with its process tree on close and at
+shutdown.
+
+This follows the common pattern of other harnesses: the agent has its own command channel, a
+process per command with background tasks it reads and answers by ID (Claude Code, Codex
+`exec_command`/`write_stdin`, OpenCode, Zed), while the user's terminals stay theirs and reach
+the agent only by an explicit user action, if at all.
 
 ## Private workspace History
 

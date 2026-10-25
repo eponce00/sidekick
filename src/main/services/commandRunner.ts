@@ -67,11 +67,11 @@ function redactedOutput(
   }
 }
 
-type PtyModule = typeof import('node-pty')
+export type PtyModule = typeof import('node-pty')
 let ptyModule: Promise<PtyModule | null> | undefined
 
 /** node-pty is native; where it cannot load, commands run over pipes as before. */
-function loadPty(): Promise<PtyModule | null> {
+export function loadPty(): Promise<PtyModule | null> {
   ptyModule ??= import('node-pty').catch((error: unknown) => {
     console.warn('[Commands] Pseudo-terminal unavailable; commands use pipes:', error)
     return null

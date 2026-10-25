@@ -1,4 +1,4 @@
-import { previewTerminalApi } from './terminalPreview'
+import { previewTerminalApi, previewUserTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import { previewCredentialsApi } from './credentialsPreview'
 import { previewBrowserLibraryApi } from './browserLibraryPreview'
@@ -1174,6 +1174,7 @@ export function installBrowserApiMock(): void {
       onEvent: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    userTerminal: previewUserTerminalApi(),
     sessions: previewSessionsApi(),
     schedules: {
       list: async () => [...previewSchedules],

@@ -49,10 +49,13 @@ plain pipes instead.
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
   stopped it and goes on. Background stops the agent waiting on it while it keeps running.
-- **The Terminal tab.** The side panel lists the conversation's commands by title, each with a
-  status dot and its run time, or **Needs input** while it waits for an answer. Select one to see
-  its command, status, and folder above all of its output in a terminal view; the buttons beside
+- **The Terminal tab.** It works like an editor's terminal panel: the selected terminal fills the
+  tab, and a list on its right holds your own terminals and, under **Agent**, the chat's commands.
+  Each command shows its title, an icon coloured by its state, and its run time, its exit code if
+  it failed, or **Needs input** while it waits for an answer; hover a running one to stop it.
+  Select one to see its command, status, and folder above all of its output; the buttons beside
   the command copy the output, move it to the background, or stop it, and you can type into it.
+  In a narrow panel the list shows only icons; hover one for its name.
 - **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
@@ -76,6 +79,18 @@ plain pipes instead.
 
 Commands from earlier app sessions are not listed in the Terminal tab; their output stays in the
 chat.
+
+### Your own terminals
+
+**+** in the Terminal tab's list (or **New terminal** in an empty tab) opens a terminal of your own:
+your default shell (PowerShell 7 when installed, else Windows PowerShell; your login shell on macOS
+and Linux) in the chat's project folder, or your home folder for a chat outside a project. Type
+into it as into any terminal; with text selected, Ctrl+C copies on Windows and Linux, and Ctrl+V
+pastes. It is not an agent command: nothing you type asks for permission, and the agent cannot
+see, read, or type into your terminals. They belong to the app, not to one chat, so every chat's
+Terminal tab lists the same ones, and they keep running while you switch chats. A terminal whose
+shell has exited stays listed with its exit code until you remove it. The trash button ends the
+shell and everything it started; quitting SideKick ends them all.
 
 ## Conditional tools
 
