@@ -1200,14 +1200,36 @@ body[data-theme='light'] .message-user .message-action:hover {
   border-spacing: 0;
 }
 
+/* Columns sized by the user keep exactly the widths they were dragged to. */
+.message-content .markdown-table table.is-sized {
+  table-layout: fixed;
+}
+
+/* Measuring each column's content on one line, for one frame before it is drawn. */
+.message-content .markdown-table table.is-measuring {
+  width: max-content;
+}
+
+.message-content .markdown-table table.is-measuring :is(th, td) {
+  white-space: nowrap;
+}
+
 .message-content .markdown-table th,
 .message-content .markdown-table td {
   padding: 0.6em 0.9em;
   text-align: left;
   vertical-align: top;
+  /* Words wrap between each other, never letter by letter. */
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.message-content .markdown-table table.is-sized :is(th, td) {
+  overflow-wrap: anywhere;
 }
 
 .message-content .markdown-table th {
+  position: relative;
   border-bottom: 1px solid var(--border-color);
   background: var(--surface-2);
   color: var(--text-secondary);
@@ -1226,6 +1248,61 @@ body[data-theme='light'] .message-user .message-action:hover {
 
 .message-content .markdown-table tbody tr:hover td {
   background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+/* A column's right edge, dragged to resize it. The line shows on hover and while dragging. */
+.markdown-table-resize {
+  position: absolute;
+  top: 0;
+  right: -5px;
+  bottom: 0;
+  z-index: 1;
+  width: 10px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.markdown-table-resize::after {
+  position: absolute;
+  top: 20%;
+  bottom: 20%;
+  left: 4px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--duration-fast);
+  content: '';
+}
+
+.markdown-table-resize:hover::after,
+.markdown-table-resize:focus-visible::after,
+body.is-resizing-table .markdown-table-resize:active::after {
+  opacity: 1;
+}
+
+/* The accent line is its focus ring. */
+.markdown-table-resize:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* The last column's edge sits inside the card, which would clip it otherwise. */
+.message-content .markdown-table th:last-child .markdown-table-resize {
+  right: 0;
+}
+
+body.is-resizing-table {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* A finger needs a wider edge to grab. */
+@media (pointer: coarse) {
+  .markdown-table-resize {
+    right: -9px;
+    width: 18px;
+  }
 }
 
 /* ---- Thinking Indicator ---- */

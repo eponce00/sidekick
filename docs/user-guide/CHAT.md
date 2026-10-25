@@ -126,6 +126,14 @@ of its report.
   Reasoning entry steps to the next level. In a reply, each step of reasoning shows the same brain
   among the agent's steps; select it to read it in full.
 
+## Tables in replies
+
+A table in a reply gives each column room for its content on one line, up to a limit, so short
+columns such as names and numbers never wrap; when the table is wider than the chat, it scrolls
+sideways inside its card. Drag a column header's right edge to resize the column, or focus the edge
+and use the arrow keys. Double-click the edge, or press **Enter** on it, to fit the columns to their
+content again.
+
 ## The side panel
 
 The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
