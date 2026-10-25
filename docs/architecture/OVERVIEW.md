@@ -340,20 +340,28 @@ guidance unless the previous reply made an artifact and the guidance is already 
 chat shows only the latest version of an artifact within a reply, and a failed one as a single
 line that expands to its error and code.
 
-In a chat, a builder child run reviews the agent's version when it failed, has layout problems, or
-the model can see images. It fixes with `edit_artifact`, offered only to builders, which replaces
-exact snippets of its current version and renders the result as `create_artifact` does; its last
-version that rendered becomes the call's result. The artifact is not hidden while this happens.
+`edit_artifact` replaces exact snippets of an artifact's current version and renders the result as
+`create_artifact` does. It finds the artifact by title among this run's versions and then among
+earlier replies' (`conversationArtifacts`), and replayed history keeps the full current code in
+the call or edit result that made it. In a chat, a builder child run, without extended reasoning,
+reviews the agent's version when it failed, has layout problems, or the model can see images; it
+fixes with `edit_artifact` applied to the version under review, and its last version that
+rendered becomes the call's result. The artifact is not hidden while this happens.
 While the model writes a `create_artifact` call, the provider clients decode its partial `code`
 argument at most every 250 ms (`ToolCallPreviews`); the kernel sends it on the live, unstored
 `agentRuns:artifactDraft` channel and keeps it out of the run ledger, whose tool previews carry only
 small fields. The projection gives a pending or running `create_artifact` call an artifact segment
 in its final place, so the chat holds one slot for the artifact from its first code to its result.
-That slot runs drafts in a frame of their own: the React sandbox cuts the partial code at the last
-complete JSX element or word (`artifactDraft.ts`), closes what is still open, renders absent
-components as placeholders, and keeps the last draft that ran when a newer one throws; the HTML
-sandbox shows the markup that has arrived without its scripts. A draft frame never reports
-errors, its requests never return, and it does not animate. Each complete version then loads in a
+That slot runs drafts in a frame of their own. The React sandbox cuts the partial code at the last
+complete JSX element or word (`artifactDraft.ts`) and closes what is still open. A Babel plugin
+(`artifactDraftTransform.ts`) registers each top-level component by name, so it stays the same
+React component from draft to draft and React updates only what changed, and declares every name
+the draft uses before defining it, from Babel's scope analysis: a placeholder for a component, an
+empty value that renders as nothing for anything else. Each component runs behind its own error
+boundary that falls back to what it last rendered, or a placeholder, and remounts once when its
+hooks change. Newly added elements fade in. The HTML sandbox shows the markup that has arrived
+without its scripts or inline handlers. A draft frame never reports errors, its requests never
+return, and nothing else in it animates. Each complete version then loads in a
 new, transparent frame over the one showing and replaces it once it reports success, so failures
 and the moments between versions are never seen; frames stay in creation order because moving an
 iframe reloads it. React code runs in a function scope inside the sandbox's prelude, so it may
