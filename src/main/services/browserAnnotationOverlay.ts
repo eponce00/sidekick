@@ -91,7 +91,6 @@ export async function createBrowserAnnotationOverlay(
     }
   })
   view.setBackgroundColor('#00000000')
-  view.setVisible(false)
   const contents = view.webContents
   // Its own document only: it never navigates or opens windows.
   contents.on('will-navigate', (event) => event.preventDefault())
@@ -129,19 +128,22 @@ export async function createBrowserAnnotationOverlay(
     get visible() {
       return visible
     },
+    // It is shown by joining the window and hidden by leaving it. A view hidden with setVisible
+    // stays hidden to its page after setVisible(true): it paints nothing and the clicks meant for
+    // it seem to do nothing.
     place(bounds) {
       if (host.isDestroyed() || contents.isDestroyed()) return
       const children = host.contentView.children
       // Adding a view it already holds raises it above the page, which may have been re-added.
-      if (!visible || children[children.length - 1] !== view) host.contentView.addChildView(view)
+      if (children[children.length - 1] !== view) host.contentView.addChildView(view)
       view.setBounds(bounds)
-      view.setVisible(true)
       if (!visible) contents.focus()
       visible = true
     },
     hide() {
       visible = false
-      if (!contents.isDestroyed()) view.setVisible(false)
+      if (!host.isDestroyed() && host.contentView.children.includes(view))
+        host.contentView.removeChildView(view)
     },
     render(state) {
       latest = state
