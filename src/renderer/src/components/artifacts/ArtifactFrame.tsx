@@ -163,9 +163,9 @@ function ArtifactFrame({
       stopTheme()
       window.clearTimeout(timeout)
     }
-    // runCode stands for code: a draft's code changes without starting the frame again.
+    // runCode stands for code: a draft's code changes without starting the frame again. fill and
+    // maxHeight are fixed for a frame's life.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    // fill and maxHeight are fixed for a frame's life.
   }, [runCode, kind, draft, still])
 
   useEffect(() => {
