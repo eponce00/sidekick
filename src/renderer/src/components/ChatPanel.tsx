@@ -71,9 +71,11 @@ import {
   pastedTextBudget,
   createPastedTextAttachment,
   createReviewCommentAttachment,
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
   isReviewCommentAttachment,
+  type BrowserAnnotationAttachment,
   type MessageContextAttachment,
   type ReviewCommentInput
 } from '../../../shared/messageContextAttachments'
@@ -161,10 +163,12 @@ interface ChatPanelProps {
 function conversationTitlePrompt(message: Message): string {
   const pasted = message.attachments?.find(isPastedTextAttachment)
   const review = message.attachments?.find(isReviewCommentAttachment)
+  const mark = message.attachments?.find(isBrowserAnnotationAttachment)
   return (
     message.content ||
     pasted?.content.slice(0, 1_000) ||
     review?.comment ||
+    mark?.note ||
     message.images?.[0]?.name ||
     'Image conversation'
   )
@@ -296,6 +300,30 @@ function ChatPanel({
     attachments: attachedContext
   })
   const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  // Places marked on this chat's browser pages. The main process holds them until a message
+  // takes them, so the chips follow its list.
+  const [browserMarks, setBrowserMarks] = useState<BrowserAnnotationAttachment[]>([])
+  useEffect(() => {
+    setBrowserMarks([])
+    if (!conversationId) return
+    let stopped = false
+    const load = (): void => {
+      void window.api.agentRuns
+        .browserAnnotations({ conversationId, action: 'list' })
+        .then((marks) => {
+          if (!stopped) setBrowserMarks(marks)
+        })
+        .catch(() => undefined)
+    }
+    load()
+    const stop = window.api.agentRuns.onBrowserAnnotationsChanged((change) => {
+      if (change.conversationId === conversationId && !change.error) load()
+    })
+    return () => {
+      stopped = true
+      stop()
+    }
+  }, [conversationId])
   const [nextRunMode, setNextRunMode] = useState<ConversationRunMode>('conversation')
   const [planModelOverrideId, setPlanModelOverrideId] = useState<string | null>(null)
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
@@ -1242,7 +1270,13 @@ function ChatPanel({
   }
 
   const handleSubmit = (): void => {
-    if (!inputValue.trim() && !attachedImages.length && !attachedContext.length) return
+    if (
+      !inputValue.trim() &&
+      !attachedImages.length &&
+      !attachedContext.length &&
+      !browserMarks.length
+    )
+      return
     if (unavailableModelName) {
       setIsModelMenuOpen(true)
       return
@@ -1277,8 +1311,38 @@ function ChatPanel({
       setAttachmentError(visionUnavailableReason || 'Image input is unavailable')
       return
     }
+    // A queued message being edited keeps what it had; marks wait for the next message.
+    if (browserMarks.length && !editingQueuedId && conversationId) {
+      if (attachedContext.length + browserMarks.length > MAX_MESSAGE_CONTEXT_ATTACHMENTS) {
+        setAttachmentError(
+          `A message can contain up to ${MAX_MESSAGE_CONTEXT_ATTACHMENTS} attachments`
+        )
+        return
+      }
+      // The main process hands over the marks as they are now, with the latest notes.
+      void window.api.agentRuns
+        .browserAnnotations({
+          conversationId,
+          action: 'take',
+          ids: browserMarks.map((mark) => mark.id)
+        })
+        .then((marks) =>
+          // A model that cannot see images still gets each mark's note and what it points at.
+          submitMessageWith(
+            visionAvailable ? marks : marks.map((mark) => ({ ...mark, image: undefined }))
+          )
+        )
+        .catch((error) =>
+          setAttachmentError(error instanceof Error ? error.message : String(error))
+        )
+      return
+    }
+    submitMessageWith([])
+  }
+
+  const submitMessageWith = (marks: BrowserAnnotationAttachment[]): void => {
     const images = attachedImages
-    const attachments = attachedContext
+    const attachments = marks.length ? [...attachedContext, ...marks] : attachedContext
     if (editingQueuedId) {
       // The queued message takes the new text, and the box gets back what it held.
       if (!updatePendingMessage(editingQueuedId, inputValue)) return
@@ -1482,7 +1546,12 @@ function ChatPanel({
 
       const queuedMessageId = getQueuedMessageIdForEmptySubmit(
         isLoading,
-        Boolean(inputValue.trim() || attachedImages.length || attachedContext.length),
+        Boolean(
+          inputValue.trim() ||
+          attachedImages.length ||
+          attachedContext.length ||
+          browserMarks.length
+        ),
         messageQueue
       )
       if (queuedMessageId) {
@@ -1852,6 +1921,15 @@ function ChatPanel({
           reasoningModel ? providerImageProfile(reasoningModel.providerKind) : undefined
         }
         attachedContext={attachedContext}
+        browserMarks={browserMarks}
+        onRemoveBrowserMark={(annotationId) => {
+          if (!conversationId) return
+          void window.api.agentRuns
+            .browserWorkspace({ conversationId, action: 'annotationRemove', annotationId })
+            .catch((error) =>
+              setAttachmentError(error instanceof Error ? error.message : String(error))
+            )
+        }}
         attachmentError={attachmentError}
         visionAvailable={visionAvailable}
         visionUnavailableReason={visionUnavailableReason}

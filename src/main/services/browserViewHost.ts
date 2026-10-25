@@ -277,6 +277,24 @@ export function browserViewHost(id: number): BrowserWindow | undefined {
   return views.get(id)?.host
 }
 
+/**
+ * Where a page is drawn in the app window while shown there, and how many window pixels one of
+ * its CSS pixels takes: the app zoom, or the fit of an agent viewport.
+ */
+export function browserViewPlacement(
+  id: number
+): { host: BrowserWindow; bounds: BrowserPanelBounds; scale: number } | undefined {
+  const entry = views.get(id)
+  const host = entry?.host
+  if (!entry || !host || host.isDestroyed() || entry.view.webContents.isDestroyed())
+    return undefined
+  return {
+    host,
+    bounds: entry.view.getBounds(),
+    scale: entry.agentViewport ? entry.fit : entry.zoom
+  }
+}
+
 export function browserNavigationState(id: number): { canGoBack: boolean; canGoForward: boolean } {
   const contents = views.get(id)?.view.webContents
   return {

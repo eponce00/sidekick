@@ -39,13 +39,27 @@ describe('toDesktopMessage', () => {
       ],
       attachments: [
         { id: 'f', kind: 'text', name: 'notes.md' },
-        { id: 'd', kind: 'folder', name: 'src' }
+        { id: 'd', kind: 'folder', name: 'src' },
+        {
+          id: 'm',
+          kind: 'browser',
+          name: 'Area 30 × 20',
+          number: 1,
+          note: 'Too tight',
+          url: 'http://localhost:5173/',
+          target: 'area',
+          box: { x: 1, y: 2, width: 30, height: 20 },
+          viewport: { width: 800, height: 600 }
+        },
+        // A malformed mark is left out rather than shown as something else.
+        { id: 'bad', kind: 'browser', name: 'Broken' }
       ]
     })
     expect(user.images).toHaveLength(1)
     expect(user.attachments).toEqual([
       { id: 'f', kind: 'file', name: 'notes.md', relativePath: 'notes.md' },
-      { id: 'd', kind: 'folder', name: 'src', relativePath: 'src' }
+      { id: 'd', kind: 'folder', name: 'src', relativePath: 'src' },
+      expect.objectContaining({ id: 'm', kind: 'browser', number: 1, note: 'Too tight' })
     ])
   })
 })

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, webContents } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, webContents, type IpcMainInvokeEvent } from 'electron'
 import { showAppMenu } from '../services/appMenus'
 import { browserDeviceMenuTemplate } from './browserDeviceMenu'
 import { createAppControlHandlers, openProviderKeyPrompt } from '../control/controlService'
@@ -17,8 +17,21 @@ import { conversationCredentialContext, openCredentialEditor } from './credentia
 import { getCredentialVault } from '../services/credentialVaultInstance'
 import { CredentialUses } from '../services/credentialUses'
 import { getManagedWorktrees } from './worktrees'
-import { mountBrowserView, unmountBrowserHost } from '../services/browserViewHost'
-import type { BrowserWorkspaceRequest } from '../../shared/browserWorkspace'
+import {
+  browserAgentInput,
+  browserViewPlacement,
+  isBrowserParkingWindow,
+  mountBrowserView,
+  unmountBrowserHost
+} from '../services/browserViewHost'
+import type {
+  BrowserAnnotationsChange,
+  BrowserWorkspaceRequest,
+  BrowserWorkspaceState
+} from '../../shared/browserWorkspace'
+import { BrowserAnnotationController } from '../services/browserAnnotations'
+import { createBrowserAnnotationOverlay } from '../services/browserAnnotationOverlay'
+import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../shared/messageContextAttachments'
 import { clipBrowserPanelBounds } from '../../shared/browserPanelBounds'
 import { ProjectStore } from '../services/projectStore'
 import { createDesktopEventPublisher } from './desktopEventPublisher'
@@ -164,6 +177,58 @@ export function startConversationInBackground(
   })
 }
 
+let annotations: BrowserAnnotationController | undefined
+
+/** The marks users make on browser pages, until each is sent with a message. */
+function browserAnnotations(): BrowserAnnotationController {
+  annotations ??= new BrowserAnnotationController({
+    page: (conversationId) => {
+      const manager = getAgentRuntimeCoordinator().tools.browser
+      const sessionId = manager?.sessionFor(conversationId)
+      if (!manager || !sessionId) return undefined
+      try {
+        return manager.service.annotationPage(sessionId)
+      } catch {
+        return undefined
+      }
+    },
+    placement: browserViewPlacement,
+    overlay: createBrowserAnnotationOverlay,
+    scroll: (conversationId, webContentsId, input) => {
+      // The wheel is the user's own input on the page, so it waits for an agent action like a click.
+      if (!getAgentRuntimeCoordinator().tools.browser?.claimUserControl(conversationId)) return
+      const page = webContents.fromId(webContentsId)
+      if (!page || page.isDestroyed()) return
+      void browserAgentInput(webContentsId, () =>
+        page.sendInputEvent({
+          type: 'mouseWheel',
+          x: Math.round(input.x),
+          y: Math.round(input.y),
+          deltaX: input.deltaX,
+          deltaY: input.deltaY,
+          canScroll: true
+        })
+      )
+    },
+    notify: (change: BrowserAnnotationsChange) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !isBrowserParkingWindow(window))
+          window.webContents.send('agentRuns:browserAnnotationsChanged', change)
+      }
+    }
+  })
+  return annotations
+}
+
+/** Browser controls answer only the app window's own document. */
+function browserControlHost(event: IpcMainInvokeEvent): BrowserWindow {
+  const host = BrowserWindow.fromWebContents(event.sender)
+  if (!host || host.webContents !== event.sender || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error('Browser controls are only available from the app window')
+  }
+  return host
+}
+
 function validId(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 200
 }
@@ -265,15 +330,31 @@ function validateAdmissions(value: unknown): ReplacePromptAdmissionsInput {
 }
 
 export function registerAgentRunHandlers(): void {
-  ipcMain.handle('agentRuns:browserWorkspace', async (event, input: BrowserWorkspaceRequest) => {
-    const host = BrowserWindow.fromWebContents(event.sender)
-    if (
-      !host ||
-      host.webContents !== event.sender ||
-      event.senderFrame !== event.sender.mainFrame
-    ) {
-      throw new Error('Browser controls are only available from the app window')
+  ipcMain.handle(
+    'agentRuns:browserWorkspace',
+    async (event, input: BrowserWorkspaceRequest): Promise<BrowserWorkspaceState | null> => {
+      const state = await browserWorkspace(event, input)
+      return state && { ...state, ...browserAnnotations().panelState(input.conversationId) }
     }
+  )
+  ipcMain.handle(
+    'agentRuns:browserAnnotations',
+    (event, input: { conversationId?: unknown; action?: unknown; ids?: unknown }) => {
+      browserControlHost(event)
+      if (!input || !validId(input.conversationId)) throw new Error('Invalid annotation request')
+      if (input.action === 'list') return browserAnnotations().list(input.conversationId)
+      if (
+        input.action !== 'take' ||
+        !Array.isArray(input.ids) ||
+        input.ids.length > 32 ||
+        !input.ids.every(validId)
+      )
+        throw new Error('Invalid annotation request')
+      return browserAnnotations().take(input.conversationId, input.ids)
+    }
+  )
+  const browserWorkspace = async (event: IpcMainInvokeEvent, input: BrowserWorkspaceRequest) => {
+    const host = browserControlHost(event)
     if (
       !input ||
       !validId(input.conversationId) ||
@@ -291,8 +372,19 @@ export function registerAgentRunHandlers(): void {
         'select',
         'close',
         'device',
-        'deviceMenu'
+        'deviceMenu',
+        'annotate',
+        'annotationNote',
+        'annotationRemove'
       ].includes(input.action) ||
+      (input.annotate !== undefined && typeof input.annotate !== 'boolean') ||
+      [input.accent, input.accentText].some(
+        (color) => color !== undefined && (typeof color !== 'string' || color.length > 64)
+      ) ||
+      (input.annotationId !== undefined && !validId(input.annotationId)) ||
+      (input.note !== undefined &&
+        (typeof input.note !== 'string' ||
+          input.note.length > MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS)) ||
       (input.menuPosition !== undefined &&
         !(Number.isFinite(input.menuPosition?.x) && Number.isFinite(input.menuPosition?.y))) ||
       (input.device !== undefined && typeof input.device !== 'string')
@@ -302,9 +394,39 @@ export function registerAgentRunHandlers(): void {
     const manager = getAgentRuntimeCoordinator().tools.browser
     if (input.action === 'unmount') {
       unmountBrowserHost(host)
+      void browserAnnotations().hideHost(host)
       return null
     }
     if (!manager) return null
+    if (
+      input.action === 'annotate' ||
+      input.action === 'annotationNote' ||
+      input.action === 'annotationRemove'
+    ) {
+      const marks = browserAnnotations()
+      if (input.action === 'annotate')
+        marks.setAnnotating(input.conversationId, input.annotate === true, {
+          accent: input.accent,
+          accentText: input.accentText
+        })
+      else if (!input.annotationId) throw new Error('Invalid browser workspace request')
+      else if (input.action === 'annotationNote')
+        marks.setNote(input.conversationId, input.annotationId, input.note ?? '')
+      else marks.remove(input.conversationId, input.annotationId)
+      const state = manager.workspaceState(input.conversationId)
+      return (
+        state && {
+          ...state,
+          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+            id,
+            title,
+            url,
+            active,
+            loading
+          }))
+        }
+      )
+    }
     if (input.action === 'state' || input.action === 'mount') {
       const state = manager.workspaceState(input.conversationId)
       if (input.action === 'mount') {
@@ -329,7 +451,7 @@ export function registerAgentRunHandlers(): void {
         // A renderer snapshot can arrive after a host resize/zoom. Keep native
         // content inside the current host instead of rejecting valid stale layout.
         const clipped = clipBrowserPanelBounds(b, width, height)
-        if (tab && clipped)
+        if (tab && clipped) {
           mountBrowserView(
             tab.webContentsId,
             host,
@@ -338,7 +460,11 @@ export function registerAgentRunHandlers(): void {
             // The page renders at 100%, like a browser window, not at the app interface zoom.
             1
           )
-        else unmountBrowserHost(host)
+          void browserAnnotations().sync(host, input.conversationId, tab.webContentsId)
+        } else {
+          unmountBrowserHost(host)
+          void browserAnnotations().hideHost(host)
+        }
       }
       return (
         state && {
@@ -442,7 +568,7 @@ export function registerAgentRunHandlers(): void {
         }))
       }
     )
-  })
+  }
   const engine = getAgentEngineClient()
   const admissions = new PromptAdmissionStore(getDb())
   ipcMain.handle('agentRuns:startConversation', async (_event, raw: unknown) => ({

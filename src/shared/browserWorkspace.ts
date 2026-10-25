@@ -8,6 +8,27 @@ export interface BrowserPanelBounds {
 import type { BrowserDeviceState } from './browserDevices'
 import type { BrowserPageTool } from './webMcp'
 
+/** How many places one message can point at on pages; they share the message's attachments. */
+export const MAX_BROWSER_ANNOTATIONS = 8
+
+/** A mark as the Browser panel lists it; its picture and page facts stay in the main process. */
+export interface BrowserAnnotationSummary {
+  id: string
+  number: number
+  name: string
+  note: string
+  target: 'element' | 'area'
+  /** It was made on the page the active tab shows now, so it is drawn there while annotating. */
+  onPage: boolean
+}
+
+/** Sent to the app window when a conversation's marks change; `focus` is a mark just made. */
+export interface BrowserAnnotationsChange {
+  conversationId: string
+  focus?: string
+  error?: string
+}
+
 export interface BrowserWorkspaceState {
   sessionId: string
   activeTabId: string
@@ -26,6 +47,9 @@ export interface BrowserWorkspaceState {
    * while SideKick's menu is open and the panel shows this in its place.
    */
   snapshot?: string
+  /** The user is marking places on the page to send with their next message. */
+  annotating?: boolean
+  annotations?: BrowserAnnotationSummary[]
 }
 
 export interface BrowserWorkspaceRequest {
@@ -45,6 +69,9 @@ export interface BrowserWorkspaceRequest {
     | 'close'
     | 'device'
     | 'deviceMenu'
+    | 'annotate'
+    | 'annotationNote'
+    | 'annotationRemove'
   bounds?: BrowserPanelBounds
   /** For `deviceMenu`: where to open it, in the app window's CSS pixels. */
   menuPosition?: { x: number; y: number }
@@ -52,4 +79,11 @@ export interface BrowserWorkspaceRequest {
   device?: string
   url?: string
   tabId?: string
+  /** For `annotate`: turn marking on or off, drawn in the app's accent and its text color. */
+  annotate?: boolean
+  accent?: string
+  accentText?: string
+  /** For `annotationNote` and `annotationRemove`. */
+  annotationId?: string
+  note?: string
 }

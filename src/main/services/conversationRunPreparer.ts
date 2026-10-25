@@ -48,6 +48,8 @@ import {
   formatMessageContextAttachments,
   formatPastedTextAttachments,
   formatReviewCommentAttachments,
+  formatBrowserAnnotationAttachments,
+  browserAnnotationImages,
   isProjectContextAttachment,
   parseMessageContextAttachments
 } from '../../shared/messageContextAttachments'
@@ -88,12 +90,15 @@ function parseJson<T>(value: string | null, fallback: T): T {
 }
 
 export function providerMessage(row: MessageRow): ProviderChatMessage {
-  const images = parseMessageImages(row.images).map((image) => image.dataUrl)
+  const attached = parseMessageImages(row.images).map((image) => image.dataUrl)
   const attachments = parseMessageContextAttachments(row.attachments)
+  // Pictures of marked browser areas follow the user's own images, numbered in that order.
+  const images = [...attached, ...browserAnnotationImages(attachments)]
   const content = [
     formatPastedTextAttachments(attachments),
     row.content.trim(),
     formatReviewCommentAttachments(attachments),
+    formatBrowserAnnotationAttachments(attachments, attached.length + 1),
     formatMessageContextAttachments(attachments)
   ]
     .filter(Boolean)

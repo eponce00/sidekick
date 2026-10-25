@@ -767,6 +767,41 @@ describe('CompanionApi', () => {
     expect(detail.run?.run.id).toBe('run-1')
   })
 
+  it('shows a mark on a browser page with its note, its picture among the images', async () => {
+    const { call, db, chat } = setup()
+    const picture = `data:image/png;base64,${PNG.toString('base64')}`
+    const mark = {
+      id: 'mark-1',
+      kind: 'browser',
+      name: 'button “Save”',
+      number: 1,
+      note: 'Make it blue',
+      url: 'http://localhost:5173/',
+      target: 'element',
+      box: { x: 1, y: 2, width: 30, height: 10 },
+      viewport: { width: 800, height: 600 },
+      image: {
+        mimeType: 'image/png',
+        dataUrl: picture,
+        width: 78,
+        height: 58,
+        mark: { x: 24, y: 24, width: 30, height: 10 }
+      }
+    }
+    db.prepare(
+      `INSERT INTO messages (id, conversation_id, role, content, attachments, timestamp)
+       VALUES ('m1', ?, 'user', 'fix', ?, 1)`
+    ).run(chat.id, JSON.stringify([mark]))
+    const detail = (await call('chat.open', { conversationId: chat.id })) as {
+      messages: Array<{ images?: unknown[]; attachments?: unknown[] }>
+    }
+    const { image: _picture, ...withoutPicture } = mark
+    expect(detail.messages[0].attachments).toEqual([withoutPicture])
+    expect(detail.messages[0].images).toEqual([
+      expect.objectContaining({ id: 'mark-1', name: 'Mark 1: button “Save”' })
+    ])
+  })
+
   it('serves only images the artifact folder holds', async () => {
     const readArtifact = vi.fn(async (url: string) =>
       url === 'sidekick-browser://artifact/viewed-images/a.jpg'
