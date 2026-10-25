@@ -33,7 +33,8 @@ export type ArtifactFrameEvent =
 
 /** What the chat tells a frame. */
 export type ArtifactHostCommand =
-  | { type: 'render'; code: string; theme: ArtifactTheme }
+  /** `still` when it replaces what the user already sees: its charts appear drawn, not drawn in. */
+  | { type: 'render'; code: string; theme: ArtifactTheme; still?: boolean }
   /**
    * The code that has arrived so far, while the model is still writing it. A frame that gets a
    * draft shows as much of it as runs and reports only its height; the finished code runs in a
@@ -89,7 +90,9 @@ export function readArtifactHostCommand(data: unknown): ArtifactHostCommand | nu
     typeof message.code === 'string' &&
     message.code.length <= MAX_ARTIFACT_CODE_LENGTH
   ) {
-    return { type: message.type, code: message.code, theme }
+    return message.type === 'render' && message.still === true
+      ? { type: 'render', code: message.code, theme, still: true }
+      : { type: message.type, code: message.code, theme }
   }
   return null
 }

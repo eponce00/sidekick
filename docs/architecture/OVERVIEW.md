@@ -359,12 +359,17 @@ React component from draft to draft and React updates only what changed, and dec
 the draft uses before defining it, from Babel's scope analysis: a placeholder for a component, an
 empty value that renders as nothing for anything else. Each component runs behind its own error
 boundary that falls back to what it last rendered, or a placeholder, and remounts once when its
-hooks change. Newly added elements fade in. The HTML sandbox shows the markup that has arrived
-without its scripts or inline handlers. A draft frame never reports errors, its requests never
-return, and nothing else in it animates. Each complete version then loads in a
-new, transparent frame over the one showing and replaces it once it reports success, so failures
-and the moments between versions are never seen; frames stay in creation order because moving an
-iframe reloads it. React code runs in a function scope inside the sandbox's prelude, so it may
+hooks change; the fallback keeps the part's element in place, so nothing is rebuilt. The HTML
+sandbox shows the markup that has arrived without its scripts or inline handlers. A draft frame
+never reports errors, its requests never return, and nothing in it animates: Recharts series and
+Chart.js draw without animation (`stillCharts`). Each complete version then loads in a new,
+transparent frame over the one showing, told to draw its charts still, and replaces it only after
+it reports success and its layout has been quiet for half a second (at least 1.2 s, at most 4 s),
+so failures, versions still animating in, and the moments between versions are never seen; frames
+stay in creation order because moving an iframe reloads it. A frame's new height is applied to
+the element when its message arrives rather than on React's next render, artifact pages turn off
+scroll anchoring, and the chat's follower lands content growth in the same frame
+(`bottomFollow.ts`), so growth above the view does not push the reply down for a moment. React code runs in a function scope inside the sandbox's prelude, so it may
 redeclare names the prelude provides, and Babel strips TypeScript annotations.
 
 Artifacts run on the isolated `sidekick-artifact://app` origin, never in the renderer's own

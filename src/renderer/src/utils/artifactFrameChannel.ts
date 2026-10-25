@@ -92,9 +92,14 @@ export function watchContentHeight(
   let last = -1
   let scrollbarTimer: number | undefined
 
+  // Content that grows above what is in view, while the frame has not caught up yet, would
+  // otherwise have the browser scroll the page to keep the view in place: the artifact jumps up
+  // for a moment and back. Nothing scrolls a page without a scrollbar but the user.
+  doc.documentElement.style.overflowAnchor = 'none'
   const fitScrollbar = (): void => {
     view.clearTimeout(scrollbarTimer)
     const root = doc.documentElement
+    if (root.style.overflowY !== 'auto') root.scrollTop = 0
     if (last <= view.innerHeight + 1) {
       root.style.overflowY = 'hidden'
       return

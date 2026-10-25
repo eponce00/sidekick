@@ -58,11 +58,12 @@ it as an artifact that runs inside the reply.
 
 - **Takes shape as it is written:** the artifact appears in the reply while the agent is still
   writing it, and grows piece by piece as the code arrives: what is already there stays put, new
-  parts fade in, and a part whose code has not arrived yet shows as a soft placeholder. Beneath it,
+  parts appear where they belong, and a part whose code has not arrived yet shows as a plain
+  placeholder. Nothing flashes or animates while it grows: charts appear already drawn. Beneath it,
   a short line says what it is doing: **Writing**, **Checking how it looks**, or **Polishing**
-  while a fix is made. A fixed version replaces it in place once it runs; a version that fails
-  along the way is never shown. While it is still being written it does not load data or
-  animate; the finished version does.
+  while a fix is made. A fixed version replaces it in place once it has settled, without drawing
+  its charts in again; a version that fails along the way is never shown. While it is still being
+  written it does not load data; the finished version does.
 - **Changes in place:** ask for a change to an artifact, such as a color or a new column, and the
   agent edits just that part of it, which takes seconds rather than writing it again.
 - **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no

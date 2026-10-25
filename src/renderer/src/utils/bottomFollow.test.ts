@@ -107,12 +107,16 @@ describe('following the end of a streaming reply', () => {
     expect(scrollDistanceFromBottom(view)).toBe(404)
   })
 
-  it('cancels a move to the end already waiting for the next frame', () => {
+  it('lands growth at once, and moves no more once the reader scrolls up', () => {
     height += 40
     follower.keepAtEnd()
+    expect(top).toBe(1_540)
     view.dispatchEvent(new WheelEvent('wheel', { deltaY: -4, bubbles: true }))
+    height += 40
+    follower.keepAtEnd()
     runFrames()
-    expect(top).toBe(1_500)
+    expect(top).toBe(1_540)
+    expect(follower.following).toBe(false)
   })
 
   it('stays with the end through its own moves, growth, and content shrinking under it', () => {

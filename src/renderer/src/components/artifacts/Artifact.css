@@ -42,6 +42,12 @@
   display: none;
 }
 
+/* While it is written it grows in small steps, and the chat follows each at once; easing them
+   would leave it a step behind its content. */
+.artifact.is-writing .artifact-stage {
+  transition: none;
+}
+
 /* A new version loads unseen over the one showing, then takes its place as the old one fades. */
 .artifact-layer.is-incoming,
 .artifact-layer.is-leaving {

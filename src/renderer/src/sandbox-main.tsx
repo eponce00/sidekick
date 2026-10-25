@@ -93,6 +93,40 @@ const LIBS: Record<string, unknown> = {
 
 const SUPPORTED_IMPORTS = Object.keys(LIBS)
 
+/** Recharts series that animate as they appear and as their data changes. */
+const ANIMATED_SERIES = [
+  'Area',
+  'Bar',
+  'Funnel',
+  'Line',
+  'Pie',
+  'Radar',
+  'RadialBar',
+  'Sankey',
+  'Scatter',
+  'SunburstChart',
+  'Treemap'
+] as const
+
+/**
+ * Charts that appear already drawn. A draft redraws its charts as more code arrives, and a version
+ * replacing one the user already sees should not draw its charts in again: in either, an entrance
+ * animation replays, unfinished, every time. Set before the artifact's code first runs.
+ */
+function stillCharts(): void {
+  const still: Record<string, unknown> = { ...Recharts }
+  for (const name of ANIMATED_SERIES) {
+    const Series = (Recharts as Record<string, unknown>)[name] as React.ElementType | undefined
+    if (!Series) continue
+    const StillSeries = (props: Record<string, unknown>): React.ReactElement =>
+      React.createElement(Series, { ...props, isAnimationActive: false })
+    StillSeries.displayName = name
+    still[name] = StillSeries
+  }
+  LIBS.recharts = asEsModule(still)
+  Chart.defaults.animation = false
+}
+
 // ---------------------------------------------------------------------------
 // CDN fallback — unknown packages are fetched from esm.sh before execution
 // ---------------------------------------------------------------------------
@@ -392,9 +426,9 @@ async function renderCode(code: string, theme?: ArtifactTheme): Promise<void> {
 // ---------------------------------------------------------------------------
 
 // Each draft is compiled anew, but its components stay the same React components from one draft
-// to the next, registered by name; React then changes only what the newer code changed, and new
-// elements fade in where they appear. A part that cannot run yet shows what it last showed, or a
-// placeholder, while the rest of the draft renders.
+// to the next, registered by name; React then changes only what the newer code changed, so what is
+// already shown stays exactly where it is. A part that cannot run yet keeps what it last showed,
+// in place, or a still placeholder, while the rest of the draft renders.
 
 let draftSource = ''
 let draftKey = 0
@@ -447,13 +481,20 @@ function DraftVersion({
 }
 
 function makeDraftPart(name: string): React.ElementType {
-  class DraftPart extends ReactComponent<Record<string, unknown>, { failedAt: number }> {
+  class DraftPart extends ReactComponent<
+    Record<string, unknown>,
+    { failedAt: number; hooksChanged: boolean }
+  > {
     static displayName = name
-    state = { failedAt: -1 }
+    state = { failedAt: -1, hooksChanged: false }
     private mount = 0
-    private retriedAt = -1
-    static getDerivedStateFromError(): { failedAt: number } {
-      return { failedAt: draftKey }
+    private attemptAt = -1
+    private attempt = 0
+    static getDerivedStateFromError(error: unknown): { failedAt: number; hooksChanged: boolean } {
+      return {
+        failedAt: draftKey,
+        hooksChanged: /hook/i.test(error instanceof Error ? error.message : String(error))
+      }
     }
     componentDidCatch(): void {
       // A part that cannot run yet is expected; the next draft usually completes it.
@@ -468,24 +509,28 @@ function makeDraftPart(name: string): React.ElementType {
       if (this.state.failedAt !== draftKey) shownParts.set(name, latestParts.get(name)!)
     }
     render(): React.ReactNode {
-      const latest = latestParts.get(name)
-      const version = (render: React.ElementType | undefined, key: string): React.ReactNode =>
+      const version = (render: React.ElementType | undefined): React.ReactNode =>
         render
           ? React.createElement(DraftVersion, {
-              key,
+              key: this.mount,
               render: render as (props: Record<string, unknown>) => React.ReactNode,
               props: this.props
             })
           : React.createElement(DraftPlaceholder)
-      if (this.state.failedAt !== draftKey) return version(latest, `live-${this.mount}`)
-      // Once per draft, a part that failed is tried again from scratch: a draft that added a
-      // hook cannot reuse the state of the one before.
-      if (this.retriedAt !== draftKey) {
-        this.retriedAt = draftKey
-        this.mount += 1
-        return version(latest, `live-${this.mount}`)
+      if (this.state.failedAt !== draftKey) return version(latestParts.get(name))
+      if (this.attemptAt !== draftKey) {
+        this.attemptAt = draftKey
+        this.attempt = 0
       }
-      return version(shownParts.get(name), `shown-${draftKey}`)
+      this.attempt += 1
+      // First, what it showed before, in the same place: same state, same elements, nothing moves.
+      if (this.attempt === 1 && !this.state.hooksChanged) return version(shownParts.get(name))
+      // A draft that added or removed a hook cannot reuse the state before it: once, start afresh.
+      if (this.attempt <= 2) {
+        this.mount += 1
+        return version(latestParts.get(name))
+      }
+      return version(shownParts.get(name))
     }
   }
   ;(DraftPart as unknown as Record<symbol, boolean>)[DRAFT_PART] = true
@@ -515,36 +560,23 @@ function draftComponent(name: string, component: unknown): unknown {
 
 function enterDraftMode(): void {
   frameMode = 'draft'
+  stillCharts()
   // A draft only shows: its requests never return, so it waits in its loading state instead of
-  // asking the network for every draft, and nothing animates but what has just arrived.
+  // asking the network for every draft, and nothing in it moves, flashes or fades: new parts
+  // simply appear where they belong.
   window.fetch = () => new Promise<Response>(() => undefined)
   XMLHttpRequest.prototype.send = () => undefined
   FramerMotion.MotionGlobalConfig.skipAnimations = true
   const style = document.createElement('style')
   style.textContent = `
 *, *::before, *::after { transition: none !important; animation: none !important; }
-.sidekick-draft-enter { animation: sidekick-draft-in 0.24s ease-out both !important; }
-@keyframes sidekick-draft-in { from { opacity: 0; transform: translateY(4px); } }
 .sidekick-draft-placeholder {
   min-height: 2.5rem;
   border-radius: var(--radius-md, 10px);
   background: var(--surface-2);
-  animation: sidekick-draft-pulse 1.4s ease-in-out infinite alternate !important;
-}
-@keyframes sidekick-draft-pulse { from { opacity: 0.45; } to { opacity: 0.9; } }
-@media (prefers-reduced-motion: reduce) { .sidekick-draft-enter { animation: none !important; } }`
+  opacity: 0.6;
+}`
   document.head.appendChild(style)
-  new MutationObserver((records) => {
-    for (const record of records) {
-      for (const node of record.addedNodes) {
-        if (!(node instanceof HTMLElement || node instanceof SVGElement)) continue
-        node.classList.add('sidekick-draft-enter')
-        node.addEventListener('animationend', () => node.classList.remove('sidekick-draft-enter'), {
-          once: true
-        })
-      }
-    }
-  }).observe(document.getElementById('root')!, { childList: true, subtree: true })
 }
 
 function renderDraftComponent(): void {
@@ -579,6 +611,7 @@ listenToHost((command) => {
   } else if (command.type === 'render') {
     if (frameMode === 'draft') return
     frameMode = 'run'
+    if (command.still) stillCharts()
     void renderCode(command.code, command.theme)
   } else {
     updateTheme(command.theme)
