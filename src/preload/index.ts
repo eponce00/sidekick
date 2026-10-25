@@ -234,6 +234,16 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('agentRuns:event', listener)
       return () => ipcRenderer.removeListener('agentRuns:event', listener)
+    },
+    onArtifactDraft: (
+      callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        draft: import('../shared/agentRunApi').AgentArtifactDraft
+      ): void => callback(draft)
+      ipcRenderer.on('agentRuns:artifactDraft', listener)
+      return () => ipcRenderer.removeListener('agentRuns:artifactDraft', listener)
     }
   },
   terminal: {

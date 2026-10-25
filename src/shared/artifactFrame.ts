@@ -34,6 +34,12 @@ export type ArtifactFrameEvent =
 /** What the chat tells a frame. */
 export type ArtifactHostCommand =
   | { type: 'render'; code: string; theme: ArtifactTheme }
+  /**
+   * The code that has arrived so far, while the model is still writing it. A frame that gets a
+   * draft shows as much of it as runs and reports only its height; the finished code runs in a
+   * frame of its own.
+   */
+  | { type: 'draft'; code: string; theme: ArtifactTheme }
   | { type: 'theme'; theme: ArtifactTheme }
 
 function record(data: unknown): Record<string, unknown> | null {
@@ -79,11 +85,11 @@ export function readArtifactHostCommand(data: unknown): ArtifactHostCommand | nu
   if (!theme) return null
   if (message.type === 'theme') return { type: 'theme', theme }
   if (
-    message.type === 'render' &&
+    (message.type === 'render' || message.type === 'draft') &&
     typeof message.code === 'string' &&
     message.code.length <= MAX_ARTIFACT_CODE_LENGTH
   ) {
-    return { type: 'render', code: message.code, theme }
+    return { type: message.type, code: message.code, theme }
   }
   return null
 }

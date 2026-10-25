@@ -24,9 +24,18 @@ export function artifactToolResult(
   reviewed = false
 ): ToolExecutionResult {
   const name = `Artifact "${artifact.title || 'Untitled'}"`
+  const warnings = inspection?.warnings ?? []
   const data = {
     artifact,
-    ...(inspection ? { inspection: { status: inspection.status, errors: inspection.errors } } : {})
+    ...(inspection
+      ? {
+          inspection: {
+            status: inspection.status,
+            errors: inspection.errors,
+            ...(warnings.length ? { warnings } : {})
+          }
+        }
+      : {})
   }
   if (!inspection) {
     return toolExecutionSucceeded({
@@ -59,11 +68,15 @@ export function artifactToolResult(
     ? ` It is taller than the ${inspection.chatFrameHeight}px an artifact grows to in the chat: the user first sees its top ${inspection.chatFrameHeight}px, scrolls inside it or opens it full screen for the rest.${media ? ' The screenshot shows that top part.' : ''}`
     : ''
   if (inspection.status === 'rendered') {
+    // Found in the rendered page itself, so they hold whether or not the model sees images.
+    const layout = warnings.length
+      ? `\nIts layout has problems the user will see:\n${warnings.map((warning) => `- ${warning}`).join('\n')}${reviewed ? '' : '\nFix them before replying.'}`
+      : ''
     return toolExecutionSucceeded({
       title,
       data,
       media,
-      modelContent: `${name} rendered in the chat without errors. ${look}${fold}`
+      modelContent: `${name} rendered in the chat without errors. ${look}${fold}${layout}`
     })
   }
   const problem =
@@ -130,8 +143,26 @@ export function registerSkillToolHandlers(
     artifactContinuation?: boolean
     /** Refine each artifact in a builder run rather than in the conversation. */
     buildArtifacts?: boolean
+    /** This run is an artifact's builder, starting from this version; it may edit it in place. */
+    builderArtifact?: { type: InspectedArtifactType; title: string; code: string }
   }
 ): void {
+  // The version a builder's next edit applies to: the last one it made, or the agent's.
+  let builderVersion = options.builderArtifact
+  const inspectWith = (
+    candidate: { type: InspectedArtifactType; title: string; code: string },
+    signal: AbortSignal | undefined
+  ): Promise<ArtifactInspection | undefined> => {
+    const inspector = options.artifactInspector?.()
+    return inspector
+      ? inspector.inspect(candidate, signal).catch((error) => {
+          signal?.throwIfAborted()
+          console.warn('[create_artifact] Inspection failed:', error)
+          return undefined
+        })
+      : Promise.resolve(undefined)
+  }
+
   registry.register('use_skill', async ({ title, arguments: args }) => {
     const skillId = String(args.skill_id || '')
     const skill = getSkillById(skillId)
@@ -182,15 +213,9 @@ export function registerSkillToolHandlers(
       title: typeof args.title === 'string' ? args.title : '',
       code: typeof args.code === 'string' ? args.code : ''
     }
-    const inspector = options.artifactInspector?.()
     const inspect = (candidate: typeof artifact): Promise<ArtifactInspection | undefined> =>
-      inspector
-        ? inspector.inspect(candidate, context.signal).catch((error) => {
-            context.signal?.throwIfAborted()
-            console.warn('[create_artifact] Inspection failed:', error)
-            return undefined
-          })
-        : Promise.resolve(undefined)
+      inspectWith(candidate, context.signal)
+    if (builderVersion) builderVersion = artifact
     const inspection = await inspect(artifact)
     let result = artifactToolResult(title, artifact, inspection, options.visionEnabled === true)
     // In a chat, the review-and-fix loop runs in a builder the chat does not
@@ -202,7 +227,7 @@ export function registerSkillToolHandlers(
       options.buildArtifacts &&
       launcher &&
       inspection &&
-      (inspection.status !== 'rendered' || options.visionEnabled)
+      (inspection.status !== 'rendered' || options.visionEnabled || inspection.warnings?.length)
     ) {
       try {
         const built = await launcher.buildArtifact({ artifact, review: result }, context)
@@ -229,6 +254,45 @@ export function registerSkillToolHandlers(
         `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n${skill.systemPromptInjection}\n</skill_instructions>`
     }
   })
+
+  if (options.builderArtifact) {
+    registry.register('edit_artifact', async ({ title, arguments: args, context }) => {
+      const current = builderVersion!
+      const edits = Array.isArray(args.edits) ? (args.edits as unknown[]) : []
+      if (!edits.length) {
+        return toolExecutionFailed({
+          title,
+          code: 'invalid_arguments',
+          message: 'No edits were given; nothing was changed.',
+          recoveryAction: 'correct_input'
+        })
+      }
+      let code = current.code
+      for (const [index, raw] of edits.entries()) {
+        const edit = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+        const oldText = typeof edit.old_text === 'string' ? edit.old_text : ''
+        const newText = typeof edit.new_text === 'string' ? edit.new_text : ''
+        const matches = oldText ? code.split(oldText).length - 1 : 0
+        if (matches !== 1) {
+          return toolExecutionFailed({
+            title,
+            code: 'invalid_arguments',
+            message: `Edit ${index + 1} ${matches ? `matches ${matches} places in` : 'matches nothing in'} the current code, so no edit was made. Copy old_text exactly from the current version, with enough around it to match one place.`,
+            recoveryAction: 'correct_input'
+          })
+        }
+        code = code.replace(oldText, () => newText)
+      }
+      const artifact = { ...current, code }
+      builderVersion = artifact
+      return artifactToolResult(
+        title,
+        artifact,
+        await inspectWith(artifact, context.signal),
+        options.visionEnabled === true
+      )
+    })
+  }
 
   registry.register('spawn_subagent', async ({ title, arguments: args, context }) => {
     const launcher = options.childLauncher()

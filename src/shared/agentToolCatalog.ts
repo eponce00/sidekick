@@ -51,6 +51,8 @@ export interface AgentToolCatalogOptions {
    * only messages its family. Without it no chat tools are offered.
    */
   sessionRole?: 'manager' | 'worker'
+  /** The run is an artifact's builder, which may edit that artifact in place. */
+  artifactBuilder?: boolean
 }
 
 function definition(
@@ -154,6 +156,7 @@ function presentationTitle(
   if (name.startsWith('browser_'))
     return { kind, title: name.replace('browser_', '').replaceAll('_', ' ') }
   if (name === 'create_artifact') return { kind, title: explicit || 'Create artifact' }
+  if (name === 'edit_artifact') return { kind, title: 'Edit artifact' }
   if (name === 'spawn_subagent')
     return {
       kind,
@@ -206,7 +209,7 @@ function presentationKind(name: string): ToolPresentationKind {
   if (name === 'view_image') return 'browser'
   if (name.startsWith('browser_')) return 'browser'
   if (name === 'list_files') return 'files'
-  if (name === 'create_artifact') return 'artifact'
+  if (name === 'create_artifact' || name === 'edit_artifact') return 'artifact'
   if (name === 'spawn_subagent') return 'subagent'
   if (name === 'manage_todo_list' || name.includes('background_task')) return 'task'
   return 'generic'
@@ -1477,7 +1480,33 @@ const createArtifact = definition(
       code: {
         type: 'string',
         description:
-          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App, then the components it uses, so the chat can show it while it streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+      }
+    }
+  }
+)
+
+const editArtifact = definition(
+  'edit_artifact',
+  'Change the artifact under review in place: each edit replaces old_text, copied exactly from its current code and matching one place, with new_text. Then it renders and is checked as create_artifact is. Prefer it for fixes; use create_artifact only to rewrite most of the code.',
+  {
+    type: 'object',
+    required: ['edits'],
+    properties: {
+      edits: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          required: ['old_text', 'new_text'],
+          properties: {
+            old_text: {
+              type: 'string',
+              description: 'Exact text from the current code, long enough to match one place.'
+            },
+            new_text: { type: 'string', description: 'What replaces it.' }
+          }
+        }
       }
     }
   }
@@ -1770,6 +1799,7 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     // cache from that point, and a tool missing from a follow-up turn was a
     // dead end; the handler brings in the skill's guidance instead.
     ...SKILLS_WITH_TOOLS.flatMap(getSkillToolCatalogEntries),
+    ...(options.artifactBuilder ? [entry(editArtifact, 'artifacts', 'write')] : []),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )

@@ -28,6 +28,8 @@ export interface ArtifactInspectionResult {
    * it; the capture shows what the chat shows.
    */
   chatFrameHeight?: number
+  /** Layout defects found in the rendered document, each with what to change. */
+  warnings?: string[]
 }
 
 /** Close to the chat column, so layout decisions match what the user sees. */

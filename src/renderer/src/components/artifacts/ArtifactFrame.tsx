@@ -31,7 +31,16 @@ interface ArtifactFrameProps {
   /** Fill the space it is given and scroll inside, as in full screen, instead of growing. */
   fill?: boolean
   maxHeight?: number
+  /**
+   * The code is still arriving: the frame shows as much of it as runs, updating in place as more
+   * comes, and reports no status. The finished code runs in a frame of its own.
+   */
+  draft?: boolean
+  /** The quiet line in its place before it first shows. */
+  pendingLabel?: string
   onStatus?: (status: ArtifactFrameStatus) => void
+  /** The height it takes in the reply, as it changes. */
+  onHeight?: (height: number) => void
   /** The pointer entered or left the artifact, which the page cannot see for itself. */
   onPointer?: (inside: boolean) => void
 }
@@ -47,8 +56,11 @@ function ArtifactFrame({
   title,
   fill = false,
   maxHeight = MAX_ARTIFACT_FRAME_HEIGHT,
+  draft = false,
+  pendingLabel = `Rendering ${title}`,
   onStatus,
-  onPointer
+  onPointer,
+  onHeight
 }: ArtifactFrameProps): React.JSX.Element {
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const readyRef = useRef(false)
@@ -57,10 +69,14 @@ function ArtifactFrame({
   const errorsRef = useRef(new Set<string>())
   const onStatusRef = useRef(onStatus)
   const onPointerRef = useRef(onPointer)
+  const codeRef = useRef(code)
   useEffect(() => {
     onStatusRef.current = onStatus
     onPointerRef.current = onPointer
+    codeRef.current = code
   })
+  // A draft frame lives for the whole draft; only a finished artifact's code starts anew.
+  const runCode = draft ? null : code
   const [contentHeight, setContentHeight] = useState<number | null>(() =>
     rememberedArtifactHeight(kind, code)
   )
@@ -86,11 +102,15 @@ function ArtifactFrame({
       switch (message.type) {
         case 'ready':
           readyRef.current = true
-          send({ type: 'render', code, theme: getArtifactTheme() })
+          send({
+            type: draft ? 'draft' : 'render',
+            code: codeRef.current,
+            theme: getArtifactTheme()
+          })
           break
         case 'resize':
           setContentHeight(message.height)
-          if (message.height > 0) rememberArtifactHeight(kind, code, message.height)
+          if (message.height > 0 && !draft) rememberArtifactHeight(kind, code, message.height)
           if (message.height > 0 && settledRef.current !== 'failed') show()
           break
         case 'pointer':
@@ -117,7 +137,7 @@ function ArtifactFrame({
       if (readyRef.current) send({ type: 'theme', theme })
     })
     const timeout = window.setTimeout(() => {
-      if (settledRef.current !== 'pending') return
+      if (draft || settledRef.current !== 'pending') return
       settledRef.current = 'failed'
       onStatusRef.current?.({
         status: 'failed',
@@ -131,13 +151,27 @@ function ArtifactFrame({
       stopTheme()
       window.clearTimeout(timeout)
     }
-  }, [code, kind])
+    // runCode stands for code: a draft's code changes without starting the frame again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runCode, kind, draft])
+
+  useEffect(() => {
+    if (draft && readyRef.current) {
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: 'draft', code, theme: getArtifactTheme() },
+        ARTIFACT_ORIGIN
+      )
+    }
+  }, [code, draft])
 
   const frameHeight =
     contentHeight === null
       ? PENDING_ARTIFACT_FRAME_HEIGHT
       : boundedArtifactFrameHeight(contentHeight, maxHeight)
   const stageHeight = shown || heldBefore ? frameHeight : PENDING_ARTIFACT_FRAME_HEIGHT
+  useEffect(() => {
+    if (!fill) onHeight?.(stageHeight)
+  }, [fill, onHeight, stageHeight])
 
   return (
     <div
@@ -155,7 +189,7 @@ function ArtifactFrame({
       />
       {!shown && (
         <div className="artifact-pending" aria-hidden="true">
-          <span className="artifact-pending-label">Rendering {title}</span>
+          <span className="artifact-pending-label">{pendingLabel}</span>
         </div>
       )}
     </div>

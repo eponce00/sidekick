@@ -24,14 +24,18 @@ export function listenToHost(onCommand: (command: ArtifactHostCommand) => void):
   return () => window.removeEventListener('message', handle)
 }
 
-export function reportErrorsToHost(): () => void {
-  const onError = (event: ErrorEvent): void =>
-    postToHost({ type: 'error', error: event.message || 'Uncaught error' })
-  const onRejection = (event: PromiseRejectionEvent): void =>
+/** Reports uncaught errors, unless `when` says this frame keeps its errors to itself. */
+export function reportErrorsToHost(when: () => boolean = () => true): () => void {
+  const onError = (event: ErrorEvent): void => {
+    if (when()) postToHost({ type: 'error', error: event.message || 'Uncaught error' })
+  }
+  const onRejection = (event: PromiseRejectionEvent): void => {
+    if (!when()) return
     postToHost({
       type: 'error',
       error: event.reason instanceof Error ? event.reason.message : String(event.reason)
     })
+  }
   window.addEventListener('error', onError)
   window.addEventListener('unhandledrejection', onRejection)
   return () => {

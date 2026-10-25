@@ -24,6 +24,7 @@ import {
   reportPointerToHost,
   watchContentHeight
 } from './utils/artifactFrameChannel'
+import { closeArtifactDraft, undefinedDraftComponents } from './utils/artifactDraft'
 import { resolveArtifactComponent } from './utils/artifactModule'
 import {
   applyArtifactTheme,
@@ -190,10 +191,92 @@ class SandboxErrorBoundary extends ReactComponent<EBProps, EBState> {
 // Renderer
 // ---------------------------------------------------------------------------
 
+// Names the prelude below gives every artifact without an import.
+const PRELUDE_NAMES = new Set(
+  'React Fragment Suspense Recharts LineChart Line BarChart Bar PieChart Pie AreaChart Area ScatterChart Scatter RadarChart Radar RadialBarChart RadialBar ComposedChart Treemap Funnel FunnelChart XAxis YAxis ZAxis CartesianGrid Tooltip Legend ResponsiveContainer Cell LabelList Brush ReferenceLine ReferenceArea ReferenceDot Chart'.split(
+    ' '
+  )
+)
+
+const PRELUDE = `
+var React = require('react').default || require('react');
+var { Fragment, useState, useEffect, useMemo, useRef, useCallback, useReducer, useContext, createContext, memo, forwardRef, lazy, Suspense } = React;
+var Recharts = require('recharts');
+var { LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, ScatterChart, Scatter, RadarChart, Radar, RadialBarChart, RadialBar, ComposedChart, Treemap, Funnel, FunnelChart, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, Brush, ReferenceLine, ReferenceArea, ReferenceDot } = Recharts;
+var Chart = require('chart.js').default || require('chart.js').Chart;
+var framerMotion = require('framer-motion');
+var motion = framerMotion.motion;
+var lucideReact = require('lucide-react');
+var _ = require('lodash').default || require('lodash');
+var math = require('mathjs');
+var Leaflet = require('leaflet');
+var ReactLeaflet = require('react-leaflet');
+var theme = __theme__;
+`
+
+/** Where a draft uses a component it has not defined yet. */
+function DraftPlaceholder(): React.ReactElement {
+  return React.createElement('div', {
+    className: 'sidekick-draft-placeholder',
+    'aria-hidden': true
+  })
+}
+
 let reactRoot: ReactDOM.Root | null = null
 let activeTheme: ArtifactTheme | null = null
 let activeComponent: React.ElementType | null = null
 let activeErrorHandler: ((err: Error) => void) | null = null
+/** A frame runs either the finished artifact or drafts of it, decided by its first command. */
+let frameMode: 'run' | 'draft' | null = null
+
+/**
+ * The artifact's component. Its code runs in a scope of its own inside the prelude's, so it may
+ * declare names the prelude also provides, such as `theme` or `Tooltip`, without a syntax error.
+ */
+function compileArtifact(code: string, draft: boolean): React.ElementType | null {
+  const transpiled = Babel.transform(code, {
+    // Models often write TypeScript in a component; its types are dropped, not rejected. The
+    // typings only know presets by name, though Babel takes a name with options too.
+    presets: ['react', ['typescript', { isTSX: true, allExtensions: true }]] as unknown as string[],
+    plugins: ['transform-modules-commonjs'],
+    filename: 'artifact.tsx'
+  }).code
+  if (!transpiled) throw new Error('Transpilation returned empty code')
+  const placeholders = draft
+    ? undefinedDraftComponents(code, PRELUDE_NAMES)
+        .map((name) => `var ${name} = __DraftPlaceholder;`)
+        .join('\n')
+    : ''
+  const factory = new Function(
+    'require',
+    'module',
+    'exports',
+    '__theme__',
+    '__resolveArtifactComponent',
+    '__DraftPlaceholder',
+    `${PRELUDE}
+return (function () {
+${placeholders}
+${transpiled}
+return __resolveArtifactComponent(
+  typeof module !== 'undefined' ? module.exports : undefined,
+  typeof App !== 'undefined' ? App : undefined
+);
+})();`
+  )
+  const moduleObj: { exports: Record<string, unknown> } = { exports: {} }
+  const component = factory(
+    sandboxRequire,
+    moduleObj,
+    moduleObj.exports,
+    activeTheme || {},
+    resolveArtifactComponent,
+    DraftPlaceholder
+  )
+  return component && (typeof component === 'function' || typeof component === 'object')
+    ? (component as React.ElementType)
+    : null
+}
 
 const contentHeight = watchContentHeight(document, (height) =>
   postToHost({ type: 'resize', height })
@@ -212,9 +295,18 @@ function updateTheme(theme: ArtifactTheme): ArtifactTheme {
   return activeTheme
 }
 
+function root(): ReactDOM.Root {
+  reactRoot ??= ReactDOM.createRoot(document.getElementById('root')!)
+  return reactRoot
+}
+
 function renderActiveComponent(): void {
-  if (!reactRoot || !activeComponent || !activeErrorHandler) return
-  reactRoot.render(
+  if (frameMode === 'draft') {
+    renderDraftComponent()
+    return
+  }
+  if (!activeComponent || !activeErrorHandler) return
+  root().render(
     React.createElement(
       SandboxErrorBoundary,
       { onError: activeErrorHandler },
@@ -240,69 +332,10 @@ async function renderCode(code: string, theme?: ArtifactTheme): Promise<void> {
   }
 
   try {
-    // Babel handles EVERYTHING: JSX → createElement, imports → require(), exports → module.exports
-    const transpiled = Babel.transform(code, {
-      presets: ['react'],
-      plugins: ['transform-modules-commonjs'],
-      filename: 'artifact.tsx'
-    }).code
-
-    if (!transpiled) {
-      postToHost({ type: 'error', error: 'Transpilation returned empty code' })
-      return
-    }
-
-    // Provide require + module/exports so Babel's CommonJS output works,
-    // plus common globals for code that skips imports entirely.
-    const wrappedCode = `
-var React = require('react').default || require('react');
-var { Fragment, useState, useEffect, useMemo, useRef, useCallback, useReducer, useContext, createContext, memo, forwardRef, lazy, Suspense } = React;
-var Recharts = require('recharts');
-var { LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, ScatterChart, Scatter, RadarChart, Radar, RadialBarChart, RadialBar, ComposedChart, Treemap, Funnel, FunnelChart, XAxis, YAxis, ZAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList, Brush, ReferenceLine, ReferenceArea, ReferenceDot } = Recharts;
-var Chart = require('chart.js').default || require('chart.js').Chart;
-var framerMotion = require('framer-motion');
-var motion = framerMotion.motion;
-var lucideReact = require('lucide-react');
-var _ = require('lodash').default || require('lodash');
-var math = require('mathjs');
-var Leaflet = require('leaflet');
-var ReactLeaflet = require('react-leaflet');
-var theme = __theme__;
-
-${transpiled}
-
-return __resolveArtifactComponent(
-  typeof module !== 'undefined' ? module.exports : undefined,
-  typeof App !== 'undefined' ? App : undefined
-);
-`
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const moduleObj: any = { exports: {} }
-    const factory = new Function(
-      'require',
-      'module',
-      'exports',
-      '__theme__',
-      '__resolveArtifactComponent',
-      wrappedCode
-    )
-    const AppComponent = factory(
-      sandboxRequire,
-      moduleObj,
-      moduleObj.exports,
-      activeTheme || theme || {},
-      resolveArtifactComponent
-    )
-
-    if (!AppComponent || (typeof AppComponent !== 'function' && typeof AppComponent !== 'object')) {
+    const AppComponent = compileArtifact(code, false)
+    if (!AppComponent) {
       postToHost({ type: 'error', error: 'Artifact must define a component named "App".' })
       return
-    }
-
-    const container = document.getElementById('root')!
-    if (!reactRoot) {
-      reactRoot = ReactDOM.createRoot(container)
     }
 
     let errorReported = false
@@ -312,7 +345,7 @@ return __resolveArtifactComponent(
       postToHost({ type: 'error', error: err.message })
     }
 
-    activeComponent = AppComponent as React.ElementType
+    activeComponent = AppComponent
     activeErrorHandler = handleError
     renderActiveComponent()
 
@@ -331,11 +364,102 @@ return __resolveArtifactComponent(
   }
 }
 
-reportErrorsToHost()
+// ---------------------------------------------------------------------------
+// Drafts: the artifact taking shape while the model writes it
+// ---------------------------------------------------------------------------
+
+/** Shows a draft, or the last one that rendered when this one throws. */
+class DraftBoundary extends ReactComponent<
+  { fallback: React.ElementType | null; onShown: () => void; children?: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false }
+  static getDerivedStateFromError(): { failed: boolean } {
+    return { failed: true }
+  }
+  componentDidCatch(): void {
+    // A draft that throws is expected; the next one usually runs.
+  }
+  componentDidMount(): void {
+    if (!this.state.failed) this.props.onShown()
+  }
+  render(): React.ReactNode {
+    if (this.state.failed) {
+      return this.props.fallback ? React.createElement(this.props.fallback) : null
+    }
+    return this.props.children
+  }
+}
+
+let draftSource = ''
+let draftComponent: React.ElementType | null = null
+let shownDraft: React.ElementType | null = null
+let draftKey = 0
+
+function enterDraftMode(): void {
+  frameMode = 'draft'
+  // A draft only shows: its requests never return, so it waits in its loading state instead of
+  // asking the network again for every draft, and nothing animates between drafts.
+  window.fetch = () => new Promise<Response>(() => undefined)
+  XMLHttpRequest.prototype.send = () => undefined
+  FramerMotion.MotionGlobalConfig.skipAnimations = true
+  const style = document.createElement('style')
+  style.textContent = `
+*, *::before, *::after { transition: none !important; animation: none !important; }
+.sidekick-draft-placeholder {
+  min-height: 2.5rem;
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-2);
+  animation: sidekick-draft-pulse 1.4s ease-in-out infinite alternate !important;
+}
+@keyframes sidekick-draft-pulse { from { opacity: 0.45; } to { opacity: 0.9; } }`
+  document.head.appendChild(style)
+}
+
+function renderDraftComponent(): void {
+  if (!draftComponent) return
+  const component = draftComponent
+  root().render(
+    React.createElement(
+      DraftBoundary,
+      {
+        key: draftKey,
+        fallback: shownDraft,
+        onShown: () => {
+          shownDraft = component
+        }
+      },
+      React.createElement(component)
+    )
+  )
+}
+
+function renderDraft(code: string, theme: ArtifactTheme): void {
+  updateTheme(theme)
+  const closed = closeArtifactDraft(code)
+  if (!closed || closed === draftSource) return
+  draftSource = closed
+  try {
+    const component = compileArtifact(closed, true)
+    if (!component) return
+    draftComponent = component
+    draftKey += 1
+    renderDraftComponent()
+  } catch {
+    // Not runnable yet; the last draft that ran stays.
+  }
+}
+
+reportErrorsToHost(() => frameMode !== 'draft')
 reportPointerToHost()
 
 listenToHost((command) => {
-  if (command.type === 'render') {
+  if (command.type === 'draft') {
+    if (frameMode === null) enterDraftMode()
+    if (frameMode === 'draft') renderDraft(command.code, command.theme)
+  } else if (command.type === 'render') {
+    if (frameMode === 'draft') return
+    frameMode = 'run'
     void renderCode(command.code, command.theme)
   } else {
     updateTheme(command.theme)
@@ -349,6 +473,7 @@ postToHost({ type: 'ready' })
 if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('artifact-preview')) {
   const mode =
     new URLSearchParams(window.location.search).get('theme') === 'light' ? 'light' : 'dark'
+  frameMode = 'run'
   void import('./dev/artifactSandboxPreview').then(({ artifactSandboxPreviewCode }) =>
     renderCode(artifactSandboxPreviewCode, getArtifactFallbackTheme(mode))
   )

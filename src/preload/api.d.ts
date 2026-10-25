@@ -198,6 +198,10 @@ interface AgentRunsAPI {
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
   ) => () => void
+  /** An artifact's code so far, while the model writes it; never stored. */
+  onArtifactDraft: (
+    callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
+  ) => () => void
 }
 
 interface McpAPI {

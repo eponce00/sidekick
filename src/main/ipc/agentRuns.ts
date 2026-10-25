@@ -122,6 +122,7 @@ export function getAgentRuntimeCoordinator(): AgentRuntimeCoordinator {
       {
         pdfOutputRoot: app.getPath('downloads'),
         publishTerminal: (event) => publishDesktopEvent('terminal:event', event),
+        publishArtifactDraft: (draft) => publishDesktopEvent('agentRuns:artifactDraft', draft),
         onPreparationChange: publishPreparation,
         prepareWorkspace: (conversationId) =>
           getManagedWorktrees().prepareConversation(conversationId)
