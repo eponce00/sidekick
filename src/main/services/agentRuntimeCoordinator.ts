@@ -700,6 +700,8 @@ export class AgentRuntimeCoordinator {
         payload: {
           assistantMessageId: active.input.assistantMessageId,
           checkpointHash,
+          // The window shows the reply's History point without reloading the chat.
+          checkpointWorkspaceRoot: checkpointHash ? active.prepared.workspaceRoot : null,
           persisted: true
         }
       })
