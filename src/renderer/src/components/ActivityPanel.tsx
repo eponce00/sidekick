@@ -74,6 +74,8 @@ interface ActivityPanelProps {
   conversationId?: string | null
   focusChainTodos: TodoItem[]
   workspaceFolder: string | null
+  /** The folder is the chat's own, as it has no project. */
+  chatFolder?: boolean
   isAgentBusy?: boolean
   /** Shows a tab when `at` changes, as when the command palette asks for the browser. */
   tabRequest?: { tab: ActivityTab; at: number } | null
@@ -109,6 +111,7 @@ function ActivityPanel({
   onTogglePin,
   conversationId = null,
   workspaceFolder,
+  chatFolder = false,
   isAgentBusy = false,
   tabRequest = null,
   onActiveTabChange,
@@ -554,6 +557,7 @@ function ActivityPanel({
       return (
         <FilesPanel
           workspaceFolder={workspaceFolder}
+          chatFolder={chatFolder}
           isAgentBusy={isAgentBusy}
           fileRequest={fileRequest}
         />

@@ -19,6 +19,8 @@ import './FilesPanel.css'
 
 export interface FilesPanelProps {
   workspaceFolder: string | null
+  /** The folder is the chat's own, as it has no project. */
+  chatFolder?: boolean
   /** Holds back deleting while the agent may be using the files. */
   isAgentBusy?: boolean
   /** A file someone asked to see, from anywhere in the app; changes open it in the viewer. */
@@ -28,6 +30,7 @@ export interface FilesPanelProps {
 /** The project's files: a tree that follows the folder on disk, and a viewer over it. */
 export function FilesPanel({
   workspaceFolder,
+  chatFolder = false,
   isAgentBusy = false,
   fileRequest = null
 }: FilesPanelProps): React.JSX.Element {
@@ -77,7 +80,9 @@ export function FilesPanel({
         setFileTreeLoading(false)
         return
       }
-      const rootName = workspaceFolder.replace(/\\/g, '/').split('/').pop() || workspaceFolder
+      const rootName = chatFolder
+        ? 'Chat files'
+        : workspaceFolder.replace(/\\/g, '/').split('/').pop() || workspaceFolder
       if (!cancelled) setFileRootName(rootName)
       const result = await window.api.workspace.listFiles(workspaceFolder)
       if (!result.ok || cancelled) {
@@ -108,7 +113,7 @@ export function FilesPanel({
     return () => {
       cancelled = true
     }
-  }, [fileRefreshKey, workspaceFolder])
+  }, [chatFolder, fileRefreshKey, workspaceFolder])
 
   // The tree follows the folder on disk, so it never needs a manual refresh.
   useEffect(() => {
@@ -287,8 +292,8 @@ ${viewedFile.filePath}`}
               <button
                 className="file-explorer-action"
                 onClick={() => showPathMenu('', true)}
-                title="More actions for the project folder"
-                aria-label="More actions for the project folder"
+                title={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
+                aria-label={`More actions for the ${chatFolder ? 'chat' : 'project'} folder`}
               >
                 <MoreHorizontal size={13} />
               </button>
@@ -311,6 +316,11 @@ ${viewedFile.filePath}`}
             <div className="activity-empty">
               <Loader2 size={16} className="icon-spin" />
               <p>Loading files…</p>
+            </div>
+          ) : chatFolder && !fileMap.get('')?.length ? (
+            <div className="activity-empty">
+              <p>No files yet</p>
+              <p className="hint">Files this chat makes appear here</p>
             </div>
           ) : fileMap.size === 0 ? (
             <div className="activity-empty">

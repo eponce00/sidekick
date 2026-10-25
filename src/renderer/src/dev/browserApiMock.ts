@@ -1033,11 +1033,16 @@ export function installBrowserApiMock(): void {
           ({ id }) => id === conversationId
         )
         const project = previewProjects.find(({ id }) => id === conversation?.project_id)
+        const projectRoot = conversation?.worktree_folder ?? project?.folder_path ?? null
+        const chatFolder = !projectRoot && !conversation?.home_workspace_root
         return {
           conversationId,
           projectId: conversation?.project_id ?? null,
           projectName: project?.name ?? null,
-          workspaceRoot: conversation?.worktree_folder ?? project?.folder_path ?? null,
+          workspaceRoot: chatFolder
+            ? `C:\\Users\\preview\\AppData\\Roaming\\SideKick\\chat-folders\\${conversationId}`
+            : projectRoot,
+          ...(chatFolder ? { chatFolder: true } : {}),
           worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
           homeProjectName: conversation?.home_project_name ?? null,

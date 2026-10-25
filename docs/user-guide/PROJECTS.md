@@ -11,7 +11,12 @@ standalone chats for work that does not belong to a folder.
 - A project conversation inherits the project folder, file tools, command working directory,
   checkpoints, project memory, and instruction files.
 - A standalone conversation has no project folder and therefore does not silently inherit file or
-  command context from the last project that happened to be open.
+  command context from the last project that happened to be open. It works in a folder of its own
+  inside SideKick's data instead, so its file and command tools, browser downloads, Terminal and
+  History work there. The Files panel shows it as **Chat files**. Paths outside it are refused as
+  they are outside a project. A fork starts with a copy of its files, moving the chat into a
+  project switches it to the project's folder, and deleting the chat deletes its folder. A chat
+  detached from its project gets no folder of its own.
 - The global New Chat action creates a standalone chat. The plus action beside a project creates a
   chat inside that project. A new chat left before anything is sent in it goes away rather than
   waiting in the sidebar, unless something was typed in its message box; a worktree made for it

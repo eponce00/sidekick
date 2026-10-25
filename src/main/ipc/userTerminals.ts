@@ -1,6 +1,7 @@
 import { BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron'
 import type { UserTerminalEvent } from '../../shared/userTerminals'
 import { panelWindowFor } from '../bootstrap/panelWindows'
+import { ensureChatFolder } from '../services/chatFolders'
 import { ProjectStore } from '../services/projectStore'
 import { UserTerminalService } from '../services/userTerminals'
 import { appState, getDb } from './state'
@@ -33,8 +34,11 @@ function publish(event: UserTerminalEvent): void {
 function terminals(): UserTerminalService {
   service ??= new UserTerminalService({
     publish,
-    folderFor: (conversationId) =>
-      new ProjectStore(getDb()).getConversationContext(conversationId).workspaceRoot
+    folderFor: (conversationId) => {
+      const context = new ProjectStore(getDb()).getConversationContext(conversationId)
+      if (context.chatFolder && context.workspaceRoot) ensureChatFolder(context.workspaceRoot)
+      return context.workspaceRoot
+    }
   })
   return service
 }

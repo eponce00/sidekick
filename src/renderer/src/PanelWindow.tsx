@@ -16,6 +16,7 @@ import { AppMenuHost } from './components/AppMenuHost'
 import BrowserActivityPanel from './components/BrowserActivityPanel'
 import { TerminalPanel } from './components/TerminalPanel'
 import { FilesPanel } from './components/FilesPanel'
+import { useChatFolder } from './hooks/useChatFolder'
 import './styles/App.css'
 import './components/ActivityPanel.css'
 import './PanelWindow.css'
@@ -40,6 +41,7 @@ export function PanelWindow({ entry }: { entry: PanelWindowEntry }): React.JSX.E
   const [accentPalette, setAccentPalette] = useState<string | undefined>()
   const [title, setTitle] = useState('')
   const [workspaceFolder, setWorkspaceFolder] = useState<string | null>(null)
+  const chatFolder = useChatFolder(entry.conversationId, workspaceFolder)
   const [maximized, setMaximized] = useState(false)
   const app = APPS[entry.app]
 
@@ -158,7 +160,10 @@ export function PanelWindow({ entry }: { entry: PanelWindowEntry }): React.JSX.E
         ) : entry.app === 'terminal' ? (
           <TerminalPanel conversationId={entry.conversationId} requestedSessionId={null} />
         ) : (
-          <FilesPanel workspaceFolder={workspaceFolder} />
+          <FilesPanel
+            workspaceFolder={workspaceFolder ?? chatFolder}
+            chatFolder={Boolean(chatFolder)}
+          />
         )}
       </main>
       <AppMenuHost />

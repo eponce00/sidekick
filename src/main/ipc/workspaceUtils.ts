@@ -2,6 +2,7 @@ import { resolve, sep } from 'path'
 import { app } from 'electron'
 import { getDb, getStore } from './state'
 import { assertPathInside } from '../utils/paths'
+import { chatIdForFolder, ensureChatFolder } from '../services/chatFolders'
 
 const APP_ROOT = resolve(app.getAppPath())
 
@@ -24,8 +25,9 @@ export function getStoredWorkspace(): string {
  * Resolves a renderer-supplied workspace against SideKick's trusted project data.
  *
  * Workspace operations must be scoped to the conversation that requested them,
- * not whichever project happens to be visible. Registered projects and detached
- * project chats are valid; arbitrary renderer paths are rejected.
+ * not whichever project happens to be visible. Registered projects, detached
+ * project chats, and the own folders of chats without a project are valid;
+ * arbitrary renderer paths are rejected.
  */
 export function resolveKnownWorkspace(passedRoot?: unknown): string {
   if (passedRoot === undefined || passedRoot === null || passedRoot === '') {
@@ -56,7 +58,21 @@ export function resolveKnownWorkspace(passedRoot?: unknown): string {
        LIMIT 1`
     )
     .get(candidate, candidate, candidate)
-  if (!known) throw new Error('Workspace is not associated with a SideKick project chat')
+  if (known) return candidate
+  // A chat with no project works in its own folder, which names it.
+  const chatId = chatIdForFolder(candidate)
+  const chat =
+    chatId &&
+    getDb()
+      .prepare(
+        `SELECT 1 FROM conversations
+         WHERE id = ? AND project_id IS NULL AND worktree_id IS NULL
+           AND home_workspace_root IS NULL`
+      )
+      .get(chatId)
+  if (!chat) throw new Error('Workspace is not associated with a SideKick project chat')
+  // It is made when first used, and opening its files may come first.
+  ensureChatFolder(candidate)
   return candidate
 }
 

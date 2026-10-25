@@ -42,6 +42,7 @@ import { ConversationGoalStore, executeGoalUpdate } from './conversationGoalStor
 import type { ConversationGoal } from '../../shared/conversationGoals'
 import { loadContextUsageByOutputMessage } from './agentRunContextUsage'
 import { AgentPlanService } from './agentPlanService'
+import { ensureChatFolder } from './chatFolders'
 import type { AgentKernelRuntimeTransition } from './agentRunKernel'
 import { parseMessageImages } from '../../shared/messageImages'
 import {
@@ -755,6 +756,7 @@ export class ConversationRunPreparer {
     const currentSettings = this.settings()
     const project = new ProjectStore(this.db).getConversationContext(input.conversationId)
     const workspaceRoot = project.workspaceRoot
+    if (project.chatFolder && workspaceRoot) ensureChatFolder(workspaceRoot)
     const rules = workspaceRoot
       ? await beginWorkspaceInstructionScope(input.id, workspaceRoot)
       : { content: '', sources: [], truncated: false }
@@ -863,6 +865,7 @@ export class ConversationRunPreparer {
           homeWorkspaceRoot: project.homeWorkspaceRoot,
           homeProjectName: project.homeProjectName,
           isDetached: project.isDetached,
+          chatFolder: project.chatFolder,
           worktree: project.worktree
         },
         currentDate: new Intl.DateTimeFormat('en-US', {

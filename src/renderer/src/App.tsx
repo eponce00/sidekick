@@ -16,6 +16,7 @@ import { ForkConversationDialog } from './components/ForkConversationDialog'
 import { WorktreesDialog } from './components/WorktreesDialog'
 import { AppMenuHost } from './components/AppMenuHost'
 import { useManagedWorktrees } from './hooks/useManagedWorktrees'
+import { useChatFolder } from './hooks/useChatFolder'
 import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
@@ -676,6 +677,10 @@ function App(): React.JSX.Element {
       projectById(conversation?.project_id)?.folder_path ??
       null,
     [projectById, worktreeById]
+  )
+  const currentChatFolder = useChatFolder(
+    currentConversationId,
+    conversationFolder(currentConversation)
   )
 
   const refreshProjects = useCallback(async (): Promise<void> => {
@@ -1551,7 +1556,8 @@ function App(): React.JSX.Element {
           focusChainTodos={
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }
-          workspaceFolder={conversationFolder(currentConversation)}
+          workspaceFolder={conversationFolder(currentConversation) ?? currentChatFolder}
+          chatFolder={Boolean(currentChatFolder)}
           isAgentBusy={isAgentBusy}
         />
       </main>

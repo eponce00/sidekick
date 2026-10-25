@@ -45,6 +45,7 @@ import {
   type UpdateConversationGoalInput
 } from '../../shared/conversationGoals'
 import { isBrowserZoomStep } from '../../shared/browserZoom'
+import { ensureChatFolder } from '../services/chatFolders'
 
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
@@ -527,6 +528,7 @@ export function registerAgentRunHandlers(): void {
       (input.action === 'url' || input.action === 'new')
     ) {
       const context = new ProjectStore(getDb()).getConversationContext(input.conversationId)
+      if (context.chatFolder && context.workspaceRoot) ensureChatFolder(context.workspaceRoot)
       const { lease } = await manager.open(
         input.conversationId,
         `browser-${input.conversationId}`,

@@ -23,6 +23,7 @@ import {
   configureCheckpointStorageRoot,
   recoverInterruptedCheckpointCaptures
 } from './services/checkpoints'
+import { configureChatFoldersRoot, removeOrphanChatFolders } from './services/chatFolders'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
 import trayIcon from '../../resources/tray.png?asset'
@@ -225,6 +226,9 @@ async function bootstrapApplication(): Promise<void> {
   appState.store = new Store()
   appState.db = openApplicationDatabase(join(app.getPath('userData'), 'conversations.db'))
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
+  configureChatFoldersRoot(join(app.getPath('userData'), 'chat-folders'))
+  // Chats deleted while SideKick was closed, or by a path that does not clean up, leave folders.
+  setImmediate(() => removeOrphanChatFolders(appState.db!))
   const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
   if (recoveredCaptures.length) {
     const linkMessage = appState.db.prepare(

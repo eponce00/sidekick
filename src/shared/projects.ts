@@ -86,8 +86,13 @@ export interface ConversationProjectContext {
   conversationId: string
   projectId: string | null
   projectName: string | null
-  /** Where the chat works: its worktree's folder when it has one, else the project folder. */
+  /**
+   * Where the chat works: its worktree's folder when it has one, else the project folder, else,
+   * for a chat that has never had a project, its own folder.
+   */
   workspaceRoot: string | null
+  /** Set when workspaceRoot is the chat's own folder rather than a project's. */
+  chatFolder?: boolean
   worktreeId: string | null
   /** For a chat in its own worktree: the project folder it is a copy of, its branch and base. */
   worktree?: ConversationWorktreeContext | null

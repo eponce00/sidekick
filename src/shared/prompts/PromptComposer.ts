@@ -168,6 +168,10 @@ function workspaceSection(input: PromptComposerInput): string {
     : mutationTools.includes('apply_patch')
       ? 'Use apply_patch for additions, targeted changes, whole-file changes, moves, and deletions. Its complete multi-file patch is verified before any write. Do not use shell commands for ordinary file editing.'
       : `Use ${mutationTools.join(', ')} for project changes: exact edit for localized replacements, write for new or complete-file content, and delete_file only when the intended final state is absent. Do not use shell commands for ordinary file editing.`
+  if (input.project.chatFolder) {
+    return `## Chat folder
+This chat has no project. It works in a folder of its own: \`${input.project.workspaceRoot}\`. Make the files the user asks for there, and use it for downloads and working files; it stays with the chat and is deleted with it. The user sees the folder only if they open it, so name the files you made and where they are. ${mutationGuidance} A mutation is successful only when its tool result says ok=true and changed=true. Paths outside the folder are refused; when the work needs one of the user's folders, tell them they can move this chat into a project for it.`
+  }
   return `## Active project
 Workspace root: \`${input.project.workspaceRoot}\`
 
@@ -201,7 +205,7 @@ This chat is currently standalone after being detached from ${formerProject}. Ea
   }
   const project = transition.toProjectName || transition.toWorkspaceRoot
   return `## Conversation project boundary
-This chat is now attached to ${project} at \`${transition.toWorkspaceRoot}\`. Treat the current folder contents, current project instructions, and current project memory as authoritative. Earlier standalone turns had no active project, and earlier messages may describe older file state; inspect before relying on them.`
+This chat is now attached to ${project} at \`${transition.toWorkspaceRoot}\`. Treat the current folder contents, current project instructions, and current project memory as authoritative. Earlier standalone turns had no project folder, or worked in the chat's own folder, whose files are not here, and earlier messages may describe older file state; inspect before relying on them.`
 }
 
 function memorySection(input: PromptComposerInput): string {

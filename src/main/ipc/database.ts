@@ -24,6 +24,7 @@ import { refreshSessionStatuses, sessionStatusService } from './sessionStatus'
 import { isConversationModelId } from '../services/conversationModelStore'
 import { createConversation } from '../services/conversationCreation'
 import { deleteConversation, setConversationPinned } from '../services/conversationActions'
+import { copyChatFolder, removeOrphanChatFolders } from '../services/chatFolders'
 
 function validBackfillIdentity(input: unknown): input is ConversationTitleBackfillIdentity {
   if (!input || typeof input !== 'object') return false
@@ -228,6 +229,13 @@ export function registerDatabaseHandlers(): void {
       if (createdWorktree) await worktrees.discardFresh(createdWorktree.id)
       throw error
     }
+    if (!targetProjectId && !targetWorktreeId && !source.home_workspace_root) {
+      try {
+        copyChatFolder(sourceId, id)
+      } catch (error) {
+        console.warn('[Conversations] The fork could not copy its chat’s files:', error)
+      }
+    }
 
     if (createdWorktree && source.project_id) {
       const sourceProject = db
@@ -426,6 +434,7 @@ export function registerDatabaseHandlers(): void {
   ipcMain.handle('conversations:deleteAll', async () => {
     db.prepare('DELETE FROM messages').run()
     db.prepare('DELETE FROM conversations').run()
+    removeOrphanChatFolders(db)
     refreshSessionStatuses(
       sessionStatusService()
         ?.statuses()

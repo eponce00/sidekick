@@ -5,6 +5,7 @@ import { useAutoScroll } from '../hooks/useAutoScroll'
 import { endDictation } from '../services/voice/dictationControl'
 import { useAutoFocus } from '../hooks/useAutoFocus'
 import { useOutsideClick } from '../hooks/useOutsideClick'
+import { useChatFolder } from '../hooks/useChatFolder'
 import {
   RunAlreadyActiveError,
   useConversationRun,
@@ -367,6 +368,8 @@ function ChatPanel({
   const pendingGoalSteerRef = useRef(false)
   const workspaceFolderRef = useRef(workspaceFolder)
   workspaceFolderRef.current = workspaceFolder
+  // Where this chat's files and History are: its project's folder, or its own when it has none.
+  const filesFolder = useChatFolder(conversationId, workspaceFolder) ?? workspaceFolder
   const {
     phase,
     activeMode,
@@ -497,7 +500,7 @@ function ChatPanel({
     selectedModel: selectedPinnedModel ? selectedModel : '',
     onModelUnavailable: () => setIsModelMenuOpen(true),
     isRunActive,
-    workspaceFolder,
+    workspaceFolder: filesFolder,
     restoreDraft: async (message, discardsGoalStart) => {
       if (discardsGoalStart && conversationId) {
         const current = await window.api.conversationGoals.current(conversationId)
@@ -1647,7 +1650,7 @@ function ChatPanel({
             key={row.key}
             brief={row.message}
             managerTitle={chatFamily?.manager.title ?? 'its manager'}
-            workspaceRoot={workspaceFolder}
+            workspaceRoot={filesFolder}
           />
         )
       case 'message':
@@ -1740,7 +1743,7 @@ function ChatPanel({
   const lastFileChangeIndex = visibleMessages.findLastIndex(
     (message) =>
       Boolean(message.checkpointHash) &&
-      message.checkpointWorkspaceRoot === workspaceFolder &&
+      message.checkpointWorkspaceRoot === filesFolder &&
       message.restoredFrom !== message.checkpointHash
   )
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
@@ -1771,7 +1774,7 @@ function ChatPanel({
       onResolveAgentInteraction={(id, response, cancelled) =>
         resolveInteraction(id, response, cancelled)
       }
-      workspaceFolder={workspaceFolder}
+      workspaceFolder={filesFolder}
       onUndoCheckpoint={handleUndoCheckpoint}
     />
   )

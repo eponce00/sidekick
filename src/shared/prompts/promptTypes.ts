@@ -55,6 +55,8 @@ export interface PromptProjectContext {
   homeWorkspaceRoot?: string | null
   homeProjectName?: string | null
   isDetached?: boolean
+  /** Set when the workspace is the folder of a chat that has no project. */
+  chatFolder?: boolean
   /** Set when the workspace is the chat's own Git worktree of its project. */
   worktree?: ConversationWorktreeContext | null
 }
