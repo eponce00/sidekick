@@ -396,7 +396,7 @@ through, and its width is the reply's. The frame measures its content's own heig
 document's scroll height, which never drops below the frame's, so it can shrink as well as grow;
 the chat follows that height with a short transition, up to 1,600 pixels, beyond which the frame
 scrolls. The frame hides its scrollbar while the chat is catching up, so scrolling over an
-artifact that fits reaches the chat. Before an artifact first shows, one quiet line holds its place,
+artifact that fits reaches the chat. Sideways, it scrolls only content more than a pixel wider than itself, so a fractional display scale does not give it a scrollbar over its last line, and the chat grows the frame by a sideways scrollbar's height. Before an artifact first shows, one quiet line holds its place,
 or the height it last rendered at when it is shown again. Each sandbox loads SideKick's fonts and
 a base stylesheet in a cascade layer, so any style the artifact writes wins; with Tailwind the same
 rules are also given as Tailwind's base layer, after its reset and before its utilities, and no

@@ -96,8 +96,21 @@ export function watchContentHeight(
   // otherwise have the browser scroll the page to keep the view in place: the artifact jumps up
   // for a moment and back. Nothing scrolls a page without a scrollbar but the user.
   doc.documentElement.style.overflowAnchor = 'none'
+  // Sideways too: with only the vertical axis set, the browser makes the other one scroll, and at
+  // a fractional display scale content a fraction of a pixel wider than the frame got a scrollbar
+  // over its last line. Only content genuinely wider than the frame scrolls sideways.
+  const fitSideways = (): void => {
+    const root = doc.documentElement
+    root.style.overflowX = root.scrollWidth - root.clientWidth > 1 ? 'auto' : 'hidden'
+  }
+  // The room a sideways scrollbar takes, so the frame grows by it instead of covering content.
+  const sidewaysBar = (): number => {
+    const root = doc.documentElement
+    return root.style.overflowX === 'auto' ? Math.max(0, view.innerHeight - root.clientHeight) : 0
+  }
   const fitScrollbar = (): void => {
     view.clearTimeout(scrollbarTimer)
+    fitSideways()
     const root = doc.documentElement
     if (root.style.overflowY !== 'auto') root.scrollTop = 0
     if (last <= view.innerHeight + 1) {
@@ -112,7 +125,8 @@ export function watchContentHeight(
   // Measured right away rather than on the next animation frame: an offscreen inspection window
   // may never run one.
   const measure = (): void => {
-    const height = measureContentHeight(doc)
+    fitSideways()
+    const height = measureContentHeight(doc) + sidewaysBar()
     if (height !== last) {
       last = height
       onHeight(height)
