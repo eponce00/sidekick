@@ -56,6 +56,11 @@ a failed check, which stays in sight.
 When you ask for something live, such as a chart, a calculator or a small tool, the agent can build
 it as an artifact that runs inside the reply.
 
+- **Takes shape as it is written:** the artifact appears in the reply while the agent is still
+  writing it, and fills in as the code arrives. Beneath it, a short line says what it is doing:
+  **Writing**, **Checking how it looks**, or **Polishing** while a fix is made. A fixed version
+  replaces it in place once it runs; a version that fails along the way is never shown. While it
+  is still being written it does not load data or animate; the finished version does.
 - **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no
   card or frame around it. It uses SideKick's font, colors and accent, and follows your light or
   dark theme and accent as you change them.
