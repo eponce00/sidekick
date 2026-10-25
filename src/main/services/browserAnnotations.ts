@@ -356,8 +356,9 @@ export class BrowserAnnotationController {
     }
     if (input.type === 'move') {
       scope.pointer = point
+      // Chromium keeps a pressed mouse on the view it was pressed in, so the release comes here.
       const press = scope.press
-      if (press && input.buttons) {
+      if (press) {
         press.last = point
         if (Math.hypot(point.x - press.x, point.y - press.y) >= DRAG_THRESHOLD) {
           press.dragging = true
@@ -367,10 +368,6 @@ export class BrowserAnnotationController {
           void this.draw(conversationId)
           return
         }
-      } else if (press) {
-        // The button came up outside the page.
-        if (press.dragging) this.finishPress(conversationId, scope, press.last)
-        scope.press = undefined
       }
       this.hoverAt(conversationId)
       return

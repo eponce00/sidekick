@@ -33,6 +33,8 @@ export interface BrowserAnnotationViewport {
   /** Where the viewport is in the document, in CSS pixels. */
   pageX: number
   pageY: number
+  /** Device pixels to a CSS pixel, which Chromium multiplies a screenshot's own scale by. */
+  devicePixelRatio?: number
 }
 
 export interface BrowserAnnotationHit {
@@ -394,6 +396,8 @@ export async function annotationViewport(
   const metrics = await send<{
     cssLayoutViewport?: { pageX: number; pageY: number; clientWidth: number; clientHeight: number }
     cssVisualViewport?: { pageX: number; pageY: number; clientWidth: number; clientHeight: number }
+    /** In device pixels. */
+    visualViewport?: { clientWidth: number }
   }>('Page.getLayoutMetrics')
   const viewport = metrics.cssVisualViewport ?? metrics.cssLayoutViewport
   if (!viewport || !(viewport.clientWidth > 0) || !(viewport.clientHeight > 0)) {
@@ -403,7 +407,10 @@ export async function annotationViewport(
     width: viewport.clientWidth,
     height: viewport.clientHeight,
     pageX: Number.isFinite(viewport.pageX) ? viewport.pageX : 0,
-    pageY: Number.isFinite(viewport.pageY) ? viewport.pageY : 0
+    pageY: Number.isFinite(viewport.pageY) ? viewport.pageY : 0,
+    ...(metrics.visualViewport?.clientWidth && metrics.visualViewport.clientWidth > 0
+      ? { devicePixelRatio: metrics.visualViewport.clientWidth / viewport.clientWidth }
+      : {})
   }
 }
 
@@ -416,8 +423,8 @@ function hoverLabel(node: CdpDomNode): string {
 }
 
 /**
- * The element drawn at a viewport point, as the user sees it: an element the page makes
- * transparent to the mouse is still found, so the page cannot steer a mark elsewhere that way.
+ * The element a click at a viewport point would reach. An element the page makes transparent
+ * to the mouse, such as an invisible layer over everything, is passed through as a click is.
  */
 export async function annotationHitTest(
   send: BrowserAnnotationCdp,
@@ -429,7 +436,7 @@ export async function annotationHitTest(
     x: Math.floor(x),
     y: Math.floor(y),
     includeUserAgentShadowDOM: false,
-    ignorePointerEventsNone: true
+    ignorePointerEventsNone: false
   }).catch(() => undefined)
   if (!hit?.backendNodeId) return undefined
   const described = await send<{ node?: CdpDomNode }>('DOM.describeNode', {
@@ -627,6 +634,8 @@ export function annotationCropBox(
 
 /** The longest side of a mark's picture; the agent needs the detail, not a whole screen. */
 const MAX_CROP_SIDE = 1_280
+/** Text stays readable at twice the CSS size, as on a high-density screen. */
+const MAX_CROP_SCALE = 2
 
 export interface BrowserAnnotationPicture {
   mimeType: 'image/png' | 'image/jpeg'
@@ -637,8 +646,9 @@ export interface BrowserAnnotationPicture {
 }
 
 /**
- * Takes the picture of a mark from the page as Chromium draws it, covers every box in `masks`
- * before anything is cut out, outlines the mark, and crops it with some room around it.
+ * Takes the picture of a mark as Chromium draws the page: just the part around the mark, in CSS
+ * pixels of the page, so the boxes in `masks` land exactly where they are. Every one is covered
+ * before the picture leaves this function, and the mark is outlined.
  */
 export async function captureAnnotationPicture(
   send: BrowserAnnotationCdp,
@@ -650,68 +660,67 @@ export async function captureAnnotationPicture(
   const visible = clampBox(mark, viewport.width, viewport.height)
   const crop = visible && annotationCropBox(visible, viewport)
   if (!visible || !crop) return undefined
-  const shot = await send<{ data?: string }>('Page.captureScreenshot', {
-    format: 'png',
-    fromSurface: true,
-    captureBeyondViewport: false
-  })
-  if (!shot.data) return undefined
-  const { nativeImage } = await import('electron')
-  const full = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'))
-  const size = full.getSize()
-  if (!size.width || !size.height) return undefined
-  // Chromium draws the viewport at device pixels, or at the scale an agent's device size is fitted to.
-  const scale = size.width / viewport.width
-  const bitmap: AnnotationBitmap = { data: full.toBitmap(), width: size.width, height: size.height }
-  for (const box of masks) coverBox(bitmap, box, scale)
-  outlineBox(bitmap, visible, scale)
-  const covered = nativeImage.createFromBitmap(bitmap.data, {
-    width: bitmap.width,
-    height: bitmap.height
-  })
-  const pixels = {
-    x: Math.floor(crop.x * scale),
-    y: Math.floor(crop.y * scale),
-    width: Math.min(size.width - Math.floor(crop.x * scale), Math.ceil(crop.width * scale)),
-    height: Math.min(size.height - Math.floor(crop.y * scale), Math.ceil(crop.height * scale))
-  }
-  let image = covered.crop(pixels)
-  let fit = Math.min(1, MAX_CROP_SIDE / Math.max(pixels.width, pixels.height))
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const sized =
-      fit < 1
-        ? image.resize({
-            width: Math.max(1, Math.round(pixels.width * fit)),
-            height: Math.max(1, Math.round(pixels.height * fit)),
-            quality: 'good'
-          })
-        : image
-    const png = sized.toPNG()
+  const target = Math.min(MAX_CROP_SCALE, MAX_CROP_SIDE / Math.max(crop.width, crop.height))
+  const ratio = viewport.devicePixelRatio
+  let scale = ratio && Number.isFinite(ratio) && ratio > 0 ? target / ratio : target
+  for (let attempt = 0; attempt < 4; attempt++, scale *= 0.7) {
+    // A clip is placed in the document, so the viewport's scroll position is added.
+    const shot = await send<{ data?: string }>('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: false,
+      clip: {
+        x: crop.x + viewport.pageX,
+        y: crop.y + viewport.pageY,
+        width: crop.width,
+        height: crop.height,
+        scale
+      }
+    })
+    if (!shot.data) return undefined
+    const { nativeImage } = await import('electron')
+    const image = nativeImage.createFromBuffer(Buffer.from(shot.data, 'base64'))
+    const size = image.getSize()
+    if (!size.width || !size.height) return undefined
+    const pixels = size.width / crop.width
+    const local = (box: BrowserAnnotationBox): BrowserAnnotationBox => ({
+      ...box,
+      x: box.x - crop.x,
+      y: box.y - crop.y
+    })
+    const bitmap: AnnotationBitmap = {
+      data: image.toBitmap(),
+      width: size.width,
+      height: size.height
+    }
+    for (const box of masks) coverBox(bitmap, local(box), pixels)
+    const outlined = local(visible)
+    outlineBox(bitmap, outlined, pixels)
+    const covered = nativeImage.createFromBitmap(bitmap.data, size)
+    const png = covered.toPNG()
     // Text stays crisp as PNG; a photo-like crop is far smaller as JPEG.
     const encoded =
       png.byteLength <= maxBytes / 2
         ? { mimeType: 'image/png' as const, bytes: png }
-        : { mimeType: 'image/jpeg' as const, bytes: sized.toJPEG(82) }
-    if (encoded.bytes.byteLength <= maxBytes) {
-      const shown = sized.getSize()
-      const ratio = shown.width / (crop.width * scale) || 1
-      return {
-        mimeType: encoded.mimeType,
-        dataUrl: `data:${encoded.mimeType};base64,${encoded.bytes.toString('base64')}`,
-        width: shown.width,
-        height: shown.height,
-        mark: {
-          x: Math.round((visible.x - crop.x) * scale * ratio),
-          y: Math.round((visible.y - crop.y) * scale * ratio),
-          width: Math.round(visible.width * scale * ratio),
-          height: Math.round(visible.height * scale * ratio)
-        }
-      }
+        : { mimeType: 'image/jpeg' as const, bytes: covered.toJPEG(82) }
+    if (encoded.bytes.byteLength > maxBytes) continue
+    const shown = clampBox(
+      {
+        x: Math.round(outlined.x * pixels),
+        y: Math.round(outlined.y * pixels),
+        width: Math.round(outlined.width * pixels),
+        height: Math.round(outlined.height * pixels)
+      },
+      size.width,
+      size.height
+    )
+    return {
+      mimeType: encoded.mimeType,
+      dataUrl: `data:${encoded.mimeType};base64,${encoded.bytes.toString('base64')}`,
+      width: size.width,
+      height: size.height,
+      mark: shown ?? { x: 0, y: 0, width: size.width, height: size.height }
     }
-    image = sized
-    fit = 0.7
-    pixels.width = image.getSize().width
-    pixels.height = image.getSize().height
   }
   return undefined
 }

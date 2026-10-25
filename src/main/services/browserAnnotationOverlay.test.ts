@@ -35,13 +35,12 @@ describe('the annotation overlay', () => {
   it("reads only the left button's clicks and drags, the pointer, and the wheel", () => {
     expect(
       overlayInput({ type: 'mouseDown', button: 'left', x: 3, y: 4, modifiers: ['leftbuttondown'] })
-    ).toEqual({ type: 'down', x: 3, y: 4, buttons: true })
+    ).toEqual({ type: 'down', x: 3, y: 4 })
     expect(overlayInput({ type: 'mouseDown', button: 'right', x: 3, y: 4 })).toBeUndefined()
     expect(overlayInput({ type: 'mouseMove', x: 5, y: 6 })).toEqual({
       type: 'move',
       x: 5,
-      y: 6,
-      buttons: false
+      y: 6
     })
     expect(overlayInput({ type: 'mouseWheel', x: 1, y: 2, deltaY: -120 } as never)).toEqual({
       type: 'wheel',

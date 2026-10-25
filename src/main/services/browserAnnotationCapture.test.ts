@@ -2,29 +2,25 @@ import { describe, expect, it, vi } from 'vitest'
 
 const images = vi.hoisted(() => ({
   created: [] as Array<{ data: Buffer; width: number; height: number }>,
-  crops: [] as Array<{ x: number; y: number; width: number; height: number }>
+  /** The size of the next screenshot Chromium returns. */
+  next: { width: 0, height: 0 }
 }))
 
 vi.mock('electron', () => {
   const image = (data: Buffer, width: number, height: number) => ({
     getSize: () => ({ width, height }),
     toBitmap: () => Buffer.from(data),
-    crop: (rect: { x: number; y: number; width: number; height: number }) => {
-      images.crops.push(rect)
-      return image(Buffer.alloc(rect.width * rect.height * 4, 0x33), rect.width, rect.height)
-    },
-    resize: ({ width, height }: { width: number; height: number }) =>
-      image(Buffer.alloc(width * height * 4), width, height),
     toPNG: () => Buffer.from('png'),
     toJPEG: () => Buffer.from('jpeg')
   })
   return {
     nativeImage: {
-      // A 200 × 100 device-pixel shot of a 100 × 50 viewport, every pixel pure red.
+      // Every pixel of the shot is pure red, in BGRA.
       createFromBuffer: () => {
-        const data = Buffer.alloc(200 * 100 * 4)
+        const { width, height } = images.next
+        const data = Buffer.alloc(width * height * 4)
         for (let index = 0; index < data.length; index += 4) data.set([0, 0, 255, 255], index)
-        return image(data, 200, 100)
+        return image(data, width, height)
       },
       createFromBitmap: (data: Buffer, size: { width: number; height: number }) => {
         images.created.push({ data: Buffer.from(data), ...size })
@@ -206,7 +202,8 @@ describe('reading a marked element over the protocol', () => {
     })
     expect(calls[0]).toEqual([
       'DOM.getNodeForLocation',
-      { x: 15, y: 30, includeUserAgentShadowDOM: false, ignorePointerEventsNone: true }
+      // A layer the page makes transparent to the mouse is passed through, as a click is.
+      { x: 15, y: 30, includeUserAgentShadowDOM: false, ignorePointerEventsNone: false }
     ])
     // Nothing is ever evaluated in the page.
     expect(calls.some(([method]) => method.startsWith('Runtime.'))).toBe(false)
@@ -281,36 +278,78 @@ describe('the picture of a mark', () => {
     expect(bitmap.data[(3 * 20 + 3) * 4 + 3]).toBe(255)
   })
 
-  it('covers fields before anything is cut out, and says where the mark is in it', async () => {
+  it('covers fields in the picture exactly where the page lays them out', async () => {
     images.created.length = 0
-    images.crops.length = 0
-    const { send } = cdp({ 'Page.captureScreenshot': () => ({ data: 'cG5n' }) })
-    const viewport = { width: 100, height: 50, pageX: 0, pageY: 300 }
+    const clips: unknown[] = []
+    const { send } = cdp({
+      'Page.captureScreenshot': (params) => {
+        const clip = params.clip as { width: number; height: number; scale: number }
+        clips.push(params)
+        images.next = { width: clip.width * clip.scale, height: clip.height * clip.scale }
+        return { data: 'cG5n' }
+      }
+    })
+    // Scrolled 300 pixels down the document.
+    const viewport = { width: 400, height: 300, pageX: 0, pageY: 300 }
     const picture = await captureAnnotationPicture(
       send,
       viewport,
-      { x: 30, y: 10, width: 20, height: 10 },
-      [{ x: 0, y: 0, width: 10, height: 10 }],
+      { x: 100, y: 50, width: 40, height: 20 },
+      [{ x: 90, y: 40, width: 10, height: 10 }],
       1_000_000
     )
-    // Covered on the whole viewport, at device pixels: the field's top-left pixel is grey.
-    const full = images.created[0]
-    expect(full).toMatchObject({ width: 200, height: 100 })
-    const [r, g, b] = full.data.subarray(0, 3)
-    expect(r === g && g === b).toBe(true)
-    // An untouched pixel away from the field and the mark keeps its color.
-    expect([...full.data.subarray((90 * 200 + 190) * 4, (90 * 200 + 190) * 4 + 3)]).toEqual([
-      0, 0, 255
+    // Only the part around the mark is drawn, placed in the document, at twice its CSS size.
+    expect(clips).toEqual([
+      {
+        format: 'png',
+        fromSurface: true,
+        captureBeyondViewport: false,
+        clip: { x: 76, y: 326, width: 88, height: 68, scale: 2 }
+      }
     ])
-    // The crop pads the mark by 24 CSS pixels, held inside the viewport.
-    expect(images.crops[0]).toEqual({ x: 12, y: 0, width: 136, height: 88 })
+    const covered = images.created[0]
+    expect(covered).toMatchObject({ width: 176, height: 136 })
+    const pixel = (x: number, y: number): number[] => [
+      ...covered.data.subarray((y * covered.width + x) * 4, (y * covered.width + x) * 4 + 3)
+    ]
+    // The field, at CSS 90,40 to 100,50, is CSS 14,14 to 24,24 in the crop: pixels 28 to 48.
+    const [r, g, b] = pixel(30, 30)
+    expect(r === g && g === b).toBe(true)
+    expect(pixel(26, 26)).toEqual([0, 0, 255])
+    // Away from the field and the mark, the page keeps its color.
+    expect(pixel(170, 130)).toEqual([0, 0, 255])
     expect(picture).toMatchObject({
       mimeType: 'image/png',
       dataUrl: `data:image/png;base64,${Buffer.from('png').toString('base64')}`,
-      width: 136,
-      height: 88,
-      mark: { x: 48, y: 20, width: 40, height: 20 }
+      width: 176,
+      height: 136,
+      mark: { x: 48, y: 48, width: 80, height: 40 }
     })
+  })
+
+  it("asks for twice the CSS size whatever the screen's own pixel density", async () => {
+    const scales: number[] = []
+    const { send } = cdp({
+      'Page.captureScreenshot': (params) => {
+        const clip = params.clip as { width: number; height: number; scale: number }
+        scales.push(clip.scale)
+        // Chromium multiplies the clip's scale by the device pixel ratio.
+        images.next = {
+          width: clip.width * clip.scale * 2.5,
+          height: clip.height * clip.scale * 2.5
+        }
+        return { data: 'cG5n' }
+      }
+    })
+    const picture = await captureAnnotationPicture(
+      send,
+      { width: 400, height: 300, pageX: 0, pageY: 0, devicePixelRatio: 2.5 },
+      { x: 100, y: 50, width: 40, height: 20 },
+      [],
+      1_000_000
+    )
+    expect(scales).toEqual([0.8])
+    expect(picture).toMatchObject({ width: 176, height: 136 })
   })
 
   it('takes no picture of a mark that is off the page', async () => {

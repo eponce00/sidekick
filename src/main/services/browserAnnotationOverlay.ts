@@ -19,7 +19,7 @@ export interface BrowserAnnotationOverlayState {
 }
 
 export type BrowserAnnotationOverlayInput =
-  | { type: 'down' | 'move' | 'up'; x: number; y: number; buttons: boolean }
+  | { type: 'down' | 'move' | 'up'; x: number; y: number }
   | { type: 'leave' }
   | { type: 'wheel'; x: number; y: number; deltaX: number; deltaY: number }
   | { type: 'escape' }
@@ -65,14 +65,13 @@ document.body.replaceChildren(...nodes)}
 </script></body></html>`
 
 export function overlayInput(input: MouseInputEvent): BrowserAnnotationOverlayInput | undefined {
-  const buttons = Boolean(input.modifiers?.includes('leftbuttondown'))
   switch (input.type) {
     case 'mouseDown':
-      return input.button === 'left' ? { type: 'down', x: input.x, y: input.y, buttons } : undefined
+      return input.button === 'left' ? { type: 'down', x: input.x, y: input.y } : undefined
     case 'mouseUp':
-      return input.button === 'left' ? { type: 'up', x: input.x, y: input.y, buttons } : undefined
+      return input.button === 'left' ? { type: 'up', x: input.x, y: input.y } : undefined
     case 'mouseMove':
-      return { type: 'move', x: input.x, y: input.y, buttons }
+      return { type: 'move', x: input.x, y: input.y }
     case 'mouseLeave':
       return { type: 'leave' }
     case 'mouseWheel': {
