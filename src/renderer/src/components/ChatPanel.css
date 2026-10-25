@@ -3978,7 +3978,8 @@ body.is-resizing-table {
 }
 
 .model-menu-search:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--panel-border));
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .model-menu-search input {
@@ -5591,7 +5592,8 @@ body[data-theme='light'] .tool-approval-command {
 }
 
 .agent-question-compose:focus-within {
-  border-color: var(--accent);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 /* The focus ring belongs to the field. Left on the bare input inside it, the

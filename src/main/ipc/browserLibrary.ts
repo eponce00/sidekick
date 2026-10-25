@@ -29,7 +29,6 @@ export function registerBrowserLibraryHandlers(): void {
     return imports.importFile(selected.filePaths[0])
   })
   ipcMain.handle('browserLibrary:sources', () => store.sources())
-  ipcMain.handle('browserLibrary:bookmarks', () => store.bookmarks())
   ipcMain.handle('browserLibrary:suggest', (_event, query: unknown) =>
     typeof query === 'string' ? store.suggest(query) : []
   )

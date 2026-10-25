@@ -138,6 +138,10 @@
 
   /* — Focus ring — */
   --focus-ring: 0 0 0 3px rgba(134, 174, 232, 0.26);
+  /* A rounded field with focus: its edge leans toward the accent with a faint halo, quieter than
+     the ring a button gets, since the caret already says where typing goes. */
+  --field-focus-border: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  --field-focus-glow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
 
   /* — The robot: neutral greys, its LEDs in the accent palette’s bright shade — */
   --brand-helmet: #e6e6e6;
@@ -259,7 +263,8 @@ select {
    icon: the rounded container shows focus, and the bare input inside it
    draws no square ring of its own. */
 .field-shell:focus-within {
-  box-shadow: var(--focus-ring);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .field-shell :is(input, textarea):focus-visible {

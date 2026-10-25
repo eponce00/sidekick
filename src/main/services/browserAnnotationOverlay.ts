@@ -31,36 +31,41 @@ export interface BrowserAnnotationOverlayHandle {
   render(state: BrowserAnnotationOverlayState): void
 }
 
-// Drawn over the page rather than the app: the app's accent, with a white rim that stands out
-// on any page.
+// Drawn over the page rather than the app: the app's accent, with a white ring that stands out on
+// any page. A mark's number sits on its corner but always inside the page, so it is never cut off.
 export const OVERLAY_PAGE = `<!doctype html><html><head><meta charset="utf-8"><style>
 :root{--accent:#3b82f6;--on-accent:#fff}
 html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;cursor:crosshair;
-user-select:none;font:600 11px/1.25 system-ui,-apple-system,"Segoe UI",sans-serif}
-.box{position:absolute;box-sizing:border-box;pointer-events:none;border-radius:3px}
-.hover{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)}
-.drag{border:2px dashed var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent)}
-.mark{border:2px solid var(--accent);box-shadow:0 0 0 1px rgba(255,255,255,.9)}
+user-select:none;font:600 11px/1 Inter,system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+.box{position:absolute;box-sizing:border-box;pointer-events:none;border-radius:6px}
+.hover{border:1.5px solid var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.drag{border:1.5px dashed var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.mark{border:2px solid var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);
+box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent)}
 .mark.area{border-style:dashed}
-.badge{position:absolute;left:-11px;top:-11px;min-width:20px;height:20px;padding:0 5px;
-box-sizing:border-box;border-radius:10px;background:var(--accent);color:var(--on-accent);border:2px solid #fff;
-display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.45)}
-.label{position:absolute;left:-2px;bottom:100%;margin-bottom:3px;padding:2px 6px;border-radius:4px;
-background:var(--accent);color:var(--on-accent);white-space:nowrap;max-width:320px;overflow:hidden;
-text-overflow:ellipsis;box-shadow:0 1px 3px rgba(0,0,0,.35)}
-.label.below{bottom:auto;top:100%;margin:3px 0 0}
+.badge{position:absolute;width:22px;height:22px;box-sizing:border-box;border-radius:50%;
+display:flex;align-items:center;justify-content:center;background:var(--accent);color:var(--on-accent);
+font-weight:700;font-variant-numeric:tabular-nums;
+box-shadow:0 0 0 2px #fff,0 3px 10px rgba(0,0,0,.28)}
+.label{position:absolute;left:0;bottom:100%;margin-bottom:6px;padding:4px 9px;border-radius:999px;
+background:var(--accent);color:var(--on-accent);white-space:nowrap;max-width:280px;overflow:hidden;
+text-overflow:ellipsis;letter-spacing:.01em;box-shadow:0 0 0 1.5px rgba(255,255,255,.85),0 3px 10px rgba(0,0,0,.25)}
+.label.below{bottom:auto;top:100%;margin:6px 0 0}
 </style></head><body><script>
 window.render=(s)=>{
 document.documentElement.style.setProperty('--accent',s.accent);
 document.documentElement.style.setProperty('--on-accent',s.accentText);
 const add=(r,c)=>{const d=document.createElement('div');d.className='box '+c;
 d.style.left=r.x+'px';d.style.top=r.y+'px';d.style.width=r.width+'px';d.style.height=r.height+'px';return d};
+const W=innerWidth,H=innerHeight;
 const nodes=[];
 for(const m of s.marks){const d=add(m,m.area?'mark area':'mark');const b=document.createElement('span');
-b.className='badge';b.textContent=String(m.number);d.append(b);nodes.push(d)}
+b.className='badge';b.textContent=String(m.number);
+const left=Math.min(Math.max(4,m.x-11),W-26),top=Math.min(Math.max(4,m.y-11),H-26);
+b.style.left=(left-m.x)+'px';b.style.top=(top-m.y)+'px';d.append(b);nodes.push(d)}
 if(s.drag)nodes.push(add(s.drag,'drag'));
 if(s.hover){const d=add(s.hover,'hover');const l=document.createElement('span');
-l.className=s.hover.y<22?'label below':'label';l.textContent=s.hover.label;d.append(l);nodes.push(d)}
+l.className=s.hover.y<30?'label below':'label';l.textContent=s.hover.label;d.append(l);nodes.push(d)}
 document.body.replaceChildren(...nodes)}
 </script></body></html>`
 

@@ -20,6 +20,8 @@ import { getManagedWorktrees } from './worktrees'
 import {
   browserAgentInput,
   browserViewPlacement,
+  browserViewZoom,
+  stepBrowserViewZoom,
   isBrowserParkingWindow,
   mountBrowserView,
   unmountBrowserHost
@@ -42,6 +44,7 @@ import {
   type CreateConversationGoalInput,
   type UpdateConversationGoalInput
 } from '../../shared/conversationGoals'
+import { isBrowserZoomStep } from '../../shared/browserZoom'
 
 let coordinator: AgentRuntimeCoordinator | null = null
 let engineClient: AgentEngineClient | null = null
@@ -177,6 +180,33 @@ export function startConversationInBackground(
   })
 }
 
+/** The panel's view of a conversation's browser: no WebContents ids, and the active tab's zoom. */
+function publicWorkspaceState<
+  T extends {
+    tabs: Array<{
+      id: string
+      title: string
+      url: string
+      active: boolean
+      loading: boolean
+      webContentsId: number
+    }>
+  }
+>(state: T): Omit<T, 'tabs'> & { tabs: BrowserWorkspaceState['tabs']; zoom: number } {
+  const active = state.tabs.find((tab) => tab.active)
+  return {
+    ...state,
+    tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
+      id,
+      title,
+      url,
+      active,
+      loading
+    })),
+    zoom: active ? browserViewZoom(active.webContentsId) : 100
+  }
+}
+
 let annotations: BrowserAnnotationController | undefined
 
 /** The marks users make on browser pages, until each is sent with a message. */
@@ -196,19 +226,31 @@ function browserAnnotations(): BrowserAnnotationController {
     overlay: createBrowserAnnotationOverlay,
     scroll: (conversationId, webContentsId, input) => {
       // The wheel is the user's own input on the page, so it waits for an agent action like a click.
-      if (!getAgentRuntimeCoordinator().tools.browser?.claimUserControl(conversationId)) return
-      const page = webContents.fromId(webContentsId)
-      if (!page || page.isDestroyed()) return
+      const manager = getAgentRuntimeCoordinator().tools.browser
+      if (!manager?.claimUserControl(conversationId)) return
+      const sessionId = manager.sessionFor(conversationId)
+      const placement = browserViewPlacement(webContentsId)
+      if (!sessionId || !placement || !(placement.scale > 0)) return
+      let page: ReturnType<typeof manager.service.annotationPage>
+      try {
+        page = manager.service.annotationPage(sessionId)
+      } catch {
+        return
+      }
+      if (!page || page.webContentsId !== webContentsId) return
+      const send = page.send
+      // A wheel at that point through the page's debugger, so Chromium scrolls whatever is under
+      // it, an inner list included, as the user's own wheel would. Electron reports turning the
+      // wheel down as a negative delta; DevTools takes it in the page's sign, as positive.
       void browserAgentInput(webContentsId, () =>
-        page.sendInputEvent({
+        send('Input.dispatchMouseEvent', {
           type: 'mouseWheel',
-          x: Math.round(input.x),
-          y: Math.round(input.y),
-          deltaX: input.deltaX,
-          deltaY: input.deltaY,
-          canScroll: true
+          x: input.x / placement.scale,
+          y: input.y / placement.scale,
+          deltaX: -input.deltaX,
+          deltaY: -input.deltaY
         })
-      )
+      ).catch(() => undefined)
     },
     notify: (change: BrowserAnnotationsChange) => {
       for (const window of BrowserWindow.getAllWindows()) {
@@ -376,8 +418,10 @@ export function registerAgentRunHandlers(): void {
         'snapshot',
         'annotate',
         'annotationNote',
-        'annotationRemove'
+        'annotationRemove',
+        'zoom'
       ].includes(input.action) ||
+      (input.zoomStep !== undefined && !isBrowserZoomStep(input.zoomStep)) ||
       (input.annotate !== undefined && typeof input.annotate !== 'boolean') ||
       [input.accent, input.accentText].some(
         (color) => color !== undefined && (typeof color !== 'string' || color.length > 64)
@@ -415,18 +459,7 @@ export function registerAgentRunHandlers(): void {
         marks.setNote(input.conversationId, input.annotationId, input.note ?? '')
       else marks.remove(input.conversationId, input.annotationId)
       const state = manager.workspaceState(input.conversationId)
-      return (
-        state && {
-          ...state,
-          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
-            id,
-            title,
-            url,
-            active,
-            loading
-          }))
-        }
-      )
+      return state && publicWorkspaceState(state)
     }
     if (input.action === 'state' || input.action === 'mount') {
       const state = manager.workspaceState(input.conversationId)
@@ -467,18 +500,7 @@ export function registerAgentRunHandlers(): void {
           void browserAnnotations().hideHost(host)
         }
       }
-      return (
-        state && {
-          ...state,
-          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
-            id,
-            title,
-            url,
-            active,
-            loading
-          }))
-        }
-      )
+      return state && publicWorkspaceState(state)
     }
     if (
       !manager.workspaceState(input.conversationId) &&
@@ -496,18 +518,14 @@ export function registerAgentRunHandlers(): void {
       await lease.release()
       manager.claimUserControl(input.conversationId)
       const state = manager.workspaceState(input.conversationId)
-      return (
-        state && {
-          ...state,
-          tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
-            id,
-            title,
-            url,
-            active,
-            loading
-          }))
-        }
-      )
+      return state && publicWorkspaceState(state)
+    }
+    if (input.action === 'zoom') {
+      const state = manager.workspaceState(input.conversationId)
+      const tab = state?.tabs.find((item) => item.active)
+      if (!state || !tab || !input.zoomStep) return state && publicWorkspaceState(state)
+      stepBrowserViewZoom(tab.webContentsId, input.zoomStep)
+      return publicWorkspaceState(state)
     }
     if (input.action === 'deviceMenu' || input.action === 'snapshot') {
       const state = manager.workspaceState(input.conversationId)
@@ -523,28 +541,28 @@ export function registerAgentRunHandlers(): void {
               .then((image) => (image.isEmpty() ? undefined : image.toDataURL()))
               .catch(() => undefined)
           : undefined
-      const result = {
-        ...state,
-        ...(snapshot ? { snapshot } : {}),
-        tabs: state.tabs.map(({ id, title, url, active, loading }) => ({
-          id,
-          title,
-          url,
-          active,
-          loading
-        }))
-      }
+      const result = { ...publicWorkspaceState(state), ...(snapshot ? { snapshot } : {}) }
       // The panel opens its own popover once it has the picture.
       if (input.action === 'snapshot') return result
-      const template = browserDeviceMenuTemplate(state.device, (device) => {
-        void manager
-          .workspaceAction(input.conversationId, {
-            conversationId: input.conversationId,
-            action: 'device',
-            device
-          })
-          .catch((error) => console.warn('[Browser] Could not change the device size:', error))
-      })
+      const zoomTab = activeTab?.webContentsId
+      const template = browserDeviceMenuTemplate(
+        state.device,
+        (device) => {
+          void manager
+            .workspaceAction(input.conversationId, {
+              conversationId: input.conversationId,
+              action: 'device',
+              device
+            })
+            .catch((error) => console.warn('[Browser] Could not change the device size:', error))
+        },
+        zoomTab === undefined
+          ? undefined
+          : {
+              percent: browserViewZoom(zoomTab),
+              step: (step) => void stepBrowserViewZoom(zoomTab, step)
+            }
+      )
       if (!showAppMenu(event.sender, template, input.menuPosition)) {
         const zoom = event.sender.getZoomFactor()
         Menu.buildFromTemplate(template).popup({
@@ -560,18 +578,7 @@ export function registerAgentRunHandlers(): void {
       return result
     }
     const result = await manager.workspaceAction(input.conversationId, input)
-    return (
-      result && {
-        ...result,
-        tabs: result.tabs.map(({ id, title, url, active, loading }) => ({
-          id,
-          title,
-          url,
-          active,
-          loading
-        }))
-      }
-    )
+    return result && publicWorkspaceState(result)
   }
   const engine = getAgentEngineClient()
   const admissions = new PromptAdmissionStore(getDb())

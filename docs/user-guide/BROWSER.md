@@ -35,8 +35,9 @@ results. The batch intentionally omits a result screenshot because text fields c
 values visually; the live Browser panel still shows the current page. Custom widgets and
 autocomplete controls remain explicit single-action work.
 
-The Browser tab in the right workspace panel contains the actual interactive page. Enter an address,
-use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
+The Browser tab in the right workspace panel contains the actual interactive page. Type an address
+and press Enter to open it; anything that is not an address, such as a few words, is searched on
+DuckDuckGo. Use back/forward/reload, or create and switch tabs yourself; the agent uses these same tabs. Click
 the page to type, scroll, select text, and edit forms. Ordinary browsing has no takeover or
 resume button: the agent can use the same session on its next browser action without waiting
 for your approval. Manual page input is blocked during an in-flight browser action to avoid
@@ -44,15 +45,16 @@ interleaving; retry your input when it finishes. Manual changes invalidate old e
 so the agent must observe fresh state before reusing them. Focusing the address bar does not
 pause the agent. Right-click offers native text editing actions.
 
-The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
+The page is responsive by default: it lays out at the panel's width at 100%, like a browser window. Zoom it as in a browser: Ctrl + and Ctrl − while the page has focus, Ctrl 0 for 100%, or the zoom items at the top of the device menu. A tab keeps its zoom, and the address bar shows it while it is not 100%; select it to return to 100%. The device button beside the address bar chooses a standard size instead, as in Chrome's device toolbar: phones and tablets, which also get mobile layout, touch, and a mobile user agent, or a laptop or desktop. The agent can choose the same devices, or an exact size. A size wider than the panel is drawn scaled down to fit, so you see the whole page: a laptop or desktop width also grows taller to fill the panel, while a phone or tablet keeps its exact size, centred; and the button shows the size in effect; choose **Responsive** to return to the panel's width. Drag the panel wider, or past the chat to the full window (see [the side panel](CHAT.md#the-side-panel)), so a laptop size shows at full size on a wide window. A size the agent set returns to responsive when its reply ends. The agent's screenshots are taken from the page itself at full size, never from the panel.
 
 ## Pointing at the page
 
 To show the agent what you mean, choose **Annotate** (the speech-bubble button beside the address
-bar). The pointer becomes a crosshair and the element under it is outlined with its tag. Click an
-element, or drag over an area, and write what should change in the note field that opens under the
-page; Enter keeps the note, Escape leaves it as it was. Each mark is numbered on the page and listed
-under it, where you can change its note or remove it. Press Escape on the page, or choose
+bar). The pointer becomes a crosshair and the part of the page under it is outlined and named, such
+as **Image** or **Link**. Click an element, or drag over an area: the mark is numbered on the page,
+and a card for it opens under the page with its name, such as **Heading “Almost 1,000 arrested…”**,
+and a note field ready for what should change; Enter keeps the note, Escape leaves it as it was.
+Each card can be edited or removed later. Press Escape on the page, or choose
 **Annotate** again, to stop marking. The wheel still scrolls the page while you mark, except
 during an agent's action on it, like the rest of your input. Marking works the same on a page you
 opened and on one the agent is using, even while the agent works.
@@ -82,8 +84,7 @@ its text, reaches the agent marked as the page's content, never as your words.
 ## Bookmarks and history from your other browsers
 
 To make the Browser panel feel like your own browser, import the bookmarks and history you already
-have. Choose the bookmark button beside the address bar, then **Import from another browser**, or
-use **Settings › Agent › Imported browser data**. Pick the browser and, if it has several, the
+have, in **Settings › Agent › Imported browser data**. Pick the browser and, if it has several, the
 profile; SideKick shows how many bookmarks and pages of history it holds before anything is kept,
 and you choose which of the two to import.
 
@@ -99,10 +100,8 @@ Any other browser, or a browser on another computer, can export its bookmarks as
 **Import a bookmarks file** in the same window. Arc keeps its sidebar in its own format, so its
 pinned tabs and spaces do not come across; its history does.
 
-- **Bookmarks** appear in the bookmark list with their folders, such as **Bookmarks bar › Work**.
-  Choose one to open it in the current tab.
-- **History** brings the 20,000 most visited pages. Typing in the address bar suggests matching
-  bookmarks and pages; use the arrow keys and Enter, or click one. Your own browsing in SideKick is
+- **Bookmarks** and **history**, the 20,000 most visited pages, become suggestions as you type in
+  the address bar; use the arrow keys and Enter, or click one. Your own browsing in SideKick is
   not added to it.
 - Only web addresses are imported: bookmarklets (`javascript:`), local files, browser pages such as
   `chrome://settings`, and addresses with a username or password in them are left out.

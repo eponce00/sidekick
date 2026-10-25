@@ -198,7 +198,8 @@ describe('reading a marked element over the protocol', () => {
     expect(await annotationHitTest(send, 15.7, 30.2)).toEqual({
       backendNodeId: button.backendNodeId,
       box: { x: 10, y: 20, width: 100, height: 32 },
-      label: 'button#go.primary.big'
+      label: 'Button',
+      tag: 'button'
     })
     expect(calls[0]).toEqual([
       'DOM.getNodeForLocation',

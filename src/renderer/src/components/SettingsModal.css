@@ -105,8 +105,8 @@
 }
 
 .settings-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .settings-search input {
@@ -1517,8 +1517,8 @@ code.settings-origin {
 }
 
 .provider-model-search:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .provider-model-search input {

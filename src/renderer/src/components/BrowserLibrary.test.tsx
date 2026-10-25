@@ -70,7 +70,6 @@ describe('imported browser data in the Browser panel', () => {
       }),
       importBookmarksFile: vi.fn().mockResolvedValue(null),
       sources: vi.fn().mockResolvedValue([]),
-      bookmarks: vi.fn().mockResolvedValue([]),
       suggest: vi.fn().mockResolvedValue([
         { url: 'https://github.com/', title: 'GitHub', kind: 'bookmark' },
         { url: 'https://gitlab.com/', title: 'GitLab', kind: 'history' }
@@ -145,66 +144,9 @@ describe('imported browser data in the Browser panel', () => {
     expect(input.value).toBe('git')
   })
 
-  it('opens the bookmarks list above the page and offers an import when it is empty', async () => {
+  it('keeps imported bookmarks to the address bar’s suggestions, with no menu of its own', async () => {
     await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    const button = container.querySelector('button[aria-label="Bookmarks"]') as HTMLButtonElement
-    await act(async () => button.click())
-    expect(button.getAttribute('aria-expanded')).toBe('true')
-    const section = container.querySelector('#browser-bookmarks')!
-    // Laid out before the page's viewport, never inside it.
-    expect(
-      section.compareDocumentPosition(container.querySelector('.browser-workspace-viewport')!)
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
-    expect(section.textContent).toContain('Import from another browser')
-  })
-
-  it('shows imported bookmarks by folder and opens one', async () => {
-    library.sources.mockResolvedValue([
-      {
-        id: 'chrome:Default',
-        label: 'Google Chrome (Personal)',
-        importedAt: 1,
-        bookmarks: 2,
-        history: 0
-      }
-    ])
-    library.bookmarks.mockResolvedValue([
-      {
-        sourceId: 'chrome:Default',
-        folder: ['Bookmarks bar'],
-        title: 'GitHub',
-        url: 'https://github.com/'
-      },
-      {
-        sourceId: 'chrome:Default',
-        folder: ['Bookmarks bar', 'Docs'],
-        title: 'MDN',
-        url: 'https://developer.mozilla.org/'
-      }
-    ])
-    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
-    await act(async () =>
-      (container.querySelector('button[aria-label="Bookmarks"]') as HTMLButtonElement).click()
-    )
-    const tree = container.querySelector('[role="tree"]')!
-    expect(tree.textContent).toContain('Bookmarks bar')
-    expect(tree.textContent).toContain('GitHub')
-    // Folders below the first stay closed, and render nothing until opened.
-    expect(tree.textContent).not.toContain('MDN')
-    const docs = [...tree.querySelectorAll('button[aria-expanded]')].find((node) =>
-      node.textContent?.includes('Docs')
-    ) as HTMLButtonElement
-    await act(async () => docs.click())
-    expect(tree.textContent).toContain('MDN')
-    const github = [...tree.querySelectorAll('button')].find(
-      (node) => node.textContent === 'GitHub'
-    ) as HTMLButtonElement
-    await act(async () => github.click())
-    expect(browserWorkspace).toHaveBeenCalledWith({
-      conversationId: 'chat',
-      action: 'url',
-      url: 'https://github.com/'
-    })
+    expect(container.querySelector('button[aria-label="Bookmarks"]')).toBeNull()
     expect(container.querySelector('#browser-bookmarks')).toBeNull()
   })
 

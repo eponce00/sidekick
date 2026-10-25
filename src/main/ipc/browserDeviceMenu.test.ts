@@ -32,4 +32,19 @@ describe('browser device menu', () => {
     )
     expect(checked(template)).toEqual(['1000 × 700, set by the agent'])
   })
+
+  it('leads with the page’s zoom and its steps', () => {
+    const step = vi.fn()
+    const template = browserDeviceMenuTemplate(null, vi.fn(), { percent: 100, step })
+    expect(template[0]).toMatchObject({ label: 'Zoom 100%', enabled: false })
+    const item = (label: string) => template.find((entry) => entry.label === label)!
+    expect(item('Actual size').enabled).toBe(false)
+    item('Zoom in').click?.({} as never, undefined, {} as never)
+    expect(step).toHaveBeenCalledWith('in')
+    expect(
+      browserDeviceMenuTemplate(null, vi.fn(), { percent: 300, step }).find(
+        (entry) => entry.label === 'Zoom in'
+      )?.enabled
+    ).toBe(false)
+  })
 })

@@ -320,4 +320,58 @@ describe('shared browser workspace', () => {
     expect(container.textContent).not.toContain('Resume agent')
     expect(container.textContent).not.toContain('Take control')
   })
+
+  it('shows a loading light while the page loads', async () => {
+    request.mockResolvedValue({
+      sessionId: 'session',
+      activeTabId: 'tab',
+      busy: false,
+      tabs: [
+        { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: true }
+      ]
+    })
+    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
+    expect(container.querySelector('.browser-workspace-progress.is-loading')).not.toBeNull()
+    expect(container.querySelector('input')?.getAttribute('aria-busy')).toBe('true')
+  })
+
+  it('searches what is not an address', async () => {
+    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
+    const input = container.querySelector('input')!
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    await act(async () => {
+      input.focus()
+      setValue.call(input, 'weather tomorrow')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => input.form!.requestSubmit())
+    expect(request).toHaveBeenCalledWith({
+      conversationId: 'chat',
+      action: 'url',
+      url: 'https://duckduckgo.com/?q=weather%20tomorrow'
+    })
+  })
+
+  it('shows the page’s zoom only when it is not 100%, and resets it', async () => {
+    await act(async () => root.render(<BrowserWorkspace conversationId="chat" />))
+    expect(container.querySelector('.browser-workspace-zoom')).toBeNull()
+    request.mockResolvedValue({
+      sessionId: 'session',
+      activeTabId: 'tab',
+      busy: false,
+      zoom: 125,
+      tabs: [
+        { id: 'tab', title: 'Example', url: 'https://example.com/', active: true, loading: false }
+      ]
+    })
+    await act(async () => root.render(<BrowserWorkspace conversationId="other" />))
+    const chip = container.querySelector<HTMLButtonElement>('.browser-workspace-zoom')!
+    expect(chip.textContent).toBe('125%')
+    await act(async () => chip.click())
+    expect(request).toHaveBeenCalledWith({
+      conversationId: 'other',
+      action: 'zoom',
+      zoomStep: 'reset'
+    })
+  })
 })

@@ -278,8 +278,9 @@
 }
 
 .sidebar-search:focus-within {
-  border-color: var(--border-strong);
+  border-color: var(--field-focus-border);
   background: var(--surface-1);
+  box-shadow: var(--field-focus-glow);
 }
 
 .sidebar-search input,

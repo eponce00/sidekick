@@ -282,7 +282,7 @@ closed, popups inherit the same navigation guard, and the ephemeral partition re
 subresources whose real path escapes that session's project grant. Conversation sessions persist
 across follow-up runs, are replaced when a chat changes projects, and evict the least-recently-used
 inactive session at the bounded global limit. Bookmarks and history the user imports from other
-browsers serve only the panel's bookmark list and address suggestions; see
+browsers serve only the panel's address suggestions; see
 [Browser data import](BROWSER_IMPORT.md).
 
 The model-facing loop is semantic-first: `browser_observe` returns a fresh accessibility snapshot,

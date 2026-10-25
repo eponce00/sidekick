@@ -109,7 +109,6 @@ export interface BrowserLibraryAPI {
   /** Asks for a bookmarks file exported from any browser and imports it; null when cancelled. */
   importBookmarksFile: () => Promise<BrowserImportResult | null>
   sources: () => Promise<BrowserLibrarySource[]>
-  bookmarks: () => Promise<BrowserBookmark[]>
   suggest: (query: string) => Promise<BrowserSuggestion[]>
   /** Removes one import, or all of them when the id is omitted. */
   remove: (sourceId?: string) => Promise<BrowserLibrarySource[]>

@@ -95,7 +95,6 @@ export function previewBrowserLibraryApi(): BrowserLibraryAPI {
     },
     importBookmarksFile: async () => null,
     sources: async () => sources,
-    bookmarks: async () => bookmarks,
     suggest: async (query) => {
       const text = query.trim().toLowerCase()
       if (!text) return []

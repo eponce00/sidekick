@@ -48,6 +48,8 @@ export interface BrowserWorkspaceState {
    * place.
    */
   snapshot?: string
+  /** The active tab's zoom in percent; 100 unless the user zoomed it. */
+  zoom?: number
   /** The user is marking places on the page to send with their next message. */
   annotating?: boolean
   annotations?: BrowserAnnotationSummary[]
@@ -75,6 +77,8 @@ export interface BrowserWorkspaceRequest {
     | 'annotate'
     | 'annotationNote'
     | 'annotationRemove'
+    /** Zooms the active tab, as `zoomStep` says. */
+    | 'zoom'
   bounds?: BrowserPanelBounds
   /** For `deviceMenu`: where to open it, in the app window's CSS pixels. */
   menuPosition?: { x: number; y: number }
@@ -89,4 +93,5 @@ export interface BrowserWorkspaceRequest {
   /** For `annotationNote` and `annotationRemove`. */
   annotationId?: string
   note?: string
+  zoomStep?: import('./browserZoom').BrowserZoomStep
 }

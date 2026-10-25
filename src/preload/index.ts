@@ -372,7 +372,6 @@ const api = {
       ipcRenderer.invoke('browserLibrary:runImport', request),
     importBookmarksFile: () => ipcRenderer.invoke('browserLibrary:importBookmarksFile'),
     sources: () => ipcRenderer.invoke('browserLibrary:sources'),
-    bookmarks: () => ipcRenderer.invoke('browserLibrary:bookmarks'),
     suggest: (query: string) => ipcRenderer.invoke('browserLibrary:suggest', query),
     remove: (sourceId?: string) => ipcRenderer.invoke('browserLibrary:remove', sourceId)
   },

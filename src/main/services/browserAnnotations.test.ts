@@ -4,6 +4,7 @@ import { MAX_BROWSER_ANNOTATIONS } from '../../shared/browserWorkspace'
 import {
   BrowserAnnotationController,
   safeAccent,
+  withPageTimeout,
   type BrowserAnnotationPage
 } from './browserAnnotations'
 import type {
@@ -196,7 +197,7 @@ describe('browser annotations', () => {
     expect(mark).toMatchObject({
       kind: 'browser',
       number: 1,
-      name: 'button “Sign in”',
+      name: 'Button “Sign in”',
       note: '',
       // A user name and password in the address are never sent.
       url: 'https://shop.example/login',
@@ -217,7 +218,7 @@ describe('browser annotations', () => {
       {
         id: mark.id,
         number: 1,
-        name: 'button “Sign in”',
+        name: 'Button “Sign in”',
         note: '',
         target: 'element',
         onPage: true
@@ -341,5 +342,31 @@ describe('browser annotations', () => {
     expect(safeAccent('red;}body{background:url(https://evil.example)')).toBeUndefined()
     expect(safeAccent('var(--accent)')).toBeUndefined()
     expect(safeAccent(42)).toBeUndefined()
+  })
+})
+
+describe('page calls while annotating', () => {
+  it('give up on a page that does not answer, so marking never waits on it for good', async () => {
+    vi.useFakeTimers()
+    try {
+      const send = withPageTimeout(() => new Promise<never>(() => undefined), 5_000)
+      const call = send('DOM.getNodeForLocation', { x: 1, y: 1 })
+      const settled = expect(call).rejects.toThrow('did not answer in time')
+      await vi.advanceTimersByTimeAsync(5_000)
+      await settled
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('pass answers and errors through untouched', async () => {
+    await expect(withPageTimeout(async <T>() => ({ ok: true }) as T)('X')).resolves.toEqual({
+      ok: true
+    })
+    await expect(
+      withPageTimeout(async () => {
+        throw new Error('detached')
+      })('X')
+    ).rejects.toThrow('detached')
   })
 })

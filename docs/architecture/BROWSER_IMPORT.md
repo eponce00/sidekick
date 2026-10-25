@@ -1,7 +1,7 @@
 # Browser data import
 
 SideKick imports bookmarks and history from browsers on the same computer so the Browser panel's
-bookmark list and address suggestions start with the user's own pages. What the user sees is
+address suggestions start with the user's own pages. What the user sees is
 described in [Visual browser](../user-guide/BROWSER.md#bookmarks-and-history-from-your-other-browsers);
 this page covers the trusted design.
 
@@ -43,8 +43,7 @@ All reading happens in the main process, in `src/main/services/browserImport`:
   passes a path.
 - `BrowserLibraryStore` keeps the results in SideKick's database (`browser_library_sources`,
   `browser_library_bookmarks`, `browser_library_history`). The renderer reads them through
-  `window.api.browserLibrary`: a bookmark list, up to six suggestions for typed text, and the
-  sources with counts. Nothing in the agent's tool registry reads these tables.
+  `window.api.browserLibrary`: up to six suggestions for typed text, and the sources with counts. Nothing in the agent's tool registry reads these tables.
 
 Nothing imported is secret: addresses that carry a username or password are dropped rather than
 stored, so no `safeStorage` encryption is involved.

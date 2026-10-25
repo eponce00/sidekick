@@ -1,20 +1,34 @@
-/* A mark's number matches the badge drawn on the page while annotating. */
+/* A mark's number matches the badge drawn on the page while annotating: a circle, wider only
+   for two digits. */
 .browser-mark-number {
-  min-width: 18px;
-  height: 18px;
-  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  flex: none;
   display: inline-grid;
   place-items: center;
-  padding: 0 4px;
+  padding: 0 5px;
   box-sizing: border-box;
-  border-radius: 9px;
+  border-radius: var(--radius-full);
   color: var(--on-accent);
   background: var(--accent);
-  font: 600 var(--text-xs) / 1 var(--font-sans);
+  font: 700 11px / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
 }
 
 .browser-mark-chip {
-  max-width: 320px;
+  max-width: 300px;
+  gap: 8px;
+}
+
+.composer-context-attachment.browser-mark-chip {
+  padding-left: 6px;
+}
+
+/* An attachment chip's text rule must not squeeze the number. */
+.browser-mark-chip > .browser-mark-number {
+  min-width: 20px;
+  overflow: visible;
+  font-size: 11px;
 }
 
 .browser-mark-chip > span:not(.browser-mark-number) {
@@ -30,9 +44,8 @@
   font-weight: 600;
 }
 
-.browser-mark-chip em {
-  color: var(--text-muted);
-  font-style: normal;
+.browser-mark-chip .browser-mark-note {
+  color: var(--text-secondary);
 }
 
 .message-browser-mark {

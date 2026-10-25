@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { browserMarkName } from '../../shared/browserMarkNames'
 import type { BrowserWindow } from 'electron'
 import {
   MAX_BROWSER_ANNOTATIONS,
@@ -89,6 +90,36 @@ interface Scope {
   drawAgain: boolean
 }
 
+/**
+ * How long one call to the page's debugger may take while annotating. A page that is busy, such as
+ * with the agent's action, or navigating can leave a call unanswered; that one step then fails
+ * instead of leaving the hover, drawing or marking waiting on it for good.
+ */
+export const PAGE_CALL_TIMEOUT_MS = 5_000
+
+export function withPageTimeout(
+  send: BrowserAnnotationCdp,
+  timeoutMs = PAGE_CALL_TIMEOUT_MS
+): BrowserAnnotationCdp {
+  return <T>(method: string, params?: Record<string, unknown>) =>
+    new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`The page did not answer in time (${method})`)),
+        timeoutMs
+      )
+      send<T>(method, params).then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error: unknown) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
+}
+
 /** A drag shorter than this is a click on the element under it. */
 const DRAG_THRESHOLD = 5
 const MIN_AREA = 8
@@ -128,13 +159,10 @@ function shownUrl(url: string): string {
 function markName(
   target: 'element' | 'area',
   box: BrowserAnnotationBox,
-  element?: { role?: string; tag: string; accessibleName?: string }
+  element?: { role?: string; tag: string; accessibleName?: string; text?: string }
 ): string {
   if (target === 'area') return `Area ${Math.round(box.width)} × ${Math.round(box.height)}`
-  const what = element?.role ?? element?.tag ?? 'element'
-  const name = element?.accessibleName?.replace(/\s+/g, ' ').trim()
-  const label = name ? `${what} “${name.length > 60 ? `${name.slice(0, 59)}…` : name}”` : what
-  return label.slice(0, MAX_BROWSER_ANNOTATION_FIELD_CHARACTERS)
+  return browserMarkName(element ?? {}).slice(0, MAX_BROWSER_ANNOTATION_FIELD_CHARACTERS)
 }
 
 /**
@@ -318,7 +346,7 @@ export class BrowserAnnotationController {
     if (!page || page.webContentsId !== scope.webContentsId) return undefined
     const placement = this.options.placement(page.webContentsId)
     if (!placement || placement.host !== scope.host || !(placement.scale > 0)) return undefined
-    return { page, scale: placement.scale }
+    return { page: { ...page, send: withPageTimeout(page.send) }, scale: placement.scale }
   }
 
   input(conversationId: string, input: BrowserAnnotationOverlayInput): void {
@@ -485,7 +513,8 @@ export class BrowserAnnotationController {
     const attachment: BrowserAnnotationAttachment = {
       id: randomUUID(),
       kind: 'browser',
-      name: markName(target, box, element),
+      // Named by the clicked element's tag when its details could not be read.
+      name: markName(target, box, element ?? (hit ? { tag: hit.tag } : undefined)),
       number: scope.marks.length + 1,
       note: '',
       url: shownUrl(page.url),

@@ -26,7 +26,8 @@ export function BrowserMarkChip({
       </span>
       <span>
         <span className="visually-hidden">Mark {mark.number}: </span>
-        <strong>{mark.name}</strong> {note || <em>No note</em>}
+        <strong>{mark.name}</strong>
+        {note && <span className="browser-mark-note"> · {note}</span>}
       </span>
       {onRemove && (
         <button

@@ -9,9 +9,10 @@ import {
   MonitorSmartphone,
   Pause,
   Plug,
-  Bookmark,
   ChevronRight,
-  MessageSquarePlus
+  MessageSquarePlus,
+  ZoomIn,
+  ZoomOut
 } from 'lucide-react'
 import type {
   BrowserWorkspaceRequest,
@@ -20,7 +21,9 @@ import type {
 import { clipBrowserPanelBounds } from '../../../shared/browserPanelBounds'
 import { webMcpSite } from '../../../shared/webMcp'
 import type { BrowserSuggestion } from '../../../shared/browserLibrary'
-import { BrowserBookmarks, BrowserImportDialog, BrowserSuggestions } from './BrowserLibrary'
+import { BrowserSuggestions } from './BrowserLibrary'
+import { browserAddress } from '../../../shared/browserAddress'
+import { DEFAULT_BROWSER_ZOOM } from '../../../shared/browserZoom'
 import { MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS } from '../../../shared/messageContextAttachments'
 import './BrowserMarkChip.css'
 
@@ -48,6 +51,11 @@ export function BrowserWorkspace({
   const [snapshot, setSnapshot] = useState<string | null>(null)
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
+  // While an address is being opened, or the page is still loading.
+  const loading = pending || Boolean(state?.tabs.find((tab) => tab.active)?.loading)
+  // Shown only when the page is not at 100%, as a browser does.
+  const zoomed =
+    state?.zoom !== undefined && state.zoom !== DEFAULT_BROWSER_ZOOM ? state.zoom : null
   const [toolsOpen, setToolsOpen] = useState(false)
   const [shownTool, setShownTool] = useState<string | null>(null)
   const toolsButton = useRef<HTMLButtonElement>(null)
@@ -60,9 +68,6 @@ export function BrowserWorkspace({
   const [notes, setNotes] = useState<Record<string, string>>({})
   const noteFields = useRef(new Map<string, HTMLInputElement>())
   const [focusMark, setFocusMark] = useState<string | null>(null)
-  const [bookmarksOpen, setBookmarksOpen] = useState(false)
-  const [importOpen, setImportOpen] = useState(false)
-  const [libraryVersion, setLibraryVersion] = useState(0)
   // What the user typed since focusing the address bar; null until they type.
   const [query, setQuery] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<BrowserSuggestion[]>([])
@@ -271,7 +276,9 @@ export function BrowserWorkspace({
     editing.current = false
     setQuery(null)
     setAddress(text)
-    void act('url', { url: /^[a-z][a-z\d+.-]*:/i.test(text) ? text : `https://${text}` })
+    // A page's address opens; anything else, such as a few words, is searched.
+    const url = browserAddress(text)
+    if (url) void act('url', { url })
   }
   const shownSuggestions = query === null ? [] : suggestions
 
@@ -322,6 +329,10 @@ export function BrowserWorkspace({
           openAddress(shownSuggestions[activeSuggestion]?.url ?? address)
         }}
       >
+        <span
+          className={`browser-workspace-progress${loading ? ' is-loading' : ''}`}
+          aria-hidden="true"
+        />
         <button
           type="button"
           aria-label="Go back"
@@ -348,12 +359,17 @@ export function BrowserWorkspace({
         </button>
         {/* Page tools sit inside the address field, like a browser's page actions, so the field
             and the page never move when a page offers them. */}
-        <div className={`browser-workspace-address${pageTools ? ' has-tools' : ''}`}>
+        <div
+          className={`browser-workspace-address${pageTools ? ' has-tools' : ''}${
+            zoomed ? ' has-zoom' : ''
+          }`}
+        >
           <input
             aria-label="Browser address"
+            aria-busy={loading}
             value={address}
             disabled={pending}
-            placeholder="Enter a URL"
+            placeholder="Search or enter an address"
             role="combobox"
             aria-autocomplete="list"
             aria-expanded={shownSuggestions.length > 0}
@@ -386,6 +402,22 @@ export function BrowserWorkspace({
               setQuery(event.target.value)
             }}
           />
+          {zoomed && (
+            <button
+              type="button"
+              className="browser-workspace-zoom"
+              aria-label={`Page zoom ${zoomed}%. Reset to 100%`}
+              title={`Zoomed to ${zoomed}%. Click for 100%; Ctrl + and Ctrl − on the page zoom it.`}
+              onClick={() => void act('zoom', { zoomStep: 'reset' })}
+            >
+              {zoomed < DEFAULT_BROWSER_ZOOM ? (
+                <ZoomOut size={12} aria-hidden="true" />
+              ) : (
+                <ZoomIn size={12} aria-hidden="true" />
+              )}
+              <span>{zoomed}%</span>
+            </button>
+          )}
           {pageTools && (
             <button
               ref={toolsButton}
@@ -469,17 +501,6 @@ export function BrowserWorkspace({
         </button>
         <button
           type="button"
-          className="browser-workspace-bookmarks"
-          aria-label="Bookmarks"
-          aria-expanded={bookmarksOpen}
-          aria-controls="browser-bookmarks"
-          title="Bookmarks you imported from another browser"
-          onClick={() => setBookmarksOpen((open) => !open)}
-        >
-          <Bookmark size={15} aria-hidden="true" />
-        </button>
-        <button
-          type="button"
           className={`browser-workspace-device${state?.device ? ' is-fixed' : ''}`}
           aria-label="Device size"
           disabled={!state || pending || state.busy}
@@ -538,21 +559,6 @@ export function BrowserWorkspace({
           onPick={(suggestion) => openAddress(suggestion.url)}
         />
       )}
-      {bookmarksOpen && (
-        <BrowserBookmarks
-          version={libraryVersion}
-          onOpen={(url) => {
-            setBookmarksOpen(false)
-            openAddress(url)
-          }}
-          onImport={() => setImportOpen(true)}
-        />
-      )}
-      <BrowserImportDialog
-        isOpen={importOpen}
-        onClose={() => setImportOpen(false)}
-        onImported={() => setLibraryVersion((version) => version + 1)}
-      />
       {(error || layoutError) && (
         <div role="alert" className="browser-workspace-error">
           {error || layoutError}
@@ -576,9 +582,19 @@ export function BrowserWorkspace({
         // Below the page, never over it: the page is drawn above the app.
         <section className="browser-workspace-annotations" aria-label="Marks for your next message">
           <p className="browser-workspace-annotations-hint">
-            {annotating
-              ? 'Click an element, or drag over an area, then write what should change. Esc stops.'
-              : 'These marks go with your next message.'}
+            {annotating ? (
+              <>
+                <span className="browser-workspace-annotations-live" aria-hidden="true" />
+                <span>Click an element or drag over an area</span>
+                <kbd>Esc</kbd>
+                <span>to stop</span>
+              </>
+            ) : (
+              <span>
+                {marks.length === 1 ? 'This mark goes' : `These ${marks.length} marks go`} with your
+                next message
+              </span>
+            )}
           </p>
           {marks.length > 0 && (
             <ol>
@@ -587,35 +603,39 @@ export function BrowserWorkspace({
                   <span className="browser-mark-number" aria-hidden="true">
                     {mark.number}
                   </span>
-                  <span className="browser-workspace-annotation-name" title={mark.name}>
-                    {mark.name}
-                  </span>
-                  <input
-                    ref={(field) => {
-                      if (field) noteFields.current.set(mark.id, field)
-                      else noteFields.current.delete(mark.id)
-                    }}
-                    aria-label={`Note for mark ${mark.number}, ${mark.name}`}
-                    placeholder="What should change here?"
-                    maxLength={MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS}
-                    value={notes[mark.id] ?? mark.note}
-                    onChange={(event) =>
-                      setNotes((previous) => ({ ...previous, [mark.id]: event.target.value }))
-                    }
-                    onBlur={() => saveNote(mark.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        event.currentTarget.blur()
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault()
-                        discarding.current = mark.id
-                        event.currentTarget.blur()
+                  <div className="browser-workspace-annotation-body">
+                    <span className="browser-workspace-annotation-name" title={mark.name}>
+                      {mark.name}
+                      {!mark.onPage && <span> · on another page</span>}
+                    </span>
+                    <input
+                      ref={(field) => {
+                        if (field) noteFields.current.set(mark.id, field)
+                        else noteFields.current.delete(mark.id)
+                      }}
+                      aria-label={`Note for mark ${mark.number}, ${mark.name}`}
+                      placeholder="Add a note for the agent…"
+                      maxLength={MAX_BROWSER_ANNOTATION_NOTE_CHARACTERS}
+                      value={notes[mark.id] ?? mark.note}
+                      onChange={(event) =>
+                        setNotes((previous) => ({ ...previous, [mark.id]: event.target.value }))
                       }
-                    }}
-                  />
+                      onBlur={() => saveNote(mark.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          event.currentTarget.blur()
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          discarding.current = mark.id
+                          event.currentTarget.blur()
+                        }
+                      }}
+                    />
+                  </div>
                   <button
                     type="button"
+                    className="browser-workspace-annotation-remove"
                     aria-label={`Remove mark ${mark.number}, ${mark.name}`}
                     title="Remove this mark"
                     onClick={() => void act('annotationRemove', { annotationId: mark.id })}

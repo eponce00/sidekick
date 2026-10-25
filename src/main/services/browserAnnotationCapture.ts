@@ -1,4 +1,5 @@
 import type { BrowserAnnotationBox } from '../../shared/messageContextAttachments'
+import { browserMarkKind } from '../../shared/browserMarkNames'
 
 /**
  * What a mark on a page says about it, read over the Chrome DevTools Protocol from the trusted
@@ -42,6 +43,8 @@ export interface BrowserAnnotationHit {
   box: BrowserAnnotationBox
   /** `button.primary`, as the hover label shows it. */
   label: string
+  /** The element's tag, which names a mark whose details could not be read. */
+  tag: string
 }
 
 export interface BrowserAnnotationElement {
@@ -414,12 +417,9 @@ export async function annotationViewport(
   }
 }
 
+/** What the pointer is over, in the words a mark is named with: "Image", "Link". */
 function hoverLabel(node: CdpDomNode): string {
-  const attributes = attributeMap(node)
-  const id = attributes.get('id')
-  const classes = (attributes.get('class') ?? '').split(/\s+/).filter(Boolean).slice(0, 2)
-  const label = `${tagOf(node)}${id ? `#${id}` : ''}${classes.map((name) => `.${name}`).join('')}`
-  return label.length > 60 ? `${label.slice(0, 59)}…` : label
+  return browserMarkKind(undefined, tagOf(node))
 }
 
 /**
@@ -447,7 +447,7 @@ export async function annotationHitTest(
   if (!node || node.nodeType !== ELEMENT_NODE) return undefined
   const box = await annotationNodeBox(send, hit.backendNodeId)
   if (!box) return undefined
-  return { backendNodeId: hit.backendNodeId, box, label: hoverLabel(node) }
+  return { backendNodeId: hit.backendNodeId, box, label: hoverLabel(node), tag: tagOf(node) }
 }
 
 interface AxNode {
