@@ -549,11 +549,6 @@ const api = {
       ipcRenderer.invoke('workspace:discardHistoryCapture', captureId),
     createCheckpoint: (workspaceRoot: string, message: string, captureId?: string) =>
       ipcRenderer.invoke('workspace:createCheckpoint', workspaceRoot, message, captureId),
-    restoreCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) => ipcRenderer.invoke('workspace:restoreCheckpoint', workspaceRoot, hash, authorization),
     hardResetCheckpoint: (
       workspaceRoot: string,
       hash: string,
@@ -565,27 +560,6 @@ const api = {
       authorization: import('../shared/types').CheckpointMutationAuthorization
     ) =>
       ipcRenderer.invoke('workspace:rewindToBeforeCheckpoint', workspaceRoot, hash, authorization),
-    listCheckpoints: (workspaceRoot: string) =>
-      ipcRenderer.invoke('workspace:listCheckpoints', workspaceRoot),
-    getCheckpointDiff: (workspaceRoot: string, hash: string) =>
-      ipcRenderer.invoke('workspace:getCheckpointDiff', workspaceRoot, hash),
-    renameCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      newMessage: string,
-      source?: import('../shared/checkpointTitles').CheckpointTitleSource
-    ) => ipcRenderer.invoke('workspace:renameCheckpoint', workspaceRoot, hash, newMessage, source),
-    claimCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-    ) => ipcRenderer.invoke('workspace:claimCheckpointTitleBackfill', input),
-    completeCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:completeCheckpointTitleBackfill', input),
-    failCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:failCheckpointTitleBackfill', input),
-    getCheckpointTitleContext: (workspaceRoot: string, hash: string, timestamp: number) =>
-      ipcRenderer.invoke('workspace:getCheckpointTitleContext', workspaceRoot, hash, timestamp),
     openFolder: (folderPath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:openFolder', folderPath, workspaceRoot),
     openFile: (filePath: string, workspaceRoot?: string) =>

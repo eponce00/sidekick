@@ -405,9 +405,6 @@ function App(): React.JSX.Element {
     return savedTheme === 'light' ? 'light' : 'dark'
   })
   const [settings, setSettings] = useState<ProviderSettings>(DEFAULT_SETTINGS)
-  const [checkpointVersion, setCheckpointVersion] = useState(0)
-  const [restoredHash, setRestoredHash] = useState<string | undefined>(undefined)
-  const [chatRollbackHash, setChatRollbackHash] = useState<string | null>(null)
   const [isReady, setIsReady] = useState(false)
   const {
     currentConversationIdRef,
@@ -1269,10 +1266,6 @@ function App(): React.JSX.Element {
   const titleBarContext = currentConversationId
     ? currentConversation?.title || 'Conversation'
     : null
-  const historyWorkspaceFolder =
-    conversationFolder(currentConversation) ?? currentConversation?.home_workspace_root ?? null
-  const historyReadOnly =
-    !conversationFolder(currentConversation) && Boolean(currentConversation?.home_workspace_root)
   const welcomeSuggestions = useMemo(() => {
     const currentProjectId = currentConversation?.project_id ?? null
     const recentConversationTitles = conversations
@@ -1384,17 +1377,6 @@ function App(): React.JSX.Element {
             const reasoningLevels = { ...settings.reasoningLevels, [modelId]: level }
             setSettings({ ...settings, reasoningLevels })
             window.api.settings.save({ reasoningLevels })
-          }}
-          onCheckpointCreated={(_restoredHash) => {
-            if (currentConversationIdRef.current !== panelConversationId) return
-            setCheckpointVersion((version) => version + 1)
-            setRestoredHash(_restoredHash)
-          }}
-          chatRollbackHash={visible ? chatRollbackHash : null}
-          onChatRollbackConsumed={() => {
-            if (currentConversationIdRef.current === panelConversationId) {
-              setChatRollbackHash(null)
-            }
           }}
         />
       </div>
@@ -1570,17 +1552,6 @@ function App(): React.JSX.Element {
             currentConversationId ? focusChainTodosByConversation[currentConversationId] || [] : []
           }
           workspaceFolder={conversationFolder(currentConversation)}
-          historyWorkspaceFolder={historyWorkspaceFolder}
-          historyReadOnly={historyReadOnly}
-          checkpointVersion={checkpointVersion}
-          restoredHash={restoredHash}
-          onGoToCheckpoint={(hash) => {
-            setCheckpointVersion((v) => v + 1)
-            setRestoredHash(hash)
-            setChatRollbackHash(hash)
-          }}
-          titleModel={currentPinnedModel}
-          fastModelName={fastModelFor(currentPinnedModel, currentModel.modelId)}
           isAgentBusy={isAgentBusy}
         />
       </main>

@@ -156,8 +156,18 @@ content again.
 
 ## The side panel
 
-The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
-resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
+The panel beside the chat works with tabs, like a browser's. Each tab shows one app: **Files**,
+**Browser**, **Terminal**, and **Chats** for a chat that started others. **+** opens a new tab
+showing the apps; choose one and the tab becomes it. An app is open once: choosing one that is
+already open goes to its tab. Close a tab with its **×** or a middle click; closing the last one
+leaves a new tab.
+
+Drag a tab along its row to reorder it. Drag it onto the top or bottom of the page below the tabs to
+give it a section of its own above or below, with its own tabs, up to four; drag the line between
+two sections to share the height between them. Drop a tab on another section's row, or in the
+middle of its page, to move it there. The panel keeps its tabs and sections for next time.
+
+Drag the panel's left edge to resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
 with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
 chat and the left sidebar make room.
 
@@ -172,8 +182,8 @@ chat and the left sidebar make room.
   let go. Click an icon, or drag out from the rail, to open it again at the width it had.
 - **Esc** while dragging leaves the panel as it was.
 
-The fold button at the end of the tab row, or clicking the tab already showing, also folds the panel
-away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
+The fold button at the end of the first row of tabs also folds the panel away. Double-click the
+edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.
 
 In **Files**, the trash button beside a file or folder, or **Move to Recycle Bin** (**Move to
@@ -185,8 +195,11 @@ Git's `.git` folders cannot be moved this way.
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the
   message and everything after it leave the chat, and the message returns to the box to change or
-  send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
-  [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
+  send. When SideKick changed the project's files since that message, it asks what to do with
+  them: **Rewind chat and files** also undoes those changes, as
+  [Workspace History](WORKSPACE_HISTORY.md) restores them, and **Chat only** leaves files as they
+  are. With no file changes since, it just rewinds.
+- **Undo** on a reply that changed files takes back that reply's changes and keeps the chat.
 - **Edit** on a message you sent moves it into the message box, with its images, attachments,
   mode, and goal, and blurs it and everything after it. Change it with anything the box offers,
   then send: the message and what followed are replaced and SideKick answers again from there, the

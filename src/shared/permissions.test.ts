@@ -53,11 +53,11 @@ describe('command permission policy', () => {
     expect(workspacePermissionOperation('write', 'a.txt', 'one', 'confirm')).not.toEqual(
       workspacePermissionOperation('write', 'a.txt', 'two', 'confirm')
     )
-    expect(checkpointPermissionOperation('restore', 'abcdef123456')).not.toEqual(
+    expect(checkpointPermissionOperation('rewind', 'abcdef123456')).not.toEqual(
       checkpointPermissionOperation('hard-reset', 'abcdef123456')
     )
-    expect(checkpointPermissionOperation('restore', 'abcdef123456').requestedAccess).toBe('confirm')
-    expect(checkpointPermissionOperation('restore', 'abcdef123456').kind).toBe('checkpoint')
+    expect(checkpointPermissionOperation('rewind', 'abcdef123456').requestedAccess).toBe('confirm')
+    expect(checkpointPermissionOperation('rewind', 'abcdef123456').kind).toBe('checkpoint')
     expect(workspacePermissionOperation('write', 'a.txt', 'one', 'confirm').kind).toBe('workspace')
     expect(browserPermissionOperation('navigate', 'https://example.com', 'confirm')).toMatchObject({
       kind: 'browser',

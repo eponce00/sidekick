@@ -777,6 +777,8 @@ interface MessageItemProps {
   onForkMessage?: (messageId: string) => void
   /** Goes back to before this message and returns it to the message box; absent while running. */
   onRewindMessage?: (message: Message, restoreFiles: boolean) => void
+  /** The project's files changed at or after this message, so a rewind can take them back too. */
+  rewindCanRestoreFiles?: boolean
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
   onResolveAgentInteraction?: (
@@ -807,6 +809,7 @@ function MessageItemInner({
   onContinueRun,
   onForkMessage,
   onRewindMessage,
+  rewindCanRestoreFiles = false,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
@@ -1513,14 +1516,24 @@ function MessageItemInner({
                         <p>
                           This message and everything after it leave the chat, and the message goes
                           back into the box to change or send.
+                          {rewindCanRestoreFiles &&
+                            ' The agent changed files since: take them back too, or keep them.'}
                         </p>
                         <div className="message-rewind-actions">
-                          <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                            Rewind chat and files
-                          </button>
-                          <button type="button" onClick={() => onRewindMessage(msg, false)}>
-                            Chat only
-                          </button>
+                          {rewindCanRestoreFiles ? (
+                            <>
+                              <button type="button" onClick={() => onRewindMessage(msg, true)}>
+                                Rewind chat and files
+                              </button>
+                              <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                                Chat only
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" onClick={() => onRewindMessage(msg, false)}>
+                              Rewind
+                            </button>
+                          )}
                         </div>
                       </MessageFooterPopover>
                     )}
@@ -1592,6 +1605,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   if (prev.readOnly !== next.readOnly) return false
   if (prev.onForkMessage !== next.onForkMessage) return false
   if (prev.onRewindMessage !== next.onRewindMessage) return false
+  if (prev.rewindCanRestoreFiles !== next.rewindCanRestoreFiles) return false
   if (prev.onContinueRun !== next.onContinueRun) return false
   // Re-render if this message is being edited or stopped being edited
   if (

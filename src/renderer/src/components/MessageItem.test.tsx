@@ -1351,7 +1351,7 @@ describe('MessageItem shared-channel presentation', () => {
     )
   })
 
-  it('offers to rewind to before a message, with or without its file changes', async () => {
+  it('offers to rewind to before a message, with or without the file changes since', async () => {
     const rewind = vi.fn()
     const message = { id: 'ask', role: 'user' as const, content: 'Tighten it', timestamp: 1_000 }
     await act(async () => {
@@ -1369,6 +1369,7 @@ describe('MessageItem shared-channel presentation', () => {
           onCopyMessage={vi.fn()}
           onRetryMessage={vi.fn()}
           onRewindMessage={rewind}
+          rewindCanRestoreFiles
           onApproveToolLimitDecision={vi.fn()}
           onDenyToolLimitDecision={vi.fn()}
         />

@@ -41,10 +41,10 @@ anything, the trusted main process checks the complete operation:
 - directories, devices, and other unsupported replacements are protected;
 - if any protected path conflicts, nothing is restored and the UI lists the paths and reasons.
 
-“Restore” is a soft move: it changes the applied project state but preserves the newer SideKick
-timeline, so the user can return to latest. “Remove newer” restores the selected point and then drops
-the newer SideKick timeline. If a new agent change is made after a soft restore, it starts a new
-timeline from the restored point and the former redo path is discarded, matching normal undo/redo
+Restores happen from the chat, where the changes were made. **Undo** on a reply returns its files
+to how they were before it. **Rewind chat and files** on a message returns the project to the last
+History point before that message and drops the newer timeline, along with the messages it leaves.
+A new agent change after an undo starts a new timeline from there, matching normal undo/redo
 behavior.
 
 ## Manual and concurrent edits
@@ -63,5 +63,5 @@ History is keyed by canonical project path, so chats attached to the same projec
 timeline. Detaching a chat makes that project's History visible but read-only. Reattaching to its
 original project restores access. Chats cannot move History between different projects.
 
-Private History may be cleaned up after its retention period. Conversation messages and History
-labels are separate SQLite records; removing private file History does not delete chat transcripts.
+Private History may be cleaned up after its retention period. Conversation messages are separate
+SQLite records; removing private file History does not delete chat transcripts.

@@ -74,7 +74,7 @@ hit target. New motion must also behave correctly under `prefers-reduced-motion`
 ## Layout behavior
 
 - The left history rail is expanded by default and can collapse to a 48px shortcut rail.
-- The right workspace panel contains equal-width Files, Recovery, and Browser tabs. It starts
+- The right workspace panel holds tabs in stacked sections (`src/renderer/src/components/sidePanel`); each app (Files, Browser, Terminal, Chats) opens in at most one tab. It starts
   expanded on viewports at least 1100px wide and collapsed below that threshold unless the user
   has saved a preference.
 - Browser-only size controls belong inside the Browser panel. The live page takes the available
@@ -191,7 +191,7 @@ Development builds expose a deterministic renderer preview when Electron's prelo
 1. Run `npm run dev`.
 2. Open `http://localhost:5173/?ui-preview=1`.
 3. Review the welcome state, the populated `Refine the desktop experience` conversation, the
-   full-window Settings workspace, Browser/Files/Recovery panels, both themes, and compact widths.
+   full-window Settings workspace, Browser/Files/Terminal panels, both themes, and compact widths.
 
 The preview mock is development-only and is never installed when `window.api` already exists. It must stay aligned with the preload contract closely enough for representative renderer testing.
 

@@ -381,7 +381,7 @@ re-encoded. Results are cached by content hash, so a turn that resends the conve
 does not prepare them again. The stored message and the run ledger keep the original; the
 composer accepts up to 100 MB per image and validates the type and declared size in the renderer
 and again at the IPC boundary. A locked-down `sidekick-browser:` protocol exposes only retained image artifacts to the
-renderer. The resizable workspace inspector docks Browser beside Files and Recovery. Its flexible
+renderer. The resizable workspace inspector docks Browser beside Files and Terminal. Its flexible
 preview stage consumes the available height while the page label, latest action, and verification
 state stay anchored at the bottom. Portrait and full-page captures scale inside that stage instead
 of expanding the inspector. Viewport screenshots overlay the last runtime-resolved interaction

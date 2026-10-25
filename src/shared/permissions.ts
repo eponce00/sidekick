@@ -52,7 +52,7 @@ export interface PermissionAuditRecord {
   reason?: string
 }
 
-export type CheckpointMutationAction = 'restore' | 'hard-reset' | 'rewind'
+export type CheckpointMutationAction = 'hard-reset' | 'rewind'
 
 export function commandPermissionOperation(request: {
   id: string
@@ -97,7 +97,6 @@ export function checkpointPermissionOperation(
   requestedAccess: RequestedAccess = 'confirm'
 ): PermissionOperation {
   const labels: Record<CheckpointMutationAction, string> = {
-    restore: 'Restore workspace checkpoint',
     'hard-reset': 'Permanently reset workspace checkpoint history',
     rewind: 'Rewind workspace before checkpoint'
   }

@@ -151,10 +151,6 @@ interface ChatPanelProps {
   /** Chosen reasoning levels, and the older switches that seed a model's first level. */
   reasoningSettings?: ReasoningSettings
   onReasoningLevelChange: (modelId: string, level: ReasoningLevel) => void
-  onCheckpointCreated?: (restoredHash?: string) => void
-  /** When set to a checkpoint hash, rolls back this conversation to that checkpoint */
-  chatRollbackHash?: string | null
-  onChatRollbackConsumed?: () => void
   /** Opens another chat, as when a worker's chip or its manager's breadcrumb is clicked. */
   onOpenConversation?: (conversationId: string) => void
 }
@@ -207,15 +203,10 @@ function ChatPanel({
   fastModelName,
   reasoningSettings = {},
   onReasoningLevelChange,
-  onCheckpointCreated,
-  chatRollbackHash,
-  onChatRollbackConsumed,
   onOpenConversation
 }: ChatPanelProps): React.JSX.Element {
   const { messages, setMessages, messagesRef, skipNextLoadRef } = useConversationMessages({
     conversationId,
-    rollbackHash: chatRollbackHash,
-    onRollbackConsumed: onChatRollbackConsumed,
     onCostUpdate: onConversationCostUpdate
   })
   const selectedPinnedModel = pinnedModels.find((model) => model.id === selectedModel)
@@ -507,7 +498,6 @@ function ChatPanel({
     onModelUnavailable: () => setIsModelMenuOpen(true),
     isRunActive,
     workspaceFolder,
-    onCheckpointCreated,
     restoreDraft: async (message, discardsGoalStart) => {
       if (discardsGoalStart && conversationId) {
         const current = await window.api.conversationGoals.current(conversationId)
@@ -1745,6 +1735,14 @@ function ChatPanel({
   const editingIndex = steppedBackFromId
     ? visibleMessages.findIndex((candidate) => candidate.id === steppedBackFromId)
     : -1
+  // The last message whose reply changed this project's files and was not undone: rewinding to it,
+  // or to any message before it, can take those files back.
+  const lastFileChangeIndex = visibleMessages.findLastIndex(
+    (message) =>
+      Boolean(message.checkpointHash) &&
+      message.checkpointWorkspaceRoot === workspaceFolder &&
+      message.restoredFrom !== message.checkpointHash
+  )
   const renderMessage = (msg: Message, index: number): React.JSX.Element => (
     <MessageItem
       key={msg.id}
@@ -1766,6 +1764,7 @@ function ChatPanel({
       }
       onForkMessage={forkMessage}
       onRewindMessage={isLoading ? undefined : rewindMessage}
+      rewindCanRestoreFiles={index <= lastFileChangeIndex}
       copiedMessageId={copiedMessageId}
       onApproveToolLimitDecision={handleApproveToolLimitDecision}
       onDenyToolLimitDecision={handleDenyToolLimitDecision}

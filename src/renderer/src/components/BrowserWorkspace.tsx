@@ -178,7 +178,9 @@ export function BrowserWorkspace({
       document.hidden ||
       !bounds ||
       element.closest('[hidden], [aria-hidden="true"]') ||
-      document.querySelector('[role="dialog"], [aria-modal="true"], .app-menu')
+      document.querySelector('[role="dialog"], [aria-modal="true"], .app-menu') ||
+      // A side panel tab is being dragged: the page would take the drag from the app.
+      document.body.dataset.panelDrag === 'true'
     const result = await window.api.agentRuns.browserWorkspace({
       conversationId,
       action: hidden ? 'unmount' : 'mount',
@@ -228,7 +230,7 @@ export function BrowserWorkspace({
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['hidden', 'aria-hidden', 'aria-modal']
+      attributeFilter: ['hidden', 'aria-hidden', 'aria-modal', 'data-panel-drag']
     })
     if (viewport.current) resize.observe(viewport.current)
     document.addEventListener('visibilitychange', update)

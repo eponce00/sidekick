@@ -22,7 +22,6 @@ import {
   configureCheckpointStorageRoot,
   recoverInterruptedCheckpointCaptures
 } from './services/checkpoints'
-import { CheckpointTitleStore } from './services/checkpointTitleStore'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
 import trayIcon from '../../resources/tray.png?asset'
@@ -226,17 +225,11 @@ async function bootstrapApplication(): Promise<void> {
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
   const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
   if (recoveredCaptures.length) {
-    const titles = new CheckpointTitleStore(appState.db)
     const linkMessage = appState.db.prepare(
       `UPDATE messages SET checkpoint_hash = ?, checkpoint_workspace_root = ?
        WHERE id = ? AND conversation_id = ?`
     )
     for (const recovered of recoveredCaptures) {
-      titles.recordCreated(
-        recovered.workspaceRoot,
-        recovered.checkpoint.hash,
-        'Interrupted agent changes'
-      )
       linkMessage.run(
         recovered.checkpoint.hash,
         recovered.workspaceRoot,

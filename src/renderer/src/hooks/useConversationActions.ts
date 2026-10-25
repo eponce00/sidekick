@@ -18,7 +18,6 @@ interface ConversationActionsOptions {
   workspaceFolder: string | null
   /** Whether a reply is running or starting, read at call time. */
   isRunActive?: () => boolean
-  onCheckpointCreated?: (restoredHash?: string) => void
   rerunStream: (
     messages: Message[],
     conversationId: string,
@@ -129,8 +128,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
               priorHash,
               authorization
             )
-            if (result.ok) options.onCheckpointCreated?.(priorHash)
-            else console.warn('[Rewind] Checkpoint hard-reset failed:', result.error)
+            if (!result.ok) console.warn('[Rewind] Checkpoint hard-reset failed:', result.error)
           }
         } catch (error) {
           console.warn('[Rewind] Checkpoint hard-reset failed:', error)
@@ -152,8 +150,7 @@ export function useConversationActions(options: ConversationActionsOptions): {
               ownHash,
               authorization
             )
-            if (result.ok) options.onCheckpointCreated?.(result.parentHash ?? undefined)
-            else console.warn('[Rewind] rewindToBeforeCheckpoint failed:', result.error)
+            if (!result.ok) console.warn('[Rewind] rewindToBeforeCheckpoint failed:', result.error)
           } catch (error) {
             console.warn('[Rewind] rewindToBeforeCheckpoint threw:', error)
           }
@@ -342,7 +339,6 @@ export function useConversationActions(options: ConversationActionsOptions): {
         authorization
       )
       if (result.ok) {
-        options.onCheckpointCreated?.(result.parentHash ?? undefined)
         options.setMessages((previous) =>
           previous.map((message) =>
             message.checkpointHash === hash ? { ...message, restoredFrom: hash } : message

@@ -91,6 +91,21 @@ async function launch(executable, profile) {
     throw error
   }
 }
+// The window exposes History only through undo and rewind, so read the private store the
+// app keeps in its profile; the synthetic workspace is the only one with History there.
+function privateHistory(profile, args) {
+  const storage = path.join(profile, 'history')
+  const stores = fs
+    .readdirSync(storage)
+    .map((name) => path.join(storage, name, 'checkpoints.git'))
+    .filter((store) => fs.existsSync(store))
+  assert.equal(stores.length, 1, 'Expected exactly one private History store')
+  return execFileSync('git', [`--git-dir=${stores[0]}`, ...args], {
+    encoding: 'utf8',
+    windowsHide: true,
+    stdio: 'pipe'
+  }).trim()
+}
 
 async function qualifyHistoricalSchema(root, currentExecutable, workspaceRoot) {
   const revision = 'e6294f358932055cf2ff9f62351e2f098ed47ece' // authentic v0.5.0
@@ -187,12 +202,11 @@ async function qualifyHistoricalSchema(root, currentExecutable, workspaceRoot) {
     if (application) await application.close()
   }
 }
-async function snapshot(page, fixture) {
-  return page.evaluate(async ({ conversationId, workspaceRoot }) => {
+async function snapshot(page, fixture, profile) {
+  const state = await page.evaluate(async ({ conversationId, workspaceRoot }) => {
     const conversations = await window.api.conversations.list()
     const conversation = conversations.find((item) => item.id === conversationId)
     const settings = await window.api.settings.load()
-    const checkpoints = await window.api.workspace.listCheckpoints(workspaceRoot)
     return {
       conversation,
       messages: await window.api.conversations.getMessages(conversationId),
@@ -203,13 +217,21 @@ async function snapshot(page, fixture) {
         toolCallLimit: settings.toolCallLimit,
         autoCompactEnabled: settings.autoCompactEnabled,
         commandPermissionMode: settings.commandPermissionMode
-      },
-      checkpoints: {
-        ok: checkpoints.ok,
-        entries: checkpoints.checkpoints.map(({ hash, message }) => ({ hash, message }))
       }
     }
   }, fixture)
+  const checkpoints = privateHistory(profile, [
+    'log',
+    'refs/heads/checkpoints',
+    '--format=%H%x1f%s'
+  ])
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, message] = line.split('\x1f')
+      return { hash, message }
+    })
+  return { ...state, checkpoints }
 }
 async function qualifyPackagedUpgrade(options = {}) {
   assert.equal(process.platform, 'win32', 'This qualification currently uses Windows NSIS payloads')
@@ -325,10 +347,9 @@ async function qualifyPackagedUpgrade(options = {}) {
       })
       return checkpoint.hash
     }, fixture)
-    const expected = await snapshot(page, fixture)
+    const expected = await snapshot(page, fixture, profile)
     assert.equal(expected.messages.length, 2)
-    assert.equal(expected.checkpoints.ok, true)
-    assert.ok(expected.checkpoints.entries.some((entry) => entry.hash === checkpoint))
+    assert.ok(expected.checkpoints.some((entry) => entry.hash === checkpoint))
     await application.close()
     application = undefined
     stages.push({ stage: 'old-seed', version: previous.version, preserved: true })
@@ -339,17 +360,14 @@ async function qualifyPackagedUpgrade(options = {}) {
     ]) {
       ;({ application, page } = await launch(executable, profile))
       assert.deepEqual(
-        await snapshot(page, fixture),
+        await snapshot(page, fixture, profile),
         expected,
         `${stage} must preserve exact synthetic application state`
       )
-      const diff = await page.evaluate(
-        ({ workspaceRoot, checkpoint }) =>
-          window.api.workspace.getCheckpointDiff(workspaceRoot, checkpoint),
-        { workspaceRoot, checkpoint }
-      )
       assert.ok(
-        JSON.stringify(diff).includes('Synthetic updated state'),
+        privateHistory(profile, ['show', `${checkpoint}:fixture.txt`]).includes(
+          'Synthetic updated state'
+        ),
         `${stage} must retain checkpoint content`
       )
       assert.equal(fs.readFileSync(document, 'utf8'), 'Synthetic updated state — café 雪\n')
@@ -380,7 +398,7 @@ async function qualifyPackagedUpgrade(options = {}) {
         'skills',
         'compaction',
         'workspace-memory',
-        'checkpoint-identity-and-diff',
+        'checkpoint-identity-and-content',
         'workspace-content',
         'compatible-rollback-and-re-upgrade'
       ],

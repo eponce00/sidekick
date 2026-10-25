@@ -335,7 +335,7 @@ interface WorkspaceAPI {
     workspaceRoot: string,
     conversationId: string,
     agentMessageId: string
-  ) => Promise<import('../shared/checkpointTitles').HistoryCaptureResult>
+  ) => Promise<import('../shared/workspaceHistory').HistoryCaptureResult>
   discardHistoryCapture: (captureId: string) => Promise<{ ok: boolean }>
   createCheckpoint: (
     workspaceRoot: string,
@@ -348,50 +348,18 @@ interface WorkspaceAPI {
     captureVersion?: number
     error?: string
   }>
-  restoreCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
   hardResetCheckpoint: (
     workspaceRoot: string,
     hash: string,
     authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
+  ) => Promise<import('../shared/workspaceHistory').HistoryMutationResult>
   rewindToBeforeCheckpoint: (
     workspaceRoot: string,
     hash: string,
     authorization: import('../shared/types').CheckpointMutationAuthorization
   ) => Promise<
-    import('../shared/checkpointTitles').HistoryMutationResult & { parentHash: string | null }
+    import('../shared/workspaceHistory').HistoryMutationResult & { parentHash: string | null }
   >
-  listCheckpoints: (
-    workspaceRoot: string
-  ) => Promise<import('../shared/checkpointTitles').CheckpointListResult>
-  getCheckpointDiff: (
-    workspaceRoot: string,
-    hash: string
-  ) => Promise<{ ok: boolean; diff: string; error?: string }>
-  renameCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    newMessage: string,
-    source?: import('../shared/checkpointTitles').CheckpointTitleSource
-  ) => Promise<{ ok: boolean; error?: string }>
-  claimCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-  ) => Promise<{ claimed: boolean }>
-  completeCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-  ) => Promise<{ applied: boolean }>
-  failCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-  ) => Promise<{ recorded: boolean }>
-  getCheckpointTitleContext: (
-    workspaceRoot: string,
-    hash: string,
-    timestamp: number
-  ) => Promise<import('../shared/checkpointTitles').CheckpointTitleContext | null>
   openFolder: (folderPath: string, workspaceRoot?: string) => Promise<void>
   openFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   openFileReference: (

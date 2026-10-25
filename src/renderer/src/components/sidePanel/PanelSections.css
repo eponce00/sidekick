@@ -1,0 +1,319 @@
+/* The side panel's sections, stacked, each a tab strip over its page. */
+.panel-sections {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.panel-section {
+  display: flex;
+  min-height: 80px;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Tabs as a browser's: icon and name, a close button on hover, and + for a new tab. */
+.panel-tabs {
+  display: flex;
+  min-height: 40px;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border-subtle);
+  scrollbar-width: none;
+}
+
+.panel-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.panel-tab {
+  position: relative;
+  display: flex;
+  height: 30px;
+  min-width: 0;
+  max-width: 168px;
+  flex: 0 1 auto;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.panel-tab:hover {
+  color: var(--text-secondary);
+  background: var(--surface-2);
+}
+
+.panel-tab.is-active {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.panel-tab.is-dragged {
+  opacity: 0.45;
+}
+
+/* Where a dragged tab would land: a bar before the tab, or after the last. */
+.panel-tab.is-drop-before::before,
+.panel-tabs.is-drop-end > .panel-tab-new::before {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: -2px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  content: '';
+}
+
+.panel-tab-select {
+  all: unset;
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px 0 9px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.panel-tab-icon {
+  position: relative;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  place-items: center;
+}
+
+.panel-tab.is-active .panel-tab-icon {
+  color: var(--accent);
+}
+
+.panel-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-tab-close,
+.panel-tab-new,
+.panel-fold {
+  all: unset;
+  display: grid;
+  flex: none;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast),
+    opacity var(--duration-fast);
+}
+
+.panel-tab-close {
+  width: 20px;
+  height: 20px;
+  margin-right: 5px;
+  opacity: 0;
+}
+
+.panel-tab:hover .panel-tab-close,
+.panel-tab.is-active .panel-tab-close,
+.panel-tab-close:focus-visible {
+  opacity: 1;
+}
+
+.panel-tab-close:hover {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.panel-tab.is-active .panel-tab-close:hover {
+  background: var(--surface-4, var(--surface-2));
+}
+
+.panel-tab-new {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+
+.panel-fold {
+  width: 30px;
+  height: 30px;
+}
+
+.panel-tab-new:hover,
+.panel-fold:hover {
+  color: var(--text-primary);
+  background: var(--surface-2);
+}
+
+.panel-tab-select:focus-visible,
+.panel-tab-close:focus-visible,
+.panel-tab-new:focus-visible,
+.panel-fold:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.panel-tabs-spacer {
+  flex: 1;
+}
+
+.panel-section-body {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The divider between two sections, a thin line that takes the pointer generously. */
+.panel-section-divider {
+  position: relative;
+  height: 1px;
+  flex: none;
+  background: var(--border-subtle);
+  cursor: row-resize;
+}
+
+.panel-section-divider::before {
+  position: absolute;
+  inset: -4px 0;
+  content: '';
+}
+
+.panel-section-divider:hover,
+.panel-section-divider:active {
+  background: var(--accent);
+}
+
+/* Where a dragged tab would go on a page: half of it for a section above or below, or all of it
+   for this section's tabs. */
+.panel-drop-zone {
+  position: absolute;
+  z-index: 5;
+  right: 6px;
+  left: 6px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  pointer-events: none;
+  transition:
+    top var(--duration-fast) var(--ease-out),
+    bottom var(--duration-fast) var(--ease-out);
+}
+
+.panel-drop-zone.is-above {
+  top: 6px;
+  bottom: 50%;
+}
+
+.panel-drop-zone.is-below {
+  top: 50%;
+  bottom: 6px;
+}
+
+.panel-drop-zone.is-tabs {
+  top: 6px;
+  bottom: 6px;
+}
+
+/* A new tab: the apps the panel can hold. */
+.panel-launcher {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-4);
+  overflow-y: auto;
+  animation: motion-fade-in var(--duration-normal) var(--ease-out);
+}
+
+.panel-launcher h2 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.panel-launcher-grid {
+  display: grid;
+  width: min(100%, 420px);
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.panel-launcher-app {
+  all: unset;
+  display: flex;
+  min-height: 104px;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition:
+    border-color var(--duration-fast),
+    background var(--duration-fast),
+    transform var(--duration-fast) var(--ease-out);
+}
+
+.panel-launcher-app:hover {
+  border-color: var(--border-color);
+  background: var(--surface-2);
+  transform: translateY(-1px);
+}
+
+.panel-launcher-app:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.panel-launcher-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.panel-launcher-name {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.panel-launcher-description {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-launcher,
+  .panel-launcher-app {
+    animation: none;
+    transition: none;
+  }
+}

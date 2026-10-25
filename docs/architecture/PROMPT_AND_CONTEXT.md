@@ -36,7 +36,7 @@ matches, command working directories, and file mutations resolve newly applicabl
 deferred, returns that rule to the model, and must be retried. Compaction resets nested delivery claims
 so the relevant instructions can be introduced again without changing the immutable transcript.
 
-Utility prompts for titles, checkpoint labels, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
+Utility prompts for titles, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
 
 ## Immutable transcript and provider projection
 

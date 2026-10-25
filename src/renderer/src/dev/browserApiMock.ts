@@ -1473,20 +1473,8 @@ export function installBrowserApiMock(): void {
       beginHistoryCapture: async () => ({ ok: true, captureId: crypto.randomUUID() }),
       discardHistoryCapture: async () => ({ ok: true }),
       createCheckpoint: async () => ({ ok: true, hash: 'abcdef123456' }),
-      restoreCheckpoint: async () => ({ ok: true }),
       hardResetCheckpoint: async () => ({ ok: true }),
       rewindToBeforeCheckpoint: async () => ({ ok: true, parentHash: null }),
-      listCheckpoints: async () => ({
-        ok: true,
-        checkpoints: [],
-        status: { storage: 'private-app-data', realRepository: false, appliedHash: null }
-      }),
-      getCheckpointDiff: async () => ({ ok: true, diff: '' }),
-      renameCheckpoint: async () => ({ ok: true }),
-      claimCheckpointTitleBackfill: async () => ({ claimed: false }),
-      completeCheckpointTitleBackfill: async () => ({ applied: false }),
-      failCheckpointTitleBackfill: async () => ({ recorded: false }),
-      getCheckpointTitleContext: async () => null,
       openFolder: async () => {},
       openFile: async () => {},
       openFileReference: async (fileReference) => ({

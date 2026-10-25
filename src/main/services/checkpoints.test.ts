@@ -9,13 +9,8 @@ import {
   configureCheckpointStorageRoot,
   createCheckpoint,
   deleteShadowRepo,
-  getCheckpointDiff,
-  getHistoryStatus,
-  hardResetCheckpoint,
   initShadowRepo,
-  listCheckpoints,
   recoverInterruptedCheckpointCaptures,
-  restoreCheckpoint,
   rewindToBeforeCheckpoint,
   rewindWorkspacesToBeforeCheckpoints
 } from './checkpoints'
@@ -82,27 +77,16 @@ describe('private SideKick workspace history', () => {
     expect((await execFileAsync('git', ['-C', workspace, 'diff', '--cached'])).stdout).toBe(
       beforeIndex
     )
-    expect(await getHistoryStatus(workspace)).toMatchObject({
-      storage: 'private-app-data',
-      realRepository: true,
-      appliedHash: hash
-    })
-    expect(await getCheckpointDiff(workspace, hash)).toContain('tracked.txt')
   }, 15_000)
 
   it('records only the delta after the per-run baseline', async () => {
     await write(join(workspace, 'manual-before.txt'), 'manual work\n')
     await write(join(workspace, 'agent.txt'), 'before\n')
 
-    const hash = await captureAndCreate('Agent edit', async () => {
-      await write(join(workspace, 'agent.txt'), 'after\n')
-    })
-    const diff = await getCheckpointDiff(workspace, hash)
+    const captureId = await beginCheckpointCapture(workspace, 'conversation-1', 'assistant-1')
+    await write(join(workspace, 'agent.txt'), 'after\n')
 
-    expect(diff).toContain('agent.txt')
-    expect(diff).not.toContain('manual-before.txt')
-    expect((await listCheckpoints(workspace))[0]).toMatchObject({
-      hash,
+    expect(await createCheckpoint(workspace, 'Agent edit', captureId)).toMatchObject({
       changeCount: 1,
       captureVersion: 2
     })
@@ -122,9 +106,6 @@ describe('private SideKick workspace history', () => {
       workspaceRoot: workspace,
       checkpoint: { changeCount: 1, captureVersion: 2 }
     })
-    expect(await getCheckpointDiff(workspace, recovered[0].checkpoint.hash)).toContain(
-      'partial change'
-    )
     await expect(createCheckpoint(workspace, 'Duplicate recovery', captureId)).rejects.toThrow(
       'History capture expired'
     )
@@ -185,38 +166,6 @@ describe('private SideKick workspace history', () => {
   })
 
   it(
-    'supports reversible soft restores and branches new work from the applied point',
-    async () => {
-      await write(join(workspace, 'state.txt'), 'zero\n')
-      const first = await captureAndCreate('First', async () => {
-        await write(join(workspace, 'state.txt'), 'one\n')
-      })
-      const second = await captureAndCreate('Second', async () => {
-        await write(join(workspace, 'state.txt'), 'two\n')
-      })
-
-      expect(await restoreCheckpoint(workspace, first)).toMatchObject({ ok: true, changedFiles: 1 })
-      expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('one\n')
-      expect(await restoreCheckpoint(workspace, second)).toMatchObject({
-        ok: true,
-        changedFiles: 1
-      })
-      expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('two\n')
-
-      expect(await restoreCheckpoint(workspace, first)).toMatchObject({ ok: true })
-      const replacement = await captureAndCreate('Replacement', async () => {
-        await write(join(workspace, 'state.txt'), 'three\n')
-      })
-      const entries = await listCheckpoints(workspace)
-      expect(entries.map(({ hash }) => hash)).toEqual([replacement, first])
-      await expect(hardResetCheckpoint(workspace, second)).rejects.toThrow(
-        'History point not found'
-      )
-    },
-    GIT_INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
     'rewinds multiple project histories atomically to before their affected checkpoints',
     async () => {
       const secondWorkspace = join(testRoot, 'second-workspace')
@@ -238,8 +187,12 @@ describe('private SideKick workspace history', () => {
       expect(result.ok).toBe(true)
       expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('before a\n')
       expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('before b\n')
-      expect(await listCheckpoints(workspace)).toEqual([])
-      expect(await listCheckpoints(secondWorkspace)).toEqual([])
+      await expect(rewindToBeforeCheckpoint(workspace, first.hash)).rejects.toThrow(
+        'History point not found'
+      )
+      await expect(rewindToBeforeCheckpoint(secondWorkspace, second.hash)).rejects.toThrow(
+        'History point not found'
+      )
     },
     GIT_INTEGRATION_TIMEOUT_MS
   )
@@ -276,8 +229,11 @@ describe('private SideKick workspace history', () => {
       })
       expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('agent a\n')
       expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('manual b\n')
-      expect((await getHistoryStatus(workspace)).appliedHash).toBe(first.hash)
-      expect((await getHistoryStatus(secondWorkspace)).appliedHash).toBe(second.hash)
+      // Neither timeline moved, so each checkpoint can still be rewound on its own.
+      expect(await rewindToBeforeCheckpoint(workspace, first.hash)).toMatchObject({ ok: true })
+      expect(await rewindToBeforeCheckpoint(secondWorkspace, second.hash)).toMatchObject({
+        ok: false
+      })
     },
     GIT_INTEGRATION_TIMEOUT_MS
   )

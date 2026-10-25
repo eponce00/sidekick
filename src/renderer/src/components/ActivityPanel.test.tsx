@@ -48,8 +48,7 @@ describe('ActivityPanel inspector', () => {
         },
         workspace: {
           watchFiles: vi.fn(() => () => undefined),
-          listFiles: vi.fn(async () => ({ ok: true, files: [] })),
-          listCheckpoints: vi.fn(async () => ({ ok: true, checkpoints: [] }))
+          listFiles: vi.fn(async () => ({ ok: true, files: [] }))
         }
       }
     })
@@ -76,24 +75,6 @@ describe('ActivityPanel inspector', () => {
       )
     )
   }
-
-  it('combines Files, Recovery, and Browser in one docked inspector', async () => {
-    await renderPanel()
-    const browserContent = container.querySelector('.activity-browser-wrap') as HTMLElement
-    expect(browserContent.hidden).toBe(true)
-    expect(container.textContent).toContain('Files')
-    expect(container.textContent).toContain('Recovery')
-    expect(container.textContent).toContain('Browser')
-    expect(browserContent.hidden).toBe(true)
-
-    const browserTab = container.querySelector(
-      'button[aria-label="Open browser activity"]'
-    ) as HTMLButtonElement
-    await act(async () => browserTab.click())
-    expect(browserTab.classList.contains('active')).toBe(true)
-    expect(browserContent.hidden).toBe(false)
-    expect(container.textContent).toContain('No browser activity yet')
-  })
 
   it('moves a folder to the bin after saying what it holds, but never Git’s folder', async () => {
     const api = window.api as unknown as {
@@ -262,35 +243,10 @@ describe('ActivityPanel inspector', () => {
     expect(state.width).toBe(520)
   })
 
-  it('folds to its rail from its button or the tab already showing', async () => {
-    const onTogglePin = vi.fn()
-    await act(async () =>
-      root.render(
-        <ActivityPanel
-          isPinned
-          onTogglePin={onTogglePin}
-          conversationId="chat-1"
-          focusChainTodos={[]}
-          workspaceFolder={null}
-        />
-      )
-    )
-    const filesTab = container.querySelector('.activity-tab-button.active') as HTMLButtonElement
-    await act(async () => filesTab.click())
-    expect(onTogglePin).toHaveBeenCalledTimes(1)
-    // So does its own button, at the end of the tab row.
-    const fold = container.querySelector(
-      '.activity-header > [aria-label="Fold the panel to its rail"]'
-    ) as HTMLButtonElement
-    await act(async () => fold.click())
-    expect(onTogglePin).toHaveBeenCalledTimes(2)
-  })
-
   it('auto-selects Browser once when a new run starts and exposes all collapsed shortcuts', async () => {
     const toggle = vi.fn()
     await renderPanel(false, toggle)
     expect(container.querySelector('button[aria-label="Open Files"]')).not.toBeNull()
-    expect(container.querySelector('button[aria-label="Open Recovery"]')).not.toBeNull()
     expect(container.querySelector('button[aria-label="Open Browser activity"]')).not.toBeNull()
 
     await act(async () => {
@@ -304,7 +260,6 @@ describe('ActivityPanel inspector', () => {
       })
     })
     expect(toggle).toHaveBeenCalledTimes(1)
-    expect(window.localStorage.getItem('activityPanelTab')).toBe('browser')
   })
 
   it('opens Browser again when the agent waits there for the user', async () => {
@@ -359,16 +314,9 @@ describe('ActivityPanel inspector', () => {
     expect(onActiveTabChange).toHaveBeenLastCalledWith('files')
 
     await render({ tab: 'browser', at: 1 })
-    const browserTab = container.querySelector(
-      'button[aria-label="Open browser activity"]'
-    ) as HTMLButtonElement
-    expect(browserTab.classList.contains('active')).toBe(true)
     expect(onActiveTabChange).toHaveBeenLastCalledWith('browser')
-
-    // The same request again changes nothing; the user's own choice stands.
-    const filesTab = container.querySelector('.activity-tab-button') as HTMLButtonElement
-    await act(async () => filesTab.click())
-    await render({ tab: 'browser', at: 1 })
-    expect(browserTab.classList.contains('active')).toBe(false)
+    expect(
+      [...container.querySelectorAll('.panel-tab.is-active')].map((tab) => tab.textContent)
+    ).toEqual(['Browser'])
   })
 })

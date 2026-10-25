@@ -18,11 +18,7 @@ import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { promisify } from 'util'
-import type {
-  HistoryConflict,
-  HistoryMutationResult,
-  HistoryStatus
-} from '../../shared/checkpointTitles'
+import type { HistoryConflict, HistoryMutationResult } from '../../shared/workspaceHistory'
 
 const execFileAsync = promisify(execFile)
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -49,20 +45,10 @@ const MANAGED_EXCLUDES = [
   '*.key'
 ] as const
 
-export interface Checkpoint {
-  hash: string
-  message: string
-  timestamp: number
-  workspaceRoot: string
-  changeCount?: number
-  captureVersion?: number
-}
-
 export interface CreatedCheckpoint {
   hash: string
   changeCount: number
   captureVersion: number
-  changedPaths: string[]
 }
 
 interface CaptureSession {
@@ -507,14 +493,14 @@ export async function createCheckpoint(
       ])
       if (existingHash) {
         const metadata = await commitMetadata(root, existingHash)
-        const files = await changedPaths(root, metadata.baseTree, existingHash)
+        const changeCount =
+          metadata.changeCount ?? (await changedPaths(root, metadata.baseTree, existingHash)).length
         await updateRef(root, APPLIED_REF, existingHash)
         await removeCapture(capture)
         return {
           hash: existingHash,
-          changeCount: metadata.changeCount ?? files.length,
-          captureVersion: metadata.captureVersion,
-          changedPaths: files
+          changeCount,
+          captureVersion: metadata.captureVersion
         }
       }
     } catch {
@@ -559,8 +545,7 @@ export async function createCheckpoint(
   return {
     hash,
     changeCount: files.length,
-    captureVersion: HISTORY_VERSION,
-    changedPaths: files
+    captureVersion: HISTORY_VERSION
   }
 }
 
@@ -948,13 +933,6 @@ async function moveAppliedState(
   return { ok: true, changedFiles: new Set(operations.map(({ path }) => path)).size }
 }
 
-export async function restoreCheckpoint(
-  workspaceRoot: string,
-  hash: string
-): Promise<HistoryMutationResult> {
-  return moveAppliedState(resolve(workspaceRoot), hash)
-}
-
 export async function hardResetCheckpoint(
   workspaceRoot: string,
   hash: string
@@ -994,68 +972,6 @@ export async function rewindToBeforeCheckpoint(
     changedFiles: new Set(operations.map(({ path }) => path)).size,
     parentHash
   }
-}
-
-export async function getCheckpointDiff(workspaceRoot: string, hash: string): Promise<string> {
-  const MAX_DIFF_BYTES = 8_000
-  await initShadowRepo(workspaceRoot)
-  const metadata = await commitMetadata(workspaceRoot, hash)
-  const stat = await git(workspaceRoot, ['diff', '--stat', metadata.baseTree, hash])
-  let patch = ''
-  try {
-    patch = await git(workspaceRoot, ['diff', '-U2', metadata.baseTree, hash])
-    if (patch.length > MAX_DIFF_BYTES)
-      patch = `${patch.slice(0, MAX_DIFF_BYTES)}\n... (diff truncated)`
-  } catch {
-    // Binary-only history entries still expose the stat summary.
-  }
-  return stat + (patch ? `\n\n${patch}` : '')
-}
-
-export async function getHistoryStatus(workspaceRoot: string): Promise<HistoryStatus> {
-  await initShadowRepo(workspaceRoot)
-  let realRepository = false
-  try {
-    realRepository =
-      (await realGit(workspaceRoot, ['rev-parse', '--is-inside-work-tree'])) === 'true'
-  } catch {
-    // Ordinary folders are fully supported by the private history repository.
-  }
-  return {
-    storage: 'private-app-data',
-    realRepository,
-    appliedHash: await ref(workspaceRoot, APPLIED_REF)
-  }
-}
-
-export async function listCheckpoints(workspaceRoot: string): Promise<Checkpoint[]> {
-  await initShadowRepo(workspaceRoot)
-  if (!(await ref(workspaceRoot, HISTORY_BRANCH))) return []
-  const log = await git(workspaceRoot, ['log', HISTORY_BRANCH, '--format=%H%x1f%ct%x1f%B%x1e'])
-  if (!log) return []
-
-  const entries: Checkpoint[] = []
-  for (const record of log
-    .split('\x1e')
-    .map((item) => item.trim())
-    .filter(Boolean)) {
-    const [hash, timestampText, ...bodyParts] = record.split('\x1f')
-    const body = bodyParts.join('\x1f').trim()
-    const metadata = await commitMetadata(workspaceRoot, hash)
-    let changeCount = metadata.changeCount
-    if (changeCount === undefined) {
-      changeCount = (await changedPaths(workspaceRoot, metadata.baseTree, hash)).length
-    }
-    entries.push({
-      hash,
-      message: body.split(/\r?\n/)[0] || 'SideKick changes',
-      timestamp: Number.parseInt(timestampText, 10) * 1000,
-      workspaceRoot,
-      changeCount,
-      captureVersion: metadata.captureVersion
-    })
-  }
-  return entries
 }
 
 export async function deleteShadowRepo(workspaceRoot: string): Promise<void> {

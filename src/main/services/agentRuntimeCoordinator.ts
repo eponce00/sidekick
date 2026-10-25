@@ -22,7 +22,6 @@ import { loadStoredSettings } from '../ipc/settings'
 import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
-import { CheckpointTitleStore } from './checkpointTitleStore'
 import {
   ConversationRunPreparer,
   steeredProviderMessage,
@@ -49,7 +48,6 @@ import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
 import type { AgentChildRunLauncher, ArtifactBuildResult } from './agentToolRuntime'
-import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { mainProcessMcpTrust } from './mcpServerTrust'
 import { OfficeHelperService } from './officeHelperService'
@@ -625,16 +623,7 @@ export class AgentRuntimeCoordinator {
       console.warn('[History] Could not finish run checkpoint:', error)
       return null
     })
-    if (!checkpoint) return null
-
-    const outcomeLabel = checkpointFallbackTitleFromPaths(checkpoint.changedPaths)
-    const storedLabel = phase === 'completed' ? outcomeLabel : `${outcomeLabel} (${phase})`
-    new CheckpointTitleStore(this.db).recordCreated(
-      active.prepared.workspaceRoot,
-      checkpoint.hash,
-      storedLabel
-    )
-    return checkpoint.hash
+    return checkpoint?.hash ?? null
   }
 
   private async finalizeUnexpectedFailure(runId: string, error: unknown): Promise<void> {
