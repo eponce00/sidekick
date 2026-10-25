@@ -101,71 +101,11 @@
   color: var(--accent);
   font: 500 var(--text-xs) / 1 var(--font-mono);
 }
-/* Shown only when the page offers WebMCP tools; the count says how many. */
-.browser-workspace-tools {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 4px;
-  font: 500 var(--text-xs) / 1 var(--font-mono);
-}
-.browser-workspace-tools[aria-expanded='true'] {
-  background: var(--accent-subtle);
-  color: var(--accent);
-}
-.browser-workspace-page-tools {
-  flex-shrink: 0;
-  max-height: 40%;
-  overflow-y: auto;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-1);
-  font-size: var(--text-xs);
-}
-.browser-workspace-page-tools-heading {
-  margin: 0 0 6px;
-  color: var(--text-secondary);
-}
-.browser-workspace-page-tools-heading strong {
-  color: var(--text-primary);
-  font-weight: 600;
-}
-.browser-workspace-page-tools ul {
+.browser-workspace-address {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.browser-workspace-page-tool-name {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  flex: 1;
   min-width: 0;
-}
-.browser-workspace-page-tool-name code {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-}
-.browser-workspace-page-tool-mark {
-  flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-3);
-  color: var(--text-secondary);
-}
-.browser-workspace-page-tools li p {
-  display: -webkit-box;
-  margin: 2px 0 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 .browser-workspace-toolbar input {
   flex: 1;
@@ -176,6 +116,114 @@
   border-radius: var(--radius-sm);
   padding: 6px 8px;
   font-size: var(--text-sm);
+}
+.browser-workspace-address.has-tools input {
+  padding-right: 30px;
+}
+/* Shown only when the page offers WebMCP tools: a quiet page action at the field's end. */
+.browser-workspace .browser-workspace-tools {
+  position: absolute;
+  top: 50%;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--text-muted);
+  transform: translateY(-50%);
+}
+.browser-workspace .browser-workspace-tools[aria-expanded='true'] {
+  background: var(--surface-3);
+  color: var(--text-primary);
+}
+/* Drawn over the page's picture: the page itself hides while the popover is open. */
+.browser-workspace-page-tools {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: 280px;
+  max-width: calc(100vw - 16px);
+  max-height: min(360px, 60vh);
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
+  font-size: var(--text-xs);
+  animation: motion-menu-down-in var(--duration-normal) var(--ease-out);
+  transform-origin: top right;
+}
+.browser-workspace-page-tools:focus {
+  outline: none;
+}
+.browser-workspace-page-tools header {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  padding: 6px 8px 5px;
+  color: var(--text-muted);
+}
+.browser-workspace-page-tools header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.browser-workspace-page-tools header span {
+  flex-shrink: 0;
+}
+.browser-workspace-page-tools ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.browser-workspace-page-tools li button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  text-align: left;
+}
+.browser-workspace-page-tools li button svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transition: transform var(--duration-fast) var(--ease-out);
+}
+.browser-workspace-page-tools li button[aria-expanded='true'] svg {
+  transform: rotate(90deg);
+}
+.browser-workspace-page-tools code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+/* The first mark pushes itself and any after it to the row's end. */
+.browser-workspace-page-tool-mark {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.browser-workspace-page-tools code + .browser-workspace-page-tool-mark {
+  margin-left: auto;
+}
+.browser-workspace-page-tools blockquote {
+  margin: 0 8px 6px 26px;
+  padding: 1px 0 1px 8px;
+  border-left: 2px solid var(--border-subtle);
+  color: var(--text-secondary);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .browser-workspace-resume {
   display: flex;

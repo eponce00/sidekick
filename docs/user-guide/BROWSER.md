@@ -50,9 +50,10 @@ The page is responsive by default: it lays out at the panel's width at 100%, lik
 
 Some websites offer tools to in-browser agents through
 [WebMCP](https://webmachinelearning.github.io/webmcp/): a store might offer "add to cart", a travel
-site "search flights". When the page in the active tab offers tools, a plug button with their
-number appears in the Browser panel's toolbar. Choose it to see each tool's name, whether the site
-marks it read-only, and the site's own description of it.
+site "search flights". When the page in the active tab offers tools, a small plug icon appears at
+the end of the Browser panel's address field; pages without tools show nothing. Choose it to see
+which site offers them and each tool's name, and whether the site marks it read-only. Choose a tool
+to read the site's own description of it.
 
 The agent learns which tools a page offers when it looks at the page. It lists them with
 `browser_list_webmcp_tools` and calls one with `browser_call_webmcp_tool`, which runs the site's own

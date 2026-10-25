@@ -125,8 +125,10 @@ redaction that apply to all tool results, which also matches the JSON forms othe
 ## Browser panel
 
 `workspaceSnapshot` reports the active tab's tools with the origin, each description cut to 300
-characters. The panel's toolbar shows a plug button with the count, which opens the list inline
-under the toolbar, so the page view, which is drawn above the app, is never covered.
+characters. Only then does a plug button appear, inside the address field, so neither the field
+nor the page view moves. It opens a popover of tool names, each disclosing its description on
+request. The page view is drawn above the app, so the panel first asks for a `snapshot` of the page;
+the popover is a dialog, which hides the view while the picture fills its place.
 
 ## Verification
 
