@@ -1,4 +1,5 @@
 import {
+  app,
   BrowserWindow,
   Menu,
   clipboard,
@@ -11,6 +12,7 @@ import {
 import { basename, isAbsolute, join, relative } from 'path'
 import { getStore } from './state'
 import { getStoredWorkspace, resolveKnownWorkspace, assertInsideWorkspace } from './workspaceUtils'
+import { chatIdForFolder, copyUploadIntoChatFolder } from '../services/chatFolders'
 import { promises as fs } from 'fs'
 import { spawn } from 'child_process'
 import { randomUUID } from 'crypto'
@@ -57,8 +59,29 @@ export function registerWorkspaceHandlers(): void {
   ipcMain.handle('workspace:selectContextAttachments', async (event, passedRoot: string) => {
     try {
       const workspaceRoot = resolveKnownWorkspace(passedRoot)
-      const canonicalRoot = await fs.realpath(workspaceRoot)
       const win = BrowserWindow.fromWebContents(event.sender)
+      // A chat with no project takes files from anywhere, as copies in its own folder.
+      if (chatIdForFolder(workspaceRoot)) {
+        const uploadOptions: OpenDialogOptions = {
+          title: 'Attach files',
+          defaultPath: app.getPath('documents'),
+          buttonLabel: 'Attach',
+          properties: ['openFile', 'multiSelections']
+        }
+        const selection = win
+          ? await dialog.showOpenDialog(win, uploadOptions)
+          : await dialog.showOpenDialog(uploadOptions)
+        if (selection.canceled || !selection.filePaths.length) {
+          return { ok: true, canceled: true, attachments: [] }
+        }
+        const attachments: ProjectContextAttachment[] = []
+        for (const selectedPath of selection.filePaths.slice(0, 12)) {
+          const copied = await copyUploadIntoChatFolder(workspaceRoot, selectedPath)
+          attachments.push({ id: randomUUID(), kind: 'file' as const, ...copied })
+        }
+        return { ok: true, canceled: false, attachments }
+      }
+      const canonicalRoot = await fs.realpath(workspaceRoot)
       const choiceOptions = {
         type: 'question' as const,
         title: 'Attach project context',

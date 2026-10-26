@@ -219,6 +219,8 @@ interface ChatInputProps {
   onModelChange: (modelId: string) => void
   onOpenModelSearch: () => void
   workspaceFolder: string | null
+  /** The chat has no project and keeps attached files as copies in its own folder. */
+  attachesToChatFolder?: boolean
   /** Shown after the add menu, such as the chat's worktree. */
   toolbarExtra?: React.ReactNode
   onOpenWorkspace: () => void
@@ -307,6 +309,7 @@ export function ChatInput({
   onModelChange,
   onOpenModelSearch,
   workspaceFolder,
+  attachesToChatFolder = false,
   toolbarExtra,
   onOpenWorkspace,
   onOpenWorkspaceMemory,
@@ -1089,13 +1092,17 @@ export function ChatInput({
                 <section className="features-menu-section" role="group" aria-label="Add">
                   <div className="features-menu-section-label">Add</div>
                   <FeatureMenuAction
-                    label="Files and folders"
-                    description="Attach files or a folder from the current project"
+                    label={attachesToChatFolder ? 'Files' : 'Files and folders'}
+                    description={
+                      attachesToChatFolder
+                        ? 'Attach files from your computer; this chat keeps a copy'
+                        : 'Attach files or a folder from the current project'
+                    }
                     icon={<Paperclip size={16} />}
                     onClick={() => runFeatureAction(onAddContextAttachments)}
-                    disabled={!workspaceFolder}
+                    disabled={!workspaceFolder && !attachesToChatFolder}
                     unavailableReason={
-                      !workspaceFolder
+                      !workspaceFolder && !attachesToChatFolder
                         ? 'Open a project before attaching files or folders'
                         : undefined
                     }

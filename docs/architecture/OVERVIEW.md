@@ -154,8 +154,7 @@ refusals as faults. A path outside the project, whether written with `..`, as an
 path, or reached through a link, is `workspace_scope` whichever tool named it. Its recovery says
 the folder is not granted to the chat and how the user can grant it: a chat in that folder's
 project, which a manager can start with `start_session` and the user approves on the start card,
-or copying the files in. It never suggests another route to the folder. A chat detached from its
-project refuses file and command tools the same way. A browser page that fails to load is labelled
+or copying the files in. It never suggests another route to the folder. A browser page that fails to load is labelled
 like a failed model request: a refused or dropped connection is `transient` and one that gave up
 is `timeout`, while a host name that does not resolve is `not_found`, because the model chose the
 address. `internal` is left for failures nothing explains. A command that failed on a Unix command
@@ -672,8 +671,8 @@ contract is in [Private workspace History](../user-guide/WORKSPACE_HISTORY.md).
 `projects` stores durable folder-backed context boundaries and `conversations.project_id` stores
 membership. A null project id is an intentional standalone chat, not an implicit reference to the
 last opened folder. Selecting or creating a conversation activates its project folder in the trusted
-main process before workspace-dependent capabilities are used. A chat that has never had a project
-works in its own folder, `chat-folders/<conversation id>` under the app's data, which the
+main process before workspace-dependent capabilities are used. A chat with no project, never attached or
+detached from one, works in its own folder, `chat-folders/<conversation id>` under the app's data, which the
 conversation context names in place of a project folder, so tools, commands, History and the
 Terminal share one boundary. The trusted resolver accepts that exact folder for that chat only.
 It is made when first used, copied on fork, and removed with the chat; a startup sweep removes

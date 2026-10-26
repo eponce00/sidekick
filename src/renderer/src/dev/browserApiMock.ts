@@ -1034,7 +1034,7 @@ export function installBrowserApiMock(): void {
         )
         const project = previewProjects.find(({ id }) => id === conversation?.project_id)
         const projectRoot = conversation?.worktree_folder ?? project?.folder_path ?? null
-        const chatFolder = !projectRoot && !conversation?.home_workspace_root
+        const chatFolder = !projectRoot
         return {
           conversationId,
           projectId: conversation?.project_id ?? null,

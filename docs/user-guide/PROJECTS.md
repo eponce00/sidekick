@@ -16,7 +16,7 @@ standalone chats for work that does not belong to a folder.
   History work there. The Files panel shows it as **Chat files**. Paths outside it are refused as
   they are outside a project. A fork starts with a copy of its files, moving the chat into a
   project switches it to the project's folder, and deleting the chat deletes its folder. A chat
-  detached from its project gets no folder of its own.
+  detached from its project works in a folder of its own the same way until it is reattached.
 - The global New Chat action creates a standalone chat. The plus action beside a project creates a
   chat inside that project. A new chat left before anything is sent in it goes away rather than
   waiting in the sidebar, unless something was typed in its message box; a worktree made for it

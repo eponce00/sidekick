@@ -1424,11 +1424,11 @@ function ChatPanel({
   }
 
   const addContextAttachments = async (): Promise<void> => {
-    if (!workspaceFolder) {
+    if (!filesFolder) {
       setAttachmentError('Open a project before attaching files or folders')
       return
     }
-    const result = await window.api.workspace.selectContextAttachments(workspaceFolder)
+    const result = await window.api.workspace.selectContextAttachments(filesFolder)
     if (!result.ok) {
       setAttachmentError(result.error || 'Could not attach project context')
       return
@@ -2030,6 +2030,7 @@ function ChatPanel({
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
         workspaceFolder={workspaceFolder}
+        attachesToChatFolder={!workspaceFolder && Boolean(filesFolder)}
         toolbarExtra={
           worktree ? (
             <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />

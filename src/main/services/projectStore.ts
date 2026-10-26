@@ -144,9 +144,8 @@ export class ProjectStore {
     if (!conversation) throw new Error('Conversation not found')
     const inWorktree = Boolean(conversation.worktree_id && conversation.worktree_folder)
     const projectRoot = conversation.worktree_folder ?? conversation.folder_path
-    // A chat detached from its project keeps no folder; one that never had a project has its own.
-    const chatFolder =
-      !projectRoot && !conversation.home_workspace_root ? chatFolderPath(conversationId) : null
+    // A chat with no project, never attached or detached from one, works in a folder of its own.
+    const chatFolder = projectRoot ? null : chatFolderPath(conversationId)
 
     const event = this.db
       .prepare(

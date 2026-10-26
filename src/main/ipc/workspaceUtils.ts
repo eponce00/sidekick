@@ -66,8 +66,7 @@ export function resolveKnownWorkspace(passedRoot?: unknown): string {
     getDb()
       .prepare(
         `SELECT 1 FROM conversations
-         WHERE id = ? AND project_id IS NULL AND worktree_id IS NULL
-           AND home_workspace_root IS NULL`
+         WHERE id = ? AND project_id IS NULL AND worktree_id IS NULL`
       )
       .get(chatId)
   if (!chat) throw new Error('Workspace is not associated with a SideKick project chat')

@@ -122,7 +122,10 @@ of its report.
   smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
 - **Files:** type `@` to pick a project file. Its path goes into the message and the file is
   attached. Attached files, up to four per message, are read before the agent starts, so its first
-  step already has their contents; the reads show in the reply like any other.
+  step already has their contents; the reads show in the reply like any other. In a chat without
+  a project, **+** → **Files** attaches files from anywhere on your computer, up to 100 MB each:
+  the chat keeps a copy in the `uploads` folder of its own folder, so the original is never
+  changed, and the copies go when the chat is deleted.
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
   goal, and for your saved prompts.
 - **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,

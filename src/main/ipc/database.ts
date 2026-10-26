@@ -229,7 +229,7 @@ export function registerDatabaseHandlers(): void {
       if (createdWorktree) await worktrees.discardFresh(createdWorktree.id)
       throw error
     }
-    if (!targetProjectId && !targetWorktreeId && !source.home_workspace_root) {
+    if (!targetProjectId && !targetWorktreeId) {
       try {
         copyChatFolder(sourceId, id)
       } catch (error) {

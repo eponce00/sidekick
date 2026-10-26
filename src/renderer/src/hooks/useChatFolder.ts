@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 
 /**
  * The folder a chat with no project works in, where its files and History are; null for a chat
- * in a project, and for one detached from its project.
+ * in a project.
  */
 export function useChatFolder(
   conversationId: string | null,
