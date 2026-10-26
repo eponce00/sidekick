@@ -43,6 +43,7 @@ behavior, and the development guide when testing or publishing it.
 
 - [Testing](development/TESTING.md) — deterministic suites, provider smoke tests, and live evaluations.
 - [UI guidelines](development/UI.md) — visual and interaction conventions.
+- [README media](development/MEDIA.md) — how the README's animations are recorded from the real app and rendered.
 - [Releases](development/RELEASES.md) — permanent zero-cost distribution, packaging, provenance, and release checks.
 - [Code signing policy](development/CODE_SIGNING.md) — what is signed through SignPath Foundation, by whom, and how.
 - [Reference repositories](development/REFERENCES.md) — upstream research and attribution policy.

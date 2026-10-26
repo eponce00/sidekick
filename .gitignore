@@ -8,6 +8,12 @@ reference/
 /reports/
 /test-results/
 /playwright-report/
+# README media: the recording, frames and renders are made again from media/ (see its guide).
+/media/out/
+/media/public/clips/
+/media/.frames*/
+/media/.stills/
+/media/.video-temp/
 /.nyc_output/
 
 # Local AI-agent instructions, memory, and session state.

@@ -25,14 +25,14 @@
   <a href="https://github.com/eponce00/sidekick/actions/workflows/ci.yml">
     <img src="https://github.com/eponce00/sidekick/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI status" />
   </a>
-  <img src="https://img.shields.io/badge/source-v0.20.0-86aee8" alt="Source version 0.20.0" />
+  <img src="https://img.shields.io/badge/source-v0.21.0-86aee8" alt="Source version 0.21.0" />
   <img src="https://img.shields.io/badge/macOS-Apple%20Silicon-111827?logo=apple" alt="macOS Apple Silicon" />
   <img src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows11" alt="Windows x64" />
   <img src="https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=111827" alt="Linux x64" />
 </p>
 
 <p align="center">
-  <img src="./docs/assets/screenshots/conversation.png" width="1200" alt="SideKick conversation with interleaved agent work, file changes, and project files" />
+  <img src="./docs/assets/media/hero.webp" width="960" alt="SideKick in action: the agent fixes a bug and runs the tests, a live forecast artifact builds as it streams, a chat splits work into two worker chats, and the theme switches from dark to light" />
 </p>
 
 > [!IMPORTANT]
@@ -94,26 +94,63 @@ receives each request, which tools are available, and how much autonomy the agen
   </tr>
 </table>
 
+## See it work
+
+Every clip below is the real app, recorded as it works. Only the model is scripted, so the takes
+can be recorded again and look the same; see [README media](./docs/development/MEDIA.md).
+
+### From bug report to passing tests
+
+Describe the problem and the agent reads the code, runs the tests, edits the code and runs them
+again. Every change lands as a diff you can open, comment on line by line, undo, or rewind
+together with the chat.
+
+<p align="center">
+  <img src="./docs/assets/media/agent.webp" width="960" alt="The agent reads a file, runs failing tests, edits the formatter, and runs the tests again until all three pass" />
+</p>
+
+### Live UI that builds while the model writes it
+
+Ask for a dashboard, a calculator or a game and it appears in the reply piece by piece as the
+code streams: the layout first, then each part as it arrives. A builder checks how it rendered and
+fixes it in place, and a follow-up such as "switch it to the evening sky" changes it in place
+instead of rewriting it.
+
+<p align="center">
+  <img src="./docs/assets/media/artifacts.webp" width="960" alt="A forecast artifact takes shape element by element while it streams, then a follow-up switches it to an evening sky in place" />
+</p>
+
+### Chats that work together
+
+Ask a chat to split work and it starts other chats, each with its own model, tools, transcript and
+Git worktree. They sit under it in the sidebar, work at the same time, and report back when they
+finish; you can open and talk to any of them. See
+[Chats that work together](docs/user-guide/CHATS_THAT_WORK_TOGETHER.md).
+
+<p align="center">
+  <img src="./docs/assets/media/team.webp" width="960" alt="A chat starts two worker chats that appear nested in the sidebar, work in parallel, and report back" />
+</p>
+
+### Your own tools beside the chat
+
+The side panel holds the chat's files, its browser, its chats and your own terminals, in tabs you
+can split into sections or drag out into a window of their own. The terminal opens in the chat's
+folder and lists the agent's commands beside your shells.
+
+<p align="center">
+  <img src="./docs/assets/media/panel.webp" width="960" alt="The side panel opens a terminal in the project, runs the tests, and shows the apps a new tab offers" />
+</p>
+
 ## A browser the agent can actually use
 
 SideKick includes an isolated Chromium workspace for visual feedback. Vision-capable agents can
 open local or remote pages, inspect accessible structure, click, type, scroll, resize the viewport,
-capture screenshots, and verify the result. The docked Browser panel shows the live page, a visible
-cursor, and concise activity while the ordinary conversation keeps text, thinking, and tools in
-their real execution order. When a website offers its own tools through
+capture screenshots, and verify the result. The Browser panel works like a browser of its own, with
+tabs, find, zoom, device sizes and bookmarks and history imported from your other browsers, and it
+shows the live page with a visible cursor while the agent works. Mark up a page with comments and
+style tweaks, by typing or speaking, and send them to the agent in one go. When a website offers its own tools through
 [WebMCP](docs/user-guide/BROWSER.md#tools-that-websites-offer), the agent can call them directly,
 with the same permissions as a click.
-
-## Chats that work together
-
-Ask a chat to split work into parallel chats. Each one gets its own model, project instructions,
-tools, transcript and Git worktree, and reports back to the chat that started it when it finishes.
-They sit under it in the sidebar, their reports fold into its conversation, and you can open and
-talk to any of them. See [Chats that work together](docs/user-guide/CHATS_THAT_WORK_TOGETHER.md).
-
-<p align="center">
-  <img src="./docs/assets/screenshots/chat-family.png" width="1200" alt="A SideKick chat that started two worker chats, showing them nested in the sidebar and their reports in the conversation" />
-</p>
 
 ## Local models and cloud models, together
 
