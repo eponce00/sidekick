@@ -2,6 +2,7 @@ import { BROWSER_RESPONSIVE_DEVICE, browserDevicePreset } from '../../shared/bro
 import { dirname, join, resolve } from 'path'
 import { readFile, writeFile } from 'fs/promises'
 import { setTimeout as abortableDelay } from 'timers/promises'
+import { credentialPageOrigin } from '../../shared/credentials'
 import { credentialRedactor } from './credentialRedaction'
 import { composeFilmstrip } from './browserFilmstrip'
 import { OutsideProjectError } from '../utils/workspacePaths'
@@ -1970,11 +1971,12 @@ export function registerBrowserToolHandlers(
       } else if (name === 'browser_sign_in') {
         const uses = options.credentials?.()
         if (!uses) throw new Error('Stored credentials cannot be used in this run.')
+        const page = manager.service.pageAddress(lease.sessionId)
         const taken = uses.take({
           alias: stringArgument(args, 'credential') || '',
           tool: 'browser_sign_in',
           kind: 'browser',
-          target: manager.service.pageAddress(lease.sessionId),
+          target: page,
           conversationId: context.conversationId,
           runId: context.runId,
           toolCallId: context.toolCallId
@@ -1998,7 +2000,8 @@ export function registerBrowserToolHandlers(
             ...(passwordRef ? { passwordTarget: { ref: passwordRef } } : {}),
             username: taken.values.username,
             password: taken.values.password,
-            allowedOrigins: taken.summary.scope.browser?.origins ?? [],
+            // The site approved for this call, which `take` just checked the page is on.
+            site: credentialPageOrigin(page) ?? '',
             submit: args.submit === true
           },
           { signal: context.signal }

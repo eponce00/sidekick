@@ -5196,3 +5196,142 @@ body.is-resizing-table {
   color: var(--color-error);
   background: var(--color-error-subtle);
 }
+
+/* Permission mode, beside the model: one setting for every chat. */
+.permission-menu-container {
+  position: relative;
+  display: flex;
+}
+
+.permission-selector-inline {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px var(--space-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  background: none;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition-ui);
+}
+
+.permission-selector-inline:hover,
+.permission-selector-inline[aria-expanded='true'] {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.permission-selector-inline:focus-visible,
+.permission-menu-option:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.permission-selector-inline svg {
+  flex-shrink: 0;
+}
+
+.permission-menu {
+  right: -6px;
+  left: auto;
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  transform-origin: bottom right;
+}
+
+.permission-menu-heading,
+.permission-menu-footer {
+  padding: 4px 8px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.permission-menu-heading {
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.permission-menu-footer {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.permission-menu-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 14px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background-color var(--duration-fast);
+}
+
+.permission-menu-option:hover,
+.permission-menu-option:focus-visible {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.permission-menu-option.is-selected {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.permission-menu-option-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+}
+
+.permission-menu-option.is-selected .permission-menu-option-icon {
+  background: var(--surface-1);
+}
+
+.permission-menu-option-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.permission-menu-option-text strong {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.permission-menu-option-text small {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.permission-menu-option-check {
+  color: var(--text-secondary);
+}
+
+/* Too narrow for words: the chip keeps its shield. */
+@container composer (max-width: 460px) {
+  .permission-selector-inline-label {
+    display: none;
+  }
+}

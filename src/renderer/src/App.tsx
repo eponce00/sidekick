@@ -21,7 +21,7 @@ import CommandPalette from './components/CommandPalette'
 import type { TodoItem } from '../../shared/types'
 import type { MoveConversationInput } from '../../shared/projects'
 import type { ManagedWorktreeSummary } from '../../shared/worktrees'
-import { normalizePermissionMode } from '../../shared/permissions'
+import { normalizePermissionMode, type PermissionMode } from '../../shared/permissions'
 import { resolveStoredToolCallLimit } from '../../shared/agentLimits'
 import {
   conversationTitleVersionForSource,
@@ -603,6 +603,14 @@ function App(): React.JSX.Element {
       }),
     []
   )
+
+  // One mode for every chat. Turning on Full access asks in SideKick's own dialog first, and a
+  // cancelled change leaves the chip where it was.
+  const handlePermissionModeChange = (mode: PermissionMode): void => {
+    void window.api.settings.save({ commandPermissionMode: mode }).then((result) => {
+      if (result.success) setSettings((current) => ({ ...current, commandPermissionMode: mode }))
+    })
+  }
 
   // A model chosen in a chat changes that chat only, and is where the next new chat starts.
   const handleModelChange = (conversationId: string | null, modelId: string): void => {
@@ -1375,6 +1383,7 @@ function App(): React.JSX.Element {
           focusChainEnabled={settings.focusChainEnabled ?? true}
           toolCallLimit={settings.toolCallLimit ?? DEFAULT_TOOL_CALL_LIMIT}
           commandPermissionMode={settings.commandPermissionMode ?? 'full-access'}
+          onPermissionModeChange={handlePermissionModeChange}
           userLocation={userLocation}
           onResponseComplete={(message) =>
             handleConversationResponseComplete(panelConversationId, message)

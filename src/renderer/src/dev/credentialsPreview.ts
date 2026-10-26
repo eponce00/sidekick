@@ -13,9 +13,6 @@ export function previewCredentialsApi(): CredentialsAPI {
       alias: 'partner-center',
       kind: 'secret',
       description: 'Partner Center client secret for Store submissions.',
-      usernameVisible: false,
-      ask: 'once_per_chat',
-      scope: { projects: 'all', background: false },
       createdAt: now - 7 * 86_400_000,
       updatedAt: now - 2 * 86_400_000,
       lastUsedAt: now - 3_600_000,
@@ -26,13 +23,30 @@ export function previewCredentialsApi(): CredentialsAPI {
       alias: 'github-login',
       kind: 'sign_in',
       description: 'Test account for the sign-in flow.',
-      usernameVisible: true,
       username: 'sidekick-test',
-      ask: 'every_use',
-      scope: { projects: 'all', background: false },
       createdAt: now - 3 * 86_400_000,
       updatedAt: now - 3 * 86_400_000,
       needsValue: false
+    },
+    {
+      id: 'preview-build-server',
+      alias: 'build-server',
+      kind: 'sign_in',
+      description: 'SSH to the build server, 10.0.0.5.',
+      username: 'deploy',
+      createdAt: now - 20 * 86_400_000,
+      updatedAt: now - 20 * 86_400_000,
+      lastUsedAt: now - 26 * 60_000,
+      needsValue: false
+    },
+    {
+      id: 'preview-weather-api',
+      alias: 'weather-api',
+      kind: 'secret',
+      description: 'OpenWeather API key, sent as the appid query parameter.',
+      createdAt: now - 40 * 86_400_000,
+      updatedAt: now - 40 * 86_400_000,
+      needsValue: true
     }
   ]
   const events: CredentialEvent[] = [
@@ -64,12 +78,9 @@ export function previewCredentialsApi(): CredentialsAPI {
         alias: input.alias,
         kind: input.kind,
         description: input.description,
-        usernameVisible: input.usernameVisible,
-        ...(input.usernameVisible
+        ...(input.kind === 'sign_in'
           ? { username: input.values?.username ?? existing?.username ?? 'preview-user' }
           : {}),
-        ask: input.ask,
-        scope: input.scope,
         createdAt: existing?.createdAt ?? Date.now(),
         updatedAt: Date.now(),
         needsValue: false

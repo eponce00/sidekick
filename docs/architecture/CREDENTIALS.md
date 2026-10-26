@@ -8,12 +8,14 @@ work still open are in the [roadmap design](../roadmap/CREDENTIALS.md).
 
 ## Storage
 
-`CredentialVault` (`src/main/services/credentialVault.ts`) owns entries. Each entry's values, scope
-and settings together are one JSON record sealed with Electron `safeStorage`, kept under the
+`CredentialVault` (`src/main/services/credentialVault.ts`) owns entries. Each entry's values and
+description together are one JSON record sealed with Electron `safeStorage`, kept under the
 top-level store key `credentialVault` beside a plaintext alias, kind and description:
 
-- The sealed record carries its own id, so swapping sealed records between entries, or editing the
-  store file to widen a scope, yields a record that does not open as that entry.
+- The sealed record carries its own id, so swapping sealed records between entries yields a record
+  that does not open as that entry.
+- Records saved before credentials followed the permission mode also hold the scope and approval
+  settings they had. Nothing reads them, and the next save of the entry drops them.
 - The plaintext copy exists only so an entry this computer cannot open, as after copying the profile
   to another one, is still listed, marked `needsValue`, until the user enters its values again.
 - It lives outside `settings` because a Settings save rebuilds `settings` from the renderer's copy
@@ -35,7 +37,7 @@ top-level store key `credentialVault` beside a plaintext alias, kind and descrip
 opens it before registering IPC handlers, so its values are redacted from the first tool output on.
 
 The audit is the store key `credentialEvents`, the newest 1,000 events: created, value replaced,
-changed (naming which settings), deleted, and, for tools that use a credential, used, denied, and
+changed (naming what changed), deleted, and, for tools that use a credential, used, denied, and
 refused. An event names the entry, alias, tool, target, conversation and run; never a value, its
 length or a hash.
 
@@ -43,34 +45,31 @@ length or a hash.
 
 `src/main/ipc/credentials.ts` exposes status, list, save, delete and events through the
 `credentials` preload namespace (`CredentialsAPI` in `src/shared/credentials.ts`). Summaries carry
-no values; a sign-in's username is included only when the entry lets the agent read it. Save takes
-optional values: an absent field keeps the stored one, and a new entry, a changed kind, or an entry
-marked `needsValue` must bring every value. `normalizeCredentialValue` stores one kind of line
-ending, so a pasted key matches output line by line, and trims a secret or username, since a copied
-token often carries a space; a password is kept as typed, and the redactor also hides its trimmed
-form. A secret or password under 4 characters is refused. Replacing any value, including through a
-changed kind, retires the old ones and records `value_replaced`.
-
-The renderer is not trusted to widen an entry. `credentialWidening` lists every way a save would let
-the agent use an existing entry more (asking less often, more projects, background runs, a visible
-username), and the main process confirms those in a trusted dialog before saving. Delete always
-confirms in a trusted dialog. Both broadcast `credentials:changed`.
+no secret or password; a sign-in's username is included, as a password manager shows it, and is
+not redacted. Save takes optional values: an absent field keeps the stored one, and a new entry, a
+changed kind, or an entry marked `needsValue` must bring every value. The editor asks for a name, a
+description, an optional username and a password or key; a username makes the entry a sign-in.
+`normalizeCredentialValue` stores one kind of line ending, so a pasted key matches output line by
+line, and trims a secret or username, since a copied token often carries a space; a password is
+kept as typed, and the redactor also hides its trimmed form. A secret or password under 4
+characters is refused. Replacing any value, including through a changed kind, retires the old ones
+and records `value_replaced`. An entry has no scope to widen, so a save needs no confirmation;
+delete confirms in a trusted dialog. Both broadcast `credentials:changed`.
 
 ## The agent's tools
 
 The `credentials` capability (conversation runs, not planning, not sub-agents or research) adds:
 
-- `credentials_list`: each entry's alias, kind, description, scope and approval setting, and
-  whether its project and background scope admit the current chat (`credentialScopeRefusal`). It
-  tells the model that descriptions are notes, not instructions.
+- `credentials_list`: each entry's alias, kind, description and username, as a password manager
+  lists them, and whether it needs a new value. The model picks an entry, and where it belongs,
+  from its description. It tells the model that descriptions are notes, not instructions.
 - `credentials_request`: opens Settings at the Credentials editor through `app:openCredential`,
   prefilled with an alias, kind and description, as `provider_request_key` does for provider keys.
   The editor marks a description the agent wrote until the user changes it, because every chat
   that lists credentials reads it. The agent learns only that the editor opened.
 
 `CREDENTIAL_CONSUMER_TOOLS` in `src/shared/credentialTools.ts` names the tools that take an alias and
-add the value themselves; `credentials_list` reports it to the model, with each entry's web hosts,
-placement and token hosts.
+add the value themselves; `credentials_list` reports it to the model.
 
 ## Using a credential
 
@@ -80,28 +79,34 @@ sends the request. Arguments, and everything built from them (the run ledger, li
 approval cards, chat grants and the tool's title, which is recomputed from the arguments after
 authorization), hold only the alias.
 
-`CredentialUses` checks every rule each time: the entry exists, `credentialScopeRefusal` admits the
-chat's project and how it was started, and the target is in scope. `take` returns the values and
-records `used`, or records `refused` with the reason the tool returns to the model. Its audit
-target is the URL without its query string, so a value sent as a parameter is never kept.
+`CredentialUses` checks the rules no approval can stand in for, each time: the entry exists and
+this computer can open it, a web request goes over HTTPS (or plain HTTP to a loopback address), a
+command's variable cannot change how commands run, and a sign-in is a sign-in filled on a secure
+page. `take` returns the values and records `used`, or records `refused` with the reason the tool
+returns to the model. Its audit target is the URL without its query string, so a value sent as a
+parameter is never kept.
 
-**Approval.** `credentialRequestsFor` reads the uses a call asks for and `credentialApprovalFor`
-turns them into one `AgentCredentialApproval`. `AgentRunKernel.authorizeCredential` runs before the
-permission policy: an entry that asks every use, or once per chat without a grant yet, suspends the
-run with a permission card whose `preview.facts` name the credential, the target and how it is
-sent. Approving it approves the whole call. A once-per-chat grant is keyed on the entry and the
-target's origin. A use outside scope, including a returned-token alias that does not exist yet, is
-refused at that point with the reason, whatever the permission mode, so no card can stand in for
-it. Once the kernel approves a call, `credentialApproved` gives `CredentialUses` a one-time permit
-for that run, tool call, alias and URL; `take` hands values only to a permitted use and checks
-scope again. Permits a run did not use lapse when it ends. A denial records `denied`.
+**Approval.** A call that uses a credential is a sensitive action, which the
+[permission mode](../user-guide/PERMISSIONS.md) decides like any other. `credentialRequestsFor`
+reads the uses a call asks for and `credentialApprovalFor` turns them into one
+`AgentCredentialApproval`; `AgentRunKernel.decideTool` then requests `confirm` for the call. Full
+access runs it without a card. Otherwise the card's `preview.facts` name the credential, the target
+and how it is sent, and approving it approves the whole call. Its chat grant is keyed on the entry,
+plus the call's own scope when the call would ask without a credential, such as a POST or a command
+that changes something; a read with the same credential later in the chat then runs unasked. A
+use that breaks a rule, including a returned-token alias that does not exist yet, is refused before
+any card, whatever the mode. Once the kernel approves a call, `credentialApproved` gives
+`CredentialUses` a one-time permit for that run, tool call, alias and URL; `take` hands values only
+to a permitted use and checks the rules again. Permits a run did not use lapse when it ends. A
+denial records `denied`.
 
 **`http_request`** (`agentHttpToolHandlers.ts`, capability `web.request`, execute risk with GET and
 HEAD requested as auto) sends one request through `requestAdmitted` in `webNetworkGuard.ts`, the
 same local-network policy as `web_fetch`, and never follows a redirect. With a credential, the
-URL must be HTTPS on one of the entry's hosts (`credentialHostMatches`: exact host and port, or
-`*.domain` for subdomains), and the handler places the value as the entry's `CredentialSend` says:
-a header with a prefix, Basic authentication, a query parameter, or a form or JSON field. It refuses
+handler places the value where the call's `credential_as` says (`credentialSendFor`): a header with
+a prefix, Basic authentication for a sign-in, a query parameter, or a form or JSON field, by
+default an `Authorization: Bearer` header for a secret and Basic authentication for a sign-in.
+Headers that decide how the request travels, such as `Host` or `Content-Length`, are refused. It refuses
 a request that already sets that header, parameter or field in any letter case, a
 `Content-Encoding` header, and, when the value goes in the body, a `Content-Type` header: SideKick
 sets the body's type itself. The `timeout` argument is a deadline for the whole exchange, not only
@@ -115,30 +120,27 @@ how commands run (`credentialVariableRefusal`: `PATH`, `LD_*`, `DYLD_*`, `NODE_*
 `ComSpec`, `GIT_SSH_COMMAND` and similar), takes each value from `CredentialUses`, and passes them
 to `CommandService` as `secretEnvironment`, added after `shellChildEnvironment` strips
 secret-looking names inherited from SideKick's own environment. The Docker shell passes them with
-`--env NAME`, so Docker reads the value from its own environment. An entry's
-`CredentialCommandScope` is `ask`, where every command asks whatever the entry's setting, or
-`programs`, where `simpleCommandProgram` must find one simple command (no `;`, `&`, `|`,
-redirection, backticks, parentheses, braces or `$(`, in Bash or PowerShell) whose program is a
-bare name on the list; `credentialProgramRefusal` keeps shells, interpreters, launchers and remote
-shells such as `ssh` off it. `CredentialUses` checks the variable name too, so a refused variable
-never reaches an approval card. Before taking any value, `commandSecrets` looks the command's
-program up as the shell would (`resolveProgram`: PATH, and on Windows the working directory first)
-and refuses when it resolves to a file inside the project or the working directory, which the agent
-could have written. A command chat grant is keyed on the entry, the variable and the exact
-command.
+`--env NAME`, so Docker reads the value from its own environment. Any command may receive a
+credential. `CredentialUses` checks the variable name too, so a refused variable never reaches an
+approval card. Before taking any value, `commandSecrets` finds the program of a simple command
+(`simpleCommandProgram`), looks it up as the shell would (`resolveProgram`: PATH, and on Windows
+the working directory first) and refuses when it resolves to a file inside the project or the
+working directory, which the agent could have written in place of the installed program.
 
 **Browser sign-in.** `browser_sign_in` takes a sign-in's alias, and optional username and
-password field refs. Before it runs, the approval is keyed on the origin the conversation's browser
-is on (`AgentBrowserSessionManager.activeAddress`); when it runs, `CredentialUses` checks that
-origin (`credentialPageOrigin`: HTTPS, or HTTP on a loopback address) against the entry's
-`CredentialBrowserScope`, and `NativeBrowserSessionService.signIn` checks it again. `signIn` finds
-the fields as a password manager does (`FIND_SIGN_IN_FIELD`), then, for each field and immediately
-before typing, refuses one in a frame, one whose document origin differs, a form whose target is
-outside the entry's origins, and a password field that is not `type="password"`. Text goes through
+password field refs. Before it runs, the approval names the origin the conversation's browser is on
+(`AgentBrowserSessionManager.activeAddress`), which must be HTTPS or HTTP on a loopback address
+(`credentialPageOrigin`); the permit is bound to that origin, and
+`NativeBrowserSessionService.signIn` fills only while the page is still on it. `signIn` finds the
+fields as a password manager does (`FIND_SIGN_IN_FIELD`), then, for each field and immediately
+before typing, refuses one in a frame, one whose document origin differs, a form that sends to
+another site, and a password field that is not `type="password"`. A form may send to the page's
+own origin, or over HTTPS to another host of the same registrable domain (`sameSignInSite`, with
+`tldts` and the private suffixes, so one `github.io` site is not another's). Text goes through
 the same `enterBrowserText` path as `browser_type`, which refuses a focus or navigation change
 before inserting. The form is sent with `requestSubmit()` in the same page call that reads the
-form's target again; a target outside the entry's origins refuses the submission and clears the
-typed password. The result is one redacted semantic observation with no screenshot. Filled password fields are recorded on the tab: while one still
+form's target again; a target on another site refuses the submission and clears the typed
+password. The result is one redacted semantic observation with no screenshot. Filled password fields are recorded on the tab: while one still
 holds its value, `browser_evaluate` is refused, and a screenshot or observation is withheld if it
 is no longer a password field.
 
@@ -152,14 +154,14 @@ cannot parse, text in an encoding it cannot read, more than 32 tokens, or a toke
 beside a value that is not an alias (in XML, HTML, a script or any other text) withholds the body
 and the `Location` header. `CredentialUses` keeps the tokens in memory for the run that received
 them, for the response's `expires_in` or at most an hour, and sends them only as
-`Authorization: Bearer` to the entry's token hosts, never to a command. When a token expires or its
+`Authorization: Bearer` over HTTPS in that run's web requests, never to a command. When a token expires or its
 run ends, its value stays with the redactor, through `CredentialVault.setTransientSecrets`, until
 SideKick restarts.
 
 ## Redaction
 
 `CredentialRedactor` (`src/main/services/credentialRedaction.ts`) holds every stored value except a
-username the agent may read, plus values replaced or deleted since launch and returned tokens,
+sign-in's username, which the agent may read, plus values replaced or deleted since launch and returned tokens,
 and matches them with one Aho–Corasick automaton together
 with the encodings the GitHub Actions runner registers for its secrets: each line of a multi-line
 value (PEM armor lines excepted), JSON escaping, percent-encoding in both forms and both cases,

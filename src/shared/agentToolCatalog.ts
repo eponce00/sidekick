@@ -1306,7 +1306,7 @@ const browserUpload = definition(
 
 const browserSignIn = definition(
   'browser_sign_in',
-  "Sign in on the current page with a sign-in the user stored, named by its alias from credentials_list. SideKick fills the username and password itself, only on the sites the user allowed and only into the page's own fields, and you never see the password. Without refs it finds the form as a password manager does, including a username-only first step; pass username_ref or password_ref from browser_observe when it cannot. Never type a password with browser_type.",
+  "Sign in on the current page with a sign-in the user stored, named by its alias from credentials_list. SideKick fills the username and password itself, only on an HTTPS page and only into the page's own fields, and you never see the password. Check the page is the site the sign-in belongs to first. Without refs it finds the form as a password manager does, including a username-only first step; pass username_ref or password_ref from browser_observe when it cannot. Never type a password with browser_type.",
   {
     type: 'object',
     required: ['credential'],

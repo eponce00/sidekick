@@ -143,6 +143,8 @@ interface ChatPanelProps {
   focusChainEnabled?: boolean
   toolCallLimit?: number
   commandPermissionMode?: PermissionMode
+  /** Changes the permission mode every chat uses, from the composer. */
+  onPermissionModeChange?: (mode: PermissionMode) => void
   userLocation?: { city?: string; country?: string; timezone?: string }
   onResponseComplete?: (message: string) => void
   /** Changes when the user asked to see this conversation's newest reply. */
@@ -197,6 +199,8 @@ function ChatPanel({
   onTokenCountUpdate,
   onConversationCostUpdate,
   onFocusChainUpdate,
+  commandPermissionMode = 'full-access',
+  onPermissionModeChange,
   userLocation,
   onResponseComplete,
   focusReplyAt,
@@ -2042,6 +2046,8 @@ function ChatPanel({
         onToggleModelMenu={() => setIsModelMenuOpen(!isModelMenuOpen)}
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
+        permissionMode={commandPermissionMode}
+        onPermissionModeChange={onPermissionModeChange}
         workspaceFolder={workspaceFolder}
         attachesToChatFolder={!workspaceFolder && (Boolean(filesFolder) || !conversationId)}
         toolbarExtra={

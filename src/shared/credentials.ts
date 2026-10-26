@@ -6,13 +6,9 @@
 export const CREDENTIAL_KINDS = ['secret', 'sign_in'] as const
 export type CredentialKind = (typeof CREDENTIAL_KINDS)[number]
 
-/** When SideKick asks before a use the entry's scope already allows. */
-export const CREDENTIAL_ASK_POLICIES = ['every_use', 'once_per_chat', 'never'] as const
-export type CredentialAskPolicy = (typeof CREDENTIAL_ASK_POLICIES)[number]
-
 /**
- * Where a value goes in a request. The user decides this, not the model, so the model cannot put a
- * value somewhere an allowed host would publish it, such as an issue comment's body.
+ * Where a value goes in a web request. The agent says, for each request; SideKick puts the value
+ * there itself, so the agent never handles it.
  */
 export type CredentialSend =
   | { as: 'header'; name: string; prefix: string }
@@ -21,60 +17,20 @@ export type CredentialSend =
   | { as: 'form'; name: string; usernameName?: string }
   | { as: 'json'; name: string; usernameName?: string }
 
-export interface CredentialWebScope {
-  /** Exact hosts, with a port when it is not 443, or `*.example.com` for its subdomains. */
-  hosts: string[]
-  send: CredentialSend
-  /** Hosts that may receive tokens returned by a request that used this credential. */
-  tokenHosts: string[]
-}
-
-/**
- * Commands that may receive the value in an environment variable. A command that holds a value can
- * reveal it, so `ask` asks before every command, and `programs` admits only a single simple command
- * whose program is one the user named.
- */
-export interface CredentialCommandScope {
-  mode: 'ask' | 'programs'
-  programs: string[]
-}
-
-/** Pages a sign-in may be filled on: exact origins, as a password manager matches them. */
-export interface CredentialBrowserScope {
-  origins: string[]
-}
-
-export interface CredentialScope {
-  /** `all`, or the ids of the projects whose chats may use the entry. */
-  projects: 'all' | string[]
-  /** Whether chats a schedule or another chat started may use it. */
-  background: boolean
-  /** Absent when the entry may not be sent in web requests. */
-  web?: CredentialWebScope
-  /** Absent when no command may receive the entry. */
-  commands?: CredentialCommandScope
-  /** Absent when the entry may not be filled into a page. Sign-ins only. */
-  browser?: CredentialBrowserScope
-}
-
 /** What the renderer and the agent may know about an entry. */
 export interface CredentialSummary {
   id: string
   alias: string
   kind: CredentialKind
   description: string
-  /** Lets the agent read a sign-in's username; the password stays hidden either way. */
-  usernameVisible: boolean
-  /** Present only when `usernameVisible` is on. */
+  /** A sign-in's username, which the agent may read as a password manager shows it. */
   username?: string
-  ask: CredentialAskPolicy
-  scope: CredentialScope
   createdAt: number
   updatedAt: number
   lastUsedAt?: number
   /**
    * The stored record cannot be read on this computer, as after copying the profile to another
-   * one. It keeps its alias and description but needs its values and scope entered again.
+   * one. It keeps its alias and description but needs its values entered again.
    */
   needsValue: boolean
 }
@@ -92,9 +48,6 @@ export interface CredentialSaveInput {
   alias: string
   kind: CredentialKind
   description: string
-  usernameVisible: boolean
-  ask: CredentialAskPolicy
-  scope: CredentialScope
   values?: CredentialValues
 }
 
@@ -164,16 +117,6 @@ export function normalizeCredentialValue(field: keyof CredentialValues, value: s
   return field === 'password' ? text : text.trim()
 }
 
-export const CREDENTIAL_ASK_LABELS: Record<CredentialAskPolicy, string> = {
-  every_use: 'Every use',
-  once_per_chat: 'First use in each chat',
-  never: 'Never, within its scope'
-}
-
-export function defaultCredentialScope(): CredentialScope {
-  return { projects: 'all', background: false }
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -199,196 +142,61 @@ export function isReservedCredentialHeader(name: string): boolean {
   return RESERVED_HEADERS.has(lower) || lower.startsWith('proxy-')
 }
 
-/**
- * The canonical form of a host the user typed: lowercase, punycode, no trailing dot, and a port
- * only when it is not 443. `*.example.com` stands for the subdomains of a domain. Anything with a
- * path, user name, another scheme or a wildcard elsewhere is refused.
- */
-export function normalizeCredentialHost(raw: string): string | null {
-  let text = raw.trim().toLowerCase()
-  if (text.startsWith('https://')) text = text.slice('https://'.length).replace(/\/$/, '')
-  if (!text || /[\s/@?#\\]/.test(text)) return null
-  const wildcard = text.startsWith('*.')
-  if (wildcard) text = text.slice(2)
-  if (text.includes('*')) return null
-  let url: URL
-  try {
-    url = new URL(`https://${text}`)
-  } catch {
-    return null
-  }
-  if (url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null
-  const host = url.hostname.replace(/\.$/, '')
-  if (!host) return null
-  if (wildcard) {
-    // A wildcard covers a domain's subdomains, never an address or a bare suffix.
-    if (host.startsWith('[') || /^\d+(\.\d+){3}$/.test(host) || host.split('.').length < 2) {
-      return null
-    }
-  }
-  return `${wildcard ? '*.' : ''}${host}${url.port ? `:${url.port}` : ''}`
-}
-
-function splitHostPort(pattern: string): { host: string; port: string } {
-  if (pattern.startsWith('[')) {
-    const end = pattern.indexOf(']')
-    return { host: pattern.slice(0, end + 1), port: pattern.slice(end + 2) }
-  }
-  const colon = pattern.lastIndexOf(':')
-  return colon < 0
-    ? { host: pattern, port: '' }
-    : { host: pattern.slice(0, colon), port: pattern.slice(colon + 1) }
-}
-
-/** Whether `url` is an HTTPS address on one of `patterns`, port included. */
-export function credentialHostMatches(patterns: readonly string[], url: URL): boolean {
-  if (url.protocol !== 'https:' || url.username || url.password) return false
-  const host = url.hostname.toLowerCase().replace(/\.$/, '')
-  return patterns.some((pattern) => {
-    const expected = splitHostPort(pattern)
-    if (expected.port !== url.port) return false
-    if (expected.host.startsWith('*.')) return host.endsWith(`.${expected.host.slice(2)}`)
-    return host === expected.host
-  })
-}
-
-function normalizeHosts(value: unknown, label: string, allowEmpty: boolean): string[] | string {
-  if (!Array.isArray(value) || value.length > 50) return `Invalid ${label} list.`
-  const hosts: string[] = []
-  for (const raw of value) {
-    const host = typeof raw === 'string' ? normalizeCredentialHost(raw) : null
-    if (!host) return `${typeof raw === 'string' && raw ? raw : 'That'} is not a host name.`
-    if (!hosts.includes(host)) hosts.push(host)
-  }
-  if (!allowEmpty && !hosts.length) return `Add at least one ${label}.`
-  return hosts.sort()
-}
-
-function normalizeSend(value: unknown, kind: CredentialKind): CredentialSend | string {
-  if (!isRecord(value)) return 'Choose how the value is sent.'
+/** A placement the agent asked for, normalized, or why it cannot be used. */
+export function normalizeCredentialSend(
+  value: unknown,
+  kind: CredentialKind
+): CredentialSend | string {
+  if (!isRecord(value))
+    return 'credential_as must be an object such as {"as": "header", "name": "X-Api-Key"}.'
   const name = typeof value.name === 'string' ? value.name.trim() : ''
   const usernameName = typeof value.usernameName === 'string' ? value.usernameName.trim() : ''
   switch (value.as) {
     case 'header': {
       if (!HEADER_NAME.test(name) || isReservedCredentialHeader(name)) {
-        return 'Enter a header name SideKick can send, such as Authorization or X-Api-Key.'
+        return 'Name a header SideKick can send the value in, such as Authorization or X-Api-Key.'
       }
       const prefix = typeof value.prefix === 'string' ? value.prefix : ''
       if (prefix.length > 50 || /[\r\n\0]/.test(prefix)) return 'Invalid header prefix.'
       return { as: 'header', name, prefix }
     }
     case 'basic':
-      if (kind !== 'sign_in') return 'Basic authentication needs a sign-in.'
+      if (kind !== 'sign_in') return 'Basic authentication needs a sign-in with a username.'
       return { as: 'basic' }
     case 'query':
-      if (!FIELD_NAME.test(name)) return 'Enter the query parameter name.'
+      if (!FIELD_NAME.test(name)) return 'Name the query parameter.'
       return { as: 'query', name }
     case 'form':
     case 'json': {
-      if (!FIELD_NAME.test(name)) return 'Enter the field name.'
+      if (!FIELD_NAME.test(name)) return 'Name the field.'
       if (kind === 'sign_in') {
         if (!FIELD_NAME.test(usernameName) || usernameName === name) {
-          return 'Enter the username field name, different from the password field.'
+          return 'Name the username field (username_name), different from the password field.'
         }
         return { as: value.as, name, usernameName }
       }
       return { as: value.as, name }
     }
     default:
-      return 'Choose how the value is sent.'
+      return 'credential_as.as must be header, basic, query, form or json.'
   }
 }
 
-/** Returns a normalized web scope, or a reason it is invalid. */
-export function normalizeCredentialWebScope(
-  value: unknown,
-  kind: CredentialKind
-): { web: CredentialWebScope } | { error: string } {
-  if (!isRecord(value)) return { error: 'Invalid web request settings.' }
-  const hosts = normalizeHosts(value.hosts, 'host', false)
-  if (typeof hosts === 'string') return { error: hosts }
-  const tokenHosts = normalizeHosts(value.tokenHosts ?? [], 'token host', true)
-  if (typeof tokenHosts === 'string') return { error: tokenHosts }
-  const send = normalizeSend(value.send, kind)
-  if (typeof send === 'string') return { error: send }
-  return { web: { hosts, send, tokenHosts } }
+/** Where a value goes when the agent does not say: a bearer token, or Basic for a sign-in. */
+export function defaultCredentialSend(kind: CredentialKind): CredentialSend {
+  return kind === 'sign_in'
+    ? { as: 'basic' }
+    : { as: 'header', name: 'Authorization', prefix: 'Bearer ' }
 }
 
-/**
- * Programs that run whatever they are given, so allowing one would allow every command: shells,
- * interpreters, launchers and package runners.
- */
-const UNSAFE_PROGRAMS = new Set([
-  'sh',
-  'bash',
-  'zsh',
-  'fish',
-  'dash',
-  'ksh',
-  'csh',
-  'tcsh',
-  'pwsh',
-  'powershell',
-  'cmd',
-  'wsl',
-  'node',
-  'deno',
-  'bun',
-  'python',
-  'python3',
-  'py',
-  'ruby',
-  'perl',
-  'php',
-  'lua',
-  'osascript',
-  'wscript',
-  'cscript',
-  'mshta',
-  'rundll32',
-  'regsvr32',
-  'start',
-  // These run other programs, or commands on another computer, as easily as a shell.
-  'ssh',
-  'busybox',
-  'toybox',
-  'su',
-  'script',
-  'watch',
-  'timeout',
-  'nice',
-  'stdbuf',
-  'chroot',
-  'parallel',
-  'env',
-  'sudo',
-  'doas',
-  'runas',
-  'nohup',
-  'time',
-  'xargs',
-  'find',
-  'awk',
-  'sed',
-  'make',
-  'npm',
-  'npx',
-  'pnpm',
-  'yarn',
-  'invoke-expression',
-  'iex',
-  'invoke-command',
-  'start-process'
-])
-
-/** Why a program cannot be allowed, or null. */
-export function credentialProgramRefusal(program: string): string | null {
-  const name = program.trim().toLowerCase()
-  if (!/^[a-z0-9][a-z0-9._+-]{0,63}$/.test(name)) return `${program} is not a program name.`
-  if (UNSAFE_PROGRAMS.has(name.replace(/\.(exe|cmd|bat|ps1)$/, ''))) {
-    return `${name} runs whatever it is given, so allowing it would allow every command.`
-  }
-  return null
+/** The placement an `http_request` call asks for, in the tool's own argument names. */
+export function credentialSendFor(raw: unknown, kind: CredentialKind): CredentialSend | string {
+  if (raw === undefined || raw === null) return defaultCredentialSend(kind)
+  if (!isRecord(raw)) return normalizeCredentialSend(raw, kind)
+  return normalizeCredentialSend(
+    { ...raw, usernameName: raw.username_name ?? raw.usernameName },
+    kind
+  )
 }
 
 /**
@@ -473,8 +281,8 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 /**
- * The canonical origin of a page the user typed: HTTPS, or plain HTTP only on this computer's
- * loopback address, with no path. Browsers treat both as secure contexts.
+ * The canonical origin of a site: HTTPS, or plain HTTP only on this computer's loopback address,
+ * with no path. Browsers treat both as secure contexts; a sign-in is filled in on nothing else.
  */
 export function normalizeCredentialOrigin(raw: string): string | null {
   const text = raw.trim()
@@ -506,80 +314,6 @@ export function credentialPageOrigin(address: string): string | null {
   }
 }
 
-function normalizeBrowser(value: unknown, kind: CredentialKind): CredentialBrowserScope | string {
-  if (kind !== 'sign_in') return 'Only a sign-in can be filled into a page.'
-  if (!isRecord(value) || !Array.isArray(value.origins) || value.origins.length > 20) {
-    return 'Invalid page addresses.'
-  }
-  const origins: string[] = []
-  for (const raw of value.origins) {
-    const origin = typeof raw === 'string' ? normalizeCredentialOrigin(raw) : null
-    if (!origin) {
-      return `${typeof raw === 'string' && raw ? raw : 'That'} is not an HTTPS site address.`
-    }
-    if (!origins.includes(origin)) origins.push(origin)
-  }
-  if (!origins.length) return 'Add the site the sign-in belongs to.'
-  return { origins: origins.sort() }
-}
-
-function normalizeCommands(value: unknown): CredentialCommandScope | string {
-  if (!isRecord(value)) return 'Invalid command settings.'
-  if (value.mode === 'ask') return { mode: 'ask', programs: [] }
-  if (value.mode !== 'programs') return 'Choose how commands may use it.'
-  if (!Array.isArray(value.programs) || !value.programs.length || value.programs.length > 20) {
-    return 'Name at least one program.'
-  }
-  const programs: string[] = []
-  for (const raw of value.programs) {
-    if (typeof raw !== 'string') return 'Invalid program.'
-    const refusal = credentialProgramRefusal(raw)
-    if (refusal) return refusal
-    const name = raw
-      .trim()
-      .toLowerCase()
-      .replace(/\.(exe|cmd|bat|ps1|com)$/, '')
-    if (!programs.includes(name)) programs.push(name)
-  }
-  return { mode: 'programs', programs: programs.sort() }
-}
-
-/** Returns a normalized scope, or a reason it is invalid. */
-export function normalizeCredentialScope(
-  value: unknown,
-  kind: CredentialKind = 'secret'
-): { scope: CredentialScope } | { error: string } {
-  if (!isRecord(value)) return { error: 'Choose where the credential can be used.' }
-  let projects: CredentialScope['projects']
-  if (value.projects === 'all') projects = 'all'
-  else if (
-    Array.isArray(value.projects) &&
-    value.projects.length > 0 &&
-    value.projects.length <= 200 &&
-    value.projects.every((id) => typeof id === 'string' && /^[\w.:-]{1,200}$/.test(id))
-  ) {
-    projects = [...new Set(value.projects as string[])].sort()
-  } else return { error: 'Choose all projects or at least one project.' }
-  if (typeof value.background !== 'boolean') return { error: 'Invalid background setting.' }
-  const scope: CredentialScope = { projects, background: value.background }
-  if (value.web !== undefined && value.web !== null) {
-    const web = normalizeCredentialWebScope(value.web, kind)
-    if ('error' in web) return web
-    scope.web = web.web
-  }
-  if (value.commands !== undefined && value.commands !== null) {
-    const commands = normalizeCommands(value.commands)
-    if (typeof commands === 'string') return { error: commands }
-    scope.commands = commands
-  }
-  if (value.browser !== undefined && value.browser !== null) {
-    const browser = normalizeBrowser(value.browser, kind)
-    if (typeof browser === 'string') return { error: browser }
-    scope.browser = browser
-  }
-  return { scope }
-}
-
 /**
  * Checks a save request's shape. `existing` is the entry being edited, which decides whether
  * values are required.
@@ -593,7 +327,7 @@ export function validateCredentialInput(
   if (!CREDENTIAL_ALIAS_PATTERN.test(alias)) {
     return {
       error:
-        'The alias must be 1 to 64 lowercase letters, digits, hyphens or underscores, starting with a letter or digit.'
+        'The name must be 1 to 64 lowercase letters, digits, hyphens or underscores, starting with a letter or digit.'
     }
   }
   if (!CREDENTIAL_KINDS.includes(input.kind as CredentialKind)) {
@@ -604,12 +338,6 @@ export function validateCredentialInput(
   if (description.length > MAX_CREDENTIAL_DESCRIPTION) {
     return { error: `The description can be at most ${MAX_CREDENTIAL_DESCRIPTION} characters.` }
   }
-  if (!CREDENTIAL_ASK_POLICIES.includes(input.ask as CredentialAskPolicy)) {
-    return { error: 'Choose when SideKick asks before a use.' }
-  }
-  if (typeof input.usernameVisible !== 'boolean') return { error: 'Invalid username setting.' }
-  const scope = normalizeCredentialScope(input.scope, kind)
-  if ('error' in scope) return scope
   if (input.id !== undefined && (typeof input.id !== 'string' || !input.id)) {
     return { error: 'Invalid credential id.' }
   }
@@ -625,7 +353,7 @@ export function validateCredentialInput(
     if (value.length > MAX_CREDENTIAL_VALUE) return { error: 'That value is too long.' }
     if (field !== 'username' && value.length < MIN_CREDENTIAL_VALUE) {
       return {
-        error: `The ${field} must be at least ${MIN_CREDENTIAL_VALUE} characters; SideKick cannot keep shorter values out of output.`
+        error: `The password or key must be at least ${MIN_CREDENTIAL_VALUE} characters; SideKick cannot keep shorter values out of output.`
       }
     }
     values[field] = value
@@ -638,7 +366,7 @@ export function validateCredentialInput(
   const needsEvery = !existing || existing.kind !== kind || existing.needsValue
   if (needsEvery && fields.some((field) => !values[field])) {
     return {
-      error: kind === 'secret' ? 'Enter the secret.' : 'Enter both the username and the password.'
+      error: kind === 'secret' ? 'Enter the password or key.' : 'Enter the password.'
     }
   }
   return {
@@ -647,82 +375,9 @@ export function validateCredentialInput(
       alias,
       kind,
       description,
-      usernameVisible: kind === 'sign_in' && input.usernameVisible,
-      ask: input.ask as CredentialAskPolicy,
-      scope: scope.scope,
       values
     }
   }
-}
-
-const ASK_ORDER: Record<CredentialAskPolicy, number> = { every_use: 0, once_per_chat: 1, never: 2 }
-
-/**
- * Plain descriptions of every way `next` lets the agent use an entry more than `previous` did.
- * Widening an existing entry needs the user's confirmation in a trusted dialog, so a compromised
- * renderer cannot quietly extend where a stored value may go.
- */
-export function credentialWidening(
-  previous: Pick<CredentialSummary, 'ask' | 'scope' | 'usernameVisible'>,
-  next: Pick<CredentialSaveInput, 'ask' | 'scope' | 'usernameVisible'>
-): string[] {
-  const changes: string[] = []
-  if (ASK_ORDER[next.ask] > ASK_ORDER[previous.ask]) {
-    changes.push(`Ask before use: ${CREDENTIAL_ASK_LABELS[next.ask]}`)
-  }
-  const before = previous.scope.projects
-  const after = next.scope.projects
-  if (after === 'all') {
-    if (before !== 'all') changes.push('Usable in every project')
-  } else if (before !== 'all') {
-    const added = after.filter((id) => !before.includes(id))
-    if (added.length) {
-      changes.push(`Usable in ${added.length} more project${added.length === 1 ? '' : 's'}`)
-    }
-  }
-  if (next.scope.background && !previous.scope.background) {
-    changes.push('Usable by schedules and chats other chats start')
-  }
-  if (next.usernameVisible && !previous.usernameVisible) {
-    changes.push('The agent can read the username')
-  }
-  const web = next.scope.web
-  const previousWeb = previous.scope.web
-  if (web) {
-    const hosts = web.hosts.filter((host) => !previousWeb?.hosts.includes(host))
-    if (hosts.length) changes.push(`Sent in web requests to ${hosts.join(', ')}`)
-    const tokenHosts = web.tokenHosts.filter((host) => !previousWeb?.tokenHosts.includes(host))
-    if (tokenHosts.length) changes.push(`Tokens it returns sent to ${tokenHosts.join(', ')}`)
-    if (previousWeb && JSON.stringify(previousWeb.send) !== JSON.stringify(web.send)) {
-      changes.push(`Sent ${describeCredentialSend(web.send)}`)
-    }
-  }
-  const commands = next.scope.commands
-  const previousCommands = previous.scope.commands
-  if (commands) {
-    if (!previousCommands)
-      changes.push(`Usable in commands: ${describeCredentialCommands(commands)}`)
-    else if (commands.mode === 'programs') {
-      const programs = commands.programs.filter(
-        (program) =>
-          previousCommands.mode !== 'programs' || !previousCommands.programs.includes(program)
-      )
-      if (programs.length)
-        changes.push(`Commands may use it without asking each time: ${programs.join(', ')}`)
-    }
-  }
-  const origins = next.scope.browser?.origins.filter(
-    (origin) => !previous.scope.browser?.origins.includes(origin)
-  )
-  if (origins?.length) changes.push(`Filled in on ${origins.join(', ')}`)
-  return changes
-}
-
-/** Which commands may receive a value, in words. */
-export function describeCredentialCommands(commands: CredentialCommandScope): string {
-  return commands.mode === 'ask'
-    ? 'any command, asking every time'
-    : `${commands.programs.join(', ')} only, one simple command at a time`
 }
 
 /** How a value travels, in words, for Settings and approval cards. */
@@ -739,28 +394,4 @@ export function describeCredentialSend(send: CredentialSend): string {
     case 'json':
       return `as the ${send.name} JSON field`
   }
-}
-
-/** Which chat wants to use an entry: its project, and whether the user started it. */
-export interface CredentialUseContext {
-  projectId: string | null
-  /** Started by a schedule or by another chat rather than by the user. */
-  background: boolean
-}
-
-/** Why an entry's project and background scope keep it out of this chat, or null. */
-export function credentialScopeRefusal(
-  credential: Pick<CredentialSummary, 'needsValue' | 'scope'>,
-  context: CredentialUseContext | undefined
-): string | null {
-  if (credential.needsValue) return 'its value has to be entered again on this computer'
-  if (credential.scope.projects !== 'all') {
-    if (!context?.projectId || !credential.scope.projects.includes(context.projectId)) {
-      return "it is not allowed in this chat's project"
-    }
-  }
-  if (context?.background && !credential.scope.background) {
-    return 'it is not allowed in chats a schedule or another chat started'
-  }
-  return null
 }

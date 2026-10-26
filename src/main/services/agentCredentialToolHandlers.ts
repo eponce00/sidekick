@@ -6,14 +6,9 @@ import {
 } from '../../shared/credentialTools'
 import {
   CREDENTIAL_ALIAS_PATTERN,
-  CREDENTIAL_ASK_LABELS,
   MAX_CREDENTIAL_DESCRIPTION,
-  describeCredentialCommands,
-  describeCredentialSend,
-  credentialScopeRefusal,
   type CredentialRequest,
-  type CredentialSummary,
-  type CredentialUseContext
+  type CredentialSummary
 } from '../../shared/credentials'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 import type { CredentialUses } from './credentialUses'
@@ -21,35 +16,18 @@ import type { CredentialUses } from './credentialUses'
 /** What the credential tools may use: summaries without values, and Settings. */
 export interface CredentialToolAccess {
   list: () => CredentialSummary[]
-  useContext: (conversationId: string | undefined) => CredentialUseContext | undefined
   openEditor: (request: CredentialRequest) => boolean
   /** Decides and records each use a tool makes of a credential. */
   uses?: CredentialUses
 }
 
-function describe(credential: CredentialSummary, context: CredentialUseContext | undefined) {
-  const refusal = credentialScopeRefusal(credential, context)
+function describe(credential: CredentialSummary) {
   return {
     alias: credential.alias,
     kind: credential.kind,
     description: credential.description,
     ...(credential.username ? { username: credential.username } : {}),
-    ask_before_use: CREDENTIAL_ASK_LABELS[credential.ask],
-    projects: credential.scope.projects === 'all' ? 'all' : credential.scope.projects.length,
-    background_runs: credential.scope.background,
-    web_requests: credential.scope.web
-      ? {
-          hosts: credential.scope.web.hosts,
-          sent: describeCredentialSend(credential.scope.web.send),
-          returned_tokens_to: credential.scope.web.tokenHosts
-        }
-      : 'not allowed',
-    commands: credential.scope.commands
-      ? describeCredentialCommands(credential.scope.commands)
-      : 'not allowed',
-    browser_sign_in: credential.scope.browser?.origins ?? 'not allowed',
-    usable_in_this_chat: refusal === null,
-    ...(refusal ? { not_usable_because: refusal } : {}),
+    ...(credential.needsValue ? { needs_value: true } : {}),
     ...(credential.lastUsedAt ? { last_used: new Date(credential.lastUsedAt).toISOString() } : {})
   }
 }
@@ -59,9 +37,8 @@ export function registerCredentialToolHandlers(
   handlers: AgentToolHandlerRegistry,
   access: CredentialToolAccess
 ): void {
-  handlers.register(CREDENTIALS_LIST_TOOL, async ({ title, context }) => {
-    const useContext = access.useContext(context.conversationId)
-    const credentials = access.list().map((credential) => describe(credential, useContext))
+  handlers.register(CREDENTIALS_LIST_TOOL, async ({ title }) => {
+    const credentials = access.list().map(describe)
     const data = {
       credentials,
       tools_that_accept_a_credential: [...CREDENTIAL_CONSUMER_TOOLS]

@@ -62,9 +62,6 @@ function input(overrides: Partial<CredentialSaveInput> = {}): CredentialSaveInpu
     alias: 'partner-center',
     kind: 'secret',
     description: 'Store submissions',
-    usernameVisible: false,
-    ask: 'once_per_chat',
-    scope: { projects: 'all', background: false },
     values: { secret: generated() },
     ...overrides
   }
@@ -100,24 +97,13 @@ describe('credentials IPC', () => {
     responses.push(await call('credentials:events', saved.credential.id))
     responses.push(await call('credentials:delete', saved.credential.id))
     const everything = JSON.stringify(responses)
-    for (const value of [secret, username, password]) {
+    // A sign-in's username is shown, as a password manager shows it.
+    expect(everything).toContain(username)
+    for (const value of [secret, password]) {
       expect(everything).not.toContain(value)
       expect(everything).not.toContain(value.slice(0, 8))
       expect(everything).not.toContain(value.slice(-8))
     }
-  })
-
-  it('confirms a widening edit in a trusted dialog, and Cancel saves nothing', async () => {
-    const saved = (await call('credentials:save', input())) as { credential: { id: string } }
-    expect(mocks.dialog).not.toHaveBeenCalled()
-    mocks.dialog.mockResolvedValue({ response: 0 })
-    const widened = input({ id: saved.credential.id, ask: 'never', values: {} } as never)
-    expect(await call('credentials:save', widened)).toMatchObject({ ok: false, cancelled: true })
-    expect(mocks.dialog).toHaveBeenCalledOnce()
-    expect(mocks.vault.get(saved.credential.id)?.ask).toBe('once_per_chat')
-    mocks.dialog.mockResolvedValue({ response: 1 })
-    expect(await call('credentials:save', widened)).toMatchObject({ ok: true })
-    expect(mocks.vault.get(saved.credential.id)?.ask).toBe('never')
   })
 
   it('deletes only after the user confirms in a trusted dialog', async () => {

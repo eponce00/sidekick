@@ -14,7 +14,11 @@ interaction. User-initiated destructive UI actions use an exact main-process bro
 
 Full access is the default. It removes approval prompts for in-scope work but does not erase the
 host's original safety classification: audit records retain both requested and effective access.
-The stricter modes are available per conversation from the composer and in Settings.
+
+The mode is one setting for every chat and every kind of action: commands, files, connectors, the
+browser, API calls and [stored credentials](CREDENTIALS.md). Change it from the shield beside the
+model in the composer, or in **Settings → Agent → Permissions**. A change applies from the next
+reply. Switching to Full access from a stricter mode asks you to confirm in SideKick's own dialog.
 
 ## Operation matrix
 
@@ -25,7 +29,7 @@ The stricter modes are available per conversation from the composer and in Setti
 | Agent MCP tool call               | Confirm                    | Kernel policy before internal MCP dispatch                                          |
 | Agent API call (`http_request`)   | Auto for GET and HEAD      | Kernel policy before the guarded request                                            |
 | Agent call to a website's tool    | Auto if marked read-only   | Kernel policy; consequential always asks; site, tab and tool rechecked at the call  |
-| Agent use of a stored credential  | The entry's own setting    | Kernel approval before the permission mode, then scope checked again when used      |
+| Agent use of a stored credential  | Confirm                    | Kernel policy; credential rules refuse before any card and are checked again at use |
 | Agent change to SideKick settings | Always confirm             | Kernel approval in every mode, no chat-wide grant, before the shared settings write |
 | Agent change to a schedule        | Always confirm             | Kernel approval in every mode, no chat-wide grant; rechecked before the scheduler   |
 | MCP connector start               | Approved content           | Fingerprint check before any connector process or connection starts                 |
@@ -59,12 +63,11 @@ and announced by a notification when SideKick is not in front.
 
 ## Stored credentials
 
-A call that uses a [stored credential](CREDENTIALS.md) asks as that credential says, every use or
-the first use in each chat, in every permission mode including Full access. Its card names the
-credential, where it is sent and how; approving it approves the whole call. **Allow for this chat**
-is offered only for credentials set to ask once per chat, and covers the same credential with the
-same host, the same site for a sign-in, or the same exact command. A credential that any command may use asks
-before every command. A use outside the credential's scope is refused without asking.
+A call that uses a [stored credential](CREDENTIALS.md) is a sensitive action: Full access runs it,
+and the other modes ask. Its card names the credential, where it is sent and how; approving it
+approves the whole call. **Allow for this chat** covers later uses of the same credential, together
+with what the call does on its own when that would ask anyway, such as the exact command. A use
+that breaks a credential rule, such as sending a value over plain HTTP, is refused without asking.
 
 ## Changes to SideKick itself
 

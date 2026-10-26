@@ -14,8 +14,33 @@ import {
   type NativeBrowserSurfaceCapture,
   type NativeBrowserSurfaceConsoleMessage,
   type NativeBrowserSurfaceLoadFailure,
+  sameSignInSite,
+  signInDomain,
   toViewInputEvent
 } from './nativeBrowserSessionService'
+
+describe('where a sign-in form may send', () => {
+  const site = 'https://login.example.com'
+  it.each([
+    ['https://login.example.com', true],
+    ['https://auth.example.com', true],
+    ['https://example.com', true],
+    ['https://example.com.evil.example', false],
+    ['https://evilexample.com', false],
+    ['http://auth.example.com', false],
+    ['https://auth.example.com:8443', false]
+  ])('%s: %s', (target, allowed) => {
+    expect(sameSignInSite(site, signInDomain(site), target)).toBe(allowed)
+  })
+
+  it('takes only the exact origin on a server on this computer or a shared hosting suffix', () => {
+    expect(signInDomain('http://localhost:3000')).toBeNull()
+    expect(sameSignInSite('http://localhost:3000', null, 'http://localhost:4000')).toBe(false)
+    // Anyone can register a site under github.io, so another one is not the same site.
+    const pages = 'https://me.github.io'
+    expect(sameSignInSite(pages, signInDomain(pages), 'https://them.github.io')).toBe(false)
+  })
+})
 
 describe('standalone SVG documents', () => {
   it('fits an SVG opened on its own to the window, and leaves web pages alone', async () => {

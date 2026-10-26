@@ -1,5 +1,6 @@
 import type { BrowserDeviceState } from '../../shared/browserDevices'
 import { browserNetworkOrigin, loopbackHost, privateNetworkHost } from '../../shared/browserNetwork'
+import { getDomain } from 'tldts'
 import { credentialPageOrigin } from '../../shared/credentials'
 import type { BrowserNetworkPolicy } from './browserNetworkApprovals'
 import { createHash, randomUUID } from 'crypto'
@@ -303,7 +304,7 @@ export interface BrowserFillFormInput {
   fields: BrowserFormFieldInput[]
 }
 
-/** A stored sign-in to fill on the current page, which must be on one of `allowedOrigins`. */
+/** A stored sign-in to fill on the current page, which must be on `site`. */
 export interface BrowserSignInInput {
   sessionId: string
   /** Found on the page, as a password manager finds them, when absent. */
@@ -311,8 +312,31 @@ export interface BrowserSignInInput {
   passwordTarget?: BrowserTarget
   username?: string
   password?: string
-  allowedOrigins: readonly string[]
+  /** The origin the use was approved for. Its form may send only to the same site. */
+  site: string
   submit?: boolean
+}
+
+/**
+ * The registrable domain of an HTTPS sign-in site, such as example.com for login.example.com, or
+ * null for an address or a server on this computer, where only the exact origin counts.
+ */
+export function signInDomain(site: string): string | null {
+  const url = new URL(site)
+  if (url.protocol !== 'https:' || url.port) return null
+  return getDomain(url.hostname, { allowPrivateDomains: true })
+}
+
+/** A sign-in form may send to its own origin, or over HTTPS to another site of the same domain. */
+export function sameSignInSite(site: string, domain: string | null, target: string): boolean {
+  if (target === site) return true
+  if (!domain) return false
+  const url = new URL(target)
+  return (
+    url.protocol === 'https:' &&
+    !url.port &&
+    (url.hostname === domain || url.hostname.endsWith(`.${domain}`))
+  )
 }
 
 export interface BrowserSignInResult extends BrowserActionResult {
@@ -4628,7 +4652,7 @@ export class NativeBrowserSessionService {
 
   /**
    * Fills a stored sign-in into the current page. Values go only into fields of the top document
-   * whose origin, and whose form's target, are among `allowedOrigins`, checked again immediately
+   * on `site`, whose form sends to that site or another of the same domain, checked again immediately
    * before each value is typed; the password only into a password field. The result has no
    * screenshot, and its semantic snapshot is redacted.
    */
@@ -4645,11 +4669,12 @@ export class NativeBrowserSessionService {
       const initialUrl = tab.surface.getURL()
       const initialRefEpoch = tab.refEpoch
       const origin = credentialPageOrigin(initialUrl)
-      if (!origin || !input.allowedOrigins.includes(origin)) {
+      if (!origin || origin !== input.site) {
         throw new Error(
-          `This sign-in is filled in only on ${input.allowedOrigins.join(', ')}; the page is not one of them.`
+          `This sign-in was approved for ${input.site || 'another page'}, and the page is no longer on it.`
         )
       }
+      const domain = signInDomain(origin)
       const passwordTarget = input.password
         ? await this.signInField(tab, 'password', input.passwordTarget, signal)
         : undefined
@@ -4699,7 +4724,7 @@ export class NativeBrowserSessionService {
         if (facts.formOrigin !== null) {
           const target =
             facts.formOrigin === 'invalid' ? null : credentialPageOrigin(facts.formOrigin)
-          if (!target || !input.allowedOrigins.includes(target)) {
+          if (!target || !sameSignInSite(origin, domain, target)) {
             throw new Error('The sign-in form sends to another site, so it was not filled')
           }
         }
@@ -4760,14 +4785,17 @@ export class NativeBrowserSessionService {
         const submission = await this.callOnNode<'form' | 'none' | 'refused'>(
           tab,
           last.backendNodeId!,
-          `function(allowed, clear) {
+          `function(site, domain, clear) {
             const form = this.form;
             if (!form) return 'none';
             let target = null;
             try {
-              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI).origin;
+              target = new URL(form.getAttribute('action') || this.ownerDocument.location.href, this.ownerDocument.baseURI);
             } catch {}
-            if (!target || !allowed.includes(target)) {
+            const sameSite = Boolean(target) && (target.origin === site || (domain !== null &&
+              target.protocol === 'https:' && !target.port &&
+              (target.hostname === domain || target.hostname.endsWith('.' + domain))));
+            if (!sameSite) {
               if (clear) this.value = '';
               return 'refused';
             }
@@ -4775,7 +4803,7 @@ export class NativeBrowserSessionService {
             else form.submit();
             return 'form';
           }`,
-          [input.allowedOrigins, last === passwordTarget],
+          [origin, domain, last === passwordTarget],
           signal
         )
         if (submission === 'refused') {

@@ -60,38 +60,37 @@ What SideKick takes from this:
 ### Shipped
 
 An entry is a secret (one value) or a sign-in (username and password) under an alias, with a
-description the agent can read, an approval setting, and a project and background scope. Values
-are sealed with `safeStorage` together with the scope, entered only in **Settings → Credentials**,
-never returned to the renderer, and redacted, with their common encodings, at the source of every
-tool output stream, for every tool result, and for every model request. Widening an entry and
-deleting one confirm in a trusted dialog, and every change is audited. See
-[Credentials](../architecture/CREDENTIALS.md) for how.
+description the agent reads to decide when and where to use it, as a password manager's entry
+has. Values are sealed with `safeStorage`, entered only in **Settings → Credentials**, never
+returned to the renderer, and redacted, with their common encodings, at the source of every tool
+output stream, for every tool result, and for every model request. Deleting one confirms in a
+trusted dialog, and every change is audited. See [Credentials](../architecture/CREDENTIALS.md) for
+how.
 
 ### Using a credential
 
 The agent names an alias in a typed argument of the few tools that accept one. It never writes a
-placeholder into free text for SideKick to expand: where the value goes inside a request is set by
-the user on the entry, not chosen by the model. A text template such as `{{secret:alias}}` was
-considered and rejected, because it lets the model put a value in a request body that an allowed
-host publishes back, such as a GitHub issue comment (Fly.io calls this an "echo oracle"), and
-because escaping a value correctly inside JSON, URLs and shell text is error-prone.
+placeholder into free text for SideKick to expand: a text template such as `{{secret:alias}}` was
+considered and rejected, because escaping a value correctly inside JSON, URLs and shell text is
+error-prone. `http_request` takes the value's place as a typed `credential_as` (a header, a query
+parameter, a form or JSON field, or Basic authentication), so SideKick still places it itself.
 
-| Tool                     | Argument                                     | What SideKick does                                                                                                                                                                                  |
-| ------------------------ | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `http_request` (shipped) | `credential: "partner-center"`               | Adds the value where the entry says (a header with an optional prefix, Basic authentication for a sign-in, a form or JSON body field, or a query parameter), only for the entry's hosts over HTTPS. |
-| `shell`                  | `secrets: { "PC_SECRET": "partner-center" }` | Puts the value in that environment variable of the command. The command text, the process list and the stored command never contain it.                                                             |
-| `browser_sign_in` (new)  | `credential: "github-login"`                 | Fills the sign-in's username and password on the current page if its origin matches; see [Browser sign-in](#browser-sign-in).                                                                       |
-| MCP tools (later)        | Server environments and named arguments      | Lets a server's environment point at an entry instead of holding its own copy.                                                                                                                      |
+| Tool                     | Argument                                     | What SideKick does                                                                                                                                                                  |
+| ------------------------ | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `http_request` (shipped) | `credential: "partner-center"`               | Adds the value where `credential_as` says (a header with an optional prefix, Basic authentication for a sign-in, a form or JSON body field, or a query parameter), over HTTPS only. |
+| `shell`                  | `secrets: { "PC_SECRET": "partner-center" }` | Puts the value in that environment variable of the command. The command text, the process list and the stored command never contain it.                                             |
+| `browser_sign_in`        | `credential: "github-login"`                 | Fills the sign-in's username and password on the current page; see [Browser sign-in](#browser-sign-in).                                                                             |
+| MCP tools (later)        | Server environments and named arguments      | Lets a server's environment point at an entry instead of holding its own copy.                                                                                                      |
 
 Every other tool, including file writes, messages to other chats, questions to the user, artifacts
 and settings changes, has no way to name a credential. The value never enters a tool's arguments:
 the handler asks the vault for it at the moment it sends the request or starts the process, and the
-vault checks scope again. Arguments, and everything built from them (the run ledger, live previews,
+vault checks the use again. Arguments, and everything built from them (the run ledger, live previews,
 approval cards, chat grants and the tool's title, which is recomputed from the arguments after
 authorization), therefore hold only the alias.
 
-The model already sees `credentials_list`, which returns each entry's alias, kind, description,
-scope and approval setting, and the username where the entry allows it. This mirrors Chromium's
+The model already sees `credentials_list`, which returns each entry's alias, kind, description and
+username. This mirrors Chromium's
 agent login service, whose credential list carries username and origin but has no password field.
 The tools' own descriptions say how credentials work, so the prompt and tool list do not change as
 entries change.
@@ -102,35 +101,22 @@ entries change.
 Commands that receive a credential are described in
 [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
 
-### Scope and approval
+### Approval
 
-Each entry says where it can be used. A use outside that scope is refused without a prompt, and the
-agent is told the user can widen it in Settings. Only the Settings page changes scope: no agent tool,
-approval card or command-line call can.
+The first version gave each entry its own scope (hosts, sign-in sites, allowed programs, projects,
+background runs) and its own approval setting, applied even in Full access. In use this was the
+wrong trade: the editor was long, a sign-in for SSH still asked about the browser and web requests,
+and a command that used a credential asked every time even when the user had chosen to allow
+everything. Credentials now work as a password manager's do: the user stores a name, a description,
+a username and a password, and the agent decides where each belongs.
 
-| Scope           | Choices                                                                                                                                 | Default                                      |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| Web requests    | Exact hosts (port included), HTTPS only; how the value is sent; hosts that may receive tokens it returns                                | None                                         |
-| Browser sign-in | Exact origins                                                                                                                           | None                                         |
-| Commands        | Off, ask every time, or allowed programs (`gh`, `az`, `msstore`): a single simple command, no chaining, pipes, redirection or subshells | Off for sign-ins, ask every time for secrets |
-| Projects        | All, or selected projects                                                                                                               | All                                          |
-| Background runs | Whether schedules and worker chats may use it                                                                                           | Off                                          |
-
-Hosts and origins match exactly. Bitwarden's documentation calls its looser "starts with" and
-regular-expression matching dangerous, and Chrome and Firefox will not fill automatically on a
-merely related domain; a wildcard such as `*.example.com` is allowed only when typed explicitly.
-
-Shells and interpreters (`sh`, `bash`, `pwsh`, `powershell`, `cmd`, `node`, `python` and similar)
-cannot be allowed programs, because they run anything. General network tools such as `curl` can be,
-with a warning that they send anywhere.
-
-**When to ask:** every use, first use in each chat (default for web and browser), or never within
-scope. Commands default to every use. `authorizeTool` makes this decision for any call that names a
-credential, before the permission mode and even for network tools, which skip authorization today,
-so it applies in Full access as `approval: 'always'` does. The card uses the existing handler
-`preview` to name the alias, the tool and the exact target (host, origin, or the full command with
-variable names), never a value. **Allow for this chat** is keyed on the entry and the target, not on
-the call's whole arguments, and covers only those.
+A use is a sensitive action under the one [permission mode](../user-guide/PERMISSIONS.md): Full
+access runs it, and the stricter modes ask with a card that names the credential, the exact target
+and how the value is sent. **Allow for this chat** covers the same credential again. What stays
+fixed in every mode is what no user would choose otherwise: HTTPS only (or loopback), no reserved
+environment variables, no program planted in the project, and a password filled only into a real
+password field of the page's own document, on a secure page, with a form that sends to the same
+site.
 
 ### Browser sign-in
 
@@ -142,8 +128,8 @@ Shipped; see [Credentials](../architecture/CREDENTIALS.md#using-a-credential).
   `refused`, shown in each entry's Recent activity; **Settings → Agent → Permissions → Recent
   approvals** does not list credential decisions yet.
 
-- **Export.** Export will write aliases, kinds, descriptions, scope and approval settings only,
-  and import will recreate entries without values, as with GitHub secrets: values are write-only. A
+- **Export.** Export will write aliases, kinds, descriptions and usernames only, and import will
+  recreate entries without values, as with GitHub secrets: values are write-only. A
   profile copied to another computer already lists its entries as **Needs a new value**.
 
 ## Threats and limits
@@ -152,26 +138,26 @@ Redaction keeps a value out of what the model reads; it does not stop a process 
 value from sending it somewhere. Once a value is in a command's environment, that command and
 everything it starts can write it to a file, transform it, or send it anywhere, and no output filter
 can prove otherwise. The real boundary is therefore which tool and target receive the value, which
-is why commands ask every time by default and why scope can only be widened in Settings.
+is why the stricter permission modes show the exact command and target before a value goes there.
 
-| Threat                                                                          | Mitigation                                                                                                                                                                          | What remains                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `echo $KEY`, `printenv`, `env`                                                  | Every output path is redacted, raw and encoded.                                                                                                                                     | None for these forms.                                                                                                                                                                                                                           |
-| Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | Commands that receive a value ask every time by default; the card shows the full command.                                                                                           | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
-| Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                                                            | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
-| Sending it to an unrelated host with `http_request`                             | Host scope, HTTPS only, no redirect to another host.                                                                                                                                | A host in scope that relays requests elsewhere.                                                                                                                                                                                                 |
-| Placing the value where an allowed host publishes it (an issue comment, a gist) | The entry, not the model, decides where in the request the value goes.                                                                                                              | The method, path and other fields are still the model's choice, so an endpoint on an allowed host that stores what it receives can keep the value. A command holding the value can do it directly.                                              |
-| Sending it to an unrelated host from a command                                  | Commands off or ask every time by default; allowed programs exclude shells and interpreters and refuse chaining, pipes, redirection and subshells.                                  | An allowed program that can itself send anywhere, such as `curl`.                                                                                                                                                                               |
-| Prompt injection asking the agent to use a credential somewhere                 | Out-of-scope uses are refused without a prompt; scope changes only in Settings; the card shows the exact target.                                                                    | A user approving a command they did not read.                                                                                                                                                                                                   |
-| Filling a password on the wrong site                                            | Frame and top-level origin match at insertion time; HTTPS, or plain HTTP only on a loopback origin the user listed; form target checked before filling and again before submitting. | Script on the allowed site can read its own password field, as with any password manager.                                                                                                                                                       |
-| Revealing a filled password on screen                                           | Password fields only; screenshots refused once the field stops being a password field; `browser_evaluate` refused.                                                                  | Usernames appear in screenshots.                                                                                                                                                                                                                |
-| Misusing a signed-in session                                                    | The sign-in itself asks per the entry's setting; the session stays in that chat's browser.                                                                                          | Once signed in, the agent can act as the user on that site, as with any agent given a login. Use an account limited to what the task needs.                                                                                                     |
-| Reading SideKick's own store and decrypting it                                  | Records are encrypted; a decrypted value printed as-is is redacted; the Docker shell cannot reach the profile.                                                                      | On Windows (DPAPI) and Linux (Secret Service) a command running on this computer as the user can decrypt `safeStorage` data, as it can provider keys today, and checking command text cannot reliably stop it. macOS asks through the Keychain. |
-| A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                                                        | None.                                                                                                                                                                                                                                           |
-| A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                                                           | It can see what the user types while saving a value.                                                                                                                                                                                            |
-| The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                                                            | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
-| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                                                  | Short values may be missed. Over-redaction hides ordinary text that matches, such as a hidden username like `admin`; file tools refuse to write a placeholder back.                                                                             |
-| Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                                                       | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
+| Threat                                                                          | Mitigation                                                                                                                                                                        | What remains                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `echo $KEY`, `printenv`, `env`                                                  | Every output path is redacted, raw and encoded.                                                                                                                                   | None for these forms.                                                                                                                                                                                                                           |
+| Transforming the value to dodge redaction (reverse, split, char codes, encrypt) | In the stricter modes, the card shows the full command before it receives the value.                                                                                              | Not preventable once a command holds the value. A command can also answer yes-or-no questions about it.                                                                                                                                         |
+| Writing the value to a file, then reading it                                    | `read` and every other result are redacted; file-writing tools cannot name a credential.                                                                                          | The file holds the value in plaintext, and Workspace History may snapshot it.                                                                                                                                                                   |
+| Sending it to an unrelated host with `http_request`                             | HTTPS only, no redirect to another host; the stricter modes show the target first.                                                                                                | In Full access, an agent misled by a page or a file can send it to any HTTPS host.                                                                                                                                                              |
+| Placing the value where a host publishes it (an issue comment, a gist)          | The value goes only in a header, a parameter or a named field, never in free text, and the card says where.                                                                       | A field or endpoint that stores what it receives can keep the value. A command holding the value can do it directly.                                                                                                                            |
+| Sending it to an unrelated host from a command                                  | The stricter modes show the full command first.                                                                                                                                   | In Full access, any command the agent runs with the value.                                                                                                                                                                                      |
+| Prompt injection asking the agent to use a credential somewhere                 | Descriptions and page content are data, not instructions; the stricter modes show the exact target.                                                                               | In Full access, nothing asks first; a user approving a command they did not read.                                                                                                                                                               |
+| Filling a password on the wrong site                                            | The page stays on the approved origin; HTTPS, or plain HTTP only on loopback; no frames; the form must send to the same site, checked before filling and again before submitting. | The agent picks the site from the description, so in Full access a page made to look like the right site can receive the sign-in. Script on that site can read its own password field.                                                          |
+| Revealing a filled password on screen                                           | Password fields only; screenshots refused once the field stops being a password field; `browser_evaluate` refused.                                                                | Usernames appear in screenshots.                                                                                                                                                                                                                |
+| Misusing a signed-in session                                                    | The sign-in follows the permission mode; the session stays in that chat's browser.                                                                                                | Once signed in, the agent can act as the user on that site, as with any agent given a login. Use an account limited to what the task needs.                                                                                                     |
+| Reading SideKick's own store and decrypting it                                  | Records are encrypted; a decrypted value printed as-is is redacted; the Docker shell cannot reach the profile.                                                                    | On Windows (DPAPI) and Linux (Secret Service) a command running on this computer as the user can decrypt `safeStorage` data, as it can provider keys today, and checking command text cannot reliably stop it. macOS asks through the Keychain. |
+| A value in persisted arguments                                                  | Arguments carry only the alias; the handler fetches the value when it sends.                                                                                                      | None.                                                                                                                                                                                                                                           |
+| A compromised renderer                                                          | No read API; the renderer receives redacted streams only.                                                                                                                         | It can see what the user types while saving a value.                                                                                                                                                                                            |
+| The user pastes a stored value into a message                                   | The final pass over outgoing model requests replaces it.                                                                                                                          | The message is kept locally as typed; a value that is not stored is not caught.                                                                                                                                                                 |
+| Short or common values                                                          | Secrets and passwords under 4 characters refused; warning under 8.                                                                                                                | Short values may be missed. Over-redaction hides ordinary text that matches; file tools refuse to write a placeholder back.                                                                                                                     |
+| Memory                                                                          | Values decrypted only when used; the redaction set lives in the main process.                                                                                                     | A memory dump of the main process contains values, as it does provider keys.                                                                                                                                                                    |
 
 ## Tests
 
@@ -183,19 +169,16 @@ credential. Each boundary gets adversarial tests:
   record is refused.
 - **Credential arguments.** Only the declared arguments of `http_request`, `shell` and
   `browser_sign_in` accept an alias, checked by iterating the whole catalog; unknown aliases and
-  `~` aliases from another run are refused; the model cannot set the header, field or parameter an
-  entry uses itself.
+  `~` aliases from another run are refused; the model cannot also set the header, field or
+  parameter it asked SideKick to fill.
 - **Persistence.** The run ledger, approval card, renderer events and transcripts hold
   the alias, never the value.
-- **Scope.** Hosts: exact and wildcard, case, trailing dot, punycode, userinfo tricks
-  (`https://allowed.example@evil.example`), port and scheme changes, cross-host redirects, and
-  names resolving to private addresses. Commands: chaining and substitution in Bash and PowerShell
-  (`;`, `&&`, `|`, `$()`, backticks, `&`, `iex`), refused variable names, shells as allowed
-  programs. Browser: iframe origin differing from the top frame, navigation between resolving and
-  inserting, form targets.
-- **Approval.** Full access still asks per the entry's setting; a chat grant does not cover another
-  host or command; schedules and worker chats are refused unless allowed; out-of-scope uses never
-  prompt.
+- **Rules.** Plain HTTP, userinfo tricks (`https://user@evil.example`) and cross-host redirects;
+  refused variable names; a program planted in the project. Browser: iframe origin differing from
+  the top frame, navigation between resolving and inserting, form targets on another site or a
+  shared hosting suffix.
+- **Approval.** Full access runs a use unasked; the other modes ask; a chat grant covers the same
+  credential and no more than the call's own scope; uses that break a rule never prompt.
 - **Redaction.** Every encoding; a value split across chunks at every offset; overlapping values;
   values inside ANSI sequences and across UTF-8 boundaries; the retained output store; compaction
   summaries; HTTP client errors; a value planted in a user message and in a worker reply caught at

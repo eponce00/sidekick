@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { agentRunProfile, getAgentToolCatalog } from '../../shared/agentToolCatalog'
-import { credentialScopeRefusal, type CredentialSummary } from '../../shared/credentials'
+import type { CredentialSummary } from '../../shared/credentials'
 import {
   registerCredentialToolHandlers,
   type CredentialToolAccess
@@ -13,9 +13,6 @@ function summary(overrides: Partial<CredentialSummary> = {}): CredentialSummary 
     alias: 'partner-center',
     kind: 'secret',
     description: 'Store submissions',
-    usernameVisible: false,
-    ask: 'once_per_chat',
-    scope: { projects: 'all', background: false },
     createdAt: 1,
     updatedAt: 1,
     needsValue: false,
@@ -28,7 +25,6 @@ function setup(access: Partial<CredentialToolAccess> = {}) {
   const openEditor = vi.fn(() => true)
   registerCredentialToolHandlers(handlers, {
     list: () => [summary(), summary({ id: 'two', alias: 'site', kind: 'sign_in' })],
-    useContext: () => ({ projectId: 'p1', background: false }),
     openEditor,
     ...access
   })
@@ -43,36 +39,19 @@ function setup(access: Partial<CredentialToolAccess> = {}) {
 }
 
 describe('credential tools', () => {
-  it('lists aliases and scope, never a value', async () => {
-    const { run } = setup()
+  it('lists names, descriptions and usernames, never a value', async () => {
+    const { run } = setup({
+      list: () => [
+        summary(),
+        summary({ id: 'two', alias: 'site', kind: 'sign_in', username: 'visible-user' })
+      ]
+    })
     const result = await run('credentials_list')
     expect(result.status).toBe('success')
     expect(result.modelContent).toContain('partner-center')
-    expect(result.modelContent).toContain('"usable_in_this_chat": true')
+    expect(result.modelContent).toContain('Store submissions')
+    expect(result.modelContent).toContain('visible-user')
     expect(result.modelContent).not.toMatch(/"(secret|password|value|values)":/)
-  })
-
-  it('shows a username only when the entry allows it', async () => {
-    const { run } = setup({
-      list: () => [
-        summary({ alias: 'site', kind: 'sign_in', usernameVisible: true, username: 'visible-user' })
-      ]
-    })
-    expect((await run('credentials_list')).modelContent).toContain('visible-user')
-  })
-
-  it('says why an entry cannot be used in this chat', () => {
-    const scoped = summary({ scope: { projects: ['p2'], background: false } })
-    expect(credentialScopeRefusal(scoped, { projectId: 'p1', background: false })).toMatch(
-      /project/
-    )
-    expect(credentialScopeRefusal(summary(), { projectId: null, background: true })).toMatch(
-      /schedule or another chat/
-    )
-    expect(credentialScopeRefusal(summary({ needsValue: true }), undefined)).toMatch(
-      /entered again/
-    )
-    expect(credentialScopeRefusal(summary(), { projectId: 'p1', background: false })).toBeNull()
   })
 
   it('opens Settings for a credential with a valid alias only', async () => {
