@@ -15,19 +15,19 @@ const MODES: ReadonlyArray<{
     mode: 'full-access',
     chip: 'Full access',
     icon: ShieldOff,
-    description: 'Commands, files, connectors, the browser and credentials run without asking.'
+    description: 'Never asks.'
   },
   {
     mode: 'sensitive-only',
     chip: 'Ask first',
     icon: ShieldCheck,
-    description: 'Reading runs on its own; changes, commands and credential use ask.'
+    description: 'Asks before changes and commands.'
   },
   {
     mode: 'always-ask',
     chip: 'Always ask',
     icon: ShieldQuestion,
-    description: 'Every change, command and credential use asks first.'
+    description: 'Asks before everything.'
   }
 ]
 
@@ -108,9 +108,6 @@ export function PermissionModePicker({
           onClick={(event) => event.stopPropagation()}
           onKeyDown={onMenuKeyDown}
         >
-          <div className="permission-menu-heading" aria-hidden="true">
-            Permissions
-          </div>
           {MODES.map((entry, index) => {
             const EntryIcon = entry.icon
             const selected = entry.mode === mode
@@ -133,14 +130,13 @@ export function PermissionModePicker({
                   <EntryIcon size={14} aria-hidden="true" />
                 </span>
                 <span className="permission-menu-option-text">
-                  <strong>{PERMISSION_MODE_LABELS[entry.mode]}</strong>
+                  <strong>{entry.chip}</strong>
                   <small>{entry.description}</small>
                 </span>
                 {selected && <Check size={14} className="permission-menu-option-check" />}
               </button>
             )
           })}
-          <div className="permission-menu-footer">For every chat, from the next reply</div>
         </div>
       )}
     </div>

@@ -745,7 +745,7 @@ function SettingsModal({
         <div className="settings-page">
           <SettingsPageHeader
             title="Credentials"
-            description="Sign-ins, API keys and tokens the agent can use without ever seeing them, as in a password manager. Each one saves on its own, apart from Save changes."
+            description="Sign-ins and keys the agent uses without ever seeing them."
           />
           <CredentialSettings request={credentialRequest} />
         </div>

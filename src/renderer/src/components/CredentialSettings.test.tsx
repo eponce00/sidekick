@@ -73,7 +73,7 @@ it('never fills a stored value into the editor and keeps it unless a new one is 
   await act(async () => button('Edit partner-center').click())
   const secret = container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!
   expect(secret.value).toBe('')
-  expect(secret.placeholder).toBe('Stored. Type a new value to replace it.')
+  expect(secret.placeholder).toBe('Type to replace')
   await act(async () => button('Save credential').click())
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ id: 'one', values: {} }))
 })
@@ -114,9 +114,9 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
     container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!.value
   ).toBe('')
   // A description the agent wrote is marked until the user changes it.
-  expect(container.textContent).toContain('The agent that asked for this credential wrote this')
+  expect(container.textContent).toContain('Written by the agent')
   await act(async () => type(description, 'Partner Center client secret'))
-  expect(container.textContent).not.toContain('The agent that asked for this credential wrote this')
+  expect(container.textContent).not.toContain('Written by the agent')
 })
 
 it('takes a multi-line key, masked, and sends it with its line breaks', async () => {

@@ -152,9 +152,7 @@ function SecretField({
           autoComplete="off"
           spellCheck={false}
           autoFocus={autoFocus}
-          placeholder={
-            stored ? 'Stored. Type a new value to replace it.' : 'Enter the password or key'
-          }
+          placeholder={stored ? 'Type to replace' : 'Password or key'}
           onChange={(event) => onChange(event.target.value || undefined)}
         />
         <button
@@ -323,11 +321,6 @@ export function CredentialSettings({
                 {kind === 'sign_in' ? <UserRound size={12} /> : <KeyRound size={12} />}
                 {KIND_LABELS[kind]}
               </span>
-              <span>
-                {kind === 'sign_in'
-                  ? 'Filled into sign-in pages, or given to commands and API calls.'
-                  : 'Added to API calls, or given to commands in a variable.'}
-              </span>
             </p>
           </div>
         </header>
@@ -352,7 +345,7 @@ export function CredentialSettings({
             <input
               id={`${controlId}-username`}
               value={draft.username}
-              placeholder="Empty for an API key or token"
+              placeholder="Leave empty for a key"
               autoComplete="off"
               spellCheck={false}
               onChange={(event) => update({ username: event.target.value })}
@@ -360,20 +353,19 @@ export function CredentialSettings({
           </label>
           <label className="modern-field is-wide" htmlFor={`${controlId}-description`}>
             <span>
-              Description <em>the agent reads this to know when to use it</em>
+              Description <em>what it’s for</em>
             </span>
             <textarea
               id={`${controlId}-description`}
               rows={2}
               value={draft.description}
               maxLength={500}
-              placeholder="What it is for and where it is used, such as “My GitHub account, for github.com” or “SSH to the build server, 10.0.0.5”."
+              placeholder="My GitHub account, for github.com"
               onChange={(event) => update({ description: event.target.value })}
             />
             {draft.suggestedDescription && draft.description === draft.suggestedDescription && (
               <small className="credential-warning">
-                The agent that asked for this credential wrote this. Check it before saving: every
-                chat reads it.
+                Written by the agent. Check it before saving.
               </small>
             )}
           </label>
@@ -388,19 +380,9 @@ export function CredentialSettings({
           {editing?.needsValue && (
             <p className="credential-callout is-warning is-wide">
               <ShieldAlert size={15} aria-hidden="true" />
-              <span>
-                This computer cannot read the stored value, as happens after moving SideKick to
-                another computer. Enter it again.
-              </span>
+              <span>Enter the value again; this computer can’t read it.</span>
             </p>
           )}
-          <p className="credential-callout is-wide">
-            <LockKeyhole size={15} aria-hidden="true" />
-            <span>
-              Encrypted on this computer. SideKick adds the value itself, so the agent, the chat and
-              the model never see it, and each use follows your permission mode.
-            </span>
-          </p>
         </div>
 
         {events.length > 0 && (
@@ -466,7 +448,6 @@ export function CredentialSettings({
     <SettingsSection
       icon={KeyRound}
       title="Stored credentials"
-      description="Each use follows your permission mode. A stored value is hidden from everything SideKick shows or sends to a model, as [secret: name]."
       className="credential-list-section"
       actions={
         <button
@@ -486,7 +467,7 @@ export function CredentialSettings({
           <input
             type="search"
             value={query}
-            placeholder={`Search ${count} credentials`}
+            placeholder="Search"
             aria-label="Search credentials"
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -547,11 +528,7 @@ export function CredentialSettings({
         <SettingsEmptyState
           icon={LockKeyhole}
           title={credentials ? 'No credentials yet' : 'Loading…'}
-          description={
-            credentials
-              ? 'Add a sign-in or an API key, as in a password manager, or let the agent ask for one when a task needs it.'
-              : undefined
-          }
+          description={credentials ? 'Add a sign-in or an API key.' : undefined}
         />
       )}
     </SettingsSection>

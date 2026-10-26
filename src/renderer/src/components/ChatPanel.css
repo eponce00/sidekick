@@ -5237,31 +5237,12 @@ body.is-resizing-table {
 .permission-menu {
   right: -6px;
   left: auto;
-  width: 300px;
+  width: 240px;
   max-width: calc(100vw - 24px);
   display: grid;
   gap: 2px;
   padding: 6px;
   transform-origin: bottom right;
-}
-
-.permission-menu-heading,
-.permission-menu-footer {
-  padding: 4px 8px;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-}
-
-.permission-menu-heading {
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.permission-menu-footer {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
 }
 
 .permission-menu-option {
