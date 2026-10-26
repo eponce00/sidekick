@@ -1423,12 +1423,25 @@ function ChatPanel({
     }
   }
 
+  /** Where attached files go; a chat not saved yet is saved first, as sending would, to have one. */
+  const attachmentFolder = async (): Promise<string | null> => {
+    if (filesFolder) return filesFolder
+    if (conversationId || workspaceFolder) return null
+    const title = 'New chat'
+    const created = await window.api.conversations.create(title, null, 'fallback')
+    skipNextLoadRef.current = true
+    onConversationCreated(created.id, title)
+    const context = await window.api.projects.getConversationContext(created.id)
+    return context.chatFolder ? context.workspaceRoot : null
+  }
+
   const addContextAttachments = async (): Promise<void> => {
-    if (!filesFolder) {
+    const folder = await attachmentFolder()
+    if (!folder) {
       setAttachmentError('Open a project before attaching files or folders')
       return
     }
-    const result = await window.api.workspace.selectContextAttachments(filesFolder)
+    const result = await window.api.workspace.selectContextAttachments(folder)
     if (!result.ok) {
       setAttachmentError(result.error || 'Could not attach project context')
       return
@@ -2030,7 +2043,7 @@ function ChatPanel({
         onModelChange={onModelChange}
         onOpenModelSearch={onOpenModelSearch}
         workspaceFolder={workspaceFolder}
-        attachesToChatFolder={!workspaceFolder && Boolean(filesFolder)}
+        attachesToChatFolder={!workspaceFolder && (Boolean(filesFolder) || !conversationId)}
         toolbarExtra={
           worktree ? (
             <WorktreeChip worktree={worktree} onManage={() => onManageWorktrees?.()} />
