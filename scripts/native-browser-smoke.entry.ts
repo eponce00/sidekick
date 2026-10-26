@@ -990,7 +990,7 @@ async function runSmoke(): Promise<SmokeResult> {
         sessionId,
         username: signInUser,
         password: signInPassword,
-        allowedOrigins: [origin],
+        site: origin,
         ...extra
       })
     // One session, navigated between fixtures: opening a session per fixture costs seconds each.
@@ -998,8 +998,8 @@ async function runSmoke(): Promise<SmokeResult> {
     const visit = (path: string) =>
       service!.navigate({ sessionId: login.sessionId, url: `${baseUrl}${path}` })
     await assert.rejects(
-      signIn(login.sessionId, { allowedOrigins: ['https://example.com'] }),
-      /only on/
+      signIn(login.sessionId, { site: 'https://example.com' }),
+      /approved for https:\/\/example\.com/
     )
     const signedIn = await signIn(login.sessionId)
     assert.deepEqual(signedIn.filled, ['username', 'password'])
