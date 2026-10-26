@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.21.0 — 2026-10-25
+
+- Watch artifacts build while the model writes them. The layout shows first and each part fills
+  in as its code arrives, then a builder checks how it rendered and fixes it in place, with no
+  failed attempts or "Building" cards in the reply. Ask for a change, such as "switch it to the
+  evening sky", and the agent edits the artifact in place instead of writing it again; follow-ups
+  are much faster. Charts no longer flash while they stream, artifacts are styled without a
+  network, and none gets a sideways scrollbar over its last line.
+- Use the Browser panel like a browser: tabs, back and forward, find in page, print, zoom, device
+  sizes and screenshots from its menu, and bookmarks and history imported from your other browsers.
+  Mark up a page for the agent: click to leave a comment, typed or spoken, change its styles live
+  from a style editor, then send every mark at once. A site's human check is cleared in the panel.
+- Arrange the side panel your way. Its apps open in tabs, a new tab offers them all, tabs split
+  into sections, and a tab dragged out of the window gets a window of its own. The panel keeps a
+  narrow column until the browser shows a page.
+- Open terminals of your own in the Terminal panel, laid out like VS Code's, with your shells and
+  the agent's commands listed beside them.
+- Rewind a chat with its files from the message itself: rewinding asks whether to take back the
+  chat only or the files too, and Undo and **Rewind chat and files** show as soon as a reply ends.
+  This replaces the Recovery tab.
+- Work without a project. A chat with no project, or detached from one, now has a folder of its
+  own, so the agent can make files, run commands and download there, and your terminal opens in
+  it; the Files panel shows it as **Chat files**. Attach files from anywhere on your computer to
+  such a chat: it keeps a copy, and deleting the chat deletes its folder.
+- Let the agent manage your schedules: list, create, change, pause and delete them from a chat,
+  with your approval for every change.
+- A new chat or tab you leave without using goes away instead of waiting in the sidebar.
+- Size reply tables to their content, and resize their columns by dragging.
+- See one quiet design across the app: menus, dialogs, Settings, the chat and the side panel
+  follow the same type, spacing and colors, with color kept for what needs attention.
+- Pair a phone every time: the certificate SideKick makes for the phone page now always works.
+
 ## 0.20.0 — 2026-10-24
 
 - Dictate on your phone as on the computer: words appear in the message box as you speak. The
