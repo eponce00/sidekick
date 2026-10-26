@@ -104,6 +104,8 @@ interface ActivityPanelProps {
   onOpenConversation?: (conversationId: string) => void
   /** Opens Settings where the browser's own settings are. */
   onOpenBrowserSettings?: () => void
+  /** Whether what the panel shows needs its width, or only the narrow column. */
+  onNeedsRoomChange?: (needsRoom: boolean) => void
 }
 
 function ActivityPanel({
@@ -124,7 +126,8 @@ function ActivityPanel({
   snapWidths = [ACTIVITY_PANEL_NARROW_WIDTH],
   onSettle,
   onOpenConversation,
-  onOpenBrowserSettings
+  onOpenBrowserSettings,
+  onNeedsRoomChange
 }: ActivityPanelProps): React.JSX.Element {
   const [layout, setLayout] = useState<PanelLayout>(() => storedPanelLayout(storedActivityTab()))
   useEffect(() => storePanelLayout(layout), [layout])
@@ -203,6 +206,12 @@ function ActivityPanel({
   }
   const [browserActivity, setBrowserActivity] =
     useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
+  // An empty browser tab, or a new tab's launcher, needs no room: the panel keeps the narrow
+  // column until a page shows, instead of taking the chat's width for nothing.
+  const [browserPageShown, setBrowserPageShown] = useState(false)
+  const needsRoom =
+    !isPinned || shown.some((app) => app !== 'launcher' && (app !== 'browser' || browserPageShown))
+  const needsRoomRef = useRef(needsRoom)
   const autoOpenedWaitRef = useRef<string | null>(null)
   const autoOpenedBrowserRunRef = useRef<string | null>(null)
   // While the edge is dragged nothing else moves: a phantom shows where the panel will land and
@@ -224,6 +233,15 @@ function ActivityPanel({
     glideTimerRef.current = window.setTimeout(() => setIsGliding(false), PANEL_GLIDE_MS + 40)
   }
   useEffect(() => () => window.clearTimeout(glideTimerRef.current), [])
+  // When a page opens in an empty browser, or the panel goes back to showing nothing that needs
+  // room, it glides between the narrow column and its width.
+  useEffect(() => {
+    if (needsRoomRef.current === needsRoom) return
+    needsRoomRef.current = needsRoom
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the width it glides to is the app's
+    glide()
+    onNeedsRoomChange?.(needsRoom)
+  })
   const resizeStartRef = useRef({ x: 0, width, landing: 'free' as PanelLanding })
   // The drag reads the latest layout and callbacks without restarting.
   const dragContextRef = useRef({
@@ -549,6 +567,7 @@ function ActivityPanel({
             conversationId={conversationId}
             onActivityChange={handleBrowserActivityChange}
             onOpenSettings={onOpenBrowserSettings}
+            onPageShownChange={setBrowserPageShown}
           />
         </div>
       )
@@ -715,6 +734,7 @@ function ActivityPanel({
               conversationId={conversationId}
               onActivityChange={handleBrowserActivityChange}
               onOpenSettings={onOpenBrowserSettings}
+              onPageShownChange={setBrowserPageShown}
             />
           </div>
         )}

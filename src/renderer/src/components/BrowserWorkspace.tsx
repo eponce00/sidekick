@@ -46,11 +46,14 @@ function accentColors(): { accent?: string; accentText?: string; theme: 'dark' |
 
 export function BrowserWorkspace({
   conversationId,
-  onOpenSettings
+  onOpenSettings,
+  onPageShownChange
 }: {
   conversationId: string
   /** Opens Settings where the browser's own settings are. */
   onOpenSettings?: () => void
+  /** Whether the active tab shows a page, rather than an empty new tab. */
+  onPageShownChange?: (shown: boolean) => void
 }): React.JSX.Element {
   const [state, setState] = useState<BrowserWorkspaceState | null>(null)
   const [address, setAddress] = useState('')
@@ -63,6 +66,10 @@ export function BrowserWorkspace({
   const [snapshot, setSnapshot] = useState<{ image: string; zoom: number } | null>(null)
   const editing = useRef(false)
   const activeUrl = state?.tabs.find((tab) => tab.active)?.url ?? ''
+  const pageShown = Boolean(activeUrl) && activeUrl !== 'about:blank'
+  useEffect(() => {
+    onPageShownChange?.(pageShown)
+  }, [onPageShownChange, pageShown])
   // While an address is being opened, or the page is still loading.
   const loading = pending || Boolean(state?.tabs.find((tab) => tab.active)?.loading)
   // Shown only when the page is not at 100%, as a browser does.

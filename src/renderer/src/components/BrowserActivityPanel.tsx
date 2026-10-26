@@ -22,6 +22,8 @@ export interface BrowserActivityPanelProps {
   conversationId: string | null
   onActivityChange?: (state: BrowserActivityState) => void
   onOpenSettings?: () => void
+  /** Whether the browser shows a page, rather than an empty new tab. */
+  onPageShownChange?: (shown: boolean) => void
 }
 
 function activityStatus(
@@ -49,7 +51,8 @@ function statusLabel(state: BrowserActivityState): string {
 export function BrowserActivityPanel({
   conversationId,
   onActivityChange,
-  onOpenSettings
+  onOpenSettings,
+  onPageShownChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   return (
     <BrowserActivityPanelSession
@@ -57,6 +60,7 @@ export function BrowserActivityPanel({
       conversationId={conversationId}
       onActivityChange={onActivityChange}
       onOpenSettings={onOpenSettings}
+      onPageShownChange={onPageShownChange}
     />
   )
 }
@@ -64,7 +68,8 @@ export function BrowserActivityPanel({
 function BrowserActivityPanelSession({
   conversationId,
   onActivityChange,
-  onOpenSettings
+  onOpenSettings,
+  onPageShownChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   const [activity, setActivity] = useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const [failedScreenshot, setFailedScreenshot] = useState<string | null>(null)
@@ -151,7 +156,11 @@ function BrowserActivityPanelSession({
       )}
 
       {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
-        <BrowserWorkspace conversationId={conversationId} onOpenSettings={onOpenSettings} />
+        <BrowserWorkspace
+          conversationId={conversationId}
+          onOpenSettings={onOpenSettings}
+          onPageShownChange={onPageShownChange}
+        />
       ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />

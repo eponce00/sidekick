@@ -67,6 +67,7 @@ import { useVoiceState } from './hooks/useVoice'
 import { toggleDictation, useDictating } from './services/voice/dictationControl'
 import {
   LAYOUT_MOTION_MS,
+  ACTIVITY_PANEL_NARROW_WIDTH,
   PANEL_GLIDE_MS,
   SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH,
@@ -250,6 +251,10 @@ function App(): React.JSX.Element {
       window.localStorage.getItem('activityPanelSize')
     )
   )
+  // The panel keeps the narrow column while it shows nothing that needs its width, such as an
+  // empty browser tab, unless the user widens it then.
+  const [panelNeedsRoom, setPanelNeedsRoom] = useState(true)
+  const [panelWidenedWhileEmpty, setPanelWidenedWhileEmpty] = useState(false)
   const [activityPanelSize, setActivityPanelSize] = useState<ActivityPanelSize>(() =>
     storedActivityPanelSize(window.localStorage.getItem('activityPanelSize'))
   )
@@ -263,6 +268,10 @@ function App(): React.JSX.Element {
   const [panelGlide, setPanelGlide] = useState(0)
   // Where the panel floats over the chat, sizes do not apply.
   const panelSize: ActivityPanelSize = isCompactLayout ? 'wide' : activityPanelSize
+  const panelWidth =
+    panelNeedsRoom || panelWidenedWhileEmpty
+      ? activityPanelWidth
+      : Math.min(activityPanelWidth, ACTIVITY_PANEL_NARROW_WIDTH)
   const panelIsFull = effectiveActivityPanelPinned && panelSize === 'full'
   // Opening the sidebar while it is folded for room keeps it open; the inspector narrows instead.
   const [isSidebarHeldOpen, setIsSidebarHeldOpen] = useState(false)
@@ -271,7 +280,7 @@ function App(): React.JSX.Element {
     sidebarCollapsed: isSidebarCollapsed,
     sidebarHeldOpen: isSidebarHeldOpen,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth,
+    panelWidth,
     panelSize
   })
   // A sidebar kept open for one squeeze folds again in the next, once there has been room.
@@ -280,7 +289,7 @@ function App(): React.JSX.Element {
     sidebarCollapsed: false,
     sidebarHeldOpen: false,
     panelOpen: effectiveActivityPanelPinned,
-    panelWidth: activityPanelWidth,
+    panelWidth,
     panelSize: panelSize === 'full' ? 'wide' : panelSize
   }).sidebarAutoCollapsed
   useEffect(() => {
@@ -297,7 +306,7 @@ function App(): React.JSX.Element {
     ? collapsedPanelWidth
     : panelSize === 'full'
       ? layout.panelMaxWidth
-      : Math.min(activityPanelWidth, layout.panelMaxWidth)
+      : Math.min(panelWidth, layout.panelMaxWidth)
   // The widest the inspector fits beside the chat, with the sidebar folded for it: dragged well
   // past this, it takes the whole window.
   const panelSideBySideMax = workspaceLayout({
@@ -1541,8 +1550,16 @@ function App(): React.JSX.Element {
           tabRequest={activityTabRequest}
           onActiveTabChange={handleActivityTabChange}
           maxWidth={layout.panelMaxWidth}
-          width={activityPanelWidth}
-          onWidthChange={setActivityPanelWidth}
+          width={panelWidth}
+          onWidthChange={(width) => {
+            setActivityPanelWidth(width)
+            if (!panelNeedsRoom) setPanelWidenedWhileEmpty(true)
+          }}
+          onNeedsRoomChange={(needsRoom) => {
+            setPanelNeedsRoom(needsRoom)
+            setPanelWidenedWhileEmpty(false)
+            setPanelGlide((count) => count + 1)
+          }}
           size={panelSize}
           onSizeChange={isCompactLayout ? undefined : setActivityPanelSize}
           sideBySideMaxWidth={panelSideBySideMax}
