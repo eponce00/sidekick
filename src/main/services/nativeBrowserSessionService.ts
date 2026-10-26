@@ -46,6 +46,21 @@ import {
 } from '../bootstrap/browserPdfSessionRegistry'
 import { externalSchemaIssues } from './agentToolRegistry'
 import {
+  busyRequests,
+  SETTLE_INSTALL_SCRIPT,
+  SETTLE_MARK_SCRIPT,
+  settleProbeScript
+} from './browserSettle'
+import {
+  PICKER_PAGE_FUNCTION,
+  rankChoices,
+  showsChoice,
+  type PickerKind,
+  type PickerOption,
+  type PickerScan
+} from './browserPicker'
+import { fieldDateFormat, formatDate, nativeDateFormat, sameEnteredText } from './browserDates'
+import {
   WEBMCP_CALL_TIMEOUT_MS,
   WEBMCP_COMPATIBILITY_SCRIPT,
   WebMcpCallError,
@@ -695,6 +710,8 @@ interface TabState {
   lastScreenshotHashes: Partial<Record<BrowserScreenshotKind, string>>
   unchangedScreenshotStreaks: Partial<Record<BrowserScreenshotKind, number>>
   inFlight: Map<string, RequestMetadata>
+  /** Where the latest action began, so its wait counts only what the action changed. */
+  settleMark?: { token: string; id: string; at: number }
   actionHistory: ActionRecord[]
   disposers: Array<() => void>
   /**
@@ -745,6 +762,8 @@ interface BrowserFormControlState {
   disabled: boolean
   readOnly: boolean
   value?: string
+  inputType?: string
+  placeholder?: string
   selectedValues?: string[]
   checked?: boolean
 }
@@ -2816,6 +2835,10 @@ export class NativeBrowserSessionService {
     signal?: AbortSignal
   ): Promise<BrowserObservation> {
     const tab = this.getTab(session, options.tabId)
+    // The page's own changes from here on tell the next action's wait what is noise.
+    await abortable(tab.surface.executeJavaScript(SETTLE_INSTALL_SCRIPT), signal).catch(
+      () => undefined
+    )
     const viewport = await abortable(this.currentViewport(tab), signal)
     let semanticSnapshot: string | undefined
     let semanticNodeCount: number | undefined
@@ -3721,6 +3744,16 @@ export class NativeBrowserSessionService {
     // post-action observation still produces the rich semantic state once.
     const challenge = await this.detectHumanVerification(tab, undefined, signal)
     if (challenge) throw new BrowserHumanVerificationError()
+    // Every action that changes the page passes here first, so this is where it begins.
+    const at = this.now()
+    const mark = await abortable(
+      tab.surface.executeJavaScript<{ token?: unknown; id?: unknown }>(SETTLE_MARK_SCRIPT),
+      signal
+    ).catch(() => undefined)
+    tab.settleMark =
+      typeof mark?.token === 'string' && typeof mark.id === 'string'
+        ? { token: mark.token, id: mark.id, at }
+        : undefined
   }
 
   async type(
@@ -3882,7 +3915,8 @@ export class NativeBrowserSessionService {
         }
         const unsupportedInputs = new Set(['button', 'submit', 'reset', 'file', 'hidden', 'image', 'range', 'color']);
         if ((tag === 'input' && !unsupportedInputs.has(inputType)) || tag === 'textarea') {
-          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? '') };
+          return { kind: 'textbox', disabled, readOnly, value: String(this.value ?? ''), inputType,
+            placeholder: String(this.getAttribute('placeholder') || this.getAttribute('aria-placeholder') || '') };
         }
         if (this.isContentEditable === true) {
           return { kind: 'textbox', disabled, readOnly, value: String(this.textContent ?? '') };
@@ -3890,6 +3924,31 @@ export class NativeBrowserSessionService {
         return { kind: 'unsupported', disabled, readOnly };
       }`,
       [],
+      signal
+    )
+  }
+
+  /**
+   * Sets a native date or time input, which ignores its value typed as text, the way the
+   * browser's own picker does: through the value setter, then input and change events.
+   */
+  private async setNativeInputValue(
+    tab: TabState,
+    backendNodeId: number,
+    value: string,
+    signal?: AbortSignal
+  ): Promise<void> {
+    await this.callOnNode(
+      tab,
+      backendNodeId,
+      `function(value) {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        this.focus();
+        setter.call(this, value);
+        this.dispatchEvent(new Event('input', { bubbles: true }));
+        this.dispatchEvent(new Event('change', { bubbles: true }));
+      }`,
+      [value],
       signal
     )
   }
@@ -4137,6 +4196,10 @@ export class NativeBrowserSessionService {
 
   private formFieldFailure(error: unknown): BrowserFormFieldResult['error'] {
     const message = error instanceof Error ? error.message : String(error)
+    // Names the format a date field takes, never the value it was given.
+    if (message.startsWith('Unsupported value: ')) {
+      return { code: 'unsupported_control', message: message.slice('Unsupported value: '.length) }
+    }
     if (/stale|not found|no longer available|ambiguous|not visible|requires a ref/i.test(message)) {
       return {
         code: 'target_not_found',
@@ -4210,20 +4273,27 @@ export class NativeBrowserSessionService {
           if (field.kind === 'textbox') {
             sensitiveStrings.add(field.value)
             if (before.readOnly) throw new Error('Target form control is read-only')
-            if (before.value !== field.value) {
-              await this.replaceFormText(
-                tab,
-                target,
-                field.value,
-                initialUrl,
-                initialRefEpoch,
-                signal
-              )
+            const native = nativeDateFormat(before.inputType)
+            // A text box that asks for a date format takes an ISO date written in it.
+            const format = native ? undefined : fieldDateFormat(before.placeholder)
+            const text = (format && formatDate(field.value, format)) || field.value
+            sensitiveStrings.add(text)
+            if (before.value !== text) {
+              if (native) {
+                if (!native.pattern.test(text)) {
+                  throw new Error(
+                    `Unsupported value: a ${before.inputType} field takes ${native.example}`
+                  )
+                }
+                await this.setNativeInputValue(tab, backendNodeId, text, signal)
+              } else {
+                await this.replaceFormText(tab, target, text, initialUrl, initialRefEpoch, signal)
+              }
               status = 'filled'
             }
             if (pageChanged()) throw new Error('Browser page changed while filling the form')
             const after = await this.inspectFormControl(tab, backendNodeId, signal)
-            const passed = after.kind === 'textbox' && after.value === field.value
+            const passed = after.kind === 'textbox' && sameEnteredText(after.value, text)
             verification = { passed, valueLength: after.value?.length }
           } else if (field.kind === 'select') {
             for (const value of field.values) sensitiveStrings.add(value)
@@ -4835,6 +4905,26 @@ export class NativeBrowserSessionService {
       }
       const startedAt = this.now()
       this.setPointer(tab, target, 'select', startedAt)
+      const kind = await this.callOnNode<PickerKind>(
+        tab,
+        target.backendNodeId!,
+        PICKER_PAGE_FUNCTION,
+        [{ phase: 'detect' }],
+        signal
+      )
+      if (kind !== 'select') {
+        await this.pickValues(tab, target, kind, input.values, sourceUrl, sourceRefEpoch, signal)
+        return this.finishAction(
+          session,
+          tab,
+          'select',
+          target.mode,
+          false,
+          fingerprint,
+          startedAt,
+          signal
+        )
+      }
       const expectedSelected = await this.callOnNode<string[]>(
         tab,
         target.backendNodeId!,
@@ -4933,6 +5023,304 @@ export class NativeBrowserSessionService {
       }
       return result
     })
+  }
+
+  /**
+   * Chooses each value in a picker the page builds itself, as a person would: opens it or types
+   * into it, waits for its options to settle, clicks the one option the value names, confirms a
+   * dialog, and checks the control shows the choice. See browserPicker.ts.
+   */
+  private async pickValues(
+    tab: TabState,
+    control: ElementPoint,
+    kind: Exclude<PickerKind, 'select'>,
+    values: string[],
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const picked: PickerOption[] = []
+    for (const wanted of values) {
+      // An earlier pick can move the control, as a chip added beside it does.
+      const rect = await this.elementRect(tab, control.backendNodeId!, signal)
+      const at = { ...control, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      picked.push(await this.pickValue(tab, at, kind, wanted, sourceUrl, sourceRefEpoch, signal))
+    }
+    if (picked.length < 2) return
+    // A later pick can replace an earlier one in a picker that holds a single value.
+    const readback = await this.pickerCall<{ own: string; around: string }>(
+      tab,
+      control,
+      randomUUID(),
+      'readback',
+      {},
+      signal
+    )
+    const lost = picked.filter((option) => !showsChoice(readback, option.names))
+    if (lost.length) {
+      throw new Error(
+        `The picker kept only some of the requested values; it no longer shows ${lost.map((option) => JSON.stringify(option.label)).join(', ')}`
+      )
+    }
+  }
+
+  private async pickValue(
+    tab: TabState,
+    control: ElementPoint,
+    kind: Exclude<PickerKind, 'select'>,
+    wanted: string,
+    sourceUrl: string,
+    sourceRefEpoch: number,
+    signal?: AbortSignal
+  ): Promise<PickerOption> {
+    const token = randomUUID()
+    const call = <T>(phase: string, extra: Record<string, unknown> = {}): Promise<T> =>
+      this.pickerCall<T>(tab, control, token, phase, extra, signal)
+    const pageChanged = (): boolean =>
+      tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch
+    try {
+      if (kind === 'datalist') {
+        const options = await call<PickerOption[]>('datalist')
+        const option = this.pickerChoice(options, wanted)
+        await this.replaceFormText(tab, control, option.value, sourceUrl, sourceRefEpoch, signal)
+        const after = await this.inspectFormControl(tab, control.backendNodeId!, signal)
+        if (after.value !== option.value) {
+          throw new Error('The field did not keep the chosen suggestion')
+        }
+        return option
+      }
+      await call('snapshot')
+      const since = this.now()
+      if (kind === 'typeahead') {
+        await this.replaceFormText(tab, control, wanted, sourceUrl, sourceRefEpoch, signal)
+      } else {
+        await this.clickFormControl(tab, control, signal)
+      }
+      let scan = await this.pickerSettle(tab, control, token, since, signal)
+      let ranking = rankChoices(scan.options, [wanted])
+      // A list whose first view lacks the value, or holds it only among other words, is narrowed
+      // with the search box it brings.
+      if (
+        kind !== 'typeahead' &&
+        scan.search &&
+        (ranking.status === 'missing' || ('rank' in ranking && ranking.rank === 'words'))
+      ) {
+        const search = await this.pickerSearchNode(tab, control, token, signal)
+        const rect = await this.elementRect(tab, search, signal)
+        await this.replaceFormText(
+          tab,
+          {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            backendNodeId: search,
+            mode: 'selector',
+            fallbackUsed: false
+          },
+          wanted,
+          sourceUrl,
+          sourceRefEpoch,
+          signal
+        )
+        scan = await this.pickerSettle(tab, control, token, since, signal)
+        ranking = rankChoices(scan.options, [wanted])
+      }
+      if (!scan.popup) {
+        throw new Error(
+          'The control opened no list of options; observe the page and choose the option directly'
+        )
+      }
+      const option = this.pickerChoice(scan.options, wanted, ranking)
+      const index = scan.options.indexOf(option)
+      const before = await call<{ own: string; around: string }>('readback')
+      const point = await call<{ x: number; y: number } | null>('point', {
+        which: 'option',
+        index
+      })
+      if (!point) throw new Error('The chosen option disappeared before it could be clicked')
+      await this.clickFormControl(
+        tab,
+        { ...point, mode: control.mode, fallbackUsed: false },
+        signal
+      )
+      // A click counts once the page shows it did something: the option or its list went away,
+      // or the option became selected. A field holding the typed text already shows the label.
+      const typedAlready = showsChoice(before, option.names)
+      const deadline = this.now() + 3_000
+      let confirmed = false
+      while (true) {
+        await delay(100, signal)
+        if (pageChanged()) throw new Error('Browser page changed while choosing an option')
+        const after = await call<{ gone: boolean; closed: boolean; selected: boolean }>('after', {
+          index
+        })
+        // A dialog's row is often only highlighted until its Select or OK button is pressed.
+        if (scan.dialog && !after.closed && !confirmed) {
+          const again = await call<PickerScan>('scan')
+          const confirm = again.confirm
+            ? await call<{ x: number; y: number } | null>('point', { which: 'confirm' })
+            : null
+          if (confirm) {
+            await this.clickFormControl(
+              tab,
+              { ...confirm, mode: control.mode, fallbackUsed: false },
+              signal
+            )
+            confirmed = true
+            continue
+          }
+        }
+        const readback = await call<{ own: string; around: string }>('readback')
+        if (
+          showsChoice(readback, option.names) &&
+          (!typedAlready || after.gone || after.closed || after.selected)
+        ) {
+          return option
+        }
+        if (this.now() >= deadline) {
+          throw new Error(
+            `The control did not keep ${JSON.stringify(option.label)} after it was clicked; observe the page before retrying`
+          )
+        }
+      }
+    } catch (error) {
+      // Leaves the page as it was found rather than with a list hanging open: Escape, or, for a
+      // menu that ignores it, the control that opened it.
+      if (!pageChanged()) {
+        tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+        tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
+        if (kind === 'dropdown') {
+          await delay(100, signal).catch(() => undefined)
+          const open = await call<{ closed: boolean }>('after', { index: -1 }).catch(() => null)
+          if (open && !open.closed)
+            await this.clickFormControl(tab, control, signal).catch(() => undefined)
+        }
+      }
+      throw error
+    } finally {
+      await call('cleanup').catch(() => undefined)
+    }
+  }
+
+  private pickerCall<T>(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    phase: string,
+    extra: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    return this.callOnNode<T>(
+      tab,
+      control.backendNodeId!,
+      PICKER_PAGE_FUNCTION,
+      [{ ...extra, token, phase }],
+      signal
+    )
+  }
+
+  /** The option `wanted` names, or an error that lists what the picker offers instead. */
+  private pickerChoice(
+    options: PickerOption[],
+    wanted: string,
+    ranking = rankChoices(options, [wanted])
+  ): PickerOption {
+    const safe = (text: string): string => JSON.stringify(text.slice(0, 80))
+    if (ranking.status === 'picked') return options[ranking.index]
+    if (ranking.status === 'disabled') {
+      throw new Error(`The option ${safe(options[ranking.index].label)} is disabled`)
+    }
+    if (ranking.status === 'ambiguous') {
+      throw new Error(
+        `${safe(wanted)} matches several options: ${ranking.indexes
+          .slice(0, 8)
+          .map((index) => safe(options[index].label))
+          .join(', ')}. Pass the exact label of one.`
+      )
+    }
+    const available = options.filter((option) => !option.disabled).slice(0, 20)
+    throw new Error(
+      available.length
+        ? `No option matched ${safe(wanted)}. Options listed: ${available.map((option) => safe(option.label)).join(', ')}${options.length > available.length ? ', ...' : ''}`
+        : `The picker listed no options for ${safe(wanted)}`
+    )
+  }
+
+  /**
+   * The picker's options once they hold still: no loading sign, no request since the pick began,
+   * and the same options for a moment. An empty list is waited on a little longer, since a
+   * typeahead often asks the server only after a pause in typing.
+   */
+  private async pickerSettle(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    since: number,
+    signal?: AbortSignal
+  ): Promise<PickerScan> {
+    const startedAt = this.now()
+    let last: PickerScan | undefined
+    let stableSince = startedAt
+    while (true) {
+      const scan = await this.pickerCall<PickerScan>(tab, control, token, 'scan', {}, signal)
+      const now = this.now()
+      if (
+        !last ||
+        scan.signature !== last.signature ||
+        scan.loading ||
+        busyRequests(tab.inFlight.values(), since, now) > 0
+      ) {
+        stableSince = now
+      }
+      last = scan
+      if (now - stableSince >= 400 && (scan.options.length || now - startedAt >= 2_500)) return scan
+      if (now - startedAt >= 8_000) return scan
+      await delay(100, signal)
+    }
+  }
+
+  /** The search box the picker's popup brought, as a node the text entry can target. */
+  private async pickerSearchNode(
+    tab: TabState,
+    control: ElementPoint,
+    token: string,
+    signal?: AbortSignal
+  ): Promise<number> {
+    const objectId = await this.resolvedNodeObject(tab, control.backendNodeId!, signal)
+    let searchId: string | undefined
+    try {
+      const response = await abortable(
+        tab.surface.sendDebuggerCommand<{ result?: { objectId?: string } }>(
+          'Runtime.callFunctionOn',
+          {
+            objectId,
+            functionDeclaration: PICKER_PAGE_FUNCTION,
+            arguments: [{ value: { token, phase: 'search-node' } }],
+            returnByValue: false
+          }
+        ),
+        signal
+      )
+      searchId = response.result?.objectId
+      if (!searchId) throw new Error('The picker search box is no longer available')
+      const described = await abortable(
+        tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
+          objectId: searchId
+        }),
+        signal
+      )
+      if (!described.node?.backendNodeId) {
+        throw new Error('The picker search box is no longer available')
+      }
+      return described.node.backendNodeId
+    } finally {
+      for (const id of [objectId, searchId]) {
+        if (id) {
+          await tab.surface
+            .sendDebuggerCommand('Runtime.releaseObject', { objectId: id })
+            .catch(() => undefined)
+        }
+      }
+    }
   }
 
   async press(
@@ -5212,24 +5600,6 @@ export class NativeBrowserSessionService {
     })
   }
 
-  private async mutationRevision(tab: TabState, signal?: AbortSignal): Promise<number> {
-    return abortable(
-      tab.surface.executeJavaScript<number>(`(() => {
-        const key = Symbol.for('io.sidekick.browser.mutation-state');
-        let state = window[key];
-        if (!state) {
-          state = { revision: 0 };
-          const observer = new MutationObserver(() => state.revision++);
-          observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true });
-          state.observer = observer;
-          window[key] = state;
-        }
-        return state.revision;
-      })()`),
-      signal
-    )
-  }
-
   private async coordinateCaptureState(
     tab: TabState,
     signal?: AbortSignal
@@ -5295,14 +5665,6 @@ export class NativeBrowserSessionService {
     )
   }
 
-  private pendingRequests(tab: TabState): number {
-    let pending = 0
-    for (const request of tab.inFlight.values()) {
-      if (!request.ignoredForIdle && this.now() - request.startedAt < 2_000) pending++
-    }
-    return pending
-  }
-
   private setPointer(
     tab: TabState,
     target: Pick<ElementPoint, 'x' | 'y' | 'mode'>,
@@ -5319,6 +5681,11 @@ export class NativeBrowserSessionService {
     tab.surface.showPointer?.(target.x, target.y)
   }
 
+  /**
+   * Waits until what the latest action set off has finished: its requests, the changes it made and
+   * any loading sign it brought up, ignoring the page's own background activity. See
+   * browserSettle.ts.
+   */
   private async waitForQuiescence(
     tab: TabState,
     input: { idleMs?: number; maxWaitMs?: number },
@@ -5327,20 +5694,44 @@ export class NativeBrowserSessionService {
     const idleMs = boundedInteger(input.idleMs ?? 350, 50, 5_000, 'idleMs')
     const maxWaitMs = boundedInteger(input.maxWaitMs ?? 5_000, idleMs, 30_000, 'maxWaitMs')
     const startedAt = this.now()
+    const mark =
+      tab.settleMark && startedAt - tab.settleMark.at < 60_000 ? tab.settleMark : undefined
+    const since = mark?.at ?? startedAt
+    // A page can answer anything; what is not a count reads as no change and no loading sign.
+    const probe = async (): Promise<{ changes?: number; loading?: number }> => {
+      const state = await abortable(
+        tab.surface.executeJavaScript<unknown>(settleProbeScript(mark)),
+        signal
+      ).catch(() => undefined)
+      const count = (value: unknown): number | undefined =>
+        typeof value === 'number' && Number.isFinite(value) ? value : undefined
+      return state && typeof state === 'object'
+        ? {
+            changes: count((state as { changes?: unknown }).changes),
+            loading: count((state as { loading?: unknown }).loading)
+          }
+        : {}
+    }
     let stableSince = startedAt
-    let revision = await this.mutationRevision(tab, signal).catch(() => 0)
+    let changes = (await probe()).changes ?? 0
+    let pending = 0
     while (this.now() - startedAt < maxWaitMs) {
-      const nextRevision = await this.mutationRevision(tab, signal).catch(() => revision)
-      const pending = this.pendingRequests(tab)
-      if (nextRevision !== revision || pending > 0 || tab.surface.isLoading()) {
-        revision = nextRevision
+      const state = await probe()
+      pending = busyRequests(tab.inFlight.values(), since, this.now())
+      if (
+        (state.changes ?? changes) !== changes ||
+        (state.loading ?? 0) > 0 ||
+        pending > 0 ||
+        tab.surface.isLoading()
+      ) {
+        changes = state.changes ?? changes
         stableSince = this.now()
       } else if (this.now() - stableSince >= idleMs) {
         return {
           idle: true,
           waitedMs: this.now() - startedAt,
           pendingRequests: pending,
-          mutationRevision: revision,
+          mutationRevision: changes,
           timedOut: false
         }
       }
@@ -5349,8 +5740,8 @@ export class NativeBrowserSessionService {
     return {
       idle: false,
       waitedMs: this.now() - startedAt,
-      pendingRequests: this.pendingRequests(tab),
-      mutationRevision: revision,
+      pendingRequests: pending,
+      mutationRevision: changes,
       timedOut: true
     }
   }

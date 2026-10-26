@@ -1009,7 +1009,7 @@ const browserType = definition(
 
 const browserSelect = definition(
   'browser_select',
-  'Choose one or more values in a select element and return the changed observation.',
+  'Choose one or more values in any picker and return the changed observation: a native select, a datalist, an autocomplete or typeahead field (it types the value and clicks the matching suggestion), an ARIA combobox, a dropdown or menu built from other elements, a multi-select that adds chips, or a button that opens a dialog with a search box and results. Target the control that opens the picker and pass the visible label of each option. A value that matches several options or none is refused with the options listed, never guessed.',
   {
     type: 'object',
     required: ['values'],
@@ -1024,11 +1024,11 @@ const browserSelect = definition(
       ref: { type: 'string' },
       selector: { type: 'string' },
       text: { type: 'string' },
-      name: { type: 'string', description: 'Accessible select name or label.' },
+      name: { type: 'string', description: 'Accessible name or label of the picker control.' },
       role: {
         type: 'string',
-        enum: ['combobox', 'listbox'],
-        description: 'Accessible select role.'
+        enum: ['combobox', 'listbox', 'button', 'textbox', 'searchbox'],
+        description: 'Accessible role of the control that opens the picker.'
       },
       exact: { type: 'boolean', description: 'Require an exact accessible-name match.' },
       nth: { type: 'integer', minimum: 0, description: 'Zero-based match index when intentional.' },
@@ -1043,7 +1043,7 @@ const browserSelect = definition(
 
 const browserFillForm = definition(
   'browser_fill_form',
-  'Fill up to 25 independent standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Every safe field is attempted even when another field fails; the batch stops early only if the page changes. Each actual post-fill state is verified, partial completion is reported explicitly, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Retry only failed fields. Use individual browser tools for custom widgets or autocomplete controls.',
+  'Fill up to 25 independent standard form controls in one browser turn. Resolve all fields from current semantic refs, selectors, or accessible label text; do not use coordinates. Every safe field is attempted even when another field fails; the batch stops early only if the page changes. Each actual post-fill state is verified, partial completion is reported explicitly, sensitive values are never returned, and only one final redacted semantic observation (no screenshot) is captured. Retry only failed fields. A date field takes an ISO date (YYYY-MM-DD): a native date input is set directly, and a text box whose placeholder names a format such as MM/DD/YYYY gets the date written in it. Use browser_select for custom pickers, comboboxes and autocomplete fields.',
   {
     type: 'object',
     required: ['fields'],
