@@ -159,7 +159,7 @@ connections of the same kind, discover their model inventories, choose which mod
 and optionally select a separate utility model for lightweight background work.
 
 <p align="center">
-  <img src="./docs/assets/screenshots/providers.png" width="1200" alt="SideKick full-window provider settings with Ollama and OpenRouter connections" />
+  <img src="./docs/assets/screenshots/providers.png" width="960" alt="SideKick provider settings with Ollama, LM Studio and a LiteLLM gateway connected, and the Ollama models shown in chat" />
 </p>
 
 | Provider      | Transport                 | Credentials | Models                            |

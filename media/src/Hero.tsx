@@ -1,8 +1,6 @@
-import { linearTiming, TransitionSeries } from '@remotion/transitions'
-import { fade } from '@remotion/transitions/fade'
-import { slide } from '@remotion/transitions/slide'
 import {
   AbsoluteFill,
+  Series,
   Img,
   interpolate,
   spring,
@@ -15,7 +13,23 @@ import { Backdrop } from './components/Backdrop'
 import { Caption } from './components/Caption'
 import { COLORS, fontFamily, MARKS, sec } from './theme'
 
-const TRANSITION = 14
+// Each scene fades out to the backdrop and the next fades in, so two never show at once.
+const FADE = 12
+
+function Faded({
+  frames,
+  children
+}: {
+  frames: number
+  children: React.ReactNode
+}): React.JSX.Element {
+  const frame = useCurrentFrame()
+  const opacity = interpolate(frame, [0, FADE, frames - FADE, frames], [0, 1, 1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  })
+  return <AbsoluteFill style={{ opacity }}>{children}</AbsoluteFill>
+}
 
 function Wordmark({ size = 1 }: { size?: number }): React.JSX.Element {
   const frame = useCurrentFrame()
@@ -153,85 +167,63 @@ function Cut({
   )
 }
 
+// Few cuts, each long enough to follow, framed once and held.
 export const HERO_CUTS = [
   {
-    frames: sec(3.6),
-    from: MARKS.agentStart + 3.5,
-    rate: 1.7,
-    kicker: 'Agent',
-    title: 'Reads, runs, fixes and verifies',
-    shots: [
-      { at: 0, zoom: 1.55, x: 0.56, y: 0.3 },
-      { at: 3.4, zoom: 1.55, x: 0.56, y: 0.48 }
-    ]
-  },
-  {
-    frames: sec(3.8),
-    from: MARKS.artifactStart + 5,
-    rate: 2,
+    frames: sec(6.5),
+    from: MARKS.artifactStart + 6,
+    rate: 1.6,
     kicker: 'Artifacts',
-    title: 'Live UI that builds as it streams',
-    shots: [
-      { at: 0, zoom: 1.45, x: 0.56, y: 0.32 },
-      { at: 3.6, zoom: 1.45, x: 0.56, y: 0.5 }
-    ]
+    title: 'Live UI that builds as the model writes it',
+    shots: [{ at: 0, zoom: 1.3, x: 0.56, y: 0.42 }]
   },
   {
-    frames: sec(3.4),
-    from: MARKS.teamStart + 8.5,
-    rate: 1.8,
+    frames: sec(5.5),
+    from: MARKS.agentStart + 4.5,
+    rate: 1.5,
+    kicker: 'Agent',
+    title: 'Reads the code, runs the tests, fixes the bug',
+    shots: [{ at: 0, zoom: 1.3, x: 0.56, y: 0.4 }]
+  },
+  {
+    frames: sec(5),
+    from: MARKS.teamStart + 8,
+    rate: 1.3,
     kicker: 'Teams',
-    title: 'Split work across chats that report back',
-    shots: [
-      { at: 0, zoom: 1.35, x: 0.5, y: 0.5 },
-      { at: 1.2, zoom: 1.8, x: 0.2, y: 0.28 }
-    ]
-  },
-  {
-    frames: sec(3),
-    from: MARKS.lightStart + 0.2,
-    rate: 1,
-    kicker: 'Themes',
-    title: 'Light and dark, with a reveal',
-    shots: [{ at: 0, zoom: 1.2, x: 0.6, y: 0.4 }]
+    title: 'Chats that split the work and report back',
+    shots: [{ at: 0, zoom: 1.3, x: 0.4, y: 0.4 }]
   }
 ]
 
-export const HERO_TITLE = sec(3.4)
+export const HERO_TITLE = sec(3.2)
 export const HERO_END = sec(2.6)
 export const HERO_DURATION =
-  HERO_TITLE +
-  HERO_CUTS.reduce((sum, cut) => sum + cut.frames, 0) +
-  HERO_END -
-  TRANSITION * (HERO_CUTS.length + 1)
+  HERO_TITLE + HERO_CUTS.reduce((sum, cut) => sum + cut.frames, 0) + HERO_END
 
 /** The README's opening: the name, then the real app in quick cuts, then where it runs. */
 export function Hero(): React.JSX.Element {
   return (
     <AbsoluteFill>
       <Backdrop />
-      <TransitionSeries>
-        <TransitionSeries.Sequence durationInFrames={HERO_TITLE}>
-          <TitleCard />
-        </TransitionSeries.Sequence>
-        {HERO_CUTS.flatMap((cut, index) => [
-          <TransitionSeries.Transition
-            key={`t${index}`}
-            presentation={index === 0 ? fade() : slide({ direction: 'from-right' })}
-            timing={linearTiming({ durationInFrames: TRANSITION })}
-          />,
-          <TransitionSeries.Sequence key={`s${index}`} durationInFrames={cut.frames}>
-            <Cut {...cut} />
-          </TransitionSeries.Sequence>
-        ])}
-        <TransitionSeries.Transition
-          presentation={fade()}
-          timing={linearTiming({ durationInFrames: TRANSITION })}
-        />
-        <TransitionSeries.Sequence durationInFrames={HERO_END}>
-          <EndCard />
-        </TransitionSeries.Sequence>
-      </TransitionSeries>
+      <Series>
+        <Series.Sequence durationInFrames={HERO_TITLE}>
+          <Faded frames={HERO_TITLE}>
+            <TitleCard />
+          </Faded>
+        </Series.Sequence>
+        {HERO_CUTS.map((cut, index) => (
+          <Series.Sequence key={index} durationInFrames={cut.frames}>
+            <Faded frames={cut.frames}>
+              <Cut {...cut} />
+            </Faded>
+          </Series.Sequence>
+        ))}
+        <Series.Sequence durationInFrames={HERO_END}>
+          <Faded frames={HERO_END}>
+            <EndCard />
+          </Faded>
+        </Series.Sequence>
+      </Series>
     </AbsoluteFill>
   )
 }

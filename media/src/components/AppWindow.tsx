@@ -19,25 +19,23 @@ export interface Shot {
 
 /**
  * The real app's recording in a floating window, played from `from` seconds at `rate`, with a
- * camera that glides between shots and a tilt that settles flat as the window arrives.
+ * camera that holds each shot and glides between them, fading in as it arrives.
  */
 export function AppWindow({
   from,
   rate = 1,
   shots = [{ at: 0, zoom: 1, x: 0.5, y: 0.5 }],
-  width = 1120,
-  tilt = true
+  width = 1120
 }: {
   from: number
   rate?: number
   shots?: Shot[]
   width?: number
-  tilt?: boolean
 }): React.JSX.Element {
   const frame = useCurrentFrame()
   const { fps } = useVideoConfig()
   const height = (width * 800) / 1280
-  const arrive = spring({ frame, fps, config: { damping: 18, mass: 0.9 } })
+  const arrive = spring({ frame, fps, config: { damping: 200 }, durationInFrames: 14 })
   const t = frame / fps
   const times = shots.map((shot) => shot.at)
   const ease = {
@@ -70,10 +68,8 @@ export function AppWindow({
         border: `1px solid ${COLORS.border}`,
         background: COLORS.surface,
         boxShadow: '0 40px 120px rgba(0,0,0,0.65), 0 0 0 1px rgba(134,174,232,0.08)',
-        transform: tilt
-          ? `perspective(1800px) rotateX(${interpolate(arrive, [0, 1], [18, 0])}deg) translateY(${interpolate(arrive, [0, 1], [80, 0])}px) scale(${interpolate(arrive, [0, 1], [0.92, 1])})`
-          : undefined,
-        opacity: interpolate(arrive, [0, 0.4], [0, 1], { extrapolateRight: 'clamp' })
+        transform: `scale(${interpolate(arrive, [0, 1], [0.985, 1])})`,
+        opacity: arrive
       }}
     >
       <div

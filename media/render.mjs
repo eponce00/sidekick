@@ -26,9 +26,9 @@ for (const id of compositions) {
       id,
       frames,
       '--sequence',
-      '--image-format=jpeg',
-      '--jpeg-quality=94',
-      '--scale=0.75',
+      '--image-format=png',
+      // Twice the size it shows at in the README, so text stays sharp on high-density screens.
+      '--scale=1.5',
       '--log=error'
     ],
     { cwd: MEDIA, stdio: 'inherit' }

@@ -29,10 +29,13 @@ cd media
 npm install
 npm run capture
 npm run render
+npm run screenshots
 ```
 
-`npm run studio` opens Remotion's editor to adjust a composition. `npm run render -- hero agent`
-renders only the named ones. Rendering needs Python 3 with Pillow for the WebP packing, and loads
+`npm run screenshots` takes the still of Settings → Providers the same way, with local Ollama,
+LM Studio and LiteLLM servers stood in for by fake ones; it uses Ollama's and LM Studio's usual
+ports, so stop them first if they are running. `npm run studio` opens Remotion's editor to adjust
+a composition, and `npm run render -- hero agent` renders only the named ones. Rendering needs Python 3 with Pillow for the WebP packing, and loads
 the Inter font from Google Fonts.
 
 The recording, its frames and renders are ignored by Git; only the finished WebP files are
