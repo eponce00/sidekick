@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "capture": "node capture/capture.mjs",
+    "screenshots": "node capture/screenshots.mjs",
     "studio": "remotion studio src/index.ts",
     "render": "node render.mjs"
   },

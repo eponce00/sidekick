@@ -1,12 +1,12 @@
-import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from 'remotion'
+import { AbsoluteFill } from 'remotion'
 import { COLORS } from '../theme'
 
-/** Slow drifting light in the app's accent colours behind everything, with a faint grid. */
+/**
+ * Soft light in the app's accent colours behind everything, with a faint grid. It holds still: a
+ * backdrop that moves changes every pixel of every frame, which the README's animations pay for in
+ * sharpness.
+ */
 export function Backdrop(): React.JSX.Element {
-  const frame = useCurrentFrame()
-  const { durationInFrames } = useVideoConfig()
-  const drift = (from: number, to: number): number =>
-    interpolate(frame, [0, durationInFrames], [from, to])
   const glow = (color: string, x: number, y: number, size: number): React.CSSProperties => ({
     position: 'absolute',
     left: `${x}%`,
@@ -22,9 +22,9 @@ export function Backdrop(): React.JSX.Element {
   })
   return (
     <AbsoluteFill style={{ background: COLORS.background, overflow: 'hidden' }}>
-      <div style={glow(COLORS.accent, drift(18, 30), drift(20, 34), 620)} />
-      <div style={glow(COLORS.violet, drift(84, 70), drift(16, 30), 520)} />
-      <div style={glow(COLORS.teal, drift(62, 78), drift(96, 80), 560)} />
+      <div style={glow(COLORS.accent, 24, 26, 620)} />
+      <div style={glow(COLORS.violet, 78, 22, 520)} />
+      <div style={glow(COLORS.teal, 70, 90, 560)} />
       <AbsoluteFill
         style={{
           backgroundImage:

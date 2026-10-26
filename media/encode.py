@@ -18,7 +18,10 @@ frames[0].save(
     append_images=frames[1:],
     duration=round(1000 * every / fps),
     loop=0,
-    quality=78,
-    method=6,
+    # Lossy at this quality keeps the app's text crisp; frames that do not change cost little,
+    # because the compositions hold the camera still.
+    quality=92,
+    method=4,
+    minimize_size=True,
 )
 print(f'{out.name}: {len(frames)} frames, {out.stat().st_size / 1e6:.1f} MB')
