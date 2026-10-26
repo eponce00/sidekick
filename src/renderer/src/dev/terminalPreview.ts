@@ -3,6 +3,11 @@ import type {
   TerminalSessionEvent,
   TerminalSessionSummary
 } from '../../../shared/terminalSessions'
+import type {
+  UserTerminalAPI,
+  UserTerminalEvent,
+  UserTerminalSummary
+} from '../../../shared/userTerminals'
 
 /**
  * Agent commands for the preview conversation: one finished, a dev server still printing, and
@@ -142,6 +147,93 @@ export function previewTerminalApi(): TerminalAPI {
         end(id, 'exited', 0)
       }
       return { written: true }
+    },
+    onEvent: (callback) => {
+      listeners.add(callback)
+      return () => listeners.delete(callback)
+    }
+  }
+}
+
+/**
+ * A shell the preview user opens: it echoes what is typed and answers each line with a prompt,
+ * enough to review the Terminal panel's own terminals without the app.
+ */
+export function previewUserTerminalApi(): UserTerminalAPI {
+  const listeners = new Set<(event: UserTerminalEvent) => void>()
+  const terminals = new Map<
+    string,
+    { summary: UserTerminalSummary; output: string; line: string }
+  >()
+  const prompt = 'PS C:\\Projects\\sidekick> '
+  const emit = (event: UserTerminalEvent): void => {
+    for (const listener of listeners) listener(event)
+  }
+  const append = (id: string, data: string): void => {
+    const terminal = terminals.get(id)
+    if (!terminal) return
+    const offset = terminal.output.length
+    terminal.output += data
+    terminal.summary.outputLength = terminal.output.length
+    emit({ type: 'output', id, offset, data })
+  }
+  return {
+    list: async () => [...terminals.values()].map((terminal) => ({ ...terminal.summary })),
+    create: async () => {
+      const id = crypto.randomUUID()
+      const summary: UserTerminalSummary = {
+        id,
+        title: 'pwsh',
+        shell: 'pwsh.exe',
+        cwd: 'C:\\Projects\\sidekick',
+        state: 'running',
+        startedAt: Date.now(),
+        outputLength: 0
+      }
+      terminals.set(id, { summary, output: '', line: '' })
+      emit({ type: 'terminal', terminal: { ...summary } })
+      append(id, `PowerShell 7.5.0\r\n${prompt}`)
+      return { ...summary }
+    },
+    read: async (id, offset = 0) => {
+      const terminal = terminals.get(id)
+      return terminal
+        ? { id, offset, data: terminal.output.slice(offset), truncatedBefore: false }
+        : null
+    },
+    write: async (id, data) => {
+      const terminal = terminals.get(id)
+      if (!terminal || terminal.summary.state !== 'running') return { written: false }
+      for (const key of data) {
+        if (key === '\r') {
+          const line = terminal.line.trim()
+          terminal.line = ''
+          if (line === 'exit') {
+            append(id, '\r\n')
+            terminal.summary.state = 'exited'
+            terminal.summary.exitCode = 0
+            terminal.summary.endedAt = Date.now()
+            emit({ type: 'terminal', terminal: { ...terminal.summary } })
+            return { written: true }
+          }
+          append(id, `\r\n${line ? `${line}: preview shell\r\n` : ''}${prompt}`)
+        } else if (key === '\u007f') {
+          if (terminal.line) {
+            terminal.line = terminal.line.slice(0, -1)
+            append(id, '\b \b')
+          }
+        } else if (key >= ' ') {
+          terminal.line += key
+          append(id, key)
+        }
+      }
+      return { written: true }
+    },
+    resize: async (id) => ({ resized: terminals.has(id) }),
+    close: async (id) => {
+      if (!terminals.delete(id)) return { closed: false }
+      emit({ type: 'closed', id })
+      return { closed: true }
     },
     onEvent: (callback) => {
       listeners.add(callback)

@@ -29,6 +29,7 @@ import {
 } from '../../../shared/companion'
 import { createFallbackConversationTitle } from '../../../shared/conversationTitles'
 import {
+  isBrowserAnnotationAttachment,
   parseMessageContextAttachments,
   pastedTextBudget,
   validateMessageContextAttachments,
@@ -448,12 +449,25 @@ export class CompanionApi {
         }
         const segments = parse(row.segments)
         const tokenUsage = parse(row.token_usage)
+        const attachments = parseMessageContextAttachments(row.attachments)
+        // The pictures of marked browser places show after the message's own images, as on the desktop.
+        const markPictures = attachments.filter(isBrowserAnnotationAttachment).flatMap((mark) =>
+          mark.image
+            ? [
+                {
+                  id: mark.id,
+                  name: `Mark ${mark.number}: ${mark.name}`,
+                  mimeType: mark.image.mimeType,
+                  dataUrl: mark.image.dataUrl
+                }
+              ]
+            : []
+        )
         const images = await Promise.all(
-          parseMessageImages(row.images).map((image) =>
+          [...parseMessageImages(row.images), ...markPictures].map((image) =>
             this.deps.shrinkImage(image).catch(() => null)
           )
         )
-        const attachments = parseMessageContextAttachments(row.attachments)
         return {
           id: row.id,
           // The desktop saves replies as `agent`; the phone's contract calls them `assistant`.
@@ -473,7 +487,15 @@ export class CompanionApi {
             : {}),
           ...(attachments.length
             ? {
-                attachments: attachments.map(({ id, kind, name }) => ({ id, kind, name }))
+                attachments: attachments.map((attachment) => {
+                  if (!isBrowserAnnotationAttachment(attachment)) {
+                    const { id, kind, name } = attachment
+                    return { id, kind, name }
+                  }
+                  // Its picture is among the message's images.
+                  const { image: _picture, ...mark } = attachment
+                  return mark
+                })
               }
             : {})
         }
@@ -1128,9 +1150,8 @@ export class CompanionApi {
       } else throw new Error('Choose an answer')
     } else if (interaction.kind === 'question') {
       const intent = interaction.request.intent
-      // These cards act on the computer itself: starting chats in folders, or taking over its browser.
-      if (intent === 'start_sessions' || intent === 'browser_takeover')
-        throw new Error('Answer this on the computer.')
+      // This card acts on the computer itself: it starts chats in its folders.
+      if (intent === 'start_sessions') throw new Error('Answer this on the computer.')
       const questions = Array.isArray(interaction.request.questions)
         ? (interaction.request.questions as Array<Record<string, unknown>>)
         : []

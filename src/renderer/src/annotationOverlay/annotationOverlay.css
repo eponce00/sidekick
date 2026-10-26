@@ -1,0 +1,483 @@
+/* The overlay is see-through: only its marks, the note and the bar draw over the page. */
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+/* Only the accent itself comes from the app's palette, so its steps are derived from it here. */
+.ao-root {
+  --accent-subtle: color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-muted: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 82%, var(--text-primary));
+  --focus-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+  --field-focus-border: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  --field-focus-glow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+
+  position: fixed;
+  inset: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+.ao-surface {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+}
+
+/* A mark on the page: the accent, haloed so it stands out on any page. Its badge and the hover
+   label are ringed in white, which separates them from the page under them in either theme. */
+.ao-mark,
+.ao-hover,
+.ao-drag {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.ao-mark {
+  border: 2px solid var(--accent);
+  background: var(--accent-subtle);
+  box-shadow: 0 0 0 4px var(--accent-muted);
+}
+
+.ao-mark.is-area {
+  border-style: dashed;
+}
+
+.ao-mark.is-editing {
+  background: var(--accent-muted);
+}
+
+.ao-badge {
+  position: absolute;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow:
+    0 0 0 2px #fff,
+    0 2px 8px var(--shadow);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.ao-badge:hover {
+  background: var(--accent-strong);
+}
+
+.ao-hover {
+  border: 1.5px solid var(--accent);
+  background: var(--accent-subtle);
+}
+
+.ao-hover > span {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  max-width: 280px;
+  margin-bottom: 6px;
+  overflow: hidden;
+  padding: 4px 9px;
+  border-radius: var(--radius-full);
+  color: var(--on-accent);
+  background: var(--accent);
+  box-shadow:
+    0 0 0 1.5px rgba(255, 255, 255, 0.85),
+    0 2px 8px var(--shadow);
+  font: 600 var(--text-xs) / 1 var(--font-sans);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ao-hover > span.is-below {
+  top: 100%;
+  bottom: auto;
+  margin: 6px 0 0;
+}
+
+.ao-drag {
+  border: 1.5px dashed var(--accent);
+  background: var(--accent-subtle);
+}
+
+/* The note and its style editor open together beside the mark. */
+.ao-note-wrap {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: ao-rise var(--duration-normal) var(--ease-out);
+}
+
+/* Floating pieces are drawn as SideKick's menus are, over whatever the page shows. */
+.ao-note,
+.ao-bar,
+.ao-style {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--panel-border);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-1) 97%, transparent);
+  box-shadow: var(--shadow-panel);
+  backdrop-filter: blur(18px);
+  user-select: auto;
+}
+
+.ao-note {
+  gap: 2px;
+  min-height: 46px;
+  padding: 5px 6px 5px 12px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+}
+
+.ao-bar {
+  position: absolute;
+}
+
+.ao-note-number {
+  display: grid;
+  min-width: 20px;
+  height: 20px;
+  flex: none;
+  place-items: center;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: var(--radius-full);
+  color: var(--on-accent);
+  background: var(--accent);
+  font: 700 var(--text-xs) / 1 var(--font-sans);
+}
+
+.ao-note input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 4px;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  background: transparent;
+  font: 400 var(--text-sm) / 1.4 var(--font-sans);
+}
+
+.ao-note input:focus-visible {
+  box-shadow: none;
+}
+
+.ao-note input::placeholder {
+  color: var(--text-muted);
+}
+
+.ao-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+  transition:
+    color var(--duration-fast),
+    background var(--duration-fast);
+}
+
+.ao-icon:hover:not(:disabled),
+.ao-icon[aria-pressed='true'] {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+/* Listening: the microphone takes the accent and breathes with it. */
+.ao-icon.is-listening {
+  color: var(--on-accent);
+  background: var(--accent);
+  animation: ao-listen 1.4s var(--ease-in-out, ease-in-out) infinite;
+}
+
+.ao-icon.is-listening:hover {
+  color: var(--on-accent);
+  background: var(--accent);
+}
+
+@keyframes ao-listen {
+  50% {
+    box-shadow: 0 0 0 5px var(--accent-muted);
+  }
+}
+
+/* The style editor: one row per property, labels left and controls right. */
+.ao-style {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px;
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  animation: ao-rise var(--duration-normal) var(--ease-out);
+}
+
+.ao-style-row {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.ao-style-row > span:first-child {
+  flex: 1;
+}
+
+.ao-style select,
+.ao-stepper input {
+  height: 28px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--surface-2);
+  font: inherit;
+  outline: none;
+}
+
+.ao-style select {
+  width: 150px;
+  padding: 0 6px;
+}
+
+.ao-style select:focus-visible,
+.ao-stepper input:focus-visible {
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
+}
+
+.ao-stepper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.ao-stepper input {
+  width: 52px;
+  padding: 0 4px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+}
+
+.ao-stepper input::-webkit-inner-spin-button {
+  appearance: none;
+}
+
+.ao-stepper button,
+.ao-style-reset {
+  display: inline-flex;
+  height: 28px;
+  min-width: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ao-stepper button:hover,
+.ao-style-reset:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-3);
+}
+
+.ao-style-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ao-color {
+  display: inline-flex;
+  width: 150px;
+  align-items: center;
+  gap: 8px;
+}
+
+.ao-color input {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+
+.ao-color input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.ao-color input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.ao-color code {
+  color: var(--text-primary);
+  font: 500 var(--text-xs) / 1 var(--font-mono);
+}
+
+.ao-style input[type='range'] {
+  width: 104px;
+  accent-color: var(--accent);
+}
+
+.ao-style-value {
+  width: 36px;
+  color: var(--text-primary);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ao-style-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 2px 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 4px;
+}
+
+.ao-icon:disabled,
+.ao-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Keeping a note is the note's own step; Send on the bar is the one accent-filled control. */
+.ao-note-save {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-primary);
+  background: var(--surface-3);
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.ao-note-save:hover {
+  background: var(--surface-4);
+}
+
+.ao-bar {
+  top: 14px;
+  left: 50%;
+  gap: 4px;
+  height: 44px;
+  padding: 0 6px 0 4px;
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  animation: ao-drop var(--duration-normal) var(--ease-out);
+}
+
+.ao-grip {
+  display: grid;
+  width: 26px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: grab;
+  touch-action: none;
+}
+
+.ao-grip:hover {
+  color: var(--text-secondary);
+  background: var(--surface-2);
+}
+
+.ao-grip:active {
+  cursor: grabbing;
+}
+
+.ao-bar-title {
+  padding: 0 8px 0 2px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.ao-bar-title > span {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ao-send {
+  height: 32px;
+  margin: 0 2px 0 4px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--on-accent);
+  background: var(--accent);
+  font: 600 var(--text-sm) / 1 var(--font-sans);
+  cursor: pointer;
+  transition: background-color var(--duration-fast);
+}
+
+.ao-send:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+@keyframes ao-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+@keyframes ao-drop {
+  from {
+    opacity: 0;
+    margin-top: -6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ao-note-wrap,
+  .ao-style,
+  .ao-bar,
+  .ao-icon.is-listening {
+    animation: none;
+  }
+}

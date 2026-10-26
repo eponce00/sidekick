@@ -40,12 +40,15 @@ import type { PendingRunMessageItem } from '../hooks/useConversationRun'
 import type { MessageImageAttachment } from '../../../shared/messageImages'
 import type { ProviderImageProfile } from '../../../shared/imagePreparation'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel,
   shouldAttachPastedText,
+  type BrowserAnnotationAttachment,
   type MessageContextAttachment
 } from '../../../shared/messageContextAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import { clipboardImageFiles } from '../utils/messageImageAttachments'
 import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { DictationButton } from './DictationButton'
@@ -145,6 +148,9 @@ interface ChatInputProps {
   /** What the selected model accepts, so an image's chip can say it will get a smaller copy. */
   imageSendProfile?: ProviderImageProfile
   attachedContext: MessageContextAttachment[]
+  /** Places marked in the Browser panel, which go with the next message. */
+  browserMarks?: BrowserAnnotationAttachment[]
+  onRemoveBrowserMark?: (id: string) => void
   attachmentError: string | null
   visionAvailable: boolean
   visionUnavailableReason?: string
@@ -213,6 +219,8 @@ interface ChatInputProps {
   onModelChange: (modelId: string) => void
   onOpenModelSearch: () => void
   workspaceFolder: string | null
+  /** The chat has no project and keeps attached files as copies in its own folder. */
+  attachesToChatFolder?: boolean
   /** Shown after the add menu, such as the chat's worktree. */
   toolbarExtra?: React.ReactNode
   onOpenWorkspace: () => void
@@ -237,6 +245,8 @@ export function ChatInput({
   attachedImages,
   imageSendProfile,
   attachedContext,
+  browserMarks = [],
+  onRemoveBrowserMark,
   attachmentError,
   visionAvailable,
   visionUnavailableReason,
@@ -299,6 +309,7 @@ export function ChatInput({
   onModelChange,
   onOpenModelSearch,
   workspaceFolder,
+  attachesToChatFolder = false,
   toolbarExtra,
   onOpenWorkspace,
   onOpenWorkspaceMemory,
@@ -920,8 +931,19 @@ export function ChatInput({
             : undefined
       }
       attachmentTray={
-        attachedImages.length || attachedContext.length || attachmentError ? (
+        attachedImages.length ||
+        attachedContext.length ||
+        browserMarks.length ||
+        attachmentError ? (
           <div className="composer-attachments" aria-label="Message attachments">
+            {browserMarks.map((mark) => (
+              <BrowserMarkChip
+                key={mark.id}
+                mark={mark}
+                className="composer-context-attachment"
+                onRemove={onRemoveBrowserMark && (() => onRemoveBrowserMark(mark.id))}
+              />
+            ))}
             {attachedContext.map((attachment) =>
               isPastedTextAttachment(attachment) ? (
                 <PastedTextAttachmentCard
@@ -949,6 +971,14 @@ export function ChatInput({
                     <X size={11} />
                   </button>
                 </div>
+              ) : isBrowserAnnotationAttachment(attachment) ? (
+                // A message being edited keeps the marks it was sent with.
+                <BrowserMarkChip
+                  key={attachment.id}
+                  mark={attachment}
+                  className="composer-context-attachment"
+                  onRemove={() => onRemoveContextAttachment(attachment.id)}
+                />
               ) : (
                 <div
                   className="composer-context-attachment"
@@ -1000,7 +1030,10 @@ export function ChatInput({
         <ScrollToBottomButton visible={showScrollToBottom} onClick={onScrollToBottom} />
       }
       sendDisabled={
-        (!inputValue.trim() && !attachedImages.length && !attachedContext.length) ||
+        (!inputValue.trim() &&
+          !attachedImages.length &&
+          !attachedContext.length &&
+          !browserMarks.length) ||
         Boolean(commandMatch) ||
         isStopping
       }
@@ -1059,13 +1092,17 @@ export function ChatInput({
                 <section className="features-menu-section" role="group" aria-label="Add">
                   <div className="features-menu-section-label">Add</div>
                   <FeatureMenuAction
-                    label="Files and folders"
-                    description="Attach files or a folder from the current project"
+                    label={attachesToChatFolder ? 'Files' : 'Files and folders'}
+                    description={
+                      attachesToChatFolder
+                        ? 'Attach files from your computer; this chat keeps a copy'
+                        : 'Attach files or a folder from the current project'
+                    }
                     icon={<Paperclip size={16} />}
                     onClick={() => runFeatureAction(onAddContextAttachments)}
-                    disabled={!workspaceFolder}
+                    disabled={!workspaceFolder && !attachesToChatFolder}
                     unavailableReason={
-                      !workspaceFolder
+                      !workspaceFolder && !attachesToChatFolder
                         ? 'Open a project before attaching files or folders'
                         : undefined
                     }

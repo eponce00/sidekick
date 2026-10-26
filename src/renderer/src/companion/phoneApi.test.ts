@@ -105,7 +105,6 @@ describe('the desktop API on the phone', () => {
     const api = createPhoneApi()
     await api.workspace.openFile()
     expect(notice).toHaveBeenCalledWith('Open this on the computer to use it.')
-    await expect(api.agentRuns.beginBrowserHumanTakeover()).rejects.toThrow(/computer/)
     await expect(api.sessions.startProposal()).rejects.toThrow(/computer/)
     expect(await api.siteIcons.get()).toEqual({ dataUrl: null })
   })

@@ -78,7 +78,9 @@ export function dataUrlByteLength(dataUrl: string): number {
  * The bytes must be the image they claim to be, and not declare more pixels than SideKick will
  * decode. The renderer checks the same before attaching; this is the boundary that counts.
  */
-function readableImage(image: MessageImageAttachment): boolean {
+export function isReadableMessageImage(
+  image: Pick<MessageImageAttachment, 'mimeType' | 'dataUrl'>
+): boolean {
   const head = dataUrlHead(image.dataUrl, HEADER_BYTES)
   if (!head || imageSignature(head) !== image.mimeType) return false
   const header = imageHeader(head)
@@ -109,7 +111,7 @@ export function validateMessageImages(value: unknown): MessageImageAttachment[] 
     )
   }
   const normalized = parseMessageImages(JSON.stringify(value))
-  if (normalized.length !== value.length || !normalized.every(readableImage)) {
+  if (normalized.length !== value.length || !normalized.every(isReadableMessageImage)) {
     throw new Error('Invalid message image attachment')
   }
   return normalized

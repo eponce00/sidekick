@@ -49,10 +49,13 @@ plain pipes instead.
 - **In the chat.** A running command shows its last lines under its row, with **Stop**,
   **Background**, and **Open in Terminal**. Stop ends that one command; the agent is told you
   stopped it and goes on. Background stops the agent waiting on it while it keeps running.
-- **The Terminal tab.** The side panel lists the conversation's commands by title, each with a
-  status dot and its run time, or **Needs input** while it waits for an answer. Select one to see
-  its command, status, and folder above all of its output in a terminal view; the buttons beside
+- **The Terminal tab.** It works like an editor's terminal panel: the selected terminal fills the
+  tab, and a list on its right holds your own terminals and, under **Agent**, the chat's commands.
+  Each command shows its title, an icon coloured by its state, and its run time, its exit code if
+  it failed, or **Needs input** while it waits for an answer; hover a running one to stop it.
+  Select one to see its command, status, and folder above all of its output; the buttons beside
   the command copy the output, move it to the background, or stop it, and you can type into it.
+  In a narrow panel the list shows only icons; hover one for its name.
 - **Prompts.** A command that prints a question and then waits, such as `Ok to proceed? (y)`, is
   marked as waiting for input. You can answer it from the chat or the Terminal tab. If the agent
   was waiting on it, the agent gets it back as a background task, with the question, instead of
@@ -77,27 +80,49 @@ plain pipes instead.
 Commands from earlier app sessions are not listed in the Terminal tab; their output stays in the
 chat.
 
+### Your own terminals
+
+**+** in the Terminal tab's list (or **New terminal** in an empty tab) opens a terminal of your own:
+your default shell (PowerShell 7 when installed, else Windows PowerShell; your login shell on macOS
+and Linux) in the chat's project folder, or your home folder for a chat outside a project. Type
+into it as into any terminal; with text selected, Ctrl+C copies on Windows and Linux, and Ctrl+V
+pastes. It is not an agent command: nothing you type asks for permission, and the agent cannot
+see, read, or type into your terminals. They belong to the app, not to one chat, so every chat's
+Terminal tab lists the same ones, and they keep running while you switch chats. A terminal whose
+shell has exited stays listed with its exit code until you remove it. The trash button ends the
+shell and everything it started; quitting SideKick ends them all.
+
 ## Conditional tools
 
 - Persistent goals add `update_goal`.
 - Plan mode adds `enter_plan_mode`, `present_plan`, and `complete_plan` at the appropriate phase.
 - Installed skills may add `create_artifact` and trusted bundled helpers. `create_artifact` renders
-  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, and,
-  for models that accept images, a screenshot, so the model can check its own result.
+  the artifact the way the chat shows it and reports whether it rendered, any runtime errors, layout
+  problems found in the rendered page (content wider than the chat, sideways scrolling, cut-off or
+  squeezed text, chart labels past the chart's edge, values such as `NaN`), and, for models that
+  accept images, a screenshot, so the model can check its own result.
   The tool is offered even before its skill loads, so the tool list stays the same across turns;
   an artifact made without the skill's guidance is rendered and the guidance comes back with it.
-- In a chat, an artifact is checked before it appears. A builder reviews how the agent's version
-  rendered and fixes what is wrong with it, up to three times, while the reply shows one
-  **Building** row with the version it is on. The chat then shows only the finished artifact;
-  open the row while it works to see each version. When there is nothing to review, because the
-  artifact could not be rendered, or it rendered cleanly and the model cannot see images, it
-  appears as the agent made it.
+- `edit_artifact` changes an existing artifact, this reply's or an earlier one's, by replacing exact
+  snippets of its code, then renders and checks it the same way; the chat shows the new version.
+- In a chat, the artifact shows while the agent writes it. A builder then reviews how it rendered
+  and fixes what is wrong, up to three times, with `edit_artifact`; each fix replaces the artifact
+  in place. The builder works without extended reasoning. When there is nothing to review, because
+  the artifact could not be rendered, or it rendered cleanly with no layout problems and the model
+  cannot see images, it stays as the agent made it.
+- An artifact cut off by the reply's output limit is not run; the agent is told to write it again
+  more compactly.
+- The Schedules skill adds `schedules_list`, `schedules_create`, `schedules_update`, and
+  `schedules_delete` to the run that loads it, and only then, so other runs carry none of them. A
+  later run that calls one first is told to load the skill. Listing changes nothing; every create,
+  change, pause, resume, and delete asks you first, even in Full access. See
+  [Asking the agent](SCHEDULES.md#asking-the-agent).
 - User-configured MCP servers add their advertised tools after schema normalization.
 
 During Plan mode's planning phase, only bounded workspace reads, code intelligence, web tools,
 questions, skills, todos, waits, plan tools, and retained output are eligible. Commands, workspace
-mutations, MCP, artifacts, starting or messaging other chats, and child agents remain unavailable even when the
-global policy is Full access.
+mutations, MCP, artifacts, schedules, starting or messaging other chats, and child agents remain
+unavailable even when the global policy is Full access.
 
 ## Execution guarantees
 

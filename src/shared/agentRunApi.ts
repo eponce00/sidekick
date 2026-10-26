@@ -69,21 +69,17 @@ export interface AgentRunChangedEvent {
   event: AgentRunEvent
 }
 
-export interface BrowserHumanTakeoverSnapshot {
-  active: boolean
-  conversationId: string
-  sessionId: string
-  pageTitle: string
-  url: string
-  humanVerificationRequired: boolean
-  message?: string
-  screenshot?: {
-    id: string
-    url: string
-    kind: 'viewport' | 'fullPage' | 'element'
-    width: number
-    height: number
-  }
+/**
+ * An artifact's code as far as the model has written it, sent while the call streams so the chat
+ * can show the artifact taking shape. Live only: it is never stored, and the finished call's
+ * arguments are the artifact.
+ */
+export interface AgentArtifactDraft {
+  runId: string
+  toolCallId: string
+  type: 'react' | 'html' | 'svg'
+  title: string
+  code: string
 }
 
 export interface PromptAdmissionItem {

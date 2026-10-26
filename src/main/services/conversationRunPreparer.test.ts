@@ -213,6 +213,54 @@ describe('conversation provider history', () => {
     )
   })
 
+  it("sends marks on browser pages after the typed text, their pictures after the user's images", () => {
+    const png =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+    const mark = (number: number, image?: string) => ({
+      id: `mark-${number}`,
+      kind: 'browser',
+      name: `button “Save ${number}”`,
+      number,
+      note: `Fix ${number}`,
+      url: 'http://localhost:5173/settings',
+      target: 'element',
+      selector: `#save-${number}`,
+      role: 'button',
+      accessibleName: `Save ${number}`,
+      box: { x: 10, y: 20, width: 80, height: 30 },
+      viewport: { width: 1280, height: 800 },
+      ...(image
+        ? {
+            image: {
+              mimeType: 'image/png',
+              dataUrl: image,
+              width: 128,
+              height: 78,
+              mark: { x: 24, y: 24, width: 80, height: 30 }
+            }
+          }
+        : {})
+    })
+    const message = providerMessage(
+      row({
+        role: 'user',
+        content: 'Please fix these.',
+        images: JSON.stringify([
+          { id: 'shot', name: 'shot.png', mimeType: 'image/png', dataUrl: png }
+        ]),
+        attachments: JSON.stringify([mark(1, png), mark(2)])
+      })
+    )
+    const content = message.content as string
+    expect(content.startsWith('Please fix these.\n\n<sidekick_browser_annotations>')).toBe(true)
+    expect(message.images).toEqual([png, png])
+    // The user's own image is image 1, so the first mark's picture is image 2.
+    expect(content).toContain('picture: image 2 of this message')
+    expect(content).toContain('<annotation number="2" target="element">')
+    expect(content).toContain('picture: none was sent')
+    expect(content).toContain('selector: "#save-1"')
+  })
+
   it('sends comments on changed lines after the typed message', () => {
     const message = providerMessage(
       row({

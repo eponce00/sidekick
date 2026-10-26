@@ -1983,17 +1983,17 @@ describe('AgentRunKernel', () => {
     await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Done' })
   })
 
-  it('suspends browser human takeover and resumes the same run after completion', async () => {
+  it('waits with no card while the user clears a check, then resumes the same run', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const sampler = sequence(
       sampledTurn({
         toolCalls: [
           {
-            id: 'takeover-call',
+            id: 'check-call',
             function: {
               name: 'browser_request_human',
               arguments: {
-                reason: 'The site is showing a human verification checkpoint.',
+                reason: 'DuckDuckGo wants you to confirm you are human.',
                 challenge_type: 'captcha'
               }
             }
@@ -2002,49 +2002,50 @@ describe('AgentRunKernel', () => {
       }),
       sampledTurn({ content: 'Continued in the same browser session.' })
     )
+    let clear!: () => void
     const router = {
       execute: vi.fn(),
-      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-1'),
-      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+      reserveBrowserForHumanCheck: vi.fn(async () => 'browser-session-1'),
+      waitForBrowserHumanCheck: vi.fn(() => new Promise<void>((resolve) => (clear = resolve))),
+      releaseBrowserHumanCheck: vi.fn(async () => undefined)
     }
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start(input(router))
 
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const interaction = store.listPendingInteractions('run-1')[0]
-    expect(interaction).toMatchObject({
-      kind: 'question',
-      request: {
-        intent: 'browser_takeover',
-        conversationId: 'thread-1',
-        browserSessionId: 'browser-session-1',
-        challengeType: 'captcha'
-      }
-    })
+    await vi.waitFor(() => expect(router.waitForBrowserHumanCheck).toHaveBeenCalled())
+    // The chat shows as waiting, with no question for the user to answer.
     expect(store.get('run-1')?.phase).toBe('awaiting_user')
-    kernel.resolveInteraction(interaction.id, { completed: true })
+    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
+    clear()
 
     const result = await running
     expect(result).toMatchObject({
       phase: 'completed',
       content: 'Continued in the same browser session.'
     })
-    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain('same session')
-    expect(router.reserveBrowserHumanTakeover).toHaveBeenCalledWith('thread-1')
-    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith('thread-1', 'browser-session-1')
+    expect(result.messages.find(({ role }) => role === 'tool')?.content).toContain(
+      'cleared the check'
+    )
+    expect(router.reserveBrowserForHumanCheck).toHaveBeenCalledWith('thread-1')
+    expect(router.waitForBrowserHumanCheck).toHaveBeenCalledWith(
+      'thread-1',
+      'browser-session-1',
+      expect.any(AbortSignal)
+    )
+    expect(router.releaseBrowserHumanCheck).toHaveBeenCalledWith('thread-1', 'browser-session-1')
     expect(router.execute).not.toHaveBeenCalled()
   })
 
-  it('releases a reserved browser takeover when the run is cancelled', async () => {
+  it('gives the browser back when the run stops while waiting for the user', async () => {
     catalog = { surface: 'conversation', webSearchEnabled: false, browserEnabled: true }
     const sampler = sequence(
       sampledTurn({
         toolCalls: [
           {
-            id: 'takeover-cancel-call',
+            id: 'check-cancel-call',
             function: {
               name: 'browser_request_human',
-              arguments: { reason: 'Human verification is required.' }
+              arguments: { reason: 'Confirm you are human.' }
             }
           }
         ]
@@ -2052,17 +2053,23 @@ describe('AgentRunKernel', () => {
     )
     const router = {
       execute: vi.fn(),
-      reserveBrowserHumanTakeover: vi.fn(async () => 'browser-session-cancel'),
-      releaseBrowserHumanTakeover: vi.fn(async () => undefined)
+      reserveBrowserForHumanCheck: vi.fn(async () => 'browser-session-cancel'),
+      waitForBrowserHumanCheck: vi.fn(
+        (_conversationId: string, _sessionId: string, signal: AbortSignal) =>
+          new Promise<void>((_resolve, reject) =>
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+          )
+      ),
+      releaseBrowserHumanCheck: vi.fn(async () => undefined)
     }
     const kernel = new AgentRunKernel(store, undefined, sampler)
     const running = kernel.start(input(router))
 
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
+    await vi.waitFor(() => expect(router.waitForBrowserHumanCheck).toHaveBeenCalled())
     expect(kernel.stop('run-1')).toBe(true)
 
     await expect(running).resolves.toMatchObject({ phase: 'cancelled' })
-    expect(router.releaseBrowserHumanTakeover).toHaveBeenCalledWith(
+    expect(router.releaseBrowserHumanCheck).toHaveBeenCalledWith(
       'thread-1',
       'browser-session-cancel'
     )
@@ -2537,6 +2544,37 @@ describe('AgentRunKernel', () => {
     expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
       expect.arrayContaining(['permission.requested', 'permission.resolved'])
     )
+  })
+
+  it("runs an artifact builder's edit without a permission card nobody would see", async () => {
+    catalog = {
+      surface: 'subagent',
+      webSearchEnabled: false,
+      capabilities: ['artifacts']
+    }
+    const sampler = sequence(
+      sampledTurn({
+        toolCalls: [
+          {
+            id: 'edit-1',
+            function: {
+              name: 'edit_artifact',
+              arguments: { edits: [{ old_text: 'a', new_text: 'b' }] }
+            }
+          }
+        ]
+      }),
+      sampledTurn({ content: 'Fixed' })
+    )
+    const router = { execute: vi.fn(async () => ({ ok: true })) }
+    const runInput = input(router)
+    runInput.permissionMode = 'always-ask'
+
+    expect((await new AgentRunKernel(store, undefined, sampler).start(runInput)).phase).toBe(
+      'completed'
+    )
+    expect(router.execute).toHaveBeenCalledOnce()
+    expect(store.listEvents('run-1').map(({ type }) => type)).not.toContain('permission.requested')
   })
 
   it.each([

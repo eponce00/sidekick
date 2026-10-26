@@ -66,6 +66,8 @@ and the agent's other chats.
 - **Answer** approval cards, questions, plan reviews and tool-limit prompts. Cards that act on the
   computer itself, such as starting chats in project folders or taking over the browser, are
   answered on the computer.
+- **Artifacts**, the live charts and tools the agent builds in a reply, run only on the computer.
+  The phone shows each one's name where it sits in the reply.
 
 Dictation and read aloud need **Voice** turned on in the computer's Settings. The phone never sees
 stored credentials or settings, cannot browse your files, and cannot type into terminals. Images it

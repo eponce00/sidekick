@@ -12,6 +12,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
+import { MarkdownTable, MarkdownTableHeader } from './MarkdownTable'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
@@ -724,7 +725,6 @@ function MarkdownLink({
       {mapLink && <MapPin size={13} aria-hidden="true" />}
       {!mapLink && external && href && <SiteIcon url={href} size={14} />}
       <span>{children}</span>
-      {!mapLink && <ExternalLink className="markdown-link-external" size={11} aria-hidden="true" />}
     </a>
   )
 }
@@ -788,6 +788,7 @@ const MarkdownFragment = memo(function MarkdownFragment({
   content,
   allowRichMedia,
   workspaceRoot,
+  isStreaming,
   onArtifactResult
 }: MarkdownFragmentProps): React.JSX.Element {
   const renderCode = ({
@@ -807,7 +808,10 @@ const MarkdownFragment = memo(function MarkdownFragment({
         return artifactSegments.map((segment, index) => (
           <Artifact
             key={`${segment.artifact!.title}-${index}`}
-            artifact={segment.artifact!}
+            // An artifact left unclosed when the reply ended runs as it is, and says if it fails.
+            artifact={
+              isStreaming ? segment.artifact! : { ...segment.artifact!, isStreaming: false }
+            }
             onResult={(result) => onArtifactResult(segment.artifact!.title, result)}
           />
         ))
@@ -857,12 +861,10 @@ const MarkdownFragment = memo(function MarkdownFragment({
         },
         img: MarkdownImage,
         a: (props) => <MarkdownLink {...props} workspaceRoot={workspaceRoot} />,
-        // A table sits in a rounded card that scrolls sideways when it is wider than the chat.
-        table: ({ children }) => (
-          <div className="markdown-table">
-            <table>{children}</table>
-          </div>
-        ),
+        // A table sits in a rounded card that scrolls sideways when it is wider than the chat; its
+        // columns size to their content and resize from their header's edge.
+        table: ({ children }) => <MarkdownTable>{children}</MarkdownTable>,
+        th: ({ node: _node, ...props }) => <MarkdownTableHeader {...props} />,
         // A checklist's boxes as the app draws its own, not the browser's disabled checkboxes.
         input: ({ type, checked }) =>
           type === 'checkbox' ? (

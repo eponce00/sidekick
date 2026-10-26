@@ -53,6 +53,7 @@ import { PermissionAuditPanel } from './PermissionAuditPanel'
 import { ProviderSettingsPanel } from './ProviderSettingsPanel'
 import { ProjectHooksPanel } from './ProjectHooksPanel'
 import { BrowserNetworkSettings } from './BrowserNetworkSettings'
+import { BrowserLibrarySettings } from './BrowserLibrarySettings'
 import { AppUpdateSettings, AppVersionButton } from './AppUpdateControls'
 import { VoiceSettings } from './VoiceSettings'
 import { SettingsPageHeader, SettingsRow, SettingsSection, ToggleField } from './SettingsLayout'
@@ -615,6 +616,7 @@ function SettingsModal({
             <PermissionAuditPanel />
           </SettingsSection>
           <BrowserNetworkSettings />
+          <BrowserLibrarySettings />
           <ProjectHooksPanel
             hooks={{
               start: settings.projectStartHooks ?? [],

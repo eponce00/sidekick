@@ -8,7 +8,7 @@ import {
   normalizeOpenAICompatibleEndpoint,
   requestFailureMessage
 } from './openAICompatibleClient'
-import { previewToolCallArguments } from './toolCallPreview'
+import { ToolCallPreviews } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import {
   incompleteToolInputArguments,
@@ -184,7 +184,7 @@ export async function streamOpenAICompatibleChat(
       number,
       { id: string; type: string; function: { name: string; arguments: string } }
     >()
-    const toolPreviewSignatures = new Map<number, string>()
+    const toolPreviews = new ToolCallPreviews()
     const closedToolCalls = new Set<number>()
     let buffer = ''
     let promptTokens = 0
@@ -280,10 +280,12 @@ export async function streamOpenAICompatibleChat(
           if (raw.function?.arguments) existing.function.arguments += raw.function.arguments
           toolCalls.set(index, existing)
 
-          const previewArguments = previewToolCallArguments(existing.function.arguments)
-          const previewSignature = `${existing.function.name}\n${JSON.stringify(previewArguments)}`
-          if (existing.function.name && toolPreviewSignatures.get(index) !== previewSignature) {
-            toolPreviewSignatures.set(index, previewSignature)
+          const previewArguments = toolPreviews.next(
+            index,
+            existing.function.name,
+            existing.function.arguments
+          )
+          if (previewArguments) {
             emit({
               message: {
                 tool_calls: [

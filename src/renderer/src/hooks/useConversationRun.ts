@@ -198,7 +198,11 @@ export function useConversationRun({
       const snapshot = active.model.refresh()
       const events = snapshot.events
       const projection = snapshot.projection
-      const finalized = events.some((event) => event.type === 'run.finalized')
+      const finalizedEvent = events.find((event) => event.type === 'run.finalized')
+      const finalized = Boolean(finalizedEvent)
+      const checkpoint = finalizedEvent?.payload as
+        | { checkpointHash?: unknown; checkpointWorkspaceRoot?: unknown }
+        | undefined
       const projectedPhase = projection.phase ?? 'streaming'
       setPhase(!finalized && TERMINAL_PHASES.has(projectedPhase) ? 'streaming' : projectedPhase)
       setMessages((previous) =>
@@ -211,7 +215,15 @@ export function useConversationRun({
                 thinking: projection.thinking,
                 segments: projection.segments as Message['segments'],
                 tokenUsage: projection.tokenUsage,
-                runMode: active.mode
+                runMode: active.mode,
+                // What the reply changed can be undone, or rewound, as soon as it ends.
+                ...(typeof checkpoint?.checkpointHash === 'string' &&
+                typeof checkpoint.checkpointWorkspaceRoot === 'string'
+                  ? {
+                      checkpointHash: checkpoint.checkpointHash,
+                      checkpointWorkspaceRoot: checkpoint.checkpointWorkspaceRoot
+                    }
+                  : {})
               }
             : message
         )

@@ -36,12 +36,14 @@ behavior, and the development guide when testing or publishing it.
 - [Configuration control](architecture/CONFIGURATION_CONTROL.md) — the control endpoint, content-bound approvals, and the agent's settings tools.
 - [Credentials](architecture/CREDENTIALS.md) — the sealed vault, its renderer and agent boundaries, and redaction of every output source.
 - [WebMCP](architecture/WEBMCP.md) — how the agent lists and calls the tools websites offer, through Chromium's own implementation.
+- [Browser data import](architecture/BROWSER_IMPORT.md) — reading other browsers' bookmarks and history in the main process, and why sign-ins are never read.
 - [Phone companion](architecture/PHONE_COMPANION.md) — the local server, QR pairing, and the encryption inside each phone connection.
 
 ## Development and operations
 
 - [Testing](development/TESTING.md) — deterministic suites, provider smoke tests, and live evaluations.
 - [UI guidelines](development/UI.md) — visual and interaction conventions.
+- [README media](development/MEDIA.md) — how the README's animations are recorded from the real app and rendered.
 - [Releases](development/RELEASES.md) — permanent zero-cost distribution, packaging, provenance, and release checks.
 - [Code signing policy](development/CODE_SIGNING.md) — what is signed through SignPath Foundation, by whom, and how.
 - [Reference repositories](development/REFERENCES.md) — upstream research and attribution policy.

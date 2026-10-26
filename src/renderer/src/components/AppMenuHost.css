@@ -50,7 +50,8 @@
   height: 18px;
   flex-shrink: 0;
   place-items: center;
-  color: var(--accent);
+  /* Grey like the label: a check marks the state, not a colour. */
+  color: inherit;
 }
 
 .app-menu-mark img {
@@ -90,4 +91,37 @@
   color: var(--text-muted);
   font-size: var(--text-xs);
   font-weight: 600;
+}
+
+/* The same rows as buttons, for menus drawn in the page (the sidebar's ⋯ menus), which take
+   focus and hover themselves instead of the host's highlighted index. */
+button.app-menu-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+
+button.app-menu-item:is(:hover, :focus-visible):not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-3);
+  box-shadow: none;
+}
+
+button.app-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Removes something: grey at rest like its neighbours, the error colour once it is pointed at. */
+.app-menu-item.is-danger:is(:hover, :focus-visible, .is-active):not(:disabled, .is-disabled) {
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+}
+
+/* A radio item whose mark column holds its own icon shows its state at the end instead. */
+.app-menu-check {
+  flex-shrink: 0;
+  margin-left: 4px;
 }

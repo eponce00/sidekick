@@ -1,4 +1,4 @@
-import { FolderOpen, GitFork, X } from 'lucide-react'
+import { FolderGit2, FolderOpen, X } from 'lucide-react'
 import { useId } from 'react'
 import { useModalDialog } from '../hooks/useModalDialog'
 import './ForkConversationDialog.css'
@@ -36,9 +36,6 @@ export function ForkConversationDialog({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="fork-dialog-header">
-          <span className="fork-dialog-icon">
-            <GitFork size={18} />
-          </span>
           <div>
             <h2 id={titleId}>Fork from this message</h2>
             <p>The new chat keeps the conversation through this point.</p>
@@ -50,12 +47,10 @@ export function ForkConversationDialog({
 
         <div className="fork-dialog-options">
           <button type="button" onClick={() => onChoose('current')} disabled={busy}>
-            <FolderOpen size={18} />
+            <FolderOpen size={16} />
             <span>
               <strong>Current workspace</strong>
-              <small>
-                Continue in the same project folder. Best for an alternate conversation.
-              </small>
+              <small>The same project folder, for an alternate conversation.</small>
             </span>
           </button>
           <button
@@ -63,22 +58,17 @@ export function ForkConversationDialog({
             onClick={() => onChoose('worktree')}
             disabled={busy || !canUseWorktree}
           >
-            <FolderOpen size={18} />
+            <FolderGit2 size={16} />
             <span>
               <strong>New isolated worktree</strong>
               <small>
                 {canUseWorktree
-                  ? 'Create a separate Git branch and folder from the current commit.'
+                  ? 'Its own branch and folder from the current commit. Uncommitted files stay here.'
                   : 'Attach this chat to a Git project to use an isolated worktree.'}
               </small>
             </span>
           </button>
         </div>
-
-        <p className="fork-dialog-note">
-          Uncommitted files remain only in the current workspace and are not copied into a new
-          worktree.
-        </p>
         {error && <div className="fork-dialog-error">{error}</div>}
       </div>
     </div>

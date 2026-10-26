@@ -99,7 +99,7 @@ describe('the chat surface', () => {
     expect(container.querySelector('[aria-label="Open map full screen"]')).toBeNull()
   })
 
-  it('sends starting chats and browser takeovers to the computer', async () => {
+  it('sends starting chats to the computer', async () => {
     const onResolve = vi.fn()
     await render(
       <AgentInteractionCard
@@ -107,13 +107,13 @@ describe('the chat surface', () => {
           id: 'i',
           kind: 'question',
           status: 'pending',
-          request: { intent: 'browser_takeover', reason: 'A CAPTCHA blocks the page.' }
+          request: { intent: 'start_sessions', sessions: [] }
         }}
         onResolve={onResolve}
       />,
       PHONE
     )
-    expect(container.textContent).toContain('Human browser verification required')
+    expect(container.textContent).toContain('SideKick wants to start other chats')
     expect(container.textContent).toContain('Open this on the computer to use it.')
     expect(container.querySelector('button')).toBeNull()
   })

@@ -56,7 +56,6 @@ export type ProviderRequestPurpose =
   | 'conversation'
   | 'continuation'
   | 'title'
-  | 'checkpoint-title'
   | 'compaction'
   | 'web-extraction'
   | 'research'

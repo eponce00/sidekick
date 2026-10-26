@@ -182,6 +182,25 @@ const api = {
   agentRuns: {
     browserWorkspace: (input: import('../shared/browserWorkspace').BrowserWorkspaceRequest) =>
       ipcRenderer.invoke('agentRuns:browserWorkspace', input),
+    browserAnnotations: (
+      input:
+        | { conversationId: string; action: 'list' }
+        | {
+            conversationId: string
+            action: 'take'
+            ids: string[]
+          }
+    ) => ipcRenderer.invoke('agentRuns:browserAnnotations', input),
+    onBrowserAnnotationsChanged: (
+      callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        change: import('../shared/browserWorkspace').BrowserAnnotationsChange
+      ): void => callback(change)
+      ipcRenderer.on('agentRuns:browserAnnotationsChanged', listener)
+      return () => ipcRenderer.removeListener('agentRuns:browserAnnotationsChanged', listener)
+    },
     startConversation: (input: import('../shared/agentRunApi').StartConversationAgentRunInput) =>
       ipcRenderer.invoke('agentRuns:startConversation', input),
     stop: (runId: string) => ipcRenderer.invoke('agentRuns:stop', runId),
@@ -190,10 +209,6 @@ const api = {
     events: (runId: string, afterSequence?: number) =>
       ipcRenderer.invoke('agentRuns:events', runId, afterSequence),
     latest: (threadId: string) => ipcRenderer.invoke('agentRuns:latest', threadId),
-    beginBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverBegin', interactionId),
-    completeBrowserHumanTakeover: (interactionId: string) =>
-      ipcRenderer.invoke('agentRuns:browserTakeoverComplete', interactionId),
     resolveInteraction: (input: import('../shared/agentRunApi').ResolveAgentInteractionInput) =>
       ipcRenderer.invoke('agentRuns:resolveInteraction', input),
     steer: (input: import('../shared/agentRunApi').SteerConversationRunInput) =>
@@ -219,6 +234,16 @@ const api = {
       ): void => callback(change)
       ipcRenderer.on('agentRuns:event', listener)
       return () => ipcRenderer.removeListener('agentRuns:event', listener)
+    },
+    onArtifactDraft: (
+      callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        draft: import('../shared/agentRunApi').AgentArtifactDraft
+      ): void => callback(draft)
+      ipcRenderer.on('agentRuns:artifactDraft', listener)
+      return () => ipcRenderer.removeListener('agentRuns:artifactDraft', listener)
     }
   },
   terminal: {
@@ -236,6 +261,24 @@ const api = {
       ): void => callback(event)
       ipcRenderer.on('terminal:event', listener)
       return () => ipcRenderer.removeListener('terminal:event', listener)
+    }
+  },
+  userTerminal: {
+    list: () => ipcRenderer.invoke('userTerminal:list'),
+    create: (input: { conversationId: string | null; cols: number; rows: number }) =>
+      ipcRenderer.invoke('userTerminal:create', input),
+    read: (id: string, offset?: number) => ipcRenderer.invoke('userTerminal:read', id, offset),
+    write: (id: string, data: string) => ipcRenderer.invoke('userTerminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.invoke('userTerminal:resize', id, cols, rows),
+    close: (id: string) => ipcRenderer.invoke('userTerminal:close', id),
+    onEvent: (callback: (event: import('../shared/userTerminals').UserTerminalEvent) => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        event: import('../shared/userTerminals').UserTerminalEvent
+      ): void => callback(event)
+      ipcRenderer.on('userTerminal:event', listener)
+      return () => ipcRenderer.removeListener('userTerminal:event', listener)
     }
   },
   conversationGoals: {
@@ -348,6 +391,19 @@ const api = {
     list: () => ipcRenderer.invoke('browserNetwork:list'),
     revoke: (origin: string) => ipcRenderer.invoke('browserNetwork:revoke', origin)
   },
+  // Names a browser and a profile it was shown; never a path, and nothing secret comes back.
+  browserLibrary: {
+    importSources: () => ipcRenderer.invoke('browserLibrary:importSources'),
+    browserIcon: (browser: string) => ipcRenderer.invoke('browserLibrary:browserIcon', browser),
+    previewImport: (browser: string, profileId: string) =>
+      ipcRenderer.invoke('browserLibrary:previewImport', browser, profileId),
+    runImport: (request: import('../shared/browserLibrary').BrowserImportRequest) =>
+      ipcRenderer.invoke('browserLibrary:runImport', request),
+    importBookmarksFile: () => ipcRenderer.invoke('browserLibrary:importBookmarksFile'),
+    sources: () => ipcRenderer.invoke('browserLibrary:sources'),
+    suggest: (query: string) => ipcRenderer.invoke('browserLibrary:suggest', query),
+    remove: (sourceId?: string) => ipcRenderer.invoke('browserLibrary:remove', sourceId)
+  },
   // Set and replace only: no call returns a stored value.
   credentials: {
     status: () => ipcRenderer.invoke('credentials:status'),
@@ -387,6 +443,27 @@ const api = {
       return () => ipcRenderer.removeListener('window:fullscreen-changed', listener)
     }
   },
+  panelWindows: {
+    open: (entry) => ipcRenderer.invoke('panelWindows:open', entry),
+    list: () => ipcRenderer.invoke('panelWindows:list'),
+    focus: (entry) => ipcRenderer.invoke('panelWindows:focus', entry),
+    dock: () => ipcRenderer.send('panelWindows:dock'),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, entries: unknown): void => {
+        if (Array.isArray(entries)) callback(entries)
+      }
+      ipcRenderer.on('panelWindows:changed', listener)
+      return () => ipcRenderer.removeListener('panelWindows:changed', listener)
+    },
+    onDocked: (callback) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        entry: import('../shared/panelWindows').PanelWindowEntry
+      ): void => callback(entry)
+      ipcRenderer.on('panelWindows:docked', listener)
+      return () => ipcRenderer.removeListener('panelWindows:docked', listener)
+    }
+  } satisfies import('../shared/panelWindows').PanelWindowsAPI,
   notification: {
     show: (request: import('../shared/desktopNotifications').DesktopNotificationRequest) =>
       ipcRenderer.invoke('notification:show', request)
@@ -522,11 +599,6 @@ const api = {
       ipcRenderer.invoke('workspace:discardHistoryCapture', captureId),
     createCheckpoint: (workspaceRoot: string, message: string, captureId?: string) =>
       ipcRenderer.invoke('workspace:createCheckpoint', workspaceRoot, message, captureId),
-    restoreCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      authorization: import('../shared/types').CheckpointMutationAuthorization
-    ) => ipcRenderer.invoke('workspace:restoreCheckpoint', workspaceRoot, hash, authorization),
     hardResetCheckpoint: (
       workspaceRoot: string,
       hash: string,
@@ -538,27 +610,6 @@ const api = {
       authorization: import('../shared/types').CheckpointMutationAuthorization
     ) =>
       ipcRenderer.invoke('workspace:rewindToBeforeCheckpoint', workspaceRoot, hash, authorization),
-    listCheckpoints: (workspaceRoot: string) =>
-      ipcRenderer.invoke('workspace:listCheckpoints', workspaceRoot),
-    getCheckpointDiff: (workspaceRoot: string, hash: string) =>
-      ipcRenderer.invoke('workspace:getCheckpointDiff', workspaceRoot, hash),
-    renameCheckpoint: (
-      workspaceRoot: string,
-      hash: string,
-      newMessage: string,
-      source?: import('../shared/checkpointTitles').CheckpointTitleSource
-    ) => ipcRenderer.invoke('workspace:renameCheckpoint', workspaceRoot, hash, newMessage, source),
-    claimCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-    ) => ipcRenderer.invoke('workspace:claimCheckpointTitleBackfill', input),
-    completeCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:completeCheckpointTitleBackfill', input),
-    failCheckpointTitleBackfill: (
-      input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-    ) => ipcRenderer.invoke('workspace:failCheckpointTitleBackfill', input),
-    getCheckpointTitleContext: (workspaceRoot: string, hash: string, timestamp: number) =>
-      ipcRenderer.invoke('workspace:getCheckpointTitleContext', workspaceRoot, hash, timestamp),
     openFolder: (folderPath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:openFolder', folderPath, workspaceRoot),
     openFile: (filePath: string, workspaceRoot?: string) =>
@@ -567,8 +618,21 @@ const api = {
       ipcRenderer.invoke('workspace:openFileReference', fileReference, workspaceRoot),
     revealFile: (filePath: string, workspaceRoot?: string) =>
       ipcRenderer.invoke('workspace:revealFile', filePath, workspaceRoot),
-    showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) =>
-      ipcRenderer.invoke('workspace:showPathMenu', filePath, workspaceRoot, isDirectory),
+    showPathMenu: (
+      filePath: string,
+      workspaceRoot?: string,
+      isDirectory?: boolean,
+      offerTrash?: boolean
+    ) =>
+      ipcRenderer.invoke(
+        'workspace:showPathMenu',
+        filePath,
+        workspaceRoot,
+        isDirectory,
+        offerTrash
+      ),
+    countPathItems: (workspaceRoot: string, folderPath: string) =>
+      ipcRenderer.invoke('workspace:countPathItems', workspaceRoot, folderPath),
     watchFiles: (workspaceRoot: string, callback: () => void) => {
       let subscriptionId: string | null = null
       let stopped = false

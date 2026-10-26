@@ -43,22 +43,11 @@
   --color-success: #5fcf9f;
   --color-error: #f0717f;
   --color-warning: #e9a05f;
-  --color-info: var(--accent);
   /* Filled destructive/positive controls carry white text, which needs a
      deeper shade than the text-on-surface colour above (4.6:1 vs 3.5:1). */
   --color-error-fill: #c8475a;
   --color-success-fill: #1f7a58;
   --on-semantic: #ffffff;
-  /* Short aliases used throughout component styles. Kept in sync here so a
-     theme change reaches every rule instead of falling through to a fallback. */
-  --error: var(--color-error);
-  --danger: var(--color-error);
-  --success: var(--color-success);
-  --warning: var(--color-warning);
-  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
-  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
-  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
-  --error-bg: var(--color-error-subtle);
   --color-folder: #cfae5c;
   /* GitHub's merged and merge-queue purple. */
   --color-merged: #ab98e8;
@@ -75,6 +64,10 @@
   --shadow-lg: rgba(0, 0, 0, 0.5);
   --shadow-panel: 0 20px 60px rgba(0, 0, 0, 0.38), 0 2px 12px rgba(0, 0, 0, 0.22);
   --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.28);
+  /* Windows' own caption close red, the same in both themes, under --on-semantic text. */
+  --window-close-bg: #c42b1c;
+  /* A switch's knob: white on either track, in both themes. */
+  --control-thumb: #ffffff;
 
   /* — Spacing Scale — */
   --space-1: 4px;
@@ -150,7 +143,31 @@
   --brand-cape-lining: #b5303a;
 }
 
-body[data-theme='light'] {
+/* Tokens computed from other tokens. A custom property's var() resolves on the element that
+   declares it, so these are declared again on the body, where the light theme and the accent
+   palette (accentPalettes.ts) set their sources; declared only on :root they kept the dark,
+   default-palette values everywhere. */
+:root,
+body,
+.app-loading {
+  --color-info: var(--accent);
+  /* Short aliases used throughout component styles. */
+  --error: var(--color-error);
+  --danger: var(--color-error);
+  --success: var(--color-success);
+  --warning: var(--color-warning);
+  --color-error-subtle: color-mix(in srgb, var(--color-error) 12%, transparent);
+  --color-success-subtle: color-mix(in srgb, var(--color-success) 12%, transparent);
+  --color-warning-subtle: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  --error-bg: var(--color-error-subtle);
+  /* A rounded field with focus: its edge leans toward the accent with a faint halo, quieter than
+     the ring a button gets, since the caret already says where typing goes. */
+  --field-focus-border: color-mix(in srgb, var(--accent) 38%, var(--border-color));
+  --field-focus-glow: 0 0 0 3px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+body[data-theme='light'],
+.app-loading[data-theme='light'] {
   color-scheme: light;
 
   --app-bg: #efefef;
@@ -259,7 +276,8 @@ select {
    icon: the rounded container shows focus, and the bare input inside it
    draws no square ring of its own. */
 .field-shell:focus-within {
-  box-shadow: var(--focus-ring);
+  border-color: var(--field-focus-border);
+  box-shadow: var(--field-focus-glow);
 }
 
 .field-shell :is(input, textarea):focus-visible {
@@ -424,13 +442,13 @@ select {
 }
 
 .window-control:hover {
-  background-color: var(--surface-3);
+  background-color: var(--surface-2);
   color: var(--text-primary);
 }
 
 .window-control.close:hover {
-  background-color: #c44;
-  color: white;
+  background-color: var(--window-close-bg);
+  color: var(--on-semantic);
 }
 
 .theme-toggle-button,
@@ -439,7 +457,9 @@ select {
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: var(--space-2);
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
   transition: var(--transition-ui);
@@ -457,13 +477,13 @@ select {
 
 .theme-toggle-button:hover,
 .settings-button:hover {
-  background-color: var(--surface-3);
+  background-color: var(--surface-2);
   color: var(--text-primary);
 }
 
 .theme-toggle-button:active,
 .settings-button:active {
-  opacity: 0.8;
+  background-color: var(--surface-3);
 }
 
 /* The sun sets and the moon rises as the theme switches. */
@@ -476,14 +496,6 @@ select {
     opacity: 0;
     transform: rotate(-90deg) scale(0.5);
   }
-}
-
-.settings-button svg {
-  transition: transform var(--duration-slow) var(--ease-out);
-}
-
-.settings-button:hover svg {
-  transform: rotate(60deg);
 }
 
 /* Sections that slide open (Reveal.tsx) animate to their natural height, whatever it becomes. */
@@ -562,20 +574,16 @@ select {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--app-bg, #0f0f0f);
-}
-
-[data-theme='light'] .app-loading {
-  background: #f5f5f5;
+  background: var(--app-bg);
 }
 
 .app-loading-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-4);
   opacity: 0;
-  animation: splash-fade-in 120ms ease forwards;
+  animation: splash-fade-in var(--duration-fast) ease forwards;
   animation-delay: 40ms;
 }
 
@@ -588,13 +596,7 @@ select {
 .app-loading-name {
   font-size: var(--text-lg);
   font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--text-primary, #e8e8e8);
-  opacity: 0.7;
-}
-
-[data-theme='light'] .app-loading-name {
-  color: #1a1a1a;
+  color: var(--text-secondary);
 }
 
 @keyframes splash-fade-in {

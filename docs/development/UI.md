@@ -1,7 +1,7 @@
 # SideKick UI guidelines
 
 SideKick uses a quiet, workspace-first visual system. The chat is the primary surface; files,
-recovery, browser feedback, and settings should support it without competing for attention.
+browser, terminal, and settings should support it without competing for attention.
 
 ## Design principles
 
@@ -71,10 +71,65 @@ must exist in `App.css`: an undefined token is not a fallback, it invalidates th
 Text and its background must reach 4.5:1 in both themes; interactive controls need a 24px minimum
 hit target. New motion must also behave correctly under `prefers-reduced-motion`.
 
+## Surfaces and patterns
+
+Every menu, popover, dialog, toolbar and card follows one pattern for its kind, so the app reads as
+one product rather than a set of screens built one at a time. Prefer reusing the component that
+already draws a pattern (`AppMenuHost`'s `.app-menu`, `Select`, `ConfirmDialog`,
+`components/SettingsLayout.tsx`) over a new look.
+
+**Colour.** Greys carry the interface; colour is a signal. The accent marks exactly: the selected
+or active item, keyboard focus, progress or something live, and the one primary action of a view.
+It is not decoration: icons, headings, chips, counts, badges, borders and empty-state art are grey
+(`--text-secondary` / `--text-muted`) unless they show one of those states. A view shows at most one
+accent-filled control. Semantic colours (`--color-success`, `--color-warning`, `--color-error`) mean
+only what they say. Use the accent's own steps for its states (`--accent-subtle` for a selected
+row's tint, `--accent-muted` for a pressed or stronger tint, `--accent-strong` for hover on an
+accent fill) rather than ad-hoc `color-mix` percentages.
+
+**Elevation.** Three levels and no others: flat content on `--surface-0`/`--surface-1`; raised
+groups (`SettingsSection`, cards) on `--surface-1` with `--border-subtle` and no shadow; floating
+surfaces (menus, popovers, dialogs, the annotation bar) on `--surface-1` or `--surface-2` with
+`--panel-border` and `--shadow-panel`. `--shadow`, `--shadow-lg` are colours, not shadows.
+
+**Menus** (any list of actions that opens from a button): `.app-menu` look — `--surface-1` at 97%,
+`--panel-border`, `--radius-md`, `--shadow-panel`, 4px padding, rows 30px tall with a fixed 18px
+icon column, label in `--text-secondary` turning `--text-primary` on hover/active with a
+`--surface-3` row tint, shortcuts right-aligned in `--text-muted`, hairline separators, small
+`--text-muted` group headings. Icons in menus are grey. Checked items show a check, not a colour.
+
+**Popovers** (a small panel of information or controls): the menu's surface and border, `--radius-md`
+or `--radius-lg`, 12px padding, a title in `--text-primary` 600 and body in `--text-secondary`.
+No icon tile in the header. They close on outside click and Escape, and return focus.
+
+**Dialogs**: `ConfirmDialog`'s frame. A title (`--text-lg`, 600) and at most one line of
+description; content in plain rows, not a stack of bordered cards; footer with secondary actions
+left of the primary on the right, one primary only; destructive actions use the danger style. No
+decorative icon tile beside the title unless it identifies something specific (a provider, a browser).
+
+**Toolbars and tabs**: icon buttons 28–32px with `--radius-sm` or round, grey icons, `--surface-2`
+hover, `--surface-3` pressed/active; text labels only where an icon is ambiguous. Tabs show the
+active one by surface and text weight, not by colouring it.
+
+**Rows, cards and chips**: lists are rows split by hairlines inside one group, not one bordered
+card per item. Use a card only for an object the user acts on as a whole (an attachment, a tool
+result, a map). Chips are `--radius-full`, `--surface-2`, `--text-secondary`, 22–24px tall; a chip
+turns accent only when it is selected.
+
+**Icon tiles**: a tinted square behind an icon is not a default decoration. Use it only for an
+identity (an app in the launcher, a provider, a browser), and then grey (`--surface-2`), not accent.
+
+**Copy**: one short line where a paragraph was. Say it once: a heading and its description must
+not repeat each other, and a status already shown by a control is not also written out. Secondary
+facts go to `title` tooltips or a quiet footnote.
+
+**Motion**: menus and popovers use the existing `motion-menu-down-in` / `motion-fade-in`; nothing
+bounces or loops except something live, and everything stops under reduced motion.
+
 ## Layout behavior
 
 - The left history rail is expanded by default and can collapse to a 48px shortcut rail.
-- The right workspace panel contains equal-width Files, Recovery, and Browser tabs. It starts
+- The right workspace panel holds tabs in stacked sections (`src/renderer/src/components/sidePanel`); each app (Files, Browser, Terminal, Chats) opens in at most one tab. It starts
   expanded on viewports at least 1100px wide and collapsed below that threshold unless the user
   has saved a preference.
 - Browser-only size controls belong inside the Browser panel. The live page takes the available
@@ -191,7 +246,7 @@ Development builds expose a deterministic renderer preview when Electron's prelo
 1. Run `npm run dev`.
 2. Open `http://localhost:5173/?ui-preview=1`.
 3. Review the welcome state, the populated `Refine the desktop experience` conversation, the
-   full-window Settings workspace, Browser/Files/Recovery panels, both themes, and compact widths.
+   full-window Settings workspace, Browser/Files/Terminal panels, both themes, and compact widths.
 
 The preview mock is development-only and is never installed when `window.api` already exists. It must stay aligned with the preload contract closely enough for representative renderer testing.
 

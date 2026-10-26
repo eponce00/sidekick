@@ -30,6 +30,10 @@ vi.mock('@xterm/xterm', () => ({
     onData(): { dispose: () => void } {
       return { dispose: () => undefined }
     }
+    onResize(): { dispose: () => void } {
+      return { dispose: () => undefined }
+    }
+    attachCustomKeyEventHandler = (): void => undefined
     dispose = (): void => undefined
   }
 }))
@@ -47,6 +51,11 @@ vi.mock('@xterm/xterm/css/xterm.css', () => ({}))
 vi.mock('../utils/terminalSessionStore', () => ({
   useTerminalSessions: () => sessions.current,
   subscribeTerminalOutput: () => () => undefined
+}))
+vi.mock('../utils/userTerminalStore', () => ({
+  useUserTerminals: () => [],
+  addUserTerminal: () => undefined,
+  subscribeUserTerminalOutput: () => () => undefined
 }))
 
 import { TerminalPanel } from './TerminalPanel'
@@ -119,7 +128,7 @@ describe('TerminalPanel', () => {
     ]
     await act(async () => root.render(<TerminalPanel conversationId="chat" />))
 
-    const rows = [...container.querySelectorAll('.terminal-panel-item')]
+    const rows = [...container.querySelectorAll('.terminal-panel-item-select')]
     expect(rows.map((row) => row.textContent)).toEqual([
       'Scaffold the docsNeeds input',
       'Check the renderer4s'

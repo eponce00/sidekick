@@ -20,9 +20,16 @@ discoverable skills. The model calls `use_skill` when the current request matche
 full instructions arrive in that run's tool result. Conversation-scoped skills may remain active for
 later turns; run-scoped skills do not persist or become part of later system prompts.
 
-Live web artifacts are deliberately run-scoped. Their rendering tool is absent from the provider's
-initial tool list and becomes available only after the model loads the `web-artifacts` skill. An
-artifact is an interactive result inside the chat. Websites, landing pages, web apps, components,
+A skill's tools reach the model in one of two ways. The `web-artifacts` skill's `create_artifact`
+is offered from the start, so the tool list stays the same across turns and the prompt cache
+holds; an artifact made before the skill loads is rendered, and the skill's guidance comes back
+with it. Tools needed rarely enough that carrying their schemas in every run costs more than a lost
+cache are gated instead: the `schedules` skill's tools are absent from the initial tool list and
+join the run's catalog once `use_skill` loads that skill. A later run that calls one before
+loading the skill is told to load it. See [Scheduled runs](SCHEDULES.md#agent-tools).
+
+Live web artifacts are deliberately run-scoped. An artifact is an interactive result inside the
+chat. Websites, landing pages, web apps, components,
 and HTML/CSS/JavaScript deliverables for an active project are workspace-file work; SideKick does
 not create both forms unless the user explicitly requests both.
 
@@ -36,7 +43,7 @@ matches, command working directories, and file mutations resolve newly applicabl
 deferred, returns that rule to the model, and must be retried. Compaction resets nested delivery claims
 so the relevant instructions can be introduced again without changing the immutable transcript.
 
-Utility prompts for titles, checkpoint labels, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
+Utility prompts for titles, web extraction, research, and sub-agents use the same data boundary. Source text is never interpolated as a system instruction. Research output is proportional to the question rather than forced into a fixed “exhaustive” length.
 
 ## Immutable transcript and provider projection
 

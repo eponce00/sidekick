@@ -77,7 +77,6 @@ class FakeSurface implements NativeBrowserSurface {
   rejectCommittedBlank = false
   failBlankBeforeCommitAttempts = 0
   focused = false
-  humanTakeoverVisible = false
   /** A protocol method that fails as if the page navigated away while it ran. */
   lostContextOn: string | null = null
   humanVerificationMarkerVisible = false
@@ -215,19 +214,6 @@ class FakeSurface implements NativeBrowserSurface {
     if (this.attached) return
     this.destroyed = true
     for (const listener of this.destroyedListeners) listener()
-  }
-
-  showForHumanTakeover(): void {
-    if (this.attached) throw new Error('This browser surface cannot be shown for human takeover')
-    this.humanTakeoverVisible = true
-  }
-
-  hideHumanTakeover(): void {
-    this.humanTakeoverVisible = false
-  }
-
-  isHumanTakeoverVisible(): boolean {
-    return this.humanTakeoverVisible
   }
 
   focus(): void {
@@ -1699,41 +1685,17 @@ describe('NativeBrowserSessionService', () => {
     expect(surface.formControls.get(14)?.value).toBe('')
   })
 
-  it('reveals and hides the same browser surface for human takeover', async () => {
+  it('says whether the page still shows a human check, and when the user has cleared it', async () => {
     const { service, runtime } = await testService()
-    const opened = await service.open({ runId: 'takeover', url: 'https://example.com/' })
+    const opened = await service.open({ runId: 'human-check', url: 'https://example.com/' })
     const surface = runtime.surfaces[0]
+    surface.bodyText = 'Press & Hold to confirm you are a human'
+    expect(await service.humanVerificationRequired(opened.sessionId)).toBe(true)
 
-    const active = await service.beginHumanTakeover(opened.sessionId)
-    expect(active.active).toBe(true)
-    expect(surface.humanTakeoverVisible).toBe(true)
-    expect(active.observation).toMatchObject({
-      sessionId: opened.sessionId,
-      tab: { url: 'https://example.com/' }
-    })
-
-    const completed = await service.completeHumanTakeover(opened.sessionId)
-    expect(completed.active).toBe(false)
-    expect(surface.humanTakeoverVisible).toBe(false)
-    expect(completed.observation).toMatchObject({
-      sessionId: opened.sessionId,
-      tab: { url: 'https://example.com/' }
-    })
-  })
-
-  it('keeps takeover popups in the exact visible tab', async () => {
-    const { service, runtime } = await testService()
-    const opened = await service.open({ runId: 'takeover-popup', url: 'https://example.com/' })
-    const surface = runtime.surfaces[0]
-
-    await service.beginHumanTakeover(opened.sessionId)
-    surface.emitOpenUrl('https://example.com/popup')
-    await vi.waitFor(() => expect(surface.url).toBe('https://example.com/popup'))
-
-    const completed = await service.completeHumanTakeover(opened.sessionId)
+    // The user clears it in the Browser panel; no window opens for it.
+    surface.bodyText = ''
+    expect(await service.humanVerificationRequired(opened.sessionId)).toBe(false)
     expect(runtime.surfaces).toHaveLength(1)
-    expect(surface.humanTakeoverVisible).toBe(false)
-    expect(completed.observation.tab.url).toBe('https://example.com/popup')
   })
 
   it('binds coordinate input to a current viewport screenshot and maps resized pixels', async () => {

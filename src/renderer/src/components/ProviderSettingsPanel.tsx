@@ -317,7 +317,7 @@ export function ProviderSettingsPanel({
         actions={
           <button
             type="button"
-            className="settings-primary-action"
+            className="settings-secondary-action"
             onClick={() => setShowAdd(true)}
           >
             <Plus size={15} aria-hidden="true" /> Add provider
@@ -381,7 +381,6 @@ export function ProviderSettingsPanel({
             <>
               <div className="provider-detail-title">
                 <div>
-                  <span className="settings-kicker">Provider instance</span>
                   <span className="provider-name-row">
                     <ProviderIcon
                       provider={providerDefinitionForInstance(selected).kind}
@@ -970,7 +969,6 @@ export function ProviderSettingsPanel({
           >
             <div className="provider-add-heading">
               <div>
-                <span className="settings-kicker">New connection</span>
                 <h3 id="provider-add-title">Add a provider</h3>
               </div>
               <button

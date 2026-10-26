@@ -2,7 +2,10 @@ import type { ProjectedAgentRunMessage } from '../../../shared/agentEventProject
 import type { ConversationRunMode } from '../../../shared/agentRunApi'
 import type { AgentRunSnapshot } from '../../../shared/agentRuntime'
 import type { CompanionMessage } from '../../../shared/companion'
-import type { MessageContextAttachment } from '../../../shared/messageContextAttachments'
+import {
+  parseMessageContextAttachments,
+  type MessageContextAttachment
+} from '../../../shared/messageContextAttachments'
 import type { ContentSegment, Message } from '../types/chat.types'
 import type { PendingSend } from './chatState'
 
@@ -19,19 +22,20 @@ function segmentsFrom(value: unknown[] | undefined): ContentSegment[] | undefine
 }
 
 /**
- * Attachments arrive by name and kind only. They show as the desktop shows a project file; the
- * file itself stays on the computer.
+ * Attachments arrive by name and kind only, and show as the desktop shows a project file; the
+ * file itself stays on the computer. Marks on browser pages arrive with their notes.
  */
 function attachmentsFrom(
   value: CompanionMessage['attachments']
 ): MessageContextAttachment[] | undefined {
   if (!value?.length) return undefined
-  return value.map(({ id, kind, name }) => ({
-    id,
-    kind: kind === 'folder' ? 'folder' : 'file',
-    name,
-    relativePath: name
-  }))
+  return value.flatMap((attachment): MessageContextAttachment[] => {
+    // A mark on a browser page shows as on the desktop, with its note.
+    if (attachment.kind === 'browser')
+      return parseMessageContextAttachments(JSON.stringify([attachment]))
+    const { id, kind, name } = attachment
+    return [{ id, kind: kind === 'folder' ? 'folder' : 'file', name, relativePath: name }]
+  })
 }
 
 /** A saved message as the desktop's message view takes it. */

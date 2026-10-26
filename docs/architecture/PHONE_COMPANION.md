@@ -50,6 +50,8 @@ steer and interaction requests.
   window's handler, including the project's setup).
 - **Uploads** arrive in pieces of at most 128 KB, up to 20 MB each and 64 MB held across phones,
   belong to the phone that sent them, are taken once and expire after ten minutes.
+- **Attachments** go to the phone by name and kind, except marks on browser pages, which keep
+  their notes; their pictures come with the images.
 - **Images** go to the phone as reduced copies, at most 1,600 pixels on the longer side. Images a
   tool saved, such as viewed images and screenshots, are fetched by their `sidekick-browser://`
   address through the same checks as the window's protocol (`readBrowserArtifact`).

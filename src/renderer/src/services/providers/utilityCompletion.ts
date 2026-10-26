@@ -22,7 +22,6 @@ export interface UtilityModelInput {
 
 export type UtilityCompletionPurpose =
   | 'title'
-  | 'checkpoint-title'
   | 'compaction'
   | 'web-extraction'
   | 'research'

@@ -25,6 +25,14 @@ import {
 } from './appSettingsTools'
 import { credentialsListTool, credentialsRequestTool } from './credentialTools'
 import { httpRequestTool } from './httpRequestTool'
+import {
+  SCHEDULES_SKILL_ID,
+  scheduleToolTitle,
+  schedulesCreateTool,
+  schedulesDeleteTool,
+  schedulesListTool,
+  schedulesUpdateTool
+} from './scheduleTools'
 import { webMcpSite } from './webMcp'
 
 export const WEB_ARTIFACTS_SKILL_ID = 'web-artifacts'
@@ -154,6 +162,7 @@ function presentationTitle(
   if (name.startsWith('browser_'))
     return { kind, title: name.replace('browser_', '').replaceAll('_', ' ') }
   if (name === 'create_artifact') return { kind, title: explicit || 'Create artifact' }
+  if (name === 'edit_artifact') return { kind, title: 'Edit artifact' }
   if (name === 'spawn_subagent')
     return {
       kind,
@@ -168,6 +177,8 @@ function presentationTitle(
     return { kind, title: `Change SideKick setting ${key}`.trim(), subject: key }
   }
   if (name === 'provider_request_key') return { kind, title: 'Ask for a provider key in Settings' }
+  const scheduleTitle = scheduleToolTitle(name, args)
+  if (scheduleTitle) return { kind, title: scheduleTitle }
   if (name === 'credentials_list') return { kind, title: 'List stored credentials' }
   if (name === 'credentials_request') {
     const alias = stringArgument(args, 'alias')
@@ -206,7 +217,7 @@ function presentationKind(name: string): ToolPresentationKind {
   if (name === 'view_image') return 'browser'
   if (name.startsWith('browser_')) return 'browser'
   if (name === 'list_files') return 'files'
-  if (name === 'create_artifact') return 'artifact'
+  if (name === 'create_artifact' || name === 'edit_artifact') return 'artifact'
   if (name === 'spawn_subagent') return 'subagent'
   if (name === 'manage_todo_list' || name.includes('background_task')) return 'task'
   return 'generic'
@@ -938,14 +949,15 @@ const browserHold = definition(
 
 const browserRequestHuman = definition(
   'browser_request_human',
-  'Pause the run for same-session human browser takeover when a CAPTCHA, anti-bot checkpoint, login confirmation, or another explicitly human-only browser step blocks progress. Keep the browser open. After the user completes the step, SideKick resumes the agent with the same cookies, DOM state, and history.',
+  "Last resort when a CAPTCHA, anti-bot checkpoint, login confirmation, or another human-only step blocks the one page that can finish the task. First use another legitimate source if there is one, such as another search engine or site. SideKick shows the page in the user's Browser panel and waits, with the same cookies, DOM state, and history, until the check is gone, then returns so you observe the page and continue. Never try to complete the check yourself.",
   {
     type: 'object',
     required: ['reason'],
     properties: {
       reason: {
         type: 'string',
-        description: 'Concise explanation of the human-only step that blocks browser progress.'
+        description:
+          'One short sentence telling the user what to do, shown to them as written, such as "DuckDuckGo wants you to confirm you are human."'
       },
       challenge_type: {
         type: 'string',
@@ -1476,7 +1488,38 @@ const createArtifact = definition(
       code: {
         type: 'string',
         description:
-          'Complete artifact code. React artifacts define App and use SideKick semantic theme colors. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+          'Complete artifact code. It renders directly in the reply on the chat background, full width and as tall as its content, with no card around it: keep the page transparent, add no outer card or fixed height, and use SideKick theme variables; plain elements are already styled like SideKick. React artifacts define App; write data and helpers first, then App as a short layout, then the hooks and components it uses (state logic, effects and handlers in a custom hook below App), so the chat can show the layout while the rest streams. Recharts, Chart.js, Framer Motion, Lucide, Lodash, MathJS, Leaflet, D3, and date-fns are bundled.'
+      }
+    }
+  }
+)
+
+const editArtifact = definition(
+  'edit_artifact',
+  'Change an existing artifact in place instead of writing it again: each edit replaces old_text, copied exactly from the current code and matching one place, with new_text. The artifact then renders and is checked as with create_artifact, and the chat shows the new version. Prefer it for any change that touches part of the code; use create_artifact only for a new artifact or to rewrite most of one.',
+  {
+    type: 'object',
+    required: ['edits'],
+    properties: {
+      title: {
+        type: 'string',
+        description:
+          'Exact title of the artifact to change. Omit it to change the latest one, or the one under review.'
+      },
+      edits: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          required: ['old_text', 'new_text'],
+          properties: {
+            old_text: {
+              type: 'string',
+              description: 'Exact text from the current code, long enough to match one place.'
+            },
+            new_text: { type: 'string', description: 'What replaces it.' }
+          }
+        }
       }
     }
   }
@@ -1560,6 +1603,15 @@ const coreEntries: AgentToolCatalogEntry[] = [
 
 const goalEntries: AgentToolCatalogEntry[] = [entry(updateGoal, 'goal', 'write')]
 
+// The schedules handler asks the user before every change itself, whatever the permission mode,
+// and refuses an invalid one without a card.
+const scheduleEntries: AgentToolCatalogEntry[] = [
+  entry(schedulesListTool, 'schedules', 'read'),
+  entry(schedulesCreateTool, 'schedules', 'write'),
+  entry(schedulesUpdateTool, 'schedules', 'write'),
+  entry(schedulesDeleteTool, 'schedules', 'write')
+]
+
 const planEntries: Record<Exclude<AgentPlanStage, 'kept'>, AgentToolCatalogEntry[]> = {
   inactive: [entry(enterPlanMode, 'plan', 'read')],
   planning: [entry(presentPlan, 'plan', 'read')],
@@ -1605,7 +1657,8 @@ const defaultCapabilities: Record<AgentRunSurface, readonly AgentCapability[]> =
     'settings',
     'sessions',
     'credentials',
-    'web.request'
+    'web.request',
+    'schedules'
   ],
   subagent: [
     'workspace.read',
@@ -1690,7 +1743,24 @@ function workspaceEntries(options: AgentToolCatalogOptions): AgentToolCatalogEnt
 }
 
 export function getSkillToolCatalogEntries(skillId: string): AgentToolCatalogEntry[] {
-  return skillId === WEB_ARTIFACTS_SKILL_ID ? [entry(createArtifact, 'artifacts', 'write')] : []
+  if (skillId === WEB_ARTIFACTS_SKILL_ID)
+    return [entry(createArtifact, 'artifacts', 'write'), entry(editArtifact, 'artifacts', 'write')]
+  return skillId === SCHEDULES_SKILL_ID ? scheduleEntries : []
+}
+
+/**
+ * Skills whose tools stay out of the tool list until the skill loads, so the many runs that never
+ * need them carry none of their schemas. They are needed rarely enough that the prompt cache lost
+ * when they arrive costs less than carrying them always; a later run that calls one before
+ * loading the skill is told to load it.
+ */
+const SKILLS_WITH_GATED_TOOLS = [SCHEDULES_SKILL_ID] as const
+
+/** The skill that must be loaded before a gated tool is offered, if `name` is one. */
+export function gatingSkillForTool(name: string): string | undefined {
+  return SKILLS_WITH_GATED_TOOLS.find((skillId) =>
+    getSkillToolCatalogEntries(skillId).some(({ definition }) => definition.function.name === name)
+  )
 }
 
 const SKILLS_WITH_TOOLS = [WEB_ARTIFACTS_SKILL_ID] as const
@@ -1769,6 +1839,9 @@ export function getAgentToolCatalog(options: AgentToolCatalogOptions): AgentTool
     // cache from that point, and a tool missing from a follow-up turn was a
     // dead end; the handler brings in the skill's guidance instead.
     ...SKILLS_WITH_TOOLS.flatMap(getSkillToolCatalogEntries),
+    ...SKILLS_WITH_GATED_TOOLS.filter((skillId) =>
+      options.activeSkillIds?.includes(skillId)
+    ).flatMap(getSkillToolCatalogEntries),
     ...(options.mcpTools ?? []).map((tool) =>
       entry(tool, 'mcp', options.mcpToolRisks?.[tool.function.name] ?? 'network')
     )
@@ -1811,7 +1884,7 @@ export function toolCapabilityForName(name: string): AgentCapability | undefined
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) {
     return 'workspace.read'
   }
-  return [...coreEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.capability
 }
@@ -1821,7 +1894,7 @@ export function toolRiskForName(name: string): ToolRisk | undefined {
   if (isWorkspaceMutationTool(name)) return 'write'
   if (name === 'code_intelligence') return 'read'
   if (workspaceReadToolDefinitions().some((tool) => tool.function.name === name)) return 'read'
-  return [...coreEntries, ...Object.values(planEntries).flat()].find(
+  return [...coreEntries, ...scheduleEntries, ...Object.values(planEntries).flat()].find(
     ({ definition: tool }) => tool.function.name === name
   )?.risk
 }

@@ -30,6 +30,7 @@ import {
   isWorkSegmentGroup
 } from '../utils/segmentGrouping'
 import Artifact from './artifacts/Artifact'
+import { artifactSlots } from '../utils/artifactSlots'
 import ToolCallRow from './ToolCallRow'
 import { ToolExecutionCard } from './ToolExecutionCard'
 import { TurnChangeReview } from './TurnChangeReview'
@@ -44,11 +45,13 @@ import { ImageAttachmentPreview } from './ImageAttachmentPreview'
 import { ReadAloudButton } from './ReadAloudButton'
 import { PastedTextAttachmentCard } from './PastedTextAttachment'
 import {
+  isBrowserAnnotationAttachment,
   isPastedTextAttachment,
   isProjectContextAttachment,
   isReviewCommentAttachment,
   reviewCommentLineLabel
 } from '../../../shared/messageContextAttachments'
+import { BrowserMarkChip } from './BrowserMarkChip'
 import type { Message } from '../types/chat.types'
 import type { GroupedSegment } from '../types/chat.types'
 import {
@@ -775,6 +778,8 @@ interface MessageItemProps {
   onForkMessage?: (messageId: string) => void
   /** Goes back to before this message and returns it to the message box; absent while running. */
   onRewindMessage?: (message: Message, restoreFiles: boolean) => void
+  /** The project's files changed at or after this message, so a rewind can take them back too. */
+  rewindCanRestoreFiles?: boolean
   onApproveToolLimitDecision: (decisionId: string) => void
   onDenyToolLimitDecision: (decisionId: string) => void
   onResolveAgentInteraction?: (
@@ -805,6 +810,7 @@ function MessageItemInner({
   onContinueRun,
   onForkMessage,
   onRewindMessage,
+  rewindCanRestoreFiles = false,
   onApproveToolLimitDecision,
   onDenyToolLimitDecision,
   onResolveAgentInteraction,
@@ -911,15 +917,44 @@ function MessageItemInner({
             ))}
           </div>
         )}
-        {Boolean(msg.images?.length) && (
+        {Boolean(msg.attachments?.some(isBrowserAnnotationAttachment)) && (
+          <div className="message-context-attachments" aria-label="Places marked on pages">
+            {msg.attachments!.filter(isBrowserAnnotationAttachment).map((attachment) => (
+              <BrowserMarkChip
+                key={attachment.id}
+                mark={attachment}
+                className="message-browser-mark"
+              />
+            ))}
+          </div>
+        )}
+        {Boolean(
+          msg.images?.length ||
+          msg.attachments?.some((a) => isBrowserAnnotationAttachment(a) && a.image)
+        ) && (
           <div className="message-image-attachments" aria-label="Attached images">
-            {msg.images!.map((image) => (
+            {msg.images?.map((image) => (
               <ImageAttachmentPreview
                 key={image.id}
                 image={image}
                 className="message-image-preview"
               />
             ))}
+            {/* The pictures of the marks, in the order the model sees them, after the images. */}
+            {msg.attachments?.filter(isBrowserAnnotationAttachment).map((mark) =>
+              mark.image ? (
+                <ImageAttachmentPreview
+                  key={mark.id}
+                  image={{
+                    id: mark.id,
+                    name: `Mark ${mark.number}: ${mark.name}`,
+                    mimeType: mark.image.mimeType,
+                    dataUrl: mark.image.dataUrl
+                  }}
+                  className="message-image-preview"
+                />
+              ) : null
+            )}
           </div>
         )}
         {msg.role === 'system' ? (
@@ -947,16 +982,10 @@ function MessageItemInner({
           <div className="message-segments">
             {(() => {
               const groupedSegments = groupSegments(msg.segments)
-              // A model that fixes or revises an artifact makes it again under the
-              // same title. Only the latest one is the result; the attempts it
-              // replaced are work, and showing each one stacked the chat with
-              // broken and outdated copies.
-              const latestArtifactByTitle = new Map<string, unknown>()
-              for (const segment of msg.segments) {
-                if (segment.type === 'artifact' && segment.artifact) {
-                  latestArtifactByTitle.set(segment.artifact.title, segment)
-                }
-              }
+              // An artifact the model makes again or edits shows once, where it first
+              // appeared, as its latest version: stacking each attempt filled the chat
+              // with broken and outdated copies.
+              const artifactsShown = artifactSlots(msg.segments)
               const lastWorkIndex = groupedSegments.findLastIndex(isWorkSegmentGroup)
               const finalAnswerIndex = groupedSegments.findIndex(
                 (group, groupIndex) =>
@@ -1119,12 +1148,11 @@ function MessageItemInner({
                   ) : group.type === 'content' &&
                     group.segment.type === 'artifact' &&
                     group.segment.artifact ? (
-                    latestArtifactByTitle.get(group.segment.artifact.title) !==
-                    group.segment ? null : (
+                    !artifactsShown.get(group.segment) ? null : (
                       // Standalone artifact (not grouped with thinking)
                       <div className="artifact-segment">
                         <Artifact
-                          artifact={group.segment.artifact}
+                          artifact={artifactsShown.get(group.segment)!}
                           onResult={(result) =>
                             onHandleArtifactResult(group.segment.artifact!.title, result)
                           }
@@ -1480,16 +1508,37 @@ function MessageItemInner({
                       >
                         <strong>Rewind to before this message</strong>
                         <p>
-                          This message and everything after it leave the chat, and the message goes
-                          back into the box to change or send.
+                          It and everything after it leave the chat; the message returns to the box.
+                          {rewindCanRestoreFiles &&
+                            ' Files the agent changed since can go back too.'}
                         </p>
                         <div className="message-rewind-actions">
-                          <button type="button" onClick={() => onRewindMessage(msg, true)}>
-                            Rewind chat and files
-                          </button>
-                          <button type="button" onClick={() => onRewindMessage(msg, false)}>
-                            Chat only
-                          </button>
+                          {rewindCanRestoreFiles ? (
+                            <>
+                              <button
+                                type="button"
+                                className="settings-secondary-action is-small"
+                                onClick={() => onRewindMessage(msg, false)}
+                              >
+                                Chat only
+                              </button>
+                              <button
+                                type="button"
+                                className="settings-primary-action is-small"
+                                onClick={() => onRewindMessage(msg, true)}
+                              >
+                                Rewind chat and files
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              className="settings-primary-action is-small"
+                              onClick={() => onRewindMessage(msg, false)}
+                            >
+                              Rewind
+                            </button>
+                          )}
                         </div>
                       </MessageFooterPopover>
                     )}
@@ -1561,6 +1610,7 @@ export const MessageItem = memo(MessageItemInner, (prev, next) => {
   if (prev.readOnly !== next.readOnly) return false
   if (prev.onForkMessage !== next.onForkMessage) return false
   if (prev.onRewindMessage !== next.onRewindMessage) return false
+  if (prev.rewindCanRestoreFiles !== next.rewindCanRestoreFiles) return false
   if (prev.onContinueRun !== next.onContinueRun) return false
   // Re-render if this message is being edited or stopped being edited
   if (

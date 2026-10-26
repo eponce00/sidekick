@@ -7,7 +7,7 @@ import type {
   ProviderThinkingBlock
 } from '../../shared/providerRuntime'
 import type { ProviderInstance, ProviderInstanceModel } from '../../shared/settings'
-import { previewToolCallArguments } from './toolCallPreview'
+import { previewToolCallArguments, ToolCallPreviews } from './toolCallPreview'
 import { cancelProviderStreamReader, releaseProviderStreamReader } from './providerStreamReader'
 import { normalizeCompletedToolInput } from '../../shared/toolCalls'
 import { nearestEffort, requestReasoningLevel, type ReasoningLevel } from '../../shared/reasoning'
@@ -296,7 +296,7 @@ export async function streamAnthropicChat(
     if (signal?.aborted) return { ok: false, error: 'aborted' }
     const decoder = new TextDecoder()
     const toolBlocks = new Map<number, { id: string; name: string; json: string }>()
-    const toolPreviewSignatures = new Map<number, string>()
+    const toolPreviews = new ToolCallPreviews()
     const thinkingBlocks = new Map<number, ProviderThinkingBlock>()
     let buffer = ''
     let promptTokens: number | undefined
@@ -334,11 +334,9 @@ export async function streamAnthropicChat(
                 : ''
             }
             toolBlocks.set(event.index, tool)
-            const previewArguments = previewToolCallArguments(tool.json)
-            toolPreviewSignatures.set(
-              event.index,
-              `${tool.name}\n${JSON.stringify(previewArguments)}`
-            )
+            const previewArguments =
+              toolPreviews.next(event.index, tool.name, tool.json) ??
+              previewToolCallArguments(tool.json)
             emit({
               message: {
                 tool_calls: [
@@ -381,10 +379,8 @@ export async function streamAnthropicChat(
             const tool = toolBlocks.get(event.index)
             if (tool) {
               tool.json += event.delta.partial_json || ''
-              const previewArguments = previewToolCallArguments(tool.json)
-              const previewSignature = `${tool.name}\n${JSON.stringify(previewArguments)}`
-              if (toolPreviewSignatures.get(event.index) !== previewSignature) {
-                toolPreviewSignatures.set(event.index, previewSignature)
+              const previewArguments = toolPreviews.next(event.index, tool.name, tool.json)
+              if (previewArguments) {
                 emit({
                   message: {
                     tool_calls: [
@@ -423,7 +419,7 @@ export async function streamAnthropicChat(
             }
             emit({ message: { tool_calls: [call], closed_tool_calls: [call] }, done: false })
             toolBlocks.delete(event.index)
-            toolPreviewSignatures.delete(event.index)
+            toolPreviews.forget(event.index)
           }
           break
         }

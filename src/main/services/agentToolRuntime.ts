@@ -80,6 +80,8 @@ import {
   registerSettingsToolHandlers,
   type AppSettingsToolAccess
 } from './agentSettingsToolHandlers'
+import { registerScheduleToolHandlers, type ScheduleToolAccess } from './agentScheduleToolHandlers'
+import { scheduleToolTitle } from '../../shared/scheduleTools'
 import {
   registerCredentialToolHandlers,
   type CredentialToolAccess
@@ -175,8 +177,16 @@ export interface AgentToolRuntimeSessionInput {
   browserEnabled?: boolean
   /** The previous reply made an artifact, so the web-artifacts guidance is already in history. */
   artifactContinuation?: boolean
-  /** This run is an artifact builder: its create_artifact renders directly, never through another builder. */
-  artifactBuilder?: boolean
+  /**
+   * This run is an artifact's builder, starting from this version: its create_artifact renders
+   * directly, never through another builder, and it may edit the version in place.
+   */
+  artifactBuilder?: { type: InspectedArtifactType; title: string; code: string }
+  /** The current version of each artifact earlier replies made, by title, oldest first. */
+  conversationArtifacts?: () => ReadonlyMap<
+    string,
+    { type: InspectedArtifactType; title: string; code: string }
+  >
   editingDialect?: AgentToolCatalogOptions['editingDialect']
   capabilities?: AgentToolCatalogOptions['capabilities']
   persistentSkillIds?: readonly string[]
@@ -432,6 +442,7 @@ export class AgentToolRuntime {
   private artifactInspector?: ArtifactInspectorLike
   private appSettings?: AppSettingsToolAccess
   private credentials?: CredentialToolAccess
+  private schedules?: ScheduleToolAccess
   private readonly recordedBackgroundVerification = new Set<string>()
   private readonly backgroundVerificationSnapshots = new Map<string, WorkspaceCommandSnapshot>()
   private readonly languageIntelligence: LanguageIntelligenceService
@@ -475,14 +486,9 @@ export class AgentToolRuntime {
     this.credentials = access
   }
 
-  async beginBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.beginHumanTakeover(conversationId, expectedSessionId)
-  }
-
-  async completeBrowserHumanTakeover(conversationId: string, expectedSessionId: string) {
-    if (!this.browser) throw new Error('Visual browser is unavailable')
-    return this.browser.completeHumanTakeover(conversationId, expectedSessionId)
+  /** Lets the agent list the user's schedules and, with approval each time, change them. */
+  setSchedules(access: ScheduleToolAccess): void {
+    this.schedules = access
   }
 
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
@@ -524,6 +530,11 @@ export class AgentToolRuntime {
     }
     registerConversationToolHandlers(handlers, this.db, { goal: input.goal, plan: input.plan })
     if (this.appSettings) registerSettingsToolHandlers(handlers, this.appSettings)
+    const scheduleTools = this.schedules
+      ? registerScheduleToolHandlers(handlers, this.schedules, {
+          permissionMode: input.permissionMode
+        })
+      : undefined
     if (this.credentials) registerCredentialToolHandlers(handlers, this.credentials)
     registerSkillToolHandlers(handlers, {
       activeSkillIds,
@@ -535,7 +546,9 @@ export class AgentToolRuntime {
       visionEnabled: input.browserEnabled === true,
       artifactContinuation: input.artifactContinuation === true,
       // A chat's artifacts are refined out of sight; a builder renders its own directly.
-      buildArtifacts: input.surface === 'conversation' && input.artifactBuilder !== true
+      buildArtifacts: input.surface === 'conversation' && !input.artifactBuilder,
+      builderArtifact: input.artifactBuilder,
+      conversationArtifacts: input.conversationArtifacts
     })
     handlers.register(
       ['office_preflight', 'office_validate'],
@@ -694,7 +707,7 @@ export class AgentToolRuntime {
         requestedAccess: (name, args, context) =>
           name === 'browser_call_webmcp_tool' && this.browser
             ? webMcpCallAccess(this.browser, browserScope(context), args, context)
-            : undefined,
+            : scheduleTools?.requestedAccess(name, args, context),
         credentialApproval: (name, args, context) => {
           const uses = this.credentials?.uses
           return uses
@@ -714,10 +727,15 @@ export class AgentToolRuntime {
         releaseRun: (runId) => this.credentials?.uses?.releaseRun(runId),
         ...(this.browser
           ? {
-              reserveBrowserHumanTakeover: (conversationId: string) =>
-                this.browser!.reserveHumanTakeover(conversationId),
-              releaseBrowserHumanTakeover: (conversationId: string, expectedSessionId: string) =>
-                this.browser!.releaseHumanTakeover(conversationId, expectedSessionId)
+              reserveBrowserForHumanCheck: (conversationId: string) =>
+                this.browser!.reserveForHumanCheck(conversationId),
+              waitForBrowserHumanCheck: (
+                conversationId: string,
+                expectedSessionId: string,
+                signal: AbortSignal
+              ) => this.browser!.waitForHumanCheck(conversationId, expectedSessionId, signal),
+              releaseBrowserHumanCheck: (conversationId: string, expectedSessionId: string) =>
+                this.browser!.releaseHumanCheck(conversationId, expectedSessionId)
             }
           : {})
       }
@@ -799,6 +817,8 @@ export class AgentToolRuntime {
       return `Change SideKick setting ${stringArg(args, 'key')}`.trim()
     }
     if (name === SETTINGS_READ_TOOL) return 'Read SideKick settings'
+    const scheduleTitle = scheduleToolTitle(name, args)
+    if (scheduleTitle) return scheduleTitle
     if (name === PROVIDER_REQUEST_KEY_TOOL) return 'Ask for a provider key in Settings'
     if (name === 'read') return `Read ${stringArg(args, 'path', '.')}`
     if (name === 'code_intelligence') {
@@ -815,7 +835,10 @@ export class AgentToolRuntime {
     if (name === 'browser_click')
       return `Click ${stringArg(args, 'text') || stringArg(args, 'selector') || stringArg(args, 'ref') || 'browser element'}`
     if (name === 'browser_hold') return 'Press and hold browser control'
-    if (name === 'browser_request_human') return 'Human browser verification'
+    if (name === 'browser_request_human') {
+      const reason = stringArg(args, 'reason')
+      return reason ? `Waiting for you in the browser: ${reason}` : 'Waiting for you in the browser'
+    }
     if (name === 'browser_type') return 'Type in browser'
     if (name === 'browser_select') return 'Select browser option'
     if (name === 'browser_fill_form') return 'Fill browser form'

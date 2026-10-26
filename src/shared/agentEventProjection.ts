@@ -37,7 +37,18 @@ export type ProjectedContentSegment =
   | { type: 'tool'; tool: ProjectedToolExecution }
   | {
       type: 'artifact'
-      artifact: { type: 'react' | 'html' | 'svg'; title: string; code: string; isStreaming: false }
+      artifact: {
+        type: 'react' | 'html' | 'svg'
+        title: string
+        code: string
+        /** The call is still being written or reviewed; the code is its first version, or empty. */
+        isStreaming: boolean
+        toolCallId: string
+        /** The builder reviewing it, while it does. */
+        childRunId?: string
+        /** An edit_artifact call that has not finished: the chat keeps the version it changes. */
+        editing?: boolean
+      }
     }
   | {
       type: 'summary'
@@ -148,6 +159,43 @@ function resultFrom(event: AgentRunEvent): ToolExecutionResult | undefined {
 }
 
 const HIDDEN_CONTROL_TOOLS = new Set(['enter_plan_mode', 'present_plan', 'complete_plan'])
+
+/**
+ * An artifact whose call is still streaming or being reviewed holds its place in the reply from
+ * the start, so it takes shape there and the finished one replaces it in place.
+ */
+function liveArtifact(tool: ProjectedToolExecution): ProjectedContentSegment | null {
+  if (tool.status !== 'pending' && tool.status !== 'running') return null
+  if (tool.name === 'edit_artifact') {
+    const title = typeof tool.input?.title === 'string' ? tool.input.title : ''
+    return {
+      type: 'artifact',
+      artifact: {
+        type: 'react',
+        title,
+        code: '',
+        isStreaming: true,
+        toolCallId: tool.id,
+        editing: true
+      }
+    }
+  }
+  if (tool.name !== 'create_artifact') return null
+  const input = tool.input ?? {}
+  const data =
+    tool.data && typeof tool.data === 'object' ? (tool.data as Record<string, unknown>) : {}
+  return {
+    type: 'artifact',
+    artifact: {
+      type: input.type === 'html' || input.type === 'svg' ? input.type : 'react',
+      title: typeof input.title === 'string' ? input.title : '',
+      code: tool.status === 'running' && typeof input.code === 'string' ? input.code : '',
+      isStreaming: true,
+      toolCallId: tool.id,
+      ...(typeof data.childRunId === 'string' ? { childRunId: data.childRunId } : {})
+    }
+  }
+}
 
 export function projectAgentRunEvents(events: readonly AgentRunEvent[]): ProjectedAgentRunMessage {
   // The durable run sequence is the chronology authority. Most callers already
@@ -433,7 +481,8 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
               type: artifact.type,
               title: artifact.title,
               code: artifact.code,
-              isStreaming: false
+              isStreaming: false,
+              toolCallId: id
             }
           })
         }
@@ -536,7 +585,7 @@ export function projectAgentRunEvents(events: readonly AgentRunEvent[]): Project
     emittedTools.add(id)
     if (HIDDEN_CONTROL_TOOLS.has(tool.name)) return
     segments.push({ type: 'tool', tool })
-    const artifact = artifacts.get(id)
+    const artifact = artifacts.get(id) ?? liveArtifact(tool)
     if (artifact) segments.push(artifact)
   }
   for (const event of orderedEvents) {

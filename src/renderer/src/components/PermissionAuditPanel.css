@@ -58,8 +58,11 @@
   color: var(--text-secondary);
   background: var(--surface-3);
   font-size: var(--text-xs);
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  font-weight: 500;
+}
+
+/* Labels are lower case for use mid-sentence; as a chip they start with a capital. */
+.permission-audit-outcome::first-letter {
   text-transform: uppercase;
 }
 
@@ -67,13 +70,13 @@
 .permission-audit-outcome.outcome-user-approved,
 .permission-audit-outcome.outcome-consumed {
   color: var(--color-success);
-  background: color-mix(in srgb, var(--color-success) 13%, transparent);
+  background: var(--color-success-subtle);
 }
 
 .permission-audit-outcome.outcome-denied,
 .permission-audit-outcome.outcome-rejected {
   color: var(--color-error);
-  background: color-mix(in srgb, var(--color-error) 13%, transparent);
+  background: var(--color-error-subtle);
 }
 
 .permission-audit-title {
@@ -102,7 +105,7 @@
   margin-top: 6px;
   padding: 7px 8px;
   border-radius: var(--radius-sm);
-  background: color-mix(in srgb, var(--surface-3) 72%, transparent);
+  background: var(--surface-2);
 }
 
 @media (max-width: 520px) {

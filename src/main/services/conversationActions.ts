@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { conversationTitleVersionForSource } from '../../shared/conversationTitles'
 import type { RemoveManagedWorktreeResult } from '../../shared/worktrees'
+import { removeChatFolder } from './chatFolders'
 
 /**
  * What the user does to a chat from its menu, shared by the window's handlers and the phone, so
@@ -38,7 +39,10 @@ export function renameConversation(
   )
 }
 
-/** Deletes a chat and its messages; a worktree its last chat leaves behind goes too. */
+/**
+ * Deletes a chat and its messages, and its own folder when it has one; a worktree its last chat
+ * leaves behind goes too.
+ */
 export async function deleteConversation(
   db: Database.Database,
   worktrees: {
@@ -50,6 +54,12 @@ export async function deleteConversation(
   const worktreeId = worktrees.worktreeIdFor(conversationId)
   db.prepare('DELETE FROM messages WHERE conversation_id = ?').run(conversationId)
   db.prepare('DELETE FROM conversations WHERE id = ?').run(conversationId)
+  try {
+    removeChatFolder(conversationId)
+  } catch (error) {
+    // The next start removes it.
+    console.warn('[Conversations] Could not remove the chat’s folder:', error)
+  }
   const worktreeCleanup = worktreeId ? await worktrees.removeIfUnused(worktreeId) : null
   return worktreeCleanup ? { worktreeCleanup } : {}
 }

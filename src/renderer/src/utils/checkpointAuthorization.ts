@@ -8,7 +8,7 @@ export async function authorizeCheckpointMutation(
   action: CheckpointMutationAction,
   hash: string
 ): Promise<CheckpointMutationAuthorization | null> {
-  // Recovery actions are initiated by an explicit Undo/Rewind/Restore click and, where
+  // Recovery actions are initiated by an explicit Undo or Rewind click and, where
   // destructive, an in-app confirmation. Respect Always Ask globally without forcing a
   // second native prompt in Full Access mode.
   const operation = checkpointPermissionOperation(action, hash, 'auto')

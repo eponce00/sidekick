@@ -13,6 +13,7 @@ import { registerSessionStatusHandlers } from './sessionStatus'
 import { registerSupportHandlers } from './support'
 import { registerSiteIconHandlers } from './siteIcons'
 import { registerBrowserNetworkHandlers } from './browserNetwork'
+import { registerBrowserLibraryHandlers } from './browserLibrary'
 import { registerCommandLineHandlers } from './commandLine'
 import { registerScheduleHandlers } from './schedules'
 import { registerSessionHandlers } from './sessions'
@@ -21,12 +22,15 @@ import { registerWorktreeHandlers } from './worktrees'
 import { registerAppMenuHandlers } from './appMenus'
 import { registerCredentialHandlers } from './credentials'
 import { registerCompanionHandlers } from './companion'
+import { registerPanelWindowHandlers } from './panelWindows'
+import { registerUserTerminalHandlers } from './userTerminals'
 
 /**
  * Registers all IPC handlers. Call after store and db are initialized.
  */
 export function registerAllHandlers(): void {
   registerWindowHandlers()
+  registerPanelWindowHandlers()
   registerAppMenuHandlers()
   registerSiteIconHandlers()
   registerProviderRuntimeHandlers()
@@ -40,10 +44,12 @@ export function registerAllHandlers(): void {
   registerMcpHandlers()
   registerPermissionHandlers()
   registerBrowserNetworkHandlers()
+  registerBrowserLibraryHandlers()
   registerCredentialHandlers()
   registerPullRequestHandlers()
   registerSupportHandlers()
   registerAgentRunHandlers()
+  registerUserTerminalHandlers()
   registerSessionStatusHandlers()
   registerCommandLineHandlers()
   registerScheduleHandlers()

@@ -21,6 +21,9 @@ import { BrowserWorkspace } from './BrowserWorkspace'
 export interface BrowserActivityPanelProps {
   conversationId: string | null
   onActivityChange?: (state: BrowserActivityState) => void
+  onOpenSettings?: () => void
+  /** Whether the browser shows a page, rather than an empty new tab. */
+  onPageShownChange?: (shown: boolean) => void
 }
 
 function activityStatus(
@@ -41,25 +44,32 @@ function statusLabel(state: BrowserActivityState): string {
   if (status === 'blocked') return 'Human action required'
   if (status === 'error') return 'Needs attention'
   if (status === 'verified') return 'Verified'
-  return state.sessionState || 'Ready'
+  const session = state.sessionState
+  return session ? session.charAt(0).toUpperCase() + session.slice(1) : 'Ready'
 }
 
 export function BrowserActivityPanel({
   conversationId,
-  onActivityChange
+  onActivityChange,
+  onOpenSettings,
+  onPageShownChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   return (
     <BrowserActivityPanelSession
       key={conversationId ?? 'no-conversation'}
       conversationId={conversationId}
       onActivityChange={onActivityChange}
+      onOpenSettings={onOpenSettings}
+      onPageShownChange={onPageShownChange}
     />
   )
 }
 
 function BrowserActivityPanelSession({
   conversationId,
-  onActivityChange
+  onActivityChange,
+  onOpenSettings,
+  onPageShownChange
 }: BrowserActivityPanelProps): React.JSX.Element {
   const [activity, setActivity] = useState<BrowserActivityState>(EMPTY_BROWSER_ACTIVITY)
   const [failedScreenshot, setFailedScreenshot] = useState<string | null>(null)
@@ -133,9 +143,6 @@ function BrowserActivityPanelSession({
     >
       {!(conversationId && typeof window.api.agentRuns.browserWorkspace === 'function') && (
         <header className="browser-activity-header">
-          <div className="browser-activity-heading-icon" aria-hidden="true">
-            <MonitorUp size={16} />
-          </div>
           <div className="browser-activity-heading">
             <strong>Browser activity</strong>
             <span className="browser-activity-status">
@@ -149,14 +156,16 @@ function BrowserActivityPanelSession({
       )}
 
       {conversationId && typeof window.api.agentRuns.browserWorkspace === 'function' ? (
-        <BrowserWorkspace conversationId={conversationId} />
+        <BrowserWorkspace
+          conversationId={conversationId}
+          onOpenSettings={onOpenSettings}
+          onPageShownChange={onPageShownChange}
+        />
       ) : !activity.hasActivity ? (
         <div className="browser-activity-empty">
           <MonitorUp size={24} />
           <strong>No browser activity yet</strong>
-          <span>
-            When the model opens or interacts with a page, its live view will appear here.
-          </span>
+          <span>Pages the agent opens show here.</span>
         </div>
       ) : (
         <div className="browser-activity-body">
@@ -235,7 +244,7 @@ function BrowserActivityPanelSession({
               <section className="browser-latest-action" aria-label="Latest browser action">
                 <MousePointer2 size={14} />
                 <div>
-                  <span>Just now</span>
+                  <span>Last action</span>
                   <strong>{activity.latestAction || latest.title}</strong>
                 </div>
               </section>

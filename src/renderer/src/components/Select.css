@@ -105,9 +105,9 @@
   font-weight: 500;
 }
 
+/* A check marks the choice; the colour stays the label's. */
 .ui-select-option.is-selected svg {
   flex-shrink: 0;
-  color: var(--accent);
 }
 
 .ui-select-option[aria-disabled='true'] {

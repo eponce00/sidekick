@@ -112,7 +112,7 @@ itself. The agent never sees the password.
   **Show password** button.
 
 Once you are signed in, the agent can act on that site as you. Use an account limited to what the
-task needs. You can still sign in yourself with **Take control** instead.
+task needs. You can still sign in yourself instead, by typing in the Browser panel.
 
 ## What the agent sees
 

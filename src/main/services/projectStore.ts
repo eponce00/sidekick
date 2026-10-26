@@ -8,6 +8,7 @@ import type {
   Project,
   ProjectConversation
 } from '../../shared/projects'
+import { chatFolderPath } from './chatFolders'
 
 interface ProjectEventRow {
   id: string
@@ -142,6 +143,9 @@ export class ProjectStore {
       | undefined
     if (!conversation) throw new Error('Conversation not found')
     const inWorktree = Boolean(conversation.worktree_id && conversation.worktree_folder)
+    const projectRoot = conversation.worktree_folder ?? conversation.folder_path
+    // A chat with no project, never attached or detached from one, works in a folder of its own.
+    const chatFolder = projectRoot ? null : chatFolderPath(conversationId)
 
     const event = this.db
       .prepare(
@@ -156,7 +160,8 @@ export class ProjectStore {
       projectId: conversation.project_id,
       projectName: conversation.name,
       // A chat in its own worktree works there, even if its project was removed since.
-      workspaceRoot: conversation.worktree_folder ?? conversation.folder_path,
+      workspaceRoot: projectRoot ?? chatFolder,
+      ...(chatFolder ? { chatFolder: true } : {}),
       worktreeId: inWorktree ? conversation.worktree_id : null,
       worktree: inWorktree
         ? {

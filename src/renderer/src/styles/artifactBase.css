@@ -1,0 +1,334 @@
+/* SideKick's look for plain elements inside an artifact, so generated code reads as part of the
+   chat without styling everything itself. It sits in a cascade layer, so any style the artifact
+   writes wins over it. With Tailwind, the same rules are given again as Tailwind's base layer,
+   after its reset and before its utilities; no selector here is more specific than one element,
+   so a utility class always wins. */
+@layer sidekick {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--content-text);
+    line-height: var(--content-leading);
+    overflow-wrap: break-word;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    color: var(--text-primary);
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  h1 {
+    font-size: 1.32em;
+    letter-spacing: -0.018em;
+  }
+
+  h2 {
+    font-size: 1.18em;
+  }
+
+  h3 {
+    font-size: 1.04em;
+  }
+
+  /* The smallest headings are labels, as the chat's own are. */
+  h4,
+  h5,
+  h6 {
+    color: var(--text-muted);
+    font-size: 0.78em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  strong,
+  b {
+    font-weight: 600;
+  }
+
+  small {
+    color: var(--text-secondary);
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    text-underline-offset: 2px;
+  }
+
+  a:where(:hover) {
+    text-decoration-color: currentColor;
+  }
+
+  hr {
+    height: 1px;
+    border: 0;
+    background: var(--border);
+  }
+
+  img,
+  svg,
+  video,
+  canvas,
+  iframe {
+    max-width: 100%;
+  }
+
+  img,
+  video,
+  svg {
+    height: auto;
+  }
+
+  /* Charts sized to their container would otherwise grow with a frame that grows with them. */
+  canvas {
+    display: block;
+    max-height: 300px;
+  }
+
+  ::selection {
+    background: var(--accent-muted);
+    color: var(--text-primary);
+  }
+
+  /* Controls: quiet by default, as the app's own secondary buttons and fields are. One action can
+     be primary with the `primary` class or `type="submit"`. */
+  button {
+    min-height: 30px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    color: var(--text-primary);
+    font: inherit;
+    font-weight: 500;
+    line-height: 1.3;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-fast) ease,
+      border-color var(--duration-fast) ease,
+      color var(--duration-fast) ease;
+  }
+
+  button:where(:hover) {
+    border-color: var(--border-strong);
+    background: var(--surface-3);
+  }
+
+  button:where(:active) {
+    background: var(--surface-4);
+  }
+
+  button:where(.primary, [type='submit'], [data-variant='primary']) {
+    border-color: transparent;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  button:where(.primary, [type='submit'], [data-variant='primary']):where(:hover) {
+    background: var(--accent-strong);
+  }
+
+  button:where(.primary, [type='submit'], [data-variant='primary']):where(:active) {
+    background: var(--accent-pressed);
+  }
+
+  button:where(:disabled) {
+    border-color: var(--border-subtle);
+    background: var(--surface-2);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  input:where(
+    :not([type]),
+    [type='text'],
+    [type='number'],
+    [type='email'],
+    [type='search'],
+    [type='password'],
+    [type='url'],
+    [type='tel'],
+    [type='date'],
+    [type='time'],
+    [type='datetime-local'],
+    [type='month'],
+    [type='week']
+  ),
+  select,
+  textarea {
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font: inherit;
+    line-height: 1.3;
+    transition:
+      border-color var(--duration-fast) ease,
+      box-shadow var(--duration-fast) ease;
+  }
+
+  input:where(:hover),
+  select:where(:hover),
+  textarea:where(:hover) {
+    border-color: var(--border-strong);
+  }
+
+  input:where(:focus-visible),
+  select:where(:focus-visible),
+  textarea:where(:focus-visible) {
+    border-color: var(--accent);
+    outline: none;
+    box-shadow: 0 0 0 3px var(--accent-muted);
+  }
+
+  input,
+  progress,
+  meter {
+    accent-color: var(--accent);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-muted);
+  }
+
+  label {
+    color: var(--text-secondary);
+  }
+
+  button:where(:focus-visible),
+  a:where(:focus-visible),
+  summary:where(:focus-visible) {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* A table: a rounded card with lines between rows only, as tables in replies are. */
+  table {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-collapse: separate;
+    border-spacing: 0;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    font-variant-numeric: tabular-nums;
+  }
+
+  th,
+  td {
+    padding: 0.6em 0.9em;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text-secondary);
+    font-size: 0.86em;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  td {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  td:where(tbody > tr:first-child > *) {
+    border-top: 0;
+  }
+
+  td:where(tbody > tr:hover > *) {
+    background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+
+  code:where(:not(pre *)),
+  kbd {
+    padding: 0.12em 0.42em;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--surface-3) 70%, transparent);
+  }
+
+  pre {
+    padding: 12px;
+    overflow-x: auto;
+    border: 1px solid var(--surface-3);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+  }
+
+  blockquote {
+    padding: 0.7em 1em;
+    border-left: 3px solid var(--accent);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+    color: var(--text-secondary);
+  }
+
+  * {
+    scrollbar-color: var(--surface-4) transparent;
+    scrollbar-width: thin;
+  }
+
+  /* Recharts draws its own text and tooltip; these give them the app's colors. */
+  .recharts-default-tooltip {
+    border: 1px solid var(--border) !important;
+    border-radius: var(--radius-md) !important;
+    background-color: var(--surface-2) !important;
+    color: var(--text-primary) !important;
+  }
+
+  .recharts-tooltip-label,
+  .recharts-legend-item-text {
+    color: var(--text-primary) !important;
+  }
+
+  .recharts-tooltip-item {
+    color: var(--text-secondary) !important;
+  }
+
+  .recharts-text,
+  .recharts-cartesian-axis-tick-value {
+    fill: var(--text-secondary);
+  }
+
+  .recharts-cartesian-axis-line,
+  .recharts-cartesian-axis-tick-line {
+    stroke: var(--border-strong);
+  }
+
+  .recharts-label {
+    fill: var(--text-primary);
+  }
+}

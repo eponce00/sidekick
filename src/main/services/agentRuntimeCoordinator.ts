@@ -2,6 +2,7 @@ import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
 import type {
+  AgentArtifactDraft,
   AgentRunEventsResult,
   ResolveAgentInteractionInput,
   StartConversationAgentRunInput,
@@ -22,7 +23,6 @@ import { loadStoredSettings } from '../ipc/settings'
 import { RunSlots, type RunLease } from './runSlots'
 import { createCheckpoint, beginCheckpointCapture } from './checkpoints'
 import { browserNetworkApprovals } from './browserNetworkApprovals'
-import { CheckpointTitleStore } from './checkpointTitleStore'
 import {
   ConversationRunPreparer,
   steeredProviderMessage,
@@ -49,7 +49,6 @@ import { WorkspaceReadService } from './workspaceReadService'
 import { AgentContextManager } from './agentContextManager'
 import { clearWorkspaceInstructionScope } from './workspaceRules'
 import type { AgentChildRunLauncher, ArtifactBuildResult } from './agentToolRuntime'
-import { checkpointFallbackTitleFromPaths } from '../../shared/checkpointTitles'
 import { getBundledSkillAssetsPath } from './bundledSkillAssets'
 import { mainProcessMcpTrust } from './mcpServerTrust'
 import { OfficeHelperService } from './officeHelperService'
@@ -139,6 +138,8 @@ export class AgentRuntimeCoordinator {
       pdfOutputRoot?: string
       /** Where every agent command's terminal output and state is published. */
       publishTerminal?: (event: TerminalSessionEvent) => void
+      /** Where an artifact's code goes while the model is still writing it. */
+      publishArtifactDraft?: (draft: AgentArtifactDraft) => void
       /** A run began or ended preparing; preparation publishes no run event of its own. */
       onPreparationChange?: (threadId: string) => void
       /** Makes a chat's folder ready before a run, as when its worktree was set aside. */
@@ -186,8 +187,12 @@ export class AgentRuntimeCoordinator {
       this.browser,
       new OfficeHelperService(this.settings, this.skillAssetsPath)
     )
-    this.kernel = new AgentRunKernel(this.store, undefined, undefined, (event) =>
-      this.publishEvent(event)
+    this.kernel = new AgentRunKernel(
+      this.store,
+      undefined,
+      undefined,
+      (event) => this.publishEvent(event),
+      options.publishArtifactDraft
     )
     this.tools.setChildLauncher({
       launch: (task, context, parent) => this.launchChild(task, context, parent),
@@ -625,16 +630,7 @@ export class AgentRuntimeCoordinator {
       console.warn('[History] Could not finish run checkpoint:', error)
       return null
     })
-    if (!checkpoint) return null
-
-    const outcomeLabel = checkpointFallbackTitleFromPaths(checkpoint.changedPaths)
-    const storedLabel = phase === 'completed' ? outcomeLabel : `${outcomeLabel} (${phase})`
-    new CheckpointTitleStore(this.db).recordCreated(
-      active.prepared.workspaceRoot,
-      checkpoint.hash,
-      storedLabel
-    )
-    return checkpoint.hash
+    return checkpoint?.hash ?? null
   }
 
   private async finalizeUnexpectedFailure(runId: string, error: unknown): Promise<void> {
@@ -704,6 +700,8 @@ export class AgentRuntimeCoordinator {
         payload: {
           assistantMessageId: active.input.assistantMessageId,
           checkpointHash,
+          // The window shows the reply's History point without reloading the chat.
+          checkpointWorkspaceRoot: checkpointHash ? active.prepared.workspaceRoot : null,
           persisted: true
         }
       })
@@ -824,7 +822,7 @@ export class AgentRuntimeCoordinator {
       persistentSkillIds: [WEB_ARTIFACTS_SKILL_ID],
       webSearchEnabled: false,
       browserEnabled: vision,
-      artifactBuilder: true,
+      artifactBuilder: first.artifact,
       instructionScopeId: id
     })
     const skill = getSkillById(WEB_ARTIFACTS_SKILL_ID)
@@ -837,9 +835,9 @@ export class AgentRuntimeCoordinator {
       {
         role: 'system',
         content: [
-          "You are SideKick's artifact builder. The agent made an interactive artifact for the user and you check it before the user sees it.",
-          `Review how it rendered against the user's request. If it works and shows what was asked, with no visible defect, reply with one sentence saying so and call no tool. Otherwise call create_artifact with the complete corrected code, keeping the title "${title}", and review the new render the same way.`,
-          'Fix defects and mismatches with the request: errors, a blank or broken render, a loading state that never ends, wrong or mixed units, NaN or placeholder values, clipped or overlapping text, controls that do nothing. Do not redesign it, add features, or restyle what works.',
+          "You are SideKick's artifact builder. The agent made an interactive artifact for the user, and you check it while the reply is finished; each fix you make replaces it in the chat.",
+          `Review how it rendered against the user's request. If it works and shows what was asked, with no visible defect, reply with one sentence saying so and call no tool. Otherwise fix it with edit_artifact, replacing only the code that has to change, and review the new render the same way. Use create_artifact, keeping the title "${title}", only to rewrite most of it.`,
+          'Fix defects and mismatches with the request: errors, a blank or broken render, a loading state that never ends, wrong or mixed units, NaN or placeholder values, clipped or overlapping text, controls that do nothing, and every layout problem the check lists. Do not redesign it, add features, or restyle what works.',
           `You have at most ${ARTIFACT_BUILDER_FIXES} fixes.`,
           skill
             ? `<skill_instructions id="${skill.id}" trust="trusted-skill-instructions">\n${getSkillRuntimeGuidance(skill)}\n</skill_instructions>`
@@ -882,7 +880,19 @@ export class AgentRuntimeCoordinator {
       model: target.model,
       catalog: session.catalog,
       messages,
-      request: { ...parentInput.request, purpose: 'sub-agent' },
+      // Reviewing a render against a list of found defects and editing a few lines needs little
+      // reasoning; at the chat's level, one review spent 6,800 tokens thinking before a one-line
+      // fix. The least the model offers, and nothing for a model that does not reason.
+      request: {
+        ...parentInput.request,
+        purpose: 'sub-agent',
+        ...(parentInput.request.reasoningLevel === undefined
+          ? {}
+          : {
+              reasoningLevel:
+                parent.prepared.lightestReasoningLevel ?? parentInput.request.reasoningLevel
+            })
+      },
       maxToolRounds: ARTIFACT_BUILDER_FIXES,
       permissionMode: parentInput.permissionMode,
       toolRouter: session.router,
@@ -910,7 +920,9 @@ export class AgentRuntimeCoordinator {
     const versions = this.store
       .listAllEvents(id)
       .filter(
-        (event) => event.type === 'tool.completed' && event.payload.name === 'create_artifact'
+        (event) =>
+          event.type === 'tool.completed' &&
+          (event.payload.name === 'create_artifact' || event.payload.name === 'edit_artifact')
       )
       .map((event) => {
         const result = event.payload.result as Record<string, unknown> | undefined

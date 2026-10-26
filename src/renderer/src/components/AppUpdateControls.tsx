@@ -134,7 +134,7 @@ export function AppUpdateSettings(): React.JSX.Element {
       control={
         action ? (
           <button
-            className="settings-primary-action"
+            className="settings-secondary-action"
             type="button"
             onClick={() => void action.run()}
           >

@@ -17,12 +17,13 @@ import { activeAgentConversationCount, shutdownAgentRuntime } from './ipc/agentR
 import { setCompanionVoice, shutdownCompanion } from './ipc/companion'
 import { sessionStatusService } from './ipc/sessionStatus'
 import { shutdownWorktreeSetup } from './ipc/worktreeSetup'
+import { shutdownUserTerminals } from './ipc/userTerminals'
 import { registerAppUpdateHandlers } from './ipc/appUpdates'
 import {
   configureCheckpointStorageRoot,
   recoverInterruptedCheckpointCaptures
 } from './services/checkpoints'
-import { CheckpointTitleStore } from './services/checkpointTitleStore'
+import { configureChatFoldersRoot, removeOrphanChatFolders } from './services/chatFolders'
 import { installApplicationMenu } from './bootstrap/applicationMenu'
 import appIcon from '../../resources/icon.png?asset'
 import trayIcon from '../../resources/tray.png?asset'
@@ -69,6 +70,7 @@ function prepareApplicationShutdown(): Promise<void> {
   appUpdateService?.stop()
   stopScheduler()
   voiceService?.dispose()
+  shutdownUserTerminals()
   applicationShutdown = Promise.allSettled([
     stopControlEndpoint?.(),
     shutdownCompanion(),
@@ -224,19 +226,16 @@ async function bootstrapApplication(): Promise<void> {
   appState.store = new Store()
   appState.db = openApplicationDatabase(join(app.getPath('userData'), 'conversations.db'))
   configureCheckpointStorageRoot(join(app.getPath('userData'), 'history'))
+  configureChatFoldersRoot(join(app.getPath('userData'), 'chat-folders'))
+  // Chats deleted while SideKick was closed, or by a path that does not clean up, leave folders.
+  setImmediate(() => removeOrphanChatFolders(appState.db!))
   const recoveredCaptures = await recoverInterruptedCheckpointCaptures()
   if (recoveredCaptures.length) {
-    const titles = new CheckpointTitleStore(appState.db)
     const linkMessage = appState.db.prepare(
       `UPDATE messages SET checkpoint_hash = ?, checkpoint_workspace_root = ?
        WHERE id = ? AND conversation_id = ?`
     )
     for (const recovered of recoveredCaptures) {
-      titles.recordCreated(
-        recovered.workspaceRoot,
-        recovered.checkpoint.hash,
-        'Interrupted agent changes'
-      )
       linkMessage.run(
         recovered.checkpoint.hash,
         recovered.workspaceRoot,

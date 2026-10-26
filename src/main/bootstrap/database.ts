@@ -138,6 +138,13 @@ const REQUIRED_COLUMNS = [
   // Whether each run starts a new chat or continues the last run's.
   { table: 'schedules', column: 'chat_mode', definition: "TEXT NOT NULL DEFAULT 'new'" },
   { table: 'conversations', column: 'permission_ceiling', definition: 'TEXT' },
+  // Who made a schedule: the user, or the agent in a chat, which the Schedules dialog shows.
+  { table: 'schedules', column: 'created_by_kind', definition: "TEXT NOT NULL DEFAULT 'user'" },
+  {
+    table: 'schedules',
+    column: 'created_by_conversation_id',
+    definition: 'TEXT REFERENCES conversations(id) ON DELETE SET NULL'
+  },
   // The model the chat runs with. Each chat keeps its own; the setting is only where new chats start.
   { table: 'conversations', column: 'model_id', definition: 'TEXT' }
 ] as const
@@ -161,6 +168,8 @@ const SCHEDULE_TABLES = `
     run_count INTEGER NOT NULL DEFAULT 0,
     permission_ceiling TEXT,
     chat_mode TEXT NOT NULL DEFAULT 'new',
+    created_by_kind TEXT NOT NULL DEFAULT 'user',
+    created_by_conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -1047,6 +1056,31 @@ function applyDatabaseSchemaTransaction(db: Database.Database): void {
       created_at INTEGER NOT NULL,
       last_seen_at INTEGER,
       last_address TEXT
+    );
+
+    -- Bookmarks and history the user imported from another browser, for the Browser panel only.
+    CREATE TABLE IF NOT EXISTS browser_library_sources (
+      id TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      imported_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_library_bookmarks (
+      source_id TEXT NOT NULL REFERENCES browser_library_sources(id) ON DELETE CASCADE,
+      position INTEGER NOT NULL,
+      folder TEXT NOT NULL,
+      title TEXT NOT NULL,
+      url TEXT NOT NULL,
+      PRIMARY KEY (source_id, position)
+    );
+
+    CREATE TABLE IF NOT EXISTS browser_library_history (
+      source_id TEXT NOT NULL REFERENCES browser_library_sources(id) ON DELETE CASCADE,
+      url TEXT NOT NULL,
+      title TEXT NOT NULL,
+      visit_count INTEGER NOT NULL,
+      last_visit_at INTEGER,
+      PRIMARY KEY (source_id, url)
     );
   `)
   db.exec(SCHEDULE_TABLES)

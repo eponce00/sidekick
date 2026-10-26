@@ -13,18 +13,11 @@ describe('useConversationMessages', () => {
   let root: Root
   let controller: Controller
   let getMessages: ReturnType<typeof vi.fn>
-  let deleteMessagesAfter: ReturnType<typeof vi.fn>
   let onCostUpdate: ReturnType<typeof vi.fn<(cost: number) => void>>
-  let onRollbackConsumed: ReturnType<typeof vi.fn<() => void>>
   let messagesChanged: ((conversationId: string) => void) | null
 
-  function Harness({ rollbackHash }: { rollbackHash?: string }): null {
-    const value = useConversationMessages({
-      conversationId: 'conversation-1',
-      rollbackHash,
-      onCostUpdate,
-      onRollbackConsumed
-    })
+  function Harness(): null {
+    const value = useConversationMessages({ conversationId: 'conversation-1', onCostUpdate })
     useEffect(() => {
       controller = value
     }, [value])
@@ -45,9 +38,7 @@ describe('useConversationMessages', () => {
       },
       { id: 'three', role: 'user', content: 'Later', timestamp: 3 }
     ])
-    deleteMessagesAfter = vi.fn(async () => undefined)
     onCostUpdate = vi.fn()
-    onRollbackConsumed = vi.fn()
     messagesChanged = null
     const onMessagesChanged = (callback: (conversationId: string) => void): (() => void) => {
       messagesChanged = callback
@@ -57,7 +48,7 @@ describe('useConversationMessages', () => {
     }
     Object.defineProperty(window, 'api', {
       configurable: true,
-      value: { conversations: { getMessages, deleteMessagesAfter, onMessagesChanged } }
+      value: { conversations: { getMessages, onMessagesChanged } }
     })
   })
 
@@ -65,9 +56,9 @@ describe('useConversationMessages', () => {
     await act(async () => root.unmount())
   })
 
-  async function render(rollbackHash?: string): Promise<void> {
+  async function render(): Promise<void> {
     await act(async () => {
-      root.render(<Harness rollbackHash={rollbackHash} />)
+      root.render(<Harness />)
       await Promise.resolve()
     })
   }
@@ -78,16 +69,6 @@ describe('useConversationMessages', () => {
     expect(controller.messages).toHaveLength(3)
     expect(controller.messagesRef.current).toHaveLength(3)
     expect(onCostUpdate).toHaveBeenLastCalledWith(0.02)
-  })
-
-  it('truncates once at a requested checkpoint', async () => {
-    await render('checkpoint-1')
-    expect(controller.messages.map((message) => message.id)).toEqual(['one', 'two'])
-    expect(deleteMessagesAfter).toHaveBeenCalledWith('conversation-1', 2)
-    expect(onRollbackConsumed).toHaveBeenCalledOnce()
-
-    await render('checkpoint-1')
-    expect(deleteMessagesAfter).toHaveBeenCalledOnce()
   })
 
   it('loads again when the phone adds a message, keeping a reply that is still running', async () => {

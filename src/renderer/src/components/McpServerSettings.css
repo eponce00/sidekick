@@ -35,9 +35,9 @@
 }
 
 .mcp-catalog-options button:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border-color));
+  border-color: var(--border-strong);
   color: var(--text-primary);
-  background: var(--accent-subtle);
+  background: var(--surface-3);
 }
 
 .mcp-catalog-options button:focus-visible {
@@ -81,8 +81,8 @@
 }
 
 .mcp-official-badge {
-  color: var(--accent);
-  background: var(--accent-subtle);
+  color: var(--text-secondary);
+  background: var(--surface-2);
 }
 
 .mcp-status {

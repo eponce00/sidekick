@@ -33,6 +33,11 @@ export interface KeepAtEndOptions {
   glide?: 'never' | 'long' | 'always'
   /** Keep landing on the end this long, while rows below are still being measured. */
   settleMs?: number
+  /**
+   * Land at once, before paint: for a resize observer, which runs after layout, so the frame that
+   * shows new content already shows the end. Otherwise the move waits for the next frame.
+   */
+  immediate?: boolean
 }
 
 const GLIDE_RANK = { never: 0, long: 1, always: 2 } as const
@@ -283,6 +288,22 @@ export function followBottom(view: HTMLElement, options: FollowOptions = {}): Bo
       const requested = options.glide ?? 'never'
       if (GLIDE_RANK[requested] > GLIDE_RANK[glide]) glide = requested
       if (options.settleMs) settleUntil = Math.max(settleUntil, Date.now() + options.settleMs)
+      // Growth that needs no glide lands at once when asked from a resize observer: waiting for
+      // the next frame painted everything one frame lower first, a visible jolt as an artifact
+      // grew. Not while the reader is scrolling, whose own scroll may not have arrived yet.
+      const readerActive =
+        pointerHeld || touchHeld || Date.now() - Math.max(keyAt, inputAt) < INPUT_SCROLL_MS
+      if (
+        options.immediate &&
+        !readerActive &&
+        glide === 'never' &&
+        !gliding &&
+        scrollDistanceFromBottom(view) > AT_END_PX
+      ) {
+        view.scrollTop = view.scrollHeight
+        lastTop = view.scrollTop
+        lastDistance = scrollDistanceFromBottom(view)
+      }
       if (frame !== null) return
       settledFrames = 0
       lastFrameAt = null

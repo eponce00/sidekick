@@ -1,6 +1,7 @@
-import { previewTerminalApi } from './terminalPreview'
+import { previewTerminalApi, previewUserTerminalApi } from './terminalPreview'
 import { previewPullRequestsApi } from './pullRequestPreview'
 import { previewCredentialsApi } from './credentialsPreview'
+import { previewBrowserLibraryApi } from './browserLibraryPreview'
 import { previewCompanionApi } from './companionPreview'
 import {
   previewSessionConversations,
@@ -303,6 +304,34 @@ const previewSchedules: Schedule[] = [
     runCount: 2,
     createdAt: Date.now() - 3 * 86_400_000,
     updatedAt: Date.now() - 86_400_000
+  },
+  {
+    id: 'preview-schedule-2',
+    name: 'Weekly dependency check',
+    prompt:
+      'Check this repository for outdated or vulnerable npm dependencies and list what to update. Do not change any files.',
+    projectId: 'preview-project-1',
+    modelId: 'ollama:ollama-local/qwen3:8b',
+    cadence: 'weekly',
+    hour: 10,
+    minute: 30,
+    weekday: 1,
+    catchUp: true,
+    chatMode: 'new',
+    permissionCeiling: 'always-ask',
+    enabled: true,
+    nextRunAt: nextScheduleOccurrence(
+      { cadence: 'weekly', hour: 10, minute: 30, weekday: 1 },
+      Date.now()
+    ),
+    runCount: 0,
+    createdBy: {
+      kind: 'agent',
+      conversationId: 'preview-3',
+      conversationTitle: 'Build release checklist'
+    },
+    createdAt: Date.now() - 3_600_000,
+    updatedAt: Date.now() - 3_600_000
   }
 ]
 
@@ -1004,11 +1033,16 @@ export function installBrowserApiMock(): void {
           ({ id }) => id === conversationId
         )
         const project = previewProjects.find(({ id }) => id === conversation?.project_id)
+        const projectRoot = conversation?.worktree_folder ?? project?.folder_path ?? null
+        const chatFolder = !projectRoot
         return {
           conversationId,
           projectId: conversation?.project_id ?? null,
           projectName: project?.name ?? null,
-          workspaceRoot: conversation?.worktree_folder ?? project?.folder_path ?? null,
+          workspaceRoot: chatFolder
+            ? `C:\\Users\\preview\\AppData\\Roaming\\SideKick\\chat-folders\\${conversationId}`
+            : projectRoot,
+          ...(chatFolder ? { chatFolder: true } : {}),
           worktreeId: conversation?.worktree_id ?? null,
           homeWorkspaceRoot: conversation?.home_workspace_root ?? null,
           homeProjectName: conversation?.home_project_name ?? null,
@@ -1057,6 +1091,8 @@ export function installBrowserApiMock(): void {
           : []
       },
       browserWorkspace: async () => null,
+      browserAnnotations: async () => [],
+      onBrowserAnnotationsChanged: () => () => undefined,
       startConversation: async (input) => ({
         run: {
           id: input.id,
@@ -1163,30 +1199,16 @@ export function installBrowserApiMock(): void {
         }
       },
       latest: async () => ({ run: null, events: [], pendingInteractions: [] }),
-      beginBrowserHumanTakeover: async (conversationId) => ({
-        active: true,
-        conversationId,
-        sessionId: 'preview-browser-session',
-        pageTitle: 'Preview browser',
-        url: 'https://example.com/',
-        humanVerificationRequired: true
-      }),
-      completeBrowserHumanTakeover: async (conversationId) => ({
-        active: false,
-        conversationId,
-        sessionId: 'preview-browser-session',
-        pageTitle: 'Preview browser',
-        url: 'https://example.com/',
-        humanVerificationRequired: false
-      }),
       resolveInteraction: async () => ({ success: true }),
       admissionsList: async () => ({ queued: [], pivot: null }),
       admissionsReplace: async () => ({ queued: [], pivot: null }),
       admissionsTakeNext: async () => null,
       onAdmissionsChanged: () => () => undefined,
-      onEvent: () => () => undefined
+      onEvent: () => () => undefined,
+      onArtifactDraft: () => () => undefined
     },
     terminal: previewTerminalApi(),
+    userTerminal: previewUserTerminalApi(),
     sessions: previewSessionsApi(),
     schedules: {
       list: async () => [...previewSchedules],
@@ -1305,6 +1327,7 @@ export function installBrowserApiMock(): void {
       }
     },
     credentials: previewCredentialsApi(),
+    browserLibrary: previewBrowserLibraryApi(),
     companion: previewCompanionApi(),
     pullRequests: previewPullRequestsApi(),
     window: {
@@ -1315,6 +1338,14 @@ export function installBrowserApiMock(): void {
       isFullScreen: async () => false,
       onMaximizedChange: () => () => undefined,
       onFullScreenChange: () => () => undefined
+    },
+    panelWindows: {
+      open: async () => false,
+      list: async () => [],
+      focus: async () => false,
+      dock: () => {},
+      onChanged: () => () => undefined,
+      onDocked: () => () => undefined
     },
     notification: { show: async () => ({ ok: true }) },
     siteIcons: { get: async () => ({ dataUrl: null }) },
@@ -1485,20 +1516,8 @@ export function installBrowserApiMock(): void {
       beginHistoryCapture: async () => ({ ok: true, captureId: crypto.randomUUID() }),
       discardHistoryCapture: async () => ({ ok: true }),
       createCheckpoint: async () => ({ ok: true, hash: 'abcdef123456' }),
-      restoreCheckpoint: async () => ({ ok: true }),
       hardResetCheckpoint: async () => ({ ok: true }),
       rewindToBeforeCheckpoint: async () => ({ ok: true, parentHash: null }),
-      listCheckpoints: async () => ({
-        ok: true,
-        checkpoints: [],
-        status: { storage: 'private-app-data', realRepository: false, appliedHash: null }
-      }),
-      getCheckpointDiff: async () => ({ ok: true, diff: '' }),
-      renameCheckpoint: async () => ({ ok: true }),
-      claimCheckpointTitleBackfill: async () => ({ claimed: false }),
-      completeCheckpointTitleBackfill: async () => ({ applied: false }),
-      failCheckpointTitleBackfill: async () => ({ recorded: false }),
-      getCheckpointTitleContext: async () => null,
       openFolder: async () => {},
       openFile: async () => {},
       openFileReference: async (fileReference) => ({
@@ -1507,7 +1526,8 @@ export function installBrowserApiMock(): void {
         path: fileReference
       }),
       revealFile: async () => {},
-      showPathMenu: async () => {},
+      showPathMenu: async () => undefined,
+      countPathItems: async () => ({ count: 12, more: false }),
       watchFiles: () => () => {}
     }
   }

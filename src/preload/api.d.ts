@@ -152,6 +152,19 @@ interface AgentRunsAPI {
   browserWorkspace: (
     input: import('../shared/browserWorkspace').BrowserWorkspaceRequest
   ) => Promise<import('../shared/browserWorkspace').BrowserWorkspaceState | null>
+  /** The marks made on this conversation's pages; `take` hands them to a message being sent. */
+  browserAnnotations: (
+    input:
+      | { conversationId: string; action: 'list' }
+      | {
+          conversationId: string
+          action: 'take'
+          ids: string[]
+        }
+  ) => Promise<import('../shared/messageContextAttachments').BrowserAnnotationAttachment[]>
+  onBrowserAnnotationsChanged: (
+    callback: (change: import('../shared/browserWorkspace').BrowserAnnotationsChange) => void
+  ) => () => void
   startConversation: (
     input: import('../shared/agentRunApi').StartConversationAgentRunInput
   ) => Promise<import('../shared/agentRunApi').StartConversationAgentRunResult>
@@ -165,12 +178,6 @@ interface AgentRunsAPI {
     afterSequence?: number
   ) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
   latest: (threadId: string) => Promise<import('../shared/agentRunApi').AgentRunEventsResult>
-  beginBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
-  completeBrowserHumanTakeover: (
-    interactionId: string
-  ) => Promise<import('../shared/agentRunApi').BrowserHumanTakeoverSnapshot>
   resolveInteraction: (
     input: import('../shared/agentRunApi').ResolveAgentInteractionInput
   ) => Promise<{ success: boolean }>
@@ -190,6 +197,10 @@ interface AgentRunsAPI {
   onAdmissionsChanged: (callback: (conversationId: string) => void) => () => void
   onEvent: (
     callback: (change: import('../shared/agentRunApi').AgentRunChangedEvent) => void
+  ) => () => void
+  /** An artifact's code so far, while the model writes it; never stored. */
+  onArtifactDraft: (
+    callback: (draft: import('../shared/agentRunApi').AgentArtifactDraft) => void
   ) => () => void
 }
 
@@ -328,7 +339,7 @@ interface WorkspaceAPI {
     workspaceRoot: string,
     conversationId: string,
     agentMessageId: string
-  ) => Promise<import('../shared/checkpointTitles').HistoryCaptureResult>
+  ) => Promise<import('../shared/workspaceHistory').HistoryCaptureResult>
   discardHistoryCapture: (captureId: string) => Promise<{ ok: boolean }>
   createCheckpoint: (
     workspaceRoot: string,
@@ -341,50 +352,18 @@ interface WorkspaceAPI {
     captureVersion?: number
     error?: string
   }>
-  restoreCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
   hardResetCheckpoint: (
     workspaceRoot: string,
     hash: string,
     authorization: import('../shared/types').CheckpointMutationAuthorization
-  ) => Promise<import('../shared/checkpointTitles').HistoryMutationResult>
+  ) => Promise<import('../shared/workspaceHistory').HistoryMutationResult>
   rewindToBeforeCheckpoint: (
     workspaceRoot: string,
     hash: string,
     authorization: import('../shared/types').CheckpointMutationAuthorization
   ) => Promise<
-    import('../shared/checkpointTitles').HistoryMutationResult & { parentHash: string | null }
+    import('../shared/workspaceHistory').HistoryMutationResult & { parentHash: string | null }
   >
-  listCheckpoints: (
-    workspaceRoot: string
-  ) => Promise<import('../shared/checkpointTitles').CheckpointListResult>
-  getCheckpointDiff: (
-    workspaceRoot: string,
-    hash: string
-  ) => Promise<{ ok: boolean; diff: string; error?: string }>
-  renameCheckpoint: (
-    workspaceRoot: string,
-    hash: string,
-    newMessage: string,
-    source?: import('../shared/checkpointTitles').CheckpointTitleSource
-  ) => Promise<{ ok: boolean; error?: string }>
-  claimCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CheckpointTitleIdentity
-  ) => Promise<{ claimed: boolean }>
-  completeCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').CompleteCheckpointTitleBackfillInput
-  ) => Promise<{ applied: boolean }>
-  failCheckpointTitleBackfill: (
-    input: import('../shared/checkpointTitles').FailCheckpointTitleBackfillInput
-  ) => Promise<{ recorded: boolean }>
-  getCheckpointTitleContext: (
-    workspaceRoot: string,
-    hash: string,
-    timestamp: number
-  ) => Promise<import('../shared/checkpointTitles').CheckpointTitleContext | null>
   openFolder: (folderPath: string, workspaceRoot?: string) => Promise<void>
   openFile: (filePath: string, workspaceRoot?: string) => Promise<void>
   openFileReference: (
@@ -398,7 +377,18 @@ interface WorkspaceAPI {
     error?: string
   }>
   revealFile: (filePath: string, workspaceRoot?: string) => Promise<void>
-  showPathMenu: (filePath: string, workspaceRoot?: string, isDirectory?: boolean) => Promise<void>
+  /** Resolves with `trash` when Move to Recycle Bin was chosen, which `offerTrash` adds. */
+  showPathMenu: (
+    filePath: string,
+    workspaceRoot?: string,
+    isDirectory?: boolean,
+    offerTrash?: boolean
+  ) => Promise<'trash' | undefined>
+  /** How many files and folders a folder holds, at any depth; `more` past 10,000. */
+  countPathItems: (
+    workspaceRoot: string,
+    folderPath: string
+  ) => Promise<{ count: number; more: boolean }>
   /** Calls back when files under the folder change; returns the function that stops watching. */
   watchFiles: (workspaceRoot: string, callback: () => void) => () => void
 }
@@ -419,12 +409,16 @@ export interface DesktopApi {
   companion: import('../shared/companion').CompanionAPI
   sessions: import('../shared/sessions').SessionsAPI
   terminal: import('../shared/terminalSessions').TerminalAPI
+  /** The user's own shells; no agent tool can reach them. */
+  userTerminal: import('../shared/userTerminals').UserTerminalAPI
   mcp: McpAPI
   permissions: PermissionsAPI
   browserNetwork: import('../shared/browserNetwork').BrowserNetworkAPI
+  browserLibrary: import('../shared/browserLibrary').BrowserLibraryAPI
   credentials: import('../shared/credentials').CredentialsAPI
   pullRequests: import('../shared/pullRequests').PullRequestsAPI
   window: WindowAPI
+  panelWindows: import('../shared/panelWindows').PanelWindowsAPI
   notification: NotificationAPI
   siteIcons: SiteIconsAPI
   app: AppAPI

@@ -8,11 +8,35 @@ export interface BrowserPanelBounds {
 import type { BrowserDeviceState } from './browserDevices'
 import type { BrowserPageTool } from './webMcp'
 
+/** How many places one message can point at on pages; they share the message's attachments. */
+export const MAX_BROWSER_ANNOTATIONS = 8
+
+/** A mark as the Browser panel lists it; its picture and page facts stay in the main process. */
+export interface BrowserAnnotationSummary {
+  id: string
+  number: number
+  name: string
+  note: string
+  target: 'element' | 'area'
+  /** It was made on the page the active tab shows now, so it is drawn there while annotating. */
+  onPage: boolean
+}
+
+/** Sent to the app window when a conversation's marks change. */
+export interface BrowserAnnotationsChange {
+  conversationId: string
+  error?: string
+  /** The user chose Send on the page: the chat sends its message with the marks. */
+  send?: boolean
+  /** The user turned dictation on or off for a note on the page; the app window listens. */
+  dictate?: boolean
+}
+
 export interface BrowserWorkspaceState {
   sessionId: string
   activeTabId: string
-  userControl: boolean
-  verificationHandoff?: boolean
+  /** The agent waits for the user to clear a human check on the active tab's page. */
+  waitingForUser?: boolean
   busy: boolean
   canGoBack?: boolean
   canGoForward?: boolean
@@ -22,10 +46,17 @@ export interface BrowserWorkspaceState {
   /** The WebMCP tools the active tab's page offers the agent, with the page's origin. */
   pageTools?: { origin: string; tools: BrowserPageTool[] } | null
   /**
-   * A picture of the page, sent with the device menu: the page is drawn above the app, so it hides
-   * while SideKick's menu is open and the panel shows this in its place.
+   * A picture of the page, for `snapshot`: the page is drawn above the app, so it hides while one
+   * of SideKick's menus or popovers is open and the panel shows this in its place.
    */
   snapshot?: string
+  /** For `find`: which match is selected, of how many on the page. */
+  found?: { active: number; matches: number }
+  /** The active tab's zoom in percent; 100 unless the user zoomed it. */
+  zoom?: number
+  /** The user is marking places on the page to send with their next message. */
+  annotating?: boolean
+  annotations?: BrowserAnnotationSummary[]
 }
 
 export interface BrowserWorkspaceRequest {
@@ -44,12 +75,40 @@ export interface BrowserWorkspaceRequest {
     | 'select'
     | 'close'
     | 'device'
-    | 'deviceMenu'
+    /** A picture of the page, for a popover of SideKick's that opens over it. */
+    | 'snapshot'
+    | 'annotate'
+    | 'annotationNote'
+    | 'annotationRemove'
+    /** What the app window heard for the note open on the page, or that it stopped listening. */
+    | 'annotationDictation'
+    /** Zooms the active tab, as `zoomStep` says. */
+    | 'zoom'
+    | 'print'
+    /** Finds `find.text` on the page; no text ends the search. */
+    | 'find'
+    /** Marks all of the page in view, as a picture with a note, and starts annotating. */
+    | 'screenshot'
   bounds?: BrowserPanelBounds
-  /** For `deviceMenu`: where to open it, in the app window's CSS pixels. */
-  menuPosition?: { x: number; y: number }
   /** For `device`: a preset id, or `responsive` for the size of the panel. */
   device?: string
   url?: string
   tabId?: string
+  /** For `annotate`: turn marking on or off, drawn in the app's accent and its text color. */
+  annotate?: boolean
+  accent?: string
+  accentText?: string
+  theme?: 'dark' | 'light'
+  /** The app can take dictation, so a note on the page offers the microphone. */
+  canDictate?: boolean
+  dictation?: { listening: boolean; text?: string; final?: boolean }
+  /** For `annotationNote` and `annotationRemove`. */
+  annotationId?: string
+  note?: string
+  zoomStep?: import('./browserZoom').BrowserZoomStep
+  /** For `find`: `next` moves to another match of the same text, backwards unless `forward`. */
+  find?: { text: string; forward?: boolean; next?: boolean }
 }
+
+/** The longest text the page can be searched for. */
+export const MAX_BROWSER_FIND_CHARACTERS = 500

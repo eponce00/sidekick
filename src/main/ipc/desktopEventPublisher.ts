@@ -3,6 +3,7 @@ import type { ConversationGoal } from '../../shared/conversationGoals'
 
 interface DesktopEventPayloads {
   'agentRuns:event': { event: AgentRunEvent }
+  'agentRuns:artifactDraft': import('../../shared/agentRunApi').AgentArtifactDraft
   'conversationGoals:changed': { goal: ConversationGoal }
   'sessions:changed': import('../../shared/sessions').SessionsChangedEvent
   'terminal:event': import('../../shared/terminalSessions').TerminalSessionEvent

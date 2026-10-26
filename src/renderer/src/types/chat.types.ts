@@ -63,6 +63,14 @@ export interface ContentSegment {
     title: string
     code: string
     isStreaming?: boolean // True while the LLM is still generating the artifact code
+    /** The create_artifact call that made it; it streams and is reviewed under this call. */
+    toolCallId?: string
+    /** The builder reviewing it, while it does. */
+    childRunId?: string
+    /** An edit_artifact call is changing it; the code is the version being changed, or empty. */
+    editing?: boolean
+    /** The identity of the place it shows in, kept as later versions replace it there. */
+    slotKey?: string
   }
   summary?: {
     originalTokens: number

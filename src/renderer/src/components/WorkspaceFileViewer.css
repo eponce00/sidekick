@@ -39,9 +39,14 @@
   background: var(--surface-2);
 }
 
+.workspace-file-viewer-back:focus-visible,
+.workspace-file-viewer-action:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
 .workspace-file-viewer-icon {
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--text-muted);
 }
 
 .workspace-file-viewer-name {
@@ -91,9 +96,9 @@
 .workspace-file-viewer-markdown {
   max-width: 760px;
   margin: 0 auto;
-  padding: var(--space-6) clamp(20px, 5%, 40px) var(--space-8, 48px);
+  padding: var(--space-6) clamp(20px, 5%, 40px) var(--space-8);
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: var(--text-base);
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
@@ -186,7 +191,7 @@
 
 .workspace-file-viewer-markdown blockquote {
   padding: 0.5em 1em;
-  border-left: 3px solid var(--accent);
+  border-left: 3px solid var(--border-strong);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--surface-1);
   color: var(--text-secondary);
@@ -198,7 +203,7 @@
 
 .workspace-file-viewer-markdown :not(pre) > code {
   padding: 0.15em 0.4em;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--surface-2);
   color: var(--text-primary);
   font-family: var(--font-mono);
@@ -207,7 +212,7 @@
 
 .workspace-file-viewer-markdown pre {
   overflow-x: auto;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   line-height: 1.55;
 }
 
@@ -217,7 +222,7 @@
   max-width: 100%;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .workspace-file-viewer-markdown :is(th, td) {

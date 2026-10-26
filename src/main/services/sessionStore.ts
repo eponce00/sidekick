@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3'
 import { randomUUID } from 'crypto'
 import type { ProjectConversation } from '../../shared/projects'
+import { removeChatFolder } from './chatFolders'
 import { ProjectStore } from './projectStore'
 import {
   SESSION_LIMITS,
@@ -166,6 +167,11 @@ export class SessionStore {
 
   deleteConversation(id: string): void {
     this.db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
+    try {
+      removeChatFolder(id)
+    } catch (error) {
+      console.warn('[Sessions] Could not remove the chat’s folder:', error)
+    }
   }
 
   insertMessage(input: NewSessionMessage): SessionMessage {

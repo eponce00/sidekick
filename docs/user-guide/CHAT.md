@@ -51,6 +51,39 @@ not asked for one. Select the status
 to see the commands and their results. The footer appears when you point at the reply, except after
 a failed check, which stays in sight.
 
+## Artifacts
+
+When you ask for something live, such as a chart, a calculator or a small tool, the agent can build
+it as an artifact that runs inside the reply.
+
+- **Takes shape as it is written:** the artifact appears in the reply while the agent is still
+  writing it, and grows piece by piece as the code arrives: what is already there stays put, new
+  parts appear where they belong, and a part whose code has not arrived yet shows as a plain
+  placeholder. Nothing flashes or animates while it grows: charts appear already drawn. Beneath it,
+  a short line says what it is doing: **Writing**, **Checking how it looks**, or **Polishing**
+  while a fix is made. A fixed version replaces it in place once it has settled, without drawing
+  its charts in again; a version that fails along the way is never shown. While it is still being
+  written it does not load data; the finished version does.
+- **Changes in place:** ask for a change to an artifact, such as a color or a new column, and the
+  agent edits just that part of it, which takes seconds rather than writing it again. Within a
+  reply, the artifact stays where it is and says **Updating** until the changed version replaces
+  it; a change asked for in a later message shows the new version in that reply, and the earlier
+  one stays as it was.
+- **Part of the reply:** an artifact sits in the reply like an image, as wide as the text, with no
+  card or frame around it. It uses SideKick's font, colors and accent, and follows your light or
+  dark theme and accent as you change them.
+- **As tall as it needs:** it grows to fit what it shows, and grows or shrinks smoothly when that
+  changes. While it first renders, one quiet line holds its place. Something taller than about two
+  screens stops there and scrolls inside; open it full screen to see all of it. Scrolling over an
+  artifact that does not scroll itself scrolls the chat.
+- **Controls when you want them:** point at an artifact, or move focus into it, to see its name and
+  three buttons beneath it: **View code** shows its code in its place, **Copy code**, and **Open
+  full screen**, which shows it across the window until you press Esc or **Close**.
+- **When it fails:** an artifact that could not run shows one line saying so. Select it to read the
+  error, or choose **Retry**. An error after it showed leaves it in place, with a short note under
+  it.
+- **On the phone,** an artifact shows as its name and a note to open it on the computer.
+
 ## Sub-agents
 
 When the agent delegates part of the work, the reply shows a row for the task. While the
@@ -89,7 +122,10 @@ of its report.
   smaller copy, the image's tooltip says so. HEIC photos are not read yet; export them as JPEG.
 - **Files:** type `@` to pick a project file. Its path goes into the message and the file is
   attached. Attached files, up to four per message, are read before the agent starts, so its first
-  step already has their contents; the reads show in the reply like any other.
+  step already has their contents; the reads show in the reply like any other. In a chat without
+  a project, **+** → **Files** attaches files from anywhere on your computer, up to 100 MB each:
+  the chat keeps a copy in the `uploads` folder of its own folder, so the original is never
+  changed, and the copies go when the chat is deleted.
 - **Commands:** type `/` for the message box's own commands, such as the model, plan, research, and
   goal, and for your saved prompts.
 - **Saved prompts:** a Markdown file in `.sidekick/prompts`, in the project or in your home folder,
@@ -126,10 +162,33 @@ of its report.
   Reasoning entry steps to the next level. In a reply, each step of reasoning shows the same brain
   among the agent's steps; select it to read it in full.
 
+## Tables in replies
+
+A table in a reply gives each column room for its content on one line, up to a limit, so short
+columns such as names and numbers never wrap; when the table is wider than the chat, it scrolls
+sideways inside its card. Drag a column header's right edge to resize the column, or focus the edge
+and use the arrow keys. Double-click the edge, or press **Enter** on it, to fit the columns to their
+content again.
+
 ## The side panel
 
-The panel beside the chat holds Files, Recovery, Browser and Terminal. Drag its left edge to
-resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
+The panel beside the chat works with tabs, like a browser's. Each tab shows one app: **Files**,
+**Browser**, **Terminal**, and **Chats** for a chat that started others. **+** opens a new tab
+showing the apps; choose one and the tab becomes it. An app is open once: choosing one that is
+already open goes to its tab. Close a tab with its **×** or a middle click; closing the last one
+leaves a new tab.
+
+Drag a tab along its row to reorder it. Drag it onto the top or bottom of the page below the tabs to
+give it a section of its own above or below, with its own tabs, up to four; drag the line between
+two sections to share the height between them. Drop a tab on another section's row, or in the
+middle of its page, to move it there. The panel keeps its tabs and sections for next time.
+
+Drag **Files**, **Browser** or **Terminal** out of the window and let go to open it in a window of
+its own, for the same chat, where you let go. Its title bar names the app and the chat; **Put back**
+returns it to the panel. While it has its own window, choosing it in the panel brings that window
+forward, and closing SideKick's main window closes it too.
+
+Drag the panel's left edge to resize it. While you drag, nothing else moves: a tinted outline shows where the panel will land,
 with an icon for what letting go will do. Let go, and the panel glides there in one motion as the
 chat and the left sidebar make room.
 
@@ -144,16 +203,24 @@ chat and the left sidebar make room.
   let go. Click an icon, or drag out from the rail, to open it again at the width it had.
 - **Esc** while dragging leaves the panel as it was.
 
-The fold button at the end of the tab row, or clicking the tab already showing, also folds the panel
-away. In a narrow panel the tabs show only their icons. Double-click the edge to switch
+The fold button at the end of the first row of tabs also folds the panel away. Double-click the
+edge to switch
 between the narrow column and the even split; the arrow keys move a focused edge.
+
+In **Files**, the trash button beside a file or folder, or **Move to Recycle Bin** (**Move to
+Trash** on macOS and Linux) in its right-click menu, asks first, saying how many items a folder
+holds, and then moves it to the Recycle Bin, where you can restore it. The project folder itself and
+Git's `.git` folders cannot be moved this way.
 
 ## Going back
 
 - **Rewind to here** on a message you sent goes back to before it without asking again: the
   message and everything after it leave the chat, and the message returns to the box to change or
-  send. **Rewind chat and files** also undoes the file changes SideKick made since then, as
-  [Workspace History](WORKSPACE_HISTORY.md) restores them; **Chat only** leaves files as they are.
+  send. When SideKick changed the project's files since that message, it asks what to do with
+  them: **Rewind chat and files** also undoes those changes, as
+  [Workspace History](WORKSPACE_HISTORY.md) restores them, and **Chat only** leaves files as they
+  are. With no file changes since, it just rewinds.
+- **Undo** on a reply that changed files takes back that reply's changes and keeps the chat.
 - **Edit** on a message you sent moves it into the message box, with its images, attachments,
   mode, and goal, and blurs it and everything after it. Change it with anything the box offers,
   then send: the message and what followed are replaced and SideKick answers again from there, the
