@@ -61,6 +61,7 @@
     "test:native-browser-smoke": "node scripts/run-native-browser-smoke.cjs",
     "test:native-browser-fixtures": "node scripts/run-native-browser-smoke.cjs --fixture-only",
     "test:browser-controls": "node scripts/run-native-browser-smoke.cjs --controls",
+    "test:browser-sites": "node scripts/run-browser-sites.cjs",
     "test:artifact-inspector-smoke": "node scripts/run-artifact-inspector-smoke.cjs",
     "benchmark:agent-evals": "node scripts/compare-agent-evals.cjs",
     "test:search-smoke": "node scripts/run-search-smoke.cjs",

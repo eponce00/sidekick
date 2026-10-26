@@ -174,6 +174,14 @@ fill directly; whether an ambiguous or missing option is refused; and, when
 booking form, in how many tool calls. `SIDEKICK_BROWSER_CONTROLS_N` and
 `SIDEKICK_BROWSER_CONTROLS_AGENT_N` set the trials.
 
+`npm run test:browser-sites` gives a real model eleven flows on public sites, each in its own
+Electron process with a time limit: Wikipedia's search suggestions and language picker, the
+react-select, MUI and Select2 demos, a flatpickr date, timeanddate.com's date calculator, a
+weather.gov location search, GitHub's branch picker, and searches on Google Flights and
+Booking.com. Each is checked against the page it ends on or the answer it gives; nothing is
+submitted, bought or signed into. Sites change, so this is an evaluation to run before changing
+browser tools, not a test that gates a release. Name scenarios to run only those.
+
 `npm run test:artifact-inspector-smoke` renders React, HTML, and SVG artifacts, including one that
 fetches live data and one that throws, through the real artifact inspection window, and writes each
 capture to `artifact-smoke/` for review. By default it needs the renderer dev server from
