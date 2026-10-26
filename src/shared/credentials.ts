@@ -25,6 +25,11 @@ export interface CredentialSummary {
   description: string
   /** A sign-in's username, which the agent may read as a password manager shows it. */
   username?: string
+  /**
+   * The sites it belongs to, as a password manager keeps a login's website: web requests and
+   * sign-ins go only to these hosts and their subdomains. Absent or empty means anywhere.
+   */
+  sites?: string[]
   createdAt: number
   updatedAt: number
   lastUsedAt?: number
@@ -48,6 +53,7 @@ export interface CredentialSaveInput {
   alias: string
   kind: CredentialKind
   description: string
+  sites?: string[]
   values?: CredentialValues
 }
 
@@ -314,6 +320,41 @@ export function credentialPageOrigin(address: string): string | null {
   }
 }
 
+export const MAX_CREDENTIAL_SITES = 10
+
+/**
+ * A site as the user typed it, such as `github.com` or `https://login.example.com/path`, reduced to
+ * its host name: lowercase, without a scheme, port, path or trailing dot. Null when it is not one.
+ */
+export function normalizeCredentialSite(raw: string): string | null {
+  const text = raw.trim().toLowerCase()
+  if (!text || /\s/.test(text)) return null
+  let url: URL
+  try {
+    url = new URL(/^[a-z][a-z0-9+.-]*:\/\//.test(text) ? text : `https://${text}`)
+  } catch {
+    return null
+  }
+  if (url.username || url.password) return null
+  const host = url.hostname.replace(/\.$/, '')
+  return host && !host.includes('*') ? host : null
+}
+
+/** The sites typed into one field, separated by commas or spaces. */
+export function credentialSitesFrom(text: string): string[] {
+  return text
+    .split(/[\s,]+/)
+    .map((site) => site.trim())
+    .filter(Boolean)
+}
+
+/** Whether a host is one of an entry's sites or under one; an entry with none goes anywhere. */
+export function credentialSiteMatches(sites: readonly string[] | undefined, host: string): boolean {
+  if (!sites?.length) return true
+  const name = host.toLowerCase().replace(/\.$/, '')
+  return sites.some((site) => name === site || name.endsWith(`.${site}`))
+}
+
 /**
  * Checks a save request's shape. `existing` is the entry being edited, which decides whether
  * values are required.
@@ -340,6 +381,17 @@ export function validateCredentialInput(
   }
   if (input.id !== undefined && (typeof input.id !== 'string' || !input.id)) {
     return { error: 'Invalid credential id.' }
+  }
+  const sites: string[] = []
+  if (input.sites !== undefined) {
+    if (!Array.isArray(input.sites) || input.sites.length > MAX_CREDENTIAL_SITES) {
+      return { error: `Name at most ${MAX_CREDENTIAL_SITES} websites.` }
+    }
+    for (const raw of input.sites) {
+      const site = typeof raw === 'string' ? normalizeCredentialSite(raw) : null
+      if (!site) return { error: `${typeof raw === 'string' ? raw : 'That'} is not a website.` }
+      if (!sites.includes(site)) sites.push(site)
+    }
   }
 
   const raw = input.values === undefined ? {} : input.values
@@ -375,6 +427,7 @@ export function validateCredentialInput(
       alias,
       kind,
       description,
+      sites,
       values
     }
   }

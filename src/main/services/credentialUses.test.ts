@@ -127,6 +127,14 @@ describe('CredentialUses', () => {
     expect(uses.take(request()).ok).toBe(false)
   })
 
+  it('sends an entry with websites only to them', () => {
+    const { uses, request, approvedTake } = setup([credential({ sites: ['microsoftonline.com'] })])
+    expect('refused' in uses.approval(request())).toBe(false)
+    const away = request({ target: 'https://collect.evil.example/token' })
+    expect(uses.approval(away)).toEqual({ refused: expect.stringContaining('belongs to') })
+    expect(approvedTake(away).ok).toBe(false)
+  })
+
   it('refuses an unknown alias, an entry this computer cannot read, and a bad placement', () => {
     const { uses, request } = setup([credential({ alias: 'moved', id: 'm', needsValue: true })])
     expect(uses.approval(request({ alias: 'missing' }))).toEqual({
@@ -343,6 +351,14 @@ describe('CredentialUses', () => {
       const { uses, approvedTake } = setup([site])
       expect('refused' in uses.approval(page(target))).toBe(true)
       expect(approvedTake(page(target)).ok).toBe(false)
+    })
+
+    it('fills a sign-in with websites only on them', () => {
+      const { uses } = setup([{ ...site, sites: ['example.com'] }])
+      expect('refused' in uses.approval(page('https://login.example.com/'))).toBe(false)
+      expect(uses.approval(page('https://example.com.evil.example/'))).toEqual({
+        refused: expect.stringContaining('belongs to')
+      })
     })
 
     it('refuses a credential with no username', () => {

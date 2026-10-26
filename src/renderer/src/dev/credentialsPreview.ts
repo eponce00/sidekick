@@ -24,6 +24,7 @@ export function previewCredentialsApi(): CredentialsAPI {
       kind: 'sign_in',
       description: 'Test account for the sign-in flow.',
       username: 'sidekick-test',
+      sites: ['github.com'],
       createdAt: now - 3 * 86_400_000,
       updatedAt: now - 3 * 86_400_000,
       needsValue: false
@@ -78,6 +79,7 @@ export function previewCredentialsApi(): CredentialsAPI {
         alias: input.alias,
         kind: input.kind,
         description: input.description,
+        ...(input.sites?.length ? { sites: input.sites } : {}),
         ...(input.kind === 'sign_in'
           ? { username: input.values?.username ?? existing?.username ?? 'preview-user' }
           : {}),

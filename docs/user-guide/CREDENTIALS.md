@@ -10,12 +10,13 @@ replaced.
 
 Open **Settings → Credentials** and choose **Add credential**.
 
-| Field               | What it is                                                                                                                                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Name**            | What the agent calls it, such as `github` or `build-server`. Type it as words; it is saved in lowercase, with hyphens for spaces.                                                                                                                 |
-| **Description**     | What it is for and where it is used, such as "My GitHub account, for github.com" or "SSH to the build server, 10.0.0.5". The agent reads this to pick the right credential, so identifiers that are not secret, such as a client ID, belong here. |
-| **Username**        | For a sign-in. Leave it empty for an API key or token on its own. The agent can read the username, as a password manager shows it.                                                                                                                |
-| **Password or key** | Typed once. When you edit a credential it starts empty and says the value is stored; typing replaces it, and leaving it empty keeps it. It can span several lines, such as a private key. Spaces around a key or username are removed.            |
+| Field               | What it is                                                                                                                                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Name**            | What the agent calls it, such as `github` or `build-server`. Type it as words; it is saved in lowercase, with hyphens for spaces.                                                                                                                            |
+| **Description**     | What it is for and where it is used, such as "My GitHub account, for github.com" or "SSH to the build server, 10.0.0.5". The agent reads this to pick the right credential, so identifiers that are not secret, such as a client ID, belong here.            |
+| **Website**         | Optional, as in a password manager: where it belongs, such as `github.com`. The agent then sends it, and fills it in, only there and on its subdomains. Name several separated by commas. Leave it empty for a credential used anywhere or only in commands. |
+| **Username**        | For a sign-in. Leave it empty for an API key or token on its own. The agent can read the username, as a password manager shows it.                                                                                                                           |
+| **Password or key** | Typed once. When you edit a credential it starts empty and says the value is stored; typing replaces it, and leaving it empty keeps it. It can span several lines, such as a private key. Spaces around a key or username are removed.                       |
 
 A password or key must be at least 4 characters, and one under 8 characters is saved with a
 warning: short values are hard to tell apart from ordinary text, so SideKick cannot reliably hide
@@ -38,8 +39,12 @@ commands and file changes, set in the composer or in Settings:
 - **Ask before every change or command** asks before each use too.
 
 A few rules hold in every mode, and a use that breaks one is refused without asking: a value is
-sent only over HTTPS (or to a server on this computer), never into a variable that changes how
-commands run, and a password is filled in only on a secure page.
+sent only over HTTPS (or to a server on this computer), and only to its **Website** when it has
+one, never into a variable that changes how commands run, and a password is filled in only on a
+secure page.
+
+Setting a **Website** is the best protection against a page or a file that tries to talk the agent
+into sending a credential somewhere else, and against a page made to look like the right site.
 
 ## Web requests
 
@@ -83,8 +88,9 @@ A sign-in can be filled in by the agent's [browser](BROWSER.md) the way a passwo
 login: the agent opens the sign-in page and asks SideKick to sign in by name, and SideKick types the
 username and password into the page itself. The agent never sees the password.
 
-- The agent decides which site a sign-in belongs to from its description, so say there which site
-  it is for. A card that asks shows the site it is about to fill.
+- A sign-in with a **Website** is filled in only there. Without one, the agent decides from the
+  description, so set it for every sign-in you use in the browser. A card that asks shows the site
+  it is about to fill.
 - SideKick fills only fields of the page itself, never fields inside a frame, and only while the
   page is still on the site the use was approved for. The page must be HTTPS, or plain HTTP on a
   server on this computer such as `http://localhost:3000`.

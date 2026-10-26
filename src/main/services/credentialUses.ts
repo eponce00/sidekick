@@ -9,6 +9,7 @@ import type { AgentApprovalPreview } from '../../shared/agentRuntime'
 import {
   credentialPageOrigin,
   credentialSendFor,
+  credentialSiteMatches,
   credentialVariableRefusal,
   describeCredentialSend,
   type CredentialEvent,
@@ -110,6 +111,11 @@ function secureUrl(target: string): URL | string {
     return `A credential is sent only over HTTPS, not to ${url.protocol}//${url.host}.`
   }
   return url
+}
+
+/** Why an entry with websites may not go to this host. */
+function elsewhere(credential: CredentialSummary, host: string): string {
+  return `${credential.alias} belongs to ${credential.sites!.join(', ')}, not ${host}. Use it only there; the user can add a website in Settings → Credentials.`
 }
 
 /** Where a web request goes, without its query: a value sent as a parameter must not be kept. */
@@ -235,10 +241,17 @@ export class CredentialUses {
           message: `${credential.alias} is filled in only on an HTTPS page, or a server on this computer, and the browser is not on one. Open the sign-in page first.`
         }
       }
+      const page = new URL(request.target).hostname
+      if (!credentialSiteMatches(credential.sites, page)) {
+        return { ok: false, credential, message: elsewhere(credential, page) }
+      }
       return { ok: true, credential }
     }
     const url = secureUrl(request.target)
     if (typeof url === 'string') return { ok: false, credential, message: url }
+    if (!credentialSiteMatches(credential.sites, url.hostname)) {
+      return { ok: false, credential, message: elsewhere(credential, url.hostname) }
+    }
     return { ok: true, credential, url }
   }
 

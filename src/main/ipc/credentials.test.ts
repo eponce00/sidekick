@@ -117,6 +117,19 @@ describe('credentials IPC', () => {
     expect(mocks.dialog).toHaveBeenCalledTimes(2)
   })
 
+  it('refuses a website anyone can register under', async () => {
+    for (const site of ['com', 'github.io']) {
+      expect(await call('credentials:save', input({ sites: [site] }))).toMatchObject({
+        ok: false,
+        error: expect.stringContaining('Anyone can register')
+      })
+    }
+    expect(await call('credentials:save', input({ sites: ['me.github.io'] }))).toMatchObject({
+      ok: true,
+      credential: { sites: ['me.github.io'] }
+    })
+  })
+
   it('stores a pasted key with one kind of line ending and a copied token without spaces', async () => {
     const lines = [generated(), generated(), generated()]
     await call('credentials:save', input({ values: { secret: `${lines.join('\r\n')}\r\n` } }))

@@ -2,10 +2,32 @@ import { describe, expect, it } from 'vitest'
 import {
   credentialPageOrigin,
   credentialSendFor,
+  credentialSiteMatches,
   credentialVariableRefusal,
+  normalizeCredentialSite,
   normalizeCredentialOrigin,
   simpleCommandProgram
 } from './credentials'
+
+describe('a credential’s websites', () => {
+  it('keeps only the host of what the user typed', () => {
+    expect(normalizeCredentialSite('GitHub.com')).toBe('github.com')
+    expect(normalizeCredentialSite('https://login.example.com:8443/path?x=1')).toBe(
+      'login.example.com'
+    )
+    expect(normalizeCredentialSite('https://user@evil.example')).toBeNull()
+    expect(normalizeCredentialSite('not a site')).toBeNull()
+  })
+
+  it('matches the site and its subdomains, never a look-alike', () => {
+    const sites = ['github.com']
+    expect(credentialSiteMatches(sites, 'github.com')).toBe(true)
+    expect(credentialSiteMatches(sites, 'api.github.com')).toBe(true)
+    expect(credentialSiteMatches(sites, 'github.com.evil.example')).toBe(false)
+    expect(credentialSiteMatches(sites, 'evilgithub.com')).toBe(false)
+    expect(credentialSiteMatches([], 'anywhere.example')).toBe(true)
+  })
+})
 
 describe('where a web request puts a credential', () => {
   it('sends a secret as a bearer token and a sign-in as Basic unless the call says otherwise', () => {

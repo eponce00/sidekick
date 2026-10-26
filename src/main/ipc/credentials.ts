@@ -4,6 +4,7 @@ import {
   type CredentialRequest,
   type CredentialSaveResult
 } from '../../shared/credentials'
+import { parse } from 'tldts'
 import { revealWindow } from '../bootstrap/windowActivation'
 import { CredentialUnavailableError } from '../services/credentialVault'
 import { getCredentialVault } from '../services/credentialVaultInstance'
@@ -19,6 +20,15 @@ function broadcastChanged(): void {
 function parentWindow(sender: Electron.WebContents): BrowserWindow | null {
   const window = BrowserWindow.fromWebContents(sender)
   return window && !window.isDestroyed() ? window : null
+}
+
+/**
+ * A website someone owns: an address, this computer, or a name under a registrable domain. A public
+ * suffix such as `com` or `github.io` would let any site anyone registers under it receive the value.
+ */
+function ownableSite(site: string): boolean {
+  const info = parse(site, { allowPrivateDomains: true })
+  return info.isIp === true || site === 'localhost' || Boolean(info.domain)
 }
 
 /** Opens Settings at Credentials; the agent never fills the form, the user does. */
@@ -47,6 +57,13 @@ export function registerCredentialHandlers(): void {
     if (id && !existing) return { ok: false, error: 'That credential no longer exists.' }
     const validated = validateCredentialInput(raw, existing)
     if ('error' in validated) return { ok: false, error: validated.error }
+    const suffix = (validated.input.sites ?? []).find((site) => !ownableSite(site))
+    if (suffix) {
+      return {
+        ok: false,
+        error: `Anyone can register a site under ${suffix}. Name the site itself, such as example.${suffix}.`
+      }
+    }
     try {
       const credential = vault.save(validated.input)
       broadcastChanged()

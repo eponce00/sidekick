@@ -14,6 +14,7 @@ import {
 import {
   MIN_CREDENTIAL_VALUE,
   SHORT_CREDENTIAL_VALUE,
+  credentialSitesFrom,
   type CredentialEvent,
   type CredentialKind,
   type CredentialRequest,
@@ -32,6 +33,8 @@ interface Draft {
   description: string
   /** A sign-in's username, shown as stored; empty for a key or token on its own. */
   username: string
+  /** Websites as typed, separated by commas or spaces. */
+  sites: string
   /** A new password or key; absent keeps the stored one. */
   secret?: string
   /** The description the agent suggested when it asked for this credential. */
@@ -53,7 +56,8 @@ function newDraft(request?: CredentialRequest | null): Draft {
     alias: request?.alias ?? '',
     description: request?.description ?? '',
     ...(request?.description ? { suggestedDescription: request.description } : {}),
-    username: ''
+    username: '',
+    sites: ''
   }
 }
 
@@ -62,7 +66,8 @@ function draftFrom(credential: CredentialSummary): Draft {
     id: credential.id,
     alias: credential.alias,
     description: credential.description,
-    username: credential.username ?? ''
+    username: credential.username ?? '',
+    sites: (credential.sites ?? []).join(', ')
   }
 }
 
@@ -274,6 +279,7 @@ export function CredentialSettings({
         alias: draft.alias.trim().replace(/-+$/, ''),
         kind,
         description: draft.description,
+        sites: credentialSitesFrom(draft.sites),
         values
       }
       const result = await window.api.credentials.save(input)
@@ -338,6 +344,19 @@ export function CredentialSettings({
               onChange={(event) => update({ alias: aliasFrom(event.target.value) })}
             />
           </label>
+          <label className="modern-field" htmlFor={`${controlId}-sites`}>
+            <span>
+              Website <em>optional</em>
+            </span>
+            <input
+              id={`${controlId}-sites`}
+              value={draft.sites}
+              placeholder="github.com"
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => update({ sites: event.target.value })}
+            />
+          </label>
           <label className="modern-field" htmlFor={`${controlId}-username`}>
             <span>
               Username <em>optional</em>
@@ -351,6 +370,12 @@ export function CredentialSettings({
               onChange={(event) => update({ username: event.target.value })}
             />
           </label>
+          <SecretField
+            stored={valueStored}
+            value={draft.secret}
+            onChange={(secret) => update({ secret })}
+            autoFocus={Boolean(draft.alias) && !draft.id}
+          />
           <label className="modern-field is-wide" htmlFor={`${controlId}-description`}>
             <span>
               Description <em>what it’s for</em>
@@ -369,14 +394,6 @@ export function CredentialSettings({
               </small>
             )}
           </label>
-          <div className="is-wide">
-            <SecretField
-              stored={valueStored}
-              value={draft.secret}
-              onChange={(secret) => update({ secret })}
-              autoFocus={Boolean(draft.alias) && !draft.id}
-            />
-          </div>
           {editing?.needsValue && (
             <p className="credential-callout is-warning is-wide">
               <ShieldAlert size={15} aria-hidden="true" />
@@ -498,6 +515,7 @@ export function CredentialSettings({
                     {credential.username && (
                       <span className="credential-item-username">{credential.username}</span>
                     )}
+                    {credential.sites?.[0] && <span>{credential.sites.join(', ')}</span>}
                     {credential.description && <span>{credential.description}</span>}
                   </span>
                 </span>

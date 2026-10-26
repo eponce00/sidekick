@@ -63,6 +63,7 @@ interface SealedRecord {
   alias: string
   kind: CredentialSummary['kind']
   description: string
+  sites?: string[]
   values: CredentialValues
   createdAt: number
   updatedAt: number
@@ -261,6 +262,7 @@ export class CredentialVault {
       kind: record.kind,
       description: record.description,
       ...(record.values.username ? { username: record.values.username } : {}),
+      ...(record.sites?.length ? { sites: [...record.sites] } : {}),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       ...(lastUsedAt ? { lastUsedAt } : {}),
@@ -313,6 +315,7 @@ export class CredentialVault {
       alias: input.alias,
       kind: input.kind,
       description: input.description,
+      ...(input.sites?.length ? { sites: [...input.sites] } : {}),
       values,
       createdAt: existing && !existing.needsValue ? existing.record.createdAt : now,
       updatedAt: now
@@ -353,6 +356,7 @@ export class CredentialVault {
     if (previous.kind !== next.kind) changes.push('kind')
     if (previous.description !== next.description) changes.push('description')
     if (previous.values.username !== next.values.username) changes.push('username')
+    if ((previous.sites ?? []).join() !== (next.sites ?? []).join()) changes.push('websites')
     return changes.length ? `Changed ${changes.join(', ')}.` : undefined
   }
 

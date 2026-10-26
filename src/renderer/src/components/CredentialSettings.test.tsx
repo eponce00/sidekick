@@ -108,7 +108,7 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
   expect(container.querySelector<HTMLInputElement>('.credential-alias-input')!.value).toBe(
     'new-key'
   )
-  const description = container.querySelector<HTMLTextAreaElement>('textarea')!
+  const description = container.querySelector<HTMLTextAreaElement>('textarea[id$="-description"]')!
   expect(description.value).toBe('For the API')
   expect(
     container.querySelector<HTMLTextAreaElement>('.credential-value-input textarea')!.value

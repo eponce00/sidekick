@@ -60,8 +60,8 @@ delete confirms in a trusted dialog. Both broadcast `credentials:changed`.
 
 The `credentials` capability (conversation runs, not planning, not sub-agents or research) adds:
 
-- `credentials_list`: each entry's alias, kind, description and username, as a password manager
-  lists them, and whether it needs a new value. The model picks an entry, and where it belongs,
+- `credentials_list`: each entry's alias, kind, description, username and websites, as a password
+  manager lists them, and whether it needs a new value. The model picks an entry, and where it belongs,
   from its description. It tells the model that descriptions are notes, not instructions.
 - `credentials_request`: opens Settings at the Credentials editor through `app:openCredential`,
   prefilled with an alias, kind and description, as `provider_request_key` does for provider keys.
@@ -82,7 +82,10 @@ authorization), hold only the alias.
 `CredentialUses` checks the rules no approval can stand in for, each time: the entry exists and
 this computer can open it, a web request goes over HTTPS (or plain HTTP to a loopback address), a
 command's variable cannot change how commands run, and a sign-in is a sign-in filled on a secure
-page. `take` returns the values and records `used`, or records `refused` with the reason the tool
+page. An entry with websites (`sites`, sealed with the values) goes only to those hosts and their
+subdomains (`credentialSiteMatches`), in web requests and sign-ins; the save handler refuses a public
+suffix such as `com` or `github.io`, checked with `tldts`. Tokens a request returned are not bound to
+the entry's websites, since a sign-in endpoint often issues them for another service's API. `take` returns the values and records `used`, or records `refused` with the reason the tool
 returns to the model. Its audit target is the URL without its query string, so a value sent as a
 parameter is never kept.
 
