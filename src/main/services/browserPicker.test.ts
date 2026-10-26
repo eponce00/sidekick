@@ -16,6 +16,12 @@ describe('browser controls', () => {
     expect(rankChoices(rooms, ['deluxe king'])).toMatchObject({ status: 'picked', index: 0 })
     expect(rankChoices(rooms, ['Deluxe'])).toMatchObject({ status: 'ambiguous', indexes: [0, 1] })
     expect(rankChoices(rooms, ['Suite'])).toEqual({ status: 'missing' })
+    // A place's own name before its comma beats a name that merely holds the word.
+    const places = [choice('Tokyo, Japan'), choice('Tokyo Station')]
+    expect(rankChoices(places, ['Tokyo'])).toMatchObject({ status: 'picked', index: 0 })
+    // A row that only offers to search for what was typed is never the choice.
+    const typed = [choice('Lisbon'), { ...choice('Lisbon Search with AI'), echo: true }]
+    expect(rankChoices(typed, ['Lisbon'])).toMatchObject({ status: 'picked', index: 0 })
   })
 
   it('lets a request open before the action stop holding the page busy', () => {

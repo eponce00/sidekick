@@ -315,9 +315,6 @@ class FakeSurface implements NativeBrowserSurface {
       const text = encoded ? (JSON.parse(encoded) as string) : ''
       return this.bodyText.includes(text) as T
     }
-    if (source.includes('let value = await (0, eval)')) {
-      return { json: '{"answer":42}', truncated: false } as T
-    }
     return undefined as T
   }
 
@@ -441,6 +438,12 @@ class FakeSurface implements NativeBrowserSurface {
     if (method === 'DOM.querySelectorAll') return { nodeIds: [99] } as T
     if (method === 'DOM.describeNode') {
       return { node: { backendNodeId: this.selectorBackendNodeId } } as T
+    }
+    if (method === 'Runtime.evaluate' && params?.replMode) {
+      return { result: { type: 'object', objectId: 'evaluation-1' } } as T
+    }
+    if (method === 'Runtime.callFunctionOn' && params?.objectId === 'evaluation-1') {
+      return { result: { value: { json: '{"answer":42}', truncated: false } } } as T
     }
     if (method === 'Runtime.callFunctionOn') {
       const declaration = String(params?.functionDeclaration ?? '')

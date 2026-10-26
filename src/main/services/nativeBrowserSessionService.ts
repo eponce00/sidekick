@@ -52,6 +52,7 @@ import {
   settleProbeScript
 } from './browserSettle'
 import {
+  foldChoiceText,
   PICKER_PAGE_FUNCTION,
   rankChoices,
   showsChoice,
@@ -948,6 +949,30 @@ async function abortable<T>(promise: Promise<T>, signal: AbortSignal | undefined
   })
 }
 
+/**
+ * A page held by a JavaScript dialog or a busy script never answers; a bounded wait turns that
+ * into an error the agent can act on instead of a run that never ends.
+ */
+async function pageAnswer<T>(operation: Promise<T>, limitMs: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  const stuck = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `The page did not respond within ${limitMs / 1000} s; it may be showing a dialog or running a long script`
+          )
+        ),
+      limitMs
+    )
+  })
+  try {
+    return await Promise.race([operation, stuck])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function delay(ms: number, signal?: AbortSignal): Promise<void> {
   await abortable(
     new Promise<void>((resolvePromise) => setTimeout(resolvePromise, Math.max(0, ms))),
@@ -1392,7 +1417,7 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
   }
 
   async executeJavaScript<T>(source: string): Promise<T> {
-    return (await this.contents.executeJavaScript(source, true)) as T
+    return (await pageAnswer(this.contents.executeJavaScript(source, true), 30_000)) as T
   }
 
   async captureViewport(): Promise<NativeBrowserSurfaceCapture> {
@@ -1527,9 +1552,12 @@ export class ElectronNativeBrowserSurface implements NativeBrowserSurface {
       this.ownerWindow.setPosition(-32_000, -32_000, false)
       this.ownerWindow.showInactive()
     }
-    return (await browserDebuggerCommand(this.webContentsId, method, () =>
-      this.contents.debugger.sendCommand(method, params)
-    )) as T
+    return pageAnswer(
+      browserDebuggerCommand(this.webContentsId, method, () =>
+        this.contents.debugger.sendCommand(method, params)
+      ),
+      method === 'Page.captureScreenshot' ? 60_000 : 30_000
+    ) as Promise<T>
   }
 
   setNavigationGuard(guard: (url: string) => boolean): void {
@@ -3538,24 +3566,37 @@ export class NativeBrowserSessionService {
       tab.surface.sendDebuggerCommand('DOM.scrollIntoViewIfNeeded', { backendNodeId }),
       signal
     ).catch(() => undefined)
-    const rect = await this.callOnNode<{
+    type Rect = {
       x: number
       y: number
       pageX: number
       pageY: number
       width: number
       height: number
-    }>(
-      tab,
-      backendNodeId,
-      `function() {
-        const rect = this.getBoundingClientRect();
-        return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
-          width: rect.width, height: rect.height };
-      }`,
-      [],
-      signal
-    )
+    }
+    const read = (): Promise<Rect> =>
+      this.callOnNode<Rect>(
+        tab,
+        backendNodeId,
+        `function() {
+          const rect = this.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, pageX: rect.x + window.scrollX, pageY: rect.y + window.scrollY,
+            width: rect.width, height: rect.height };
+        }`,
+        [],
+        signal
+      )
+    // A page that scrolls smoothly is still moving the element for a few frames after it is
+    // scrolled into view; its position counts once it holds still. The wait is kept here rather
+    // than in the page, whose timers a hidden page slows to a crawl.
+    let rect = await read()
+    for (let attempt = 0; attempt < 15; attempt++) {
+      await delay(30, signal)
+      const next = await read()
+      const settled = next && rect && next.x === rect.x && next.y === rect.y
+      rect = next
+      if (settled) break
+    }
     if (!rect || rect.width <= 0 || rect.height <= 0) {
       throw new Error('Browser element is not visible')
     }
@@ -4913,7 +4954,7 @@ export class NativeBrowserSessionService {
         signal
       )
       if (kind !== 'select') {
-        await this.pickValues(tab, target, kind, input.values, sourceUrl, sourceRefEpoch, signal)
+        await this.pickValues(tab, target, kind, input.values, signal)
         return this.finishAction(
           session,
           tab,
@@ -5035,8 +5076,6 @@ export class NativeBrowserSessionService {
     control: ElementPoint,
     kind: Exclude<PickerKind, 'select'>,
     values: string[],
-    sourceUrl: string,
-    sourceRefEpoch: number,
     signal?: AbortSignal
   ): Promise<void> {
     const picked: PickerOption[] = []
@@ -5044,7 +5083,7 @@ export class NativeBrowserSessionService {
       // An earlier pick can move the control, as a chip added beside it does.
       const rect = await this.elementRect(tab, control.backendNodeId!, signal)
       const at = { ...control, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-      picked.push(await this.pickValue(tab, at, kind, wanted, sourceUrl, sourceRefEpoch, signal))
+      picked.push(await this.pickValue(tab, at, kind, wanted, signal))
     }
     if (picked.length < 2) return
     // A later pick can replace an earlier one in a picker that holds a single value.
@@ -5069,20 +5108,21 @@ export class NativeBrowserSessionService {
     control: ElementPoint,
     kind: Exclude<PickerKind, 'select'>,
     wanted: string,
-    sourceUrl: string,
-    sourceRefEpoch: number,
     signal?: AbortSignal
   ): Promise<PickerOption> {
     const token = randomUUID()
     const call = <T>(phase: string, extra: Record<string, unknown> = {}): Promise<T> =>
       this.pickerCall<T>(tab, control, token, phase, extra, signal)
-    const pageChanged = (): boolean =>
-      tab.surface.getURL() !== sourceUrl || tab.refEpoch !== sourceRefEpoch
+    // A picker often rewrites the address as it goes without leaving the page, so only a page
+    // that is gone stops it; a new document fails every call on the control. Each entry of text
+    // is still bound to the address it starts on.
+    const enter = (field: ElementPoint, text: string): Promise<void> =>
+      this.replaceFormText(tab, field, text, tab.surface.getURL(), tab.refEpoch, signal)
     try {
       if (kind === 'datalist') {
         const options = await call<PickerOption[]>('datalist')
         const option = this.pickerChoice(options, wanted)
-        await this.replaceFormText(tab, control, option.value, sourceUrl, sourceRefEpoch, signal)
+        await enter(control, option.value)
         const after = await this.inspectFormControl(tab, control.backendNodeId!, signal)
         if (after.value !== option.value) {
           throw new Error('The field did not keep the chosen suggestion')
@@ -5091,39 +5131,62 @@ export class NativeBrowserSessionService {
       }
       await call('snapshot')
       const since = this.now()
+      let field = control
       if (kind === 'typeahead') {
-        await this.replaceFormText(tab, control, wanted, sourceUrl, sourceRefEpoch, signal)
-      } else {
+        // A field that opens an overlay with a text box of its own takes the typing there, once
+        // the overlay has finished opening.
+        await this.clickFormControl(tab, control, signal)
+        let moved: number | undefined
+        for (let attempt = 0; attempt < 20 && !moved; attempt++) {
+          await delay(50, signal)
+          moved = await this.pickerNode(tab, control, token, 'focused-node', signal)
+        }
+        if (moved) {
+          await delay(250, signal)
+          field = await this.pointOfNode(tab, moved, signal)
+        }
+      } else if (!(await call<boolean>('open'))) {
+        // A list the model already opened stays open; clicking its control again would close it.
         await this.clickFormControl(tab, control, signal)
       }
-      let scan = await this.pickerSettle(tab, control, token, since, signal)
-      let ranking = rankChoices(scan.options, [wanted])
-      // A list whose first view lacks the value, or holds it only among other words, is narrowed
-      // with the search box it brings.
-      if (
-        kind !== 'typeahead' &&
-        scan.search &&
-        (ranking.status === 'missing' || ('rank' in ranking && ranking.rank === 'words'))
-      ) {
-        const search = await this.pickerSearchNode(tab, control, token, signal)
-        const rect = await this.elementRect(tab, search, signal)
-        await this.replaceFormText(
-          tab,
-          {
-            x: rect.x + rect.width / 2,
-            y: rect.y + rect.height / 2,
-            backendNodeId: search,
-            mode: 'selector',
-            fallbackUsed: false
-          },
-          wanted,
-          sourceUrl,
-          sourceRefEpoch,
-          signal
+      // A site searches by a shorter text than an option's whole label, as a model often passes:
+      // the full value first, then its text before the first comma, then its first word. Every
+      // list is ranked against the full value.
+      const queries = [
+        ...new Set(
+          [wanted, wanted.split(',')[0], wanted.split(/\s+/)[0]].map((query) => query.trim())
         )
-        scan = await this.pickerSettle(tab, control, token, since, signal)
+      ].filter((query) => query.length >= 2)
+      let scan: PickerScan | undefined
+      let ranking: ReturnType<typeof rankChoices> = { status: 'missing' }
+      for (const [attempt, query] of queries.entries()) {
+        if (kind === 'typeahead') {
+          await enter(field, query)
+        } else if (attempt > 0 || scan) {
+          // A list whose first view lacks the value, or holds it only among other words, is
+          // narrowed with the search box it brings.
+          if (!scan?.search) break
+          const search = await this.pickerNode(tab, control, token, 'search-node', signal)
+          if (!search) break
+          await enter(await this.pointOfNode(tab, search, signal), query)
+        }
+        const typed = kind === 'typeahead' || attempt > 0 ? query : undefined
+        scan = await this.pickerSettle(tab, control, token, since, signal, typed)
         ranking = rankChoices(scan.options, [wanted])
+        const narrow =
+          ranking.status === 'missing' || ('rank' in ranking && ranking.rank === 'words')
+        // A dropdown is first read as it opens, before anything is typed into its search box.
+        if (kind !== 'typeahead' && attempt === 0 && narrow && scan.search) {
+          const search = await this.pickerNode(tab, control, token, 'search-node', signal)
+          if (search) {
+            await enter(await this.pointOfNode(tab, search, signal), query)
+            scan = await this.pickerSettle(tab, control, token, since, signal, query)
+            ranking = rankChoices(scan.options, [wanted])
+          }
+        }
+        if (ranking.status !== 'missing') break
       }
+      if (!scan) throw new Error('The control opened no list of options')
       if (!scan.popup) {
         throw new Error(
           'The control opened no list of options; observe the page and choose the option directly'
@@ -5149,7 +5212,8 @@ export class NativeBrowserSessionService {
       let confirmed = false
       while (true) {
         await delay(100, signal)
-        if (pageChanged()) throw new Error('Browser page changed while choosing an option')
+        if (tab.surface.isDestroyed())
+          throw new Error('Browser page closed while choosing an option')
         const after = await call<{ gone: boolean; closed: boolean; selected: boolean }>('after', {
           index
         })
@@ -5185,7 +5249,7 @@ export class NativeBrowserSessionService {
     } catch (error) {
       // Leaves the page as it was found rather than with a list hanging open: Escape, or, for a
       // menu that ignores it, the control that opened it.
-      if (!pageChanged()) {
+      if (!tab.surface.isDestroyed()) {
         tab.surface.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
         tab.surface.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' })
         if (kind === 'dropdown') {
@@ -5230,14 +5294,18 @@ export class NativeBrowserSessionService {
       throw new Error(`The option ${safe(options[ranking.index].label)} is disabled`)
     }
     if (ranking.status === 'ambiguous') {
+      const tied = ranking.indexes.slice(0, 8).map((index) => options[index])
+      // Options that share a label, such as two places called Lisbon, are told apart by their
+      // whole text, which also picks one when passed back.
+      const label = (option: PickerOption): string =>
+        tied.filter((other) => other.label === option.label).length > 1
+          ? option.names.reduce((long, name) => (name.length > long.length ? name : long))
+          : option.label
       throw new Error(
-        `${safe(wanted)} matches several options: ${ranking.indexes
-          .slice(0, 8)
-          .map((index) => safe(options[index].label))
-          .join(', ')}. Pass the exact label of one.`
+        `${safe(wanted)} matches several options: ${tied.map((option) => safe(label(option))).join(', ')}. Pass the exact label of one.`
       )
     }
-    const available = options.filter((option) => !option.disabled).slice(0, 20)
+    const available = options.filter((option) => !option.disabled && !option.echo).slice(0, 20)
     throw new Error(
       available.length
         ? `No option matched ${safe(wanted)}. Options listed: ${available.map((option) => safe(option.label)).join(', ')}${options.length > available.length ? ', ...' : ''}`
@@ -5255,11 +5323,20 @@ export class NativeBrowserSessionService {
     control: ElementPoint,
     token: string,
     since: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    typed?: string
   ): Promise<PickerScan> {
     const startedAt = this.now()
     let last: PickerScan | undefined
     let stableSince = startedAt
+    // After typing, a list none of whose options mention what was typed, such as a calendar
+    // that opened beside the field, is waited past like an empty one.
+    const word = foldChoiceText(typed ?? '').split(' ')[0]
+    const answers = (scan: PickerScan): boolean =>
+      !word ||
+      scan.options.some((option) =>
+        option.names.some((name) => ` ${foldChoiceText(name)}`.includes(` ${word}`))
+      )
     while (true) {
       const scan = await this.pickerCall<PickerScan>(tab, control, token, 'scan', {}, signal)
       const now = this.now()
@@ -5272,19 +5349,24 @@ export class NativeBrowserSessionService {
         stableSince = now
       }
       last = scan
-      if (now - stableSince >= 400 && (scan.options.length || now - startedAt >= 2_500)) return scan
+      if (
+        now - stableSince >= 400 &&
+        ((scan.options.length && answers(scan)) || now - startedAt >= 2_500)
+      )
+        return scan
       if (now - startedAt >= 8_000) return scan
       await delay(100, signal)
     }
   }
 
-  /** The search box the picker's popup brought, as a node the text entry can target. */
-  private async pickerSearchNode(
+  /** A node the picker's page code found, such as its search box, for text entry to target. */
+  private async pickerNode(
     tab: TabState,
     control: ElementPoint,
     token: string,
+    phase: 'search-node' | 'focused-node',
     signal?: AbortSignal
-  ): Promise<number> {
+  ): Promise<number | undefined> {
     const objectId = await this.resolvedNodeObject(tab, control.backendNodeId!, signal)
     let searchId: string | undefined
     try {
@@ -5294,24 +5376,21 @@ export class NativeBrowserSessionService {
           {
             objectId,
             functionDeclaration: PICKER_PAGE_FUNCTION,
-            arguments: [{ value: { token, phase: 'search-node' } }],
+            arguments: [{ value: { token, phase } }],
             returnByValue: false
           }
         ),
         signal
       )
       searchId = response.result?.objectId
-      if (!searchId) throw new Error('The picker search box is no longer available')
+      if (!searchId) return undefined
       const described = await abortable(
         tab.surface.sendDebuggerCommand<{ node?: { backendNodeId?: number } }>('DOM.describeNode', {
           objectId: searchId
         }),
         signal
       )
-      if (!described.node?.backendNodeId) {
-        throw new Error('The picker search box is no longer available')
-      }
-      return described.node.backendNodeId
+      return described.node?.backendNodeId
     } finally {
       for (const id of [objectId, searchId]) {
         if (id) {
@@ -5320,6 +5399,21 @@ export class NativeBrowserSessionService {
             .catch(() => undefined)
         }
       }
+    }
+  }
+
+  private async pointOfNode(
+    tab: TabState,
+    backendNodeId: number,
+    signal?: AbortSignal
+  ): Promise<ElementPoint> {
+    const rect = await this.elementRect(tab, backendNodeId, signal)
+    return {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+      backendNodeId,
+      mode: 'selector',
+      fallbackUsed: false
     }
   }
 
@@ -6062,26 +6156,7 @@ export class NativeBrowserSessionService {
         )
       }
       await this.assertAutomatedMutationAllowed(tab, signal)
-      const envelope = await abortable(
-        tab.surface.executeJavaScript<{ json: string; truncated: boolean }>(`(async () => {
-          let value = await (0, eval)(${JSON.stringify(input.expression)});
-          if (value === undefined) value = null;
-          const seen = new WeakSet();
-          let json = JSON.stringify(value, (_key, item) => {
-            if (typeof item === 'bigint') return item.toString();
-            if (typeof item === 'object' && item !== null) {
-              if (seen.has(item)) return '[Circular]';
-              seen.add(item);
-            }
-            return item;
-          });
-          if (json === undefined) json = 'null';
-          const limit = ${MAX_EVALUATION_BYTES};
-          const truncated = json.length > limit;
-          return { json: truncated ? json.slice(0, limit) : json, truncated };
-        })()`),
-        signal
-      )
+      const envelope = await this.evaluateExpression(tab, input.expression, signal)
       let value: unknown = envelope.json
       if (!envelope.truncated) {
         try {
@@ -6098,6 +6173,99 @@ export class NativeBrowserSessionService {
         truncated: envelope.truncated
       }
     })
+  }
+
+  /**
+   * Runs the expression as DevTools' console does, through the protocol rather than `eval` in
+   * the page, so a page whose Content Security Policy or Trusted Types forbid `eval` can still be
+   * read. REPL mode keeps statements, top-level `await` and the last expression's value.
+   */
+  private async evaluateExpression(
+    tab: TabState,
+    expression: string,
+    signal?: AbortSignal
+  ): Promise<{ json: string; truncated: boolean }> {
+    const evaluated = await abortable(
+      tab.surface.sendDebuggerCommand<{
+        result?: {
+          objectId?: string
+          subtype?: string
+          value?: unknown
+          unserializableValue?: string
+        }
+        exceptionDetails?: { text?: string; exception?: { description?: string } }
+      }>('Runtime.evaluate', {
+        expression,
+        replMode: true,
+        awaitPromise: true,
+        returnByValue: false,
+        userGesture: true
+      }),
+      signal
+    ).catch((error: unknown) => {
+      throw pageChangedError(error)
+    })
+    if (evaluated.exceptionDetails) {
+      throw new Error(
+        evaluated.exceptionDetails.exception?.description ??
+          evaluated.exceptionDetails.text ??
+          'Browser page evaluation failed'
+      )
+    }
+    const result = evaluated.result ?? {}
+    const bounded = (json: string): { json: string; truncated: boolean } =>
+      json.length > MAX_EVALUATION_BYTES
+        ? { json: json.slice(0, MAX_EVALUATION_BYTES), truncated: true }
+        : { json, truncated: false }
+    if (!result.objectId) {
+      const value = result.unserializableValue ?? result.value ?? null
+      return bounded(JSON.stringify(value) ?? 'null')
+    }
+    try {
+      const serialized = await abortable(
+        tab.surface.sendDebuggerCommand<{
+          result?: { value?: { json: string; truncated: boolean } }
+          exceptionDetails?: { text?: string; exception?: { description?: string } }
+        }>('Runtime.callFunctionOn', {
+          objectId: result.objectId,
+          functionDeclaration: `async function(limit) {
+            let value = this;
+            if (value && typeof value.then === 'function') value = await value;
+            if (value === undefined) value = null;
+            const seen = new WeakSet();
+            let json = JSON.stringify(value, (_key, item) => {
+              if (typeof item === 'bigint') return item.toString();
+              if (typeof item === 'object' && item !== null) {
+                if (seen.has(item)) return '[Circular]';
+                seen.add(item);
+              }
+              return item;
+            });
+            if (json === undefined) json = 'null';
+            const truncated = json.length > limit;
+            return { json: truncated ? json.slice(0, limit) : json, truncated };
+          }`,
+          arguments: [{ value: MAX_EVALUATION_BYTES }],
+          awaitPromise: true,
+          returnByValue: true
+        }),
+        signal
+      ).catch((error: unknown) => {
+        throw pageChangedError(error)
+      })
+      if (serialized.exceptionDetails || !serialized.result?.value) {
+        throw new Error(
+          serialized.exceptionDetails?.exception?.description ??
+            serialized.exceptionDetails?.text ??
+            'The evaluated value could not be read'
+        )
+      }
+      return serialized.result.value
+    } finally {
+      await tab.surface
+        .sendDebuggerCommand('Runtime.releaseObject', { objectId: result.objectId })
+        .catch(() => undefined)
+    }
   }
 
   async verify(

@@ -35,11 +35,13 @@ export interface PickerChoice {
   /** The value it carries in an attribute such as `data-value`, or "". */
   value: string
   disabled: boolean
+  /** A row that runs a search for, or creates, what was typed rather than choosing an option. */
+  echo?: boolean
   /** One option seen twice has one key; different options have different keys. */
   key: string
 }
 
-export type PickerRank = 'exact' | 'normalized' | 'folded' | 'words'
+export type PickerRank = 'exact' | 'normalized' | 'folded' | 'leading' | 'words'
 
 export type PickerRanking =
   | { status: 'picked'; index: number; rank: PickerRank }
@@ -59,8 +61,10 @@ export function foldChoiceText(text: string): string {
 
 /**
  * The one option `wanted`, a list of spellings of one choice, names: a name or the value as
- * written, then ignoring case and spacing, then also accents and punctuation, then a name holding
- * a spelling as whole words (New York for York). A name beats the value at each rank. The first
+ * written, then ignoring case and spacing, then also accents and punctuation, then a name whose
+ * text before its first comma is a spelling (Tokyo, Japan for Tokyo, but not 1,000 for 1), then a
+ * name holding a spelling as whole words (New York for York). A name beats the value at each
+ * rank. Rows that only repeat what was typed, such as "Search with AI", are never chosen. The first
  * rank that matches decides, and a weaker one never overrules it: one option is picked, or
  * reported disabled when every copy of it is; two or more are ambiguous and never guessed.
  */
@@ -92,6 +96,17 @@ export function rankChoices(choices: PickerChoice[], wanted: string[]): PickerRa
     ['folded', byName(foldChoiceText)],
     ['folded', byValue(foldChoiceText)],
     [
+      'leading',
+      (choice) => {
+        const forms = formed(foldChoiceText)
+        return choice.names.some((name) => {
+          // The first comma that is not a thousands separator, as in 1,000.
+          const comma = String(name ?? '').search(/(?<!\p{N}),|,(?!\p{N})/u)
+          return comma > 0 && forms.has(foldChoiceText(name.slice(0, comma)))
+        })
+      }
+    ],
+    [
       'words',
       (choice) => {
         const parts = spellings.map(phrase).filter((part) => part.trim() !== '')
@@ -100,7 +115,9 @@ export function rankChoices(choices: PickerChoice[], wanted: string[]): PickerRa
     ]
   ]
   for (const [rank, test] of tests) {
-    const matched = choices.flatMap((choice, index) => (test(choice) ? [index] : []))
+    const matched = choices.flatMap((choice, index) =>
+      !choice.echo && test(choice) ? [index] : []
+    )
     if (!matched.length) continue
     const keys = [...new Set(matched.map((index) => choices[index].key))]
     if (keys.length > 1) {
@@ -122,6 +139,7 @@ export interface PickerOption {
   names: string[]
   value: string
   disabled: boolean
+  echo?: boolean
   key: string
 }
 
@@ -149,6 +167,8 @@ export interface PickerScan {
  * - `point`: scrolls an option, the search box or the confirm button into view and returns its
  *   center, or null when it is gone.
  * - `search-node`: the search box itself, for typing into it.
+ * - `open`: whether the control's own list is already open.
+ * - `focused-node`: the text box that took focus when the control was clicked, if not the control.
  * - `after`: whether a clicked option is gone, its popup closed, or it became selected.
  * - `readback`: what the control shows: its own value or text, and the text around it.
  * - `cleanup`: forgets the token.
@@ -182,6 +202,19 @@ export const PICKER_PAGE_FUNCTION = String.raw`function(args) {
     if (element.getAttribute('aria-haspopup') === 'dialog') return 'dialog';
     if (editable(element)) return 'typeahead';
     return 'dropdown';
+  }
+  // Whether the control's own list is already open: it says it is expanded and the list it owns
+  // shows. Another field's open list does not count.
+  if (args.phase === 'open') {
+    const owner = element.getAttribute('aria-expanded') === 'true' ? element : element.closest('[role=combobox][aria-expanded="true"]');
+    if (!owner) return false;
+    return ['aria-controls', 'aria-owns'].flatMap((name) => (owner.getAttribute(name) ?? '').split(/\s+/).filter(Boolean))
+      .some((id) => shown(doc.getElementById(id)));
+  }
+  // The field that took focus when the control was clicked, such as an overlay's text box.
+  if (args.phase === 'focused-node') {
+    const active = focused();
+    return active && active !== element && !element.contains(active) && editable(active) && shown(active) ? active : null;
   }
   if (args.phase === 'datalist') {
     return Array.from(element.list.options).map((option, index) => ({
@@ -243,6 +276,8 @@ export const PICKER_PAGE_FUNCTION = String.raw`function(args) {
   // Whole status lines, so an option such as "Loading Dock B" stays an option.
   const statusText = /^(no (results?|matches|options|items|suggestions)( found)?|nothing (found|matches)|loading( results| options)?|searching|please (enter|type) .{0,40}|(enter|type) (at least )?\d+ (or more )?(characters?|letters?)|type to search|start typing.{0,40}|\d+ results? (are |is )?available)[.!\u2026]*$/i;
   const loadingText = /^(loading|searching)( results| options)?[.!\u2026]*$/i;
+  // What a row beside the typed text offers instead of an option: to search for it, or add it.
+  const actionText = /^(search|search with ai|search for|look up|find|see all|show all|add|create)\b/i;
   const excluded = /(^|[\s_-])(group|header|heading|separator|divider|no-?results?|no-?options|empty|loading|searching|placeholder|footer|message)([\s_-]|$)/i;
   const tiers = [
     '[role=option]',
@@ -361,7 +396,12 @@ export const PICKER_PAGE_FUNCTION = String.raw`function(args) {
     const base = names.join('\u0001') + '\u0000' + value;
     const seen = counts.get(base) ?? 0;
     counts.set(base, seen + 1);
-    return { label: lines[0] || clean(node.getAttribute('aria-label')) || value, names, value, disabled, key: base + '\u0000' + seen };
+    // A row that repeats what was typed with an action beside it, such as "Lisbon / Search with
+    // AI" or "Add Lisbon", runs a search or makes a new entry rather than choosing an option.
+    const typed = clean(fieldText(state.search && shown(state.search) ? state.search : element));
+    const echo = (typed !== '' && clean(lines[0]) === typed && lines.slice(1).some((line) => actionText.test(clean(line)))) ||
+      /^\+?\s*(add|create)\s+(new\b|["“‘'])/i.test(text) || node.matches('[class*="create-option" i], [class*="option-create" i], [data-create]');
+    return { label: lines[0] || clean(node.getAttribute('aria-label')) || value, names, value, disabled, echo, key: base + '\u0000' + seen };
   });
   // Still loading: a loading sign new since the snapshot, a Loading or Searching row, a busy popup.
   const loading = signsShown().some((node) => !state.signs.has(node) && (!popup || holds(popup, node) || !holds(node, popup))) ||
@@ -380,7 +420,9 @@ export const PICKER_PAGE_FUNCTION = String.raw`function(args) {
 /** Whether the control's readback shows one of an option's names as whole words. */
 export function showsChoice(readback: { own: string; around: string }, names: string[]): boolean {
   const shown = [readback.own, readback.around].map((text) => ` ${foldChoiceText(text)} `)
+  // A field often keeps only a name's text before its first comma: Tokyo for Tokyo, Japan.
   return names
+    .flatMap((name) => [name, name.split(/(?<!\p{N}),|,(?!\p{N})/u)[0]])
     .map(foldChoiceText)
     .some((name) => name !== '' && shown.some((text) => text.includes(` ${name} `)))
 }
