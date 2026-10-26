@@ -32,8 +32,24 @@ the remaining batch. It then returns one
 fresh semantic observation with per-field filled, unchanged, failed, or skipped status. Entered
 text, selected option values, and checked choices are redacted from durable tool records and
 results. The batch intentionally omits a result screenshot because text fields could expose those
-values visually; the live Browser panel still shows the current page. Custom widgets and
-autocomplete controls remain explicit single-action work.
+values visually; the live Browser panel still shows the current page. A date field takes an ISO
+date such as 2026-11-14: a native date input is set directly, and a text box whose placeholder
+names a format such as MM/DD/YYYY gets the date written that way, whatever separators its input
+mask adds.
+
+`browser_select` chooses values in any picker, not only a native select: an autocomplete field
+whose suggestions come from the server, an ARIA combobox, a menu built from plain elements, a
+multi-select that adds chips, or a button that opens a dialog with a search box and a results
+table. It opens the picker or types into it with real input, waits for the options to stop
+changing, clicks the one option the value names, presses the dialog's Select or OK button when it
+has one, and checks the control then shows the choice. A value two options share, such as
+"Deluxe" for Deluxe King and Deluxe King, ocean view, or one no option has, is refused with the
+options listed rather than guessed, and the picker is closed again.
+
+After every action the agent waits until what the action set off has finished: the requests it
+started, the changes it made to the page, and any spinner or loading bar it brought up. The page's
+own background activity, such as a carousel, a clock, analytics or a connection held open, does
+not hold the wait open.
 
 The Browser tab in the right workspace panel contains the actual interactive page. Its toolbar
 reads like a browser's: back, forward and reload, the address field, **Annotate**, the page's tools

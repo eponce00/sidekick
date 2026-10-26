@@ -165,6 +165,15 @@ a two-turn inline-SVG creation and revision scenario; the native-browser smoke s
 real rendering, screenshots, pointer interaction, viewport changes, and browser-session cleanup, and
 drives a page's WebMCP tools through the agent kernel in each permission mode.
 
+`npm run test:browser-controls` measures the browser tools on synthetic pages and reports numbers
+rather than passing or failing, so the same run compares two builds: how long actions wait to
+settle on pages that load slowly, show a spinner, or never stop changing, and whether the result
+had arrived; how many custom pickers and date fields `browser_select` and `browser_fill_form`
+fill directly; whether an ambiguous or missing option is refused; and, when
+`SIDEKICK_AGENT_EVAL_API_KEY`, `_URL` and `_MODEL` are set, whether a real model completes the
+booking form, in how many tool calls. `SIDEKICK_BROWSER_CONTROLS_N` and
+`SIDEKICK_BROWSER_CONTROLS_AGENT_N` set the trials.
+
 `npm run test:artifact-inspector-smoke` renders React, HTML, and SVG artifacts, including one that
 fetches live data and one that throws, through the real artifact inspection window, and writes each
 capture to `artifact-smoke/` for review. By default it needs the renderer dev server from

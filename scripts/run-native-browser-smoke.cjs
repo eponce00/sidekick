@@ -6,6 +6,7 @@ const { buildSync } = require('esbuild')
 
 const ROOT = resolve(__dirname, '..')
 if (process.argv.includes('--fixture-only')) process.env.SIDEKICK_BROWSER_FIXTURE_ONLY = '1'
+const controls = process.argv.includes('--controls')
 const reliability =
   process.argv.includes('--reliability') || process.argv.includes('--fixture-only')
 const liveAgent =
@@ -14,11 +15,13 @@ const liveAgent =
 const ENTRY = join(
   ROOT,
   'scripts',
-  reliability
-    ? 'native-browser-reliability.entry.ts'
-    : liveAgent
-      ? 'native-browser-agent.entry.ts'
-      : 'native-browser-smoke.entry.ts'
+  controls
+    ? 'native-browser-controls.entry.ts'
+    : reliability
+      ? 'native-browser-reliability.entry.ts'
+      : liveAgent
+        ? 'native-browser-agent.entry.ts'
+        : 'native-browser-smoke.entry.ts'
 )
 const RESULT_PREFIX = 'SIDEKICK_NATIVE_BROWSER_SMOKE='
 
@@ -51,7 +54,7 @@ async function runElectron(output) {
     process.stdout.write(chunk)
   })
   child.stderr.on('data', (chunk) => process.stderr.write(chunk))
-  const timeout = setTimeout(() => child.kill(), liveAgent ? 300_000 : 120_000)
+  const timeout = setTimeout(() => child.kill(), liveAgent || controls ? 3_600_000 : 120_000)
   const result = await new Promise((resolvePromise, reject) => {
     child.once('error', reject)
     child.once('exit', (code, signal) => resolvePromise({ code, signal }))
@@ -63,7 +66,7 @@ async function runElectron(output) {
 }
 
 async function main() {
-  if (liveAgent && !process.env.SIDEKICK_AGENT_EVAL_API_KEY)
+  if (liveAgent && !controls && !process.env.SIDEKICK_AGENT_EVAL_API_KEY)
     throw new Error('A process-scoped evaluation key is required')
   const bundleRoot = mkdtempSync(join(tmpdir(), 'sidekick-native-browser-bundle-'))
   const output = join(bundleRoot, 'smoke.cjs')
@@ -82,14 +85,17 @@ async function main() {
       banner: {
         js: `require = require('node:module').createRequire(${JSON.stringify(join(ROOT, 'package.json'))});`
       },
-      ...(liveAgent || reliability ? { packages: 'external', loader: { '.md': 'text' } } : {}),
+      ...(liveAgent || reliability || controls
+        ? { packages: 'external', loader: { '.md': 'text' } }
+        : {}),
       logLevel: 'silent'
     })
     const stdout = await runElectron(output)
     const resultLine = stdout.split(/\r?\n/).find((line) => line.startsWith(RESULT_PREFIX))
     if (!resultLine) throw new Error('Native browser smoke did not emit a structured result')
     const result = JSON.parse(resultLine.slice(RESULT_PREFIX.length))
-    if (reliability)
+    if (controls) console.log(JSON.stringify(result, null, 2))
+    else if (reliability)
       console.log(
         `Browser reliability: ${result.passed}/${result.count} verified cases, ${result.elapsedMs} ms.`
       )

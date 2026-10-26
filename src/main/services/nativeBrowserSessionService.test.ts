@@ -446,6 +446,10 @@ class FakeSurface implements NativeBrowserSurface {
       const declaration = String(params?.functionDeclaration ?? '')
       const backendNodeId = Number(String(params?.objectId ?? '').replace('object-', ''))
       this.lastBackendNodeId = backendNodeId
+      if (declaration.includes("Symbol.for('io.sidekick.browser.picker')")) {
+        const kind = this.formControls.get(backendNodeId)?.kind === 'select' ? 'select' : 'dropdown'
+        return { result: { value: kind } } as T
+      }
       if (declaration.includes('getBoundingClientRect')) {
         return {
           result: { value: { x: 20, y: 30, pageX: 20, pageY: 30, width: 100, height: 40 } }

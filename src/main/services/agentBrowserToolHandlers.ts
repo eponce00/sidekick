@@ -2040,7 +2040,7 @@ export function registerBrowserToolHandlers(
             target: targetFromArguments(args, {
               required: true,
               coordinates: false,
-              preferredRoles: ['combobox', 'listbox']
+              preferredRoles: ['combobox', 'listbox', 'textbox', 'searchbox', 'button']
             })!,
             values
           },
