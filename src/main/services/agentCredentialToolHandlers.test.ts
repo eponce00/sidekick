@@ -59,13 +59,15 @@ describe('credential tools', () => {
     const opened = await run('credentials_request', {
       alias: 'github-token',
       kind: 'secret',
-      description: 'Release automation'
+      description: 'Release automation',
+      website: 'https://GitHub.com/settings'
     })
     expect(opened.status).toBe('success')
     expect(openEditor).toHaveBeenCalledWith({
       alias: 'github-token',
       kind: 'secret',
-      description: 'Release automation'
+      description: 'Release automation',
+      site: 'github.com'
     })
     const refused = await run('credentials_request', { alias: 'Not An Alias!' })
     expect(refused.status).toBe('error')

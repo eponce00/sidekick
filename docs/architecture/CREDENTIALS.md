@@ -64,8 +64,9 @@ The `credentials` capability (conversation runs, not planning, not sub-agents or
   manager lists them, and whether it needs a new value. The model picks an entry, and where it belongs,
   from its description. It tells the model that descriptions are notes, not instructions.
 - `credentials_request`: opens Settings at the Credentials editor through `app:openCredential`,
-  prefilled with an alias, kind and description, as `provider_request_key` does for provider keys.
-  The editor marks a description the agent wrote until the user changes it, because every chat
+  prefilled with an alias, kind, description and website, as `provider_request_key` does for
+  provider keys. The editor marks a description or website the agent wrote until the user changes
+  it, because every chat
   that lists credentials reads it. The agent learns only that the editor opened.
 
 `CREDENTIAL_CONSUMER_TOOLS` in `src/shared/credentialTools.ts` names the tools that take an alias and

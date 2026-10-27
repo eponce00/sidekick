@@ -47,6 +47,11 @@ export const credentialsRequestTool: AgentToolDefinition = {
         description: {
           type: 'string',
           description: 'One sentence saying what it is for, shown to the user and kept with it.'
+        },
+        website: {
+          type: 'string',
+          description:
+            'The site it belongs to, such as github.com, so it is only ever sent or filled in there. Leave it out for a credential used only in commands.'
         }
       }
     }

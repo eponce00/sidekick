@@ -1,5 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import {
+  Copy,
+  ExternalLink,
   Eye,
   EyeOff,
   KeyRound,
@@ -40,6 +42,8 @@ interface Draft {
   secret?: string
   /** The description the agent suggested when it asked for this credential. */
   suggestedDescription?: string
+  /** The website the agent suggested. */
+  suggestedSites?: string
 }
 
 /** With a username it is a sign-in; without one, a secret such as an API key. */
@@ -57,8 +61,9 @@ function newDraft(request?: CredentialRequest | null): Draft {
     alias: request?.alias ?? '',
     description: request?.description ?? '',
     ...(request?.description ? { suggestedDescription: request.description } : {}),
+    ...(request?.site ? { suggestedSites: request.site } : {}),
     username: '',
-    sites: ''
+    sites: request?.site ?? ''
   }
 }
 
@@ -94,6 +99,11 @@ const EVENT_LABELS: Record<CredentialEvent['kind'], string> = {
 const KIND_LABELS: Record<CredentialKind, string> = {
   sign_in: 'Sign-in',
   secret: 'Key or token'
+}
+
+/** Most recently used first, as a password manager lists them; never used ones by name. */
+function byLastUse(left: CredentialSummary, right: CredentialSummary): number {
+  return (right.lastUsedAt ?? 0) - (left.lastUsedAt ?? 0) || left.alias.localeCompare(right.alias)
 }
 
 /** The first letters of a name's words, as a password manager's tile shows a site. */
@@ -271,8 +281,9 @@ export function CredentialSettings({
   )
   const shown = useMemo(() => {
     const words = query.trim().toLowerCase()
-    if (!words || !credentials) return credentials
-    return credentials.filter((credential) =>
+    const sorted = credentials ? [...credentials].sort(byLastUse) : null
+    if (!words || !sorted) return sorted
+    return sorted.filter((credential) =>
       [credential.alias, credential.description, credential.username ?? '']
         .join(' ')
         .toLowerCase()
@@ -381,6 +392,9 @@ export function CredentialSettings({
               spellCheck={false}
               onChange={(event) => update({ sites: event.target.value })}
             />
+            {draft.suggestedSites && draft.sites === draft.suggestedSites && (
+              <small className="credential-warning">Suggested by the agent. Check it.</small>
+            )}
           </label>
           <label className="modern-field" htmlFor={`${controlId}-username`}>
             <span>
@@ -552,6 +566,29 @@ export function CredentialSettings({
                 <Pencil size={14} className="credential-item-edit" aria-hidden="true" />
               </button>
               <span className="credential-item-actions">
+                {credential.username && (
+                  <button
+                    type="button"
+                    className="settings-ghost-action is-small is-icon"
+                    aria-label={`Copy the username of ${credential.alias}`}
+                    title="Copy username"
+                    onClick={() => void window.api.clipboard.writeText(credential.username!)}
+                  >
+                    <Copy size={14} />
+                  </button>
+                )}
+                {credential.sites?.[0] && (
+                  <a
+                    className="settings-ghost-action is-small is-icon"
+                    href={`https://${credential.sites[0]}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label={`Open ${credential.sites[0]}`}
+                    title={`Open ${credential.sites[0]}`}
+                  >
+                    <ExternalLink size={14} />
+                  </a>
+                )}
                 <button
                   type="button"
                   className="settings-ghost-action is-small is-icon settings-remove-action"

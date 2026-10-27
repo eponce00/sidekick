@@ -95,6 +95,8 @@ export interface CredentialRequest {
   alias: string
   description?: string
   kind?: CredentialKind
+  /** The website the agent suggests, already reduced to its host name. */
+  site?: string
 }
 
 export interface CredentialsAPI {

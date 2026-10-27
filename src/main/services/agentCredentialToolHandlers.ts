@@ -7,6 +7,7 @@ import {
 import {
   CREDENTIAL_ALIAS_PATTERN,
   MAX_CREDENTIAL_DESCRIPTION,
+  normalizeCredentialSite,
   type CredentialRequest,
   type CredentialSummary
 } from '../../shared/credentials'
@@ -73,12 +74,14 @@ export function registerCredentialToolHandlers(
       typeof args.description === 'string'
         ? args.description.trim().slice(0, MAX_CREDENTIAL_DESCRIPTION)
         : undefined
+    const site = typeof args.website === 'string' ? normalizeCredentialSite(args.website) : null
     const existing = access.list().find((credential) => credential.alias === alias)
     if (
       !access.openEditor({
         alias,
         ...(kind ? { kind } : {}),
-        ...(description ? { description } : {})
+        ...(description ? { description } : {}),
+        ...(site ? { site } : {})
       })
     ) {
       return toolExecutionFailed({

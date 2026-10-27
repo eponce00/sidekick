@@ -100,11 +100,18 @@ it('opens the editor the agent asked for, prefilled but without a value', async 
   await act(async () =>
     root.render(
       <CredentialSettings
-        request={{ value: { alias: 'new-key', description: 'For the API' }, at: 1 }}
+        request={{
+          value: { alias: 'new-key', description: 'For the API', site: 'api.example.com' },
+          at: 1
+        }}
       />
     )
   )
   expect(container.textContent).toContain('New credential')
+  expect(container.querySelector<HTMLInputElement>('input[id$="-sites"]')!.value).toBe(
+    'api.example.com'
+  )
+  expect(container.textContent).toContain('Suggested by the agent')
   expect(container.querySelector<HTMLInputElement>('.credential-alias-input')!.value).toBe(
     'new-key'
   )

@@ -22,9 +22,12 @@ A password or key must be at least 4 characters, and one under 8 characters is s
 warning: short values are hard to tell apart from ordinary text, so SideKick cannot reliably hide
 them.
 
+The list shows the credentials you used most recently first. Hover one to copy its username or
+open its website.
+
 When a task needs a credential you have not stored, the agent opens this editor for you with a
-suggested name and description. The editor marks a description the agent wrote; check it before
-saving, since every chat reads it. The agent cannot fill in the value, and it never asks you to
+suggested name, description and website. The editor marks what the agent wrote; check it before
+saving, since every chat reads the description and the website decides where the value may go. The agent cannot fill in the value, and it never asks you to
 paste one into the chat; if anything ever does, add it here instead.
 
 ## When SideKick asks
