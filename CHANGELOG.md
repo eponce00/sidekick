@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.3 — 2026-10-27
+
+- Keep a reply going when the model server is busy or limiting requests. A single "too many
+  requests" from a free tier or a LiteLLM limit, or a local server still loading a model, ended the
+  reply at once. SideKick now waits and asks again for about a minute and a quarter, and the reply
+  says it is waiting. A gateway with no model behind it still fails at once, so you know to start
+  the server.
+- Keep a reply going when one step reads more than a small context window holds. Reading several
+  files at once on a small local model ended the reply with "Compaction did not reduce context".
+  Results too large for the room left now keep their opening and end, and the agent is told what
+  was cut so it can read that part again.
+
 ## 0.22.2 — 2026-10-27
 
 - See PowerShell results that come back as objects. Commands such as `Select-Object`,
