@@ -170,6 +170,8 @@ export interface AgentChildRunLauncher {
 export interface AgentToolRuntimeSessionInput {
   permissionMode?: PermissionMode
   runId: string
+  /** The chat the run replies in: what the agent read in its earlier replies still counts. */
+  conversationId?: string
   surface: AgentRunSurface
   workspaceRoot?: string
   webSearchEnabled: boolean
@@ -219,6 +221,8 @@ function boundedNumber(value: unknown, fallback: number, minimum: number, maximu
 
 /** How long a reply to command input waits for the program to react before reading it. */
 const COMMAND_INPUT_SETTLE_MS = 1_500
+/** Chats whose read receipts are kept for their next reply. */
+const MAX_CONVERSATION_RECEIPTS = 50
 
 function backgroundNote(task: OwnedBackgroundTask): string {
   if (task.detached === 'waiting_for_input') {
@@ -467,6 +471,13 @@ export class AgentToolRuntime {
 
   /** Waits in a run that end when the user sends it a message. */
   private readonly userMessageWaiters = new Map<string, Set<() => void>>()
+  /**
+   * The file versions the agent last read or wrote, per chat and project. Kept per reply, a
+   * follow-up such as "now rename it" was refused for files the agent itself wrote one reply
+   * earlier until it read them again. A version is the file's content hash, so a file changed
+   * since is still refused as stale.
+   */
+  private readonly conversationReceipts = new Map<string, Map<string, string>>()
 
   setChildLauncher(launcher: AgentChildRunLauncher): void {
     this.childLauncher = launcher
@@ -491,10 +502,23 @@ export class AgentToolRuntime {
     this.schedules = access
   }
 
+  private receiptsFor(input: AgentToolRuntimeSessionInput): Map<string, string> {
+    if (!input.conversationId || !input.workspaceRoot) return new Map()
+    const key = `${input.conversationId}|${input.workspaceRoot}`
+    const receipts = this.conversationReceipts.get(key) ?? new Map<string, string>()
+    // Most recently used last; only the latest chats are kept.
+    this.conversationReceipts.delete(key)
+    this.conversationReceipts.set(key, receipts)
+    while (this.conversationReceipts.size > MAX_CONVERSATION_RECEIPTS) {
+      this.conversationReceipts.delete(this.conversationReceipts.keys().next().value!)
+    }
+    return receipts
+  }
+
   async createSession(input: AgentToolRuntimeSessionInput): Promise<AgentToolRuntimeSession> {
     const activeSkillIds = new Set(input.persistentSkillIds ?? [])
     const officeSession = this.officeHelpers?.session(input.workspaceRoot)
-    const readReceipts = new Map<string, string>()
+    const readReceipts = this.receiptsFor(input)
     const mcpByFunction = new Map<string, McpToolInfo>()
     const enabledMcpByFunction = new Map<string, McpToolInfo>()
     const baselineRevision = this.verification.beginSession(input.workspaceRoot)

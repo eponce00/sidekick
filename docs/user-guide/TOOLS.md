@@ -137,8 +137,9 @@ unavailable even when the global policy is Full access.
   the folder is not granted to the chat instead of looking for another way in. You can add the
   folder as a project and work on it in a chat there, which a chat can also start for you with
   your approval, or copy the files into this project.
-- Existing files require a same-run read receipt before an edit. Stale, ambiguous, and no-op edits
-  fail rather than being reported as successful.
+- An existing file can be edited only after the agent read or wrote it earlier in the same chat,
+  and only if it has not changed since. A stale, ambiguous or no-op edit fails rather than being
+  reported as successful.
 - A multi-file patch is validated as one transaction. Any failure prevents the full change set or
   rolls it back.
 - Foreground and background commands use an explicit project-relative working directory. Background

@@ -853,6 +853,7 @@ export class ConversationRunPreparer {
     const toolSession = await this.tools.createSession({
       permissionMode,
       runId: input.id,
+      conversationId: input.conversationId,
       surface,
       // The model that executes the work edits files with the contract it was trained on.
       editingDialect: editingDialectForTarget(executionTarget),

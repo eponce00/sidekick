@@ -261,6 +261,8 @@ export class AgentScenarioHarness {
       : null
     const session = await this.tools.createSession({
       runId,
+      // Runs given one thread are replies in one chat, as in the app.
+      ...(input.threadId ? { conversationId: input.threadId } : {}),
       surface,
       workspaceRoot: input.workspaceRoot,
       capabilities: input.capabilities,

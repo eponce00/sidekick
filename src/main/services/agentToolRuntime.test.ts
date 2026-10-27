@@ -657,6 +657,65 @@ describe('AgentToolRuntime file receipts', () => {
     })
   })
 
+  it('lets the next reply in a chat edit what the last one saw, unless the file changed', async () => {
+    // Kept per reply, "now rename it" was refused for a file the agent had written one reply ago.
+    const workspace = await temporaryRoot('sidekick-tool-runtime-receipts-')
+    const data = await temporaryRoot('sidekick-tool-runtime-receipts-data-')
+    await writeFile(join(workspace, 'status.txt'), 'one\n', 'utf8')
+    const db = new Database(':memory:')
+    applyDatabaseSchema(db)
+    const runtime = new AgentToolRuntime(
+      db,
+      new WorkspaceReadService(),
+      new CommandService(db, join(data, 'commands')),
+      new ToolOutputStore(join(data, 'outputs')),
+      new McpClientManager()
+    )
+    const reply = async (runId: string, conversationId: string) => {
+      const session = await runtime.createSession({
+        runId,
+        conversationId,
+        surface: 'conversation',
+        workspaceRoot: workspace,
+        webSearchEnabled: false,
+        capabilities: ['workspace.read', 'workspace.write']
+      })
+      const context = { runId, workspaceRoot: workspace, signal: new AbortController().signal }
+      return {
+        read: () => session.router.execute('read', { path: 'status.txt' }, context),
+        edit: (from: string, to: string) =>
+          session.router.execute(
+            'apply_patch',
+            {
+              patch: `*** Begin Patch\n*** Update File: status.txt\n@@\n-${from}\n+${to}\n*** End Patch`,
+              accessLevel: 'auto'
+            },
+            context
+          ) as Promise<ToolExecutionResult>
+      }
+    }
+    try {
+      const first = await reply('run-1', 'chat')
+      await first.read()
+      expect(await first.edit('one', 'two')).toMatchObject({ status: 'success' })
+
+      expect(await (await reply('run-2', 'chat')).edit('two', 'three')).toMatchObject({
+        status: 'success'
+      })
+      expect(await (await reply('run-3', 'another-chat')).edit('three', 'four')).toMatchObject({
+        error: { code: 'stale_read', message: expect.stringContaining('Read receipt required') }
+      })
+
+      await writeFile(join(workspace, 'status.txt'), 'edited by the user\n', 'utf8')
+      expect(await (await reply('run-4', 'chat')).edit('edited by the user', 'five')).toMatchObject(
+        { error: { code: 'stale_read' } }
+      )
+    } finally {
+      await runtime.close()
+      db.close()
+    }
+  })
+
   it('passes the trusted full-access mode to external image reads in a real tool session', async () => {
     const workspace = await temporaryRoot('sidekick-image-mode-project-')
     const data = await temporaryRoot('sidekick-image-mode-external-')
