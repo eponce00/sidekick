@@ -1,10 +1,28 @@
 import { SearchCache } from './cache'
 import { fuseSearchResults } from './fusion'
+import { SearchHttpError } from './searchHttp'
 import type { SearchSource } from './source'
 import { bingSource } from './sources/bing'
 import { braveSource } from './sources/brave'
 import { duckDuckGoSource } from './sources/duckDuckGo'
-import type { SearchResponse, SearchSourceDiagnostic, SourceSearchResult } from './types'
+import type {
+  SearchResponse,
+  SearchSourceDiagnostic,
+  SearchSourceId,
+  SourceSearchResult
+} from './types'
+
+/**
+ * How long an engine that answered 429 is left alone. Asking again at once only extends the
+ * limit; an agent once searched 55 times in a row against engines that kept refusing.
+ */
+export const RATE_LIMIT_COOLDOWN_MS = 5 * 60_000
+const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60_000
+
+function cooldownMs(error: SearchHttpError): number {
+  const asked = error.retryAfterMs ?? RATE_LIMIT_COOLDOWN_MS
+  return Math.max(60_000, Math.min(MAX_RATE_LIMIT_COOLDOWN_MS, asked))
+}
 
 function normalizedQuery(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, 500)
@@ -12,9 +30,11 @@ function normalizedQuery(value: string): string {
 
 export function createSearchCoordinator(
   sources: SearchSource[],
-  cache = new SearchCache<SearchResponse>(5 * 60_000, 100)
+  cache = new SearchCache<SearchResponse>(5 * 60_000, 100),
+  now: () => number = Date.now
 ): (query: string, requestedLimit?: number) => Promise<SearchResponse> {
   const pending = new Map<string, Promise<SearchResponse>>()
+  const rateLimitedUntil = new Map<SearchSourceId, number>()
 
   return async (query: string, requestedLimit = 10): Promise<SearchResponse> => {
     const cleanQuery = normalizedQuery(query)
@@ -31,23 +51,40 @@ export function createSearchCoordinator(
     const search = (async (): Promise<SearchResponse> => {
       const controller = new AbortController()
       const searches = sources.map(async (source) => {
-        const startedAt = Date.now()
+        const startedAt = now()
+        const retryAt = rateLimitedUntil.get(source.id)
+        if (retryAt !== undefined && retryAt > startedAt) {
+          const diagnostic: SearchSourceDiagnostic = {
+            source: source.id,
+            status: 'rate_limited',
+            resultCount: 0,
+            durationMs: 0,
+            error: 'HTTP 429 (too many requests); not asked again yet',
+            retryAt
+          }
+          return { results: [] as SourceSearchResult[], diagnostic }
+        }
         try {
           const results = await source.search(cleanQuery, Math.max(limit, 10), controller.signal)
+          rateLimitedUntil.delete(source.id)
           const diagnostic: SearchSourceDiagnostic = {
             source: source.id,
             status: results.length > 0 ? 'ok' : 'empty',
             resultCount: results.length,
-            durationMs: Date.now() - startedAt
+            durationMs: now() - startedAt
           }
           return { results, diagnostic }
         } catch (error) {
+          const limited = error instanceof SearchHttpError && error.status === 429
+          const retryAt = limited ? now() + cooldownMs(error) : undefined
+          if (retryAt !== undefined) rateLimitedUntil.set(source.id, retryAt)
           const diagnostic: SearchSourceDiagnostic = {
             source: source.id,
-            status: 'error',
+            status: limited ? 'rate_limited' : 'error',
             resultCount: 0,
-            durationMs: Date.now() - startedAt,
-            error: error instanceof Error ? error.message.slice(0, 160) : 'Search failed'
+            durationMs: now() - startedAt,
+            error: error instanceof Error ? error.message.slice(0, 160) : 'Search failed',
+            ...(retryAt !== undefined ? { retryAt } : {})
           }
           return { results: [] as SourceSearchResult[], diagnostic }
         }

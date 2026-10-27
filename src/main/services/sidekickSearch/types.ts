@@ -18,10 +18,12 @@ export interface SearchResult {
 
 export interface SearchSourceDiagnostic {
   source: SearchSourceId
-  status: 'ok' | 'empty' | 'error'
+  /** rate_limited: the engine refused with HTTP 429, and is skipped until retryAt. */
+  status: 'ok' | 'empty' | 'error' | 'rate_limited'
   resultCount: number
   durationMs: number
   error?: string
+  retryAt?: number
 }
 
 export interface SearchResponse {

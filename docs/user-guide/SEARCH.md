@@ -16,6 +16,8 @@ Each source has a small parser adapter. SideKick canonicalizes destination URLs,
 
 This is a federation, not a fallback chain: a slow or changed source does not stop the other sources from returning useful results. Every query records bounded per-source diagnostics, and successful fused results are cached in memory for five minutes.
 
+A source that answers "too many requests" (HTTP 429) is left alone for five minutes, or for as long as it asks, up to thirty. A search that every source refused or failed is reported to the agent as a failed call that names the search engines, so it does not mistake their limit for its model server's and keep searching.
+
 ## Images and page reading
 
 Image discovery uses DuckDuckGo's browser-facing image flow directly. SideKick establishes the same short-lived query session used by the public site, normalizes the returned image metadata, and can download a small number of images into memory when a vision-capable model needs pixels. Electron decodes and resizes those images locally before they reach the model.

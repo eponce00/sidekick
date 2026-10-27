@@ -10,7 +10,12 @@ import { searchImages } from './sidekickSearch/imageSearch'
 import { digestPage } from './sidekickSearch/pageDigest'
 import { readPage } from './sidekickSearch/pageReader'
 import { searchWeb } from './sidekickSearch/searchCoordinator'
-import type { ImageSearchResult, PageContent } from './sidekickSearch/types'
+import type {
+  ImageSearchResult,
+  PageContent,
+  SearchResponse,
+  SearchSourceId
+} from './sidekickSearch/types'
 import type { ToolOutputStore } from './toolOutputStore'
 import type { AgentToolHandlerRegistry } from './agentToolHandlerRegistry'
 
@@ -95,6 +100,54 @@ export function imageSearchToolResult(
   })
 }
 
+const ENGINE_NAMES: Record<SearchSourceId, string> = {
+  duckduckgo: 'DuckDuckGo',
+  brave: 'Brave',
+  bing: 'Bing'
+}
+
+/**
+ * A search where every engine failed is a failed call. Reported as an empty success with a bare
+ * "HTTP 429" in each engine's diagnostics, an agent took the refusals for its own model server's
+ * and kept searching. The message names who refused and when asking again can help.
+ */
+export function searchFailure(
+  title: string,
+  response: SearchResponse,
+  now = Date.now()
+): ToolExecutionResult | null {
+  const { diagnostics } = response
+  if (response.results.length > 0 || diagnostics.length === 0) return null
+  if (
+    !diagnostics.every((engine) => engine.status === 'error' || engine.status === 'rate_limited')
+  ) {
+    return null
+  }
+  const limited = diagnostics.filter((engine) => engine.status === 'rate_limited')
+  const failures = diagnostics
+    .map((engine) => `${ENGINE_NAMES[engine.source]}: ${engine.error || 'failed'}`)
+    .join('; ')
+  const comesBack = Math.min(...limited.map((engine) => engine.retryAt ?? now))
+  const minutes = Math.max(1, Math.ceil((comesBack - now) / 60_000))
+  const message =
+    `Web search failed: every search engine failed (${failures}). These are the public search ` +
+    `engines SideKick asks, not the model provider or any server in this task.` +
+    (limited.length
+      ? ` An engine that answers 429 is not asked again for a few minutes, so searching again ` +
+        `in the next ${minutes} minute${minutes === 1 ? '' : 's'} fails the same way. Continue ` +
+        `without web search, read a known page with web_fetch, or tell the user search is ` +
+        `unavailable.`
+      : '')
+  return toolExecutionFailed({
+    title,
+    code: 'transient',
+    message,
+    retryable: true,
+    recoveryAction: limited.length ? 'change_strategy' : 'retry_later',
+    data: response
+  })
+}
+
 function bounded(value: unknown, fallback: number, min: number, max: number): number {
   const parsed = Number(value)
   return Math.max(min, Math.min(max, Number.isFinite(parsed) ? parsed : fallback))
@@ -107,7 +160,7 @@ export function registerWebToolHandlers(
 ): void {
   registry.register('web_search', async ({ title, arguments: args }) => {
     const data = await searchWeb(String(args.query || ''), bounded(args.limit, 8, 1, 20))
-    return toolExecutionSucceeded({ title, data })
+    return searchFailure(title, data) ?? toolExecutionSucceeded({ title, data })
   })
   registry.register('web_image_search', async ({ title, arguments: args }) => {
     const results = await searchImages(String(args.query || ''), 8, {
