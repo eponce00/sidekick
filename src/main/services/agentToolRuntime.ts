@@ -1351,6 +1351,13 @@ export class AgentToolRuntime {
         pattern
       })
       if (!read) {
+        if (this.commands.ownsCommand(taskId, commandScope)) {
+          return this.success(
+            title,
+            { id: taskId, state: 'starting' },
+            `Task ${taskId}: starting\nNo output yet.`
+          )
+        }
         return toolExecutionFailed({ title, code: 'not_found', message: 'Command output is gone' })
       }
       if (!terminalSessionIsLive(read.state)) this.commands.markSeen(taskId)
@@ -1452,6 +1459,26 @@ export class AgentToolRuntime {
       taskIds.length
         ? taskIds.includes(session.id)
         : Boolean(context.conversationId) && session.conversationId === context.conversationId
+    // What happened before the call never fires again: a prompt shown, or a ready line printed,
+    // while the model wrote its call left the wait sleeping out its whole time.
+    const prompting = taskIds
+      .map((id) => terminals.get(id))
+      .find((session) => session?.state === 'waiting_for_input')
+    if (prompting)
+      return this.waitResult(title, { woke: 'waiting_for_input', task: prompting }, 0, 0)
+    if (pattern) {
+      const candidates = taskIds.length
+        ? taskIds.map((id) => terminals.get(id)).filter((session) => session !== undefined)
+        : terminals.list(context.conversationId).filter(relevant)
+      for (const session of candidates.filter((candidate) =>
+        terminalSessionIsLive(candidate.state)
+      )) {
+        const unread = (await terminals.unreadLines(session.id)).join('\n')
+        if (pattern.test(credentialRedactor.redact(unread))) {
+          return this.waitResult(title, { woke: 'pattern_matched', task: session }, 0, 0)
+        }
+      }
+    }
     const printed = new Map<string, string>()
     const result = await waitForAgentDelay<WaitWake>(args.seconds ?? (conditional ? 600 : 30), {
       signal: context.signal,

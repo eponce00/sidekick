@@ -454,7 +454,7 @@ const shell = definition(
         minimum: 1,
         maximum: 86400,
         description:
-          'Seconds to wait for a foreground command (default 30). One still running then goes on in the background, and you get its output so far and its task ID. For a background command, how long it may run (default 3600).'
+          'Seconds to wait for a foreground command (default 30). One still running then goes on in the background, and you get its output so far and its task ID. For a background command, how long it may run (3600 or more).'
       },
       background: {
         type: 'boolean',

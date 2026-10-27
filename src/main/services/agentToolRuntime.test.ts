@@ -476,6 +476,23 @@ describe('AgentToolRuntime file receipts', () => {
       expect(ready).toMatchObject({ woke: 'pattern_matched', taskId: server, state: 'running' })
       expect(ready.output).toContain('ready on http://localhost:5173')
 
+      // Printed while the model was writing its call: the wait slept out all its seconds.
+      const early = await background(
+        "console.log('listening on 4317'); setInterval(() => {}, 1000)"
+      )
+      await vi.waitFor(
+        async () => expect((await commands.terminals.lines(early))?.join('\n')).toContain('4317'),
+        { timeout: 10_000 }
+      )
+      const already = await wait({ taskIds: [early], pattern: 'listening', seconds: 120 })
+      expect(already).toMatchObject({ woke: 'pattern_matched', taskId: early })
+      expect(already.elapsed).toBeLessThan(5_000)
+      commands.cancelBackground(early, { conversationId: 'chat' })
+      await vi.waitFor(() => expect(commands.terminals.get(early)?.state).toBe('stopped'), {
+        timeout: 10_000
+      })
+      commands.takeNotices('chat')
+
       setTimeout(() => runtime.notifyUserMessage('run-wait'), 300)
       const interrupted = await wait({ seconds: 30 })
       expect(interrupted).toMatchObject({ woke: 'user_message' })

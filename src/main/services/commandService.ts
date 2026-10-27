@@ -500,7 +500,11 @@ export class CommandService {
         id,
         command: input.command,
         cwd,
-        timeoutMs: Math.max(1, Math.min(86_400, input.timeoutSecs ?? 3_600)) * 1_000,
+        // Never shorter than the default: a model's `timeout: 30` meant waiting for a server to
+        // start, and it stopped the server half a minute in.
+        timeoutMs:
+          Math.min(86_400, Math.max(BACKGROUND_COMMAND_LIMIT_SECONDS, input.timeoutSecs ?? 0)) *
+          1_000,
         outputPath: this.outputPath(id),
         env: {
           ...this.shellEnvironment(input.runId, input.workspaceRoot),
@@ -575,7 +579,12 @@ export class CommandService {
   /** Whether a command, foreground or background, belongs to the conversation. */
   ownsCommand(id: string, scope: BackgroundTaskScope): boolean {
     const session = this.terminals.get(id)
-    if (!session) return false
+    // A background command's terminal opens once its shell has started, after its ID was handed
+    // back: a wait sent right after the shell call found no such command.
+    if (!session) {
+      const task = this.backgroundTasks.get(id)
+      return Boolean(task && inScope(task, scope))
+    }
     if (scope.conversationId) return session.conversationId === scope.conversationId
     return !scope.runId || session.runId === scope.runId
   }

@@ -190,6 +190,14 @@ export class TerminalSessionStore {
    * What the agent reads of a command: by default what it printed since the agent last looked,
    * or its latest lines, optionally only those matching a pattern.
    */
+  /** Lines the agent has not read yet, without marking them read. */
+  async unreadLines(id: string): Promise<string[]> {
+    const record = this.sessions.get(id)
+    const all = await this.lines(id)
+    if (!record || !all) return []
+    return all.slice(record.agentReadLines > all.length ? 0 : record.agentReadLines)
+  }
+
   async readForModel(
     id: string,
     options: { mode?: 'new' | 'tail'; maxLines?: number; pattern?: RegExp } = {}

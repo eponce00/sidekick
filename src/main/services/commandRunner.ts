@@ -132,22 +132,28 @@ export function loadPty(): Promise<PtyModule | null> {
   return ptyModule
 }
 
-/** The PowerShell wrapper that turns the command's outcome into the process exit code. */
-function windowsScript(command: string, reportExitCodeOnStderr: boolean): string {
+/**
+ * The PowerShell wrapper that turns the command's outcome into the process exit code. It saves
+ * the code for the launcher, which sets it with SetShouldExit: `exit` quit before PowerShell drew
+ * buffered tables, so `Select-Object` or a parsed JSON object printed nothing. Invoke-WebRequest
+ * without -UseBasicParsing stops at a security prompt in Windows PowerShell.
+ */
+function windowsScript(command: string): string {
   return `& {
+      $PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
       $global:LASTEXITCODE = $null
+      # Stays 1 if the command ends the block early with an error.
+      $global:SideKickExitCode = 1
       ${command}
       $sidekickSucceeded = $?
       $sidekickExitCode = $global:LASTEXITCODE
-      $sidekickFinalExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCode -ne 0) {
+      $global:SideKickExitCode = if ($null -ne $sidekickExitCode -and $sidekickExitCode -ne 0) {
         [int]$sidekickExitCode
       } elseif (-not $sidekickSucceeded) {
         1
       } else {
         0
       }
-      ${reportExitCodeOnStderr ? `[Console]::Error.WriteLine('${WINDOWS_EXIT_MARKER}' + $sidekickFinalExitCode)` : ''}
-      exit $sidekickFinalExitCode
     }`
 }
 
@@ -157,6 +163,9 @@ function windowsScript(command: string, reportExitCodeOnStderr: boolean): string
  * could start an interactive child, report exit 0, and leave the workspace directory locked.
  * -EncodedCommand avoided that, but antivirus heuristics count it as a malware trait, as they
  * do -ExecutionPolicy Bypass, so the file is read into a script block instead of run with -File.
+ * Windows PowerShell's `curl` and `wget` are aliases of Invoke-WebRequest, which takes none of
+ * curl's arguments; models mean curl.exe. The aliases are in every scope, so only removing them
+ * here, before the script block, reaches the command.
  */
 function windowsScriptLaunch(
   outputPath: string,
@@ -164,13 +173,18 @@ function windowsScriptLaunch(
   reportExitCodeOnStderr: boolean
 ): { args: string[]; scriptPath: string } {
   const scriptPath = `${outputPath}.ps1`
-  writeFileSync(scriptPath, windowsScript(command, reportExitCodeOnStderr), 'utf8')
+  writeFileSync(scriptPath, windowsScript(command), 'utf8')
   const literal = scriptPath.replaceAll("'", "''")
   return {
     scriptPath,
     args: [
       '-Command',
-      `& ([ScriptBlock]::Create([IO.File]::ReadAllText('${literal}', [Text.Encoding]::UTF8)))`
+      'Remove-Item Alias:curl, Alias:wget -Force -ErrorAction SilentlyContinue; ' +
+        `& ([ScriptBlock]::Create([IO.File]::ReadAllText('${literal}', [Text.Encoding]::UTF8))); ` +
+        (reportExitCodeOnStderr
+          ? `[Console]::Error.WriteLine('${WINDOWS_EXIT_MARKER}' + [int]$global:SideKickExitCode); `
+          : '') +
+        '$host.SetShouldExit([int]$global:SideKickExitCode)'
     ]
   }
 }
