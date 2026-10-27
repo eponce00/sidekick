@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs'
 import { join } from 'path'
+import { getAdmitted } from './webNetworkGuard'
 
 /**
  * Resolves a site's own icon for links shown in replies.
@@ -7,7 +8,8 @@ import { join } from 'path'
  * Only the linked site is ever contacted — never a third-party icon service —
  * so showing an icon discloses no more than clicking the link would, which is
  * the line PRIVACY.md draws. Results, including misses, are cached on disk so
- * a host is asked at most once per week.
+ * a host is asked at most once per week. Requests go through the network
+ * guard, so no address or redirect reaches this computer or the local network.
  */
 const ICON_TIMEOUT_MS = 4_000
 const MAX_ICON_BYTES = 256 * 1024
@@ -24,6 +26,28 @@ const ICON_TYPES = new Set([
   'image/avif'
 ])
 
+/**
+ * `fetch` for icons under the network guard: this computer and the local network are refused,
+ * directly, by a name that resolves there, or by a redirect.
+ */
+export const guardedIconFetch = (async (input: string | URL, init?: RequestInit) => {
+  const { response } = await getAdmitted<ArrayBuffer>(
+    new URL(String(input)),
+    {
+      responseType: 'arraybuffer',
+      timeout: ICON_TIMEOUT_MS,
+      maxContentLength: Math.max(MAX_ICON_BYTES, MAX_HTML_BYTES) * 2,
+      headers: { accept: new Headers(init?.headers).get('accept') ?? '*/*' }
+    },
+    { localNetwork: false, ...(init?.signal ? { signal: init.signal } : {}) }
+  )
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(response.headers)) {
+    if (typeof value === 'string') headers.set(name, value)
+  }
+  return new Response(Buffer.from(response.data), { status: response.status, headers })
+}) as typeof fetch
+
 interface CachedIcon {
   dataUrl: string | null
   fetchedAt: number
@@ -35,7 +59,7 @@ export class SiteIconService {
 
   constructor(
     private readonly cacheDir: string,
-    fetchImpl: typeof fetch = fetch
+    fetchImpl: typeof fetch = guardedIconFetch
   ) {
     this.fetchImpl = fetchImpl
   }
