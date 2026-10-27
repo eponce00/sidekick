@@ -259,6 +259,14 @@ const HUMAN_CHECK_WAIT_MS = 10 * 60_000
  */
 export const STREAM_DROP_RETRY_DELAY_MS = 3_000
 
+/**
+ * How long a run waits before asking again when the provider is busy or limiting requests (429,
+ * 502, 503, 504, 529), one wait per attempt. One 429 from a free tier or a LiteLLM limit ended a
+ * run in its first second, and a busy local server ended one halfway through.
+ */
+export const PROVIDER_BUSY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000]
+const PROVIDER_BUSY_STATUSES = new Set([429, 502, 503, 504, 529])
+
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
   projectStartCommands?: string[]
@@ -1398,6 +1406,7 @@ The user approved this exact plan revision. Act capabilities are now available a
     let imageLimitRetryAttempted = false
     let outputLimitRetryAttempted = false
     let streamDropRetryAttempted = false
+    let providerBusyRetries = 0
     // A reply that ran away is stopped and the model told once; a second one ends the run.
     let runawayStopped = false
     // Learned from a provider's image-count rejection and enforced on every
@@ -1869,8 +1878,30 @@ The user approved this exact plan revision. Act capabilities are now available a
             )
             continue
           }
+          const status = sampled.result.status
+          if (
+            status !== undefined &&
+            PROVIDER_BUSY_STATUSES.has(status) &&
+            providerBusyRetries < PROVIDER_BUSY_RETRY_DELAYS_MS.length
+          ) {
+            const delayMs = PROVIDER_BUSY_RETRY_DELAYS_MS[providerBusyRetries++]
+            this.append(input.id, 'run.retrying', {
+              reason: 'provider_unavailable',
+              status,
+              attempt: providerBusyRetries,
+              delayMs,
+              error: providerError
+            })
+            await abortablePromise(
+              new Promise((resolve) => setTimeout(resolve, delayMs)),
+              signal,
+              'Agent run cancelled'
+            )
+            continue
+          }
           throw new ProviderRequestError(providerError, sampled.result.status)
         }
+        providerBusyRetries = 0
         contextOverflowRetryAttempted = false
         imageLimitRetryAttempted = false
         outputLimitRetryAttempted = false

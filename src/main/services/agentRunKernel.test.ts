@@ -8,6 +8,7 @@ import type { ProviderChatRequest, ProviderStreamChunk } from '../../shared/prov
 import { applyDatabaseSchema } from '../bootstrap/database'
 import {
   AgentRunKernel,
+  PROVIDER_BUSY_RETRY_DELAYS_MS,
   STREAM_DROP_RETRY_DELAY_MS,
   type AgentKernelProviderSampler,
   type AgentKernelModelTurn,
@@ -3670,12 +3671,21 @@ describe('AgentRunKernel', () => {
       }
     }))
 
-    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      // A busy provider is asked again after each wait, then the run fails as before.
+      const running = new AgentRunKernel(store, undefined, sampler).start(input())
+      await vi.advanceTimersByTimeAsync(PROVIDER_BUSY_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0))
+      const result = await running
 
-    expect(result.error).toBe(
-      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
-    )
-    expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
+      expect(sampler).toHaveBeenCalledTimes(PROVIDER_BUSY_RETRY_DELAYS_MS.length + 1)
+      expect(result.error).toBe(
+        'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
+      )
+      expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('fails a chat whose provider was removed as a setup problem the user can fix', async () => {
@@ -3845,6 +3855,42 @@ describe('AgentRunKernel', () => {
           status: expect.objectContaining({ reason: 'stream_dropped' })
         })
       )
+    })
+
+    it('waits and asks again while the provider is busy or limiting requests', async () => {
+      // One 429 from a free tier ended a run in its first second.
+      const busy: AgentKernelProviderSampler = vi.fn(async () => ({
+        result: { ok: false, error: 'HTTP 429: Provider returned error', status: 429 },
+        turn: {
+          content: '',
+          thinking: '',
+          thinkingBlocks: [],
+          toolCalls: [],
+          usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+        }
+      }))
+      const answer = sampledTurn({ content: 'Whole answer.' }, [
+        { message: { content: 'Whole answer.' } }
+      ])
+      const sampler = vi.fn(sequence(busy, busy, answer))
+      const kernel = new AgentRunKernel(store, undefined, sampler)
+
+      const running = kernel.start(input())
+      await vi.advanceTimersByTimeAsync(
+        PROVIDER_BUSY_RETRY_DELAYS_MS[0] + PROVIDER_BUSY_RETRY_DELAYS_MS[1]
+      )
+
+      await expect(running).resolves.toMatchObject({ phase: 'completed', content: 'Whole answer.' })
+      expect(sampler).toHaveBeenCalledTimes(3)
+      expect(
+        store
+          .listEvents('run-1')
+          .filter(({ type }) => type === 'run.retrying')
+          .map(({ payload }) => payload)
+      ).toEqual([
+        expect.objectContaining({ reason: 'provider_unavailable', status: 429, attempt: 1 }),
+        expect.objectContaining({ reason: 'provider_unavailable', status: 429, attempt: 2 })
+      ])
     })
 
     it('fails as before when the second try breaks off too', async () => {
