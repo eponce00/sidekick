@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.22.0 — 2026-10-26
+
+- Choose how much the agent asks from the shield beside the model: **Full access**, the default,
+  **Ask first**, or **Always ask**. It is one setting for every chat and every kind of action,
+  credentials included, and Settings shows the same one.
+- Keep credentials as in a password manager: a name, a website, a username, a password or key, and
+  a description. The agent picks the one a task needs and uses it without ever seeing the value.
+  Using one follows your permission mode, so Full access no longer asks before every command. A
+  credential with a website is only sent or filled in there, and shows that site's icon. The list
+  puts recently used ones first and copies a username or opens the site from each row. Saved
+  credentials keep working; their old per-credential settings are gone.
+- Let the agent fill a website's own dropdowns, typeaheads and date pickers, such as a flight or
+  hotel search, and wait for a page to finish loading before it acts.
+- Browse real sites more reliably: the agent's scripts run on pages with strict security, such as
+  GitHub and Google, a page stuck on a dialog no longer stalls a reply, and clicks land on a page
+  that is still scrolling.
+- Stay on your question in a long reply. When a reply ran long enough to summarize its own context,
+  the agent could lose the request it was answering and answer an earlier question instead, as if
+  you had just asked it. The current request now always stays word for word, and the agent knows
+  SideKick's own notes and summaries are not you speaking.
+
 ## 0.21.0 — 2026-10-25
 
 - Watch artifacts build while the model writes them. The layout shows first and each part fills
