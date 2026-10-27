@@ -144,7 +144,9 @@ export function searchFailure(
     message,
     retryable: true,
     recoveryAction: limited.length ? 'change_strategy' : 'retry_later',
-    data: response
+    data: response,
+    // Without it the model read only the diagnostics, and none of the above.
+    modelContent: message
   })
 }
 
