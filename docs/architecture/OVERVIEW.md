@@ -101,7 +101,8 @@ with ASCII quotes never rewrites the file's typography. Each line keeps its own 
 CRLF/LF file is not converted, and `write` keeps the line endings of the file it replaces. A miss
 reports the closest current lines with their line numbers. Paths may be project-relative, `./`
 prefixed, or absolute inside the project; all spellings share one read receipt. `AgentToolRuntime` requires
-same-run version receipts for every existing target, the kernel resolves permission policy, and the
+a version receipt for every existing target, from a read or write earlier in the same chat and
+project (the latest 50 chats are kept), and a file whose content changed since is stale, the kernel resolves permission policy, and the
 transactional mutation service commits only after validating the complete plan. Model results
 contain a bounded truthful diff summary; the UI starts the activity row as soon as tool input
 streams and only shows success after `ok` and `changed` are both true.
