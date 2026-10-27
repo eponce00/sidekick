@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.1 — 2026-10-27
+
+- Keep a background command running while a program it started is still working. A command that
+  launched a program with `Start-Process` or `nohup` was reported finished at once with exit code
+  0, so the agent took a long job that was still running for one that had failed, and Stop could
+  not reach it. The command now runs until the program ends, Stop and the time limit end both,
+  and the agent is told the program's later output is not shown.
+- Stop searching when the search engines refuse. A search that DuckDuckGo, Brave and Bing all
+  refused looked like a search with no results, and an agent took their limit for its own model
+  server's and searched dozens of times in a row. It is now a failed search that names the engines,
+  and an engine that says "too many requests" is left alone for a few minutes.
+
 ## 0.22.0 — 2026-10-26
 
 - Choose how much the agent asks from the shield beside the model: **Full access**, the default,
