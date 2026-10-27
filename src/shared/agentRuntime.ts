@@ -530,6 +530,24 @@ export function toolExecutionSucceeded<TData>(input: {
   }
 }
 
+/**
+ * What the model reads of a failure that carries data. It read only the data, so the message and
+ * the recovery never reached it: a failed search showed bare diagnostics, and a malformed
+ * apply_patch never got the corrected example.
+ */
+function failureModelContent(data: unknown, message: string, recovery?: string): string {
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const record = data as Record<string, unknown>
+    return stringifyModelContent({
+      ...record,
+      ...(record.error ? {} : { error: message }),
+      ...(recovery && !record.recovery ? { recovery } : {})
+    })
+  }
+  const text = stringifyModelContent(data)
+  return [`Error: ${message}`, ...(recovery ? [recovery] : []), ...(text ? [text] : [])].join('\n')
+}
+
 export function toolExecutionFailed(input: {
   title: string
   code: ToolErrorCode
@@ -569,7 +587,7 @@ export function toolExecutionFailed(input: {
   return {
     status: input.status ?? 'error',
     title: input.title,
-    modelContent: input.modelContent ?? stringifyModelContent(data),
+    modelContent: input.modelContent ?? failureModelContent(data, input.message, input.recovery),
     data,
     error,
     ...(input.output ? { output: input.output } : {}),
