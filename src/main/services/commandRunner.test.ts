@@ -76,7 +76,8 @@ describe('CommandRunner', () => {
     const command =
       process.platform === 'win32'
         ? "Start-Process -NoNewWindow powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 3'"
-        : 'nohup sleep 3 >/dev/null 2>&1 &'
+        : // Time for nohup to ignore the hangup the terminal sends when the shell exits.
+          'nohup sleep 3 >/dev/null 2>&1 & sleep 1'
     const startedAt = Date.now()
     const result = await new CommandRunner().run({
       id: 'outlived',
