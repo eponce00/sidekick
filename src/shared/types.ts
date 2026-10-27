@@ -25,6 +25,8 @@ export interface ShellCommandResult {
   terminal?: boolean
   /** The user stopped this command from SideKick, not the agent or a timeout. */
   stoppedByUser?: boolean
+  /** Programs it started kept running after its terminal's shell exited, and it waited for them. */
+  outlived?: boolean
 }
 
 export interface CommandExecutionRequest {

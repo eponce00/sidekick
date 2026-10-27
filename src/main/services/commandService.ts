@@ -110,6 +110,16 @@ function sessionState(
 }
 
 const MAX_RENDERED_OUTPUT = 256 * 1024
+/**
+ * Written at the end of a command whose shell exited while programs it started still ran, where
+ * the agent and the user read its output. Reported finished at once with exit code 0 and no
+ * output, an agent took its running benchmark for a failed one.
+ */
+const OUTLIVED_NOTE =
+  '[SideKick] The shell exited while programs it started were still running, so this command ' +
+  'ran until they ended. What they printed after that is not shown, and the exit code is the ' +
+  'shell’s. To see their output, run the program directly instead of with Start-Process, nohup ' +
+  'or &, or have it write to a file.'
 /** How long a command handed to the background may still run, unless its call asked for longer. */
 const BACKGROUND_COMMAND_LIMIT_SECONDS = 3_600
 /** Lines of a command's output handed back with it when it moves to the background. */
@@ -338,6 +348,7 @@ export class CommandService {
       env,
       terminal: !sandbox && this.terminalEnabled(),
       onStart: ({ pty }) => this.openSession(id, cwd, input, false, pty),
+      followLeftovers: () => this.backgroundTasks.has(id),
       onOutput: (data) => {
         this.terminals.append(id, data.chunk)
         input.onOutput?.(data)
@@ -398,6 +409,7 @@ export class CommandService {
     result: ShellCommandResult
   ): Promise<ShellCommandResult> {
     const stoppedByUser = this.stoppedByUser.delete(id)
+    if (result.outlived) this.terminals.append(id, `\r\n${OUTLIVED_NOTE}\r\n`)
     await this.terminals.finish(id, { state: sessionState(result), exitCode: result.exitCode })
     let completed: ShellCommandResult = stoppedByUser
       ? {
@@ -496,6 +508,7 @@ export class CommandService {
         },
         terminal: this.terminalEnabled(),
         onStart: ({ pty }) => this.openSession(id, cwd, input, true, pty),
+        followLeftovers: () => true,
         onOutput: (data) => this.terminals.append(id, data.chunk)
       })
     )

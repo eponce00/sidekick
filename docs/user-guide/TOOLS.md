@@ -70,7 +70,11 @@ plain pipes instead.
 - **Waiting.** The agent does not guess how long work takes. A foreground command still running when
   its time is up (30 seconds unless the agent asks for more) goes on in the background, and the
   agent gets its output so far. When a background command ends, the agent is told before its next
-  step, with the exit code and last lines. `wait` ends as soon as what it names happens:
+  step, with the exit code and last lines. A background command whose shell exits while a program
+  it started, for example with `Start-Process` or `nohup`, is still running counts as running until
+  that program ends, and stopping the command stops the program too. Its terminal closes with the
+  shell, so what the program prints after that is lost, and the command's last line says so.
+  `wait` ends as soon as what it names happens:
   - a named command ends or stops at a prompt;
   - a command prints a line matching a pattern, such as `ready|error`;
   - for a plain wait, any background command of the conversation ends.

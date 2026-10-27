@@ -15,6 +15,59 @@ import { TERMINAL_COLUMNS, TERMINAL_ROWS } from './terminalScreen'
 const WINDOWS_EXIT_MARKER = '__SIDEKICK_EXIT_CODE__='
 /** Windows' console host can deliver the last output just after it reports the exit. */
 const PTY_EXIT_SETTLE_MS = 150
+/** How often SideKick looks whether programs a command left running have ended. */
+const LEFTOVER_POLL_MS = 2_000
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
+ * Programs a command started that still run after its shell exited, such as one started with
+ * Start-Process or nohup. On Windows they are the shell's descendants created since the command
+ * started; on Unix the terminal's process group, given as its negative id.
+ */
+function leftoverProcesses(shellPid: number, since: number): Promise<number[]> {
+  if (process.platform !== 'win32') return Promise.resolve(isAlive(-shellPid) ? [-shellPid] : [])
+  return new Promise((resolve) => {
+    let listing = ''
+    const query = spawn(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-CimInstance Win32_Process | Where-Object CreationDate | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $([DateTimeOffset]::new($_.CreationDate).ToUnixTimeMilliseconds())" }'
+      ],
+      { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
+    )
+    query.stdout.on('data', (chunk: Buffer) => (listing += chunk.toString()))
+    query.on('error', () => resolve([]))
+    query.on('close', () => {
+      const children = new Map<number, number[]>()
+      for (const line of listing.split(/\r?\n/)) {
+        const [pid, parent, created] = line.trim().split(' ').map(Number)
+        // A parent id can outlive its process and be reused; only processes newer than the
+        // command can be its own.
+        if (!pid || !Number.isFinite(created) || created < since - 1_000) continue
+        children.set(parent, [...(children.get(parent) ?? []), pid])
+      }
+      const found: number[] = []
+      const queue = [...(children.get(shellPid) ?? [])]
+      while (queue.length) {
+        const pid = queue.shift()!
+        found.push(pid)
+        queue.push(...(children.get(pid) ?? []))
+      }
+      resolve(found.filter(isAlive))
+    })
+  })
+}
 
 function decodeCliXmlText(value: string): string {
   return value
@@ -135,12 +188,19 @@ export interface CommandRunOptions {
   terminal?: boolean
   /** Called once the process is spawned, saying whether it got a pseudo-terminal. */
   onStart?: (info: { pty: boolean }) => void
+  /**
+   * Asked as the terminal's shell exits: whether to keep the command running until programs it
+   * started end. Finding them takes about a second on Windows, too long for every command.
+   */
+  followLeftovers?: () => boolean
   onOutput?: (data: { commandId: string; chunk: string; stream: 'stdout' | 'stderr' }) => void
 }
 
 type ActiveProcess =
   | { kind: 'pipe'; child: ChildProcessWithoutNullStreams }
   | { kind: 'pty'; pty: IPty }
+  /** Programs a command left running after its terminal's shell exited. */
+  | { kind: 'leftovers'; pids: number[] }
 
 export class CommandRunner {
   private readonly active = new Map<string, ActiveProcess>()
@@ -149,6 +209,21 @@ export class CommandRunner {
   constructor(private readonly redactor: CredentialRedactor = credentialRedactor) {}
 
   private terminate(process_: ActiveProcess, signal: NodeJS.Signals = 'SIGTERM'): boolean {
+    if (process_.kind === 'leftovers') {
+      for (const pid of process_.pids) {
+        try {
+          if (process.platform === 'win32') {
+            spawn('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+              windowsHide: true,
+              stdio: 'ignore'
+            }).on('error', () => undefined)
+          } else process.kill(pid, signal)
+        } catch {
+          // Already gone.
+        }
+      }
+      return true
+    }
     const pid = process_.kind === 'pipe' ? process_.child.pid : process_.pty.pid
     if (!pid) return false
     const killDirect = (): boolean => {
@@ -231,6 +306,7 @@ export class CommandRunner {
   write(id: string, data: string): boolean {
     const running = this.active.get(id)
     if (!running) return false
+    if (running.kind === 'leftovers') return false
     try {
       if (running.kind === 'pty') running.pty.write(data)
       else running.child.stdin.write(data)
@@ -260,6 +336,7 @@ export class CommandRunner {
       ? // Unlike the pipe path there is no -NonInteractive: a prompt here can be answered.
         ['powershell.exe', ['-NoProfile', ...launch.args]]
       : ['bash', ['-c', options.command]]
+    const startedAt = Date.now()
     const terminal = ptyModule.spawn(file, args, {
       name: 'xterm-256color',
       cols: TERMINAL_COLUMNS,
@@ -323,10 +400,12 @@ export class CommandRunner {
         })
       }
 
+      // What runs may change from the terminal to the programs it left running.
+      const current = (): ActiveProcess => this.active.get(options.id) ?? running
       const timer = setTimeout(() => {
         timedOut = true
-        this.terminate(running)
-        forceKillTimer = setTimeout(() => this.terminate(running, 'SIGKILL'), 3_000)
+        this.terminate(current())
+        forceKillTimer = setTimeout(() => this.terminate(current(), 'SIGKILL'), 3_000)
         settleTimer = setTimeout(
           () =>
             finish({
@@ -345,22 +424,48 @@ export class CommandRunner {
       const exitSubscription = terminal.onExit(({ exitCode, signal }) => {
         const cancelled = !timedOut && (this.cancelled.delete(options.id) || signal === 15)
         if (cancelled || timedOut) this.sweepOrphans(terminal.pid)
-        setTimeout(
-          () =>
-            finish({
-              success: exitCode === 0 && !timedOut && !cancelled,
-              exitCode,
-              cancelled,
-              error: timedOut
-                ? `Command timed out after ${options.timeoutMs / 1000} seconds`
-                : cancelled
-                  ? 'Command cancelled'
-                  : undefined
-            }),
-          PTY_EXIT_SETTLE_MS
-        )
+        const report = (outlived: boolean): void => {
+          const stopped = outlived && this.cancelled.delete(options.id)
+          finish({
+            success: exitCode === 0 && !timedOut && !cancelled && !stopped,
+            exitCode,
+            cancelled: cancelled || stopped,
+            error: timedOut
+              ? `Command timed out after ${options.timeoutMs / 1000} seconds`
+              : cancelled || stopped
+                ? 'Command cancelled'
+                : undefined,
+            ...(outlived ? { outlived: true } : {})
+          })
+        }
+        setTimeout(() => {
+          if (cancelled || timedOut || !options.followLeftovers?.()) return report(false)
+          void this.awaitLeftovers(options.id, terminal.pid, startedAt).then(report)
+        }, PTY_EXIT_SETTLE_MS)
       })
     })
+  }
+
+  /**
+   * Keeps a command running while programs it started outlive its terminal's shell, so it is not
+   * reported finished while they work, and Stop and the time limit still reach them. The
+   * terminal closes with its shell, so what they print afterwards is lost. Says whether any did.
+   */
+  private async awaitLeftovers(id: string, shellPid: number, since: number): Promise<boolean> {
+    const pids = await leftoverProcesses(shellPid, since)
+    if (!pids.length) return false
+    const leftovers: ActiveProcess = { kind: 'leftovers', pids }
+    // Stopped or out of time while they were being found: that reached only the dead shell.
+    if (!this.active.has(id)) {
+      this.terminate(leftovers)
+      return false
+    }
+    this.active.set(id, leftovers)
+    if (this.cancelled.has(id)) this.terminate(leftovers)
+    while (this.active.get(id) === leftovers && pids.some(isAlive)) {
+      await new Promise((resolve) => setTimeout(resolve, LEFTOVER_POLL_MS))
+    }
+    return true
   }
 
   private runOverPipes(options: CommandRunOptions): Promise<ShellCommandResult> {
