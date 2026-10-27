@@ -11,7 +11,8 @@ import { PromptComposer, capabilitiesFromTools, createPromptModelProfile } from 
  * After a deliberate change, update the file with `npx vitest run src/shared/agentContextBudget -u`.
  */
 
-const bytes = (text: string): number => Buffer.byteLength(text, 'utf8')
+const encoder = new TextEncoder()
+const bytes = (text: string): number => encoder.encode(text).length
 
 function toolBudget(options: AgentToolCatalogOptions) {
   const tools = getAgentToolDefinitions(options)
