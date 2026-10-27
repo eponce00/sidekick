@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.22.2 — 2026-10-27
+
+- See PowerShell results that come back as objects. Commands such as `Select-Object`,
+  `ConvertFrom-Json` or a table of results printed nothing on Windows, so the agent saw an empty
+  result and guessed; they now print as in a terminal, and exit codes are kept.
+- Run the real curl on Windows. `curl` and `wget` in Windows PowerShell were Invoke-WebRequest,
+  which rejected curl's arguments or stopped at a security prompt; the agent's commands now get
+  curl.exe, and Invoke-WebRequest no longer asks.
+- Stop waiting on things that already happened. A command already at a prompt, or a server that
+  had already printed it was ready, left the agent waiting up to ten minutes; a wait sent right
+  after starting a command could not find it. A server started in the background is no longer
+  stopped by a short timeout meant for its startup.
+- Tell the agent how to recover after a failed step. The hint SideKick attaches to a failed tool
+  call, such as the corrected form of a malformed edit, never reached the model; it does now, and
+  a refused web search says plainly that the search engines refused, not the model provider.
+- Point the agent to the shell or the browser when it asks for a server on this computer, instead
+  of a message that named the wrong tool and told it to stop.
+
 ## 0.22.1 — 2026-10-27
 
 - Keep a background command running while a program it started is still working. A command that
