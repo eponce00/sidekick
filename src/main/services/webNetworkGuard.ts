@@ -69,8 +69,12 @@ export interface WebAdmission {
 
 const MAX_REDIRECTS = 5
 
+/** Named for every web tool: http_request reported it as web_fetch, and said to stop. */
 function onThisComputer(origin: string): string {
-  return `${origin} is on this computer, which web_fetch does not read. Open it in the browser instead.`
+  return (
+    `${origin} is on this computer, which SideKick's web tools do not reach. To check a server ` +
+    'you started, request it from the shell (curl.exe on Windows), or open it in the browser.'
+  )
 }
 
 function intoLocalNetwork(target: string): string {
@@ -143,7 +147,7 @@ export async function resolveAdmitted(
     const kind = kindOf(address) ?? 'loopback'
     if (kind === 'loopback') {
       throw new WebNetworkRefusal(
-        `${hostname} resolves to ${address}, on this computer, which web_fetch does not read`
+        `${hostname} resolves to ${address}, on this computer, which SideKick's web tools do not reach`
       )
     }
     if (kind === 'local') {

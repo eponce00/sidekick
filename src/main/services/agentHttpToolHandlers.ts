@@ -282,7 +282,8 @@ export function registerHttpToolHandlers(
           code: 'permission_denied',
           status: 'denied',
           message: refusal.message,
-          retryable: false
+          retryable: false,
+          recoveryAction: 'change_strategy'
         })
       }
       if (!context.signal.aborted && (error as { code?: unknown })?.code === 'ERR_CANCELED') {

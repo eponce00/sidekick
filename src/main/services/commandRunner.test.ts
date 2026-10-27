@@ -93,6 +93,26 @@ describe('CommandRunner', () => {
   }, 30_000)
 
   it.runIf(process.platform === 'win32')(
+    'prints PowerShell objects, and runs curl.exe for curl',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
+      tempDirs.push(dir)
+      const result = await new CommandRunner().run({
+        id: 'objects',
+        command:
+          "[pscustomobject]@{ answer = 4217 }; (Get-Command curl).CommandType; cmd.exe /d /c 'exit 5'",
+        cwd: dir,
+        timeoutMs: 20_000,
+        outputPath: join(dir, 'objects.log')
+      })
+      expect(result.stdout).toMatch(/answer[\s\S]*4217/)
+      expect(result.stdout).toContain('Application')
+      expect(result.exitCode).toBe(5)
+    },
+    30_000
+  )
+
+  it.runIf(process.platform === 'win32')(
     'preserves the exit code from a failing native Windows command',
     async () => {
       const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
