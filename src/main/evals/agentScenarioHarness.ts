@@ -48,6 +48,8 @@ export interface AgentScenarioConfig {
   editingDialect?: EditingDialect
   /** Sampling temperature; null leaves it to the server, as production conversation runs do. */
   temperature?: number | null
+  /** Run commands in a terminal, as the app does, instead of over pipes. */
+  terminal?: boolean
 }
 
 export interface AgentKernelScenarioInput {
@@ -55,6 +57,7 @@ export interface AgentKernelScenarioInput {
   capabilities?: readonly AgentCapability[]
   workspaceRoot: string
   messages: ProviderChatMessage[]
+  webSearchEnabled?: boolean
   surface?: Extract<AgentRunSurface, 'conversation'>
   runId?: string
   threadId?: string
@@ -220,7 +223,8 @@ export class AgentScenarioHarness {
         join(runtimeRoot, 'command-outputs'),
         undefined,
         config.skillAssetsPath,
-        () => config.shellIsolation === true
+        () => config.shellIsolation === true,
+        { terminalEnabled: () => config.terminal === true }
       ),
       new ToolOutputStore(join(runtimeRoot, 'tool-outputs')),
       this.mcp,
@@ -260,7 +264,7 @@ export class AgentScenarioHarness {
       workspaceRoot: input.workspaceRoot,
       capabilities: input.capabilities,
       browserEnabled: Boolean(this.config.browser),
-      webSearchEnabled: false,
+      webSearchEnabled: input.webSearchEnabled === true,
       editingDialect,
       plan: planService
         ? {

@@ -80,6 +80,28 @@ On a pull request, CI compares the file with the base branch's copy
 (`scripts/check-agent-context-budget.cjs`) and fails when any number grew, including a new tool.
 When the growth is worth it, add the `agent-context-increase` label and re-run the job.
 
+### Harness fault scenarios
+
+`src/main/evals/harnessFaults.test.ts` replays harness bugs found in real runs. Each scenario runs
+the real kernel and tools (`AgentScenarioHarness`) against the scripted model, in an environment
+with the fault that caused the bug, and checks what SideKick told the model and the user. Each
+fails on the commit before its fix. They run in the ordinary suite:
+
+- A reply that compacts mid-run keeps the user's latest request word for word right after the
+  summary, even when the summary names an earlier question as the objective (fixed in 0.22.0).
+- `web_search` where every engine answers HTTP 429 is a failed call whose text names the engines
+  and says they are not the model provider, and a second search inside the cooldown asks no engine
+  (0.22.1).
+- A background command whose script starts a program with `Start-Process` (Windows) or `nohup … &`
+  (macOS, Linux) stays running until the program ends and ends with the `[SideKick]` note that the
+  shell exited first; stopping it after its shell exited ends the program (0.22.1).
+- A model that repeats the same failing call is warned from the second call and stopped with
+  `loop_detected` by the fifth.
+
+A new harness bug gets a scenario here when a scripted model and a faulted environment can
+reproduce it; one that needs the built app's windows, settings or storage belongs in
+`npm run test:behavior`.
+
 ## Continuous integration
 
 CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
