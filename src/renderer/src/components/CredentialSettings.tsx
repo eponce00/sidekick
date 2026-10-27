@@ -24,6 +24,7 @@ import {
   type CredentialValues
 } from '../../../shared/credentials'
 import { SettingsEmptyState, SettingsSection } from './SettingsLayout'
+import { loadSiteIcon } from '../utils/siteIcons'
 import './CredentialSettings.css'
 
 /** The editor as typed, the way a password manager asks: a name, notes, a username, a password. */
@@ -102,16 +103,40 @@ function monogram(alias: string): string {
   return letters.toUpperCase()
 }
 
+/**
+ * The tile for an entry: its website's own icon once one has loaded, as a password manager shows
+ * a login, and the name's first letters until then or when the site has none.
+ */
 function CredentialAvatar({
   alias,
+  site,
   size = 'md'
 }: {
   alias: string
+  site?: string
   size?: 'md' | 'lg'
 }): React.JSX.Element {
+  const [icon, setIcon] = useState<{ site: string; dataUrl: string } | null>(null)
+  useEffect(() => {
+    if (!site) return
+    let current = true
+    void loadSiteIcon(`https://${site}`).then((dataUrl) => {
+      if (current && dataUrl) setIcon({ site, dataUrl })
+    })
+    return () => {
+      current = false
+    }
+  }, [site])
+  const shown = icon && icon.site === site ? icon.dataUrl : null
   return (
-    <span className={`credential-avatar is-${size}`} aria-hidden="true">
-      {alias ? monogram(alias) : <KeyRound size={size === 'lg' ? 18 : 14} />}
+    <span className={`credential-avatar is-${size}${shown ? ' has-icon' : ''}`} aria-hidden="true">
+      {shown ? (
+        <img src={shown} alt="" onError={() => setIcon(null)} />
+      ) : alias ? (
+        monogram(alias)
+      ) : (
+        <KeyRound size={size === 'lg' ? 18 : 14} />
+      )}
     </span>
   )
 }
@@ -319,7 +344,7 @@ export function CredentialSettings({
     return (
       <section className="credential-editor" aria-label={title}>
         <header className="credential-editor-head">
-          <CredentialAvatar alias={draft.alias} size="lg" />
+          <CredentialAvatar alias={draft.alias} site={editing?.sites?.[0]} size="lg" />
           <div className="credential-editor-title">
             <h3>{title}</h3>
             <p>
@@ -500,7 +525,7 @@ export function CredentialSettings({
                 aria-label={`Edit ${credential.alias}`}
                 onClick={() => open(draftFrom(credential))}
               >
-                <CredentialAvatar alias={credential.alias} />
+                <CredentialAvatar alias={credential.alias} site={credential.sites?.[0]} />
                 <span className="credential-item-text">
                   <span className="credential-item-name">
                     <strong>{credential.alias}</strong>

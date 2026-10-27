@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Globe } from 'lucide-react'
-
-const iconCache = new Map<string, Promise<string | null>>()
+import { loadSiteIcon } from '../utils/siteIcons'
 
 function originOf(url: string): string | null {
   try {
@@ -10,18 +9,6 @@ function originOf(url: string): string | null {
   } catch {
     return null
   }
-}
-
-function loadIcon(origin: string): Promise<string | null> {
-  let pending = iconCache.get(origin)
-  if (!pending) {
-    pending = window.api.siteIcons
-      .get(origin)
-      .then((result) => result.dataUrl)
-      .catch(() => null)
-    iconCache.set(origin, pending)
-  }
-  return pending
 }
 
 /**
@@ -35,7 +22,7 @@ export function SiteIcon({ url, size = 14 }: { url: string; size?: number }): Re
   useEffect(() => {
     if (!origin) return
     let cancelled = false
-    void loadIcon(origin).then((value) => {
+    void loadSiteIcon(origin).then((value) => {
       if (!cancelled) setDataUrl(value)
     })
     return () => {
