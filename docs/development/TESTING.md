@@ -233,6 +233,34 @@ the comprehensive integration lane measures tool interoperability without paying
 of the Plan-mode state machine. Its fixture and every browser/runtime artifact live under one
 temporary root that the parent process removes even after a failed or timed out child run.
 
+### Replay of bad turns
+
+`npm run test:agent-eval:replay` replays the turns real runs got wrong. Each case in
+`src/main/evals/replay/` is one NDJSON file: the first line names the case, the pattern it comes
+from, and what the next turn must or must not do (`forbidTools`, `forbidContent`,
+`forbidArguments`, and `oneOf` a tool call or a phrase), and every later line is a message of the
+conversation trimmed to that turn. The runner adds the system prompt and the full conversation
+tool catalog composed from the checkout, asks the configured model for the next turn, and grades
+it by code (`src/main/evals/replayCases.ts`). A message with a `fixture` is built by SideKick's own
+code, such as the result of a search every engine refused, so a change to that text is replayed
+too. The cases cover answering an older question after compaction, retrying a refused search,
+treating SideKick's own notes as the user, and misreading a background command as finished.
+
+Each case runs `SIDEKICK_REPLAY_TRIALS` times (default 3), because a model does not answer the same
+way each time; `SIDEKICK_REPLAY_CASES` runs only the named cases. The report records the revision
+it measured, with `+changes` for uncommitted edits. To score a prompt or tool-text change, run the
+same cases on both versions and compare the reports; the comparison lists each case whose result
+differs:
+
+```bash
+SIDEKICK_AGENT_EVAL_REPORT=before.json npm run test:agent-eval:replay
+SIDEKICK_AGENT_EVAL_REPORT=after.json npm run test:agent-eval:replay
+npm run benchmark:agent-evals -- before.json after.json
+```
+
+It calls a model, so it never runs in CI. Write a new case by hand from the pattern a bad run
+shows, never by copying a conversation, prompt, path or credential from a run journal.
+
 ## Search and packaged-app tests
 
 `npm run test:search-smoke` performs an opt-in live search check. Keep ordinary search behavior

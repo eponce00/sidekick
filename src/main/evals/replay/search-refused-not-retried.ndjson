@@ -1,0 +1,4 @@
+{"id":"search-refused-not-retried","pattern":"Retrying a refused search","expect":{"forbidTools":["web_search","web_image_search"]}}
+{"role":"user","content":"Find recent benchmark results for 27B models that run on a single 24 GB GPU."}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_search_1","name":"web_search","arguments":{"query":"27B model benchmark 24GB GPU"}}]}
+{"role":"tool","tool_call_id":"call_search_1","fixture":"web_search_refused","query":"27B model benchmark 24GB GPU"}
