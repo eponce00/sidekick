@@ -91,6 +91,50 @@ describe('AgentContextManager', () => {
     expect(record?.summary).toContain('not complete evidence')
   })
 
+  it('cuts the latest turn’s oversized tool results when they alone outgrow the window', async () => {
+    // Seven file reads at once on a 24k window ended the run with "did not reduce context".
+    const complete = vi.fn()
+    const manager = new AgentContextManager({
+      target,
+      contextLength: 24_576,
+      maxOutputTokens: 4_096,
+      threshold: 0.65,
+      enabled: true,
+      complete
+    })
+    const reads = Array.from({ length: 6 }, (_, index) => `read-${index}`)
+    const messages: ProviderChatMessage[] = [
+      { role: 'system', content: 'Policy' },
+      { role: 'user', content: 'Read every module and name its last function.' },
+      {
+        role: 'assistant',
+        content: '',
+        tool_calls: reads.map((id) => ({
+          id,
+          function: { name: 'read', arguments: { path: `${id}.js` } }
+        }))
+      },
+      ...reads.map((id) => ({
+        role: 'tool',
+        tool_call_id: id,
+        content: `opening of ${id}\n${'function step(entry) { return entry }\n'.repeat(700)}last function of ${id}`
+      }))
+    ]
+
+    const result = await manager.compact(messages, [], new AbortController().signal)
+
+    expect(result.compacted).toBe(true)
+    expect(complete).not.toHaveBeenCalled()
+    expect(estimateProviderRequestTokens(result.messages, [])).toBeLessThan(24_576 - 4_096)
+    const results = result.messages.filter((message) => message.role === 'tool')
+    expect(results.map((message) => message.tool_call_id)).toEqual(reads)
+    for (const [index, message] of results.entries()) {
+      expect(message.content).toContain(`opening of read-${index}`)
+      expect(message.content).toContain(`last function of read-${index}`)
+      expect(message.content).toContain('SideKick cut')
+    }
+  })
+
   it('does not treat a truncated summary or fallback excerpts as verified completion', async () => {
     let record: AgentCompactionRecord | undefined
     const manager = new AgentContextManager({
