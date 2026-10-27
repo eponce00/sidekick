@@ -168,6 +168,21 @@ function previousSummaryFrom(messages: ProviderChatMessage[]): string | null {
   return summary?.content || null
 }
 
+/** A user message SideKick wrote: a compaction summary, or a notice such as a verification guard. */
+function isHarnessMessage(message: ProviderChatMessage): boolean {
+  const content = message.content?.trimStart() ?? ''
+  return content.startsWith('<historical_context') || content.startsWith('<sidekick_')
+}
+
+/** Where the user's latest request is: their last message that SideKick did not write. */
+function latestRequestIndex(messages: readonly ProviderChatMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.role === 'user' && !isHarnessMessage(message)) return index
+  }
+  return -1
+}
+
 function compactionMessage(summary: string): ProviderChatMessage {
   return {
     role: 'user',
@@ -484,8 +499,18 @@ export class AgentContextManager implements AgentKernelContextManager {
       compactedMessages
     }
     this.options.onCompacted?.(record)
+    // The request the run is answering stays word for word. Left to the summary, a local model
+    // wrote an earlier question in as the objective, and the agent answered that one instead.
+    const requestIndex = latestRequestIndex(conversation)
+    const request = requestIndex >= 0 && requestIndex < split ? [conversation[requestIndex]] : []
     return {
-      messages: [...system, ...projectInstructions, compactionMessage(summary), ...recent],
+      messages: [
+        ...system,
+        ...projectInstructions,
+        compactionMessage(summary),
+        ...request,
+        ...recent
+      ],
       compacted: true,
       details: {
         summary,
