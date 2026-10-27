@@ -88,7 +88,8 @@ export interface AgentKernelScenarioResult {
   toolNames: string[]
 }
 
-function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
+/** Samples the configured model as a conversation run does: streaming, with the server's defaults. */
+export function liveSampler(config: AgentScenarioConfig): AgentKernelProviderSampler {
   return async (request, signal, onChunk) => {
     const startedAt = performance.now()
     let firstTokenMs: number | undefined

@@ -48,6 +48,7 @@
     "test:agent-eval:quick": "node scripts/run-agent-eval.cjs --quick",
     "test:agent-eval:verification": "node scripts/run-agent-eval.cjs --verification",
     "test:agent-eval:visual": "node scripts/run-agent-eval.cjs --visual",
+    "test:agent-eval:replay": "node scripts/run-agent-eval.cjs --replay",
     "test:agent-eval:comprehensive": "node scripts/run-agent-comprehensive-eval.cjs",
     "test:agent-eval:configured": "electron scripts/run-configured-agent-eval.cjs",
     "test:agent-eval:configured:quick": "electron scripts/run-configured-agent-eval.cjs --quick",

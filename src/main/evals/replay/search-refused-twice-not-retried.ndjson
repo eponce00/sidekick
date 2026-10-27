@@ -1,0 +1,6 @@
+{"id":"search-refused-twice-not-retried","pattern":"Retrying a refused search","expect":{"forbidTools":["web_search","web_image_search"]}}
+{"role":"user","content":"What changed in the latest release of the llama.cpp server? Search the web."}
+{"role":"assistant","content":"","tool_calls":[{"id":"call_search_1","name":"web_search","arguments":{"query":"llama.cpp server latest release changes"}}]}
+{"role":"tool","tool_call_id":"call_search_1","fixture":"web_search_refused","query":"llama.cpp server latest release changes"}
+{"role":"assistant","content":"The search engines refused. I will try a different query.","tool_calls":[{"id":"call_search_2","name":"web_search","arguments":{"query":"llama.cpp release notes"}}]}
+{"role":"tool","tool_call_id":"call_search_2","fixture":"web_search_refused","query":"llama.cpp release notes"}
