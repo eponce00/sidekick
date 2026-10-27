@@ -74,6 +74,7 @@ const RETRY_LABELS: Record<string, string> = {
   truncated_tool_batch: 'Reply limit reached while writing tool calls; asking for smaller ones',
   runaway_tool_calls: 'Stopped a reply that repeated its tool calls; asking for one at a time',
   stream_dropped: 'Lost the connection to the model server; asking again',
+  provider_unavailable: 'The model server is busy or limiting requests; asking again shortly',
   research_source_required: 'Source verification required; continuing research',
   workspace_verification_required: 'Workspace changed; running a fresh verification',
   goal_continuation: 'Continuing the active goal',
