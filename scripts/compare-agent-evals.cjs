@@ -55,4 +55,38 @@ for (const { report } of reports) {
   lines.push(`- ${report.providerKind}/${report.model}: ${categories}`)
 }
 
+// Cases whose result differs between reports, such as the same replay cases on two branches.
+// Trials of a case (`case#1`, `case#2`) count together.
+const caseResults = reports.map(({ report }) => {
+  const cases = new Map()
+  for (const metric of report.metrics || []) {
+    const name = String(metric.name).replace(/#\d+$/, '')
+    const counts = cases.get(name) || { passed: 0, total: 0 }
+    counts.total++
+    if (metric.passed) counts.passed++
+    cases.set(name, counts)
+  }
+  return cases
+})
+const changed = [...new Set(caseResults.flatMap((cases) => [...cases.keys()]))]
+  .sort()
+  .filter(
+    (name) => new Set(caseResults.map((cases) => JSON.stringify(cases.get(name) ?? null))).size > 1
+  )
+if (changed.length) {
+  const revisions = reports.map(({ report }) => (report.runtime?.revision || 'local').slice(0, 16))
+  lines.push('', '## Cases that differ', '')
+  lines.push(
+    `| Case | ${revisions.join(' | ')} |`,
+    `| --- | ${revisions.map(() => '---:').join(' | ')} |`
+  )
+  for (const name of changed) {
+    const cells = caseResults.map((cases) => {
+      const counts = cases.get(name)
+      return counts ? `${counts.passed}/${counts.total}` : '–'
+    })
+    lines.push(`| ${name} | ${cells.join(' | ')} |`)
+  }
+}
+
 process.stdout.write(`${lines.join('\n')}\n`)
