@@ -66,6 +66,20 @@ limit), and replies that ran away: more than 64 tool calls, or one call more tha
 prints counts and run ids,
 never message content, and exits 1 when something is flagged. Thresholds are flags; see `--help`.
 
+### Context budget
+
+Every turn sends the system prompt and the tool schemas before any history, and a local model with
+a small window pays for each byte. `src/shared/agentContextBudget.test.ts` composes them for a full
+conversation turn (project folder, web search, browser, code intelligence, a chat that can start
+other chats, Windows, a local Qwen model) and for a sub-agent, and requires the byte counts to equal
+`src/shared/agentContextBudget.json`: the system prompt, the tool count, the tools' OpenAI function
+JSON, and each tool's share. A change to prompt or tool text therefore updates that file, with
+`npx vitest run src/shared/agentContextBudget -u`, and the diff shows what it costs.
+
+On a pull request, CI compares the file with the base branch's copy
+(`scripts/check-agent-context-budget.cjs`) and fails when any number grew, including a new tool.
+When the growth is worth it, add the `agent-context-increase` label and re-run the job.
+
 ## Continuous integration
 
 CI runs its work in parallel jobs: one Linux job for the platform-independent checks and coverage,
