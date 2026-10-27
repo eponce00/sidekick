@@ -3671,21 +3671,12 @@ describe('AgentRunKernel', () => {
       }
     }))
 
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    try {
-      // A busy provider is asked again after each wait, then the run fails as before.
-      const running = new AgentRunKernel(store, undefined, sampler).start(input())
-      await vi.advanceTimersByTimeAsync(PROVIDER_BUSY_RETRY_DELAYS_MS.reduce((a, b) => a + b, 0))
-      const result = await running
+    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
 
-      expect(sampler).toHaveBeenCalledTimes(PROVIDER_BUSY_RETRY_DELAYS_MS.length + 1)
-      expect(result.error).toBe(
-        'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
-      )
-      expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
-    } finally {
-      vi.useRealTimers()
-    }
+    expect(result.error).toBe(
+      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
+    )
+    expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
   })
 
   it('fails a chat whose provider was removed as a setup problem the user can fix', async () => {

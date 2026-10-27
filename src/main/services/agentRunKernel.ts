@@ -260,12 +260,13 @@ const HUMAN_CHECK_WAIT_MS = 10 * 60_000
 export const STREAM_DROP_RETRY_DELAY_MS = 3_000
 
 /**
- * How long a run waits before asking again when the provider is busy or limiting requests (429,
- * 502, 503, 504, 529), one wait per attempt. One 429 from a free tier or a LiteLLM limit ended a
- * run in its first second, and a busy local server ended one halfway through.
+ * How long a run waits before asking again when the provider is limiting requests or busy (429,
+ * 503, 529), one wait per attempt. One 429 from a free tier or a LiteLLM limit ended a run in its
+ * first second. A gateway with nothing behind it (502, 504) fails at once: the user has a server
+ * to start, and waiting would only hide that.
  */
 export const PROVIDER_BUSY_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000, 40_000]
-const PROVIDER_BUSY_STATUSES = new Set([429, 502, 503, 504, 529])
+const PROVIDER_BUSY_STATUSES = new Set([429, 503, 529])
 
 export interface StartAgentKernelRunInput extends StartAgentRunInput {
   /** App-settings snapshot, never model/repository-discovered commands. Always requires approval. */
