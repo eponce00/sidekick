@@ -70,6 +70,28 @@ describe('CommandRunner', () => {
     expect(result.error).toBe('Command cancelled')
   })
 
+  it('keeps a terminal command running while a program it started outlives its shell', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sidekick-command-'))
+    tempDirs.push(dir)
+    const command =
+      process.platform === 'win32'
+        ? "Start-Process -NoNewWindow powershell.exe -ArgumentList '-NoProfile','-Command','Start-Sleep 3'"
+        : // Time for nohup to ignore the hangup the terminal sends when the shell exits.
+          'nohup sleep 3 >/dev/null 2>&1 & sleep 1'
+    const startedAt = Date.now()
+    const result = await new CommandRunner().run({
+      id: 'outlived',
+      command,
+      cwd: dir,
+      timeoutMs: 20_000,
+      outputPath: join(dir, 'outlived.log'),
+      terminal: true,
+      followLeftovers: () => true
+    })
+    expect(result).toMatchObject({ success: true, outlived: true })
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(2_500)
+  }, 30_000)
+
   it.runIf(process.platform === 'win32')(
     'preserves the exit code from a failing native Windows command',
     async () => {

@@ -431,7 +431,7 @@ const completePlan = definition(
 
 const shell = definition(
   'shell',
-  'Execute a command through SideKick’s bounded host-shell executor. On Windows the dialect is PowerShell; on macOS and Linux it is Bash. Use background=true only for persistent servers or watchers. Use cwd instead of a leading cd.',
+  'Execute a command through SideKick’s bounded host-shell executor. On Windows the dialect is PowerShell; on macOS and Linux it is Bash. Use background=true only for persistent servers or watchers. Use cwd instead of a leading cd. Run a long job as the command itself rather than starting it with Start-Process, nohup or a trailing &: such a program outlives the shell, and SideKick cannot show what it prints after that.',
   {
     type: 'object',
     required: ['command'],
