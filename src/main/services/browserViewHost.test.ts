@@ -222,19 +222,10 @@ it('restores human input checks after an injected input command fails', async ()
   }
 })
 
-it('renders an embedded page at the host app zoom instead of natural scale', () => {
+it('renders an embedded page at the host app zoom, and reapplies it after a navigation resets it', () => {
   const fixture = hosted(0.8)
   try {
-    expect(fixture.contents.setZoomFactor).toHaveBeenCalledWith(0.8)
     expect(fixture.contents.getZoomFactor()).toBe(0.8)
-  } finally {
-    fixture.contents.emit('destroyed')
-  }
-})
-
-it('reapplies the host zoom after a cross-origin navigation resets it', () => {
-  const fixture = hosted(0.8)
-  try {
     fixture.contents.setZoomFactor(1)
     fixture.contents.emit('did-navigate')
     expect(fixture.contents.getZoomFactor()).toBe(0.8)

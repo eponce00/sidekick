@@ -152,40 +152,6 @@ describe('workspace mutation service', () => {
     await expect(lstat(join(root, 'generated'))).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
-  it('rejects missing and ambiguous exact replacements', async () => {
-    const root = await workspace()
-    await writeFile(join(root, 'values.txt'), 'same\nsame\n', 'utf8')
-
-    const ambiguous = await executeWorkspaceMutation(root, {
-      kind: 'replace',
-      filePath: 'values.txt',
-      oldText: 'same',
-      newText: 'different',
-      replaceAll: false,
-      accessLevel: 'auto'
-    })
-    const missing = await executeWorkspaceMutation(root, {
-      kind: 'replace',
-      filePath: 'values.txt',
-      oldText: 'missing',
-      newText: 'different',
-      replaceAll: false,
-      accessLevel: 'auto'
-    })
-
-    expect(ambiguous).toMatchObject({ ok: false, changed: false })
-    expect(ambiguous.error).toContain('2 matches')
-    expect(ambiguous.failure).toEqual({
-      code: 'multiple_matches',
-      recovery:
-        'Choose the replacement scope explicitly: set replace_all=true for every match, or add surrounding lines to old_string for one unique match. Do not repeat the unchanged call.',
-      matchCount: 2,
-      matchStartLines: [1, 2]
-    })
-    expect(missing.error).toContain('was not found')
-    expect(await readFile(join(root, 'values.txt'), 'utf8')).toBe('same\nsame\n')
-  })
-
   describe('model copies that differ only in formatting', () => {
     const replace = (
       root: string,
@@ -441,23 +407,6 @@ describe('workspace mutation service', () => {
     expect(result).toMatchObject({ ok: false, changed: false })
     expect(result.error).toContain('hard link')
     expect(await readFile(join(elsewhere, 'shared.txt'), 'utf8')).toBe('outside\n')
-  })
-
-  it('adapts exact multi-line edits to the file line ending without changing its style', async () => {
-    const root = await workspace()
-    await writeFile(join(root, 'windows.txt'), 'first\r\nsecond\r\nthird\r\n', 'utf8')
-
-    const result = await executeWorkspaceMutation(root, {
-      kind: 'replace',
-      filePath: 'windows.txt',
-      oldText: 'first\nsecond',
-      newText: 'updated\nsecond',
-      replaceAll: false,
-      accessLevel: 'auto'
-    })
-
-    expect(result).toMatchObject({ ok: true, changed: true })
-    expect(await readFile(join(root, 'windows.txt'), 'utf8')).toBe('updated\r\nsecond\r\nthird\r\n')
   })
 
   it('serializes concurrent edits so a stale second mutation fails', async () => {

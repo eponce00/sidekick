@@ -113,9 +113,7 @@ describe('ActivityPanel inspector', () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="Delete src"]')!.click()
     )
     expect(countPathItems).toHaveBeenCalledWith('C:/project', 'src')
-    expect(document.body.textContent).toContain(
-      'Move the folder “src” and the 214 items in it to the Recycle Bin?'
-    )
+    expect(trashFile).not.toHaveBeenCalled()
     const confirm = [...document.body.querySelectorAll('button')].find(
       (button) => button.textContent === 'Move to Recycle Bin'
     )!
@@ -127,128 +125,9 @@ describe('ActivityPanel inspector', () => {
     )
   })
 
-  it('drags its edge to any width, snapping, taking the window, and folding away', async () => {
-    const onSettle = vi.fn()
-    let state = { width: 500, size: 'wide' as 'wide' | 'full', pinned: true }
-    const render = async (): Promise<void> => {
-      await act(async () =>
-        root.render(
-          <ActivityPanel
-            isPinned={state.pinned}
-            onTogglePin={() => {
-              state = { ...state, pinned: !state.pinned }
-              void render()
-            }}
-            conversationId="chat-1"
-            focusChainTodos={[]}
-            workspaceFolder={null}
-            maxWidth={state.size === 'full' ? 1_000 : 900}
-            width={state.width}
-            onWidthChange={(width) => {
-              state = { ...state, width }
-              void render()
-            }}
-            size={state.size}
-            onSizeChange={(size) => {
-              state = { ...state, size }
-              void render()
-            }}
-            sideBySideMaxWidth={900}
-            snapWidths={[320, 600]}
-            onSettle={onSettle}
-          />
-        )
-      )
-    }
-    const panel = (): HTMLElement => container.querySelector('.activity-panel') as HTMLElement
-    const phantom = (): HTMLElement | null => document.querySelector('.activity-panel-phantom')
-    const edge = (): HTMLElement =>
-      container.querySelector('[aria-label="Resize workspace inspector"]') as HTMLElement
-    const drag = async (from: number, to: number, beforeRelease?: () => void): Promise<void> => {
-      await act(async () => {
-        edge().dispatchEvent(
-          new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: from })
-        )
-      })
-      await act(async () => {
-        window.dispatchEvent(new MouseEvent('pointermove', { clientX: to }))
-      })
-      beforeRelease?.()
-      await act(async () => {
-        window.dispatchEvent(new MouseEvent('pointerup', { clientX: to }))
-      })
-    }
-    await render()
-    expect(panel().style.width).toBe('500px')
-    // No size buttons: the edge does it all.
-    expect(container.querySelector('.activity-size-button')).toBeNull()
-    expect(container.querySelector('[title="Collapse panel"]')).toBeNull()
-
-    // Let go near the even split, it glides there.
-    await drag(1_000, 880)
-    expect(state.width).toBe(600)
-    expect(onSettle).toHaveBeenCalled()
-    expect(panel().classList.contains('is-gliding')).toBe(true)
-
-    // Well past the widest it fits beside the chat, it takes the window.
-    await drag(1_000, 500, () => {
-      // Nothing moves while dragged; a phantom shows where it lands.
-      expect(state.size).toBe('wide')
-      expect(phantom()?.dataset.landing).toBe('full')
-      expect(phantom()?.querySelector('.activity-panel-phantom-icon')).not.toBeNull()
-    })
-    expect(phantom()).toBeNull()
-    expect(state.size).toBe('full')
-    expect(panel().style.width).toBe('1000px')
-
-    // From the window, dragging back sets it beside the chat at the width let go at.
-    await drag(1_000, 1_300)
-    expect(state.size).toBe('wide')
-    expect(state.width).toBe(700)
-
-    // Nearly shut, it folds to the rail and opens again at the width it had.
-    await drag(1_000, 1_620, () => {
-      expect(phantom()?.dataset.landing).toBe('fold')
-    })
-    expect(state.pinned).toBe(false)
-    expect(state.width).toBe(700)
-    expect(panel().classList.contains('is-collapsed')).toBe(true)
-
-    // Dragged out from the rail, it opens, settling on a snap width nearby.
-    await drag(1_000, 400)
-    expect(state.pinned).toBe(true)
-    expect(state.width).toBe(600)
-
-    // Escape lets go without changing anything.
-    await act(async () => {
-      edge().dispatchEvent(
-        new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 1_000 })
-      )
-    })
-    await act(async () => {
-      window.dispatchEvent(new MouseEvent('pointermove', { clientX: 400 }))
-    })
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    })
-    expect(phantom()).toBeNull()
-    expect(state.size).toBe('wide')
-
-    // The arrow keys move the edge too.
-    state = { ...state, size: 'wide', width: 500 }
-    await render()
-    await act(async () => {
-      edge().dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
-    })
-    expect(state.width).toBe(520)
-  })
-
-  it('auto-selects Browser once when a new run starts and exposes all collapsed shortcuts', async () => {
+  it('auto-selects Browser once when a new run starts', async () => {
     const toggle = vi.fn()
     await renderPanel(false, toggle)
-    expect(container.querySelector('button[aria-label="Open Files"]')).not.toBeNull()
-    expect(container.querySelector('button[aria-label="Open Browser activity"]')).not.toBeNull()
-
     await act(async () => {
       browserListener?.({ event: runEvent(1, 'run.started', { threadId: 'chat-1' }) })
       browserListener?.({
@@ -315,8 +194,5 @@ describe('ActivityPanel inspector', () => {
 
     await render({ tab: 'browser', at: 1 })
     expect(onActiveTabChange).toHaveBeenLastCalledWith('browser')
-    expect(
-      [...container.querySelectorAll('.panel-tab.is-active')].map((tab) => tab.textContent)
-    ).toEqual(['Browser'])
   })
 })

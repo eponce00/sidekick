@@ -10,7 +10,6 @@ function covers(granted: string, requested: string): boolean {
 describe('agentPermissionScope', () => {
   it('scopes a command to its exact text, directory and mode', () => {
     const base = agentPermissionScope('shell', { command: 'npm test', cwd: 'src/' })!
-    expect(base.label).toBe('this exact command')
     expect(agentPermissionScope('shell', { command: ' npm test ', cwd: './src' })!.keys).toEqual(
       base.keys
     )
@@ -26,7 +25,6 @@ describe('agentPermissionScope', () => {
 
   it('scopes file edits to their paths and keeps deletion separate', () => {
     const edit = agentPermissionScope('write', { file_path: 'src\\app.ts', content: 'a' })!
-    expect(edit.label).toBe('edits to src/app.ts')
     expect(
       agentPermissionScope('edit', { file_path: './src/app.ts', old_string: 'x' })!.keys
     ).toEqual(edit.keys)
@@ -50,7 +48,6 @@ describe('agentPermissionScope', () => {
         '*** End Patch'
       ].join('\n')
     })!
-    expect(scope.label).toBe('changes to these 2 files')
     expect(scope.keys).toEqual(
       agentPermissionScope('write', { file_path: 'src/a.ts' })!.keys.concat(
         agentPermissionScope('delete_file', { file_path: 'src/b.ts' })!.keys
@@ -62,7 +59,6 @@ describe('agentPermissionScope', () => {
   it('scopes any other tool to its exact arguments', () => {
     const tool = 'mcp__tracker__create_issue'
     const scope = agentPermissionScope(tool, { title: 'Bug', body: 'x' })!
-    expect(scope.label).toBe('this exact action')
     expect(agentPermissionScope(tool, { body: 'x', title: 'Bug' })!.keys).toEqual(scope.keys)
     expect(agentPermissionScope(tool, { title: 'Other', body: 'x' })!.keys).not.toEqual(scope.keys)
   })

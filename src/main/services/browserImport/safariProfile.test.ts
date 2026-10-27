@@ -49,31 +49,22 @@ describe('parseBinaryPlist', () => {
     expect(() => parseBinaryPlist(sizes)).toThrow(/integer sizes/)
   })
 
-  it('refuses an object offset or a reference past the objects', () => {
+  it('refuses references, offsets, lengths and keys that do not fit the objects', () => {
     expect(() =>
       parseBinaryPlist(rawBinaryPlist([Buffer.concat([Buffer.from([0xa1]), ref(7)])]))
     ).toThrow(/reference/)
     const offsets = rawBinaryPlist([ascii('abc')])
     offsets.writeUInt32BE(0xffffff, offsets.length - 32 - 4)
     expect(() => parseBinaryPlist(offsets)).toThrow(/offset/)
-  })
-
-  it('refuses a length that runs past the objects', () => {
     const long = Buffer.concat([
       Buffer.from([0x5f, 0x13]),
       Buffer.from([0, 0, 0, 0, 0x7f, 0xff, 0xff, 0xff]),
       Buffer.from('ab')
     ])
     expect(() => parseBinaryPlist(rawBinaryPlist([long]))).toThrow(/past its end/)
-  })
-
-  it('refuses an array that contains itself', () => {
     expect(() =>
       parseBinaryPlist(rawBinaryPlist([Buffer.concat([Buffer.from([0xa1]), ref(0)])]))
     ).toThrow(/loop/)
-  })
-
-  it('refuses a dictionary key that is not a string', () => {
     const dict = Buffer.concat([Buffer.from([0xd1]), ref(1), ref(1)])
     expect(() => parseBinaryPlist(rawBinaryPlist([dict, Buffer.from([0x10, 0x05])]))).toThrow(/key/)
   })

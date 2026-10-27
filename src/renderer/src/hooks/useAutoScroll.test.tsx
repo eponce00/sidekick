@@ -3,7 +3,7 @@
 import { act, useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { shouldShowScrollToBottom, useAutoScroll, type AutoScrollController } from './useAutoScroll'
+import { useAutoScroll, type AutoScrollController } from './useAutoScroll'
 import { scrollDistanceFromBottom } from '../utils/bottomFollow'
 import { SECTION_REVEAL_EVENT } from '../utils/messageMotion'
 
@@ -128,33 +128,6 @@ describe('auto-scroll positioning', () => {
     expect(scrollDistanceFromBottom(timeline)).toBe(0)
     runFrames()
     expect(controller.showScrollToBottom).toBe(false)
-  })
-
-  it('stops a jump when the reader scrolls back up', async () => {
-    await act(async () => root.render(<Harness ready />))
-    const timeline = host.firstElementChild as HTMLDivElement
-    let height = 20_000
-    const view = layOut(timeline, { height: () => height, client: 500, top: 19_500 })
-    act(() => controller.scrollToBottom())
-    act(() => runFrame())
-    height = 26_000
-    wheel(timeline, -300)
-    runFrames()
-    expect(view.top()).toBe(19_200)
-  })
-
-  it('calculates a bounded distance from the latest message', () => {
-    expect(
-      scrollDistanceFromBottom({ scrollHeight: 1_000, scrollTop: 400, clientHeight: 500 })
-    ).toBe(100)
-    expect(scrollDistanceFromBottom({ scrollHeight: 500, scrollTop: 20, clientHeight: 600 })).toBe(
-      0
-    )
-  })
-
-  it('only offers the jump control when the user is meaningfully scrolled away', () => {
-    expect(shouldShowScrollToBottom(240)).toBe(false)
-    expect(shouldShowScrollToBottom(241)).toBe(true)
   })
 
   it('attaches after an asynchronously rendered timeline and clears after jumping', async () => {

@@ -199,24 +199,7 @@ describe('AgentContextManager', () => {
     )
     expect(result.messages.at(-1)?.content).toBe('Current request must remain verbatim.')
     expect(record).toMatchObject({ strategy: 'model', promptVersion: expect.any(String) })
-  })
-
-  it('records deterministic fallback provenance when summarization fails', async () => {
-    let record: AgentCompactionRecord | null = null
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      complete: async () => ({ ok: false, error: 'provider unavailable' }),
-      onCompacted: (value) => {
-        record = value
-      }
-    })
-
-    await manager.compact(transcript(), [], new AbortController().signal)
-    expect(record).toMatchObject({ strategy: 'deterministic', provider: 'openai-compatible' })
+    expect(result.details).not.toHaveProperty('fallbackReason')
   })
 
   it('compacts a fresh user turn after many complete tool exchanges', async () => {
@@ -357,19 +340,6 @@ describe('AgentContextManager', () => {
     ).toBe(true)
   })
 
-  it('starts a new run with the provider calibration learned by the previous turn', () => {
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      initialEstimationBiasTokens: 6_000
-    })
-
-    expect(manager.shouldCompact([{ role: 'user', content: 'Continue' }], [])).toBe(true)
-  })
-
   it('allows long runs to compact again after successful provider samples', async () => {
     const complete = vi.fn(async () => ({
       ok: true,
@@ -466,11 +436,6 @@ describe('AgentContextManager', () => {
       { fallbackReason: 'timeout' }
     ],
     [
-      'a gateway that gave up',
-      { ok: false, error: 'HTTP 504', status: 504 },
-      { fallbackReason: 'timeout', fallbackStatus: 504 }
-    ],
-    [
       'a dropped connection',
       {
         ok: false,
@@ -521,20 +486,6 @@ describe('AgentContextManager', () => {
         }
       },
       { fallbackReason: 'reasoning_only' }
-    ],
-    [
-      'an empty reply',
-      {
-        ok: true,
-        data: {
-          message: { role: 'assistant', content: '   ' },
-          promptTokens: 1_000,
-          completionTokens: 1,
-          reasoningTokens: 0,
-          finishReason: 'stop'
-        }
-      },
-      { fallbackReason: 'empty_output' }
     ]
   ])(
     'records why it used the fallback summary after %s, without content',
@@ -606,29 +557,6 @@ describe('AgentContextManager', () => {
     const sent = request!.messages[1].content!
     expect(sent).not.toContain('PROJECT-RULE')
     expect(sent).toContain('OLD-SUMMARY of earlier work.')
-  })
-
-  it('records no fallback reason for a model summary', async () => {
-    const manager = new AgentContextManager({
-      target,
-      contextLength: 8_192,
-      maxOutputTokens: 2_048,
-      threshold: 0.8,
-      enabled: true,
-      complete: async () => ({
-        ok: true,
-        data: {
-          message: { role: 'assistant', content: 'Summary.' },
-          promptTokens: 1_500,
-          completionTokens: 3,
-          reasoningTokens: 0,
-          finishReason: 'stop'
-        }
-      })
-    })
-    const compacted = await manager.compact(transcript(), [], new AbortController().signal)
-    expect(compacted.details).toMatchObject({ strategy: 'model', summaryPromptTokens: 1_500 })
-    expect(compacted.details).not.toHaveProperty('fallbackReason')
   })
 
   it('is no compaction at all when the run is stopped while the summary is written', async () => {

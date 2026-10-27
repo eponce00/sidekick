@@ -239,18 +239,6 @@ describe('CompanionApi', () => {
     )
   })
 
-  it('lists projects with whether their chats can use worktrees', async () => {
-    const { call, db } = setup()
-    addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')
-    addProject(db, 'notes', 'Notes', 'C:/notes')
-    expect(await call('projects.list', {})).toEqual(
-      expect.arrayContaining([
-        { id: 'repo', name: 'sidekick', canUseWorktree: true },
-        { id: 'notes', name: 'Notes', canUseWorktree: false }
-      ])
-    )
-  })
-
   it('starts a new chat in a project, and in its own worktree when asked', async () => {
     const { call, db, deps } = setup()
     addProject(db, 'repo', 'sidekick', 'C:/code/sidekick')

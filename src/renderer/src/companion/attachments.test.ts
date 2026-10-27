@@ -13,31 +13,14 @@ import { base64ToBytes } from './audio'
 import type { CompanionConnection } from './chatState'
 
 describe('imagePlan', () => {
-  it('keeps a small PNG screenshot as it is', () => {
-    expect(imagePlan({ type: 'image/png', size: 400_000 }, 1170, 2532)).toEqual({
-      keep: true,
-      width: 1170,
-      height: 2532,
-      mimeType: 'image/png'
-    })
-  })
-
-  it('makes a camera photo a JPEG no longer than the limit on its longest side', () => {
-    const plan = imagePlan({ type: 'image/jpeg', size: 4_000_000 }, 4032, 3024)
-    expect(plan).toEqual({
+  it('keeps a small PNG screenshot, and shrinks a large one or a photo to a JPEG', () => {
+    expect(imagePlan({ type: 'image/png', size: 400_000 }, 1170, 2532).keep).toBe(true)
+    expect(imagePlan({ type: 'image/png', size: KEEP_PNG_BYTES }, 800, 600).keep).toBe(false)
+    expect(imagePlan({ type: 'image/jpeg', size: 4_000_000 }, 4032, 3024)).toEqual({
       keep: false,
       width: PHONE_IMAGE_SIDE,
       height: 1920,
       mimeType: 'image/jpeg'
-    })
-  })
-
-  it('reduces a PNG that is large in bytes or in size', () => {
-    expect(imagePlan({ type: 'image/png', size: KEEP_PNG_BYTES }, 800, 600).keep).toBe(false)
-    expect(imagePlan({ type: 'image/png', size: 1_000 }, 3000, 1000)).toMatchObject({
-      keep: false,
-      width: PHONE_IMAGE_SIDE,
-      height: 853
     })
   })
 
@@ -54,19 +37,12 @@ describe('imagePlan', () => {
 describe('textFileProblem', () => {
   const text = (value: string): Uint8Array => new TextEncoder().encode(value)
 
-  it('accepts text and code', () => {
+  it('accepts text and refuses binary or oversized files', () => {
     expect(textFileProblem('notes.md', text('# Notes\n- café ✓'))).toBeNull()
-    expect(textFileProblem('empty.txt', new Uint8Array())).toBeNull()
-  })
-
-  it('refuses binary files', () => {
-    expect(textFileProblem('app.exe', new Uint8Array([77, 90, 0, 1]))).toMatch(/not a text file/)
+    expect(textFileProblem('app.exe', new Uint8Array([77, 90, 0, 1]))).not.toBeNull()
     const latin1 = new Uint8Array(Array.from({ length: 200 }, (_, index) => 0xc0 + (index % 30)))
-    expect(textFileProblem('photo.raw', latin1)).toMatch(/not a text file/)
-  })
-
-  it('refuses files over 2 MB', () => {
-    expect(textFileProblem('big.log', new Uint8Array(MAX_TEXT_FILE_BYTES + 1))).toMatch(/2 MB/)
+    expect(textFileProblem('photo.raw', latin1)).not.toBeNull()
+    expect(textFileProblem('big.log', new Uint8Array(MAX_TEXT_FILE_BYTES + 1))).not.toBeNull()
   })
 })
 

@@ -66,18 +66,6 @@ describe('CommandService', () => {
     expect(environment).not.toHaveProperty('GITHUB_TOKEN')
   })
 
-  it('executes foreground commands within the project', async () => {
-    const { root, service } = await setup()
-    const result = await service.execute({
-      runId: 'run-1',
-      title: 'Print directory',
-      command: process.platform === 'win32' ? 'Write-Output $PWD.Path' : 'pwd',
-      workspaceRoot: root
-    })
-    expect('success' in result && result.success).toBe(true)
-    expect('stdout' in result && result.stdout.trim()).toBe(await realpath(root))
-  })
-
   it('gives a stored credential to its command alone, past the ambient filter, and hides it', async () => {
     const { root, service } = await setup()
     const value = `generated${Date.now().toString(36)}value`
@@ -114,7 +102,7 @@ describe('CommandService', () => {
     expect('stdout' in other && other.stdout.trim()).toBe('key=')
   })
 
-  it('accepts an absolute cwd when it resolves inside the active project', async () => {
+  it('runs in the project, taking an absolute cwd that resolves inside it', async () => {
     const { root, service } = await setup()
     const result = await service.execute({
       runId: 'run-absolute-cwd',

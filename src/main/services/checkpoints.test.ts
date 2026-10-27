@@ -1,3 +1,6 @@
+// Over the 30-second budget on Windows (about 50 s): every case runs the real Git commands of
+// the history store, about 40 a checkpoint at some 100 ms each. The git project in
+// vitest.config.ts runs it beside the rest of the suite.
 import { execFile } from 'child_process'
 import { promises as fs } from 'fs'
 import { tmpdir } from 'os'
@@ -16,7 +19,6 @@ import {
 } from './checkpoints'
 
 const execFileAsync = promisify(execFile)
-const GIT_INTEGRATION_TIMEOUT_MS = process.platform === 'win32' ? 20_000 : 10_000
 
 async function write(path: string, content: string): Promise<void> {
   await fs.mkdir(join(path, '..'), { recursive: true })
@@ -77,20 +79,25 @@ describe('private SideKick workspace history', () => {
     expect((await execFileAsync('git', ['-C', workspace, 'diff', '--cached'])).stdout).toBe(
       beforeIndex
     )
-  }, 15_000)
+  })
 
-  it('records only the delta after the per-run baseline', async () => {
+  it('records and undoes only the delta after the per-run baseline, keeping manual files', async () => {
     await write(join(workspace, 'manual-before.txt'), 'manual work\n')
     await write(join(workspace, 'agent.txt'), 'before\n')
 
     const captureId = await beginCheckpointCapture(workspace, 'conversation-1', 'assistant-1')
     await write(join(workspace, 'agent.txt'), 'after\n')
+    const checkpoint = await createCheckpoint(workspace, 'Agent edit', captureId)
+    expect(checkpoint).toMatchObject({ changeCount: 1, captureVersion: 2 })
+    await write(join(workspace, 'manual-after.txt'), 'keep me\n')
 
-    expect(await createCheckpoint(workspace, 'Agent edit', captureId)).toMatchObject({
-      changeCount: 1,
-      captureVersion: 2
-    })
-  }, 15_000)
+    const result = await rewindToBeforeCheckpoint(workspace, checkpoint!.hash)
+
+    expect(result).toMatchObject({ ok: true, changedFiles: 1, parentHash: null })
+    expect(await fs.readFile(join(workspace, 'agent.txt'), 'utf8')).toBe('before\n')
+    expect(await fs.readFile(join(workspace, 'manual-before.txt'), 'utf8')).toBe('manual work\n')
+    expect(await fs.readFile(join(workspace, 'manual-after.txt'), 'utf8')).toBe('keep me\n')
+  })
 
   it('recovers a persisted pre-mutation capture after an interrupted run', async () => {
     await write(join(workspace, 'agent.txt'), 'before\n')
@@ -109,20 +116,6 @@ describe('private SideKick workspace history', () => {
     await expect(createCheckpoint(workspace, 'Duplicate recovery', captureId)).rejects.toThrow(
       'History capture expired'
     )
-  })
-
-  it('preserves unrelated manual files when undoing SideKick changes', async () => {
-    await write(join(workspace, 'agent.txt'), 'before\n')
-    const hash = await captureAndCreate('Agent edit', async () => {
-      await write(join(workspace, 'agent.txt'), 'after\n')
-    })
-    await write(join(workspace, 'manual-after.txt'), 'keep me\n')
-
-    const result = await rewindToBeforeCheckpoint(workspace, hash)
-
-    expect(result).toMatchObject({ ok: true, changedFiles: 1, parentHash: null })
-    expect(await fs.readFile(join(workspace, 'agent.txt'), 'utf8')).toBe('before\n')
-    expect(await fs.readFile(join(workspace, 'manual-after.txt'), 'utf8')).toBe('keep me\n')
   })
 
   it('blocks the entire restore when an affected file changed later', async () => {
@@ -165,78 +158,54 @@ describe('private SideKick workspace history', () => {
     expect(await fs.readFile(join(workspace, 'agent.txt'), 'utf8')).toBe('after\n')
   })
 
-  it(
-    'rewinds multiple project histories atomically to before their affected checkpoints',
-    async () => {
-      const secondWorkspace = join(testRoot, 'second-workspace')
-      await fs.mkdir(secondWorkspace, { recursive: true })
-      await write(join(workspace, 'state.txt'), 'before a\n')
-      await write(join(secondWorkspace, 'state.txt'), 'before b\n')
-      const firstCapture = await beginCheckpointCapture(workspace, 'group', 'run-a')
-      const secondCapture = await beginCheckpointCapture(secondWorkspace, 'group', 'run-b')
-      await write(join(workspace, 'state.txt'), 'agent a\n')
-      await write(join(secondWorkspace, 'state.txt'), 'agent b\n')
-      const first = (await createCheckpoint(workspace, 'Agent A', firstCapture))!
-      const second = (await createCheckpoint(secondWorkspace, 'Agent B', secondCapture))!
+  it('rewinds several projects together, or leaves every one untouched on a conflict', async () => {
+    const secondWorkspace = join(testRoot, 'second-workspace')
+    await fs.mkdir(secondWorkspace, { recursive: true })
+    await write(join(workspace, 'state.txt'), 'before a\n')
+    await write(join(secondWorkspace, 'state.txt'), 'before b\n')
+    const firstCapture = await beginCheckpointCapture(workspace, 'group', 'run-a')
+    const secondCapture = await beginCheckpointCapture(secondWorkspace, 'group', 'run-b')
+    await write(join(workspace, 'state.txt'), 'agent a\n')
+    await write(join(secondWorkspace, 'state.txt'), 'agent b\n')
+    const first = (await createCheckpoint(workspace, 'Agent A', firstCapture))!
+    const second = (await createCheckpoint(secondWorkspace, 'Agent B', secondCapture))!
+    await write(join(secondWorkspace, 'state.txt'), 'manual b\n')
 
-      const result = await rewindWorkspacesToBeforeCheckpoints([
+    const result = await rewindWorkspacesToBeforeCheckpoints([
+      { workspaceRoot: workspace, checkpointHash: first.hash },
+      { workspaceRoot: secondWorkspace, checkpointHash: second.hash }
+    ])
+
+    expect(result).toMatchObject({
+      ok: false,
+      conflicts: [
+        {
+          workspaceRoot: secondWorkspace,
+          path: 'state.txt',
+          reason: 'changed-after'
+        }
+      ]
+    })
+    expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('agent a\n')
+    expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('manual b\n')
+
+    // Neither timeline moved, so once the conflict is gone both rewind together.
+    await write(join(secondWorkspace, 'state.txt'), 'agent b\n')
+    expect(
+      await rewindWorkspacesToBeforeCheckpoints([
         { workspaceRoot: workspace, checkpointHash: first.hash },
         { workspaceRoot: secondWorkspace, checkpointHash: second.hash }
       ])
-
-      expect(result.ok).toBe(true)
-      expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('before a\n')
-      expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('before b\n')
-      await expect(rewindToBeforeCheckpoint(workspace, first.hash)).rejects.toThrow(
-        'History point not found'
-      )
-      await expect(rewindToBeforeCheckpoint(secondWorkspace, second.hash)).rejects.toThrow(
-        'History point not found'
-      )
-    },
-    GIT_INTEGRATION_TIMEOUT_MS
-  )
-
-  it(
-    'leaves every project untouched when any coordinated rewind has a conflict',
-    async () => {
-      const secondWorkspace = join(testRoot, 'second-workspace')
-      await fs.mkdir(secondWorkspace, { recursive: true })
-      await write(join(workspace, 'state.txt'), 'before a\n')
-      await write(join(secondWorkspace, 'state.txt'), 'before b\n')
-      const firstCapture = await beginCheckpointCapture(workspace, 'group', 'run-a')
-      const secondCapture = await beginCheckpointCapture(secondWorkspace, 'group', 'run-b')
-      await write(join(workspace, 'state.txt'), 'agent a\n')
-      await write(join(secondWorkspace, 'state.txt'), 'agent b\n')
-      const first = (await createCheckpoint(workspace, 'Agent A', firstCapture))!
-      const second = (await createCheckpoint(secondWorkspace, 'Agent B', secondCapture))!
-      await write(join(secondWorkspace, 'state.txt'), 'manual b\n')
-
-      const result = await rewindWorkspacesToBeforeCheckpoints([
-        { workspaceRoot: workspace, checkpointHash: first.hash },
-        { workspaceRoot: secondWorkspace, checkpointHash: second.hash }
-      ])
-
-      expect(result).toMatchObject({
-        ok: false,
-        conflicts: [
-          {
-            workspaceRoot: secondWorkspace,
-            path: 'state.txt',
-            reason: 'changed-after'
-          }
-        ]
-      })
-      expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('agent a\n')
-      expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('manual b\n')
-      // Neither timeline moved, so each checkpoint can still be rewound on its own.
-      expect(await rewindToBeforeCheckpoint(workspace, first.hash)).toMatchObject({ ok: true })
-      expect(await rewindToBeforeCheckpoint(secondWorkspace, second.hash)).toMatchObject({
-        ok: false
-      })
-    },
-    GIT_INTEGRATION_TIMEOUT_MS
-  )
+    ).toMatchObject({ ok: true })
+    expect(await fs.readFile(join(workspace, 'state.txt'), 'utf8')).toBe('before a\n')
+    expect(await fs.readFile(join(secondWorkspace, 'state.txt'), 'utf8')).toBe('before b\n')
+    await expect(rewindToBeforeCheckpoint(workspace, first.hash)).rejects.toThrow(
+      'History point not found'
+    )
+    await expect(rewindToBeforeCheckpoint(secondWorkspace, second.hash)).rejects.toThrow(
+      'History point not found'
+    )
+  })
 
   it('migrates the obsolete in-project store without deleting project rules', async () => {
     const legacy = join(workspace, '.sidekick', 'checkpoints.git')

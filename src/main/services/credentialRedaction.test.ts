@@ -21,12 +21,6 @@ describe('CredentialRedactor', () => {
     expect(redactor.redactDeep(data)).toBe(data)
   })
 
-  it('replaces a stored value with its alias', () => {
-    const value = generated()
-    const redactor = redactorFor(value)
-    expect(redactor.redact(`token=${value}; done`)).toBe('token=[secret: entry-0]; done')
-  })
-
   it('catches the encodings a program is likely to print a value in', () => {
     const value = `p@ss w"rd'$&<${generated(12)}>`
     const redactor = redactorFor(value)

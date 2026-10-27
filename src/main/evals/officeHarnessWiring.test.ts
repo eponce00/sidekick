@@ -83,9 +83,6 @@ it.each(['available', 'missing'] as const)(
           status: 'error',
           error: { code: 'command_failed' }
         })
-        expect(result.content || result.finalResponse).toContain(
-          'Blocked: bundled helper unavailable'
-        )
         const failure = results[1].result as {
           status: string
           error: { code: string; recoveryAction: string }

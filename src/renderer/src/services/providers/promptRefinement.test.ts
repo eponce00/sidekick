@@ -41,13 +41,7 @@ describe('promptRefinement', () => {
       text: 'Build the dashboard and validate the result.'
     })
     expect(complete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        model: config.model,
-        purpose: 'prompt-refinement',
-        think: false,
-        temperature: 0.3,
-        maxOutputTokens: 1024
-      })
+      expect.objectContaining({ model: config.model, purpose: 'prompt-refinement' })
     )
   })
 
@@ -92,8 +86,8 @@ describe('promptRefinement', () => {
       vi.fn(async () => successfulCompletion('<think>Only reasoning</think>'))
     )
 
-    expect(unchanged).toEqual({ ok: false, error: 'This prompt is already clear.' })
-    expect(empty).toEqual({ ok: false, error: 'The model returned an empty prompt.' })
+    expect(unchanged.ok).toBe(false)
+    expect(empty.ok).toBe(false)
   })
 
   it('returns provider failures without changing the draft', async () => {

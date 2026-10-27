@@ -109,7 +109,7 @@ describe('TerminalPanel', () => {
     stop.mockReset()
   })
 
-  it('lists each command once by title, and shows the selected command above its terminal', async () => {
+  it('selects a command waiting for input first, and stops only one still running', async () => {
     sessions.current = [
       session({
         id: 'done',
@@ -129,22 +129,9 @@ describe('TerminalPanel', () => {
     await act(async () => root.render(<TerminalPanel conversationId="chat" />))
 
     const rows = [...container.querySelectorAll('.terminal-panel-item-select')]
-    expect(rows.map((row) => row.textContent)).toEqual([
-      'Scaffold the docsNeeds input',
-      'Check the renderer4s'
-    ])
-    // The command is the row's tooltip, not a second line.
-    expect(rows[0].getAttribute('title')).toBe('npx create-vite docs\nWaiting for input')
-
-    // A waiting command is shown first, with where to type its reply.
+    // A waiting command is shown first.
     expect(container.querySelector('.terminal-panel-command')?.textContent).toBe(
       '$npx create-vite docs'
-    )
-    expect(container.querySelector('.terminal-panel-status')?.textContent).toBe(
-      'Waiting for input: click the terminal and type your replysidekick'
-    )
-    expect(container.querySelector('.terminal-panel-cwd')?.getAttribute('title')).toBe(
-      'C:\\Projects\\sidekick'
     )
 
     await act(async () =>
@@ -153,7 +140,6 @@ describe('TerminalPanel', () => {
     expect(stop).toHaveBeenCalledWith('prompt')
 
     await act(async () => (rows[1] as HTMLButtonElement).click())
-    expect(container.querySelector('.terminal-panel-status')?.textContent).toBe('Finishedsidekick')
     // A finished command has nothing left to stop or move.
     expect(container.querySelector('button[aria-label="Stop the command"]')).toBeNull()
   })

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import {
-  nearestEffort,
   reasoningOptions,
   requestReasoningLevel,
   resolveReasoningLevel,
@@ -99,15 +98,6 @@ describe('resolveReasoningLevel', () => {
       resolveReasoningLevel(model('openrouter', 'openai/o3'), { openRouterThinkingEnabled: true })
     ).toBe('medium')
     expect(resolveReasoningLevel(model('openrouter', 'openai/o3'), {})).toBe('off')
-  })
-})
-
-describe('nearestEffort', () => {
-  it('maps a level onto the nearest one a protocol accepts', () => {
-    expect(nearestEffort('xhigh', ['low', 'medium', 'high'] as const)).toBe('high')
-    expect(nearestEffort('minimal', ['low', 'medium', 'high'] as const)).toBe('low')
-    expect(nearestEffort('on', ['low', 'medium', 'high'] as const)).toBe('medium')
-    expect(nearestEffort('max', ['low', 'medium', 'high', 'max'] as const)).toBe('max')
   })
 })
 

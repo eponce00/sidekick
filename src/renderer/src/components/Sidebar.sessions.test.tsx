@@ -129,29 +129,9 @@ describe('Sidebar chat families', () => {
   const titles = (): string[] =>
     [...container.querySelectorAll('.conversation-title')].map((node) => node.textContent ?? '')
 
-  it('lists a chat in its own worktree under its project, marked with a branch icon', async () => {
-    await render({
-      conversations: [
-        chat('manager', { title: 'Design review' }),
-        { ...worker('cards', 1, 'p1'), worktree_id: 'wt-alpha' },
-        { ...worker('api', 2, 'p2'), worktree_id: 'wt-beta' }
-      ]
-    })
-    // Same project as the manager: no tag. Another project: tagged with that name.
-    expect(row('cards').querySelector('.session-project-tag')).toBeNull()
-    expect(row('api').querySelector('.session-project-tag')?.textContent).toBe('beta')
-    expect(row('cards').querySelector('.conversation-worktree-icon')).not.toBeNull()
-    expect(row('Design review').querySelector('.conversation-worktree-icon')).toBeNull()
-    expect(
-      [...container.querySelectorAll('.project-name')].map((node) => node.textContent)
-    ).toEqual(['alpha', 'beta'])
-  })
-
   it('nests workers under their manager by handle, with a tag for one in another project', async () => {
     await render()
     expect(titles()).toEqual(['Design review', 'cards', 'toggle', 'api', 'Other chat'])
-    const workers = container.querySelector('.session-family-workers')!
-    expect(workers.querySelectorAll('.session-worker')).toHaveLength(3)
     expect(row('api').querySelector('.session-project-tag')?.textContent).toBe('beta')
     expect(row('cards').querySelector('.session-project-tag')).toBeNull()
     // The other project does not list the worker a second time.

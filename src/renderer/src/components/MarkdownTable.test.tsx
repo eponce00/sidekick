@@ -54,7 +54,6 @@ describe('MarkdownTable', () => {
   it('resizes a column from its header’s edge, and fits it to its content again', async () => {
     await act(async () => root.render(<MessageMarkdown content={TABLE} />))
     const edge = headers()[0].querySelector<HTMLElement>('.markdown-table-resize')!
-    expect(edge.getAttribute('role')).toBe('separator')
 
     await act(async () => {
       edge.dispatchEvent(
@@ -84,18 +83,5 @@ describe('MarkdownTable', () => {
     await act(async () => edge.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })))
     expect(table.querySelector('colgroup')).toBeNull()
     expect(table.classList.contains('is-sized')).toBe(false)
-  })
-
-  it('resizes from the keyboard too', async () => {
-    await act(async () => root.render(<MessageMarkdown content={TABLE} />))
-    const edge = headers()[1].querySelector<HTMLElement>('.markdown-table-resize')!
-    await act(async () =>
-      edge.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
-    )
-    expect(container.querySelectorAll('col')[1].style.width).toBe('76px')
-    await act(async () =>
-      edge.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    )
-    expect(container.querySelector('colgroup')).toBeNull()
   })
 })

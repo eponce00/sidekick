@@ -25,15 +25,7 @@ describe('decideConversationTitleBackfill', () => {
     expect(
       decideConversationTitleBackfill(candidate('The user wants me to create a 2-5', 'generated'))
     ).toBe('generate')
-  })
-
-  it('preserves useful generated titles across title algorithm upgrades', () => {
-    expect(
-      decideConversationTitleBackfill(candidate('Replace image and add lightbox', 'generated'))
-    ).toBe('preserve')
-  })
-
-  it('regenerates legacy titles that exactly match the deterministic fallback', () => {
+    // A legacy title equal to the deterministic fallback was never chosen by anyone.
     expect(
       decideConversationTitleBackfill(
         candidate('Explain how distributed queues preserve message ordering', 'legacy')
@@ -41,7 +33,10 @@ describe('decideConversationTitleBackfill', () => {
     ).toBe('generate')
   })
 
-  it('preserves ambiguous legacy titles instead of overwriting possible manual names', () => {
+  it('preserves useful generated titles and legacy titles that may be manual names', () => {
+    expect(
+      decideConversationTitleBackfill(candidate('Replace image and add lightbox', 'generated'))
+    ).toBe('preserve')
     expect(decideConversationTitleBackfill(candidate('Queue research notes', 'legacy'))).toBe(
       'preserve'
     )

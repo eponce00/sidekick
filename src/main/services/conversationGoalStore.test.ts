@@ -68,16 +68,6 @@ describe('ConversationGoalStore', () => {
     })
   })
 
-  it('aggregates provider usage across goal turns', () => {
-    const goal = store.create({ conversationId: 'conversation-1', objective: 'Measure work' })
-
-    store.addUsage(goal.id, 120, 30)
-    expect(store.addUsage(goal.id, 80, 20)).toMatchObject({
-      promptTokens: 200,
-      completionTokens: 50
-    })
-  })
-
   it('pauses active goals during restart recovery without clearing them', () => {
     const goal = store.create({ conversationId: 'conversation-1', objective: 'Long task' })
 

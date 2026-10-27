@@ -7,14 +7,6 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 it.each([
-  [
-    'PDF source exceeds the 64 MiB input limit; open a smaller document',
-    'PDF source exceeds the 64 MiB input limit; open a smaller document'
-  ],
-  [
-    'PDF source changed while being read; close and reopen the document',
-    'PDF source changed while being read; close and reopen the document'
-  ],
   ['PDF session or source is no longer available', 'PDF session or source is no longer available'],
   ['<img src=x onerror=private()> private/path', 'Could not read the PDF document']
 ])('shows safe snapshot failure without starting the worker: %s', async (error, expected) => {

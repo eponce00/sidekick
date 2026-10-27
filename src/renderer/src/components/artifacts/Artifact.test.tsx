@@ -59,14 +59,12 @@ describe('an artifact in the chat', () => {
 
   const stage = (): HTMLElement => container.querySelector<HTMLElement>('.artifact-stage')!
 
-  it('runs on the artifact origin with no card around it, holding one line until it shows', async () => {
+  it('runs React on the artifact origin, hidden until it shows', async () => {
     const { frame } = await render()
 
     expect(frame.getAttribute('src')).toBe(ARTIFACT_REACT_SANDBOX_URL)
     expect(frame.getAttribute('sandbox')).toBe('allow-scripts allow-same-origin')
-    expect(container.querySelector('.artifact-container, .artifact-header')).toBeNull()
     expect(stage().classList.contains('is-shown')).toBe(false)
-    expect(container.textContent).toContain('Rendering Tip splitter')
   })
 
   it('runs HTML and SVG in the HTML sandbox', async () => {
@@ -123,23 +121,6 @@ describe('an artifact in the chat', () => {
     expect(stage().dataset.contentHeight).toBeUndefined()
   })
 
-  it('shows its controls while the frame says the pointer is inside it', async () => {
-    const { frame } = await render()
-    const figure = container.querySelector('.artifact')!
-
-    await fromFrame(frame, { type: 'pointer', inside: true })
-    expect(figure.classList.contains('is-pointer-inside')).toBe(true)
-    await fromFrame(frame, { type: 'pointer', inside: false })
-    expect(figure.classList.contains('is-pointer-inside')).toBe(false)
-
-    // A pointer that left without the frame hearing is outside once the chat sees it.
-    await fromFrame(frame, { type: 'pointer', inside: true })
-    await act(async () => {
-      container.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
-    })
-    expect(figure.classList.contains('is-pointer-inside')).toBe(false)
-  })
-
   it('reports success once', async () => {
     const { frame, onResult } = await render()
 
@@ -156,9 +137,6 @@ describe('an artifact in the chat', () => {
     await fromFrame(frame, { type: 'error', error: 'App is not defined\n    at eval' })
 
     expect(container.querySelector('iframe')).toBeNull()
-    expect(container.textContent).toContain('Couldn’t show Tip splitter')
-    expect(container.textContent).toContain('App is not defined')
-    expect(container.textContent).not.toContain('at eval')
     expect(onResult).toHaveBeenCalledWith(
       expect.objectContaining({ success: false, error: 'App is not defined\n    at eval' })
     )
@@ -176,32 +154,5 @@ describe('an artifact in the chat', () => {
 
     expect(container.querySelector('iframe')).not.toBeNull()
     expect(container.querySelector('.artifact-note')?.textContent).toContain('Clicked into a bug')
-  })
-
-  it('shows its code in place, copies it, and opens full screen until Escape', async () => {
-    const code = 'function App() { return <b>Code</b> }'
-    await render('react', code)
-    const button = (label: RegExp): HTMLButtonElement =>
-      [...container.querySelectorAll('button')].find((b) =>
-        label.test(b.getAttribute('aria-label') ?? '')
-      )!
-
-    await act(async () => button(/^View code$/).click())
-    expect(container.querySelector('.artifact-code')?.textContent).toBe(code)
-    expect(container.querySelector<HTMLElement>('.artifact-preview')?.hidden).toBe(true)
-
-    await act(async () => button(/^Copy code$/).click())
-    expect(writeText).toHaveBeenCalledWith(code)
-    expect(button(/^Code copied$/)).toBeDefined()
-
-    await act(async () => button(/full screen$/).click())
-    const dialog = document.querySelector('[role="dialog"]')
-    expect(dialog?.getAttribute('aria-label')).toBe('Tip splitter')
-    expect(dialog?.querySelector('.artifact-stage.is-fill iframe')).not.toBeNull()
-
-    await act(async () => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
   })
 })

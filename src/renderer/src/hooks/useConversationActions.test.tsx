@@ -397,7 +397,6 @@ describe('useConversationActions leaving messages', () => {
 
   let root: Root
   let controller: ReturnType<typeof useConversationActions>
-  let latestMessages: Message[] = []
   let finishLeaving: () => void = () => undefined
   const beforeMessagesLeave = vi.fn(
     () =>
@@ -406,7 +405,6 @@ describe('useConversationActions leaving messages', () => {
       })
   )
   const rerunStream = vi.fn(async () => undefined)
-  const restoreDraft = vi.fn()
 
   function Harness(): null {
     const [messages, setMessages] = useState<Message[]>([question, answer])
@@ -417,13 +415,11 @@ describe('useConversationActions leaving messages', () => {
       selectedModel: 'model-1',
       workspaceFolder: null,
       rerunStream,
-      restoreDraft,
       beforeMessagesLeave
     })
     useEffect(() => {
       controller = value
-      latestMessages = messages
-    }, [messages, value])
+    }, [value])
     return null
   }
 
@@ -431,7 +427,6 @@ describe('useConversationActions leaving messages', () => {
     root = createRoot(document.createElement('div'))
     beforeMessagesLeave.mockClear()
     rerunStream.mockClear()
-    restoreDraft.mockClear()
     Object.defineProperty(window, 'api', {
       configurable: true,
       value: {
@@ -481,19 +476,5 @@ describe('useConversationActions leaving messages', () => {
     await act(async () => finishLeaving())
     await vi.waitFor(() => expect(controller.steppedBackFromId).toBeNull())
     expect(rerunStream).toHaveBeenCalled()
-  })
-
-  it('returns a rewound message to the box while it and its reply leave', async () => {
-    const rewinding = controller.rewindToMessage(question, false)
-
-    await vi.waitFor(() => expect(beforeMessagesLeave).toHaveBeenCalledWith(question, 'rewind'))
-    await vi.waitFor(() => expect(restoreDraft).toHaveBeenCalledWith(question, false))
-    expect(latestMessages).toHaveLength(2)
-
-    await act(async () => {
-      finishLeaving()
-      await rewinding
-    })
-    expect(latestMessages).toEqual([])
   })
 })

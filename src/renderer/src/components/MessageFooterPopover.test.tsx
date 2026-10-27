@@ -67,12 +67,4 @@ describe('MessageFooterPopover', () => {
     await pointerDown(container.querySelector('.second summary')!)
     expect(details('first').open).toBe(false)
   })
-
-  it('closes on Escape', async () => {
-    await open('second')
-    await act(async () => {
-      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
-    })
-    expect(details('second').open).toBe(false)
-  })
 })

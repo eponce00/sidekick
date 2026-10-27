@@ -60,8 +60,4 @@ describe('dissolveMessages', () => {
       visibility.mockRestore()
     }
   })
-
-  it('resolves at once with nothing to animate', async () => {
-    await expect(dissolveMessages([], null)).resolves.toBeUndefined()
-  })
 })

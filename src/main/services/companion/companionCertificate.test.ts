@@ -27,7 +27,6 @@ describe('createCompanionCertificate', () => {
     expect(parsed.checkIP('192.168.1.109')).toBeUndefined()
     expect(parsed.ca).toBe(false)
     expect(parsed.keyUsage).toEqual(['1.3.6.1.5.5.7.3.1'])
-    expect(parsed.subject).toBe('O=SideKick\nCN=SideKick on 192.168.1.108')
     expect(parsed.verify(parsed.publicKey)).toBe(true)
     expect(parsed.checkPrivateKey(createPrivateKey(key))).toBe(true)
     expect(Date.parse(parsed.validFrom)).toBe(NOW - DAY_MS)
@@ -58,17 +57,11 @@ describe('createCompanionCertificate', () => {
 describe('certificateServes', () => {
   const { cert } = createCompanionCertificate('172.16.4.20', NOW)
 
-  it('keeps a certificate for its own address until a month before it ends', () => {
+  it('keeps a certificate for its own address until a month before it ends, and nothing else', () => {
     expect(certificateServes(cert, '172.16.4.20', NOW)).toBe(true)
     expect(certificateServes(cert, '172.16.4.20', NOW + 366 * DAY_MS)).toBe(true)
     expect(certificateServes(cert, '172.16.4.20', NOW + 368 * DAY_MS)).toBe(false)
-  })
-
-  it('replaces a certificate when the computer moves to another address', () => {
     expect(certificateServes(cert, '172.16.4.21', NOW)).toBe(false)
-  })
-
-  it('replaces anything that is not a certificate', () => {
     expect(certificateServes('not a certificate', '172.16.4.20', NOW)).toBe(false)
   })
 })

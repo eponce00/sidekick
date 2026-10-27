@@ -458,7 +458,6 @@ describe('http_request', () => {
   })
 
   it('reports a failed request by its message alone', async () => {
-    const { call } = setup()
     const failing = vi.fn<HttpSend>(async () => {
       const error = new Error('connect ETIMEDOUT') as Error & { config?: unknown }
       error.config = { headers: { Authorization: `Bearer ${SECRET}` } }
@@ -475,6 +474,5 @@ describe('http_request', () => {
       context: { runId: 'run', signal: new AbortController().signal }
     })
     expect(result.error?.message).toBe('The request failed: connect ETIMEDOUT')
-    expect(call).toBeDefined()
   })
 })

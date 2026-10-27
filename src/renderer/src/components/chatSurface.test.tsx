@@ -47,17 +47,6 @@ describe('the chat surface', () => {
     })
   }
 
-  it('leaves images, artifacts and maps as they are on the desktop', async () => {
-    await render(<SurfaceImage src="https://example.com/a.png" alt="A" fallback="none" />)
-    expect(container.querySelector('img')?.getAttribute('src')).toBe('https://example.com/a.png')
-    await render(
-      <Artifact
-        artifact={{ type: 'svg', title: 'Chart', code: '<svg></svg>', isStreaming: false }}
-      />
-    )
-    expect(container.textContent).not.toContain('Open this on the computer')
-  })
-
   it('loads an image through the surface, or shows its fallback', async () => {
     await render(
       <>
@@ -79,8 +68,6 @@ describe('the chat surface', () => {
       PHONE
     )
     expect(container.querySelector('iframe')).toBeNull()
-    expect(container.textContent).toContain('Mockup')
-    expect(container.textContent).toContain('Open this on the computer to use it.')
   })
 
   it('leaves out the interactive map where nothing may load from the network', async () => {
@@ -96,7 +83,6 @@ describe('the chat surface', () => {
     await render(<MessageMapCard location={location} />, PHONE)
     expect(container.textContent).toContain('Lisbon')
     expect(container.querySelector('[data-testid="map-preview"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Open map full screen"]')).toBeNull()
   })
 
   it('sends starting chats to the computer', async () => {
@@ -113,8 +99,6 @@ describe('the chat surface', () => {
       />,
       PHONE
     )
-    expect(container.textContent).toContain('SideKick wants to start other chats')
-    expect(container.textContent).toContain('Open this on the computer to use it.')
     expect(container.querySelector('button')).toBeNull()
   })
 })

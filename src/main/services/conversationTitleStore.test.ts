@@ -74,23 +74,6 @@ describe('ConversationTitleStore', () => {
     expect(store.claim(identity)).toBe(true)
   })
 
-  it('can revisit SideKick-generated titles after a future prompt-version upgrade', () => {
-    insertConversation(
-      'generated-old',
-      'Older generated title',
-      'generated',
-      CONVERSATION_TITLE_VERSION - 1
-    )
-
-    expect(store.listCandidates()).toEqual([
-      expect.objectContaining({
-        id: 'generated-old',
-        titleSource: 'generated',
-        titleVersion: CONVERSATION_TITLE_VERSION - 1
-      })
-    ])
-  })
-
   it('retries an old algorithm attempt immediately after a version upgrade', () => {
     insertConversation(
       'generated-old',

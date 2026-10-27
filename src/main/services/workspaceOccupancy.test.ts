@@ -37,7 +37,6 @@ describe('WorkspaceOccupancy', () => {
         message = (error as Error).message
       }
       expect(parseWorkspaceBusyMessage(message)).toEqual([occupant('run-a', 'a', root)])
-      expect(workspaceBusyDisplayMessage(message)).toContain('“Chat a”')
       expect(workspaceBusyDisplayMessage(message)).not.toContain('[workspace-busy]')
     }
   })

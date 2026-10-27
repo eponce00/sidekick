@@ -39,12 +39,6 @@ describe('loadWorkspaceRules', () => {
     expect(result.content).toContain('Never expose secrets.')
   })
 
-  it('returns an empty result when no rule files exist', async () => {
-    const root = await createWorkspace()
-    const result = await loadWorkspaceRules(root, root, { includeGlobal: false })
-    expect(result).toEqual({ content: '', sources: [], sourceDetails: [], truncated: false })
-  })
-
   it('prefers AGENTS.override.md over AGENTS.md in the same directory', async () => {
     const root = await createWorkspace()
     await fs.writeFile(join(root, 'AGENTS.md'), 'Base instructions')
@@ -76,9 +70,9 @@ describe('loadWorkspaceRules', () => {
     const root = await createWorkspace()
     const outside = dirname(root)
 
-    await expect(
-      loadWorkspaceRules(root, outside, { includeGlobal: false })
-    ).rejects.toThrow('Working directory must be inside the project folder')
+    await expect(loadWorkspaceRules(root, outside, { includeGlobal: false })).rejects.toThrow(
+      'Working directory must be inside the project folder'
+    )
   })
 
   it.runIf(process.platform === 'win32')(

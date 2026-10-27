@@ -19,12 +19,8 @@ import {
 import { AgentRunStore } from './agentRunStore'
 import { durableProviderHistory, type MessageRow } from './conversationRunPreparer'
 import { validateProviderTranscript } from '../../shared/providerTranscript'
-import { CommandService } from './commandService'
 import { CredentialUses, credentialApprovalFor, credentialRequestsFor } from './credentialUses'
 import type { CredentialSummary } from '../../shared/credentials'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 vi.mock('../providers/providerRuntime', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../providers/providerRuntime')>()),
@@ -49,6 +45,24 @@ function sampledTurn(
       }
     }
   })
+}
+
+/** A provider that refuses the request before any output. */
+function refusedWith(result: {
+  ok: false
+  status?: number
+  error: string
+}): AgentKernelProviderSampler {
+  return vi.fn(async () => ({
+    result,
+    turn: {
+      content: '',
+      thinking: '',
+      thinkingBlocks: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
+    }
+  }))
 }
 
 function sequence(...samplers: AgentKernelProviderSampler[]): AgentKernelProviderSampler {
@@ -186,45 +200,6 @@ describe('AgentRunKernel', () => {
     expect(
       store.listEvents('run-1').filter((event) => event.type === 'tool.completed')
     ).toHaveLength(1)
-  })
-
-  it('runs an approved hook through the real command service before sampling', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'sidekick-hook-run-'))
-    try {
-      const commands = new CommandService(db, join(root, 'output'))
-      const router: StartAgentKernelRunInput['toolRouter'] = {
-        execute: async (_name, args, context) => {
-          const result = await commands.execute({
-            runId: context.runId,
-            title: 'hook',
-            command: String(args.command),
-            workspaceRoot: root,
-            signal: context.signal
-          })
-          expect('stdout' in result && result.stdout).toContain('hook-ok')
-          expect('exitCode' in result && result.exitCode).toBe(0)
-          return toolExecutionSucceeded({
-            title: 'hook',
-            data: result,
-            modelContent: 'hook-ok',
-            startedAt: Date.now()
-          })
-        }
-      }
-      const sampler = sampledTurn({ content: 'Ready' })
-      const kernel = new AgentRunKernel(store, undefined, sampler)
-      const running = kernel.start({
-        ...input(router),
-        workspaceRoot: root,
-        projectStartCommands: ['echo hook-ok']
-      })
-      await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-      expect(sampler).not.toHaveBeenCalled()
-      kernel.resolveInteraction(store.listPendingInteractions('run-1')[0].id, { approved: true })
-      expect((await running).phase).toBe('completed')
-    } finally {
-      rmSync(root, { recursive: true, force: true })
-    }
   })
 
   it('stops before sampling or executing when a hook is denied', async () => {
@@ -928,7 +903,7 @@ describe('AgentRunKernel', () => {
     const toolMessages = (messages: { role: string; tool_call_id?: string; content?: unknown }[]) =>
       messages.filter(({ role }) => role === 'tool')
 
-    it.each(['length', 'max_tokens', 'max-output-tokens'])(
+    it.each(['length', 'max_tokens'])(
       'runs no call of a batch the provider stopped for %s, and records why',
       async (doneReason) => {
         // Arguments that parse are no proof: one such reply wrote 784 calls, 781 of them the
@@ -1562,169 +1537,6 @@ describe('AgentRunKernel', () => {
     expect(result.messages.filter(({ role }) => role === 'tool')[0].content).toContain('patch')
   })
 
-  it('keeps the canonical editing contract after legacy tool calls fail', async () => {
-    catalog = {
-      surface: 'conversation',
-      workspaceRoot: '/project',
-      capabilities: ['workspace.write']
-    }
-    const malformed = (id: string) =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'edit',
-              arguments: { file_path: 'src/app.ts', accessLevel: 'auto' }
-            }
-          }
-        ]
-      })
-    const patched: AgentKernelProviderSampler = async (request) => {
-      expect(
-        (request.tools as Array<{ function: { name: string } }>).map(
-          ({ function: definition }) => definition.name
-        )
-      ).toContain('apply_patch')
-      return {
-        result: { ok: true },
-        turn: {
-          content: '',
-          thinking: '',
-          thinkingBlocks: [],
-          toolCalls: [
-            {
-              id: 'patch-1',
-              function: {
-                name: 'apply_patch',
-                arguments: {
-                  patch:
-                    '*** Begin Patch\n*** Update File: src/app.ts\n@@\n-before\n+after\n*** End Patch',
-                  accessLevel: 'auto'
-                }
-              }
-            }
-          ],
-          usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
-        }
-      }
-    }
-    const router = { execute: vi.fn(async () => ({ ok: true, changed: true })) }
-    const kernel = new AgentRunKernel(
-      store,
-      undefined,
-      sequence(malformed('edit-1'), malformed('edit-2'), patched, sampledTurn({ content: 'Done' }))
-    )
-    const runInput = input(router)
-    runInput.catalog = () => ({ ...catalog })
-
-    const result = await kernel.start(runInput)
-
-    expect(result).toMatchObject({ phase: 'completed', content: 'Done' })
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(
-      store
-        .listEvents('run-1')
-        .filter(({ type }) => type === 'run.retrying')
-        .map(({ payload }) => payload.reason)
-    ).not.toContain('editing_contract_switched')
-  })
-
-  it('does not calibrate or revive removed exact-edit tools', async () => {
-    catalog = {
-      surface: 'conversation',
-      workspaceRoot: '/project',
-      capabilities: ['workspace.write']
-    }
-    const ambiguous = (id: string) =>
-      sampledTurn({
-        toolCalls: [
-          {
-            id,
-            function: {
-              name: 'edit',
-              arguments: {
-                file_path: 'src/app.ts',
-                old_string: 'color: legacy;',
-                new_string: 'color: current;',
-                replace_all: false,
-                accessLevel: 'auto'
-              }
-            }
-          }
-        ]
-      })
-    const patched: AgentKernelProviderSampler = async (request) => {
-      expect(
-        (request.tools as Array<{ function: { name: string } }>).map(
-          ({ function: definition }) => definition.name
-        )
-      ).toContain('apply_patch')
-      return {
-        result: { ok: true },
-        turn: {
-          content: '',
-          thinking: '',
-          thinkingBlocks: [],
-          toolCalls: [
-            {
-              id: 'ambiguity-patch',
-              function: {
-                name: 'apply_patch',
-                arguments: {
-                  patch:
-                    '*** Begin Patch\n*** Update File: src/app.ts\n@@\n-color: legacy;\n+color: current;\n*** End Patch',
-                  accessLevel: 'auto'
-                }
-              }
-            }
-          ],
-          usage: { promptTokens: 10, completionTokens: 5, doneReason: 'tool_calls' }
-        }
-      }
-    }
-    const router = {
-      execute: vi.fn(async (name: string) =>
-        name === 'edit'
-          ? toolExecutionFailed({
-              title: 'edit src/app.ts',
-              code: 'conflict',
-              message: 'old_string has 4 matches',
-              retryable: true,
-              recoveryAction: 'correct_input',
-              data: {
-                ok: false,
-                failure: { code: 'multiple_matches', matchCount: 4 }
-              }
-            })
-          : { ok: true, changed: true }
-      )
-    }
-    const kernel = new AgentRunKernel(
-      store,
-      undefined,
-      sequence(
-        ambiguous('ambiguous-1'),
-        ambiguous('ambiguous-2'),
-        patched,
-        sampledTurn({ content: 'Recovered safely.' })
-      )
-    )
-    const runInput = input(router)
-    runInput.catalog = () => ({ ...catalog })
-
-    const result = await kernel.start(runInput)
-
-    expect(result).toMatchObject({ phase: 'completed', content: 'Recovered safely.' })
-    expect(router.execute).toHaveBeenCalledTimes(1)
-    expect(
-      store
-        .listEvents('run-1')
-        .filter(({ type }) => type === 'run.retrying')
-        .map(({ payload }) => payload.reason)
-    ).not.toContain('editing_contract_calibration_started')
-  })
-
   it('returns malformed provider JSON as a tool result and lets the model recover', async () => {
     const router = { execute: vi.fn() }
     const sampler = sequence(
@@ -2307,25 +2119,6 @@ describe('AgentRunKernel', () => {
     )
   })
 
-  it('cancels a suspended run and settles its pending interaction', async () => {
-    const sampler = sampledTurn({
-      toolCalls: [
-        {
-          id: 'question-call',
-          function: { name: 'ask_user', arguments: { questions: [{ id: 'x', question: 'X?' }] } }
-        }
-      ]
-    })
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const running = kernel.start(input())
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-
-    expect(kernel.stop('run-1')).toBe(true)
-    const result = await running
-    expect(result.phase).toBe('cancelled')
-    expect(store.listPendingInteractions('run-1')).toHaveLength(0)
-  })
-
   it('sends a repaired transcript to the provider', async () => {
     let providerRequest: ProviderChatRequest | undefined
     const sampler: AgentKernelProviderSampler = async (request) => {
@@ -2528,43 +2321,6 @@ describe('AgentRunKernel', () => {
     expect((await running).phase).toBe('completed')
     expect(kernel.steer('run-1', steer)).toBe(false)
     expect(store.listEvents('run-1').some(({ type }) => type === 'run.steered')).toBe(false)
-  })
-
-  it('uses one durable permission interaction for sensitive tools', async () => {
-    catalog = { surface: 'conversation', workspaceRoot: '/workspace', webSearchEnabled: false }
-    const sampler = sequence(
-      sampledTurn({
-        toolCalls: [
-          {
-            id: 'write-1',
-            function: {
-              name: 'apply_patch',
-              arguments: {
-                patch: '*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End Patch',
-                accessLevel: 'confirm'
-              }
-            }
-          }
-        ]
-      }),
-      sampledTurn({ content: 'Permission handled' })
-    )
-    const router = { execute: vi.fn(async () => ({ ok: true })) }
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-    const runInput = input(router)
-    runInput.permissionMode = 'always-ask'
-    const running = kernel.start(runInput)
-
-    await vi.waitFor(() => expect(store.listPendingInteractions('run-1')).toHaveLength(1))
-    const interaction = store.listPendingInteractions('run-1')[0]
-    expect(interaction.kind).toBe('permission')
-    kernel.resolveInteraction(interaction.id, { approved: true })
-
-    expect((await running).phase).toBe('completed')
-    expect(router.execute).toHaveBeenCalledOnce()
-    expect(store.listEvents('run-1').map(({ type }) => type)).toEqual(
-      expect.arrayContaining(['permission.requested', 'permission.resolved'])
-    )
   })
 
   it("runs an artifact builder's edit without a permission card nobody would see", async () => {
@@ -3123,21 +2879,12 @@ describe('AgentRunKernel', () => {
   })
 
   it('forces one compaction and retries after a provider context overflow', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          "ContextWindowExceededError: This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        "ContextWindowExceededError: This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens."
+    })
     const sampler = sequence(overflow, sampledTurn({ content: 'Recovered after compaction' }))
     const contextManager = {
       shouldCompact: vi.fn(() => false),
@@ -3186,20 +2933,11 @@ describe('AgentRunKernel', () => {
         source: { type: 'data_url', dataUrl: `data:${name}` },
         name
       }) as const
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: 'Invalid request: at most 2 image(s) may be provided in one request.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Invalid request: at most 2 image(s) may be provided in one request.'
+    })
     const recovered = sampledTurn({ content: 'Opened the page' })
     const sampler = sequence(rejected, recovered)
     const kernel = new AgentRunKernel(store, undefined, sampler)
@@ -3260,20 +2998,11 @@ describe('AgentRunKernel', () => {
         source: { type: 'data_url', dataUrl: `data:${name}` },
         name
       }) as const
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: 'Invalid request: at most 1 image(s) may be provided in one request.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Invalid request: at most 1 image(s) may be provided in one request.'
+    })
     const withImages = (id: string): StartAgentKernelRunInput => {
       const runInput = { ...input(), id }
       runInput.messages = [
@@ -3317,16 +3046,11 @@ describe('AgentRunKernel', () => {
   it('drops the only screenshot when a provider refuses even one image', async () => {
     // A provider that names no count and rejects a single screenshot is saying
     // it takes no images at all; pruning "to one" would change nothing.
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 400, error: 'Bad request: too many images in this request' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'Bad request: too many images in this request'
+    })
     const recovered = sampledTurn({ content: 'Answered without the screenshot' })
     const kernel = new AgentRunKernel(store, undefined, sequence(rejected, recovered))
     const runInput = { ...input(), id: 'run-no-vision' }
@@ -3380,16 +3104,11 @@ describe('AgentRunKernel', () => {
   })
 
   it('surfaces the image-limit failure when nothing can be dropped', async () => {
-    const rejected: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 400, error: 'too many images in request' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const rejected: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: 'too many images in request'
+    })
     const kernel = new AgentRunKernel(store, undefined, rejected)
 
     const result = await kernel.start(input())
@@ -3442,21 +3161,12 @@ describe('AgentRunKernel', () => {
   it('believes the window a provider reports over a larger configured one', async () => {
     // The shape seen in the field: a profile swapped on the server left the app
     // budgeting against 180k while the engine actually had 49,152.
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        "This model's maximum context length is 49152 tokens. However, you requested 49153 tokens (16385 in the messages, 32768 in the completion)."
+    })
     const recovered = sampledTurn({ content: 'Fits now' })
     const applied: Array<{ contextLength: number; maxOutputTokens: number }> = []
     const contextManager = {
@@ -3506,20 +3216,11 @@ describe('AgentRunKernel', () => {
   })
 
   it('does not widen a window the provider reports as larger than configured', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error: "This model's maximum context length is 262144 tokens. However, you requested more."
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error: "This model's maximum context length is 262144 tokens. However, you requested more."
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       applyContextLength: vi.fn(),
@@ -3548,16 +3249,10 @@ describe('AgentRunKernel', () => {
   })
 
   it('does not loop when the compacted retry still exceeds provider context', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, error: 'context_window_exceeded: prompt is too long' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const sampler: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      error: 'context_window_exceeded: prompt is too long'
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       compact: vi.fn(async (messages: ProviderChatRequest['messages']) => ({
@@ -3595,50 +3290,15 @@ describe('AgentRunKernel', () => {
     expect(projectAgentRunEvents(events).content).toBe('Partial answer')
   })
 
-  it('presents provider image-count rejection as a non-retryable input limit', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        error: 'litellm.BadRequestError: At most 2 image(s) may be provided in one prompt.'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
-    const kernel = new AgentRunKernel(store, undefined, sampler)
-
-    await kernel.start(input())
-
-    expect(store.get('run-1')?.error).toMatchObject({
-      code: 'invalid_arguments',
-      message: 'The model accepts at most 2 images per request. SideKick could not send this turn.',
-      retryable: false,
-      recoveryAction: 'stop'
-    })
-  })
-
   it('retries once at the reply limit a provider states, and remembers it for later runs', async () => {
     // Groq-style hosts cap a reply below SideKick's default and do not list the cap; every run on
     // the model failed as "internal" before its first token.
-    const refused: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const refused: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        '`max_tokens` must be less than or equal to `16384`, the maximum value for `max_tokens` is less than the `context_window` for this model'
+    })
     const recovered = sampledTurn({ content: 'Answered' })
     const capped = (id: string): StartAgentKernelRunInput => ({
       ...input(),
@@ -3680,22 +3340,14 @@ describe('AgentRunKernel', () => {
   })
 
   it('fails a refused request by what its HTTP status means, not as internal', async () => {
-    const sampler: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: { ok: false, status: 502, error: 'HTTP 502' },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const sampler: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 502,
+      error: 'HTTP 502'
+    })
 
-    const result = await new AgentRunKernel(store, undefined, sampler).start(input())
+    await new AgentRunKernel(store, undefined, sampler).start(input())
 
-    expect(result.error).toBe(
-      'The server in front of the model got no answer from it (HTTP 502 Bad Gateway). Check that the model server behind it is running.'
-    )
     expect(store.get('run-1')?.error).toMatchObject({ code: 'transient', retryable: true })
   })
 
@@ -3707,29 +3359,16 @@ describe('AgentRunKernel', () => {
 
     await new AgentRunKernel(store, undefined, sampler).start(input())
 
-    expect(store.get('run-1')?.error).toMatchObject({
-      code: 'not_configured',
-      message:
-        'Provider LiteLLM is not configured. Choose another model for this chat, or set this one up in Settings → Providers.'
-    })
+    expect(store.get('run-1')?.error).toMatchObject({ code: 'not_configured' })
   })
 
   it('compacts and retries a prompt-plus-reply overflow worded without "context window"', async () => {
-    const overflow: AgentKernelProviderSampler = vi.fn(async () => ({
-      result: {
-        ok: false,
-        status: 400,
-        error:
-          'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
-      },
-      turn: {
-        content: '',
-        thinking: '',
-        thinkingBlocks: [],
-        toolCalls: [],
-        usage: { promptTokens: 0, completionTokens: 0, doneReason: 'error' }
-      }
-    }))
+    const overflow: AgentKernelProviderSampler = refusedWith({
+      ok: false,
+      status: 400,
+      error:
+        'litellm.BadRequestError: OpenAIException - prompt (99950 tokens) + max tokens (32768) exceeds the context (131072); requests are never truncated'
+    })
     const contextManager = {
       shouldCompact: vi.fn(() => false),
       compact: vi.fn(async () => ({

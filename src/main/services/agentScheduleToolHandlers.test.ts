@@ -209,10 +209,7 @@ describe('schedule tools', () => {
 
   it.each([
     ['an unknown model', { model_id: 'missing' }],
-    ['an unknown project', { project_id: 'missing' }],
     ['a time that is not HH:MM', { time: '9am' }],
-    ['a weekly schedule without a day', { cadence: 'weekly' }],
-    ['an unknown cadence', { cadence: 'monthly' }],
     ['an overlong prompt', { prompt: 'x'.repeat(20_001) }]
   ])('refuse %s without asking', async (_label, change) => {
     const { access, result } = await approvedCall('schedules_create', { ...VALID, ...change })

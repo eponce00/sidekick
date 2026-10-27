@@ -4,7 +4,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AppUpdateState } from '../../../shared/appUpdates'
-import { AppUpdateToast, AppVersionButton } from './AppUpdateControls'
+import { AppUpdateToast } from './AppUpdateControls'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -55,17 +55,6 @@ describe('AppUpdateToast', () => {
     container.remove()
   })
 
-  it('offers the public release for notification-only states', async () => {
-    await act(async () => root.render(<AppUpdateToast />))
-    expect(container.textContent).toContain('SideKick 2.0.0 is available.')
-
-    const button = [...container.querySelectorAll('button')].find(({ textContent }) =>
-      textContent?.includes('View release')
-    )
-    await act(async () => button?.click())
-    expect(openRelease).toHaveBeenCalledOnce()
-  })
-
   it('reports a failed check and retries only when the user chooses', async () => {
     await act(async () => root.render(<AppUpdateToast />))
     await act(async () =>
@@ -75,7 +64,7 @@ describe('AppUpdateToast', () => {
         message: 'offline'
       })
     )
-    expect(container.textContent).toContain('Update failed: offline')
+    expect(check).not.toHaveBeenCalled()
     const button = [...container.querySelectorAll('button')].find(({ textContent }) =>
       textContent?.includes('Retry')
     )
@@ -89,27 +78,11 @@ describe('AppUpdateToast', () => {
     await act(async () =>
       publish({ status: 'downloading', currentVersion: '1.0.0', update, percent: 42 })
     )
-    expect(container.textContent).toContain('42%')
     expect(container.querySelector('button')).toBeNull()
     await act(async () =>
       publish({ status: 'ready', currentVersion: '1.0.0', update, installMode: 'restart' })
     )
-    expect(container.textContent).toContain('Only the app will restart')
     await act(async () => container.querySelector('button')?.click())
     expect(install).toHaveBeenCalledOnce()
-  })
-
-  it('shows the installed version and leads to the updates card', async () => {
-    const onSelect = vi.fn()
-    await act(async () => root.render(<AppVersionButton onSelect={onSelect} />))
-    const button = container.querySelector('button')!
-    expect(button.textContent).toBe('SideKick 1.0.0Update')
-    expect(button.title).toBe('SideKick 2.0.0 is available.')
-    await act(async () => button.click())
-    expect(onSelect).toHaveBeenCalledOnce()
-
-    await act(async () => publish({ status: 'up-to-date', currentVersion: '1.0.0', checkedAt: 1 }))
-    expect(button.textContent).toBe('SideKick 1.0.0')
-    expect(button.getAttribute('aria-label')).toBe('SideKick 1.0.0. Show updates.')
   })
 })

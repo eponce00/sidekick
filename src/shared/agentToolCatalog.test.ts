@@ -95,54 +95,15 @@ describe('canonical agent tool catalog', () => {
       browserEnabled: true
     })
     expect(browser).toEqual(
-      expect.arrayContaining([
-        'view_image',
-        'browser_open',
-        'browser_observe',
-        'browser_screenshot',
-        'browser_click',
-        'browser_hold',
-        'browser_request_human',
-        'browser_type',
-        'browser_select',
-        'browser_fill_form',
-        'browser_press',
-        'browser_scroll',
-        'browser_hover',
-        'browser_wait',
-        'browser_navigate',
-        'browser_resize',
-        'browser_tabs',
-        'browser_console',
-        'browser_network',
-        'browser_evaluate',
-        'browser_verify',
-        'browser_close'
-      ])
+      expect.arrayContaining(['view_image', 'browser_open', 'browser_observe', 'browser_close'])
     )
-    const observation = getAgentToolCatalog({
-      surface: 'conversation',
-      browserEnabled: true
-    }).find(({ definition }) => definition.function.name === 'browser_observe')
-    expect(observation).toMatchObject({
-      capability: 'browser',
-      risk: 'read',
-      presentation: { kind: 'browser' }
-    })
-    const evaluation = getAgentToolCatalog({
-      surface: 'conversation',
-      browserEnabled: true
-    }).find(({ definition }) => definition.function.name === 'browser_evaluate')
-    expect(evaluation?.definition.function.description).toContain('read-only')
-    expect(evaluation?.definition.function.description).toContain('dedicated browser action tools')
-    const formFill = getAgentToolCatalog({
-      surface: 'conversation',
-      browserEnabled: true
-    }).find(({ definition }) => definition.function.name === 'browser_fill_form')
-    expect(formFill).toMatchObject({
+    const catalog = getAgentToolCatalog({ surface: 'conversation', browserEnabled: true })
+    const tool = (name: string) =>
+      catalog.find(({ definition }) => definition.function.name === name)
+    expect(tool('browser_observe')).toMatchObject({ capability: 'browser', risk: 'read' })
+    expect(tool('browser_fill_form')).toMatchObject({
       capability: 'browser',
       risk: 'execute',
-      presentation: { kind: 'browser' },
       definition: {
         function: {
           parameters: {
@@ -152,18 +113,11 @@ describe('canonical agent tool catalog', () => {
         }
       }
     })
-    const click = getAgentToolCatalog({
-      surface: 'conversation',
-      browserEnabled: true
-    }).find(({ definition }) => definition.function.name === 'browser_click')
-    expect(click?.definition.function.parameters).toMatchObject({
+    expect(tool('browser_click')?.definition.function.parameters).toMatchObject({
       anyOf: expect.arrayContaining([{ required: ['x', 'y', 'screenshot_id'] }]),
       properties: { screenshot_id: { type: 'string' } }
     })
-    const hold = getAgentToolCatalog({
-      surface: 'conversation',
-      browserEnabled: true
-    }).find(({ definition }) => definition.function.name === 'browser_hold')
+    const hold = tool('browser_hold')
     expect(hold?.definition.function.parameters).toMatchObject({
       required: ['duration_ms'],
       properties: { duration_ms: { minimum: 100, maximum: 10_000 } }

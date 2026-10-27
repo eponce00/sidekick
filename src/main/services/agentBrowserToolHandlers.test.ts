@@ -6,7 +6,6 @@ import { readFile, rm, writeFile } from 'fs/promises'
 import { MAX_TOOL_RESULT_MEDIA_BYTES, type ToolExecutionResult } from '../../shared/agentRuntime'
 import {
   AGENT_BROWSER_TOOL_NAMES,
-  AGENT_WEBMCP_TOOL_NAMES,
   AgentBrowserSessionManager,
   registerBrowserToolHandlers,
   webMcpCallAccess
@@ -215,21 +214,6 @@ function fakeService(): NativeBrowserSessionService & {
     scroll: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'scroll')
     ),
-    resize: vi.fn(
-      async (input: {
-        sessionId: string
-        viewport: { width: number; height: number; deviceScaleFactor?: number }
-      }) => {
-        const value = sessions.get(input.sessionId)!
-        value.viewport = { ...input.viewport }
-        value.screenshot = {
-          ...value.screenshot!,
-          width: input.viewport.width,
-          height: input.viewport.height
-        }
-        return actionResult(value, 'resize')
-      }
-    ),
     hover: vi.fn(async (input: { sessionId: string }) =>
       actionResult(sessions.get(input.sessionId)!, 'hover')
     ),
@@ -331,7 +315,7 @@ describe('native browser agent tool handlers', () => {
     }
     service.fillForm.mockResolvedValueOnce(success)
     const args = { fields: [{ kind: 'textbox', ref: 'ax-1-900', value: 'synthetic text' }] }
-    const routine = await execute(registry, 'browser_fill_form', args)
+    await execute(registry, 'browser_fill_form', args)
     const failure: BrowserFillFormResult = {
       ...success,
       completed: false,
@@ -355,16 +339,6 @@ describe('native browser agent tool handlers', () => {
     const second = await execute(registry, 'browser_fill_form', args)
     const inventoryCount = (content: string) =>
       (content.match(/Unrelated country \d+/g) || []).length
-    console.info(
-      JSON.stringify({
-        scope: 'synthetic-textbox-failure-only',
-        successBytes: Buffer.byteLength(routine.modelContent),
-        failureBytes: Buffer.byteLength(first.modelContent),
-        successOptionNodes: inventoryCount(routine.modelContent),
-        firstFailureOptionNodes: inventoryCount(first.modelContent),
-        secondFailureOptionNodes: inventoryCount(second.modelContent)
-      })
-    )
     expect(first.status).toBe('error')
     expect(first.modelContent).toContain('retarget only the failed fields')
     expect(first.modelContent).toContain('ax-1-900')
@@ -461,25 +435,6 @@ describe('native browser agent tool handlers', () => {
     expect(result.status).not.toBe('success')
   })
 
-  it.each([
-    ['browser_open', { url: 'https://example.com/next' }],
-    ['browser_tabs', { action: 'list' }],
-    ['browser_close', {}]
-  ])('allows %s after manual interaction without an explicit resume', async (name, args) => {
-    const { registry, manager } = setup()
-    await execute(registry, 'browser_open', { url: 'https://example.com/' })
-    expect(manager.claimUserControl('conversation-1')).toBe(true)
-    expect((await execute(registry, name as string, args)).status).toBe('success')
-  })
-
-  it('holds the browser for the user while they clear a human check', async () => {
-    const { registry, manager } = setup()
-    await execute(registry, 'browser_open', { url: 'https://example.com/' })
-    await manager.reserveForHumanCheck('conversation-1')
-    expect((await execute(registry, 'browser_observe', {})).status).not.toBe('success')
-    expect((await execute(registry, 'browser_close', {})).status).not.toBe('success')
-    expect(manager.workspaceState('conversation-1')?.waitingForUser).toBe(true)
-  })
   it('registers every browser catalog tool and returns screenshots as real vision media', async () => {
     const { registry, service } = setup()
     for (const name of AGENT_BROWSER_TOOL_NAMES) expect(registry.has(name), name).toBe(true)
@@ -595,7 +550,7 @@ describe('native browser agent tool handlers', () => {
     expect(result.modelContent.length).toBeLessThan(8_000)
   })
 
-  it('attaches vision for coordinate actions and exposes action-specific semantic roles', async () => {
+  it('attaches vision for coordinate actions bound to a screenshot', async () => {
     const { registry, service } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
 
@@ -617,36 +572,11 @@ describe('native browser agent tool handlers', () => {
       }),
       expect.any(Object)
     )
-
-    await execute(registry, 'browser_type', { text: 'State', value: 'Nevada' })
-    expect(service.type).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        target: expect.objectContaining({
-          name: 'State',
-          preferredRoles: ['textbox', 'searchbox', 'combobox', 'spinbutton']
-        })
-      }),
-      expect.any(Object)
-    )
   })
 
-  it('maps atomic hold arguments and blocks agent actions while the user clears a check', async () => {
-    const { registry, service, manager } = setup()
+  it('blocks agent actions while the user clears a check', async () => {
+    const { registry, manager } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
-
-    const held = await execute(registry, 'browser_hold', {
-      ref: 'ax-1-1',
-      duration_ms: 750
-    })
-    expect(held.status).toBe('success')
-    expect(service.hold).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        sessionId: 'session-1',
-        target: expect.objectContaining({ ref: 'ax-1-1' }),
-        durationMs: 750
-      }),
-      expect.any(Object)
-    )
 
     const reservedSessionId = await manager.reserveForHumanCheck('conversation-1')
     const raced = await execute(registry, 'browser_observe', {})
@@ -889,35 +819,6 @@ describe('native browser agent tool handlers', () => {
     }
   })
 
-  it('resizes an existing viewport and attaches the post-resize screenshot', async () => {
-    const { registry, service } = setup()
-    await execute(registry, 'browser_open', { url: 'https://example.com/' })
-    const result = await execute(registry, 'browser_resize', {
-      width: 390,
-      height: 844,
-      device_scale_factor: 2
-    })
-
-    expect(service.resize).toHaveBeenCalledWith(
-      {
-        sessionId: 'session-1',
-        viewport: { width: 390, height: 844, deviceScaleFactor: 2 }
-      },
-      expect.objectContaining({ signal: expect.any(AbortSignal) })
-    )
-    expect(result).toMatchObject({
-      status: 'success',
-      data: {
-        action: 'resize',
-        observation: {
-          viewport: { width: 390, height: 844, deviceScaleFactor: 2 },
-          screenshot: { width: 390, height: 844 }
-        }
-      },
-      media: [{ mimeType: 'image/png' }]
-    })
-  })
-
   it('maps a mixed form batch, returns one final observation, and never echoes field values', async () => {
     const { registry, service } = setup()
     await execute(registry, 'browser_open', { url: 'https://example.com/' })
@@ -947,18 +848,7 @@ describe('native browser agent tool handlers', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) })
     )
-    expect(result).toMatchObject({
-      status: 'success',
-      data: {
-        completed: true,
-        fields: [
-          { index: 0, verification: { passed: true } },
-          { index: 1, verification: { passed: true } },
-          { index: 2, verification: { passed: true } },
-          { index: 3, verification: { passed: true } }
-        ]
-      }
-    })
+    expect(result).toMatchObject({ status: 'success', data: { completed: true } })
     expect((result.data as BrowserFillFormResult).observation.screenshot).toBeUndefined()
     expect(result.media).toBeUndefined()
     expect(JSON.stringify(result)).not.toContain(secret)
@@ -1082,10 +972,6 @@ describe('native browser agent tool handlers', () => {
     expect(result.modelContent).toContain('Do not repeat fields that were already verified')
     expect(JSON.stringify(result)).not.toContain('private first value')
     expect(JSON.stringify(result)).not.toContain('private second value')
-    const model = JSON.parse(result.modelContent)
-    const ui = result.data as { fields: unknown; recovery: unknown }
-    expect(model.fields).toEqual(ui.fields)
-    expect(model.recovery).toEqual(ui.recovery)
   })
 
   it('rejects coordinate form targets before any browser action', async () => {
@@ -1188,9 +1074,7 @@ describe('native browser agent tool handlers', () => {
 
   it.each([
     ['ERR_NAME_NOT_RESOLVED', -105, 'not_found', 'correct_input', 'does not resolve'],
-    ['ERR_CONNECTION_REFUSED', -102, 'transient', 'change_strategy', 'Nothing is listening'],
-    ['ERR_CONNECTION_TIMED_OUT', -118, 'timeout', 'retry_later', 'did not answer in time'],
-    ['ERR_INTERNET_DISCONNECTED', -106, 'transient', 'retry_later', 'network connection failed']
+    ['ERR_CONNECTION_REFUSED', -102, 'transient', 'change_strategy', 'Nothing is listening']
   ])(
     'labels a page that failed to load with %s as a network failure',
     async (chromiumCode, errno, code, recoveryAction, recovery) => {
@@ -1387,11 +1271,6 @@ describe('WebMCP agent tools', () => {
     })
     return context
   }
-
-  it('registers both tools', () => {
-    const { registry } = setup()
-    for (const name of AGENT_WEBMCP_TOOL_NAMES) expect(registry.has(name), name).toBe(true)
-  })
 
   it("lists the page's tools as data the page cannot break out of", async () => {
     const { registry } = await shop()

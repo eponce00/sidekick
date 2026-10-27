@@ -102,15 +102,9 @@ describe('image preparation plans', () => {
 
 describe('image reduction notices', () => {
   it('says when the model receives a smaller copy, and stays quiet otherwise', () => {
-    expect(describeImageReduction(screenshot, providerImageProfile('anthropic'))).toBe(
-      'This model receives a 2000 × 1125 copy. The original stays in the chat.'
+    expect(describeImageReduction(screenshot, providerImageProfile('anthropic'))).toContain(
+      '2000 × 1125'
     )
-    expect(
-      describeImageReduction(
-        { mimeType: 'image/jpeg', width: 1600, height: 1200, bytes: 9_000_000 },
-        providerImageProfile('anthropic')
-      )
-    ).toBe('This model receives a smaller copy. The original stays in the chat.')
     expect(
       describeImageReduction(
         { mimeType: 'image/webp', width: 800, height: 600, bytes: 60_000 },

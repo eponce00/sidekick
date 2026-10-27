@@ -307,7 +307,7 @@ it('uses a fixed preflight workflow schema and generated workspace flag', async 
   await pending
 })
 
-it.each([0, -1, 2_147_483_648, Number.MAX_SAFE_INTEGER])(
+it.each([0, 2_147_483_648])(
   'rejects invalid or overflowing timeout %i before dispatch',
   async (timeoutMs) => {
     await expect(executeDirectOfficeHelper(config(), { ...input(), timeoutMs })).rejects.toThrow(

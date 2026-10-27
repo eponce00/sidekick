@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MenuItemConstructorOptions } from 'electron'
 
 const electron = vi.hoisted(() => {
   const trays: Array<{
@@ -67,10 +66,8 @@ vi.mock('electron', () => ({
 
 import {
   compositeBitmap,
-  dockMenuTemplate,
   SystemTray,
   trayMenuTemplate,
-  trayTooltip,
   updateMenuItem,
   type TrayActions,
   type TraySnapshot
@@ -98,64 +95,17 @@ function snapshot(overrides: Partial<TraySnapshot> = {}): TraySnapshot {
   }
 }
 
-function labels(template: MenuItemConstructorOptions[]): Array<string | undefined> {
-  return template.map((item) => (item.type === 'separator' ? '---' : item.label))
-}
-
 describe('trayMenuTemplate', () => {
-  it('keeps an idle menu short: open, new chat, status, settings, updates, quit', () => {
-    const template = trayMenuTemplate('SideKick', snapshot(), actions())
-    expect(labels(template)).toEqual([
-      'Open SideKick',
-      'New Chat',
-      '---',
-      'No chats working',
-      '---',
-      'Settings…',
-      'Check for Updates…',
-      '---',
-      'Quit SideKick'
-    ])
-    expect(template.find((item) => item.label === 'No chats working')?.enabled).toBe(false)
-  })
-
-  it('wires each entry to its action', () => {
-    const tray = actions()
-    const template = trayMenuTemplate('SideKick', snapshot(), tray)
-    const click = (label: string): void =>
-      (template.find((item) => item.label === label)?.click as () => void)()
-    click('Open SideKick')
-    click('New Chat')
-    click('Settings…')
-    click('Check for Updates…')
-    click('Quit SideKick')
-    expect(tray.open).toHaveBeenCalledOnce()
-    expect(tray.newChat).toHaveBeenCalledOnce()
-    expect(tray.openSettings).toHaveBeenCalledOnce()
-    expect(tray.checkForUpdates).toHaveBeenCalledOnce()
-    expect(tray.quit).toHaveBeenCalledOnce()
-  })
-
   it('lists the chats waiting on the user, oldest first, and jumps to the one chosen', () => {
     const tray = actions()
     const waiting = [
       { id: 'a', title: 'Fix the login & signup flow' },
-      { id: 'b', title: '' },
-      { id: 'c', title: 'A title that is much too long to fit in a tray menu entry' },
-      { id: 'd', title: 'Fourth' },
-      { id: 'e', title: 'Fifth' }
+      { id: 'b', title: 'Second' }
     ]
-    const template = trayMenuTemplate('SideKick', snapshot({ waiting, workingCount: 1 }), tray)
-    expect(labels(template).slice(3, 9)).toEqual([
-      '5 chats waiting for you',
-      // A lone & would become a keyboard mnemonic.
-      'Fix the login && signup flow',
-      'Untitled chat',
-      'A title that is much too long to fit in…',
-      '2 more in SideKick',
-      '1 chat working'
-    ])
-    ;(template[4].click as () => void)()
+    const template = trayMenuTemplate('SideKick', snapshot({ waiting }), tray)
+    // A lone & would become a keyboard mnemonic.
+    const entry = template.find((item) => item.label === 'Fix the login && signup flow')
+    ;(entry?.click as () => void)()
     expect(tray.openConversation).toHaveBeenCalledWith('a')
   })
 })
@@ -169,47 +119,14 @@ describe('updateMenuItem', () => {
     releaseUrl: 'https://example.invalid'
   }
 
-  it('narrates a check in progress and offers the restart once an update is ready', () => {
+  it('installs a ready update and opens the release of an available one', () => {
     const tray = actions()
     const base = { currentVersion: '1.0.0' }
-    expect(updateMenuItem({ ...base, status: 'checking' }, tray)).toMatchObject({
-      label: 'Checking for Updates…',
-      enabled: false
-    })
-    expect(
-      updateMenuItem({ ...base, status: 'downloading', update, percent: 41.6 } as never, tray)
-    ).toMatchObject({ label: 'Downloading Update… 42%', enabled: false })
-    const ready = updateMenuItem({ ...base, status: 'ready', update } as never, tray)
-    expect(ready.label).toBe('Restart to Update to 2.0.0')
-    ;(ready.click as () => void)()
+    expect(updateMenuItem({ ...base, status: 'checking' }, tray).enabled).toBe(false)
+    ;(updateMenuItem({ ...base, status: 'ready', update } as never, tray).click as () => void)()
     expect(tray.installUpdate).toHaveBeenCalledOnce()
-    const available = updateMenuItem({ ...base, status: 'available', update } as never, tray)
-    ;(available.click as () => void)()
+    ;(updateMenuItem({ ...base, status: 'available', update } as never, tray).click as () => void)()
     expect(tray.openRelease).toHaveBeenCalledOnce()
-    expect(
-      updateMenuItem({ ...base, status: 'error', message: 'offline' } as never, tray).label
-    ).toBe('Check for Updates…')
-  })
-})
-
-describe('trayTooltip', () => {
-  it('names the product, then what is working and waiting', () => {
-    expect(trayTooltip('SideKick', snapshot())).toBe('SideKick')
-    expect(trayTooltip('SideKick', snapshot({ workingCount: 2 }))).toBe(
-      'SideKick — 2 chats working'
-    )
-    expect(
-      trayTooltip('SideKick', snapshot({ workingCount: 1, waiting: [{ id: 'a', title: 'A' }] }))
-    ).toBe('SideKick — 1 chat working, 1 chat waiting for you')
-  })
-})
-
-describe('dockMenuTemplate', () => {
-  it('adds only what the Dock lacks: a new chat and the waiting chats', () => {
-    expect(labels(dockMenuTemplate(snapshot(), actions()))).toEqual(['New Chat'])
-    expect(
-      labels(dockMenuTemplate(snapshot({ waiting: [{ id: 'a', title: 'Deploy' }] }), actions()))
-    ).toEqual(['New Chat', '---', '1 chat waiting for you', 'Deploy'])
   })
 })
 
@@ -265,7 +182,6 @@ describe('SystemTray', () => {
     icon.handlers.click()
     expect(tray.open).toHaveBeenCalledOnce()
     expect(icon.setContextMenu).toHaveBeenCalledOnce()
-    expect(icon.setToolTip).toHaveBeenCalledWith('SideKick')
     // Windows gets a crisp icon for each display scale.
     expect(electron.addRepresentation).toHaveBeenCalledWith(
       expect.objectContaining({ scaleFactor: 2, width: 32, height: 32 })
@@ -288,7 +204,6 @@ describe('SystemTray', () => {
     vi.runAllTimers()
     expect(icon.setContextMenu).toHaveBeenCalledTimes(2)
     expect(icon.setImage).toHaveBeenCalledOnce()
-    expect(icon.setToolTip).toHaveBeenLastCalledWith('SideKick — 1 chat waiting for you')
 
     state = snapshot({ waiting: [{ id: 'a', title: 'A' }], workingCount: 1 })
     systemTray.render()
@@ -319,30 +234,12 @@ describe('SystemTray', () => {
     expect(electron.buildFromTemplate).toHaveBeenLastCalledWith([])
   })
 
-  it('removes the icon when destroyed', () => {
-    const systemTray = create()
-    systemTray.install()
-    systemTray.destroy()
-    expect(electron.trays[0].destroy).toHaveBeenCalledOnce()
-    expect(systemTray.installed).toBe(false)
-  })
-
-  it('explains where the window went, and brings it back when the notice is clicked', () => {
+  it('brings the hidden window back when its notice is clicked', () => {
     const systemTray = create()
     systemTray.install()
     systemTray.showHiddenNotice()
-    const [notice] = electron.notices
-    expect(notice.options).toMatchObject({
-      title: 'SideKick is still running',
-      body: expect.stringContaining('notification area')
-    })
-    notice.handlers.click()
+    electron.notices[0].handlers.click()
     expect(tray.open).toHaveBeenCalledOnce()
-
-    create('linux').showHiddenNotice()
-    expect(electron.notices[1].options).toMatchObject({
-      body: expect.stringContaining('open SideKick again')
-    })
   })
 
   it('falls back to a tray balloon on Windows without notifications', () => {

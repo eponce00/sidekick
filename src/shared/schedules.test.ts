@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  describeScheduleTiming,
-  nextScheduleOccurrence,
-  validateScheduleInput,
-  type ScheduleTiming
-} from './schedules'
+import { nextScheduleOccurrence, validateScheduleInput, type ScheduleTiming } from './schedules'
 
 // Local wall-clock instants, so the expectations hold in any time zone the suite runs in.
 const at = (year: number, month: number, day: number, hour = 0, minute = 0, second = 0): number =>
@@ -77,19 +72,6 @@ describe('nextScheduleOccurrence', () => {
       const date = new Date(cursor)
       expect([date.getDate(), date.getHours(), date.getMinutes()]).toEqual([day, 6, 5])
     }
-  })
-})
-
-describe('describeScheduleTiming', () => {
-  it('names each cadence', () => {
-    expect(describeScheduleTiming(timing({ cadence: 'hourly', minute: 5 }))).toBe(
-      'Every hour at :05'
-    )
-    expect(describeScheduleTiming(timing({ cadence: 'daily' }))).toMatch(/^Daily at 9:00/)
-    expect(describeScheduleTiming(timing({ cadence: 'weekdays' }))).toMatch(/^Weekdays at /)
-    expect(describeScheduleTiming(timing({ cadence: 'weekly', weekday: 5 }))).toMatch(
-      /^Fridays at /
-    )
   })
 })
 

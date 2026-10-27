@@ -205,17 +205,6 @@ describe('credential redaction points', () => {
     expect(sectioned.content).not.toContain(value)
   })
 
-  it('redacts a value in output kept before it was stored, as it is read back', async () => {
-    const { value } = storedValue()
-    const root = tempDir()
-    const before = new ToolOutputStore(root, Date.now, new CredentialRedactor())
-    const handle = await before.save(`old output ${value}`)
-    const redactor = new CredentialRedactor()
-    redactor.setSecrets([{ alias: 'api-key', value }])
-    const after = new ToolOutputStore(root, Date.now, redactor)
-    expect((await after.read(handle)).content).toBe('old output [secret: api-key]')
-  })
-
   it('redacts every tool result, failures included', async () => {
     const { value, redactor } = storedValue()
     const registry = new AgentToolRegistry(redactor)

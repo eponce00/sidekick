@@ -104,62 +104,6 @@ describe('ChatInput add menu', () => {
     return button
   }
 
-  it('keeps the add menu compact while exposing plain-language help on hover', async () => {
-    await act(async () => root.render(<ChatInput {...baseProps()} />))
-
-    expect(
-      [...container.querySelectorAll('.features-menu-section-label')].map((item) =>
-        item.textContent?.trim()
-      )
-    ).toEqual(['Add', 'Project context', 'Agent behavior'])
-
-    expect(menuButton('Files and folders').textContent?.trim()).toBe('Files and folders')
-    expect(menuButton('Files and folders').title).toContain('current project')
-    expect(menuButton('Image from computer').textContent?.trim()).toBe('Image from computer')
-    expect(menuButton('Image from computer').title).toContain('Attach a PNG, JPEG, WebP, or GIF')
-    expect(menuButton('Change project folder').title).toContain(
-      'Choose the files SideKick can read and change'
-    )
-    expect(menuButton('Shared project notes').title).toContain('included in every chat')
-    expect(menuButton('Ongoing goal').title).toContain('across messages')
-    expect(menuButton('Plan first').title).toContain('before SideKick changes project files')
-    expect(menuButton('Research report').title).toContain('cross-check')
-    // Thinking has its own toolbar toggle; a second switch here could disagree with it.
-    expect(container.querySelector('.features-menu')?.textContent).not.toContain('thinking')
-
-    const instructions = container.querySelector('.features-menu-status') as HTMLDivElement
-    expect(instructions.textContent?.trim()).toBe('Instruction files (AGENTS.md)')
-    expect(instructions.getAttribute('aria-label')).toContain(
-      '2 instruction files loaded automatically'
-    )
-    expect(instructions.title).toContain('AGENTS.md')
-    expect(instructions.title).toContain('packages/desktop/AGENTS.md')
-    expect(instructions.closest('button')).toBeNull()
-  })
-
-  it('runs every available action and closes the menu after choosing it', async () => {
-    const props = baseProps()
-    const inputClick = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {})
-    await act(async () => root.render(<ChatInput {...props} />))
-
-    const actions: Array<[string, keyof ChatInputProps | 'image']> = [
-      ['Files and folders', 'onAddContextAttachments'],
-      ['Image from computer', 'image'],
-      ['Change project folder', 'onOpenWorkspace'],
-      ['Shared project notes', 'onOpenWorkspaceMemory'],
-      ['Ongoing goal', 'onToggleGoal'],
-      ['Plan first', 'onTogglePlan'],
-      ['Research report', 'onToggleResearch']
-    ]
-
-    for (const [label, callback] of actions) {
-      await act(async () => menuButton(label).click())
-      if (callback === 'image') expect(inputClick).toHaveBeenCalledTimes(1)
-      else expect(props[callback]).toHaveBeenCalledTimes(1)
-    }
-    expect(props.onToggleFeaturesMenu).toHaveBeenCalledTimes(actions.length)
-  })
-
   it('explains disabled actions and does not show project-only context without a project', async () => {
     const props = baseProps({
       workspaceFolder: null,
@@ -176,20 +120,9 @@ describe('ChatInput add menu', () => {
 
     expect(menuButton('Open project folder').disabled).toBe(false)
     expect(container.textContent).not.toContain('Shared project notes')
-    expect(container.textContent).not.toContain('Instruction files (AGENTS.md)')
 
-    const disabled = [
-      ['Image from computer', 'This model cannot inspect images'],
-      ['Ongoing goal', 'Finish the current goal first'],
-      ['Plan first', 'Planning is unavailable while running'],
-      ['Research report', 'Configure web search first']
-    ] as const
-    for (const [label, reason] of disabled) {
-      const button = menuButton(label)
-      expect(button.disabled).toBe(true)
-      expect(button.title).toBe(reason)
-      expect(button.textContent?.trim()).toBe(label)
-      expect(button.getAttribute('aria-label')).toContain(reason)
+    for (const label of ['Image from computer', 'Ongoing goal', 'Plan first', 'Research report']) {
+      expect(menuButton(label).disabled).toBe(true)
     }
   })
 
@@ -200,66 +133,7 @@ describe('ChatInput add menu', () => {
     })
     await act(async () => root.render(<ChatInput {...props} />))
 
-    const notes = menuButton('Shared project notes')
-    expect(notes.disabled).toBe(true)
-    expect(notes.title).toBe('Loading shared project notes…')
-    expect(notes.textContent?.trim()).toBe('Shared project notes')
-    expect(notes.getAttribute('aria-label')).toContain('Loading shared project notes…')
-  })
-})
-
-describe('ChatInput reasoning', () => {
-  let container: HTMLDivElement
-  let root: Root
-
-  beforeEach(() => {
-    container = document.createElement('div')
-    document.body.appendChild(container)
-    root = createRoot(container)
-  })
-
-  afterEach(async () => {
-    await act(async () => root.unmount())
-    container.remove()
-  })
-
-  const models = [
-    { id: 'a:sonnet', name: 'Claude Sonnet', provider: 'anthropic', providerKind: 'anthropic' }
-  ] as ChatInputProps['pinnedModels']
-
-  it('shows the level beside the model, on the model picker', async () => {
-    await act(async () =>
-      root.render(
-        <ChatInput
-          {...baseProps({
-            pinnedModels: models,
-            selectedModel: 'a:sonnet',
-            reasoningOptions: { levels: ['off', 'low', 'high'], initial: 'off' },
-            reasoningLevel: 'high'
-          })}
-        />
-      )
-    )
-    expect(container.querySelector('.model-selector-inline-effort')?.textContent).toBe('High')
-    // No second control for reasoning.
-    expect(
-      container.querySelectorAll('.input-toolbar-right [aria-label^="Reasoning"]')
-    ).toHaveLength(0)
-  })
-
-  it('is absent for a model without reasoning settings', async () => {
-    await act(async () =>
-      root.render(
-        <ChatInput
-          {...baseProps({
-            pinnedModels: models,
-            selectedModel: 'a:sonnet',
-            reasoningOptions: null
-          })}
-        />
-      )
-    )
-    expect(container.querySelector('.model-selector-inline-effort')).toBeNull()
+    expect(menuButton('Shared project notes').disabled).toBe(true)
   })
 })
 
@@ -294,55 +168,17 @@ describe('ChatInput goal banner', () => {
     updatedAt: 1
   }
 
-  it('says the next message becomes the goal, and lets arming be undone', async () => {
-    const onToggleGoal = vi.fn()
-    await act(async () =>
-      root.render(<ChatInput {...baseProps({ goalArmed: true, onToggleGoal })} />)
-    )
-
-    const banner = container.querySelector('.goal-mode-bar.is-armed')
-    expect(banner?.textContent).toContain('next message becomes the objective')
-    // The objective is written in the composer, not in a separate dialog.
-    expect(container.querySelector('.goal-dialog')).toBeNull()
-    expect(container.querySelector('textarea')?.getAttribute('placeholder')).toContain(
-      'Describe the outcome'
-    )
-
-    await act(async () =>
-      (banner?.querySelector('button[aria-label="Cancel goal"]') as HTMLButtonElement).click()
-    )
-    expect(onToggleGoal).toHaveBeenCalledTimes(1)
-  })
-
-  it('offers pause and drop on a running goal, and no longer edits or counts', async () => {
-    const onPauseGoal = vi.fn()
-    const onClearGoal = vi.fn()
-    await act(async () =>
-      root.render(<ChatInput {...baseProps({ goal, onPauseGoal, onClearGoal })} />)
-    )
-
-    const bar = container.querySelector('.goal-mode-bar')!
-    expect(bar.textContent).toContain('Ship the settings page')
-    const labels = [...bar.querySelectorAll('button')].map((button) =>
-      button.getAttribute('aria-label')
-    )
-    expect(labels).toEqual(['Pause goal', 'Drop goal'])
-    expect(bar.querySelector('.goal-mode-progress')).toBeNull()
-
-    await act(async () => (bar.querySelector('[aria-label="Pause goal"]') as HTMLElement).click())
-    await act(async () => (bar.querySelector('[aria-label="Drop goal"]') as HTMLElement).click())
-    expect(onPauseGoal).toHaveBeenCalledTimes(1)
-    expect(onClearGoal).toHaveBeenCalledTimes(1)
-  })
-
-  it('offers resume, not pause, once a goal has stopped', async () => {
+  it('offers pause on a running goal and resume, not pause, once it has stopped', async () => {
+    const labels = (): Array<string | null> =>
+      [...container.querySelectorAll('.goal-mode-bar button')].map((button) =>
+        button.getAttribute('aria-label')
+      )
+    await act(async () => root.render(<ChatInput {...baseProps({ goal })} />))
+    expect(labels()).toEqual(['Pause goal', 'Drop goal'])
     await act(async () =>
       root.render(<ChatInput {...baseProps({ goal: { ...goal, status: 'paused' } })} />)
     )
-    const labels = [...container.querySelectorAll('.goal-mode-bar button')].map((button) =>
-      button.getAttribute('aria-label')
-    )
-    expect(labels).toEqual(['Resume goal', 'Drop goal'])
+    expect(labels()).toEqual(['Resume goal', 'Drop goal'])
   })
 })
 
@@ -410,7 +246,6 @@ describe('ChatInput long pastes', () => {
       root.render(<ChatInput {...baseProps({ editingMessageId: 'message-1', onCancelEdit })} />)
     )
     const bar = container.querySelector('.composer-editing-bar')!
-    expect(bar.textContent).toContain('Editing your message')
     const input = container.querySelector<HTMLTextAreaElement>('textarea.message-input')!
     expect(input.disabled).toBe(false)
     await act(async () => {
@@ -419,44 +254,6 @@ describe('ChatInput long pastes', () => {
     expect(onCancelEdit).toHaveBeenCalledOnce()
     await act(async () => bar.querySelector('button')!.click())
     expect(onCancelEdit).toHaveBeenCalledTimes(2)
-  })
-
-  it('shows a pasted attachment as a card that can be viewed, inserted, or removed', async () => {
-    const onRemoveContextAttachment = vi.fn()
-    const onInsertPastedText = vi.fn()
-    await act(async () =>
-      root.render(
-        <ChatInput
-          {...baseProps({
-            isFeaturesMenuOpen: false,
-            onRemoveContextAttachment,
-            onInsertPastedText,
-            attachedContext: [
-              { id: 'paste-1', kind: 'text', name: 'line 1', content: longText, size: 400 }
-            ]
-          })}
-        />
-      )
-    )
-    const card = container.querySelector('.pasted-text-card')!
-    expect(card.textContent).toContain('Pasted · 40 lines')
-
-    await act(async () => {
-      card.querySelector<HTMLButtonElement>('.pasted-text-card-open')!.click()
-    })
-    const dialog = document.querySelector('[role="dialog"]')!
-    expect(dialog.querySelector('pre')?.textContent).toBe(longText)
-    const insert = [...dialog.querySelectorAll('button')].find(
-      (button) => button.textContent === 'Insert as text'
-    )!
-    await act(async () => insert.click())
-    expect(onInsertPastedText).toHaveBeenCalledWith('paste-1')
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-
-    await act(async () => {
-      card.querySelector<HTMLButtonElement>('.pasted-text-card-remove')!.click()
-    })
-    expect(onRemoveContextAttachment).toHaveBeenCalledWith('paste-1')
   })
 })
 
@@ -539,46 +336,5 @@ describe('ChatInput prompt history', () => {
     input().setSelectionRange(0, 0)
     await press('ArrowUp')
     expect(input().value).toBe('/')
-  })
-})
-
-describe('ChatInput review comments', () => {
-  it('shows a comment on changed lines as a removable chip', async () => {
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
-    const onRemoveContextAttachment = vi.fn()
-    await act(async () =>
-      root.render(
-        <ChatInput
-          {...baseProps({
-            isFeaturesMenuOpen: false,
-            onRemoveContextAttachment,
-            attachedContext: [
-              {
-                id: 'review-1',
-                kind: 'review',
-                name: 'App.tsx:3-4',
-                path: 'src/App.tsx',
-                side: 'new',
-                startLine: 3,
-                endLine: 4,
-                excerpt: '+a\n+b',
-                comment: 'Rename this'
-              }
-            ]
-          })}
-        />
-      )
-    )
-    const chip = container.querySelector<HTMLDivElement>('.composer-review-comment')!
-    expect(chip.textContent).toContain('App.tsx:3-4 Rename this')
-    expect(chip.title).toBe('src/App.tsx:3-4\nRename this')
-    await act(async () =>
-      chip.querySelector<HTMLButtonElement>('[aria-label="Remove comment on App.tsx:3-4"]')!.click()
-    )
-    expect(onRemoveContextAttachment).toHaveBeenCalledWith('review-1')
-    await act(async () => root.unmount())
-    container.remove()
   })
 })

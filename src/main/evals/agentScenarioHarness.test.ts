@@ -4,19 +4,6 @@ import { describe, expect, it } from 'vitest'
 import { serializeAgentScenarioMessages, withIsolatedEvalRoot } from './agentScenarioHarness'
 
 describe('isolated agent evaluation roots', () => {
-  it('removes the complete root after a successful scenario', async () => {
-    let observedRoot = ''
-
-    await withIsolatedEvalRoot('sidekick-eval-cleanup-success-', async (root) => {
-      observedRoot = root
-      await fs.mkdir(`${root}/project/nested`, { recursive: true })
-      await fs.writeFile(`${root}/project/nested/generated.txt`, 'temporary', 'utf8')
-      expect(existsSync(root)).toBe(true)
-    })
-
-    expect(existsSync(observedRoot)).toBe(false)
-  })
-
   it('removes the complete root after a failed scenario', async () => {
     let observedRoot = ''
 

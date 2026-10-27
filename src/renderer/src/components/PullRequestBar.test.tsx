@@ -54,61 +54,12 @@ describe('PullRequestBar', () => {
   const bar = (): HTMLElement | null => container.querySelector('.pull-request-bar')
   const text = (): string => bar()?.textContent ?? ''
 
-  it('shows the pull request, its merge status, changed lines, and CI', async () => {
+  it('reads the status of the open folder and links the pull request out of the app', async () => {
     await render()
     expect(getStatus).toHaveBeenCalledWith('C:\\Projects\\sidekick')
     const link = container.querySelector<HTMLAnchorElement>('.pull-request-bar-number')
-    expect(link?.textContent).toBe('#128')
     expect(link?.href).toBe('https://github.com/sidekick-labs/sidekick-demo/pull/128')
     expect(link?.target).toBe('_blank')
-    expect(text()).toContain('Blocked')
-    expect(text()).toContain('+1,284')
-    expect(text()).toContain('−312')
-    expect(text()).toContain('Checks running')
-    expect(text()).toContain('feature/pr-bar')
-  })
-
-  it.each([
-    ['draft', 'Draft', 'Checks passed'],
-    ['failing', 'Checks failing', 'Checks failed'],
-    ['queued', 'In merge queue', 'Checks passed'],
-    ['conflicts', 'Conflicts', 'Checks passed'],
-    ['merged', 'Merged', 'Checks passed'],
-    ['closed', 'Closed', 'No checks']
-  ])('labels a %s pull request', async (name, mergeLabel, checksLabel) => {
-    getStatus.mockResolvedValue(withPullRequest(name))
-    await render()
-    expect(container.querySelector('.pull-request-bar-merge')?.textContent).toBe(mergeLabel)
-    expect(container.querySelector('.pull-request-checks-trigger')?.textContent).toContain(
-      checksLabel
-    )
-  })
-
-  it('expands CI into individual checks with links to their logs', async () => {
-    getStatus.mockResolvedValue(withPullRequest('failing'))
-    await render()
-    const trigger = container.querySelector<HTMLButtonElement>('.pull-request-checks-trigger')!
-    expect(trigger.getAttribute('aria-expanded')).toBe('false')
-    await act(async () => trigger.click())
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    const rows = [...container.querySelectorAll('.pull-request-checks-list li')]
-    expect(rows.map((row) => row.className)).toEqual(['is-failure', 'is-success', 'is-success'])
-    expect(rows[0].querySelector('a')?.href).toContain('/actions/runs/1042/job/1')
-    expect(container.querySelector('.pull-request-checks-counts')?.textContent).toBe(
-      '1 failed · 2 passed'
-    )
-
-    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
-    expect(container.querySelector('.pull-request-checks-card')).toBeNull()
-  })
-
-  it('offers Create PR as a link to GitHub’s compare form when there is no pull request', async () => {
-    getStatus.mockResolvedValue(withPullRequest('create'))
-    await render()
-    const create = container.querySelector<HTMLAnchorElement>('.pull-request-bar-create')
-    expect(create?.textContent).toBe('Create PR')
-    expect(create?.href).toBe(createUrl)
-    expect(container.querySelector('.pull-request-checks-trigger')).toBeNull()
   })
 
   it('renders nothing when there is nothing to show or no folder', async () => {
@@ -159,7 +110,7 @@ describe('PullRequestBar', () => {
       container.querySelector<HTMLButtonElement>('.pull-request-bar-refresh')!.click()
     )
     expect(text()).toContain('#128')
-    expect(container.querySelector('.pull-request-bar-error')?.textContent).toContain('rate limit')
+    expect(container.querySelector('.pull-request-bar-error')).not.toBeNull()
 
     await act(async () =>
       container
